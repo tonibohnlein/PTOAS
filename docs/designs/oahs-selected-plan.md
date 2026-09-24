@@ -1928,3 +1928,35 @@ keeps the checked source-local realization available. The normal-constructor
 two-path witness has strictly fewer complete payload-order relations than a
 valid source-local packet on both paths; this finite comparison does not prove
 a general ordering optimum or recover the cyclic `hc_head_reduce` case.
+
+## AQ design — joined historical reverse-key qualification
+
+The joined binder no longer equates an earlier physical reverse-key use with
+unavailability. It first asks whether the actual selected causal state after
+**every** alternative old WAIT permits republication of that key. For a used
+key it then excludes selected reverse uses from the union of the original
+continuations starting at all those old-WAIT words, including exits and
+backedges. A key used only before the respective old WAITs is eligible; an
+intersecting use on even one alternative is not. The continuation scan is lazy
+and shared across candidate reverse keys, and canonical-word intersections
+are memoized. No selected credit is inferred by this query: the same complete
+packet, ownership, event-chain, publication-support and authoritative replay
+checks remain required.
+
+The normal constructor reuses an earlier completed reverse generation and
+retains strictly less complete payload ordering than a valid source-local
+packet on both alternative paths. A private second-arm negative proves that
+the first-arm-only neighbor scan would miss a selected use: both old-WAIT
+states can rearm, the first-arm continuation is clear, and their union is not.
+The previously established singleton empty-but-unrearmed negative still
+guards the shared `canPublish` rule. Unique acyclic correspondence, exact
+post-WAIT gaps, helper-free ownership and joined-helper retention remain
+sufficient restrictions, not a universal key-reuse theorem.
+
+The AD `hc_head_reduce` debt requires a different next fact than this binder
+supplies. Its traced old WAITs are at unique acyclic sites, but not every
+source path contains one of the candidate old WAITs. Unguarded early reverse
+publication could therefore be unconsumed on a bypass path. A future guarded
+source-continuation query must prove original predicate availability and
+occurrence correlation before qualifying that placement; the present refusal
+is required. The finite +122/-20 ordering comparison remains open.

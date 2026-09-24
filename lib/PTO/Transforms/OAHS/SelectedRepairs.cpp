@@ -287,9 +287,9 @@ bool Constructor::separatedBoundaryPacket(const SourceGapQualification& facts, G
             arms = joined->alternatives;
         }
         if (arms.empty()) { continue; }
-        // Historical reverse reuse is currently certified only for one old
-        // consumption. Joined sources require a virgin reverse key until a
-        // neighboring-use proof spans every alternative continuation.
+        // A historical reverse key may be reused only when every actual old
+        // WAIT rearms it and no selected use intersects any of their
+        // continuations. The union also includes exits and backedges.
         std::vector<bool> afterConsumption;
         std::map<Cut, bool> wordIntersects;
         for (Id reverse = 0; reverse < frontier.keys().size(); ++reverse) {
@@ -297,18 +297,22 @@ bool Constructor::separatedBoundaryPacket(const SourceGapQualification& facts, G
             const bool eligibleReverse = b.source == observer && b.observer == group.source &&
                 helperFreeKey(reverse);
             if (!eligibleReverse) { continue; }
+            const bool rearmedAtEveryArm = std::all_of(arms.begin(), arms.end(),
+                [&](const ConsumptionFrontier& old) {
+                    const auto after = cache.afterEndpoint.find(old.wait);
+                    return after != cache.afterEndpoint.end() &&
+                        canPublish(after->second, reverse);
+                });
+            if (!rearmedAtEveryArm) { continue; }
             const auto& reverseUses = ledger.eventUses(b);
-            const bool unsupportedHistoricalJoin = arms.size() != 1 && !reverseUses.empty();
-            if (unsupportedHistoricalJoin) { continue; }
-            const auto firstAfter = cache.afterEndpoint.find(arms.front().wait);
-            const bool initiallyAvailable = firstAfter != cache.afterEndpoint.end() &&
-                canPublish(firstAfter->second, reverse);
-            if (!initiallyAvailable) { continue; }
             if (!reverseUses.empty()) {
                 if (afterConsumption.empty()) {
                     afterConsumption.resize(control.graph.sites.size());
                     result.work.normalKeySites += afterConsumption.size();
-                    std::vector<Cut> pending{ledger.endpoint(arms.front().wait).cut};
+                    std::vector<Cut> pending;
+                    for (const auto& old : arms) {
+                        pending.push_back(ledger.endpoint(old.wait).cut);
+                    }
                     while (!pending.empty()) {
                         const auto site = pending.back(); pending.pop_back();
                         if (!control.reachable[site] || afterConsumption[site]) { continue; }
@@ -326,10 +330,7 @@ bool Constructor::separatedBoundaryPacket(const SourceGapQualification& facts, G
             const Command forwardWait{Command::Acquire, a.source, a.observer, a.key};
             bool legal = true;
             for (const auto& old : arms) {
-                const auto after = cache.afterEndpoint.find(old.wait);
-                const bool available = after != cache.afterEndpoint.end() &&
-                    canPublish(after->second, reverse);
-                if (!available) { legal = false; break; }
+                const auto& after = cache.afterEndpoint.at(old.wait);
                 // The contracted chain establishes event rearming only.
                 // sourceGapFacts supplies payload coverage independently.
                 const std::vector<std::pair<Command, FrontierBinding>> chain{
@@ -338,7 +339,7 @@ bool Constructor::separatedBoundaryPacket(const SourceGapQualification& facts, G
                     {forwardSet, {facts.gap.cut, 1}},
                     {forwardWait, {current, 0}}};
                 result.work.repairSourceCommands += chain.size();
-                if (!frontier.eventChain(after->second.causal, chain)) {
+                if (!frontier.eventChain(after.causal, chain)) {
                     legal = false;
                     break;
                 }

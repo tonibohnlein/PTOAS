@@ -240,6 +240,62 @@ struct ReplayTestAccess {
             "empty reverse key without known consumption was treated as rearmed");
     }
 
+    static void joinedSecondArmNeighbor(const Program& p, const Commands& fixed,
+                                        Cut source, Cut deadline)
+    {
+        Constructor c(p);
+        c.current = deadline;
+        for (Cut cut = 0; cut < fixed.size(); ++cut) {
+            for (const auto& command : fixed[cut]) {
+                c.ledger.append(cut, command, EndpointPurpose::Fixed);
+            }
+        }
+        require(c.contextualReplay(), "second-arm neighbor fixture failed selected replay");
+        const auto reverse = keyIndex(c.frontier,
+            {Command::Publish, Pipe::V, Pipe::MTE2, 0});
+        require(reverse != NoAnalysisId, "second-arm fixture lost reverse key");
+        std::vector<Cut> waits;
+        for (Cut cut = 0; cut < fixed.size(); ++cut) {
+            for (auto id : c.ledger.word(cut)) {
+                const auto& command = c.ledger.endpoint(id).command;
+                if (command.kind == Command::Acquire && command.source == Pipe::MTE2 &&
+                    command.observer == Pipe::V) {
+                    waits.push_back(cut);
+                    const auto after = c.cache.afterEndpoint.find(id);
+                    require(after != c.cache.afterEndpoint.end() &&
+                        c.canPublish(after->second, reverse),
+                        "second-arm fixture did not rearm at every old WAIT");
+                }
+            }
+        }
+        require(waits.size() == 2, "second-arm fixture lost alternative old WAITs");
+        auto continuation = [&](const std::vector<Cut>& seeds) {
+            std::vector<bool> sites(c.control.graph.sites.size());
+            auto pending = seeds;
+            while (!pending.empty()) {
+                const auto site = pending.back(); pending.pop_back();
+                if (sites[site]) { continue; }
+                sites[site] = true;
+                const auto& next = c.control.graph.sites[site].successors;
+                pending.insert(pending.end(), next.begin(), next.end());
+            }
+            return sites;
+        };
+        std::map<Cut, bool> firstWords, allWords;
+        require(c.selectedKeyUsesOutside(continuation({waits.front()}), reverse, firstWords) &&
+            !c.selectedKeyUsesOutside(continuation(waits), reverse, allWords),
+            "second-arm fixture does not distinguish first-arm and union neighbor proofs");
+        Group group;
+        group.source = Pipe::MTE2;
+        group.publication = source;
+        group.requirements = {{1, Pipe::MTE2, true, deadline, true, false}};
+        const auto facts = c.sourceGapFacts({source, NoAnalysisId, NoAnalysisId},
+            Pipe::MTE2, Pipe::V, group.requirements);
+        require(facts.proved(), "second-arm neighbor fixture lost source coverage: " + facts.reason);
+        require(!c.separatedBoundaryPacket(facts, group),
+            "joined binder ignored a reverse-key neighbor on only the second arm");
+    }
+
     static void sourceGapOccurrences()
     {
         const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE1;
@@ -933,6 +989,66 @@ void separatedJoinedConsumptionReturn()
         require(!checkCausalFrontier(p, missing).accepted,
             "missing guarded acknowledgment publication remained legal");
     }
+
+    // An earlier completed reverse generation is available on both arms.
+    // Its physical key need not be virgin when each actual old WAIT proves
+    // consumption and no selected reverse use intersects either continuation.
+    auto historical = fixed;
+    historical[cut(0)] = {{Command::Publish,Q,P,0}, {Command::Acquire,Q,P,0}};
+    const auto reused = constructSelectedPlan(p, historical);
+    require(reused.success, "joined historical reverse construction: " + reused.reason);
+    require(reused.work.repairSelected == 1 && reused.work.joinedAcknowledgments == 1,
+        "joined historical reverse key did not enter common class-one selection");
+    for (auto branch : {1U, 2U}) {
+        require(std::any_of(reused.commands[cut(branch)].begin(), reused.commands[cut(branch)].end(),
+                [&](const Command& command) {
+                    return command.kind == Command::Publish && command.source == Q &&
+                        command.observer == P && command.key == 0;
+                }), "joined historical key was not republished at its actual old WAIT");
+    }
+    require(checkCausalFrontier(p, reused.commands).accepted,
+        "joined historical reverse reuse failed independent causal checking");
+    auto historicalLate = reused.commands;
+    const auto historicalSet = historicalLate[cut(1)][1];
+    historicalLate[cut(1)].erase(historicalLate[cut(1)].begin() + 1);
+    historicalLate[cut(2)].erase(historicalLate[cut(2)].begin() + 1);
+    historicalLate[cut(5)].insert(historicalLate[cut(5)].begin(), historicalSet);
+    require(checkCausalFrontier(p, historicalLate).accepted,
+        "historical source-local comparison failed cold validation");
+    const auto historicalOrders = completeOrders(reused.commands);
+    const auto historicalLateOrders = completeOrders(historicalLate);
+    require(historicalOrders.size() == historicalLateOrders.size(),
+        "historical joined alternative lost a participating path");
+    for (unsigned path = 0; path < historicalOrders.size(); ++path) {
+        const bool included = std::includes(historicalLateOrders[path].begin(),
+            historicalLateOrders[path].end(), historicalOrders[path].begin(),
+            historicalOrders[path].end());
+        require(included && historicalLateOrders[path].size() > historicalOrders[path].size(),
+            "historical joined binding did not preserve its early release order");
+    }
+
+    auto neighbor = historical;
+    neighbor[cut(3)] = {{Command::Publish,Q,P,0}, {Command::Acquire,Q,P,0}};
+    const auto intersecting = constructSelectedPlan(p, neighbor);
+    require(intersecting.success, "joined reverse-neighbor construction: " + intersecting.reason);
+    for (auto branch : {1U, 2U}) {
+        const auto& word = intersecting.commands[cut(branch)];
+        const bool earlyHistoricalReturn = std::any_of(word.begin(), word.end(),
+            [&](const Command& command) {
+                return command.kind == Command::Publish && command.source == Q &&
+                    command.observer == P && command.key == 0;
+            });
+        require(!earlyHistoricalReturn,
+            "joined early return crossed a selected reverse-key neighbor");
+    }
+
+    // This neighbor exists only on the second arm. Scanning the first arm's
+    // continuation alone would incorrectly consider the reverse key free.
+    auto secondArmNeighbor = historical;
+    secondArmNeighbor[cut(2)].push_back({Command::Publish,Q,P,0});
+    secondArmNeighbor[cut(2)].push_back({Command::Acquire,Q,P,0});
+    selected::ReplayTestAccess::joinedSecondArmNeighbor(p, secondArmNeighbor,
+        cut(5), cut(6));
 }
 
 void repeatedJoinedPacket()

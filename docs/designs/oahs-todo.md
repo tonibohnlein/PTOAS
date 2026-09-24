@@ -533,3 +533,21 @@ the semantic boundary. All three reviewers accepted the bounded mechanism.
 Host plans remain identical to AO; work and resource evidence is in HANDOFF/AP
 artifacts. Joined helper retirement, historical reverse reuse, cyclic/multiple
 generation consumption and AD `hc_head_reduce` ordering recovery remain open.
+
+## Current continuation after AQ
+
+AQ lets the common joined class-one binder reuse a historically used reverse
+key when every actual old-WAIT state proves rearming and no selected use of
+that key intersects the union of the old-WAIT continuations. A normal
+constructor positive and a second-arm-only neighbor negative exercise the
+new proof; the same packet, ownership, publication and selected causal checks
+remain authoritative. Joined-helper retirement and broader key ownership
+remain open. See HANDOFF/AQ artifacts for exact host and cost evidence.
+
+The traced AD `hc_head_reduce` source is acyclic but has a bypass path that
+contains none of the candidate old WAITs. Do not remove AP's one-WAIT-per-
+participating-path premise to force an early return. Next establish a typed
+guarded source-continuation query with executable original predicate
+availability and occurrence correlation, then feed that fact to the common
+packet binder. Keep the +122/-20 finite ordering debt open until a nonempty
+complete-order comparison proves recovery.

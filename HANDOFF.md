@@ -1,5 +1,48 @@
 # OAHS current handoff
 
+## Active after Step AQ — historically used reverse keys across joined consumption
+
+AQ removes the joined-only virgin reverse-key gate from the common class-one
+separated-repair binder. Every actual old-WAIT state must prove the key
+republishable. For a historically used key, selected reverse uses must be
+outside the union of all old-WAIT continuations, including exits and
+backedges. The union is built lazily after the cheap all-arm rearming check
+and shared across key alternatives. Exact packet, ownership, matching,
+publication support and authoritative causal replay remain unchanged.
+
+The normal constructor reuses a completed historical reverse generation
+after either alternative old WAIT. Its independent complete-order comparison
+is strictly less ordered than a valid source-local packet on both finite
+paths. A private second-arm-only negative proves why scanning just the first
+continuation is unsound: both arm snapshots can republish, the first arm's
+neighbor test passes, and the union rejects. The prior singleton
+empty-but-unrearmed negative still covers the shared rearming rule.
+
+Final exact-code host evidence: all 21 built portable OAHS test executables
+pass (the portable build has no CTest registrations); three linked native
+drivers pass; 88/88 corpus, 18/19 compatibility with the inherited refusal,
+GEMM, two prefills and three targeted inputs reconstruct. All 113 campaign
+plan hashes equal AP, so campaign payload order and event resources are
+unchanged. Matched AP→AQ selected updates/replay sites remain
+8238/7101060; normal key-site work rises 1031360→1041985, repair-neighbor
+visits 20152→20275, and repair-source commands 48→56. SET/WAIT totals
+remain 3775/3774. Compiler microseconds 323129764→314846153 are noisy,
+not a speed conclusion. The changed-code check passes. Architecture and
+generality, correctness, and asymptotic-performance reviewers ACCEPT after
+the all-arm/second-arm amendments. No sanitizer/device campaign. Artifacts:
+`../oahs-gemm-base-builds/refactor-step-aq/` (`design.md`, `summary.json`,
+`results.json`, `work.json`, host/build logs, and the read-only trace).
+
+The AD `hc_head_reduce` +122/-20 finite ordering debt remains. AQ corrected
+the AP diagnosis: the traced old WAITs and source are unique acyclic sites,
+but a source path bypasses every candidate old WAIT. Publishing an unguarded
+early acknowledgment would be invalid. Next derive an executable guarded
+source-continuation fact from original control, including predicate
+availability and occurrence matching, and pass it through the common packet
+binder. Do not assume a recurring event generation is the blocker. Joined
+helper retirement, affected-use support, class-three guarding, final quality
+and coupled-device gates remain open; continue the three-reviewer loop.
+
 ## Active after Step AP — joined prior consumption at early source gaps
 
 AP extends the common class-one consumption repair to an acyclic joined
@@ -40,11 +83,10 @@ WAIT per participating path, a fresh reverse key, and retained joined helpers
 outside singleton retirement. The AD `hc_head_reduce` +122/-20 finite ordering
 debt remains: its later source-local V→MTE2 acknowledgment imports unrelated
 vector completion before MTE2 loads, and this AP acyclic frontier does not
-qualify its cyclic/multiple-generation histories. Next derive a generation-
-scoped recurring consumption frontier and exact early helper support through
-the same binder, without moving or duplicating notifications on a visit.
-Then continue broader affected-use support, class-three guarding, and final
-quality/generality/device gates through the three-reviewer commit loop.
+qualify every path to its later source. AQ's trace establishes a bypass path,
+not a cyclic occurrence at the candidate sites. The active AQ section above
+supersedes this next-action diagnosis. Broader affected-use support,
+class-three guarding and final quality/generality/device gates remain open.
 
 ## Active after Step AO — historical reverse-key binding in common class one
 
