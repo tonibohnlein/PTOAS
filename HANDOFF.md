@@ -38,3 +38,25 @@ original physical-use/control queries and the first draft constructor engine
 from paper revision 0.40. Treat that paper as a working specification. Keep the
 existing mode intact throughout; do not import the old OAHS constructor to
 preserve historical example outputs.
+
+## First-pass port in progress
+
+The first extraction copies the donor scalar dependency/loop-domain analysis
+and effective tile-descriptor state into `include/PTO/Transforms/Handoff`.
+The source is pinned to `371fdb344d2783b92d6c39424c507b2ce082e08c`; changes
+are mechanical include-path/guard changes only. These analyses are not yet
+called by the handoff stub.
+
+The staged port and revision-0.40 crosswalk are recorded in
+[the first-pass port plan](docs/designs/frontier-synch-first-pass-port.md).
+Next: extract physical storage and original control records, then connect
+address observations to these scalar facts. This is a port of the donor
+analyses; the finite scalar orbit must not be treated as physical-use matching.
+
+Validation for this extraction: both headers exactly match the pinned donor
+after normalizing their include guards and local include path; `git diff
+--check` passes. A serial C++17 `-fsyntax-only` check including both headers
+passes against this checkout's source headers and the existing LLVM 19 / donor
+generated PTO headers. This is a focused header check, not a build or execution
+of the new handoff path. No native integration or generality acceptance is
+claimed for this source-only extraction.
