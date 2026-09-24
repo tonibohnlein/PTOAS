@@ -40,6 +40,19 @@ Cost track: extract measured plan-equivalent reductions with their consumers;
 new caches/region execution require evidence and invalidation tests. Two local
 resource-intensive workers maximum in aggregate.
 
+## Current continuation after AT
+
+AT moves exact emitted-word source/consumer correspondence into ordinary
+saved-source eligibility. The first-use/child projection now constructs with
+its first-use prefix rather than declining it. This is a bounded matching
+correction; local history/freshness, same-frame placement, exact all-copy
+source credit and indexed interval-query cost remain open. The 17-bank
+reconstruction negative from the removed broader coverage trial is pinned in
+AT artifacts. Its cause must be resolved before claiming full source-credit
+composition. Keep the AS intermediate retry as service coverage and add a
+separate positive retry regression when an actual qualifying input is found.
+AT's mixed finite ordering changes remain a quality-recovery ledger item.
+
 ## Current v0.38 continuation after AC
 
 AA publication contracts, AB original induction certificates and AC common normal

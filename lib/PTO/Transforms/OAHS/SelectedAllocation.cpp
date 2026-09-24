@@ -680,14 +680,30 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
         std::string reason = "no reusable key or nonrecursive consumption acknowledgment: source=" +
             std::to_string(unsigned(source)) + " observer=" + std::to_string(unsigned(observer)) +
             " deadline=" + std::to_string(current);
+        const auto& relation = control.correspondence(publication, current);
+        reason += " matching=" + (relation.proved() ? std::string("proved/") +
+            std::to_string(relation.pairs.size()) : relation.reason);
+        if (relation.proved()) {
+            for (const auto& pair : relation.pairs) {
+                if (!control.straight(pair.first, pair.second)) {
+                    reason += " cross-frame=" + std::to_string(pair.first) + ":" +
+                        std::to_string(pair.second);
+                    break;
+                }
+            }
+        }
         for (Id candidate = 0; candidate < frontier.keys().size(); ++candidate) {
-            const auto &identity = frontier.keys()[candidate];
+            const auto& identity = frontier.keys()[candidate];
             if (identity.source == source && identity.observer == observer) {
-                const auto &state = cache.cuts[publication].before;
+                const auto& state = cache.cuts[publication].before;
                 reason += " key=" + std::to_string(identity.key) +
                     "/closed=" + std::to_string(closedKeys.count(candidate)) +
                     "/occupancy=" + std::to_string(state.causal.facts()->events[candidate].occupancy) +
-                    "/receipts=" + std::to_string(state.consumptions[candidate].size());
+                    "/receipts=" + std::to_string(state.consumptions[candidate].size()) +
+                    "/publishable=" + std::to_string(canPublish(state, candidate));
+                if (relation.proved() && canPublish(state, candidate)) {
+                    reason += "/clear=" + std::to_string(clearInterval(candidate, publication, current));
+                }
             }
         }
         return fail(SelectedFailure::EventResource, reason, publication);

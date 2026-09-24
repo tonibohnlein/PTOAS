@@ -254,6 +254,8 @@ struct SelectedPlan {
     FrontierCheck certificate;
     SelectedWork work;
     std::optional<DeclinedRecurringAttempt> declinedRecurring;
+    // Native import observation count for the selected attempt, after retries.
+    std::size_t nativeFirstUsePrefixes = 0;
     // The last optional first-use observation layer was declined while
     // retaining previously qualified storage/occurrence interfaces.
     std::optional<DeclinedRecurringAttempt> declinedFirstUse;

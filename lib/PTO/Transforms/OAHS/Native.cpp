@@ -1689,6 +1689,8 @@ LogicalResult executeSelectedAttempt(
                                   program.observed->firstUsePrefixes != 0;
         }
         auto selected = constructSelectedPlan(program);
+        selected.nativeFirstUsePrefixes = program.observed ?
+                                          program.observed->firstUsePrefixes : 0;
         selected.work.nativeEndpointDiscoveryWork = endpointDiscoveryWork;
         Result result;
         result.success = selected.success;

@@ -417,10 +417,14 @@ Group Constructor::sourceGroup(
     const SelectedSource* selected = nullptr;
     for (const auto& handle : result.sources) {
         if (handle.pipe != source || handle.version != cache.version || !handle.snapshot.reachable() ||
-            !control.straight(handle.cut, current)) continue;
+            !control.straight(handle.cut, current) ||
+            (selected && control.position[handle.cut] >= control.position[selected->cut])) continue;
         const auto covered = coverage(handle.cut, source, required);
         if (!std::includes(covered.begin(), covered.end(), needed.begin(), needed.end())) continue;
-        if (!selected || control.position[handle.cut] < control.position[selected->cut]) selected = &handle;
+        // This word must publish on exactly the participating target visits.
+        // A locally covered first-use copy may also exit without a receiver.
+        if (!control.correspondence(handle.cut, current).proved()) continue;
+        selected = &handle;
     }
     const bool comparable = selected != nullptr;
     if (structured && !comparable && sourceFrontier(source, required, all, group)) { return group; }

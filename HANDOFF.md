@@ -1,5 +1,42 @@
 # OAHS current handoff
 
+## Active after Step AT — saved-source occurrence eligibility
+
+AT moves the emitted-word matching obligation into ordinary saved-source
+qualification. A locally covered first-use source at corpus 31 cut 120 had
+`publication reaches exit unconsumed`; five unclosed keys were publishable, so
+this was not key exhaustion. The saved-source selector now asks the shared
+`Control::correspondence(source, deadline)` before choosing its earliest
+candidate. A disproved/unknown source is skipped; another saved source or the
+existing structured/common-cut path remains available. Binding, actual causal
+credit, key ownership and independent reconstruction are unchanged. Failure
+records now distinguish matching and publishability. The native diagnostic
+reports the selected attempt's actual first-use prefix count.
+
+The pinned normal-constructor witness retains one first-use prefix and
+constructs/reconstructs without either observation retry. All three independent
+reviewers ACCEPT this bounded occurrence-eligibility correction. The host
+campaign passes 88/88 corpus, 18/19 compatibility with the inherited refusal,
+GEMM, both prefills and three targeted cases. Eleven corpus and one prefill
+plans change; compatibility, GEMM and targeted plans do not. Nonempty finite
+projection traces show a mixed +100/-80 ordering change versus AS and 12 more
+SET/WAIT pairs; this is temporary quality debt, not an improvement claim.
+The `lm_head` finite trace computes +1650/-3960, but exporting its large
+relation integers hit Python's default digit limit; keep the full comparison
+status qualified. Exact logs, source/build pins, resources and work are under
+`../oahs-gemm-base-builds/refactor-step-at/`.
+
+This step is not complete all-copy source coverage: the existing local
+`coverage()` and same-frame filters remain sufficient restrictions. A trial
+that intersected causal histories/freshness across all matched copies caused
+a 17-bank native variant to fail independent event reconstruction; it was
+removed. See AT design.md for the invariant, gate inventory and cost boundary.
+The old AS middle-layer retry remains a bounded service route but this repaired
+fixture no longer exercises its successful branch. Next: resolve all-copy
+source-credit interpretation and retain an explicit retry witness, then return
+to guarded source continuation, affected support, binding and linked-pipeline
+quality. No sanitizer or device campaign.
+
 ## Active after Step AS — retain prior qualified observations on first-use refusal
 
 AS makes the final optional first-use observation layer a fixed admission

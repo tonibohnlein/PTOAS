@@ -44,6 +44,26 @@ Ordinary completion endpoint `request` IDs index `decisions`. Endpoints with
 purpose `RecurringCompletion` index `channels`. Both kinds coexist in the same
 ledger; `channels` contains qualified physical access-role requests. Neither table supplies completion to the checker.
 
+## Saved-source occurrence eligibility
+
+An ordinary saved source is a canonical emitted word, not just the analytical
+copy observed at the current deadline. Before selecting it as a provider,
+construction requires the shared original-control correspondence query to
+prove that its complete emitted occurrence population matches the target
+word. A locally covered first-use copy may otherwise publish on a path that
+exits without a receiver. Unknown or disproved matching declines that source
+only; other sources and packet forms remain available. Physical-key binding
+still checks its own interval, ownership, occupancy, neighboring uses and
+rearming; no analysis fact grants completion credit before actual acquisition.
+
+This check establishes endpoint participation, not all-copy source coverage.
+The current local history and same-frame filters are sufficient placement
+restrictions. Extending coverage to matched copies must reconcile their
+selected causal snapshots with complete event reconstruction; a direct
+intersection trial failed the 17-bank native regression and was not retained.
+Repeated distinct correspondence queries remain charged by original-control
+site visits; an indexed interval summary requires measured justification.
+
 ## Stable packet gaps and exact commitment
 
 `WordGap` identifies a canonical command word and its adjacent endpoint IDs,

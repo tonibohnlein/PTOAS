@@ -6,15 +6,15 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // A nonunit first-use loop composes with existing child endpoint distinctions.
-// The extra first-use copy cannot establish event rearming; preserve the earlier
-// qualified interface rather than dropping all observations.
+// A locally covered source whose emitted word can exit unconsumed must be
+// skipped; the full qualified graph then constructs without an observation retry.
 // RUN: pto-oahs-selected-test --construct %s > %t.pto 2> %t.log
 // RUN: FileCheck %s --check-prefix=LOG < %t.log
 // RUN: FileCheck %s --check-prefix=PLAN < %t.pto
 // LOG: function=first_use_child_protocol construction=1 reconstruction=1
-// LOG-SAME: first_use_declined=1
+// LOG-SAME: first_use_prefixes={{[1-9][0-9]*}} first_use_declined=0
 // LOG-SAME: observation_declined=0
-// LOG: first-use-decline cut=
+// LOG-NOT: first-use-decline cut=
 // PLAN-LABEL: func.func @first_use_child_protocol
 // PLAN: scf.if
 // PLAN: pto.set_flag

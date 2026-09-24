@@ -1880,7 +1880,7 @@ module attributes {pto.target_arch = "a3"} {
     oahs::SelectedPlan plan;
     if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)),
                "dependency-sliced constructor or independent reconstruction failed, variant " +
-                   std::to_string(variant))) {
+                   std::to_string(variant) + " reason=" + plan.reason)) {
       return false;
     }
     if (variant <= 6 || variant == 10 || variant == 11) {
@@ -2080,6 +2080,7 @@ bool runFile(MLIRContext &context, const char *path) {
                  << work.frontierUnknown
                  << " recurring=" << work.recurringChannels
                  << " recurring_proposals=" << work.recurringProposals
+                 << " first_use_prefixes=" << report.nativeFirstUsePrefixes
                  << " first_use_declined=" << bool(report.declinedFirstUse)
                  << " first_use_discarded_replay_sites="
                  << (report.declinedFirstUse ? report.declinedFirstUse->work.replaySiteEvaluations : 0)
