@@ -1835,3 +1835,23 @@ would admit on the same ledger revision. A true result is only an opportunity;
 it grants no key, packet or completion credit. The deadline-wide class3 guard
 remains a transitional sufficient priority rule until all competing structured
 packets have common realizations.
+
+## AM design — joined one-shot entry as a common class-three realization
+
+The original-use query can produce a regional entry fact when producer
+completion is available only after alternative source paths join. This fact
+must remain distinct from a saved early source: it subscribes the exact entry
+tail and therefore has class three placement. The common constructor first
+tries saved source and other classes zero through two. A regional packet is
+qualified only if those fail and no unresolved earlier original source or
+saved-entry opportunity remains for any due request. Its own regional fact
+does not veto it. This preserves the structured path for opportunities whose
+common local binding remains unknown.
+
+A qualifying regional packet uses one noncyclic entry occurrence, the complete
+joined source-gap facts, exact SET-then-WAIT entry word, physical coverage,
+helper-free event ownership and key-neighbor checks, and persistent publication
+support. Only selected contextual replay grants completion. The inherited
+regional query still requires whole-source-pipe inactivity in the loop; that
+is a sufficient opportunity restriction and must be replaced by an
+affected-use/occurrence query before claiming general regional entry support.

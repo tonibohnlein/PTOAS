@@ -483,3 +483,14 @@ plan-equivalent because class3 may now be tried when the old broad predicate
 was true but the actual entry qualifier was false. Three source reviews accepted
 the change. See HANDOFF/AL artifacts for final host evidence. The deadline-wide
 guard itself and structured packet binding remain unfinished.
+
+## Current continuation after AM
+
+AM lets the shared joined-regional entry fact feed a bounded common class-three
+one-shot realization. Saved entry facts retain class-zero discovery; an
+unresolved earlier structured source blocks class-three regional fallback,
+including another saved-entry fact of the same request. Alternative-write and
+competing saved-source normal-constructor tests cover the selected cases.
+The whole-source-pipe inactivity condition and one-shot unique occurrence
+remain sufficient restrictions; affected-use regional support and general
+recurring entry binding are unfinished. See HANDOFF and AM artifacts.

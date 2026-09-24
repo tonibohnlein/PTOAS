@@ -744,7 +744,8 @@ private:
     std::optional<CertifiedRealization> normalAlternative(
         const Group&, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);
     std::optional<CertifiedRealization> normalEntry(
-        const Group&, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);
+        const Group&, const std::vector<FrontierRequirement>&,
+        const std::vector<DueObligation>&, bool regionalOnly = false);
     std::optional<CertifiedRealization> normalCorridor(
         const Group&, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);
     std::optional<CertifiedRealization> normalCommonCut(

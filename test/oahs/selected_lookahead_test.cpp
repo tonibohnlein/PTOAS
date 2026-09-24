@@ -766,6 +766,83 @@ void invariantLoopEntry()
     p.observed->loops.front().atLeastOnce = false;
     require(accepted(p).work.loopEntryTransfers == 0, "unknown/zero-trip entry was acquired unconditionally");
 }
+o::Program regionalOneShotProgram()
+{
+    auto p = base(1, 3);
+    p.operations = {op(P, {{0, false, true, true}}),
+                    op(P, {{0, false, true, true}}),
+                    op(Q, {{0, true, false}})};
+    o::ObservedControl g;
+    g.qualification = "alternative writers with a joined entry completion";
+    g.entry = 0; g.exit = 6;
+    const std::vector<o::Cut> operations{o::NoAnalysisId, 0, 1,
+        o::NoAnalysisId, 2, o::NoAnalysisId, o::NoAnalysisId};
+    const std::vector<std::vector<o::Cut>> edges{{1, 2}, {3}, {3}, {4}, {5},
+        {4, 6}, {}};
+    for (o::Cut site = 0; site < operations.size(); ++site) {
+        g.observations.push_back({site, {}, true});
+        g.sites.push_back({operations[site], site, edges[site], {}, 0});
+    }
+    g.sites[5].backedgeOwners = {3, o::NoAnalysisId};
+    g.loops.push_back({3, 3, 6, {4, 5}, 4, true});
+    p.observed = g;
+    return p;
+}
+void regionalOneShotEntry()
+{
+    auto p = regionalOneShotProgram();
+    const auto plan = accepted(p);
+    require(std::any_of(plan.realizationChoices.begin(), plan.realizationChoices.end(),
+        [](const auto& choice) {
+            return choice.deadline == 4 && choice.placementClass == 3;
+        }), "joined original source did not enter common class-three selection");
+    require(std::any_of(plan.decisions.begin(), plan.decisions.end(),
+        [](const auto& decision) {
+            return decision.consumer == 4 && decision.sourceMilestone == 3;
+        }), "joined entry source did not retain its original milestone");
+    require(plan.commands[3].size() == 2 &&
+            plan.commands[3][0].kind == o::Command::Publish &&
+            plan.commands[3][1].kind == o::Command::Acquire,
+            "regional one-shot packet was not emitted in entry-tail order");
+    auto competing = base(2, 3);
+    competing.operations = {op(P, {{0, false, true, true}}),
+        op(P, {{0, false, true, true}}), op(R, {{1, false, true, true}}),
+        op(Q, {{0, true, false}, {1, true, false}})};
+    o::ObservedControl joined;
+    joined.qualification = "joined source plus an independent saved source";
+    joined.entry = 0; joined.exit = 8;
+    const std::vector<o::Cut> operations{o::NoAnalysisId, 0, 1, 2,
+        o::NoAnalysisId, o::NoAnalysisId, 3, o::NoAnalysisId, o::NoAnalysisId};
+    const std::vector<std::vector<o::Cut>> edges{{1, 2}, {3}, {3}, {4},
+        {5}, {6}, {7}, {6, 8}, {}};
+    for (o::Cut site = 0; site < operations.size(); ++site) {
+        joined.observations.push_back({site, {}, true});
+        joined.sites.push_back({operations[site], site, edges[site], {}, 0});
+    }
+    joined.sites[7].backedgeOwners = {5, o::NoAnalysisId};
+    joined.loops.push_back({5, 5, 8, {6, 7}, 6, true});
+    competing.observed = joined;
+    const auto preferred = accepted(competing);
+    const auto firstChoice = std::find_if(preferred.realizationChoices.begin(),
+        preferred.realizationChoices.end(),
+        [](const auto& choice) { return choice.deadline == 6; });
+    require(firstChoice != preferred.realizationChoices.end() &&
+            firstChoice->placementClass == 0,
+            "regional fallback was selected before the class-zero saved source");
+    require(std::any_of(preferred.decisions.begin(), preferred.decisions.end(),
+        [](const auto& decision) {
+            return decision.consumer == 6 && decision.source == R &&
+                decision.sourceMilestone == 4;
+        }), "regional fallback preempted a saved independent source");
+    auto optional = p;
+    optional.observed->loops.front().atLeastOnce = false;
+    const auto skipped = accepted(optional);
+    require(std::none_of(skipped.realizationChoices.begin(), skipped.realizationChoices.end(),
+        [](const auto& choice) {
+            return choice.deadline == 4 && choice.placementClass == 3;
+        }), "zero-trip child inherited unconditional regional completion");
+}
+
 void nonemptyOneShotEntryGaps()
 {
     auto p = invariantLoopProgram();
@@ -1111,6 +1188,7 @@ int main()
     changedRepublicationDeadline();
     enclosingAcquisitionAndRearming();
     invariantLoopEntry();
+    regionalOneShotEntry();
     nonemptyOneShotEntryGaps();
     historicalOneShotEntryKey();
     reuseOneShotEntryKey();

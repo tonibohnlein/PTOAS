@@ -1,5 +1,45 @@
 # OAHS current handoff
 
+## Active after Step AM — joined regional one-shot entry in common selection
+
+AM lets the shared nextEntrySource regional fact feed a class-three one-shot
+common realization when alternative producer paths join at the reader-loop
+entry. The exact entry-tail SET/WAIT packet is privately checked against
+source-gap coverage, helper-free key ownership and neighbors, persistent
+publication support and one-shot participation; only selected contextual
+replay grants credit. Saved-source class-zero discovery runs first. A
+regional fallback is considered only after classes zero through two fail and
+only when no unresolved earlier source or saved-entry opportunity remains,
+including a different saved fact for the same request.
+
+Normal-constructor tests cover joined alternative writes, zero-trip refusal,
+and a competing independent saved source whose class-zero packet is selected
+first. Existing enclosing re-entry, crossed-publication, historical-key and
+missing-return negatives remain. The inherited whole-source-pipe inactivity
+gate and unique one-shot occurrence are sufficient restrictions, not general
+regional-lifetime semantics. An earlier structured opportunity whose common
+local proof is Unknown is protected by the guard but lacks a direct fixture.
+
+Final host evidence: 25/25 portable suites, three native drivers, 88/88
+corpus, 18/19 compatibility (inherited refusal), GEMM, two prefills and three
+targeted inputs pass. All 113 campaign emitted-plan hashes match AL exactly;
+complete payload order and SET/WAIT resource use are therefore unchanged.
+Matched selected updates, replay sites and counted provider/key work are
+unchanged; aggregate measured compiler microseconds 316117338→321966953 are
+noisy, not a speed conclusion. The strengthened focused test and changed-code
+check pass. Architecture/generality, correctness and asymptotic-performance
+reviewers ACCEPT the bounded change. No sanitizer/device campaign.
+Artifacts: `../oahs-gemm-base-builds/refactor-step-am/` (`design.md`,
+`summary.json`, `results.json`, `work.json`, `reviews.md`).
+
+Next: replace the remaining structured realization and deadline-wide class3
+guard through scoped common request/packet binding. The first quality debt
+remains AD `hc_head_reduce` +122/-20 finite ordering; trace its first
+unnecessarily late source or wait before adding a new family. Broader
+affected-use regional qualification, recurring entry, final consolidation,
+generality and coupled device evidence remain open. Continue the
+three-reviewer commit loop.
+
 ## Active after Step AL — shared loop-entry opportunity preflight
 
 AL removes the class3 guard's duplicate whole-loop, syntactic loop-entry test.

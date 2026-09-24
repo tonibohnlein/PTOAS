@@ -400,7 +400,7 @@ std::optional<CertifiedRealization> Constructor::normalAlternative(
 }
 std::optional<CertifiedRealization> Constructor::normalEntry(
     const Group& request, const std::vector<FrontierRequirement>& due,
-    const std::vector<DueObligation>& universe)
+    const std::vector<DueObligation>& universe, bool regionalOnly)
 {
     const auto observer = program.operations[control.graph.operations[current]].pipe;
     const auto motivating = classes(request.requirements);
@@ -410,8 +410,10 @@ std::optional<CertifiedRealization> Constructor::normalEntry(
     if (!containsEntry) { return {}; }
     Id cursor = 0;
     while (auto fact = nextEntrySource(request.source, request.requirements, motivating, cursor)) {
-        if (fact->regional || fact->publication == fact->loop->entry) { continue; }
         const auto publication = fact->publication, entry = fact->loop->entry;
+        if (fact->regional != regionalOnly || (!regionalOnly && publication == entry)) {
+            continue;
+        }
         const auto uniqueOneShot = [&](Cut cut) {
             const auto component = control.component[cut];
             if (component == NoAnalysisId || control.components[component].cyclic ||
@@ -433,10 +435,11 @@ std::optional<CertifiedRealization> Constructor::normalEntry(
         // The entry certificate permits the receipt after existing commands
         // in that word; moving it before them would cross an unproved barrier.
         const WordGap entryGap = ledger.tail(entry);
-        // The saved source covers the lifetime before this word. Later gaps
-        // would import selected commands into the publication prefix.
-        const WordGap sourceGap{publication, NoAnalysisId,
-            sourceWord.empty() ? NoAnalysisId : sourceWord.front()};
+        // A saved source covers the lifetime before its word. A regional
+        // source instead observes the joined completion at the entry tail.
+        const WordGap sourceGap = fact->regional ? entryGap :
+            WordGap{publication, NoAnalysisId,
+                sourceWord.empty() ? NoAnalysisId : sourceWord.front()};
         const auto facts = sourceGapFacts(sourceGap, request.source, observer,
             request.requirements, entry);
         if (!facts.proved()) { continue; }
@@ -486,6 +489,7 @@ std::optional<CertifiedRealization> Constructor::normalEntry(
             }
             CertifiedRealization out;
             out.version = ledger.version();
+            out.placementClass = fact->regional ? 3 : 0;
             out.sourceMilestone = publication;
             out.selectedSourceGap = sourceGap;
             out.physicalCoverage = physical;
@@ -876,6 +880,33 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
     if (!hasPreferred) {
         for (const auto& request : ordinaryRequests) {
             retain(normalCorridor(request, due, universe));
+        }
+    }
+    if (candidates.empty()) {
+        // A regional source is an entry-tail class-three fallback. Do not let
+        // it hide a saved source, or preempt another request's still-structured
+        // earlier source. Its own entry fact is not a competing opportunity.
+        for (const auto& request : ordinaryRequests) {
+            const bool unresolvedEarlier = std::any_of(
+                ordinaryRequests.begin(), ordinaryRequests.end(), [&](const Group& other) {
+                    if (&other == &request) {
+                        if (discoverSourceFrontier(other.source, other.requirements)) {
+                            return true;
+                        }
+                        Id cursor = 0;
+                        const auto needed = classes(other.requirements);
+                        while (auto fact = nextEntrySource(other.source,
+                            other.requirements, needed, cursor)) {
+                            if (!fact->regional) { return true; }
+                        }
+                        return false;
+                    }
+                    return discoverSourceFrontier(other.source, other.requirements) ||
+                        earlierLoopEntrySource(other.source, other.requirements);
+                });
+            if (!unresolvedEarlier) {
+                retain(normalEntry(request, due, universe, true));
+            }
         }
     }
     const bool terminalCandidate = candidates.empty() && terminalCommonCut();
