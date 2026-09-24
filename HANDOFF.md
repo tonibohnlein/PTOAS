@@ -1,5 +1,43 @@
 # OAHS current handoff
 
+## Active after Step AI — historical-key alternative binding
+
+AI lets the common alternative-source realization consider a previously used
+directional key when actual source-time state proves it empty and consumed at
+every participating publication gap. A shared neighbor query excludes existing
+uses reachable after any source arm, including same-word uses and backedges;
+it reuses a per-word intersection result across keys while checking every
+endpoint's activity and ownership. Exact packet, persistent-publication and
+authoritative selected-credit checks remain unchanged. No candidate global
+solve or new selection ranking was added.
+
+The normal-constructor positive inserts an earlier consumed R→P key and proves
+that the common alternative return reuses that identity. A selected use after
+only one source arm forces another key. A branch with a receipt unavailable at
+one source also forces another key, although this fixture additionally hits the
+conservative same-word neighbor rule; it does not isolate `canPublish` alone.
+A separate source-time-only negative remains useful future evidence.
+
+On this source, 25/25 portable suites, three native drivers, 88/88 corpus,
+18/19 compatibility (the inherited refusal), GEMM, two prefills and three
+targeted inputs pass. All campaign outputs match AH, so the complete finite
+payload-order delta is empty. Aggregate selected updates and replay sites stay
+8225 and 7100684; normal candidates 687, SETs 3775, WAITs 3774. Neighbor
+work rises 985825->1010704 inspected sites and 15924->16002 selected uses;
+publication-support sites 263443->263604. Measured aggregate compiler
+microseconds 316686314->315170788 are noisy and are not a speed claim.
+Changed-code check is clean. Architecture/generality, correctness and
+asymptotic-performance reviewers ACCEPT this bounded step. No sanitizer or
+device campaign. Artifacts: `../oahs-gemm-base-builds/refactor-step-ai/`
+(`design.md`, `summary.json`, `results.json`, `changed-order.json`, `work.json`,
+`reviews.md`).
+
+Next: move loop-entry and recurring alternative packets into common scoped
+binding, then remove the deadline-wide class3 migration guard. Historical-key
+qualification still excludes same-word and dormant-owner cases; qualified
+rearming at actual reuse deadlines and AD ordering recovery remain open.
+Continue the three-reviewer commit loop.
+
 ## Active after Step AH — bounded alternative-source realization
 
 AH routes qualified alternative writer frontiers through the common class0

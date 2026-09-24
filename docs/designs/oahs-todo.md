@@ -112,6 +112,18 @@ see HANDOFF and AH artifacts. Historical-key, recurring and loop-entry
 alternative binding, removal of the class3 priority guard, general source
 subscriptions and AD quality recovery remain open.
 
+## Current continuation after AI
+
+AI shares selected-key neighbor checking between ordinary and alternative
+source clients, admitting an actually rearmed historical key across alternative
+arms without global candidate solving. The normal-constructor positive reuses
+a prior R→P identity; one-arm later-use and unavailable-receipt negatives
+remain conservative. Three source reviews and host service pass; all campaign
+outputs match AH. See HANDOFF and AI artifacts for work accounting and the
+negative test's same-word qualification. Loop-entry and recurring common
+binding, dormant ownership, broader historical-key gaps and AD quality
+recovery remain open.
+
 ## Current continuation after R
 
 User-approved sequence is the "Adopted continuation" in the canonical semantic

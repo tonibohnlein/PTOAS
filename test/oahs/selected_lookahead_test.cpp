@@ -218,12 +218,51 @@ void alternativeReturnCoverage()
         if (found != plan.decisions.end()) {
             require(found->publicationFrontier == std::vector<o::Cut>{4, 7},
                     "additional coverage moved the selected alternative source boundaries");
+            require(found->sourceMilestone == 4,
+                    "historical-key alternative return did not enter common selection");
             const bool coversReader = std::any_of(found->supporting.begin(), found->supporting.end(),
                 [](const auto& r) {
                     return r.cell == 0 && r.source == Q && !r.sourceWrite && r.consumerWrite;
                 });
             require(coversReader == (variant == 0),
                     "alternative return misclassified its original reader coverage");
+        }
+        if (variant == 0) {
+            const auto returnKey = [&](const o::SelectedPlan& selected) {
+                const auto& word = selected.commands[4];
+                const auto pub = std::find_if(word.begin(), word.end(), [](const auto& command) {
+                    return command.kind == o::Command::Publish && command.source == R &&
+                        command.observer == P;
+                });
+                require(pub != word.end(), "alternative return has no first-arm publication");
+                return pub->key;
+            };
+            // A consumed earlier key is reusable at both alternative source
+            // gaps. Numeric key order must not turn this into a virgin-key rule.
+            o::Commands earlier(o::commandCutCount(p));
+            earlier[0] = {{o::Command::Publish, R, P, 0}, {o::Command::Acquire, R, P, 0}};
+            const auto historical = accepted(p, earlier);
+            const auto commonReturn = std::find_if(historical.decisions.begin(), historical.decisions.end(),
+                [](const auto& decision) { return decision.consumer == 9 && decision.source == R; });
+            require(commonReturn != historical.decisions.end() && commonReturn->sourceMilestone == 4 &&
+                    returnKey(historical) == 0,
+                    "consumed historical key did not enter common alternative selection");
+            // A use after only the first arm's source must exclude that key
+            // from the multi-source packet, even when the other arm is clear.
+            o::Commands later(o::commandCutCount(p));
+            later[5] = {{o::Command::Publish, R, P, 0}, {o::Command::Acquire, R, P, 0}};
+            const auto blocked = accepted(p, later);
+            require(returnKey(blocked) != 0,
+                    "one-arm future key use was ignored by alternative binding");
+            // The second arm consumes the old publication before its source;
+            // the first arm has not yet consumed it at its source gap.
+            o::Commands lateConsumption(o::commandCutCount(p));
+            lateConsumption[0] = {{o::Command::Publish, R, P, 0}};
+            lateConsumption[4] = {{o::Command::Acquire, R, P, 0}};
+            lateConsumption[6] = {{o::Command::Acquire, R, P, 0}};
+            const auto unready = accepted(p, lateConsumption);
+            require(returnKey(unready) != 0,
+                    "one-arm source-time rearming was assumed before its receipt");
         }
         for (const auto& path : {std::vector<o::Cut>{0, 1, 2, 3, 4, 5, 8, 9, 10},
                                  std::vector<o::Cut>{0, 1, 2, 6, 7, 8, 9, 10}}) {

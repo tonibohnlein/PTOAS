@@ -510,15 +510,29 @@ bool Constructor::sourceKeyNeighbors(const SourceGapQualification& facts, Id key
             pending.insert(pending.end(), next.begin(), next.end());
         }
     }
-    for (auto id : uses) {
+    std::map<Cut, bool> wordIntersects;
+    return selectedKeyUsesOutside(facts.futureSites, key, wordIntersects);
+}
+bool Constructor::selectedKeyUsesOutside(const std::vector<bool>& futureSites, Id key,
+    std::map<Cut, bool>& wordIntersects)
+{
+    const bool valid = futureSites.size() == control.graph.sites.size() &&
+        key < frontier.keys().size();
+    if (!valid) { return false; }
+    for (auto id : ledger.eventUses(frontier.keys()[key])) {
         ++result.work.repairNeighborUses;
         const auto& endpoint = ledger.endpoint(id);
         const bool supported = ledger.active(id) &&
             (endpoint.purpose == EndpointPurpose::Completion || endpoint.purpose == EndpointPurpose::Fixed);
         if (!supported) { return false; }
-        for (auto site : control.wordOccurrences[endpoint.cut]) {
-            if (facts.futureSites[site]) { return false; }
+        const auto [found, inserted] = wordIntersects.try_emplace(endpoint.cut, false);
+        if (inserted) {
+            for (auto site : control.wordOccurrences[endpoint.cut]) {
+                ++result.work.normalKeySites;
+                found->second |= futureSites[site];
+            }
         }
+        if (found->second) { return false; }
     }
     return true;
 }

@@ -783,6 +783,8 @@ private:
     SourceGapQualification sourceGapFacts(
         const WordGap&, Pipe, Pipe, const std::vector<FrontierRequirement>&);
     bool sourceKeyNeighbors(const SourceGapQualification&, Id);
+    bool selectedKeyUsesOutside(const std::vector<bool>& futureSites, Id key,
+        std::map<Cut, bool>& wordIntersects);
     bool sourceGapKey(const SourceGapQualification&, Id);
     bool fixedBoundaryPacket(const SourceGapQualification&, Group&);
     std::optional<WordGap> earlyPublicationMilestone(Cut, Pipe) const;

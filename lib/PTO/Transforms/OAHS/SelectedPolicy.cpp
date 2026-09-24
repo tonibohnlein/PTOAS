@@ -329,10 +329,28 @@ std::optional<CertifiedRealization> Constructor::normalAlternative(
     const auto covered = normalizedCoverage(universe, due, physical);
     const bool coversOwn = !own.empty() && subset(own, covered);
     if (!coversOwn) { return {}; }
+    std::vector<bool> futureSites;
+    std::map<Cut, bool> wordIntersects;
     for (Id key = 0; key < frontier.keys().size(); ++key) {
         const auto& identity = frontier.keys()[key];
         if (identity.source != request.source || identity.observer != observer ||
-            !helperFreeKey(key) || !ledger.eventUses(identity).empty()) { continue; }
+            !helperFreeKey(key)) { continue; }
+        if (!ledger.eventUses(identity).empty()) {
+            if (futureSites.empty()) {
+                futureSites.resize(control.graph.sites.size());
+                result.work.normalKeySites += futureSites.size();
+                std::vector<Cut> pending = discovered->publications;
+                while (!pending.empty()) {
+                    const auto site = pending.back(); pending.pop_back();
+                    if (!control.reachable[site] || futureSites[site]) { continue; }
+                    futureSites[site] = true;
+                    ++result.work.normalKeySites;
+                    const auto& next = control.graph.sites[site].successors;
+                    pending.insert(pending.end(), next.begin(), next.end());
+                }
+            }
+            if (!selectedKeyUsesOutside(futureSites, key, wordIntersects)) { continue; }
+        }
         OrderedPacket endpoints;
         bool sourceReady = true;
         for (const auto& prefix : prefixes) {

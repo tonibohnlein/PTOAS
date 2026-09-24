@@ -1739,3 +1739,31 @@ is a bounded client of the common selector, not general alternative binding.
 Historical-key, recurring, loop-entry and dormant-owner packets still need a
 common scoped realization contract. The deadline-wide AG class3 priority guard
 remains transitional until those competitors are represented.
+
+## AI design — selected-key neighbors across alternative sources
+
+The AH common client required a never-used key although a selected earlier
+use can be legal when its receipt was consumed before every alternative source.
+For a qualified source set, AI builds one union of original continuation sites
+reachable from any participating source. Every existing use of a candidate
+identity must be active, have completion/fixed purpose, and have no analytical
+word occurrence in that union. A per-word intersection cache avoids repeated
+endpoint-by-occurrence scans for the same query; the original occurrence union
+and event-use population remain explicit costs. Same-word selected uses are
+conservatively excluded.
+
+Source-time `canPublish` is checked at each exact publication gap, so key
+occupancy and actual knowledge of the old consumption are proved on every arm.
+Helper-free ownership, complete prepared packet and publication-support
+checks retain their independent duties. The source-cut correspondence provides
+participation matching; only selected replay establishes new completion. A
+virgin key remains one valid candidate, but prior use alone no longer erases
+physical frontier facts. This is a bounded local certificate, not general
+dormant-owner restoration or recurring historical-key binding.
+
+The normal constructor exercises an actually consumed historical identity,
+interference after one source arm, and an unavailable receipt on one arm. The
+receipt negative also triggers conservative same-word neighbor exclusion, so
+it does not isolate the source-time occupancy check. Host campaign outputs
+remain unchanged from AH; acceptance is the new focused binding capability
+and preserved independent validation, not a campaign command reduction.
