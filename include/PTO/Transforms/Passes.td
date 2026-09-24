@@ -25,6 +25,8 @@ include "mlir/Pass/PassBase.td"
 
 // Define PTOInsertSync Pass
 def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
+  let options = [Option<"algorithm", "algorithm", "std::string", "\"existing\"",
+    "Synchronization constructor: existing or frontier-synch (under development)">];
   let summary = "Insert synchronization flags for PTO dialect";
   let description = [{
     Analyzes data dependencies between Cube, Vector and MTE pipelines

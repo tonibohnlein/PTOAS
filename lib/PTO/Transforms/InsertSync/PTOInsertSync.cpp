@@ -12,7 +12,8 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
-#include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
+#include "PTO/Transforms/InsertSync/SyncInput.h"
+#include "PTO/Transforms/FrontierSynch/FrontierSynch.h"
 #include "PTO/Transforms/InsertSync/InsertSyncAnalysis.h"
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "PTO/Transforms/InsertSync/MoveSyncState.h"
@@ -66,6 +67,11 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     // in the outer child module to model cross-child calls. Those declaration
     // funcs have a function type but no entry block arguments, so the
     // translator's argument walk must not run on them.
+    if (algorithm != "existing" && algorithm != "frontier-synch") {
+      func.emitError("unknown synchronization algorithm; expected existing or frontier-synch");
+      signalPassFailure();
+      return;
+    }
     if (func.isDeclaration()) {
       return;
     }
@@ -89,15 +95,22 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       return;
     }
 
-    // 0. 数据结构准备
-    MemoryDependentAnalyzer memAnalyzer;
-    SyncIRs syncIR;
-    SyncOperations syncOpsStorage;
-    Buffer2MemInfoMap buffer2MemInfoMap;
+    SyncInput input;
+    if (failed(input.build(func))) {
+      signalPassFailure();
+      return;
+    }
+    if (algorithm == "frontier-synch") {
+      if (failed(frontiersynch::run(func, input))) {
+        signalPassFailure();
+      }
+      return;
+    }
 
-    // 1. Translator: 构建 SyncIR
-    PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func, SyncAnalysisMode::NORMALSYNC);
-    translator.Build();
+    // Existing construction retains the same translated nodes and pipeline.
+    auto &memAnalyzer = input.memory();
+    auto &syncIR = input.ir();
+    SyncOperations syncOpsStorage;
 
     // 如果 IR 太简单，直接跳过
     if (syncIR.size() <= 1) {
