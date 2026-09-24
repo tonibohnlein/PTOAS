@@ -1,7 +1,16 @@
 # FrontierSynch Phase A: original-program analysis contract
 
-This is the construction-facing interpretation of the working synchronization
-draft v0.41 at `dc5c309`, Sections 3.1–3.5. `ProgramAnalysis` owns one imported original structure and
+This document describes the historical implemented construction-facing interface at
+`3bbc58a67`, compared with synchronization draft v0.42 at `267c435` on
+2026-09-24. The [current v0.44 parity inventory](frontier-synch-v0.44-parity.md)
+supersedes its comparison. The original contract and D1–D4 are in Section 3; the joint
+refinements are in `sections/03b_joint_contexts.tex` and
+`appendices/09_joint_context_derivations.tex`. The interface was developed
+against v0.41 and does not yet implement those refinements. See the
+[0.42 gap inventory](frontier-synch-v0.42-gaps.md) for the source comparison,
+draft limits, and proposed acceptance cases.
+
+`ProgramAnalysis` owns one imported original structure and
 its lifetime, occurrence, and guarded-reader query services. The unchanged
 shared `SyncInput` and source function must outlive it because physical uses
 retain translated effect and IR identities. Its indexed
@@ -131,16 +140,29 @@ answers on equivalent spelling, unrelated state, optional children, reloads,
 and independent bank selectors. No MLIR utility should turn an uncertain may
 fact into exact participation or selected completion.
 
-## Acceptance still required
+## Acceptance still required against 0.42
 
 - Qualify definite-write coverage against exact target effects, including
-  partial writes and read-modify-write cases.
+  partial writes and read-modify-write cases, and qualify effect completeness
+  for the admitted instruction fragment.
+- Derive guarded joint producer/read/reuse records for the admitted fixed-use
+  acyclic fragment. Preserve incoming cases, continuation boundaries, source
+  subscriptions, and placement-relevant engine work through context sharing.
+  Independent marginal histories do not certify these correlations.
 - Generalize guarded first/last selectors and D1/D2/D4 correspondence without
   a product of independent loop states; retain exact endpoint predicate
-  availability and child continuation.
+  availability and child continuation. Owner selection must include the
+  declared stopping boundary, rather than only the source/target pair.
+- Implement the restricted symbolic interval rule and a separate sufficient
+  region-boundary descriptor. Keep exact/no-hit/unknown frontier semantics;
+  sufficient boundaries require their own participation and placement evidence.
 - Add finite return/consequence and compatibility indexes only when the first
   constructor has a concrete consumer; keep their source positions subscribed
-  before traversal.
+  before traversal. Multiple placement descriptors must share their original
+  obligations without multiplying residual progress or coverage weight.
+- Charge context formation, shared expressions, materialized relationships,
+  and query output separately. The optional separator backend needs qualified
+  contextual graph size/width; it is not an existing implementation guarantee.
 - Validate a linked `frontier-synch` mode and compare the query answers against an
   independent fixture; focused source probes alone do not establish full
   first-pass generality or construction service.

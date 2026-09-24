@@ -5,8 +5,15 @@
 Recipient: `codex/handoff-foundation`, foundation `dbd99c242`.
 Donor: `codex/oahs-gemm-base` at
 `371fdb344d2783b92d6c39424c507b2ce082e08c`.
-Specification checked: synchronization draft revision 0.40, paper repository
+Historical source-port specification: synchronization draft revision 0.40, paper repository
 `7e3f59c`, Section 3 (original storage analysis and D1–D4).
+
+Historical comparison baseline: revision 0.42 at paper repository `267c435`,
+implementation `3bbc58a67`, reviewed 2026-09-24. The [current v0.44 parity
+inventory](frontier-synch-v0.44-parity.md) supersedes that baseline. The stages
+below record the 0.40/0.41 extraction history; they do not claim implementation
+of the later joint refinements. See the [0.42 gap inventory](frontier-synch-v0.42-gaps.md)
+and [Phase A contract](frontier-synch-program-analysis.md).
 
 Port existing analyses in dependency order. Preserve their implementation and
 record differences from the working draft before adapting their consumers.
@@ -231,8 +238,8 @@ corpus quality or generality acceptance.
 
 ## Coherent Phase A result after the source ports
 
-The source ports are now assembled through `ProgramAnalysis`, following the working
-draft v0.41's three-way distinction: fixed original facts, complete physical
+The source ports were assembled through `ProgramAnalysis`, following the then-current
+draft v0.41's three-way distinction, retained in v0.42: fixed original facts, complete physical
 requirements, and placement opportunities. The result owns the immutable
 original structure and shared query services. It indexes every requirement by
 deadline and direction, subscribes every represented source position before

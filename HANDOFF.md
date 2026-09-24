@@ -1,21 +1,86 @@
 # FrontierSynch status
 
-
 Branch: `codex/handoff-foundation`. FrontierSynch is selected with
 `pto-insert-sync{algorithm=frontier-synch}`; `algorithm=existing` remains
 available.
 
-Status: Phase A has a usable query boundary for a first constructor draft, but
-is not complete against the draft. Full-write and implicit-effect proofs,
-general D1/D2/D4 correspondence, and executable participation remain open.
+Status: Phase A has an original-program query boundary, but is not complete
+against the specified first-pass contract in draft v0.43. The current paper
+revision is v0.44; its operative Phase A sections are unchanged from v0.43.
+Factored conditional provenance, directional covering boundaries, the qualified
+interval rule, and complete look-ahead preparation remain unimplemented.
+Construction still reports an explicit failure.
 The seven foundation commits introduce FrontierSynch under its current name.
 
 Base: upstream `master`, `f5eff3ee249697f6157088f649c6434fcc9d7c5b`.
 Donor: `371fdb344d2783b92d6c39424c507b2ce082e08c`.
-Draft checked: paper repository `dc5c309`, revision 0.41 representation pass,
-Sections 3.1–3.5 and `REVISION_0_41_REPRESENTATION.md`.
+Implementation reviewed: `3bbc58a67` on `codex/handoff-foundation`.
+Draft checked: paper repository `4905f8a`, revision 0.44, on 2026-09-24.
+Its Phase A contract is the v0.43 contract introduced at `a13650a`. The
+implementation checkpoint below predates both revisions; its historical
+v0.42 comparison remains below. The current comparison and four review gates
+are in [the v0.44 parity inventory](docs/designs/frontier-synch-v0.44-parity.md).
 
-## Current increment: coherent Phase A query boundary
+## Current draft parity and implementation sequence
+
+The parity target is every *specified* Phase A behavior in the current draft,
+including retained physical provenance, All/MayAfter, typed prerequisites,
+D1–D4, and the v0.43 additions. Open general symbolic matching and selected
+construction are recorded as such, not silently claimed implemented.
+
+1. Factored provenance and demands: the current four marginal bit matrices
+   give conservative may relationships, but lose shared branch correlations.
+   All imported writes still lack a definite full-cell proof. A shared guarded
+   expression service and its real-effect qualification are required.
+2. Directional boundaries: current exact/may reader frontiers and operation
+   cuts are present; independent source and target covering results over
+   original cut intervals are absent.
+3. Exact occurrence/frontier rules: restricted fixed visit, same-role period,
+   and invariant-reader rules exist. The specified guarded alternatives,
+   supported D2/D4 transport, and symbolic interval rule are incomplete.
+4. Look-ahead preparation: current requirements have deadline/source indexes
+   and subscribed operation cuts. Stable obligation/group/descriptor
+   separation, closure over all referenced sources, and the qualified two-link
+   consequence service are absent.
+
+Each increment needs focused semantic tests, corpus queries, and an independent
+review against its full specified contract before the next increment. The
+earlier occurrence-relation proposal in the paper repository is exploratory;
+it is not a substitute for implementing already specified rules.
+
+The five development kernels were run through the current actual pass modes:
+`existing` compiled and emitted C++ for all five; `frontier-synch` reached the
+expected construction-not-implemented diagnostic. The Phase A corpus runner
+completed all five, but all 2,242 interpreted storage requirements reported
+Unknown occurrence correspondence. These runs establish the baseline only;
+they do not establish plan correctness, device behavior, or draft parity.
+
+## Historical draft 0.42 comparison
+
+[The source comparison and acceptance cases](docs/designs/frontier-synch-v0.42-gaps.md)
+record the earlier gap inventory. The draft retains the original/selected-state
+boundary and adds restricted derivations for these capabilities:
+
+- Joint guarded records must connect producer, reader interval, next reuse,
+  frontiers, and continuation. Current histories are marginal may sets;
+  `interpretAt` combines their handles without proving their correlation.
+- Context formation must preserve source/deadline distinctions, including
+  unrelated engine work that changes a prefix. A shared predicate/frontier DAG
+  does not yet provide the draft's shared decision DAG of whole query records.
+- The unit-step interval rule must derive nonempty, first, and last participating
+  visits symbolically. Current counted D3 accepts invariant participation;
+  induction-dependent participation remains unresolved.
+- A separate sufficient-boundary descriptor must retain region participation,
+  enclosed work, and the original deadline. Current exact-frontier results and
+  operation-cut candidates do not represent that descriptor.
+
+Existing prerequisites remain: full-write coverage, guarded D1 alternatives,
+qualified D2 entry/successor cases and D4 re-entry, continuation-aware owners,
+and executable endpoint predicates. The draft's general mixed-write/while
+qualification, combined adequacy/cost result, and complete packet integration
+also remain research obligations; changing the baseline does not prove them.
+
+## Implemented checkpoint: coherent Phase A query boundary
 
 The follow-up review of the five Phase A commits found five remaining items.
 The current checkpoint closes the owner escape in `firstMayUse`/`lastMayUse`, retains
@@ -109,16 +174,27 @@ subscriptions identify original positions, not ordered command-word gaps or
 source snapshots under selected waits. The shared translator remains responsible
 for effect completeness.
 
-Next: add a shared lowering/effect certificate for definite full-cell writes and
-complete implicit effects; bounding geometry and a generic MLIR Write effect do
-not prove either. Extend D1/D2/D4 correspondence and executable participation
-from that evidence, then have the first constructor draft consume these indexed
-requests while evaluating selected causal credit separately. Control-value
-prerequisites are indexed but lack qualified native-availability and dynamic
-occurrence matching; return/compatibility precision also remains open. Do not
-widen these facts by assuming a recipe matched.
+Recommended next increment: qualify full-cell effects for an explicit initial
+instruction fragment, then implement the draft's fixed-use acyclic joint
+records with continuation-aware owners and guarded source subscriptions. Use
+the conditional-write example in the gap inventory as the first comparison
+fixture. Preserve unsupported effects and correlations as unresolved demands.
+The symbolic interval and sufficient-boundary rules can then extend that
+interface under their own premises. Extend repeated-use D2/D4 qualification
+before composing those records across re-entry. This order is an implementation
+recommendation, not a new restriction in the paper.
+
+Control-value prerequisites still lack qualified native availability and
+dynamic occurrence matching; return/compatibility precision remains open.
+The constructor must evaluate actual completion, matching, event reuse, and
+ordered command-word placement separately from these original facts.
 
 ## Validation
+
+The 0.42 comparison is a documentation and source inspection update. No compiler
+build, probe, corpus, sanitizer, or device run was performed for it. The evidence
+below belongs to the earlier implementation checkpoints and does not validate
+the new draft refinements.
 
 Current FrontierSynch importer and translator sources compile in a focused C++17 probe
 with the project's warning flags. The probe links existing LLVM 19 and generated
@@ -176,6 +252,7 @@ does not establish synchronization-plan quality or full supported-input service.
 No sanitizer, corpus, device or synchronization-quality campaign was run.
 The current checkpoint does not establish complete target effects, full-write
 coverage, or constructor service.
+
 Three read-only reviews of this increment checked architecture/generality,
 correctness, and avoidable asymptotic work. Their mixed-incidence and repeated
 scan findings were corrected; they did not validate a complete Phase A or a
@@ -192,3 +269,20 @@ All eight inputs passed. The changed-code scanner reports 60 pre-existing
 unbraced-control findings in the ported sources;
 no control bodies changed during naming. No constructor or device validation was
 added for this structural checkpoint.
+
+### Kernel corpus added after the 0.42 comparison
+
+The [development corpus](test/lit/pto/frontier_synch/README.md) now contains
+TileLang intrinsic GEMM, PyPTO manual-pipeline GEMM, expert Flash Attention
+(separate cube/vector bodies), and pipelined vector add. Five lit cases run the
+current Phase A query boundary, interpret every indexed storage requirement,
+check source subscriptions and unchanged IR, and verify materialized manual
+references. A fresh focused build passes all five; the full compiler build and
+device gates remain open. This adds fixtures and a test runner, not algorithm
+implementation. The preceding no-corpus statement describes the earlier
+foundation checkpoint. See the corpus README for source pins, porting
+differences and observed Unknown results. The shared TAXPY effect definition now
+includes its destination read, with a focused dependency regression in
+`test/lit/pto/frontier_synch_taxpy_effects.pto`. All six focused tests pass after
+rebuilding the dialect implementation and regenerating its operation/interface
+headers from this checkout.
