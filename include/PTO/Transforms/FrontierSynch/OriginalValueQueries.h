@@ -66,7 +66,12 @@ struct OriginalValueRecipe {
         LoopResidue,
         Minimum,
         Maximum,
-        GuardedLast
+        GuardedLast,
+        // Composed I.2 recipes are interpreted by ExactFrontiers.h. Their
+        // bounds/conditions remain original SSA references, not new counters.
+        IntervalNonEmpty,
+        IntervalFirst,
+        IntervalLast
     } kind = OriginalSSA;
     std::vector<Value> operands;
     unsigned width = 0;

@@ -1,5 +1,68 @@
 # FrontierSynch Phase A parity checklist
 
+## Current integration update — 2026-09-25
+
+Downloads steps 7–12 have been merged sequentially and independently accepted
+against draft v0.44 (`4905f8a`), including integration corrections. Step 13 source
+preparation and scoped consequences are implemented locally and independently
+accepted within the documented scope after final integrated validation. See [the integration record](frontier-synch-steps7-13-review.md) for the current evidence,
+precise supported fragments and remaining qualifications. Older baseline tables
+and submitted patch reports below remain historical; they do not override this
+update. Step 14 and aggregate draft parity have not been accepted. The later
+v0.45 manuscript is not the contract for these patches.
+
+
+## Step 7 candidate delta — native validation and independent review pending
+
+Read these updates alongside the historical rows below. Procedure implementation
+is not acceptance; the [step-7 record](frontier-synch-step7-review.md) separates
+executed portable checks from the added, unexecuted native tests.
+
+| Entries | Candidate implementation and consumer | Evidence and remaining gate |
+| --- | --- | --- |
+| PA-040 | `queryFixedVisitSources` reads the hazard-specific OLD demand root. `OccurrenceQueries::fixedVisit` and `ProgramAnalysis::fixedVisitFor` use it instead of source dominance and a no-intervening-access scan. Pure reads do not kill producer correspondence; local fixed-use loop projections are admitted without inventing backedge transport. The cache includes hazard as well as the complete interval. | Portable multiple-reader/old-state/partial-write oracle passes; native hazard-cache, local-loop and legal-cut fixtures added. Native run and independent step-7 review pending; D2/D4 transport stays at steps 8/9. |
+| PA-041 | `fixedSourcesAt` and `ProgramAnalysis::fixedSourcesFor` return deterministic guarded origins, incoming cases and retained effect witnesses. `Both` remains simultaneous obligations; it is not relabeled an exclusive writer choice after a partial overwrite. Obligation IDs and conservative marginals are unchanged. | Portable conditional replacement, no-producer and incompatible-arm checks pass. Native public-family and incoming-only fixtures added but unexecuted. An incoming record is not a synthesized source publication or completed interface. |
+| PA-042 | Each origin has its applicability and separately qualified source/target conditions, using the common original-value service at legal immediate cuts. Source lexical facts do not make a target guard available. `InterpretedRequirement::fixedVisit` retains the full record and its predicate arena. | Portable matching-domain checks cover optional targets and repeated guard identities. Native late-guard and unavailable-phase-cut checks added but unexecuted. Completion prerequisites remain explicit; no selected credit is created. |
+
+Steps 10–13 (structural frontiers, covering boundaries, descriptors and preparation)
+and the final integrated review in step 14 are not completed by this increment.
+## Step 8 implementation delta (acceptance pending)
+
+The [D2 implementation/evidence record](frontier-synch-step8-review.md) updates
+entries **PA-043–PA-046**: physical selection, role matching and entry/exit
+domains. `OccurrenceQueries::bank/periodic`, `ProgramAnalysis::periodicUseFor` and
+the compatibility `interpretAt` path now share that implementation. Original
+obligations, conservative footprints and unresolved enclosing transport remain.
+The record names native validation and independent review as outstanding gates;
+a passing standalone finite oracle is not integrated parity acceptance.
+## Step 9 candidate delta
+
+The D4 composition and re-entry candidate is documented in
+[the step 9 review report](frontier-synch-step9-review.md), including the
+PA-047–PA-049 implementation map, portable semantic tests, native supplier gates
+and pending native validation/independent review. This is not an acceptance record
+and does not change the historical statuses below by implication.
+## Step 10 candidate delta — pending acceptance
+
+The [Step 10 note](frontier-synch-step10.md) records the common exact-boundary
+service, interval-participation recipe, public consumers, executed core tests
+and unexecuted native checks on base `4122dd1531fbdb2859bd7b27772dba56930be393`.
+It does not upgrade any row to independently accepted or claim complete parity.
+D1/D2/D4 integration, native effect premises and the final integrated gate remain
+explicit review obligations.
+## Step 12 delivery delta — awaiting integrated review
+
+PA-065–PA-067 now have request-group records, a shared three-slot formation
+procedure and a frozen public `ProgramAnalysis::requests()` consumer. Original
+obligation IDs remain owned by step 6. The portable tests exercise independent
+source/target answers, shared choices, duplicate slots, unavailable guards and
+retained reference coverage; native semantic fixtures are supplied, not yet run.
+PA-036–PA-039 retain their original obligation/witness meaning. PA-060–PA-064
+are NOT completed by accepting supplied covering answers: their step-11 derivation
+remains missing in this base. PA-068–PA-071 preparation/support closure remains
+step 13. Status is **partial pending native integration and independent review**,
+not an acceptance decision. See [the step-12 record](frontier-synch-step12-review.md).
+
 ## Current integration delta — 2026-09-24
 
 Steps 2–6 are applied in the working tree. All five increments have scoped independent
@@ -378,3 +441,23 @@ committed core is credited without overstating integration, and verify that
 specified missing procedures are not hidden in the reference/open register.
 Review the supported positive cases as well as conservative failure behavior.
 At step 14 repeat the entire review against the then-current implementation.
+
+## Step 13 integrated implementation delta
+
+The current original-data consumer is `ProgramAnalysis::preparation()`, constructed
+immediately after `OriginalRequests::build`. This section supersedes the step-1
+baseline statuses for PA-068–PA-073 within the following declared scope.
+
+| ID | Current implementation and consumer | Evidence / remaining gate |
+| --- | --- | --- |
+| PA-068 | Deadline families and factored physical cell/role source buckets; explicit typed-family source buckets. Membership remains in `OriginalObligations`; no engine maximum replaces families. | Native preparation test and corpus typed-adjacency assertions. |
+| PA-069 | Frozen hooks retain sufficient analytical cut, executable original cut, associated references and obstruction. An enclosing cut does not become the exact phase cut. | Native early-source traversal and internal-phase fixture. |
+| PA-070 | Iterative visited-node traversal of every declared descriptor root, both choice arms, source boundaries and typed completion prerequisites. Opaque source families contribute conservative incidence hooks. | Native frozen inventory and zero origin-enumeration assertion. |
+| PA-071 | Finite declared support-role registry and visited-role closure; relations retain shifts. Invalid/missing qualifications stay explicit. | Native cycle and missing-role tests. Positive nonzero-shift qualification remains unsupported; retained links are not support credit. |
+| PA-072 | Lazy two-link service for qualified invocation D1 relations. It retains three obligation IDs and conditional applicability, matches the same translated middle phase, and caches by the full interval. | Native cross-cell, conditional, opposite-branch, changed-interval and loop-visit tests. Recurring/D4 middle composition remains unresolved. |
+| PA-073 | `formed()` and `repertoireComplete()` distinguish frozen preparation from discharged subscription premises; individual hooks retain obstructions. Stale versions invalidate public views. | Native stale snapshot and incomplete support/phase cases. Full integrated parity remains step 14. |
+
+Counters expose descriptor nodes, references, access incidences, support roles and
+links, consequence requests and cache computations. Origin output and witness
+queries retain their separate original-obligation accounting. No whole-pass
+linear-time or complete conditional-recurrence precision claim follows.

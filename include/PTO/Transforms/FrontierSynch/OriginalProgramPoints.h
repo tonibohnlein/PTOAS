@@ -59,6 +59,41 @@ struct Region {
     bool qualifiedCounted = false;
 };
 
+// Canonicalize anonymous sequence wrappers before constructing any original
+// query index. This changes only the imported side-table representation, not IR
+// control or cuts. In particular the numbered child of a choice/for/while is
+// retained, and named scopes are never flattened into their parent. Every query
+// must see this same layout: normalizing only reader slices would invalidate
+// their begin/end indices in the other original-program services.
+inline void normalizeOriginalSequences(Region& region)
+{
+    if (region.kind != Region::Sequence) {
+        for (auto& child : region.children) {
+            normalizeOriginalSequences(child);
+        }
+        return;
+    }
+    std::vector<Region> pending;
+    for (auto child = region.children.rbegin(); child != region.children.rend(); ++child) {
+        pending.push_back(std::move(*child));
+    }
+    region.children.clear();
+    while (!pending.empty()) {
+        auto child = std::move(pending.back());
+        pending.pop_back();
+        const bool transparent = child.kind == Region::Sequence && child.originalOwner == NoControlId &&
+                                 !child.zeroTripPossible && !child.qualifiedCounted;
+        if (transparent) {
+            for (auto part = child.children.rbegin(); part != child.children.rend(); ++part) {
+                pending.push_back(std::move(*part));
+            }
+        } else {
+            normalizeOriginalSequences(child);
+            region.children.push_back(std::move(child));
+        }
+    }
+}
+
 // Static ORIGINAL insertion positions, not positions in a selected command word.
 // The first two fields retain SourceMilestone's payload aggregate spelling.
 // Scope: before/after the complete structured operation (or the function body).

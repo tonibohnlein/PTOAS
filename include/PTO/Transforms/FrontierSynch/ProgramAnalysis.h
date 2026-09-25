@@ -14,6 +14,10 @@
 #include "PTO/Transforms/FrontierSynch/ReaderFrontiers.h"
 #include "PTO/Transforms/FrontierSynch/OriginalValueQueries.h"
 #include "PTO/Transforms/FrontierSynch/OriginalObligations.h"
+#include "PTO/Transforms/FrontierSynch/ExactFrontiers.h"
+#include "PTO/Transforms/FrontierSynch/OriginalCoveringQueries.h"
+#include "PTO/Transforms/FrontierSynch/OriginalRequests.h"
+#include "PTO/Transforms/FrontierSynch/OriginalPreparation.h"
 #include <optional>
 
 namespace mlir::pto::frontiersynch {
@@ -45,6 +49,8 @@ struct OriginalBoundaryResult {
     std::string reason;
     std::optional<OriginalInterval> interval;
     std::vector<OriginalCut> cuts;
+    // NoControlId means unresolved, not an empty/no-access path.
+    std::size_t noHit = NoControlId;
 };
 struct OriginalEndpointCandidate {
     SourceMilestone position;
@@ -87,17 +93,18 @@ struct OriginalAllQuery {
     std::optional<PipelineType> engine;
 };
 struct OriginalOccurrenceInterpretation {
-    enum class Status { Unknown, FixedVisit, PeriodicSameRole } status = Status::Unknown;
+    enum class Status { Unknown, FixedVisit, PeriodicSameRole, PeriodicRoles } status = Status::Unknown;
     std::size_t owner = NoControlId;
     std::size_t source = NoControlId, target = NoControlId;
-    // For PeriodicSameRole, the predecessor in one invocation of owner is at
-    // ordinal i - period when i >= period. Entry/re-entry remain unresolved.
+    // Compatibility scalar summary for uniform-distance links. The full D2
+    // record below is authoritative for distinct roles and boundary domains.
     std::size_t period = 0;
     std::size_t firstOrdinalWithLocalPredecessor = 0;
     bool earlierOrdinalsNeedIncomingCase = false;
     // A bank relation is a physical candidate until predecessor/successor
     // occurrence matching, participation and child transport are proved.
     std::vector<std::size_t> sharedBankCandidates;
+    std::optional<PeriodicUseCorrespondence> periodic;
     std::string reason;
     std::optional<OriginalInterval> interval;
 };
@@ -129,6 +136,10 @@ struct InterpretedRequirement {
     // expression and translated-effect witnesses. It is not a new obligation ID
     // and does not certify a source from the conservative marginal relationship.
     FactoredDemandView factoredDemand;
+    // D1 is conditional: keep the predicates, endpoint qualifications and the
+    // complete alternative family, not only occurrence.status == FixedVisit.
+    // Predicate IDs use fixedVisit.alternatives->sources.predicates.
+    FixedVisitCorrespondence fixedVisit;
 };
 
 // Owns the immutable original structure and its construction-facing query services.
@@ -137,12 +148,14 @@ struct InterpretedRequirement {
 // and subscription populations are materialized together when requested.
 class ProgramAnalysis {
 public:
-    ProgramAnalysis(const SyncInput& input, OriginalStructure structure);
+    ProgramAnalysis(
+        const SyncInput& input, OriginalStructure structure, OriginalRequestBoundaryProvider requestBoundaries = {});
     ~ProgramAnalysis();
     ProgramAnalysis(const ProgramAnalysis&) = delete;
     ProgramAnalysis& operator=(const ProgramAnalysis&) = delete;
 
-    // Preparation completeness; individual decoded fields may remain Unknown.
+    // Frozen formation completed. Inspect preparation()->repertoireComplete()
+    // and per-query obstructions before relying on a declared exact source.
     bool complete() const;
     const std::string& reason() const;
     const OriginalStructure& structure() const { return original; }
@@ -169,12 +182,52 @@ public:
     // do not create IDs. Guarded means membership in the modeled original-use
     // relation, not exact physical geometry or executable endpoint qualification.
     const OriginalObligations& obligations() const;
+    // Prepared and frozen in the constructor, before traversal/probing. nullptr
+    // means preparation failed or the original snapshot is stale. Unknown
+    // boundary components remain in declaredSlots, not the recipe population;
+    // their presence is not a preparation error or selected completion.
+    const OriginalRequests* requests() const;
+    const OriginalPreparation* preparation() const;
     const std::vector<OriginalObligationFamilyId>& obligationsAt(std::size_t originalSite) const;
     OriginalObligationWitness obligationWitness(OriginalObligationFamilyId id, ObligationOrigin source) const;
     OriginalObligationWitness obligationWitness(OriginalObligationId id) const;
     Value obligationGuardValue(std::size_t originalIfSite) const;
+    // D1 query of one frozen obligation family, including incoming-only cases.
+    // This materializes that family's origins, not source-target products during
+    // formation. It neither changes IDs nor discharges the family.
+    // For a canonical repeated-program family this is ONLY a local visit view.
+    // Its alternatives do not exhaust the global origins or discharge transport.
+    std::shared_ptr<const FixedVisitSourceFrontier> fixedSourcesFor(OriginalObligationFamilyId id) const
+    {
+        const auto* family = obligations().get(id);
+        if (!family || !values.current() || family->key.originalVersion != original.version ||
+            family->key.kind == OriginalObligationKey::Kind::Typed ||
+            (family->key.occurrences != OriginalObligationKey::Occurrences::FixedUseProjection &&
+             (!family->expression || !family->expression->complete))) {
+            auto unknown = std::make_shared<FixedVisitSourceFrontier>();
+            unknown->sources.reason = "D1 requires a current fixed-use physical obligation family";
+            return unknown;
+        }
+        const auto& key = family->key;
+        const auto hazard = key.kind == OriginalObligationKey::Kind::RAW ? FactoredUseNode::Hazard::RAW :
+                            key.kind == OriginalObligationKey::Kind::WAR ? FactoredUseNode::Hazard::WAR :
+                                                                          FactoredUseNode::Hazard::WAW;
+        const auto result = occurrenceQueries.fixedSourcesAt(key.consumerOperation, key.cell, hazard);
+        if (result->sources.complete && key.occurrences == OriginalObligationKey::Occurrences::FixedUseProjection &&
+            result->sources.frame.owner != key.owner) {
+            auto unknown = std::make_shared<FixedVisitSourceFrontier>(*result);
+            unknown->sources.complete = false;
+            unknown->sources.reason = "D1 family needs a qualified enclosing occurrence transport";
+            return unknown;
+        }
+        return result;
+    }
 
     const PhysicalBankCorrespondence& bankRelation(std::size_t index) const;
+    // Query a local D2 pairing directly from a lazy obligation ID. Its entry and
+    // exit are NOT substituted for the obligation's complete prefix/horizon.
+    // This does not enumerate compatibility pairs or alter obligation IDs.
+    PeriodicUseCorrespondence periodicUseFor(OriginalObligationId obligation) const;
     const std::vector<StorageOrigin>& alternativeSourcesFor(const DecodedRequirement& requirement) const;
     // Compatibility pair view. These APIs are not the obligation-ID universe and
     // requesting them explicitly charges their expanded marginal pair output.
@@ -189,6 +242,26 @@ public:
         std::size_t operation, std::size_t index, OriginalIntervalRequest continuation) const;
     OriginalIntervalRequest intervalFor(std::size_t operation, std::size_t index) const;
     OriginalIntervalResult prepareInterval(OriginalIntervalRequest request) const;
+    // I.3 directional queries over explicitly prepared family intervals. The
+    // caller chooses each side's fixed selector and horizon; a triggering edge's
+    // interval is not automatically the interval of all source or target uses.
+    // These queries neither overwrite exact answers nor generate descriptors,
+    // source subscriptions, selected completion or event protocols.
+    const OriginalCoveringQueries& coveringQueries() const
+    {
+        if (!covering) {
+            covering = std::make_unique<OriginalCoveringQueries>(original, storage, values);
+        }
+        return *covering;
+    }
+    OriginalCoveringBoundary sourceCovering(const OriginalInterval& interval) const
+    {
+        return coveringQueries().source(interval);
+    }
+    OriginalCoveringBoundary targetCovering(const OriginalInterval& interval) const
+    {
+        return coveringQueries().target(interval);
+    }
     // Lazily joins the shared original queries for a currently relevant request.
     // No selected ledger, event key, or predicted completion enters this result.
     const InterpretedRequirement& interpretAt(std::size_t operation, std::size_t index) const;
@@ -197,6 +270,15 @@ public:
     FixedVisitCorrespondence fixedVisitFor(const DecodedRequirement& requirement) const;
     OriginalBoundaryResult firstConflict(const DecodedRequirement& requirement) const;
     OriginalBoundaryResult lastRelevantUse(const DecodedRequirement& requirement) const;
+    // D3/I.2 over the FULL original interval key and fixed access selector.
+    // readOnly additionally requires an unchanged read episode (no cell writes).
+    // These locate original accesses, not D1/D2 source-to-target matches. Exact
+    // structural roots and each endpoint's availability are separate results.
+    OriginalExactFrontiers exactFrontiers(const OriginalInterval& interval, bool readOnly = false) const;
+    OriginalBoundaryResult firstConflict(const OriginalInterval& interval, bool readOnly = false) const;
+    OriginalBoundaryResult lastRelevantUse(const OriginalInterval& interval, bool readOnly = false) const;
+    const OriginalIntervalParticipation* intervalParticipation(std::size_t id) const;
+    OriginalExactFrontierStats exactFrontierStats() const;
     // General may-frontier queries over a caller-qualified original interval.
     // Their Present result does not by itself establish guarded participation.
     PhysicalUseFrontier firstMayUse(const OriginalUseQuery& query) const;
@@ -224,12 +306,14 @@ public:
 private:
     void ensureLegacyRequirementIndex() const;
     OriginalBoundaryResult boundary(const DecodedRequirement& requirement, bool first) const;
+    OriginalBoundaryResult exactBoundary(const OriginalInterval& interval, bool first, bool readOnly) const;
     OriginalIntervalResult supportInterval(const InterpretedRequirement& requirement) const;
     const SyncInput& input;
     OriginalStructure original;
     OriginalValueQueries values;
     OriginalLifetimes storage;
     OccurrenceQueries occurrenceQueries;
+    mutable std::unique_ptr<OriginalCoveringQueries> covering;
     struct Impl;
     std::unique_ptr<Impl> impl;
 };

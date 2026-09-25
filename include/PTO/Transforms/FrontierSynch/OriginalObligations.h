@@ -267,7 +267,9 @@ struct OriginalObligationFamily {
     std::size_t applicability = ObligationConditions::yes;
     // Borrowed immutable nodes owned by OriginalLifetimes. Demand nodes reference
     // the old incoming source expression, so a subsequent strong update cannot
-    // erase a previously registered obligation.
+    // erase a previously registered obligation. For Marginal families this may
+    // retain a local projection for separate queries; it does not define global
+    // membership or replace cross-visit obligations.
     const FactoredUseResult* expression = nullptr;
     std::size_t demandNode = NoObligationIndex, sources = 0;
     // Optional additional reader interface. The integrated adapter uses the

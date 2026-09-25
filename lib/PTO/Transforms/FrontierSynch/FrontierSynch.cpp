@@ -22,10 +22,10 @@ LogicalResult run(func::FuncOp function, const SyncInput& input)
     if (!analysis.complete()) {
         return function.emitError("frontier-synch: original lifetime analysis failed: ") << analysis.reason();
     }
-    // Query the frozen original obligation universe, not a materialized list
-    // of every possible source/target pair. Placement and selected completion
-    // remain Phase B tasks; this diagnostic does not instantiate either.
+    // Query the frozen original obligation universe and prederived descriptor
+    // repertoire. These original placements supply no selected completion.
     const auto& obligations = analysis.obligations().stats();
+    const auto& requests = *analysis.requests();
     return function.emitError("frontier-synch: imported ")
            << input.instructions().size() << " instruction phases through InsertSync; analyzed "
            << analysis.structure().cells.size() << " storage cells; indexed "
@@ -33,6 +33,10 @@ LogicalResult run(func::FuncOp function, const SyncInput& input)
            << obligations.factoredFamilies << " factored, " << obligations.marginalFamilies
            << " conservative marginal), " << obligations.typedFamilies << " control-value obligation families, and "
            << analysis.lifetimes().stats().accessIncidences << " physical access incidences; "
+           << requests.groups().size() << " original request groups and "
+           << requests.descriptors().stats().roots << " prederived descriptor roots; "
+           << analysis.preparation()->hooks().size() << " prepared original source hooks ("
+           << analysis.preparation()->obstructions().size() << " preparation obstructions); "
            << "construction is not implemented yet";
 }
 } // namespace mlir::pto::frontiersynch

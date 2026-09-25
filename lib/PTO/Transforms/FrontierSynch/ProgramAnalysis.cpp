@@ -8,7 +8,9 @@
 // License.
 #include "PTO/Transforms/FrontierSynch/ProgramAnalysis.h"
 #include "OriginalReadQueries.h"
+#include "OriginalExactQueries.h"
 #include "OriginalObligationAdapter.h"
+#include "OriginalRequestAdapter.h"
 #include <algorithm>
 #include <iterator>
 #include <functional>
@@ -100,31 +102,17 @@ std::optional<OriginalIntervalRequest> readerIntervalRequest(
     }
     return context;
 }
-bool allRoleIncidencesUseRelation(
-    const OriginalStructure& original, std::size_t operation, std::size_t cell, bool write, std::size_t relation)
-{
-    if (operation >= original.operations.size()) {
-        return false;
-    }
-    bool hasRole = false;
-    for (const auto& access : original.operations[operation].accesses) {
-        if (access.cell != cell || (write ? !access.write : !access.read)) {
-            continue;
-        }
-        hasRole = true;
-        if (access.physicalRelation != relation) {
-            return false;
-        }
-    }
-    return hasRole;
-}
 } // namespace
 
 struct ProgramAnalysis::Impl {
     std::unique_ptr<OriginalObligations> obligationModel = std::make_unique<OriginalObligations>();
+    std::unique_ptr<OriginalRequests> requestModel;
+    std::unique_ptr<OriginalPreparation> preparationModel;
     std::string obligationError = "original obligation universe not prepared";
     bool legacyRequirementIndexReady = false;
     OriginalReadQueries readers;
+    OriginalExactQueries exact;
+    std::map<OriginalInterval, std::vector<StorageOrigin>> exactMay;
     std::vector<std::optional<PhysicalBankCorrespondence>> banks;
     using AlternativeKey = std::tuple<std::size_t, std::size_t, StorageRelationship::Kind>;
     std::map<AlternativeKey, std::vector<StorageOrigin>> alternatives;
@@ -134,7 +122,10 @@ struct ProgramAnalysis::Impl {
     // Requirement IDs alone do not identify a continuation. All original
     // interval fields (including Unknown qualifications) participate in reuse.
     using QueryKey = std::tuple<std::size_t, std::size_t, OriginalInterval>;
-    std::map<OriginalInterval, FixedVisitCorrespondence> fixedVisits;
+    // RMW can give WAR and WAW under the same cut interval. They query
+    // different old-state roots and must never share a fixed-visit answer.
+    using FixedVisitKey = std::pair<OriginalInterval, StorageRelationship::Kind>;
+    std::map<FixedVisitKey, FixedVisitCorrespondence> fixedVisits;
     std::map<QueryKey, DecodedRequirement> cache;
     std::map<QueryKey, InterpretedRequirement> interpretations;
     std::map<std::pair<std::size_t, std::size_t>, OriginalAccessSummary> allUses;
@@ -142,18 +133,23 @@ struct ProgramAnalysis::Impl {
     std::map<std::tuple<std::size_t, std::size_t, unsigned>, std::vector<StorageOrigin>> readerUses;
     explicit Impl(const OriginalStructure& original, const OriginalValueQueries& values)
         : readers(original, &values),
+          exact(original, values, readers),
           banks(original.physicalAddresses.size()),
           typedByDeadline(original.originalSites.size()),
           typedBySource(original.operations.size())
     {}
 };
 
-ProgramAnalysis::ProgramAnalysis(const SyncInput& source, OriginalStructure structure)
+ProgramAnalysis::ProgramAnalysis(
+    const SyncInput& source, OriginalStructure structure, OriginalRequestBoundaryProvider requestBoundaries)
     : input(source),
-      original(std::move(structure)),
+      original([&] {
+          normalizeOriginalSequences(structure.body);
+          return std::move(structure);
+      }()),
       values(original),
       storage(original, &values),
-      occurrenceQueries(original, &values),
+      occurrenceQueries(original, &values, &storage),
       impl(std::make_unique<Impl>(original, values))
 {
     if (!storage.complete()) {
@@ -235,15 +231,35 @@ ProgramAnalysis::ProgramAnalysis(const SyncInput& source, OriginalStructure stru
         original, storage, values,
         [this](std::size_t site) -> const std::vector<TypedOriginalRequirement>& { return typedRequirementsAt(site); });
     impl->obligationError = impl->obligationModel->complete() ? "" : "invalid original obligation universe";
+    if (impl->obligationModel->complete()) {
+        impl->requestModel = OriginalRequests::build(*this, requestBoundaries);
+        if (impl->requestModel->complete()) {
+            impl->preparationModel = std::make_unique<OriginalPreparation>(*this);
+        }
+    }
 }
 
 ProgramAnalysis::~ProgramAnalysis() = default;
-bool ProgramAnalysis::complete() const { return storage.complete() && impl->obligationModel->complete(); }
+bool ProgramAnalysis::complete() const
+{
+    return storage.complete() && impl->obligationModel->complete() && impl->requestModel && impl->requestModel->complete() &&
+           impl->preparationModel && impl->preparationModel->formed();
+}
 const std::string& ProgramAnalysis::reason() const
 {
-    return storage.complete() ? impl->obligationError : storage.reason();
+    if (!storage.complete()) { return storage.reason(); }
+    if (!impl->obligationModel->complete()) { return impl->obligationError; }
+    return impl->requestModel ? impl->requestModel->reason() : impl->obligationError;
 }
 const OriginalObligations& ProgramAnalysis::obligations() const { return *impl->obligationModel; }
+const OriginalRequests* ProgramAnalysis::requests() const
+{
+    return impl->requestModel && impl->requestModel->complete() ? impl->requestModel.get() : nullptr;
+}
+const OriginalPreparation* ProgramAnalysis::preparation() const
+{
+    return impl->preparationModel && impl->preparationModel->formed() ? impl->preparationModel.get() : nullptr;
+}
 const std::vector<OriginalObligationFamilyId>& ProgramAnalysis::obligationsAt(std::size_t originalSite) const
 {
     return obligations().atOriginalSite(originalSite);
@@ -326,13 +342,48 @@ void ProgramAnalysis::ensureLegacyRequirementIndex() const
 const PhysicalBankCorrespondence& ProgramAnalysis::bankRelation(std::size_t index) const
 {
     static const PhysicalBankCorrespondence invalid;
-    if (index >= impl->banks.size()) {
+    if (!values.current() || index >= impl->banks.size()) {
         return invalid;
     }
     if (!impl->banks[index]) {
         impl->banks[index] = occurrenceQueries.bank(index);
     }
     return *impl->banks[index];
+}
+PeriodicUseCorrespondence ProgramAnalysis::periodicUseFor(OriginalObligationId obligation) const
+{
+    PeriodicUseCorrespondence result;
+    const auto* family = obligations().get(obligation.family);
+    const auto member = obligations().membership(obligation);
+    if (!family || member.status == ObligationMembership::Status::Invalid ||
+        member.status == ObligationMembership::Status::Excluded) {
+        result.reason = "invalid or excluded original obligation";
+        return result;
+    }
+    const auto& key = family->key;
+    if (obligation.origin.incoming || key.kind == OriginalObligationKey::Kind::Typed) {
+        result.reason = "incoming/typed obligation needs its own interface, not a fictitious periodic source";
+        return result;
+    }
+    OriginalIntervalRequest query;
+    query.version = key.originalVersion;
+    query.selector.cell = key.cell;
+    query.selector.read = key.kind == OriginalObligationKey::Kind::RAW;
+    query.selector.write = !query.selector.read;
+    query.occurrence.source = obligation.origin.operation;
+    query.occurrence.target = key.consumerOperation;
+    query.start = {query.occurrence.source, OriginalCut::After};
+    query.stop = {query.occurrence.target, OriginalCut::Before};
+    // This is a local PLACEMENT relationship queried under an unchanged ID,
+    // not a restriction of that ID's complete incoming/original-control demands.
+    const auto prepared = prepareInterval(std::move(query));
+    if (!prepared.valid) {
+        result.reason = prepared.reason;
+        return result;
+    }
+    return occurrenceQueries.periodic(
+        prepared.interval, key.sourceRole() == OriginalObligationKey::Role::Writer,
+        key.consumerRole() == OriginalObligationKey::Role::Writer);
 }
 const std::vector<StorageOrigin>& ProgramAnalysis::alternativeSourcesFor(const DecodedRequirement& requirement) const
 {
@@ -539,34 +590,28 @@ const InterpretedRequirement& ProgramAnalysis::interpretAt(
         std::back_inserter(answer.occurrence.sharedBankCandidates));
     if (fixedVisit.exact) {
         answer.occurrence.status = OriginalOccurrenceInterpretation::Status::FixedVisit;
-    } else if (
-        answer.occurrence.source == answer.occurrence.target && answer.occurrence.sharedBankCandidates.size() == 1) {
-        const auto candidate = answer.occurrence.sharedBankCandidates.front();
-        const auto& bank = bankRelation(candidate);
+    } else if (answer.queryInterval) {
         const auto& relation = answer.decoded->requirement.relationship;
-        const bool sourceWrites = relation.kind != StorageRelationship::WAR;
-        const bool targetWrites = relation.kind != StorageRelationship::RAW;
-        const bool covered =
-            allRoleIncidencesUseRelation(original, answer.occurrence.source, relation.cell, sourceWrites, candidate) &&
-            allRoleIncidencesUseRelation(original, answer.occurrence.target, relation.cell, targetWrites, candidate);
-        const bool oneMatchingUse = bank.participatingOperations.size() == 1 &&
-                                    bank.participatingOperations.front() == answer.occurrence.source;
-        const bool localContext =
-            answer.queryInterval && answer.queryInterval->owner == bank.owner &&
-            continuation.occurrence.stopVisit == OriginalOccurrenceContext::StopVisit::Unqualified &&
-            continuation.occurrence.incomingInterface == NoControlId && continuation == intervalFor(target, index);
-        if (covered && bank.exactPermutation && oneMatchingUse && localContext) {
-            answer.occurrence.status = OriginalOccurrenceInterpretation::Status::PeriodicSameRole;
-            answer.occurrence.owner = bank.owner;
-            answer.occurrence.period = bank.distance;
-            answer.occurrence.firstOrdinalWithLocalPredecessor = bank.distance;
-            answer.occurrence.earlierOrdinalsNeedIncomingCase = true;
+        answer.occurrence.periodic = occurrenceQueries.periodic(
+            *answer.queryInterval, relation.kind != StorageRelationship::WAR, relation.kind != StorageRelationship::RAW);
+        const auto& periodic = *answer.occurrence.periodic;
+        if (periodic.exact) {
+            answer.occurrence.status = answer.occurrence.source == answer.occurrence.target ?
+                                          OriginalOccurrenceInterpretation::Status::PeriodicSameRole :
+                                          OriginalOccurrenceInterpretation::Status::PeriodicRoles;
+            answer.occurrence.owner = periodic.owner;
+            const auto distance = periodic.links.front().occurrence.distance;
+            const bool uniform = std::all_of(periodic.links.begin(), periodic.links.end(), [&](const auto& link) {
+                return link.occurrence.distance == distance;
+            });
+            answer.occurrence.period = uniform ? distance : 0;
+            answer.occurrence.firstOrdinalWithLocalPredecessor = uniform ? distance : 0;
+            answer.occurrence.earlierOrdinalsNeedIncomingCase = std::any_of(
+                periodic.links.begin(), periodic.links.end(), [](const auto& link) { return link.occurrence.distance > 0; });
         }
     }
     if (answer.occurrence.status == OriginalOccurrenceInterpretation::Status::Unknown) {
-        answer.occurrence.reason = answer.occurrence.sharedBankCandidates.empty() ?
-                                       fixedVisit.reason :
-                                       "physical-bank candidate lacks qualified predecessor and child correspondence";
+        answer.occurrence.reason = answer.occurrence.periodic ? answer.occurrence.periodic->reason : fixedVisit.reason;
     }
     const auto& relation = answer.decoded->requirement.relationship;
     auto lifecycle = [&](std::size_t operation) -> const StorageLifecycle* {
@@ -619,28 +664,50 @@ const InterpretedRequirement& ProgramAnalysis::interpretAt(
             break;
     }
     answer.factoredDemand = answer.factoredUse->requirement(target, hazard);
-    // The origin group is a may-set. D1 path guards and the possible absence of
-    // an incoming full writer remain explicit in targetUse and are not inferred
-    // from this vector's cardinality.
+    answer.fixedVisit = fixedVisit;
+    if (fixedVisit.alternatives) {
+        const auto& d1 = *fixedVisit.alternatives;
+        // This flag is about a complete matched local alternative family. An
+        // incoming path retains its own unresolved enclosing-source interface.
+        answer.alternativeGuardsQualified = fixedVisit.exact && d1.sources.complete &&
+                                           d1.physicalRolesQualified && d1.localGuardsQualified && !d1.hasIncoming;
+    }
+    // The marginal origin vector remains a may-set. D1 predicates live in the
+    // retained fixedVisit result; do not treat its conditional exactness as an
+    // unconditional edge or an already-established completion.
     return impl->interpretations.emplace(key, std::move(answer)).first->second;
 }
 FixedVisitCorrespondence ProgramAnalysis::fixedVisitFor(const DecodedRequirement& requirement) const
 {
     const auto& relation = requirement.requirement.relationship;
-    if (!requirement.interval || requirement.interval->query.version != original.version ||
-        requirement.interval->query.occurrence.stopVisit == OriginalOccurrenceContext::StopVisit::AfterBackedge) {
+    if (!values.current() || !requirement.interval || requirement.interval->query.version != original.version ||
+        requirement.interval->query.occurrence.stopVisit == OriginalOccurrenceContext::StopVisit::AfterBackedge ||
+        requirement.interval->query.occurrence.incomingInterface != NoControlId ||
+        requirement.interval->query.occurrence.qualification != NoControlId) {
         FixedVisitCorrespondence unknown;
         unknown.source = relation.source.operation;
         unknown.target = relation.target.operation;
         unknown.reason = "fixed-visit query lacks its original interval interpretation";
         return unknown;
     }
-    const auto& key = *requirement.interval;
+    const Impl::FixedVisitKey key{*requirement.interval, relation.kind};
     const auto prior = impl->fixedVisits.find(key);
     if (prior != impl->fixedVisits.end()) {
         return prior->second;
     }
-    auto result = occurrenceQueries.fixedVisit(relation.source.operation, relation.target.operation, relation.cell);
+    const auto hazard = relation.kind == StorageRelationship::RAW ? FactoredUseNode::Hazard::RAW :
+                        relation.kind == StorageRelationship::WAR ? FactoredUseNode::Hazard::WAR :
+                                                                    FactoredUseNode::Hazard::WAW;
+    auto result = occurrenceQueries.fixedVisit(
+        relation.source.operation, relation.target.operation, relation.cell, hazard);
+    if (result.exact && result.alternatives->sources.frame.kind != FactoredUseFrame::Kind::Invocation) {
+        const auto owner = result.alternatives->sources.frame.owner;
+        const auto* frame = scopeRegion(original.body, owner);
+        if (requirement.interval->owner != owner && (!frame || !scopeRegion(*frame, requirement.interval->owner))) {
+            result.exact = false;
+            result.reason = "fixed-use result needs qualified transport to the enclosing continuation";
+        }
+    }
     return impl->fixedVisits.emplace(key, std::move(result)).first->second;
 }
 OriginalBoundaryResult ProgramAnalysis::boundary(const DecodedRequirement& requirement, bool first) const
@@ -661,14 +728,12 @@ OriginalBoundaryResult ProgramAnalysis::boundary(const DecodedRequirement& requi
         found = impl->allUses.emplace(key, storage.all(result.owner, result.cell)).first;
     }
     const auto& allUses = found->second;
-    if (relation.kind == StorageRelationship::WAW) {
+    if (relation.kind == StorageRelationship::WAW || (first && relation.kind == StorageRelationship::WAR)) {
+        if (requirement.interval) {
+            return exactBoundary(*requirement.interval, first, false);
+        }
         result.mayAccesses = &allUses.writers;
-        result.reason = "write frontier needs a qualified occurrence and episode interval";
-        return result;
-    }
-    if (first && relation.kind == StorageRelationship::WAR) {
-        result.mayAccesses = &allUses.writers;
-        result.reason = "first conflicting write needs a qualified occurrence interval";
+        result.reason = "conflict frontier has no validated original cut interval";
         return result;
     }
     const auto reader =
@@ -694,43 +759,107 @@ OriginalBoundaryResult ProgramAnalysis::boundary(const DecodedRequirement& requi
         result.reason = "no qualified original reader cut interval";
         return result;
     }
-    const auto& readers = requirement.readers;
-    if (readers.status == OriginalReaderFrontiers::Status::Unknown) {
-        result.reason = readers.reason;
+    // Boundary discovery does not itself pair a producer with these reads.
+    // Keep D1/D2/generation qualification on the original relationship/support;
+    // do not withhold an independently derivable D3/I.2 boundary because that
+    // DIFFERENT query is unresolved. Complete obligations remain unchanged.
+    return exactBoundary(*requirement.readerInterval, first, true);
+}
+OriginalExactFrontiers ProgramAnalysis::exactFrontiers(const OriginalInterval& interval, bool readOnly) const
+{
+    const auto prepared = prepareInterval(interval.query);
+    if (!prepared.valid || prepared.interval != interval) {
+        OriginalExactFrontiers unknown;
+        unknown.interval = interval;
+        unknown.readOnly = readOnly;
+        unknown.reason = prepared.valid ? "inconsistent original frontier owner" : prepared.reason;
+        return unknown;
+    }
+    return impl->exact.query(interval, readOnly);
+}
+OriginalBoundaryResult ProgramAnalysis::exactBoundary(const OriginalInterval& interval, bool first, bool readOnly) const
+{
+    static const std::vector<StorageOrigin> empty;
+    OriginalBoundaryResult result;
+    result.interval = interval;
+    result.owner = interval.owner;
+    result.cell = interval.query.selector.cell;
+    result.mayAccesses = &empty;
+    const auto& selector = interval.query.selector;
+    if (interval.query.version == original.version && selector.cell < original.cells.size()) {
+        auto found = impl->exactMay.find(interval);
+        if (found == impl->exactMay.end()) {
+            // This is a conservative owner-level view, not an exact positive
+            // frontier. Keep it even when a cut or participation is unresolved.
+            OriginalAllQuery mayQuery;
+            mayQuery.owner = interval.owner;
+            mayQuery.cell = selector.cell;
+            mayQuery.read = selector.read;
+            mayQuery.write = selector.write;
+            if (selector.engine) {
+                mayQuery.engine = static_cast<PipelineType>(*selector.engine);
+            }
+            const auto footprint = all(mayQuery);
+            auto may = footprint.readers;
+            may.insert(may.end(), footprint.writers.begin(), footprint.writers.end());
+            found = impl->exactMay.emplace(interval, std::move(may)).first;
+        }
+        result.mayAccesses = &found->second;
+    }
+    const auto answer = exactFrontiers(interval, readOnly);
+    result.nonempty = answer.nonempty;
+    result.noHit = answer.noHit;
+    result.frontier = first ? answer.first : answer.last;
+    if (answer.status == OriginalExactFrontiers::Status::Unknown) {
+        result.reason = answer.reason;
         return result;
     }
-    result.nonempty = readers.nonempty;
-    result.frontier = first ? readers.first : readers.last;
     result.endpointQualification.status = OriginalValueQualification::Status::Available;
+    if (answer.status == OriginalExactFrontiers::Status::NoHit) {
+        result.status = OriginalBoundaryResult::Status::NoHit;
+        result.guardsAvailableAtReadSites = true;
+        return result;
+    }
     for (const auto& [operation, guard] : impl->readers.guardedAccesses(result.frontier)) {
+        if (guard == 0) {
+            continue;
+        }
+        const OriginalCut cut{operation, first ? OriginalCut::Before : OriginalCut::After};
+        if (!resolveOriginalCut(original, cut)) {
+            result.reason = "exact selected access has no executable original cut on this side";
+            result.cuts.clear();
+            return result;
+        }
         result.endpointQualification = OriginalValueQueries::combine(
             std::move(result.endpointQualification), impl->readers.qualificationAt(guard, operation, !first));
+        result.cuts.push_back(cut);
+    }
+    if (result.cuts.empty()) {
+        result.reason = "nonempty exact frontier has no qualified endpoint references";
+        return result;
     }
     result.guardsAvailableAtReadSites = result.endpointQualification.available();
     if (!result.endpointQualification.executableAfterPrerequisites()) {
         result.reason = result.endpointQualification.reason();
+        result.cuts.clear();
         return result;
     }
-    if (!requirement.requirement.episodeKnown || !requirement.requirement.occurrenceKnown) {
-        result.reason = "structural reader frontier lacks a qualified episode and occurrence interval";
-        return result;
-    }
-    result.status = readers.status == OriginalReaderFrontiers::Status::NoHit ? OriginalBoundaryResult::Status::NoHit :
-                                                                               OriginalBoundaryResult::Status::Exact;
-    if (result.status == OriginalBoundaryResult::Status::Exact) {
-        for (const auto& [operation, guard] : impl->readers.guardedAccesses(result.frontier)) {
-            const OriginalCut cut{operation, first ? OriginalCut::Before : OriginalCut::After};
-            if (guard == 0 || !resolveOriginalCut(original, cut)) {
-                result.status = OriginalBoundaryResult::Status::Unknown;
-                result.reason = "exact access frontier has no executable original cut";
-                result.cuts.clear();
-                return result;
-            }
-            result.cuts.push_back(cut);
-        }
-    }
+    result.status = OriginalBoundaryResult::Status::Exact;
     return result;
 }
+OriginalBoundaryResult ProgramAnalysis::firstConflict(const OriginalInterval& interval, bool readOnly) const
+{
+    return exactBoundary(interval, true, readOnly);
+}
+OriginalBoundaryResult ProgramAnalysis::lastRelevantUse(const OriginalInterval& interval, bool readOnly) const
+{
+    return exactBoundary(interval, false, readOnly);
+}
+const OriginalIntervalParticipation* ProgramAnalysis::intervalParticipation(std::size_t id) const
+{
+    return impl->readers.intervalParticipation(id);
+}
+OriginalExactFrontierStats ProgramAnalysis::exactFrontierStats() const { return impl->exact.statistics(); }
 OriginalBoundaryResult ProgramAnalysis::firstConflict(const DecodedRequirement& requirement) const
 {
     return boundary(requirement, true);
@@ -831,41 +960,34 @@ OriginalBoundaryResult ProgramAnalysis::qualifiedBoundary(
         unknown.reason = "missing original requirement";
         return unknown;
     }
-    auto result = boundary(*requirement.decoded, first);
-    if (!support.complete || !support.generationEstablished ||
-        requirement.occurrence.status != OriginalOccurrenceInterpretation::Status::FixedVisit ||
-        !requirement.decoded->hasReaderFrontier) {
-        result.reason = "reader frontier lacks qualified generation or occurrence support";
-        return result;
+    auto unknown = boundary(*requirement.decoded, first);
+    unknown.status = OriginalBoundaryResult::Status::Unknown;
+    unknown.cuts.clear();
+    if (!support.complete || !support.generationEstablished || support.cases.backedge ||
+        requirement.occurrence.status != OriginalOccurrenceInterpretation::Status::FixedVisit) {
+        unknown.reason = "reader frontier lacks qualified generation or occurrence support";
+        return unknown;
     }
     const auto& relation = requirement.decoded->requirement.relationship;
     const auto reader =
         relation.kind == StorageRelationship::RAW ? relation.target.operation : relation.source.operation;
-    const bool participates =
-        llvm::any_of(support.readers, [&](const StorageOrigin& use) { return use.operation == reader; });
     const auto expected = supportInterval(requirement);
-    const bool sameInterval = expected.valid && support.interval && *support.interval == expected.interval;
-    const auto& readInterval = requirement.decoded->readerInterval;
-    // A first/last answer about an entire lexical owner must not be relabelled
-    // as the answer about a smaller producer-to-reuse interval. Broader adapters
-    // belong to the exact-frontier step, not to cache-key normalization.
-    const bool sameReaderSpan =
-        readInterval && support.interval && readInterval->owner == support.interval->owner &&
-        readInterval->query.version == support.interval->query.version &&
-        readInterval->query.start == support.interval->query.start &&
-        readInterval->query.stop == support.interval->query.stop &&
-        readInterval->query.includeStoppingAccess == support.interval->query.includeStoppingAccess &&
-        readInterval->query.continuationOwner == support.interval->query.continuationOwner &&
-        readInterval->query.occurrence.incomingInterface == support.interval->query.occurrence.incomingInterface &&
-        !support.cases.backedge;
-    if (!participates || !sameInterval || !sameReaderSpan) {
-        result.reason = "reader summary and qualified support do not name the same original interval";
-        return result;
+    if (!expected.valid || !support.interval || *support.interval != expected.interval ||
+        reader >= original.operations.size() ||
+        !llvm::any_of(support.readers, [&](const StorageOrigin& use) { return use.operation == reader; })) {
+        unknown.reason = "reader and support do not name the same original interval";
+        return unknown;
     }
-    auto qualified = *requirement.decoded;
-    qualified.requirement.occurrenceKnown = true;
-    qualified.requirement.episodeKnown = true;
-    return boundary(qualified, first);
+    auto query = support.interval->query;
+    query.selector.read = true;
+    query.selector.write = false;
+    query.selector.engine = unsigned(original.operations[reader].instruction->kPipeValue);
+    const auto prepared = prepareInterval(std::move(query));
+    if (!prepared.valid) {
+        unknown.reason = prepared.reason;
+        return unknown;
+    }
+    return exactBoundary(prepared.interval, first, true);
 }
 std::vector<OriginalEndpointCandidate> ProgramAnalysis::endpointCandidates(
     const OriginalBoundaryResult& boundary, SourceMilestone::Side side) const
@@ -881,8 +1003,9 @@ std::vector<OriginalEndpointCandidate> ProgramAnalysis::endpointCandidates(
             return {};
         }
         const OriginalCut cut{operation, side};
-        if (!resolveOriginalCut(original, cut)) {
-            return {};
+        if (!resolveOriginalCut(original, cut) ||
+            std::find(boundary.cuts.begin(), boundary.cuts.end(), cut) == boundary.cuts.end()) {
+            return {}; // A first/before certificate is not a last/after certificate.
         }
         auto qualification = guardQualificationAt(guard, operation, side);
         result.push_back({cut, guard, qualification.available(), true, std::move(qualification)});

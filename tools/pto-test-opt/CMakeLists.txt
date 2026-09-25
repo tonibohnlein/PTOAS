@@ -146,3 +146,105 @@ target_link_libraries(pto-frontier-lifetime-test PRIVATE
   MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRControlFlowDialect
 )
 add_dependencies(pto-frontier-lifetime-test PTOOpsIncGen PTOPassesIncGen)
+
+# Step 7: one portable source-DAG oracle and the actual native Phase A adapter.
+add_llvm_executable(pto-frontier-d1-core-test
+  ../../test/standalone/frontier_d1_sources_test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_include_directories(pto-frontier-d1-core-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+add_llvm_executable(pto-frontier-d1-test
+  pto-frontier-d1-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-frontier-d1-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
+  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRControlFlowDialect
+)
+add_dependencies(pto-frontier-d1-test PTOOpsIncGen PTOPassesIncGen)
+add_llvm_executable(pto-frontier-periodic-core-test
+  ../../test/frontier-synch-step8/core.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_include_directories(pto-frontier-periodic-core-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+add_llvm_executable(pto-frontier-periodic-test
+  ../../test/frontier-synch-step8/native.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-frontier-periodic-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
+  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRControlFlowDialect
+)
+add_dependencies(pto-frontier-periodic-test PTOOpsIncGen PTOPassesIncGen)
+# D4 uses the production factored transfer and a qualified original-use algebra.
+add_llvm_executable(pto-frontier-d4-test
+  pto-frontier-d4-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_include_directories(pto-frontier-d4-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+add_llvm_executable(pto-frontier-d4-native-test
+  pto-frontier-d4-native-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-frontier-d4-native-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
+  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRControlFlowDialect
+)
+add_dependencies(pto-frontier-d4-native-test PTOOpsIncGen PTOPassesIncGen)
+# Step 10: pure structural algebra and public native original-boundary queries.
+add_llvm_executable(pto-frontier-exact-core-test
+  ../../test/frontier-synch-step10/core.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_include_directories(pto-frontier-exact-core-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+add_llvm_executable(pto-frontier-exact-test
+  ../../test/frontier-synch-step10/native.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-frontier-exact-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
+  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRControlFlowDialect
+)
+add_dependencies(pto-frontier-exact-test PTOOpsIncGen PTOPassesIncGen)
+# I.3 uses the same production core in portable and native interface checks.
+add_llvm_executable(pto-frontier-covering-core-test
+  pto-frontier-covering-core-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_include_directories(pto-frontier-covering-core-test PRIVATE
+  "${CMAKE_SOURCE_DIR}/include"
+  "${CMAKE_SOURCE_DIR}/lib/PTO/Transforms/FrontierSynch"
+)
+add_llvm_executable(pto-frontier-covering-test
+  pto-frontier-covering-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-frontier-covering-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
+  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRControlFlowDialect
+)
+add_dependencies(pto-frontier-covering-test PTOOpsIncGen PTOPassesIncGen)
+add_llvm_executable(pto-frontier-descriptor-core-test
+  ../../test/standalone/frontier_descriptor_slots.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_include_directories(pto-frontier-descriptor-core-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+add_llvm_executable(pto-frontier-request-test
+  pto-frontier-request-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-frontier-request-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
+  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRControlFlowDialect
+)
+add_dependencies(pto-frontier-request-test PTOOpsIncGen PTOPassesIncGen)
+
+add_llvm_executable(pto-frontier-preparation-test
+  pto-frontier-preparation-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-frontier-preparation-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
+  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRControlFlowDialect
+)
+add_dependencies(pto-frontier-preparation-test PTOOpsIncGen PTOPassesIncGen)

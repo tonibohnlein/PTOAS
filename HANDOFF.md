@@ -1,8 +1,55 @@
 # FrontierSynch status
 
+## Current integration update — 2026-09-25
+
+Downloads steps 7–12 have been merged sequentially and independently accepted
+against draft v0.44 (`4905f8a`), including integration corrections. Step 13 source
+preparation and scoped consequences are implemented locally and independently
+accepted within the documented scope after final integrated validation. See [the integration record](docs/designs/frontier-synch-steps7-13-review.md) for the current evidence,
+precise supported fragments and remaining qualifications. Older baseline tables
+and submitted patch reports below remain historical; they do not override this
+update. Step 14 and aggregate draft parity have not been accepted. The later
+v0.45 manuscript is not the contract for these patches.
+
+
+## Step 7 candidate: conflict-specific D1
+
+The step-7 patch adds guarded fixed-visit source queries over the shared
+old-state provenance, separate endpoint qualifications and an explicit incoming
+case. `ProgramAnalysis::fixedSourcesFor` consumes stable obligation families;
+`interpretAt` retains the complete conditional result. The portable oracle and
+ASan/UBSan checks pass. Native tests are added but have not been executed in the
+patch environment; independent acceptance is still pending. See the separate
+[step-7 record](docs/designs/frontier-synch-step7-review.md) and the new delta in
+the parity checklist. The following integration record predates this candidate.
+Step 10 review candidate on `4122dd1531fbdb2859bd7b27772dba56930be393`:
+[exact first/last boundaries and interval participation](docs/designs/frontier-synch-step10.md).
+Standalone production-core checks passed; native integration validation and
+independent acceptance remain pending. This does not mark Step 10 accepted or
+supersede the remaining Phase A gates.
+## Step 12 delivery on 4122dd1531fb — awaiting native and independent review
+
+The request/descriptor layer now forms the three fixed slots before construction,
+keeps original obligation identities, composes shared alternatives without a
+Cartesian product, and exposes a frozen `ProgramAnalysis::requests()` view.
+See [scope, evidence and remaining gates](docs/designs/frontier-synch-step12-review.md).
+The portable slot core is tested. Native integration tests are supplied but have
+not been run in the delivery environment. Steps 7–11 still supply missing native
+occurrence/boundary answers; step 13 supplies source/support preparation closure.
+This is not independent acceptance or complete Phase A parity.
+
 Branch: `codex/handoff-foundation`. FrontierSynch is selected with
 `pto-insert-sync{algorithm=frontier-synch}`; `algorithm=existing` remains
 available.
+
+## Step 8 patch — D2 local periodic correspondence
+
+The [step-8 record](docs/designs/frontier-synch-step8-review.md) describes the
+physical-permutation proof, distinct producer/reader roles, both directional
+domains and explicit initial/final/bypass cases. It also separates executed
+standalone checks from native tests awaiting a build and independent review.
+No step-8 independent acceptance, D4 re-entry transport, or complete Phase A
+parity is claimed by this patch. The original obligation universe is unchanged.
 
 ## Current integration update — 2026-09-24
 

@@ -17,7 +17,11 @@ struct ObservationAtom {
     LoopNonEmpty,
     LoopResidue,
     LoopHasPrevious,
-    LoopHasNext
+    LoopHasNext,
+    // parameter names an immutable I.2 recipe in the shared original arena.
+    IntervalNonEmpty,
+    IntervalFirst,
+    IntervalLast
   } kind = OriginalBoolean;
   std::size_t owner = NoControlId;
   uint64_t parameter = 0, value = 0;

@@ -9,7 +9,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_FACTOREDPROVENANCE_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_FACTOREDPROVENANCE_H
 
-#include "PTO/Transforms/FrontierSynch/FactoredUse.h"
+#include "PTO/Transforms/FrontierSynch/D4Composition.h"
 #include "PTO/Transforms/FrontierSynch/OriginalStructure.h"
 #include "PTO/Transforms/FrontierSynch/OriginalValueQueries.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -78,8 +78,9 @@ public:
         FactoredUseProjection projection;
         projection.frame = frame;
         projection.body = adapter.project(*root, projection.accesses);
-        FactoredUseBuilder builder(std::move(projection), std::move(boundary));
-        result = builder.take();
+        auto composed = buildD4Composition(std::move(projection), std::move(boundary));
+        compositionWork = composed.work;
+        result = std::move(composed.uses);
         projectionWork = adapter.work;
     }
 
@@ -89,6 +90,7 @@ public:
         std::size_t syntax = 0, effectIncidences = 0, guards = 0;
     };
     const ProjectionWork& preparationWork() const { return projectionWork; }
+    const D4CompositionWork& childCompositionWork() const { return compositionWork; }
 
 private:
     static const Region* findOwner(const Region& region, std::size_t owner)
@@ -237,6 +239,7 @@ private:
     };
     FactoredUseResult result;
     ProjectionWork projectionWork;
+    D4CompositionWork compositionWork;
 };
 
 // One original instance owns the default projections. Different cells, loop

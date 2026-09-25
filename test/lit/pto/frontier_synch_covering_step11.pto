@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and
+// conditions of CANN Open Software License Agreement Version 2.0 (the "License"). Please refer to
+// the License for details. You may not use this file except in compliance with the License. THIS
+// SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A
+// PARTICULAR PURPOSE. See LICENSE in the root of the software repository for the full text of the
+// License.
+// RUN: pto-frontier-covering-core-test | FileCheck %s --check-prefix=CORE
+// RUN: pto-frontier-covering-test %s | FileCheck %s --check-prefix=NATIVE
+// CORE: directional covering core:
+// CORE-SAME: passed
+// NATIVE: native directional covering passed; original-ir-unchanged; construction-not-run
+// Analysis input, not a device-executable program. No authored synchronization.
+!vec = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module attributes {pto.target_arch = "a3"} {
+  func.func @directional_covering(%ptr: !pto.ptr<f32>, %n: index, %k: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %x_addr = arith.constant 0 : i64
+    %y_addr = arith.constant 1024 : i64
+    %scale = arith.constant 2.0 : f32
+    %x = pto.alloc_tile addr = %x_addr : !vec
+    %y = pto.alloc_tile addr = %y_addr : !vec
+    %view = pto.make_tensor_view %ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%x : !vec)
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%y : !vec)
+    // A reads x; g is a later original SSA value.
+    pto.taxpy ins(%x, %scale : !vec, f32) outs(%y : !vec)
+    %g = arith.cmpi slt, %k, %n : index
+    scf.if %g {
+      // B optionally reads x.
+      pto.taxpy ins(%x, %scale : !vec, f32) outs(%y : !vec)
+    }
+    // U uses only y, so the x release belongs BEFORE U.
+    pto.taxpy ins(%y, %scale : !vec, f32) outs(%y : !vec)
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%x : !vec)
+    // Exact last participation can vary; the finite external boundaries do not.
+    scf.for %i = %c0 to %n step %c1 {
+      %participates = arith.cmpi slt, %i, %k : index
+      scf.if %participates {
+        pto.taxpy ins(%x, %scale : !vec, f32) outs(%y : !vec)
+      }
+      pto.taxpy ins(%y, %scale : !vec, f32) outs(%y : !vec)
+    }
+    // No general while termination proof is supplied by Phase A.
+    %last = scf.while (%i = %c0) : (index) -> index {
+      %continue = arith.cmpi slt, %i, %n : index
+      scf.condition(%continue) %i : index
+    } do {
+    ^bb0(%i: index):
+      pto.taxpy ins(%x, %scale : !vec, f32) outs(%y : !vec)
+      %next = arith.addi %i, %c1 : index
+      scf.yield %next : index
+    }
+    return
+  }
+}

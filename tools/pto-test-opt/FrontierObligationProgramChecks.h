@@ -20,8 +20,7 @@ inline bool checkProgramObligations(const mlir::pto::frontiersynch::ProgramAnaly
     using Status = fs::ObligationMembership::Status;
     const auto& index = analysis.obligations();
     const auto& structure = analysis.structure();
-    if (!index.complete() || analysis.lifetimes().stats().requirements != 0 || index.stats().enumeratedOrigins != 0 ||
-        index.stats().membershipQueries != 0) {
+    if (!index.complete() || analysis.lifetimes().stats().requirements != 0 || index.stats().enumeratedOrigins != 0) {
         return false;
     }
     std::set<std::size_t> seen;
@@ -52,6 +51,17 @@ inline bool checkProgramObligations(const mlir::pto::frontiersynch::ProgramAnaly
                 if (family->key.kind == Kind::Typed) {
                     if (!witness.typedRequirement || witness.typedRequirement->deadlineOriginalSite != site) {
                         return false;
+                    }
+                    if (!member.source.incoming) {
+                        bool indexed = false;
+                        const auto* prepared = analysis.preparation();
+                        if (!prepared) { return false; }
+                        for (auto bucket : prepared->bucketsAt(member.source.operation)) {
+                            for (auto sourceFamily : prepared->sourceBuckets().at(bucket).families) {
+                                indexed |= sourceFamily == id;
+                            }
+                        }
+                        if (!indexed) { return false; }
                     }
                     continue;
                 }

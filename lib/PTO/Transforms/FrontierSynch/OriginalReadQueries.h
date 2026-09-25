@@ -10,7 +10,9 @@
 #define PTO_FRONTIERSYNCH_ORIGINAL_READ_QUERIES_H
 #include "PTO/Transforms/FrontierSynch/ReaderFrontiers.h"
 #include "PTO/Transforms/FrontierSynch/OriginalValueQueries.h"
+#include "PTO/Transforms/FrontierSynch/ExactFrontiers.h"
 #include <algorithm>
+#include <deque>
 #include <map>
 #include <set>
 #include <tuple>
@@ -269,8 +271,45 @@ public:
     }
     OriginalValueQualification qualificationAt(std::size_t predicateId, std::size_t operation, bool after = false) const
     {
-        return values->predicate(
-            predicateId, [&](std::size_t id) { return predicate(id); }, values->phaseCut(operation, after));
+        return qualificationAtCut(predicateId, values->phaseCut(operation, after));
+    }
+    OriginalValueQualification qualificationAtCut(std::size_t predicateId, OriginalValueCut cut) const
+    {
+        return qualifyExactFrontierPredicate(
+            *original, *values, predicateId, [&](std::size_t id) { return predicate(id); },
+            [&](std::size_t id) { return intervalParticipation(id); }, cut);
+    }
+    // Read-only and conflict-selector queries share these original expression
+    // IDs. None of the factories chooses an endpoint, key or acquired credit.
+    exact_frontier::Algebra boundaryAlgebra()
+    {
+        return {
+            [this](auto a, auto b) { return combine(true, a, b); },
+            [this](auto a, auto b) { return combine(false, a, b); },
+            [this](auto a, auto b) { return unite(a, b); },
+            [this](auto root, auto condition) { return guarded(root, condition); },
+            [this](auto condition) { return negate(condition); }};
+    }
+    std::size_t boundaryAtom(ObservationAtom observation) { return atom(observation); }
+    std::size_t boundaryLeaf(std::size_t operation)
+    {
+        return addFrontier({GuardedReadFrontier::Access, NoControlId, NoControlId, 1, operation});
+    }
+    std::size_t registerIntervalParticipation(OriginalIntervalParticipation record)
+    {
+        const auto key = record.key();
+        const auto prior = intervalIds.find(key);
+        if (prior != intervalIds.end()) {
+            return prior->second;
+        }
+        const auto id = intervalRecords.size();
+        intervalRecords.push_back(std::move(record));
+        intervalIds.emplace(key, id);
+        return id;
+    }
+    const OriginalIntervalParticipation* intervalParticipation(std::size_t id) const
+    {
+        return id < intervalRecords.size() ? &intervalRecords[id] : nullptr;
     }
     // Compatibility view: NeedsCompletion is deliberately not Available.
     bool availableAt(std::size_t predicateId, std::size_t operation) const
@@ -707,6 +746,9 @@ private:
         }
         return true;
     }
+    // deque keeps borrowed immutable recipe addresses stable across later queries.
+    std::deque<OriginalIntervalParticipation> intervalRecords;
+    std::map<OriginalIntervalParticipation::Key, std::size_t> intervalIds;
     const OriginalStructure* original;
     std::unique_ptr<OriginalValueQueries> ownedValues;
     const OriginalValueQueries* values;

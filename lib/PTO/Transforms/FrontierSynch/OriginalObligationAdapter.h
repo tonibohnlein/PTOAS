@@ -174,7 +174,8 @@ inline std::unique_ptr<OriginalObligations> buildOriginalObligations(
                     }
                 }
             }
-            if (expression.complete && use && use->visited && mapped.first->second) {
+            if (expression.complete && use && use->visited && mapped.first->second &&
+                expression.frame.kind == FactoredUseFrame::Kind::Invocation) {
                 family.representation = Rep::Factored;
                 family.key.occurrences = OriginalObligationKey::Occurrences::FixedUseProjection;
                 family.key.owner = expression.frame.owner;
@@ -199,10 +200,18 @@ inline std::unique_ptr<OriginalObligations> buildOriginalObligations(
                     "original scoped relation; incoming transport and endpoint qualification are separate";
             } else {
                 family.representation = Rep::Marginal;
+                // A body projection names one visit, whereas this canonical
+                // obligation includes prior visits. Keep its local DAG as query
+                // evidence without replacing the whole-prefix origin relation or
+                // registering a second residual-bearing family.
+                if (expression.complete && use && use->visited && mapped.first->second) {
+                    family.expression = &expression;
+                }
                 if (!storage.hasMayOriginsAt(target, cell, kind == Kind::WAR).value_or(true)) {
                     continue;
                 }
-                family.unresolved = expression.reason + "; conservative original-control obligations retained";
+                family.unresolved = expression.reason +
+                    "; canonical original-control obligations retained; local projection does not prove transport";
             }
             result->add(std::move(family));
         }
