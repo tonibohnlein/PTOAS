@@ -2644,6 +2644,23 @@ def TFreeOp : PTO_TOp<"tfree", [
 // Synchronization Ops
 //===----------------------------------------------------------------------===//
 
+// Compiler-generated direct mechanisms before physical event-ID assignment.
+// A logical key plus the source coordinates identifies one publication/acquisition.
+class PTO_LogicalFlagOp<string mnemonic> : PTO_Op<mnemonic> {
+  let arguments = (ins PTO_PipeAttr:$src_pipe, PTO_PipeAttr:$dst_pipe,
+                        I64Attr:$key, Variadic<Index>:$source_coordinates);
+  let assemblyFormat = [{
+    `[` $src_pipe `,` $dst_pipe `,` $key `]` `(` $source_coordinates `)` attr-dict
+  }];
+  let hasVerifier = 1;
+}
+def LogicalSetOp : PTO_LogicalFlagOp<"sync.logical_set"> {
+  let summary = "Publish a direct logical handoff awaiting event-ID assignment";
+}
+def LogicalWaitOp : PTO_LogicalFlagOp<"sync.logical_wait"> {
+  let summary = "Acquire a direct logical handoff awaiting event-ID assignment";
+}
+
 def SetFlagOp : PTO_Op<"set_flag"> {
   let summary = "Set synchronization flag between pipes";
   let arguments = (ins

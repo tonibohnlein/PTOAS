@@ -139,6 +139,57 @@ add_mlir_dialect_library(PTOTransforms
 
   InsertSync/PTOInsertSync.cpp
   InsertSync/SyncInput.cpp
+  InsertSync/SyncStorageBounds.cpp
+  InsertSync/SyncTargetInfo.cpp
+  InsertSync/SyncTargetReport.cpp
+  FrontierSynch/FiniteEventAssignment.cpp
+  FrontierSynch/ExplicitPhysicalEmission.cpp
+  FrontierSynch/FrontierSynch.cpp
+  FrontierSynch/StorageAnalysis.cpp
+  FrontierSynch/PhaseIndex.cpp
+  FrontierSynch/StructuredArithmetic.cpp
+  FrontierSynch/StructuredGuards.cpp
+  FrontierSynch/StructuredInputAdapter.cpp
+  FrontierSynch/LifetimeAnalysis.cpp
+  FrontierSynch/RankReduction.cpp
+  FrontierSynch/RotatingFootprintAnalysis.cpp
+  FrontierSynch/SignedArithmetic.cpp
+  FrontierSynch/SignedRelations.cpp
+  FrontierSynch/SignedInterchange.cpp
+  FrontierSynch/SignedDemandAnalysis.cpp
+  FrontierSynch/SignedSelectors.cpp
+  FrontierSynch/SymbolicSchema.cpp
+  FrontierSynch/SymbolicDemandAnalysis.cpp
+  FrontierSynch/SymbolicEvaluation.cpp
+  FrontierSynch/OneWayRepair.cpp
+  FrontierSynch/PeriodicEventAssignment.cpp
+  FrontierSynch/PeriodicDemandAnalysis.cpp
+  FrontierSynch/AccessIncidences.cpp
+  FrontierSynch/PredicateArena.cpp
+  FrontierSynch/TraceDemandAnalysis.cpp
+  FrontierSynch/DirectEmission.cpp
+  FrontierSynch/SourceDispatcher.cpp
+  FrontierSynch/RegionalRequests.cpp
+  FrontierSynch/FixedBodyUpper.cpp
+  FrontierSynch/StationaryCells.cpp
+  FrontierSynch/SingleStreamLoop.cpp
+  FrontierSynch/SingleStreamLoopComposition.cpp
+  FrontierSynch/SingleStreamLoopEmission.cpp
+  FrontierSynch/PeriodicQueries.cpp
+  FrontierSynch/CountedReaders.cpp
+  FrontierSynch/GeneralQueries.cpp
+  FrontierSynch/GeneralEndpointCodegen.cpp
+  FrontierSynch/EndpointComposition.cpp
+  FrontierSynch/PeriodicEmission.cpp
+  FrontierSynch/GuardedEmission.cpp
+  FrontierSynch/SelectedAnalysisReport.cpp
+  FrontierSynch/CostReport.cpp
+  FrontierSynch/SelectedAnalysisEvidence.cpp
+  FrontierSynch/EndpointRelations.cpp
+  FrontierSynch/EndpointSpecialization.cpp
+  FrontierSynch/EndpointCodegen.cpp
+  FrontierSynch/GuardedAnalysis.cpp
+  FrontierSynch/GuardedMLIR.cpp
   Passes/PTOInjectBarrierAllSync.cpp
   InsertSync/InsertSyncDebug.cpp
   Passes/PTOMaterializeImplicitTmp.cpp
@@ -294,6 +345,8 @@ add_mlir_dialect_library(PTOTransforms
   PTOAnalysis
   PTOIR
   MLIRAnalysis
+  MLIRPresburger
+  MLIRControlFlowInterfaces
   MLIRIR
   MLIRLLVMDialect
   MLIRPass

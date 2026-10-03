@@ -287,3 +287,25 @@ ParseResult MemBarOp::parse(OpAsmParser &parser, OperationState &result) {
 void MemBarOp::print(OpAsmPrinter &p) {
   printLegacyOrAttrMemBar(p, getKind(), (*this)->getAttrs());
 }
+
+static LogicalResult verifyLogicalFlag(Operation *op, PipeAttr source,
+                                       PipeAttr target, int64_t key) {
+  if (key < 0) {
+    return op->emitOpError("requires a nonnegative logical handoff key");
+  }
+  if (source == target || source.getPipe() == mlir::pto::PIPE::PIPE_ALL ||
+      target.getPipe() == mlir::pto::PIPE::PIPE_ALL) {
+    return op->emitOpError(
+        "requires two distinct directed pipes excluding PIPE_ALL");
+  }
+  return success();
+}
+
+LogicalResult mlir::pto::LogicalSetOp::verify() {
+  return verifyLogicalFlag(*this, getSrcPipe(), getDstPipe(), getKey());
+}
+
+LogicalResult mlir::pto::LogicalWaitOp::verify() {
+  return verifyLogicalFlag(*this, getSrcPipe(), getDstPipe(), getKey());
+}
+
