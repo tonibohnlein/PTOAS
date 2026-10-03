@@ -153,6 +153,31 @@ llvm::cl::opt<bool> enableVmiFastmath(
                    "default; pass --vmi-fastmath=false to disable"),
     llvm::cl::init(true));
 
+llvm::cl::opt<std::string> insertSyncAlgorithm(
+    "insert-sync-algorithm",
+    llvm::cl::desc("Synchronization algorithm used with --enable-insert-sync: "
+                   "existing or frontier-synch"),
+    llvm::cl::init("existing"));
+
+llvm::cl::opt<std::string> insertSyncGMAlias(
+    "insert-sync-gm-alias",
+    llvm::cl::desc("Distinct GM root assumption for both synchronization algorithms: "
+                   "may-not-alias (legacy default) or may-alias"),
+    llvm::cl::init("may-not-alias"));
+
+llvm::cl::opt<std::string> frontierRepairFamily(
+    "frontier-repair-family",
+    llvm::cl::desc("Permitted frontier physical repair family: fixed-only or finite-one-way; restricted guarantee"),
+    llvm::cl::init("fixed-only"));
+
+llvm::cl::opt<bool> dumpFrontierDemands(
+    "dump-frontier-demands", llvm::cl::desc("Dump frontier demand evidence (requires frontier-synch)"),
+    llvm::cl::init(false));
+llvm::cl::opt<bool> reportFrontierCosts(
+    "report-frontier-costs",
+    llvm::cl::desc("Report frontier stage costs and resource status (requires frontier-synch)"),
+    llvm::cl::init(false));
+
 llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",
     llvm::cl::desc("Plan larger local buffers first inside one AddressSpace "

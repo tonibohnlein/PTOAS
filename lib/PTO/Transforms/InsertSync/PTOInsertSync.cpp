@@ -13,6 +13,8 @@
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
+#include "PTO/Transforms/InsertSync/SyncStorageBounds.h"
+#include "PTO/Transforms/FrontierSynch/FrontierSynch.h"
 #include "PTO/Transforms/InsertSync/InsertSyncAnalysis.h"
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "PTO/Transforms/InsertSync/MoveSyncState.h"
@@ -60,12 +62,37 @@ static bool hasGatherScatterLikeOps(func::FuncOp func) {
 }
 
 struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSyncPass> {
+  PTOInsertSyncPass() = default;
+  explicit PTOInsertSyncPass(const PTOInsertSyncOptions &options) {
+    algorithm = options.algorithm;
+    gmAlias = options.gmAlias;
+    dumpFrontierDemands = options.dumpFrontierDemands;
+    reportFrontierCosts = options.reportFrontierCosts;
+    frontierRepairFamily = options.frontierRepairFamily;
+  }
+
   void runOnOperation() override {
     func::FuncOp func = getOperation();
     // Backend-partitioned PTODSL containers carry private func declarations
     // in the outer child module to model cross-child calls. Those declaration
     // funcs have a function type but no entry block arguments, so the
     // translator's argument walk must not run on them.
+    if (algorithm != "existing" && algorithm != "frontier-synch") {
+      func.emitError("unknown synchronization algorithm; expected existing or frontier-synch");
+      signalPassFailure();
+      return;
+    }
+    if (gmAlias != "may-alias" && gmAlias != "may-not-alias") {
+      func.emitError("unknown GM alias policy; expected may-alias or may-not-alias");
+      signalPassFailure();
+      return;
+    }
+    bool requestedFrontierDiagnostics = dumpFrontierDemands || reportFrontierCosts;
+    if (requestedFrontierDiagnostics && algorithm != "frontier-synch") {
+      func.emitError("frontier diagnostics require algorithm=frontier-synch");
+      signalPassFailure();
+      return;
+    }
     if (func.isDeclaration()) {
       return;
     }
@@ -78,8 +105,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     //
     bool hasExplicitSync = false;
     func.walk([&](Operation *op) {
-      if (isa<pto::SetFlagOp, pto::WaitFlagOp, pto::RecordEventOp,
-              pto::WaitEventOp>(op)) {
+      if (isa<pto::SetFlagOp, pto::WaitFlagOp, pto::LogicalSetOp,
+              pto::LogicalWaitOp, pto::RecordEventOp, pto::WaitEventOp>(op)) {
         hasExplicitSync = true;
         return WalkResult::interrupt();
       }
@@ -88,15 +115,51 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     if (hasExplicitSync) {
       return;
     }
+    if (auto status =
+            func->getAttrOfType<StringAttr>("pto.frontier.endpoint_status")) {
+      if (status.getValue() == "emitted") {
+        return;
+      }
+    }
 
-    SyncInput input;
-    if (failed(input.build(func))) {
+    frontiersynch::CostLedger costs(algorithm == "frontier-synch" && reportFrontierCosts);
+    SyncInput input(gmAlias == "may-alias" ? GMAliasPolicy::MayAlias : GMAliasPolicy::MayNotAlias);
+    LogicalResult imported = failure();
+    {
+      frontiersynch::CostScope scope(costs, frontiersynch::CostStage::Effects);
+      imported = input.build(func);
+    }
+    if (failed(imported)) {
+      if (costs.active()) {
+        frontiersynch::reportImportFailure(func, costs, "shared translation failed", dumpFrontierDemands);
+      }
       signalPassFailure();
       return;
     }
+    if (isInsertSyncDebugEnabled(InsertSyncDebugLevel::SyncIR)) {
+      llvm::errs() << "SharedGMAlias " << gmAlias << "\n";
+      llvm::errs() << "SharedTarget " << input.target().attribute() << "\n";
+      llvm::errs() << "SharedSlots " << input.slotAttribute(func.getContext()) << "\n";
+    }
+    SyncOperations syncOpsStorage;
+    dumpInsertSyncPhase("After Shared Translator", input.ir(), syncOpsStorage,
+                        func.getOperation());
+    if (algorithm == "frontier-synch") {
+      if (frontierRepairFamily != "fixed-only" && frontierRepairFamily != "finite-one-way") {
+        func.emitError("unknown frontier repair family; expected fixed-only or finite-one-way");
+        signalPassFailure();
+        return;
+      }
+      if (failed(frontiersynch::run(func, input,
+          {dumpFrontierDemands, reportFrontierCosts, frontierRepairFamily == "finite-one-way"}, costs))) {
+        signalPassFailure();
+      }
+      return;
+    }
+
+    // Existing construction retains the same translated nodes and pipeline.
     auto &memAnalyzer = input.memory();
     auto &syncIR = input.ir();
-    SyncOperations syncOpsStorage;
 
     // 如果 IR 太简单，直接跳过
     if (syncIR.size() <= 1) {
@@ -155,4 +218,9 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
 
 std::unique_ptr<Pass> mlir::pto::createPTOInsertSyncPass() {
   return std::make_unique<PTOInsertSyncPass>();
+}
+
+std::unique_ptr<Pass>
+mlir::pto::createPTOInsertSyncPass(const PTOInsertSyncOptions &options) {
+  return std::make_unique<PTOInsertSyncPass>(options);
 }

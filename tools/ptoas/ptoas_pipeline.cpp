@@ -598,15 +598,28 @@ struct SerialAutoSyncPass
 
   enum class Mode { InsertSync, Bufid, BarrierAll };
 
-  SerialAutoSyncPass(Mode mode, bool enableBufidDebug)
-      : mode(mode), enableBufidDebug(enableBufidDebug) {}
+  SerialAutoSyncPass(Mode mode, bool enableBufidDebug,
+                     std::string algorithm = "existing", bool dumpDemands = false,
+                     bool reportCosts = false,
+                     std::string repairFamily = "fixed-only",
+                     std::string gmAlias = "may-not-alias")
+      : mode(mode), enableBufidDebug(enableBufidDebug),
+        algorithm(std::move(algorithm)), dumpDemands(dumpDemands),
+        reportCosts(reportCosts), repairFamily(std::move(repairFamily)), gmAlias(std::move(gmAlias)) {}
 
   void runOnOperation() override {
     OpPassManager functionPM(func::FuncOp::getOperationName());
     switch (mode) {
-    case Mode::InsertSync:
-      functionPM.addPass(pto::createPTOInsertSyncPass());
+    case Mode::InsertSync: {
+      PTOInsertSyncOptions options;
+      options.algorithm = algorithm;
+      options.gmAlias = gmAlias;
+      options.dumpFrontierDemands = dumpDemands;
+      options.reportFrontierCosts = reportCosts;
+      options.frontierRepairFamily = repairFamily;
+      functionPM.addPass(pto::createPTOInsertSyncPass(options));
       break;
+    }
     case Mode::Bufid: {
       PTOBufidSyncOptions options;
       options.enableBufidSyncDebug = enableBufidDebug;
@@ -625,11 +638,17 @@ struct SerialAutoSyncPass
         return;
       }
     }
+
   }
 
 private:
   Mode mode;
   bool enableBufidDebug;
+  std::string algorithm;
+  bool dumpDemands;
+  bool reportCosts;
+  std::string repairFamily;
+  std::string gmAlias;
 };
 } // namespace
 
@@ -1260,6 +1279,30 @@ static LogicalResult validateAllocationConfiguration(ModuleOp module,
 
 static LogicalResult validateCompileOptions(ModuleOp module,
                                             PTOBuildLevel level) {
+  if (enableInsertSync && insertSyncAlgorithm != "existing" &&
+      insertSyncAlgorithm != "frontier-synch") {
+    module.emitError("unknown synchronization algorithm; expected existing or frontier-synch");
+    return failure();
+  }
+  if (enableInsertSync && insertSyncGMAlias != "may-alias" && insertSyncGMAlias != "may-not-alias") {
+    module.emitError("unknown GM alias policy; expected may-alias or may-not-alias");
+    return failure();
+  }
+  if (frontierRepairFamily != "fixed-only" && frontierRepairFamily != "finite-one-way") {
+    module.emitError("unknown frontier repair family; expected fixed-only or finite-one-way");
+    return failure();
+  }
+  if (frontierRepairFamily != "fixed-only" &&
+      (!enableInsertSync || insertSyncAlgorithm != "frontier-synch")) {
+    module.emitError("frontier repair family requires frontier-synch synchronization");
+    return failure();
+  }
+  bool requestedFrontierDiagnostics = dumpFrontierDemands || reportFrontierCosts;
+  bool frontierSelected = enableInsertSync && insertSyncAlgorithm == "frontier-synch";
+  if (requestedFrontierDiagnostics && !frontierSelected) {
+    module.emitError("frontier diagnostics require --enable-insert-sync --insert-sync-algorithm=frontier-synch");
+    return failure();
+  }
   return failed(validateAutoSyncTailHints(module)) ||
                  failed(validateTAssignConfiguration(module, level)) ||
                  failed(validateAllocationConfiguration(module, level)) ||
@@ -1360,11 +1403,18 @@ static LogicalResult appendPlanMemoryPasses(PassManager &pm,
 /// operations and keeps their slot identity for alias and event-id analysis.
 static void appendAutoSyncPasses(PassManager &pm) {
   if (enableInsertSync) {
-    if (emitMlirIR) {
+    if (emitMlirIR || insertSyncAlgorithm == "frontier-synch") {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
-          SerialAutoSyncPass::Mode::InsertSync, false));
+          SerialAutoSyncPass::Mode::InsertSync, false, insertSyncAlgorithm,
+          dumpFrontierDemands, reportFrontierCosts, frontierRepairFamily, insertSyncGMAlias));
     } else {
-      pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass());
+      PTOInsertSyncOptions options;
+      options.algorithm = insertSyncAlgorithm;
+      options.gmAlias = insertSyncGMAlias;
+      options.dumpFrontierDemands = dumpFrontierDemands;
+      options.reportFrontierCosts = reportFrontierCosts;
+      options.frontierRepairFamily = frontierRepairFamily;
+      pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass(options));
     }
   }
   else if (enableBufidSync) {
@@ -1550,7 +1600,7 @@ static LogicalResult runMainLoweringPipeline(
 }
 
 // VPTO fast path: when no TileOp expansion is needed the shared mainline
-// pipeline can be skipped entirely.
+// pipeline can be skipped. Explicitly requested InsertSync still runs.
 static int runVPTOSkipMainlinePipeline(OwningOpRef<ModuleOp> &module,
                                        PTOASContext &context,
                                        const CompilePipelineState &state,
@@ -1560,6 +1610,14 @@ static int runVPTOSkipMainlinePipeline(OwningOpRef<ModuleOp> &module,
     llvm::errs() << "Error: shared pre-backend seam IR is unavailable when "
                     "skipping the shared PTO-to-VPTO lowering pipeline.\n";
     return 1;
+  }
+  if (enableInsertSync) {
+    PassManager syncPM(module->getContext());
+    syncPM.enableVerifier();
+    appendAutoSyncPasses(syncPM);
+    if (failed(syncPM.run(*module))) {
+      return 1;
+    }
   }
   if (failed(runVPTOBackendPipeline(module, state.hasTileOpsToExpand))) {
     return 1;

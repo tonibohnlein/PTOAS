@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --emit-vpto %s -o - 2>&1 | FileCheck %s
+// A helper call has shared effects but no OpPipeInterface TileOp to expand.
+// Requested InsertSync must still execute in the no-expansion VPTO path.
+// CHECK: frontier-synch physical event-ID realization is pending
+module {
+  func.func private @write_ub(!pto.ptr<f32, ub>)
+      attributes {pto.ptodsl.subkernel_helper = "cube", pto.tileop.effects = ["write"]}
+  func.func private @read_ub(!pto.ptr<f32, ub>)
+      attributes {pto.ptodsl.subkernel_helper = "simd", pto.tileop.effects = ["read"]}
+  func.func @fast_path(%arg: !pto.ptr<f32, ub>) {
+    func.call @write_ub(%arg) : (!pto.ptr<f32, ub>) -> ()
+    func.call @read_ub(%arg) : (!pto.ptr<f32, ub>) -> ()
+    return
+  }
+}

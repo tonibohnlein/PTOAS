@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt --pto-insert-sync %s 2>&1 | FileCheck %s
+// RUN: not pto-test-opt --pto-insert-sync='algorithm=frontier-synch dump-frontier-demands=true' %s 2>&1 | FileCheck %s
+// RUN: not pto-test-opt --pto-insert-sync='algorithm=frontier-synch report-frontier-costs=true' %s 2>&1 | FileCheck %s --check-prefix=COST
+// COST: "analysis":"import-failed"
+// COST-SAME: "metrics":null
+// COST-SAME: "report":"frontier-costs-v1"
+// COST-SAME: "effect_recovery":{
+// COST-SAME: "status":"failed"
+// RUN: pto-frontier-analysis-test --expect-translation-failure %s | FileCheck %s --check-prefix=EMPTY
+// EMPTY: translation-failed; shared-records-empty; original-ir-unchanged
+// CHECK: requires planner-assigned slot addresses or a constant level3 base
+// CHECK-NOT: LLVM ERROR
+// CHECK-NOT: PLEASE submit a bug report
+module {
+  func.func @nested_failure(%take: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %c1 step %c1 {
+      scf.if %take {
+        %tile = pto.alloc_multi_tile : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+      }
+    }
+    return
+  }
+}

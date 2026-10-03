@@ -298,12 +298,38 @@ ptoas --version
 
 ### 5.1 命令行工具 (CLI)
 
+`--enable-insert-sync` uses `existing` by default. Select the Section 8
+implementation with `--insert-sync-algorithm=frontier-synch`. Both algorithms
+consume the same translated `SyncInput`/`SyncIR`, pipe assignments, effects and
+memory analyzer; frontier does not requalify the input's instruction model.
+
+Frontier selects exact or conservative demands, inserts direct logical
+synchronization, then assigns physical event IDs. Generated plans are published
+only after placement, matching and causal reuse succeed. Unsupported analysis
+or physical-realization interfaces still produce explicit diagnostics.
+
+Both algorithms use `--insert-sync-gm-alias=may-not-alias|may-alias`. The default
+`may-not-alias` retains the legacy assumption for distinct resolved GM roots;
+`may-alias` conservatively allows them to overlap. Same-root range analysis and
+conservative handling of missing address information are unchanged. The MLIR
+pass spelling is `gm-alias=may-alias` or `gm-alias=may-not-alias`.
+
+`--frontier-repair-family=finite-one-way` enables the implemented finite,
+one-way scarcity repair; the default is `fixed-only`.
+
+Use `--dump-frontier-demands` to inspect demands and `--report-frontier-costs`
+for stage timings and mechanism counts. Both require frontier synchronization.
+Use `--emit-pto-ir` to inspect the synchronized IR.
+
 ```bash
 # 解析并打印 PTO IR
 ptoas test/lit/pto/empty_func.pto
 
 # 运行 AutoSyncInsert Pass
 ptoas test/lit/pto/empty_func.pto --enable-insert-sync -o outputfile.cpp
+
+# Select the synchronization constructor (existing is the default)
+ptoas test/lit/pto/empty_func.pto --enable-insert-sync --insert-sync-algorithm=existing -o outputfile.cpp
 
 # 指定目标硬件架构（A3 / A5）
 ptoas test/lit/pto/empty_func.pto --pto-arch=a5 -o outputfile.cpp
