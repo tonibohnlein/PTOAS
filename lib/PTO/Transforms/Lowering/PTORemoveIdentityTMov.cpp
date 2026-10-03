@@ -12,7 +12,6 @@
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
-#include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/Transforms/Passes.h"
@@ -377,12 +376,14 @@ struct PTORemoveIdentityTMovPass
     });
 
     if (!memInfoCandidates.empty()) {
-      MemoryDependentAnalyzer memAnalyzer;
       SyncIRs syncIR;
       Buffer2MemInfoMap buffer2MemInfoMap;
-      PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func,
+      PTOIRTranslator translator(syncIR, buffer2MemInfoMap, func,
                                  SyncAnalysisMode::NORMALSYNC);
-      translator.Build();
+      if (failed(translator.Build())) {
+        signalPassFailure();
+        return;
+      }
 
       for (TMovOp op : memInfoCandidates) {
         if (isIdentityTMovByMemInfo(op, buffer2MemInfoMap)) {

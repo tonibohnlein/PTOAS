@@ -80,3 +80,14 @@ add_llvm_executable(pto-bisheng-scheduler-test
 )
 
 target_link_libraries(pto-bisheng-scheduler-test PRIVATE PTOASBishengScheduler)
+
+# Shared effect/pipe extraction is usable independently of dependency analysis.
+add_llvm_executable(pto-sync-input-test
+  pto-sync-input-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-sync-input-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
+  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect
+)
+add_dependencies(pto-sync-input-test PTOOpsIncGen PTOPassesIncGen)

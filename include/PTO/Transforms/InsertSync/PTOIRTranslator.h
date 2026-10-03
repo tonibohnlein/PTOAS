@@ -16,7 +16,6 @@
  
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
-#include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -30,7 +29,6 @@ namespace pto {
 class PTOIRTranslator {
 public:
   PTOIRTranslator(SyncIRs &syncIR,
-                  MemoryDependentAnalyzer &memDepAnalyzer,
                   Buffer2MemInfoMap &buffer2MemInfoMap,
                   func::FuncOp func,
                   SyncAnalysisMode syncAnalysisMode)
@@ -38,14 +36,12 @@ public:
       index(0),
       syncIR_(syncIR), 
       buffer2MemInfoMap_(buffer2MemInfoMap),
-      memAnalyzer_(memDepAnalyzer),
       mode_(syncAnalysisMode) {
-    (void)memAnalyzer_;
     (void)mode_;
   };
  
   // 核心入口：执行 IR 分析和转换
-  void Build();
+  LogicalResult Build();
  
   // 获取生成的 SyncIR (指令序列)
   SyncIRs &getSyncIR() { return syncIR_; }
@@ -63,11 +59,10 @@ private:
   // 核心数据结构 (定义在 SyncCommon.h 中)
   SyncIRs &syncIR_;
   Buffer2MemInfoMap &buffer2MemInfoMap_;
-  MemoryDependentAnalyzer &memAnalyzer_;
   SyncAnalysisMode mode_;
  
   // --- 递归遍历逻辑 ---
-  void RecursionIR(Region *region);
+  LogicalResult RecursionIR(Region *region);
   // RecursionIR 的按类别分发器：返回 nullopt 表示 op 不属于该类别，
   // 需继续尝试后续类别；返回 WalkResult 表示已匹配处理完毕。
   std::optional<WalkResult> dispatchAllocOp(Operation *op);
@@ -91,9 +86,9 @@ private:
                                          Value slot);
  
   // --- 控制流处理 (SCF) ---
-  void UpdateForOpInfo(scf::ForOp forOp);
-  void UpdateWhileOpInfo(scf::WhileOp whileOp);
-  void UpdateIfOpInfo(scf::IfOp ifOp);
+  LogicalResult UpdateForOpInfo(scf::ForOp forOp);
+  LogicalResult UpdateWhileOpInfo(scf::WhileOp whileOp);
+  LogicalResult UpdateIfOpInfo(scf::IfOp ifOp);
   void UpdateYieldOpInfo(scf::YieldOp yieldOp);
 
   // --- 核心：处理计算/搬运指令 (生成 Compound 节点) ---

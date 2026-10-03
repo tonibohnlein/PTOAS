@@ -12,7 +12,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
-#include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
+#include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "PTO/Transforms/InsertSync/InsertSyncAnalysis.h"
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "PTO/Transforms/InsertSync/MoveSyncState.h"
@@ -89,15 +89,14 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       return;
     }
 
-    // 0. 数据结构准备
+    SyncInput input;
+    if (failed(input.build(func))) {
+      signalPassFailure();
+      return;
+    }
     MemoryDependentAnalyzer memAnalyzer;
-    SyncIRs syncIR;
+    auto &syncIR = input.ir();
     SyncOperations syncOpsStorage;
-    Buffer2MemInfoMap buffer2MemInfoMap;
-
-    // 1. Translator: 构建 SyncIR
-    PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func, SyncAnalysisMode::NORMALSYNC);
-    translator.Build();
 
     // 如果 IR 太简单，直接跳过
     if (syncIR.size() <= 1) {

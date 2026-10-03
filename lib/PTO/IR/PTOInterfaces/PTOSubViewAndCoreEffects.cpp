@@ -167,8 +167,11 @@ void TAbsOp::getEffects(
 }
 
 // === TStoreOp ===
-// Read: src, Write: dst (GM)
+// Read: src and old dst for AtomicAdd; Write: dst (GM).
 void TStoreOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  if (getAtomicType() == AtomicType::AtomicAdd) {
+    addEffect(effects, &getDstMutable(), MemoryEffects::Read::get());
+  }
   addStoreLikeEffects(effects, getSrcMutable(), getFpMutable(),
                       getPreQuantScalarMutable(), getDstMutable());
 }
