@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --phase-index %s | FileCheck %s
+// CHECK: phase-index pto.taxpy anchor-phases=1 control-depth=0
+// CHECK: phase-index pto.taxpy anchor-phases=1 control-depth=2
+// CHECK: phase-index pto.taxpy anchor-phases=1 control-depth=2
+// CHECK: phase-index pto.taxpy anchor-phases=1 control-depth=1
+// CHECK: sequence nested: structured
+// CHECK: availability outer before=0 after=1 operand-before=1 operand-before-owner=0
+// CHECK: availability inner before=0 after=1 operand-before=1 operand-before-owner=0
+// CHECK: declaration: phases=0
+// CHECK: sequence straight: 1
+// CHECK: source-unchanged; dependency-analysis-not-run
+!vec = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @nested(%src: !vec, %dst: !vec, %n: index, %take: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %scale = arith.constant 2.0 : f32
+    %outer = arith.addi %c0, %c1 {test.probe = "outer"} : index
+    pto.taxpy ins(%src, %scale : !vec, f32) outs(%dst : !vec)
+    scf.for %i = %c0 to %n step %c1 {
+      %inner = arith.addi %i, %c1 {test.probe = "inner"} : index
+      scf.if %take {
+        pto.taxpy ins(%src, %scale : !vec, f32) outs(%dst : !vec)
+      } else {
+        pto.taxpy ins(%src, %scale : !vec, f32) outs(%dst : !vec)
+      }
+    }
+    %result = scf.while (%active = %take) : (i1) -> i1 {
+      scf.condition(%active) %active : i1
+    } do {
+    ^bb0(%active: i1):
+      pto.taxpy ins(%src, %scale : !vec, f32) outs(%dst : !vec)
+      scf.yield %active : i1
+    }
+    return
+  }
+  func.func private @declaration(!vec)
+  func.func @straight(%src: !vec, %dst: !vec) {
+    %scale = arith.constant 2.0 : f32
+    pto.taxpy ins(%src, %scale : !vec, f32) outs(%dst : !vec)
+    return
+  }
+}

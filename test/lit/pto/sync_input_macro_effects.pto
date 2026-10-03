@@ -6,6 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test %s | FileCheck %s
+// RUN: pto-sync-input-test --phase-index %s | FileCheck %s --check-prefix=INDEX
+// INDEX: phase-index pto.tgather anchor-phases=4 control-depth=0
+// INDEX: sequence tgather_compare_macro_model: structured
 // CHECK: tgather_compare_macro_model: phases=4
 // CHECK: pto.tgather {{.*}} macro=0
 // CHECK: pto.tgather {{.*}} macro=1
