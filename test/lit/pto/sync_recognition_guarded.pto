@@ -1,0 +1,102 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --recognize %s | FileCheck %s
+// CHECK-LABEL: recognition nested_arms
+// CHECK: recognize finite-guarded: applicable backend=unavailable
+// CHECK-NEXT: guarded phases=3 guards=4 entry-guards=available
+// CHECK-NEXT: guard 0 parent=true arm=then
+// CHECK-NEXT: guard 1 parent=true arm=else
+// CHECK-NEXT: guard 2 parent=0 arm=then
+// CHECK-NEXT: guard 3 parent=0 arm=else
+// CHECK-NEXT: guarded-phase pto.tsetval guard=2
+// CHECK-NEXT: guarded-phase pto.tgetval guard=3
+// CHECK-NEXT: guarded-phase pto.tsetval guard=1
+// CHECK-LABEL: recognition invariant_loop
+// CHECK: recognize finite-guarded: not-applicable
+// CHECK: recognize guarded-rotating: applicable backend=unavailable
+// CHECK: rotation {{.*}} guard=0
+// CHECK: rotation {{.*}} guard=1
+// CHECK: guarded phases=2 guards=2 entry-guards=available
+// CHECK: guarded-phase pto.tsetval guard=0
+// CHECK: guarded-phase pto.tgetval guard=1
+// CHECK-LABEL: recognition varying_loop
+// CHECK: recognize guarded-rotating: missing-premise
+// CHECK: issue guard-invariance
+// CHECK: guarded phases=1 guards=2 entry-guards=late
+// CHECK-LABEL: recognition late_finite
+// CHECK: recognize finite-guarded: applicable backend=unavailable
+// CHECK-NEXT: guarded phases=2 guards=2 entry-guards=late
+// CHECK: source-unchanged; dependency-analysis-not-run
+
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=2>
+module {
+  func.func @nested_arms(%g: i1, %h: i1) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.if %g {
+      scf.if %h {
+        pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      } else {
+        %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+      }
+    } else {
+      pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+    }
+    return
+  }
+  func.func @invariant_loop(%n: index, %g: i1) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    scf.for %i = %i0 to %n step %i1 {
+      %slot = arith.remui %i, %i2 : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      scf.if %g {
+        pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      } else {
+        %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+  func.func @varying_loop(%n: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    scf.for %i = %i0 to %n step %i1 {
+      %slot = arith.remui %i, %i2 : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      %g = arith.cmpi eq, %slot, %i0 : index
+      scf.if %g {
+        pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      }
+    }
+    return
+  }
+  func.func @late_finite() {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    %g = arith.cmpf ogt, %v, %one : f32
+    scf.if %g {
+      pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+    }
+    return
+  }
+}

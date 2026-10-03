@@ -84,6 +84,7 @@ target_link_libraries(pto-bisheng-scheduler-test PRIVATE PTOASBishengScheduler)
 # Shared effect/pipe extraction is usable independently of dependency analysis.
 add_llvm_executable(pto-sync-input-test
   pto-sync-input-test.cpp
+  ArithmeticProgramDump.cpp
   PARTIAL_SOURCES_INTENDED
 )
 target_link_libraries(pto-sync-input-test PRIVATE
@@ -91,3 +92,11 @@ target_link_libraries(pto-sync-input-test PRIVATE
   MLIRFuncDialect MLIRArithDialect MLIRSCFDialect
 )
 add_dependencies(pto-sync-input-test PTOOpsIncGen PTOPassesIncGen)
+
+# Exercise primitive classification, normalization and producer contract limits.
+add_llvm_executable(pto-arithmetic-recognition-test
+  pto-arithmetic-recognition-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-arithmetic-recognition-test PRIVATE PTOIR PTOTransforms MLIRIR MLIRSupport)
+add_dependencies(pto-arithmetic-recognition-test PTOOpsIncGen PTOPassesIncGen)

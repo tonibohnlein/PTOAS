@@ -8,9 +8,10 @@ The library API is `FrontierSynch/Recognition.h`; its diagnostic client is:
 pto-sync-input-test --recognize input.pto
 ```
 
-The client reports the function's explicit-region candidacy and inspects every
-`scf.for` separately, including loops inside rejected outer loops. Source
-locations identify missing premises. It verifies that the original IR remains
+The client reports the function's explicit and finite-guarded candidacy and
+inspects both rotating variants of every `scf.for` separately, including loops
+inside rejected outer loops. Arithmetic recognition checks the whole function.
+Diagnostics identify missing premises. It verifies that the original IR remains
 unchanged. This is a developer test tool, not a production synchronization mode.
 
 ## Separate recognition from a ready analysis
@@ -74,6 +75,101 @@ slots for its dynamic access. Other tile operations retain an
 alternatives remain explicit obligations; unknown physical geometry does not
 prevent reporting an otherwise recognized slot expression.
 
+## Guarded regions
+
+The finite-guarded recognizer traverses loop-free, single-block regions with
+nested `scf.if` arms. It retains a shared predicate DAG: each node records its
+parent conjunction, condition value and selected arm. Payload phases and
+rotating accesses refer to those nodes. Missing arms are empty; arbitrary loops
+and other region control are rejected. Supplied footprints must be exact.
+
+Conditions may be computed within a finite region. Recognition records whether
+all conditions are available at entry; a late condition does not invalidate the
+finite guarded analysis class, but recognition does not establish that paired
+synchronization endpoints can evaluate their guards. Predicate evaluation must
+respect the parent path, particularly for values defined inside an arm.
+
+The guarded rotating variant permits nested conditionals in the canonical loop
+body only when their conditions are available before the loop. This sufficient
+check establishes immutable participation across iterations. It does not try
+to prove invariance of expressions defined inside the loop. The same physical
+slot and footprint checks as the unguarded route apply. No retention circuits
+or guarded endpoint code are generated yet.
+
+## Arithmetic relations
+
+`ArithmeticRecognition.h` checks a supplied bundle of exact primitive relations.
+Every role must be present: context, occurrences, order, native order, reads,
+writes and extra prerequisites. A present empty union denotes false, whereas a
+missing role is an unmet input obligation. Completeness and equivalence to the
+program, finite executions and native-order semantics remain producer contracts.
+The checker does not infer these facts from arithmetic syntax.
+
+Each primitive declares named coordinates and their roles, including parameters,
+storage coordinates and auxiliaries. All coordinates count toward the configured
+dimension limit. Every piece is an MLIR `IntegerSet` over quotient coordinates
+with explicit residues under one common fixed period. The producer must already
+have split modular constraints into these pieces. Raw division, remainder and
+nonlinear products are rejected.
+
+The caller supplies fixed limits on pipe count, dimension, period and coefficient
+magnitude. These limits must not be inferred from the current kernel. All rows
+are collected with checked integer arithmetic and normalized by their coefficient
+GCD. Inequalities use floor division, including negative constants; an equality
+with a nondivisible constant makes its piece empty. The normalized rows identify
+difference constraints, integer octagons, or the broader bounded-coefficient
+class. For example, `x+y<=N` has three coordinates and belongs to the broader
+class when `N` is a parameter; `u=7v+3w+c` needs coefficient bound at least seven.
+
+An accepted result retains normalized rows and indices into the supplied schema
+and residue pieces. Failed recognition publishes no partial normalized bundle.
+This is a representation check, not feasibility, projection, reduction or selector
+synthesis. Integer coefficients are currently limited to signed 64-bit values;
+overflow is reported rather than wrapped.
+
+### Primitive extraction from kernel IR
+
+`ArithmeticProgram.h` now connects the shared input to the arithmetic checker.
+It accepts sequences and nested canonical `scf.for` loops (lower bound zero,
+step one, no loop-carried SSA arguments). Upper bounds may be constants, function
+entry index arguments, or enclosing induction variables. This includes rectangular
+and triangular nests and restarted inner-loop buffer rotation. It analyzes the
+whole nest without unfolding any trip count or repeatedly composing an inner
+summary.
+
+The producer exports a site table and relations for occurrence domains, strict
+reference order, strict native reachability, physical byte reads/writes, parameter
+context and an empty extra-prerequisite relation. Relation metadata identifies
+source/target sites, their coordinate spans, start/completion event kinds and
+address space. Order compares common enclosing iterations first and static
+program positions afterward. Native relations include same-pipe start/start,
+completion/completion and start/completion paths, including each payload's own
+start-to-completion edge. They represent native closure, not just adjacent edges.
+
+Fixed exact effects use the shared physical ranges, so overlapping SSA roots
+refer to the same bytes. Dynamic scalar slots use `iv rem slot_count`, actual
+physical slot intervals, and exact scalar within-slot footprints. Slots need
+not be evenly spaced, and distinct allocations need not be disjoint for this
+arithmetic route. The slot count must divide the configured residue period.
+All quotient substitutions use checked integer arithmetic.
+
+This first producer supports **P in {1,2} and D<=8**, with at most 256 residue
+tuples per conjunction. Larger producer configurations are rejected before
+splitting. Pipe/dimension limits are checked before constructing site pairs.
+The test client fixes `(k,D,P,C)=(8,8,2,8)`; the library takes an explicit
+configuration. The broader supplied-bundle checker remains available separately.
+
+Conditionals, noncanonical loops, computed bounds, unresolved footprints,
+existing synchronization and additional SSA prerequisites are currently rejected.
+In particular, a payload result consumed by another payload, loop control or a
+return is not silently treated as free metadata. Rejected inputs export no
+partial primitive/site/parameter bundle. Completeness of the shared operation
+effect registry remains an input premise.
+
+`pto-sync-input-test --arithmetic input.pto` emits structured test data for these
+relations. `pto-arithmetic-recognition-test` exercises the generic checker and
+its integer normalization. Neither tool generates demands or synchronization.
+
 ## Cost and scope
 
 For a candidate with `N` immediate operations, `A` supplied access records, and
@@ -87,12 +183,27 @@ not claim the paper's slot-count-independent extraction bound. The output has
 at most one normalized fragment per supplied record; deduplication and
 generator extraction are subsequent work.
 
-Guarded rotating, arithmetic, counted-pattern and compositional recognizers
-are not implemented here. The next useful steps are exact tile-operation
-footprints and view normalization for representative kernels, then the rotating
-generator and quotient backend. Arithmetic acceptance requires checking its
-actual primitive relations; merely finding affine-looking operands is not
-sufficient.
+Guarded traversal adds expected linear work in visited operations, phases and
+access records, plus the rotating geometry checks when requested. For arithmetic,
+let `L` count expression DAG nodes across rows, `D` the configured coordinate
+limit, and `M` the input schema/residue metadata. Checking takes expected
+`O(M + LD)` fixed-width arithmetic operations, plus coefficient GCD operations.
+Expression collection shares nodes within each row. These bounds exclude
+constructing the primitive relations and residue splitting.
+
+For the IR producer, let `n` be the number of operations, `h` the nesting depth,
+`s` the number of payload sites, and `a` the supplied access/range count. At fixed
+supported `D,P`, collection and construction take expected `O(nh+s^2+a)` work,
+with `O(s^2+a)` relation output; residue splitting has the explicit factor
+`P^D` and polynomial factors in `D`. The quadratic term constructs reference and
+native order between static sites, not conflicting dynamic access pairs. Costs
+are independent of trip counts. These operation counts exclude shared input
+recovery and the later symbolic reduction backend.
+
+Counted-pattern and compositional recognizers remain unimplemented. Practical
+coverage next needs exact tile-operation footprints, broader bounds/views and
+arithmetic conditions. The arithmetic reduction/selector backend and rotating
+generator/quotient backend are also still separate work.
 
 ## Validation
 
@@ -102,3 +213,15 @@ of nested loops, unknown geometry, shifted-index obligations, mismatched
 strides, physical aliasing across SSA roots, runtime moduli, conditional bodies
 and unsupported loop steps. Existing shared-input and precision tests remain
 applicable.
+
+New tests also cover nested then/else paths, absent arms, immutable versus
+iteration-varying loop guards, late finite guards, all three arithmetic classes,
+negative-bound normalization, impossible equalities, residue/schema mismatches,
+configured bounds and checked coefficient overflow.
+
+The arithmetic program fixture compares emitted relations against independently
+unfolded nested-reset, triangular and sibling-loop traces over small positive,
+zero and negative bounds. It checks occurrence membership, reference order,
+native closure and read/write bytes, including slot holes and shared addresses.
+Rejected prerequisite/control cases must export nothing. The generic checker
+also tests immediate rejection of oversized producer configurations.

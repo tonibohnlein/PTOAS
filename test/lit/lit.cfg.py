@@ -78,6 +78,7 @@ tools = [
     'ptoas',
     'pto-test-opt',
     'pto-sync-input-test',
+    'pto-arithmetic-recognition-test',
     'pto-vpto-scheduler-tracker-test',
     'pto-bisheng-scheduler-test',
 ]
