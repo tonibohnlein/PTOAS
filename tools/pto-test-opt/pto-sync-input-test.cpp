@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Inspect the shared instruction contract without any dependency analyzer.
 #include "PTO/Transforms/InsertSync/SyncInput.h"
+#include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -16,6 +17,43 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
 namespace {
+LogicalResult dumpPhaseIndex(func::FuncOp function, const pto::SyncInput &input) {
+  namespace fs = pto::frontiersynch;
+  fs::PhaseIndex index;
+  if (failed(index.build(function, input))) {
+    return failure();
+  }
+  for (const auto *phase : input.instructions()) {
+    llvm::outs() << "phase-index " << phase->opName.getStringRef()
+                 << " anchor-phases=" << index.phasesFor(phase->elementOp).size()
+                 << " control-depth=" << index.controlPath(*phase).size() << "\n";
+  }
+  if (!function.isDeclaration()) {
+    auto sequence = index.explicitSequence(function.front());
+    llvm::outs() << "sequence " << function.getSymName() << ": ";
+    if (succeeded(sequence)) {
+      llvm::outs() << sequence->size() << "\n";
+    } else {
+      llvm::outs() << "structured\n";
+    }
+  }
+  bool invalidProbe = false;
+  function.walk([&](Operation *op) {
+    if (auto probe = op->getAttrOfType<StringAttr>("test.probe")) {
+      if (!op->getNumResults() || !op->getNumOperands()) {
+        invalidProbe = true;
+        return;
+      }
+      llvm::outs() << "availability " << probe.getValue()
+                   << " before=" << index.valueAvailable(op->getResult(0), op, fs::Boundary::Before)
+                   << " after=" << index.valueAvailable(op->getResult(0), op, fs::Boundary::After)
+                   << " operand-before=" << index.valueAvailable(op->getOperand(0), op, fs::Boundary::Before)
+                   << " operand-before-owner=" << index.valueAvailable(op->getOperand(0),
+                          op->getParentOp(), fs::Boundary::Before) << "\n";
+    }
+  });
+  return failure(invalidProbe);
+}
 void dumpCapabilities() {
   using namespace pto;
   auto dump = [](StringRef name, std::optional<bool> available, bool noScenario = false) {
@@ -50,15 +88,16 @@ std::string render(Operation *op) {
 int main(int argc, char **argv) {
   const bool expectFailure = argc == 3 && StringRef(argv[1]) == "--expect-failure";
   const bool capabilities = argc == 3 && StringRef(argv[1]) == "--capabilities";
-  if (argc != 2 && !expectFailure && !capabilities) {
-    llvm::errs() << "usage: pto-sync-input-test [--expect-failure|--capabilities] input.pto\n";
+  const bool phaseIndex = argc == 3 && StringRef(argv[1]) == "--phase-index";
+  if (argc != 2 && !expectFailure && !capabilities && !phaseIndex) {
+    llvm::errs() << "usage: pto-sync-input-test [--expect-failure|--capabilities|--phase-index] input.pto\n";
     return 1;
   }
   DialectRegistry dialects;
   dialects.insert<pto::PTODialect, func::FuncDialect, arith::ArithDialect, scf::SCFDialect>();
   MLIRContext context(dialects);
   context.disableMultithreading();
-  auto module = parseSourceFile<ModuleOp>(argv[expectFailure || capabilities ? 2 : 1], &context);
+  auto module = parseSourceFile<ModuleOp>(argv[expectFailure || capabilities || phaseIndex ? 2 : 1], &context);
   if (!module || failed(verify(*module))) {
     return 1;
   }
@@ -77,6 +116,9 @@ int main(int argc, char **argv) {
       continue;
     }
     if (!translated) {
+      return 1;
+    }
+    if (phaseIndex && failed(dumpPhaseIndex(function, input))) {
       return 1;
     }
     llvm::outs() << function.getSymName() << ": phases=" << input.instructions().size() << "\n";
