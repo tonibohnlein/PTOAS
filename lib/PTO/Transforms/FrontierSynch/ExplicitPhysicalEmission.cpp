@@ -280,6 +280,10 @@ LogicalResult emitExplicitPhysical(const SyncInput& input, const TraceDemandAnal
         }
         return certifyPeriodicLocals(input, result, costs);
     }
+    if (result.selected && (result.selected->kind == SelectedAnalysis::Kind::Signed ||
+                            result.selected->kind == SelectedAnalysis::Kind::Guarded)) {
+        return emitSymbolicPhysical(input, trace, result, costs);
+    }
     CostScope allocation(costs, CostStage::Allocation);
     if (!pendingPlanUnchanged(result)) {
         result.reason = "finite pending/source plan changed after placement qualification";

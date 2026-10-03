@@ -309,8 +309,10 @@ only after placement, matching and causal reuse succeed. Unsupported analysis
 or physical-realization interfaces still produce explicit diagnostics.
 Flat invocation-owned fixed-body loops can use quotient-based physical
 allocation across multiple pipes, with uniform IDs for dynamic bounds and
-finite-prefix budgets for constant bounds. Nested symbolic allocation and
-capacity repair still require their supported interfaces.
+finite-prefix budgets for constant bounds. Supported nested and conditional
+plans use exact difference-bound reuse queries and invocation-wide counters;
+loop-free opaque guards use shared Boolean outcome valuations. General
+arithmetic allocation and broader capacity repair remain incomplete.
 
 Both algorithms use `--insert-sync-gm-alias=may-not-alias|may-alias`. The default
 `may-not-alias` retains the legacy assumption for distinct resolved GM roots;

@@ -9,6 +9,7 @@
 // null, not guessed from logical command cardinality or shared numeric ID enums.
 #include "DirectEmissionInternal.h"
 #include "GeneralQueries.h"
+#include "PTO/IR/PTO.h"
 #include "SingleStreamLoop.h"
 #include "PTO/Transforms/FrontierSynch/FrontierSynch.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -207,20 +208,49 @@ llvm::json::Object costReport(
                 metrics["repair_guarantee"] = physical.getAs<StringAttr>("guarantee").getValue();
             }
             llvm::json::Array capacities, ids;
-            for (auto item : physical.getAs<ArrayAttr>("pools")) {
-                auto pool = cast<DictionaryAttr>(item);
-                capacities.push_back(llvm::json::Object{
-                    {"allocator", pool.getAs<StringAttr>("allocator").getValue()},
-                    {"source", pool.getAs<IntegerAttr>("source").getInt()},
-                    {"target", pool.getAs<IntegerAttr>("target").getInt()},
-                    {"available", static_cast<int64_t>(pool.getAs<ArrayAttr>("eligible").size())},
-                    {"required", pool.getAs<IntegerAttr>("required").getInt()}});
+            auto number = [](Attribute attribute) -> llvm::json::Value {
+                if (auto value = dyn_cast_or_null<IntegerAttr>(attribute)) { return value.getInt(); }
+                if (auto value = dyn_cast_or_null<StringAttr>(attribute)) { return value.getValue(); }
+                if (auto value = dyn_cast_or_null<PipeAttr>(attribute)) {
+                    return static_cast<int64_t>(value.getPipe());
+                }
+                return nullptr;
+            };
+            auto cardinality = [](Attribute attribute) -> llvm::json::Value {
+                if (auto values = dyn_cast_or_null<ArrayAttr>(attribute)) {
+                    return static_cast<int64_t>(values.size());
+                }
+                if (auto values = dyn_cast_or_null<DenseI64ArrayAttr>(attribute)) {
+                    return static_cast<int64_t>(values.size());
+                }
+                return nullptr;
+            };
+            if (auto pools = physical.getAs<ArrayAttr>("pools")) {
+                for (auto item : pools) {
+                    auto pool = cast<DictionaryAttr>(item);
+                    auto allocator = pool.getAs<StringAttr>("allocator");
+                    if (!allocator) { allocator = physical.getAs<StringAttr>("allocator"); }
+                    capacities.push_back(llvm::json::Object{
+                        {"allocator", allocator ? llvm::json::Value(allocator.getValue()) : llvm::json::Value(nullptr)},
+                        {"source", number(pool.get("source"))},
+                        {"target", number(pool.get("target"))},
+                        {"available", cardinality(pool.get("eligible"))},
+                        {"required", number(pool.get("required"))}});
+                }
             }
-            for (auto item : physical.getAs<ArrayAttr>("matching")) {
-                ids.push_back(cast<DictionaryAttr>(item).getAs<IntegerAttr>("id").getInt());
+            // Finite plans enumerate handoffs; compact plans retain pools and
+            // symbolic generations. Absence of a finite matching list is not
+            // absence of a certified assignment, nor a minimum-ID claim.
+            if (auto matching = physical.getAs<ArrayAttr>("matching")) {
+                for (auto item : matching) {
+                    ids.push_back(number(cast<DictionaryAttr>(item).get("id")));
+                }
+            } else {
+                metrics["physical_ids_scope"] = "compact eligible-pool assignment; occurrence IDs not enumerated";
             }
             metrics["pool_capacities"] = std::move(capacities);
-            metrics["physical_ids"] = std::move(ids);
+            metrics["physical_ids"] = physical.getAs<ArrayAttr>("matching") ?
+                llvm::json::Value(std::move(ids)) : llvm::json::Value(nullptr);
         }
     }
     return llvm::json::Object{

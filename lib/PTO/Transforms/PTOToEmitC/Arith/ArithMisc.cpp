@@ -10,6 +10,7 @@
 
 #include "../PTOToEmitCEmitters.h"
 #include "ArithInternal.h"
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -269,7 +270,25 @@ struct ArithConstantToEmitC : public OpConversionPattern<arith::ConstantOp> {
     }
 
     if (auto intAttr = dyn_cast_or_null<IntegerAttr>(valueAttr)) {
-      std::string valStr = std::to_string(getIntegerAttrSignedValue(intAttr));
+      std::string valStr;
+      const APInt &value = intAttr.getValue();
+      if (value.getBitWidth() == 128 && value.getSignificantBits() > 63) {
+        // C++ has no 128-bit literal suffix. Construct the exact value from
+        // two representable halves; never narrow an analysis guard to int64.
+        APInt high = value.extractBits(64, 64);
+        uint64_t low = value.extractBits(64, 0).getZExtValue();
+        bool isUnsigned = cast<IntegerType>(intAttr.getType()).isUnsigned();
+        std::string upper;
+        if (isUnsigned) { upper = std::to_string(high.getZExtValue()) + "ULL"; }
+        else if (high.getSExtValue() == std::numeric_limits<int64_t>::min()) {
+          upper = "(-9223372036854775807LL - 1)";
+        } else { upper = std::to_string(high.getSExtValue()) + "LL"; }
+        std::string type = isUnsigned ? "unsigned __int128" : "__int128";
+        valStr = "(static_cast<" + type + ">(" + upper + ") * "
+                 "(static_cast<" + type + ">(1) << 64) + " + std::to_string(low) + "ULL)";
+      } else {
+        valStr = std::to_string(getIntegerAttrSignedValue(intAttr));
+      }
       auto constAttr = emitc::OpaqueAttr::get(rewriter.getContext(), valStr);
       rewriter.replaceOpWithNewOp<emitc::ConstantOp>(op, newType, constAttr);
       return success();

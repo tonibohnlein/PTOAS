@@ -95,6 +95,8 @@ add_llvm_executable(pto-frontier-analysis-test
   frontier-finite-physical-driver.cpp
   frontier-one-way-repair-driver.cpp
   frontier-periodic-allocation-driver.cpp
+  frontier-structured-counter-driver.cpp
+  frontier-symbolic-allocation-driver.cpp
   frontier-single-stream-driver.cpp
   frontier-general-counted-driver.cpp
   PARTIAL_SOURCES_INTENDED

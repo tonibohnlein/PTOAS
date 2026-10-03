@@ -11,8 +11,10 @@ from pathlib import Path
 import re
 import sys
 import tempfile
-from ptoas.mlir.ir import Context, Module, DictAttr, IntegerAttr, DenseI64ArrayAttr, BoolAttr
+from ptoas.mlir.ir import Context, Module, DictAttr, IntegerAttr, DenseI64ArrayAttr, BoolAttr, StringAttr
 from ptoas.mlir.dialects import pto
+from check_symbolic_physical import selected_closure
+from check_periodic_physical import rearm as symbolic_rearm
 from check_banked_xor import (close, command_graph, execute, expected, independent_covers,
                              rejected_original, retained_covers, run, activation_certificate)
 
@@ -172,7 +174,38 @@ def main():
         for name, text in negative_sources.items():
             candidate = Path(directory) / (name + ".pto")
             candidate.write_text(text, encoding="utf-8")
-            rejected_original(tool, candidate, name)
+            alternative = run(tool, candidate, "frontier-synch")
+            if alternative.returncode:
+                rejected_original(tool, candidate, name)
+                continue
+            # These mutations disqualify the specialized saved-boundary route,
+            # not the shared SyncIR. A newly supported general plan is legal
+            # only when its own selected R and physical protocol check out.
+            with Context() as context:
+                pto.register_dialect(context)
+                source_module = Module.parse(text)
+                alternative_module = Module.parse(alternative.stdout)
+                source_function = source_module.body.operations[0].operation
+                function = alternative_module.body.operations[0].operation
+                status = StringAttr(function.attributes["pto.frontier.physical_status"]).value
+                assert status == "certified-symbolic-pools", name + " used unqualified specialized allocation"
+                metadata = DictAttr(function.attributes["pto.frontier.analysis"])
+                for active, scalars in valuations:
+                    for n in (0, 1, 2, 3):
+                        inputs = {2: n, **(scalars or {})}
+                        arguments = source_function.regions[0].blocks[0].arguments
+                        for index, argument in enumerate(arguments):
+                            if str(argument.type) == "i1":
+                                inputs[index] = int(active)
+                        occurrences = []
+                        execute(source_function, n, active=active, scalar_inputs=inputs,
+                                occurrences_out=occurrences)
+                        selected = selected_closure(metadata, occurrences, inputs)
+                        required = original_model(source_function, n, False, active, inputs)
+                        commands = execute(function, n, active=active, scalar_inputs=inputs)
+                        assert all(row <= selected[i] for i, row in enumerate(required)), name + " misses storage"
+                        assert command_graph(commands) == selected, name + " changes selected payload order"
+                        symbolic_rearm(commands)
     print("verified source-barrier equivalence, modeled F*, correlated coverage, zero/short/incomplete "
           "trips, directed causal rearm and source/protocol mutations")
 

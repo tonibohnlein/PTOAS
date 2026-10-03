@@ -9,6 +9,7 @@
 #ifndef PTO_FRONTIERSYNCH_EXPLICIT_PHYSICAL_EMISSION_H
 #define PTO_FRONTIERSYNCH_EXPLICIT_PHYSICAL_EMISSION_H
 #include "mlir/Support/LogicalResult.h"
+#include "PTO/Transforms/FrontierSynch/SignedDemandAnalysis.h"
 #include <cstddef>
 #include <cstdint>
 namespace mlir {
@@ -28,6 +29,11 @@ struct PeriodicEventAssignment;
 Value lowerPeriodicPhysicalId(OpBuilder&, Location, Value coordinate, Value lower,
                              int64_t step, const PeriodicEventAssignment&, std::size_t phase);
 LogicalResult emitPeriodicPhysical(const SyncInput&, const TraceDemandAnalysis&,
+                                  DirectEmissionResult&, CostLedger&);
+LogicalResult certifySymbolicReuse(SignedRelationHandle demand, SignedRelationHandle native,
+    SignedRelationHandle readiness, PipelineType source, PipelineType target,
+    std::size_t capacity, std::string& reason);
+LogicalResult emitSymbolicPhysical(const SyncInput&, const TraceDemandAnalysis&,
                                   DirectEmissionResult&, CostLedger&);
 LogicalResult emitExplicitPhysical(const SyncInput&, const TraceDemandAnalysis&,
                                   DirectEmissionResult&, CostLedger&, bool finiteOneWayFamily = false);

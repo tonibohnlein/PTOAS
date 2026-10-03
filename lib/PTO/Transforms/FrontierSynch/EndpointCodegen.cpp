@@ -82,7 +82,10 @@ unsigned endpointWidth(StructuredInputHandle input, const SignedSelector& select
             }
         }
     }
-    return bits;
+    for (unsigned width : {8U, 16U, 32U, 64U, 128U}) {
+        if (bits <= width) { return width; }
+    }
+    return 129;
 }
 Value EndpointCodegen::integer(OpBuilder& builder, Location loc, Value value)
 {
@@ -165,8 +168,8 @@ LogicalResult EndpointCodegen::emit(
     }
     auto loc = anchor->getLoc();
     unsigned bits = endpointWidth(input, selector);
-    if (bits > IntegerType::kMaxWidth) {
-        result.reason = "endpoint arithmetic exceeds the MLIR integer representation";
+    if (bits > 128) {
+        result.reason = "endpoint arithmetic exceeds the supported target integer representation";
         return failure();
     }
     arithmeticType = builder.getIntegerType(bits);
@@ -331,8 +334,8 @@ LogicalResult prepareEndpoints(SelectedAnalysis& selected, std::string& reason)
                     selected.endpoints.clear();
                     return failure();
                 }
-                if (endpointWidth(selected.structured, *selector.value) > IntegerType::kMaxWidth) {
-                    reason = "endpoint arithmetic exceeds the MLIR integer representation";
+                if (endpointWidth(selected.structured, *selector.value) > 128) {
+                    reason = "endpoint arithmetic exceeds the supported target integer representation";
                     selected.endpoints.clear();
                     return failure();
                 }

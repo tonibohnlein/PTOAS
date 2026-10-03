@@ -8,6 +8,7 @@
 
 """Execute actual periodic physical IR against an independent storage/command DAG."""
 import sys
+import json
 from pathlib import Path
 from ptoas.mlir.ir import ArrayAttr, Context, DictAttr, IntegerAttr, Module, StringAttr
 from ptoas.mlir.dialects import pto
@@ -58,8 +59,24 @@ def rejected(commands, expected):
     return actual != expected
 
 
+def check_costs(path, functions):
+    reports = [json.loads(line) for line in Path(path).read_text().splitlines() if line.startswith("{")]
+    reports = [report for report in reports if report.get("report") == "frontier-costs-v1"]
+    assert {report["function"] for report in reports} == functions, "cost report lost a function"
+    for report in reports:
+        metrics = report["metrics"]
+        assert report["failure_category"] is None, "certified plan reported a failure"
+        assert isinstance(metrics["pool_capacities"], list), "missing physical pool report"
+        for pool in metrics["pool_capacities"]:
+            assert isinstance(pool["available"], int), "pool capacity was not reported"
+            assert isinstance(pool["source"], int) and isinstance(pool["target"], int)
+            assert pool["allocator"], "missing allocator identity"
+        if "physical_ids_scope" in metrics:
+            assert metrics["physical_ids"] is None, "compact IDs were spuriously enumerated"
+
+
 def main():
-    source, output = sys.argv[1:]
+    source, output = sys.argv[1:3]
     with Context() as context:
         pto.register_dialect(context)
         original_module = Module.parse(Path(source).read_text(encoding="utf-8"))
@@ -98,6 +115,9 @@ def main():
                     early.insert(first_payload, moved)
                     if not rejected(early, selected):
                         raise ValueError("publication before source escaped the independent oracle")
+        if len(sys.argv) > 3:
+            check_costs(sys.argv[3], {StringAttr(view.operation.attributes["sym_name"]).value
+                                    for view in original_module.body.operations})
         print("periodic physical closure, matching, uniform rearm and mutations verified")
 
 

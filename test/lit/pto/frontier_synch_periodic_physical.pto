@@ -7,12 +7,13 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --emit-pto-ir %s -o %t.ir
 // RUN: FileCheck %s --check-prefix=IR < %t.ir
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --emit-pto-ir --report-frontier-costs %s -o %t.cost.ir 2> %t.cost
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch %s -o %t.cpp 2> %t.cpp.log
 // RUN: FileCheck %s --check-prefix=CPP < %t.cpp
 // RUN: FileCheck %s --check-prefix=LOWERING --allow-empty < %t.cpp.log
 // RUN: %python %S/Inputs/minimum_demand/check_periodic_cpp.py %t.cpp %t.guards
 // RUN: pto-frontier-analysis-test --periodic-allocation-check %s
-// RUN: %python %S/Inputs/minimum_demand/check_periodic_physical.py %s %t.ir
+// RUN: %python %S/Inputs/minimum_demand/check_periodic_physical.py %s %t.ir %t.cost
 !vec = !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 !gm = !pto.partition_tensor_view<16x128xi32>
 module attributes {pto.target_arch = "a3"} {

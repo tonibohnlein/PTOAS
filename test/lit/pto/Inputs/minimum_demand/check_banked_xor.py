@@ -116,8 +116,19 @@ def execute(function, n, correlated=False, effects=None, active=None, scalar_inp
             name = operation.name
             operands = [values.get(value) for value in operation.operands]
             result = None
+            results = None
+            if name in ("scf.yield", "func.return"):
+                return operands
             if name == "arith.constant":
-                result = IntegerAttr(operation.attributes["value"]).value
+                text = str(operation.attributes["value"])
+                if text in ("true", "false"):
+                    result = int(text == "true")
+                else:
+                    # MLIR's Python IntegerAttr.value narrows to int64. Parse
+                    # its exact decimal form for widened endpoint constants.
+                    match = re.match(r"(-?\d+)(?: : .*)?$", text)
+                    assert match, "unsupported scalar integer constant"
+                    result = int(match.group(1))
             elif name in ("arith.addi", "arith.subi", "arith.remui", "arith.muli", "arith.divui"):
                 a, b = operands
                 if name == "arith.remui":
@@ -135,27 +146,42 @@ def execute(function, n, correlated=False, effects=None, active=None, scalar_inp
                     result = a - b
                 else:
                     result = a * b
+            elif name in ("arith.maxsi", "arith.minsi"):
+                result = max(operands) if name == "arith.maxsi" else min(operands)
             elif name == "arith.cmpi":
                 predicate = IntegerAttr(operation.attributes["predicate"]).value
                 a, b = operands
                 result = {0: a == b, 1: a != b, 2: a < b, 3: a <= b, 4: a > b, 5: a >= b}[predicate]
-            elif name in ("arith.index_cast", "arith.extsi"):
+            elif name in ("arith.index_cast", "arith.extsi", "arith.extui"):
                 result = operands[0]
-            elif name in ("arith.ori", "arith.andi"):
-                result = (operands[0] or operands[1]) if name == "arith.ori" else (operands[0] and operands[1])
+                operand_type = str(operation.operands[0].type)
+                if name == "arith.extsi" and operand_type.startswith("i"):
+                    width = int(operand_type[1:])
+                    result %= 1 << width
+                    if result >= 1 << (width - 1):
+                        result -= 1 << width
+            elif name in ("arith.ori", "arith.andi", "arith.xori"):
+                a, b = operands
+                result = (a | b) if name == "arith.ori" else ((a & b) if name == "arith.andi" else (a ^ b))
             elif name == "arith.select":
                 result = operands[1] if operands[0] else operands[2]
             elif name == "scf.for":
                 nested = operation.regions[0].blocks[0]
+                carried = operands[3:]
                 for iteration in range(*operands[:3]):
                     values[nested.arguments[0]] = iteration
+                    for argument, value in zip(nested.arguments[1:], carried, strict=True):
+                        values[argument] = value
                     frames.append(iteration)
-                    block(nested)
+                    carried = block(nested)
                     frames.pop()
+                results = carried
             elif name == "scf.if":
                 arm = 0 if operands[0] else 1
                 if arm < len(operation.regions) and len(operation.regions[arm].blocks):
-                    block(operation.regions[arm].blocks[0])
+                    results = block(operation.regions[arm].blocks[0])
+                else:
+                    results = []
             elif name == "pto.alloc_tile":
                 result = physical_cells(operands[0], tile_bytes(operation.results[0].type))
             elif name == "pto.alloc_multi_tile":
@@ -188,7 +214,10 @@ def execute(function, n, correlated=False, effects=None, active=None, scalar_inp
             elif name not in ("pto.alloc_tile", "pto.alloc_multi_tile", "pto.multi_tile_get", "scf.yield",
                               "func.return"):
                 raise ValueError("uninterpreted compiled operation: " + name)
-            if len(operation.results) == 1:
+            if results is not None:
+                for value, computed in zip(operation.results, results, strict=True):
+                    values[value] = computed
+            elif len(operation.results) == 1:
                 values[operation.results[0]] = result
     block(function.regions[0].blocks[0])
     if values_out is not None:
