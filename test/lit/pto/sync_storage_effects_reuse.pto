@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
+
+// One large allocation is reused as two smaller allocations with distinct SSA
+// roots. Cells must be shared by byte identity, not by root or operation name.
+// A bounding tile write is not a definite overwrite; a scalar write is exact.
+// CHECK-LABEL: storage reused_ranges: cells=5 all-exact=0
+// CHECK: cell 0 {{.*}} [0,4)
+// CHECK: cell 1 {{.*}} [4,1024)
+// CHECK: cell 2 {{.*}} [1024,1028)
+// CHECK: cell 3 {{.*}} [1028,2048)
+// CHECK: cell 4 {{.*}} [4096,5120)
+// CHECK: effect 0 pto.texpands write upper definite-write=0 cells=0, 1, 2, 3
+// CHECK: effect 1 pto.texpands write upper definite-write=0 cells=0, 1
+// CHECK: effect 2 pto.texpands write upper definite-write=0 cells=2, 3
+// CHECK: effect 3 pto.tsetval write exact definite-write=1 cells=0
+// CHECK: effect 4 pto.tgetval read exact definite-write=0 cells=2
+// CHECK: effect 5 pto.tsetval write exact definite-write=1 cells=2
+// CHECK: effect 6 pto.texpands write upper definite-write=0 cells=4
+// CHECK: overlap 0,1=1
+// CHECK: overlap 0,2=1
+// CHECK: overlap 1,2=0
+// CHECK: overlap 4,5=1
+// CHECK: overlap 3,5=0
+// CHECK: overlap 0,6=0
+// CHECK-LABEL: storage scalar_only: cells=1 all-exact=1
+// CHECK: cell 0 {{.*}} [0,4)
+// CHECK: effect 0 pto.tsetval write exact definite-write=1 cells=0
+// CHECK: effect 1 pto.tgetval read exact definite-write=0 cells=0
+// CHECK: source-unchanged; dependency-analysis-not-run
+
+!large = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!small = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @reused_ranges() attributes {test.overlap = array<i64: 0, 1, 0, 2, 1, 2, 4, 5, 3, 5, 0, 6>} {
+    %zero = arith.constant 0 : i64
+    %middle = arith.constant 1024 : i64
+    %far = arith.constant 4096 : i64
+    %i0 = arith.constant 0 : index
+    %i256 = arith.constant 256 : index
+    %one = arith.constant 1.0 : f32
+    %large = pto.alloc_tile addr = %zero : !large
+    %left = pto.alloc_tile addr = %zero : !small
+    %right = pto.alloc_tile addr = %middle : !small
+    %separate = pto.alloc_tile addr = %far : !small
+    pto.texpands ins(%one : f32) outs(%large : !large)
+    pto.texpands ins(%one : f32) outs(%left : !small)
+    pto.texpands ins(%one : f32) outs(%right : !small)
+    pto.tsetval ins(%i0, %one : index, f32) outs(%left : !small)
+    %v = pto.tgetval ins(%large, %i256 : !large, index) outs : f32
+    pto.tsetval ins(%i0, %v : index, f32) outs(%right : !small)
+    pto.texpands ins(%one : f32) outs(%separate : !small)
+    return
+  }
+  func.func @scalar_only() {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %zero : !small
+    %b = pto.alloc_tile addr = %zero : !small
+    pto.tsetval ins(%i0, %one : index, f32) outs(%a : !small)
+    %v = pto.tgetval ins(%b, %i0 : !small, index) outs : f32
+    return
+  }
+}
