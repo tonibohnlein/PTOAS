@@ -9,6 +9,7 @@
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
+#include "PTO/Transforms/FrontierSynch/Recognition.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -56,6 +57,47 @@ LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &in
   if (failed(storage.build(input)) || storage.cells().size() != cellCount || storage.effects().size() != effectCount) {
     return failure();
   }
+  return success();
+}
+void dumpRecognition(StringRef label, const pto::frontiersynch::RecognitionResult &result) {
+  namespace fs = pto::frontiersynch;
+  llvm::outs() << "recognize " << label << ": " << fs::recognitionName(result.state)
+               << " backend=unavailable\n";
+  for (const auto &diagnostic : result.diagnostics) {
+    llvm::outs() << "  issue " << fs::recognitionName(diagnostic.issue);
+    if (diagnostic.anchor) {
+      llvm::outs() << " at " << diagnostic.anchor->getLoc();
+    }
+    llvm::outs() << "\n";
+  }
+  DenseMap<Value, std::size_t> families;
+  for (const auto &access : result.accesses) {
+    auto family = families.try_emplace(access.family, families.size()).first->second;
+    llvm::outs() << "  rotation family=" << family << " slots=" << access.slots
+                 << " stride=" << access.stride << " offset=" << access.offset
+                 << " refresh=" << access.refresh << " atom=";
+    if (access.atom) {
+      llvm::outs() << "[" << access.atom->first << "," << access.atom->second << ")";
+    } else {
+      llvm::outs() << "unknown";
+    }
+    llvm::outs() << "\n";
+  }
+}
+LogicalResult recognize(func::FuncOp function, const pto::SyncInput &input) {
+  pto::frontiersynch::PhaseIndex index;
+  pto::SyncStorageEffects effects;
+  if (failed(index.build(function, input)) || failed(effects.build(input))) {
+    return failure();
+  }
+  llvm::outs() << "recognition " << function.getSymName() << "\n";
+  if (!function.isDeclaration()) {
+    dumpRecognition("explicit", pto::frontiersynch::recognizeExplicit(function.front(), index, effects));
+  }
+  function.walk<WalkOrder::PreOrder>([&](scf::ForOp loop) {
+    llvm::outs() << "  loop " << loop.getLoc() << "\n";
+    dumpRecognition("rotating", pto::frontiersynch::recognizeRotating(loop, index, input, effects));
+  });
   return success();
 }
 LogicalResult dumpPhaseIndex(func::FuncOp function, const pto::SyncInput &input) {
@@ -131,16 +173,17 @@ int main(int argc, char **argv) {
   const bool capabilities = argc == 3 && StringRef(argv[1]) == "--capabilities";
   const bool phaseIndex = argc == 3 && StringRef(argv[1]) == "--phase-index";
   const bool storageEffects = argc == 3 && StringRef(argv[1]) == "--storage-effects";
-  if (argc != 2 && !expectFailure && !capabilities && !phaseIndex && !storageEffects) {
+  const bool recognition = argc == 3 && StringRef(argv[1]) == "--recognize";
+  if (argc != 2 && !recognition && !expectFailure && !capabilities && !phaseIndex && !storageEffects) {
     llvm::errs() << "usage: pto-sync-input-test "
-                 << "[--expect-failure|--capabilities|--phase-index|--storage-effects] input.pto\n";
+                 << "[--expect-failure|--capabilities|--phase-index|--storage-effects|--recognize] input.pto\n";
     return 1;
   }
   DialectRegistry dialects;
   dialects.insert<pto::PTODialect, func::FuncDialect, arith::ArithDialect, scf::SCFDialect>();
   MLIRContext context(dialects);
   context.disableMultithreading();
-  const auto filename = argv[expectFailure || capabilities || phaseIndex || storageEffects ? 2 : 1];
+  const auto filename = argv[expectFailure || capabilities || phaseIndex || storageEffects || recognition ? 2 : 1];
   auto module = parseSourceFile<ModuleOp>(filename, &context);
   if (!module || failed(verify(*module))) {
     return 1;
@@ -160,6 +203,9 @@ int main(int argc, char **argv) {
       continue;
     }
     if (!translated) {
+      return 1;
+    }
+    if (recognition && failed(recognize(function, input))) {
       return 1;
     }
     if (phaseIndex && failed(dumpPhaseIndex(function, input))) {

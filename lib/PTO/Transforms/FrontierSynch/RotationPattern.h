@@ -5,13 +5,16 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-#ifndef PTO_TRANSFORMS_INSERTSYNC_SYNCEFFECTRANGES_H
-#define PTO_TRANSFORMS_INSERTSYNC_SYNCEFFECTRANGES_H
-#include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
-namespace mlir::pto::detail {
-// Requires a nonnull root. Physical extents stay in slot order, without union
-// normalization. Empty means unknown.
-SmallVector<SyncStorageCell> physicalSlotRanges(const BaseMemInfo& memory);
-void resolveEffectRanges(const SyncInput& input, SyncStorageEffect& effect);
-} // namespace mlir::pto::detail
+#ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ROTATIONPATTERN_H
+#define PTO_TRANSFORMS_FRONTIERSYNCH_ROTATIONPATTERN_H
+#include "PTO/Transforms/FrontierSynch/Recognition.h"
+namespace mlir::pto::frontiersynch::detail {
+struct SlotPattern {
+    uint64_t stride = 0;
+    uint64_t offset = 0;
+    bool arithmeticProven = true;
+};
+std::optional<SlotPattern> matchSlot(Value slot, Value induction, uint64_t count);
+std::optional<std::pair<uint64_t, uint64_t>> scalarAtom(const SyncStorageEffect& effect, uint64_t bytes);
+} // namespace mlir::pto::frontiersynch::detail
 #endif

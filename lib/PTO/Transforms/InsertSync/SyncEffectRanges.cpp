@@ -183,6 +183,11 @@ void refineScalarElement(const SyncInput& input, SyncStorageEffect& effect, bool
 }
 } // namespace
 
+SmallVector<SyncStorageCell> physicalSlotRanges(const BaseMemInfo& memory)
+{
+    return rootRanges(memory);
+}
+
 void resolveEffectRanges(const SyncInput& input, SyncStorageEffect& effect)
 {
     const auto& memory = *effect.memory;
