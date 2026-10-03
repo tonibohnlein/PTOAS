@@ -18,6 +18,7 @@ add_mlir_dialect_library(PTOIR
   PTO.cpp
   VPTOBridgeRegistry.cpp
   VPTOBridgeOps.cpp
+  PTOSyncCapabilities.cpp
   VPTO.cpp
   VPTOAddressSemantics.cpp
   PTOGenericOps.cpp
