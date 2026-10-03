@@ -456,15 +456,6 @@ FailureOr<SyncEventPool> SyncTargetInfo::eventPool(
     }
     return pool;
 }
-FailureOr<SmallVector<unsigned>> SyncTargetInfo::eligibleEventIds(
-    SyncPhysicalCore core, PIPE source, PIPE target, std::string& reason) const
-{
-    auto pool = eventPool(core, source, target, reason);
-    if (failed(pool)) {
-        return failure();
-    }
-    return std::move(pool->eligibleIds);
-}
 SyncMechanismFact SyncTargetInfo::barrierFact(SyncPhysicalCore core, PIPE pipe) const
 {
     return getSyncBarrierFact(arch, core, pipe);

@@ -486,19 +486,6 @@ FailureOr<ArrayAttr> SingleStreamLoop::framePortQuery(bool sourceLast, PeriodicE
     } else if (**threshold == 0) { append(active, positive); }
     return builder.getArrayAttr(alternatives);
 }
-FailureOr<bool> SingleStreamLoop::portReaches(bool sourceLast, PeriodicEventKind sourceKind,
-    bool targetLast, PeriodicEventKind targetKind, int64_t trips) const
-{
-    if (!regionOnly || trips <= 0) { return failure(); }
-    const auto source = sourceLast ? bodies.size() - 1 : 0;
-    const auto target = targetLast ? bodies.size() - 1 : 0;
-    const int64_t sourceOrdinal = sourceLast ? trips - 1 : 0;
-    const int64_t targetOrdinal = targetLast ? trips - 1 : 0;
-    if (targetOrdinal < sourceOrdinal) { return false; }
-    auto distance = reduction.threshold(source, sourceKind, target, targetKind);
-    if (failed(distance)) { return failure(); }
-    return *distance && **distance <= llvm::DynamicAPInt(targetOrdinal - sourceOrdinal);
-}
 FailureOr<DictionaryAttr> SingleStreamLoop::crossingWitness(const SyncInput& input,
     const CompoundInstanceElement* source, const CompoundInstanceElement* consumer,
     std::size_t sourceSite, std::size_t consumerSite, int64_t distance, MLIRContext* context)

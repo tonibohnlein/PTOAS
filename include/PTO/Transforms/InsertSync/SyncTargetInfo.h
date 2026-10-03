@@ -143,8 +143,6 @@ public:
     // Unsupported target mechanisms are distinct from event-capacity exhaustion.
     FailureOr<SyncEventPool> eventPool(
         SyncPhysicalCore core, PIPE source, PIPE target, std::string& reason) const;
-    FailureOr<SmallVector<unsigned>> eligibleEventIds(
-        SyncPhysicalCore core, PIPE source, PIPE target, std::string& reason) const;
     // Separate from frontier site/loop/value namespaces: explicit MLIR postorder.
     LogicalResult retainSourceIds(func::FuncOp clone, const IRMapping& mapping) const;
     bool valueAvailable(Value value, Operation* anchor, bool after) const;

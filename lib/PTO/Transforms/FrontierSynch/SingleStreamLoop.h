@@ -119,8 +119,6 @@ struct SingleStreamLoop {
     // Affine rows are a finite union, not an opaque numerical callback.
     FailureOr<ArrayAttr> framePortQuery(bool sourceLast, PeriodicEventKind sourceKind,
         bool targetLast, PeriodicEventKind targetKind) const;
-    FailureOr<bool> portReaches(bool sourceLast, PeriodicEventKind sourceKind,
-        bool targetLast, PeriodicEventKind targetKind, int64_t trips) const;
     static FailureOr<std::shared_ptr<const SingleStreamLoop>> buildRepeatedPair(
         func::FuncOp function, const SyncInput& input, const TraceDemandAnalysis& trace,
         CostLedger& costs, std::string& reason);

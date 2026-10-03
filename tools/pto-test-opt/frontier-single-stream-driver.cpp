@@ -495,17 +495,21 @@ int runSingleStreamChecks(llvm::StringRef path, mlir::MLIRContext& context)
             for (int64_t trips : {0, 1, 2, 5}) {
                 for (unsigned from = 0; from < 4; ++from) {
                     for (unsigned to = 0; to < 4; ++to) {
-                        auto query = child.analysis->boundaryLoop->portReaches(from >= 2,
+                        auto query = body.portQuery(from >= 2,
                             from % 2 ? fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start,
-                            to >= 2, to % 2 ? fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start, trips);
-                        if (!trips) { if (succeeded(query)) { return 1; } continue; }
+                            to >= 2, to % 2 ? fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start);
+                        if (failed(query)) { return 1; }
+                        if (!trips) { continue; }
                         const auto size = static_cast<int64_t>(body.bodies.size());
                         const auto source = from >= 2 ? trips * size - 1 : 0;
                         const auto target = to >= 2 ? trips * size - 1 : 0;
                         // Independent total RMW chain with paired native chains.
                         const bool expected = target > source ||
                             (target == source && !(from % 2 && !(to % 2)));
-                        if (failed(query) || *query != expected) { return 1; }
+                        const bool actual = query->reachable &&
+                            llvm::DynamicAPInt(query->coefficient) * llvm::DynamicAPInt(trips) +
+                                llvm::DynamicAPInt(query->constant) >= 0;
+                        if (actual != expected) { return 1; }
                     }
                 }
             }
@@ -569,16 +573,20 @@ int runSingleStreamChecks(llvm::StringRef path, mlir::MLIRContext& context)
         for (int64_t trips : {0, 1, 2, 5}) {
             for (unsigned from = 0; from < 4; ++from) {
                 for (unsigned to = 0; to < 4; ++to) {
-                    auto reached = body.portReaches(from >= 2,
+                    auto reached = body.portQuery(from >= 2,
                         from % 2 ? fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start,
-                        to >= 2, to % 2 ? fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start, trips);
-                    if (!trips) { if (succeeded(reached)) { return 1; } continue; }
+                        to >= 2, to % 2 ? fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start);
+                    if (failed(reached)) { return 1; }
+                    if (!trips) { continue; }
                     const auto size = static_cast<int64_t>(body.bodies.size());
                     const auto source = from >= 2 ? trips * size - 1 : 0;
                     const auto target = to >= 2 ? trips * size - 1 : 0;
                     const bool expected = target > source ||
                         (target == source && !(from % 2 && !(to % 2)));
-                    if (failed(reached) || *reached != expected) { return 1; }
+                    const bool actual = reached->reachable &&
+                        llvm::DynamicAPInt(reached->coefficient) * llvm::DynamicAPInt(trips) +
+                            llvm::DynamicAPInt(reached->constant) >= 0;
+                    if (actual != expected) { return 1; }
                 }
             }
         }
