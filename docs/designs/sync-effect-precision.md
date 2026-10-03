@@ -70,7 +70,11 @@ is not polynomial in the bit length of an arbitrary encoded slot count.
 length; unknown geometry answers conservatively. A positive answer means
 possible overlap, not a proved dynamic dependence.
 
-## Next consumer: demand generation
+## Next consumers: recognition and demand generation
+
+The [route recognizers](sync-analysis-recognition.md) inspect these effects
+and the original control structure before selecting an analysis. Recognition
+does not itself generate demands.
 
 For an explicit execution with exact effects, the lifetime scan tracks the
 previous writer and latest reader per pipe for each cell. It processes an
