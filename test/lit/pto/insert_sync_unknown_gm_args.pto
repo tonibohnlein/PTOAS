@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-gm-alias=may-alias %s -o - | FileCheck %s --check-prefix=EMIT
+// RUN: pto-frontier-analysis-test --gm-alias-check %s | FileCheck %s --check-prefix=MODEL
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-gm-alias=may-alias --insert-sync-algorithm=frontier-synch %s -o - | FileCheck %s --check-prefix=EMIT
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=existing --insert-sync-gm-alias=may-alias --emit-pto-ir %s -o - | FileCheck %s --check-prefix=ALIASIR
+// RUN: pto-test-opt --pto-insert-sync='algorithm=existing gm-alias=may-alias' %s -o - | FileCheck %s --check-prefix=ALIASIR
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=existing --insert-sync-gm-alias=may-not-alias --emit-pto-ir %s -o - | FileCheck %s --check-prefix=NOALIASIR
+// RUN: pto-test-opt --pto-insert-sync='algorithm=existing gm-alias=may-not-alias' %s -o - | FileCheck %s --check-prefix=NOALIASIR
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=existing --emit-pto-ir %s -o - | FileCheck %s --check-prefix=NOALIASIR
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=existing --insert-sync-gm-alias=may-not-alias %s -o - | FileCheck %s --check-prefix=NOALIASCPP
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=existing %s -o - | FileCheck %s --check-prefix=NOALIASCPP
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --insert-sync-gm-alias=may-alias --emit-pto-ir %s -o - | FileCheck %s --check-prefix=ALIASIR
+// RUN: pto-test-opt --pto-insert-sync='algorithm=frontier-synch gm-alias=may-alias' %s -o - | FileCheck %s --check-prefix=ALIASIR
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --insert-sync-gm-alias=may-not-alias --emit-pto-ir %s -o - | FileCheck %s --check-prefix=NOALIASIR
+// RUN: pto-test-opt --pto-insert-sync='algorithm=frontier-synch gm-alias=may-not-alias' %s -o - | FileCheck %s --check-prefix=NOALIASIR
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --emit-pto-ir %s -o - | FileCheck %s --check-prefix=NOALIASIR
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --insert-sync-gm-alias=may-not-alias %s -o - | FileCheck %s --check-prefix=NOALIASCPP
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch %s -o - | FileCheck %s --check-prefix=NOALIASCPP
+// RUN: not pto-test-opt --pto-insert-sync='gm-alias=invalid' %s 2>&1 | FileCheck %s --check-prefix=INVALID
+// RUN: not ptoas --pto-arch=a3 --enable-insert-sync --insert-sync-gm-alias=invalid %s -o - 2>&1 | FileCheck %s --check-prefix=INVALID
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --insert-sync-gm-alias=may-alias --dump-frontier-demands --emit-pto-ir %s -o %t.may-alias.ir 2>&1 | FileCheck %s --check-prefix=ALIASDUMP
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --insert-sync-gm-alias=may-not-alias --dump-frontier-demands --emit-pto-ir %s -o %t.may-not-alias.ir 2>&1 | FileCheck %s --check-prefix=NOALIASDUMP
+// Distinct pointer arguments may name the same GM object. Distinct local tiles
+// isolate the cross-pipe GM dependence. One executed phase per physical pipe
+// has no distinct native-chain pair; pointer aliasing remains conservative.
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @gm_unknown_arguments(%first: !pto.ptr<f32, gm>, %second: !pto.ptr<f32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 1024 : i64
+    %store_ptr = pto.addptr %first, %c0 : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
+    %load_ptr = pto.addptr %second, %c0 : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
+    %store_view = pto.make_tensor_view %store_ptr,
+      shape = [%c1, %c1, %c1, %c16, %c16],
+      strides = [%c16, %c16, %c16, %c16, %c1]
+      : !pto.tensor_view<1x1x1x16x16xf32>
+    %load_view = pto.make_tensor_view %load_ptr,
+      shape = [%c1, %c1, %c1, %c16, %c16],
+      strides = [%c16, %c16, %c16, %c16, %c1]
+      : !pto.tensor_view<1x1x1x16x16xf32>
+    %store_part = pto.partition_view %store_view,
+      offsets = [%c0, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c1, %c1, %c16, %c16]
+      : !pto.tensor_view<1x1x1x16x16xf32>
+      -> !pto.partition_tensor_view<1x1x1x16x16xf32>
+    %load_part = pto.partition_view %load_view,
+      offsets = [%c0, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c1, %c1, %c16, %c16]
+      : !pto.tensor_view<1x1x1x16x16xf32>
+      -> !pto.partition_tensor_view<1x1x1x16x16xf32>
+    %stored = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf32>
+    %loaded = pto.alloc_tile addr = %addr1 : !pto.tile_buf<vec, 16x16xf32>
+    pto.tstore ins(%stored : !pto.tile_buf<vec, 16x16xf32>)
+               outs(%store_part : !pto.partition_tensor_view<1x1x1x16x16xf32>)
+               {layout = #pto.layout<nd>}
+    pto.tload ins(%load_part : !pto.partition_tensor_view<1x1x1x16x16xf32>)
+              outs(%loaded : !pto.tile_buf<vec, 16x16xf32>)
+              {layout = #pto.layout<nd>}
+    return
+  }
+}
+
+// EMIT-LABEL: AICORE void gm_unknown_arguments(
+// EMIT:      TSTORE(
+// EMIT-NEXT: set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID[[GM_DEP:[0-9]+]]);
+// EMIT-NEXT: wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID[[GM_DEP]]);
+// EMIT-NEXT: TLOAD(
+// MODEL: verified shared GM alias policies, interval boundaries and original RAW incidence
+// ALIASIR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>,
+// ALIASIR: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>,
+// NOALIASIR-NOT: pto.set_flag
+// NOALIASIR-NOT: pto.wait_flag
+// NOALIASIR: pto.tstore
+// NOALIASIR-NOT: pto.set_flag
+// NOALIASIR-NOT: pto.wait_flag
+// NOALIASIR: pto.tload
+// NOALIASIR-NOT: pto.set_flag
+// NOALIASIR-NOT: pto.wait_flag
+// NOALIASCPP-NOT: set_flag(PIPE_MTE3, PIPE_MTE2,
+// NOALIASCPP-NOT: wait_flag(PIPE_MTE3, PIPE_MTE2,
+// NOALIASCPP: TSTORE(
+// NOALIASCPP-NOT: set_flag(PIPE_MTE3, PIPE_MTE2,
+// NOALIASCPP-NOT: wait_flag(PIPE_MTE3, PIPE_MTE2,
+// NOALIASCPP: TLOAD(
+// NOALIASCPP-NOT: set_flag(PIPE_MTE3, PIPE_MTE2,
+// NOALIASCPP-NOT: wait_flag(PIPE_MTE3, PIPE_MTE2,
+// INVALID: unknown GM alias policy; expected may-alias or may-not-alias
+
+// ALIASDUMP: "F_star_pairs":{{\[\[0,1\]\]}}
+// ALIASDUMP-SAME: "gm_alias_policy":"may-alias"
+// NOALIASDUMP: "F_star_pairs":[]
+// NOALIASDUMP-SAME: "gm_alias_policy":"may-not-alias"

@@ -77,6 +77,9 @@ tool_dirs = [config.ptoir_tools_dir, config.ptoir_test_tools_dir,
 tools = [
     'ptoas',
     'pto-test-opt',
+    'pto-frontier-analysis-test',
+    'pto-frontier-demand-test',
+    'pto-frontier-rotating-test',
     'pto-vpto-scheduler-tracker-test',
     'pto-bisheng-scheduler-test',
 ]

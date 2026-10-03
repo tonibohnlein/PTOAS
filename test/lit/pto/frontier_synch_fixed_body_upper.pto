@@ -1,0 +1,94 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-frontier-analysis-test --fixed-body-upper-check %s | FileCheck %s
+// CHECK: verified sound upper coverage, finite excess certificate, delayed locals and request isolation
+!vec = !pto.tile_buf<vec, 16x128xf32>
+!view = !pto.partition_tensor_view<16x128xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func @relay(%src: !view, %n: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %next = arith.constant 8192 : i64
+    %third = arith.constant 16384 : i64
+    %a = pto.alloc_tile addr = %zero : !vec
+    %x = pto.alloc_tile addr = %next : !vec
+    %r = pto.alloc_tile addr = %third : !vec
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %n step %c1 {
+      pto.tload ins(%src : !view) outs(%a : !vec)
+      pto.tload ins(%src : !view) outs(%x : !vec)
+      pto.tabs ins(%a : !vec) outs(%r : !vec)
+      pto.tload ins(%src : !view) outs(%a : !vec)
+    }
+    return
+  }
+  func.func @local_upper(%src: !view, %n: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %next = arith.constant 8192 : i64
+    %a = pto.alloc_tile addr = %zero : !vec
+    %x = pto.alloc_tile addr = %next : !vec
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %n step %c1 {
+      pto.tload ins(%src : !view) outs(%a : !vec)
+      pto.tload ins(%src : !view) outs(%x : !vec)
+      pto.tload ins(%src : !view) outs(%a : !vec)
+    }
+    return
+  }
+  func.func @changing(%src: !view, %n: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %fixedAddress = arith.constant 8192 : i64
+    %fixed = pto.alloc_tile addr = %fixedAddress : !vec
+    scf.for %i = %c0 to %n step %c1 {
+      %address = arith.index_cast %i : index to i64
+      %a = pto.alloc_tile addr = %address : !vec
+      pto.tload ins(%src : !view) outs(%a : !vec)
+      pto.tload ins(%src : !view) outs(%fixed : !vec)
+    }
+    return
+  }
+
+  func.func @parent_upper(%src: !view, %n: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %next = arith.constant 8192 : i64
+    %third = arith.constant 16384 : i64
+    %a = pto.alloc_tile addr = %zero : !vec
+    %x = pto.alloc_tile addr = %next : !vec
+    %seed = pto.alloc_tile addr = %third : !vec
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    pto.tabs ins(%seed : !vec) outs(%a : !vec)
+    scf.for %i = %c0 to %n step %c1 {
+      pto.tload ins(%src : !view) outs(%a : !vec)
+      pto.tload ins(%src : !view) outs(%x : !vec)
+      pto.tload ins(%src : !view) outs(%a : !vec)
+    }
+    pto.tabs ins(%a : !vec) outs(%seed : !vec)
+    return
+  }
+  func.func @partial_rmw(%src: !view, %n: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %partial = arith.constant 4096 : i64
+    %third = arith.constant 16384 : i64
+    %a = pto.alloc_tile addr = %zero : !vec
+    %b = pto.alloc_tile addr = %partial : !vec
+    %seed = pto.alloc_tile addr = %third : !vec
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %scale = arith.constant 1.0 : f32
+    scf.for %i = %c0 to %n step %c1 {
+      pto.taxpy ins(%seed, %scale : !vec, f32) outs(%a : !vec)
+      pto.tload ins(%src : !view) outs(%b : !vec)
+      pto.tabs ins(%a : !vec) outs(%seed : !vec)
+    }
+    return
+  }
+
+}

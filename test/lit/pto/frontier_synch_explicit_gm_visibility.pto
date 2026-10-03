@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='algorithm=frontier-synch dump-frontier-demands=true report-frontier-costs=true' %s -o %t.ir 2> %t.log
+// RUN: FileCheck %s --check-prefix=REPORT < %t.log
+// RUN: FileCheck %s --check-prefix=IR < %t.ir
+// Shared modeled GM requirements are analyzed directly; no separate input
+// visibility certificate is requested by frontier.
+!vec = !pto.tile_buf<vec, 16x128xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func @gm_round_trip(%buffer: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %next = arith.constant 8192 : i64
+    %input = pto.alloc_tile addr = %zero : !vec
+    %output = pto.alloc_tile addr = %next : !vec
+    pto.tstore ins(%input : !vec) outs(%buffer : !pto.partition_tensor_view<16x128xf32>)
+    pto.tload ins(%buffer : !pto.partition_tensor_view<16x128xf32>) outs(%output : !vec)
+    pto.tabs ins(%output : !vec) outs(%input : !vec)
+    return
+  }
+}
+// REPORT-DAG: "analysis":"selected-minimum"
+// REPORT-DAG: "requirements":"shared-modeled"
+// REPORT-DAG: "physical_realization":"physical assignment certified
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]

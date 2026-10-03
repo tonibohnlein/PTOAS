@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --emit-pto-ir %s -o %t.ir
+// RUN: FileCheck %s --check-prefix=IR < %t.ir
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch %s -o %t.cpp
+// RUN: FileCheck %s --check-prefix=CPP < %t.cpp
+// RUN: pto-frontier-analysis-test --single-stream-check %s
+// RUN: %python %S/Inputs/minimum_demand/check_nested_frames.py pto-test-opt %s
+!vec = !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module attributes {pto.target_arch = "a3"} {
+  func.func @nested_banks3(%gm0: !pto.partition_tensor_view<16x128xi32>,
+                        %gm1: !pto.partition_tensor_view<16x128xi32>, %n: index, %outer: index, %middle: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 16384 : i64
+    %a2 = arith.constant 65536 : i64
+    %input = pto.alloc_tile addr = %a0 : !vec
+    %tmp = pto.alloc_tile addr = %a2 : !vec
+    %banks = pto.alloc_multi_tile addr = %a1 : !pto.multi_tile_buf<!vec, count=3>
+    pto.tload ins(%gm0 : !pto.partition_tensor_view<16x128xi32>) outs(%input : !vec)
+    // These constants deliberately follow the entry payload.
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %count = arith.constant 3 : index
+    scf.for %j = %zero to %outer step %one {
+      scf.for %k = %zero to %middle step %one {
+      scf.for %i = %zero to %n step %one {
+      %slot = arith.remui %i, %count : index
+      %output = pto.multi_tile_get %banks[%slot] : !pto.multi_tile_buf<!vec, count=3> -> !vec
+      pto.txor ins(%input, %input, %tmp : !vec, !vec, !vec) outs(%output : !vec)
+      pto.txor ins(%input, %input, %tmp : !vec, !vec, !vec) outs(%output : !vec)
+    }
+    }
+    }
+    %inner_nonempty = arith.cmpi sgt, %n, %zero : index
+    %outer_nonempty = arith.cmpi sgt, %outer, %zero : index
+    %inner_outer = arith.andi %inner_nonempty, %outer_nonempty : i1
+    %middle_nonempty = arith.cmpi sgt, %middle, %zero : index
+    %nonempty = arith.andi %inner_outer, %middle_nonempty : i1
+    scf.if %nonempty {
+      %last = arith.subi %n, %one : index
+      %slot = arith.remui %last, %count : index
+      %output = pto.multi_tile_get %banks[%slot] : !pto.multi_tile_buf<!vec, count=3> -> !vec
+      pto.tstore ins(%output : !vec) outs(%gm1 : !pto.partition_tensor_view<16x128xi32>)
+    }
+    return
+  }
+}
+// IR: pto.frontier.physical_status = "certified-single-generation-boundaries"
+// IR: pto.tload
+// IR: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// IR: scf.for
+// IR: pto.barrier <PIPE_V>
+// IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// IR: pto.txor
+// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR: pto.tstore
+// IR: pto.barrier <PIPE_ALL>
+// IR-NOT: sync.logical_
+// CPP: TLOAD(
+// CPP: TXOR(
+// CPP: TSTORE(

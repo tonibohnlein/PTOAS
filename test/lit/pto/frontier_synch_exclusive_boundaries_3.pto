@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --emit-pto-ir %s -o %t.ir
+// RUN: FileCheck %s --check-prefix=IR < %t.ir
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch %s -o %t.cpp
+// RUN: FileCheck %s --check-prefix=CPP < %t.cpp
+// RUN: pto-frontier-analysis-test --single-stream-check %s
+// RUN: %python %S/Inputs/minimum_demand/check_exclusive_boundaries.py pto-test-opt %s
+!vec = !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module attributes {pto.target_arch = "a3"} {
+  func.func @exclusive3(%gm0: !pto.partition_tensor_view<16x128xi32>,
+                         %gm1: !pto.partition_tensor_view<16x128xi32>, %n1: index, %n2: index, %gate: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 16384 : i64
+    %a2 = arith.constant 65536 : i64
+    %input = pto.alloc_tile addr = %a0 : !vec
+    %tmp = pto.alloc_tile addr = %a2 : !vec
+    %banks = pto.alloc_multi_tile addr = %a1 : !pto.multi_tile_buf<!vec, count=3>
+    pto.tload ins(%gm0 : !pto.partition_tensor_view<16x128xi32>) outs(%input : !vec)
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %count = arith.constant 3 : index
+    %active = arith.cmpi sgt, %gate, %zero : index
+    scf.if %active {
+    scf.for %i1 = %zero to %n1 step %one {
+      %slot1 = arith.remui %i1, %count : index
+      %output1 = pto.multi_tile_get %banks[%slot1] : !pto.multi_tile_buf<!vec, count=3> -> !vec
+      pto.txor ins(%input, %input, %tmp : !vec, !vec, !vec) outs(%output1 : !vec)
+    }
+    } else {
+    scf.for %i2 = %zero to %n2 step %one {
+      %slot2 = arith.remui %i2, %count : index
+      %output2 = pto.multi_tile_get %banks[%slot2] : !pto.multi_tile_buf<!vec, count=3> -> !vec
+      pto.txor ins(%input, %input, %tmp : !vec, !vec, !vec) outs(%output2 : !vec)
+    }
+    }
+    %selected = arith.select %active, %n1, %n2 : index
+    %positive = arith.cmpi sgt, %selected, %zero : index
+    scf.if %positive {
+      %last = arith.subi %selected, %one : index
+      %slot = arith.remui %last, %count : index
+      %output = pto.multi_tile_get %banks[%slot] : !pto.multi_tile_buf<!vec, count=3> -> !vec
+      pto.tstore ins(%output : !vec) outs(%gm1 : !pto.partition_tensor_view<16x128xi32>)
+    }
+    return
+  }
+}
+// IR: representation = "exclusive-arm-shared-port-boundaries"
+// IR: static_endpoint_templates = 8 : i64
+// IR: pto.tload
+// IR: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// IR: scf.for
+// IR: pto.txor
+// IR: scf.for
+// IR: pto.txor
+// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR: pto.tstore
+// IR: pto.barrier <PIPE_ALL>
+// IR-NOT: sync.logical_
+// CPP: TLOAD(
+// CPP: TXOR(
+// CPP: TXOR(
+// CPP: TSTORE(

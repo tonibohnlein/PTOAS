@@ -1,0 +1,139 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-frontier-analysis-test --dump-guarded-demands %s | FileCheck %s
+// RUN: %python %S/Inputs/minimum_demand/check_guarded_mlir.py pto-frontier-analysis-test %s
+// RUN: not pto-frontier-analysis-test --dump-guarded-demands %S/frontier_synch_structure.pto 2>&1 | FileCheck %s --check-prefix=LOOP
+// RUN: not pto-frontier-analysis-test --dump-guarded-demands %S/tgather_compare_macro_sync_model.pto 2>&1 | FileCheck %s --check-prefix=MACRO
+// LOOP: guarded demand analysis supports loop-free scf.if/else only
+// MACRO: guarded demand analysis requires single-phase operation anchors
+!vec = !pto.tile_buf<vec, 16x16xf32>
+!half = !pto.tile_buf<vec, 8x16xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func private @write_v(!vec) attributes {pto.tileop.helper, pto.tileop.kind = "vector", pto.tileop.effects = ["write"]}
+  func.func private @write_m(!vec) attributes {pto.tileop.helper, pto.tileop.kind = "cube", pto.tileop.effects = ["write"]}
+  func.func private @read_v(!vec) attributes {pto.tileop.helper, pto.tileop.kind = "vector", pto.tileop.effects = ["read"]}
+  func.func private @read_m(!vec) attributes {pto.tileop.helper, pto.tileop.kind = "cube", pto.tileop.effects = ["read"]}
+  func.func private @rmw_v(!vec) attributes {pto.tileop.helper, pto.tileop.kind = "vector", pto.tileop.effects = ["readwrite"]}
+  func.func private @copy_m(!vec, !vec) attributes {pto.tileop.helper, pto.tileop.kind = "cube", pto.tileop.effects = ["read", "write"]}
+  func.func private @read_pair(!vec, !vec) attributes {pto.tileop.helper, pto.tileop.kind = "vector", pto.tileop.effects = ["read", "read"]}
+  func.func private @write_half_m(!half) attributes {pto.tileop.helper, pto.tileop.kind = "cube", pto.tileop.effects = ["write"]}
+
+  func.func @exclusive_writers(%c: i1) {
+    %z = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %z : !vec
+    scf.if %c {
+      func.call @write_v(%a) : (!vec) -> ()
+    } else {
+      func.call @write_m(%a) : (!vec) -> ()
+    }
+    func.call @read_v(%a) : (!vec) -> ()
+    return
+  }
+  // CHECK-LABEL: exclusive_writers: phases=3
+  // CHECK: guarded=
+  func.func @conditional_relay(%c: i1) {
+    %z = arith.constant 0 : i64
+    %k = arith.constant 2048 : i64
+    %a = pto.alloc_tile addr = %z : !vec
+    %b = pto.alloc_tile addr = %k : !vec
+    func.call @write_v(%a) : (!vec) -> ()
+    scf.if %c {
+      func.call @copy_m(%a, %b) : (!vec, !vec) -> ()
+    }
+    func.call @read_pair(%a, %b) : (!vec, !vec) -> ()
+    return
+  }
+  // CHECK-LABEL: conditional_relay: phases=3
+  // CHECK: guarded=
+  func.func @conditional_adjacency(%c: i1) {
+    %z = arith.constant 0 : i64
+    %k = arith.constant 2048 : i64
+    %a = pto.alloc_tile addr = %z : !vec
+    %b = pto.alloc_tile addr = %k : !vec
+    func.call @write_v(%a) : (!vec) -> ()
+    scf.if %c {
+      func.call @write_v(%b) : (!vec) -> ()
+    }
+    func.call @read_v(%a) : (!vec) -> ()
+    return
+  }
+  // CHECK-LABEL: conditional_adjacency: phases=3
+  // CHECK: guarded=
+  func.func @nested(%c: i1, %d: i1) {
+    %z = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %z : !vec
+    func.call @write_v(%a) : (!vec) -> ()
+    scf.if %c {
+      scf.if %d {
+        func.call @read_m(%a) : (!vec) -> ()
+      } else {
+        func.call @rmw_v(%a) : (!vec) -> ()
+      }
+    } else {
+      func.call @read_v(%a) : (!vec) -> ()
+    }
+    func.call @write_m(%a) : (!vec) -> ()
+    return
+  }
+  // CHECK-LABEL: nested: phases=5
+  // CHECK: guarded=
+  func.func @repeated_condition(%c: i1) {
+    %z = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %z : !vec
+    func.call @write_v(%a) : (!vec) -> ()
+    scf.if %c {
+      scf.if %c {
+        func.call @read_m(%a) : (!vec) -> ()
+      } else {
+        func.call @write_m(%a) : (!vec) -> ()
+      }
+    }
+    func.call @read_v(%a) : (!vec) -> ()
+    return
+  }
+  // CHECK-LABEL: repeated_condition: phases=4
+  // CHECK: guarded=
+  func.func @partial_overlap(%c: i1) {
+    %z = arith.constant 0 : i64
+    %k = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %z : !vec
+    %b = pto.alloc_tile addr = %k : !half
+    func.call @write_v(%a) : (!vec) -> ()
+    scf.if %c {
+      func.call @write_half_m(%b) : (!half) -> ()
+    }
+    func.call @read_v(%a) : (!vec) -> ()
+    return
+  }
+  // CHECK-LABEL: partial_overlap: phases=3
+  // CHECK: guarded=
+  func.func @constant_branch() {
+    %c = arith.constant true
+    %z = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %z : !vec
+    scf.if %c {
+      func.call @write_v(%a) : (!vec) -> ()
+    } else {
+      func.call @write_m(%a) : (!vec) -> ()
+    }
+    func.call @read_v(%a) : (!vec) -> ()
+    return
+  }
+  // CHECK-LABEL: constant_branch: phases=3
+  // CHECK: guarded=
+  func.func @empty_arms(%c: i1) {
+    scf.if %c {
+    } else {
+    }
+    return
+  }
+  // CHECK-LABEL: empty_arms: phases=0
+  // CHECK: guarded=
+}
+// CHECK: original-ir-unchanged; construction-not-run

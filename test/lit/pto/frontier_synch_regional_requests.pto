@@ -1,0 +1,127 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-frontier-analysis-test --regional-request-check %s | FileCheck %s
+// CHECK: verified regional requests: child quotient, sibling independence, cache/context/needs and rollback
+!vec = !pto.tile_buf<vec, 16x16xf32>
+module attributes {pto.target_arch = "a3"} {
+func.func private @v(!vec) attributes {pto.tileop.helper,
+  pto.tileop.kind = "vector", pto.tileop.effects = ["write"]}
+func.func private @m(!vec) attributes {pto.tileop.helper,
+  pto.tileop.kind = "cube", pto.tileop.effects = ["read"]}
+func.func private @vr(!vec) attributes {pto.tileop.helper,
+  pto.tileop.kind = "vector", pto.tileop.effects = ["read"]}
+func.func @prologue_loop_epilogue(%n: index) {
+  %a = pto.alloc_tile : !vec
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  func.call @v(%a) : (!vec) -> ()
+  scf.for %i = %c0 to %n step %c1 {
+    func.call @v(%a) : (!vec) -> ()
+    func.call @m(%a) : (!vec) -> ()
+  }
+  func.call @m(%a) : (!vec) -> ()
+  return
+}
+func.func @unsupported_sibling(%n: index) {
+  %a = pto.alloc_tile : !vec
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  func.call @v(%a) : (!vec) -> ()
+  scf.for %i = %c0 to %n step %c1 {
+    func.call @v(%a) : (!vec) -> ()
+    func.call @m(%a) : (!vec) -> ()
+  }
+  %nonlinear = arith.muli %n, %n : index
+  %last = scf.while (%i = %c0) : (index) -> index {
+    %more = arith.cmpi slt, %i, %nonlinear : index
+    scf.condition(%more) %i : index
+  } do {
+  ^bb0(%i: index):
+    func.call @m(%a) : (!vec) -> ()
+    %next = arith.addi %i, %c1 : index
+    scf.yield %next : index
+  }
+  func.call @m(%a) : (!vec) -> ()
+  return
+}
+func.func @guarded_child(%n: index, %guard: i1) {
+  %a = pto.alloc_tile : !vec
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  func.call @v(%a) : (!vec) -> ()
+  scf.if %guard {
+    scf.for %i = %c0 to %n step %c1 {
+      func.call @v(%a) : (!vec) -> ()
+      func.call @m(%a) : (!vec) -> ()
+    }
+  }
+  func.call @m(%a) : (!vec) -> ()
+  return
+}
+func.func @opaque_guarded_child(%n: index, %repeat: i1) {
+  %a = pto.alloc_tile : !vec
+  %c0 = arith.constant 0 : index
+  %nonlinear = arith.muli %n, %n : index
+  %condition = arith.cmpi sgt, %nonlinear, %c0 : index
+  scf.if %condition {
+    func.call @v(%a) : (!vec) -> ()
+    func.call @m(%a) : (!vec) -> ()
+  }
+  scf.while : () -> () {
+    scf.condition(%repeat)
+  } do {
+    scf.yield
+  }
+  return
+}
+func.func @late_outcome(%n: index) {
+  %a = pto.alloc_tile : !vec
+  %c0 = arith.constant 0 : index
+  func.call @v(%a) : (!vec) -> ()
+  %nonlinear = arith.muli %n, %n : index
+  %condition = arith.cmpi sgt, %nonlinear, %c0 : index
+  scf.if %condition {
+    func.call @m(%a) : (!vec) -> ()
+  }
+  return
+}
+
+func.func @guard_local_nonadjacent(%n: index) {
+  %a = pto.alloc_tile : !vec
+  %b = pto.alloc_tile : !vec
+  %c0 = arith.constant 0 : index
+  %nonlinear = arith.muli %n, %n : index
+  %condition = arith.cmpi sgt, %nonlinear, %c0 : index
+  scf.if %condition {
+    func.call @v(%a) : (!vec) -> ()
+  }
+  func.call @v(%b) : (!vec) -> ()
+  scf.if %condition {
+    func.call @vr(%a) : (!vec) -> ()
+  }
+  return
+}
+func.func @guard_local_exclusive(%n: index) {
+  %a = pto.alloc_tile : !vec
+  %b = pto.alloc_tile : !vec
+  %c0 = arith.constant 0 : index
+  %nonlinear = arith.muli %n, %n : index
+  %condition = arith.cmpi sgt, %nonlinear, %c0 : index
+  scf.if %condition {
+    func.call @v(%a) : (!vec) -> ()
+  } else {
+    func.call @v(%b) : (!vec) -> ()
+  }
+  scf.if %condition {
+    func.call @vr(%a) : (!vec) -> ()
+  }
+  return
+}
+
+}

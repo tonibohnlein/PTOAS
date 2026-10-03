@@ -1,0 +1,133 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-frontier-analysis-test --dump-storage %s | FileCheck %s
+// RUN: pto-frontier-analysis-test --dump-demands %s | FileCheck %s --check-prefix=DEMAND
+// Inspect original geometry and the production analyzer's alias relationships.
+// Distinct allocation roots at overlapping physical addresses must still alias.
+// CHECK-LABEL: disjoint: phases=2 footprints=2 alias-pairs=0 alias-queries=1
+// CHECK: footprint=0 bytes=1024 physical=1 unknown-range=0 addresses=[0]
+// CHECK-NEXT: access footprint=0 phase=0 read=1 write=1
+// CHECK-NEXT: footprint=1 bytes=1024 physical=1 unknown-range=0 addresses=[2048]
+// CHECK-NEXT: access footprint=1 phase=1 read=1 write=1
+// CHECK-NOT: alias footprints=
+// CHECK: bound-cell=0 {{.*}}interval=[0,1024) coverage=may-access
+// CHECK-NEXT: bound-cell=1 {{.*}}interval=[2048,3072) coverage=may-access
+// CHECK-NEXT: bound-memory=0 status=0 cells=[0]
+// CHECK-NEXT: bound-memory=1 status=0 cells=[1]
+// CHECK-LABEL: overlap: phases=2 footprints=2 alias-pairs=1 alias-queries=1
+// CHECK: footprint=0 bytes=1024 physical=1 unknown-range=0 addresses=[0]
+// CHECK: footprint=1 bytes=1024 physical=1 unknown-range=0 addresses=[512]
+// CHECK: alias footprints=0, 1
+// CHECK-NEXT: bound-cell=0 {{.*}}interval=[0,512) coverage=may-access
+// CHECK-NEXT: bound-cell=1 {{.*}}interval=[512,1024) coverage=may-access
+// CHECK-NEXT: bound-cell=2 {{.*}}interval=[1024,1536) coverage=may-access
+// CHECK-NEXT: bound-memory=0 status=0 cells=[0, 1]
+// CHECK-NEXT: bound-memory=1 status=0 cells=[1, 2]
+// Unknown GM pointers may alias despite distinct SSA roots. Records stay pairwise.
+// CHECK-LABEL: unknown_bridge: phases=3 footprints=3 alias-pairs=3 alias-queries=3
+// CHECK: footprint=0 bytes=0 physical=0 unknown-range=0 addresses=[0]
+// CHECK: footprint=1 bytes=0 physical=0 unknown-range=0 addresses=[0]
+// CHECK: footprint=2 bytes=0 physical=0 unknown-range=1 addresses=[0]
+// CHECK: alias footprints=0, 1
+// CHECK: alias footprints=0, 2
+// CHECK-NEXT: alias footprints=1, 2
+// CHECK-NEXT: bound-memory=0 status=1 cells=[]
+// CHECK-NEXT: bound-memory=1 status=1 cells=[]
+// CHECK-NEXT: bound-memory=2 status=1 cells=[]
+// CHECK-LABEL: physical_reuse: phases=2 footprints=2 alias-pairs=1
+// CHECK: bound-cell=0 {{.*}}interval=[0,1024) coverage=may-access
+// CHECK-NEXT: bound-memory=0 status=0 cells=[0]
+// CHECK-NEXT: bound-memory=1 status=0 cells=[0]
+// CHECK-LABEL: touching: phases=2 footprints=2 alias-pairs=0
+// CHECK: bound-cell=0 {{.*}}interval=[0,1024) coverage=may-access
+// CHECK-NEXT: bound-cell=1 {{.*}}interval=[1024,2048) coverage=may-access
+// CHECK-LABEL: large_gap: phases=2 footprints=2 alias-pairs=0
+// CHECK: bound-cell=0 {{.*}}interval=[0,1024) coverage=may-access
+// CHECK-NEXT: bound-cell=1 {{.*}}interval=[1099511627776,1099511628800) coverage=may-access
+// CHECK: original-ir-unchanged; construction-not-run
+// DEMAND-LABEL: disjoint:
+// DEMAND: generators=0 retained=0
+// DEMAND: site=1 phase=1 rank=2 S=[0] T=[2]
+// DEMAND-LABEL: overlap:
+// DEMAND: generators=1 retained=1
+// DEMAND: demand=0->1 retained=1 witnesses= 0:0,1
+// DEMAND-LABEL: unknown_bridge:
+// Three modeled WAW pairs reduce to the two adjacent demands; this conservative
+// model does not assert the caller's actual buffers all overlap.
+// DEMAND: generators=3 retained=2
+// DEMAND: site=1 phase=1 rank=2 S=[1] T=[2]
+// DEMAND: demand=0->1 retained=1 witnesses= 2:0,1
+// DEMAND: demand=0->2 retained=0 witnesses= 2:0,2
+// DEMAND-NEXT: demand=1->2 retained=1 witnesses= 2:1,2
+// DEMAND: original-ir-unchanged; construction-not-run
+!vec = !pto.tile_buf<vec, 16x16xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func @disjoint() {
+    %zero = arith.constant 0 : i64
+    %other = arith.constant 2048 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %zero : !vec
+    %b = pto.alloc_tile addr = %other : !vec
+    pto.tadds ins(%a, %one : !vec, f32) outs(%a : !vec)
+    pto.tadds ins(%b, %one : !vec, f32) outs(%b : !vec)
+    return
+  }
+  func.func @overlap() {
+    %zero = arith.constant 0 : i64
+    %other = arith.constant 512 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %zero : !vec
+    %b = pto.alloc_tile addr = %other : !vec
+    pto.tadds ins(%a, %one : !vec, f32) outs(%a : !vec)
+    pto.tadds ins(%b, %one : !vec, f32) outs(%b : !vec)
+    return
+  }
+  func.func @unknown_bridge(%a: !pto.ptr<f32>, %b: !pto.ptr<f32>, %opaque: i64) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %unknown = pto.castptr %opaque : i64 -> !pto.ptr<f32>
+    pto.store %one, %a[%zero] : !pto.ptr<f32>, f32
+    pto.store %one, %b[%zero] : !pto.ptr<f32>, f32
+    pto.store %one, %unknown[%zero] : !pto.ptr<f32>, f32
+    return
+  }
+  func.func @physical_reuse() {
+    %zero = arith.constant 0 : i64
+    %other = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %zero : !vec
+    %b = pto.alloc_tile addr = %other : !vec
+    pto.tadds ins(%a, %one : !vec, f32) outs(%a : !vec)
+    pto.tadds ins(%b, %one : !vec, f32) outs(%b : !vec)
+    return
+  }
+
+  func.func @touching() {
+    %zero = arith.constant 0 : i64
+    %other = arith.constant 1024 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %zero : !vec
+    %b = pto.alloc_tile addr = %other : !vec
+    pto.tadds ins(%a, %one : !vec, f32) outs(%a : !vec)
+    pto.tadds ins(%b, %one : !vec, f32) outs(%b : !vec)
+    return
+  }
+
+  func.func @large_gap() {
+    %zero = arith.constant 0 : i64
+    %other = arith.constant 1099511627776 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %zero : !vec
+    %b = pto.alloc_tile addr = %other : !vec
+    pto.tadds ins(%a, %one : !vec, f32) outs(%a : !vec)
+    pto.tadds ins(%b, %one : !vec, f32) outs(%b : !vec)
+    return
+  }
+
+}

@@ -80,3 +80,48 @@ add_llvm_executable(pto-bisheng-scheduler-test
 )
 
 target_link_libraries(pto-bisheng-scheduler-test PRIVATE PTOASBishengScheduler)
+
+# Inspect shared SyncInput without a second effects/control representation.
+add_llvm_executable(pto-frontier-analysis-test
+  pto-frontier-analysis-test.cpp
+  frontier-structured-driver.cpp
+  frontier-sync-target-driver.cpp
+  frontier-gm-alias-driver.cpp
+  frontier-atomic-store-driver.cpp
+  frontier-regional-request-driver.cpp
+  frontier-fixed-body-upper-driver.cpp
+  frontier-stationary-cell-driver.cpp
+  frontier-counted-reader-driver.cpp
+  frontier-finite-physical-driver.cpp
+  frontier-one-way-repair-driver.cpp
+  frontier-periodic-allocation-driver.cpp
+  frontier-single-stream-driver.cpp
+  frontier-general-counted-driver.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-frontier-analysis-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
+  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRControlFlowDialect
+  MLIRControlFlowInterfaces MLIRLoopLikeInterface MLIRAffineDialect MLIRMemRefDialect
+)
+add_dependencies(pto-frontier-analysis-test PTOOpsIncGen PTOPassesIncGen)
+
+# Exercise explicit demand analysis against an independent finite graph oracle.
+add_llvm_executable(pto-frontier-demand-test
+  pto-frontier-demand-test.cpp
+  frontier-guarded-driver.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-frontier-demand-test PRIVATE PTOIR PTOTransforms MLIRIR MLIRSupport)
+add_dependencies(pto-frontier-demand-test PTOOpsIncGen PTOPassesIncGen)
+
+# Supplied exact rotating fragments; independent finite physical-access oracle.
+add_llvm_executable(pto-frontier-rotating-test
+  pto-frontier-rotating-test.cpp
+  frontier-periodic-driver.cpp
+  frontier-symbolic-driver.cpp
+  frontier-signed-driver.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-frontier-rotating-test PRIVATE PTOIR PTOTransforms MLIRIR MLIRSupport)
+add_dependencies(pto-frontier-rotating-test PTOOpsIncGen PTOPassesIncGen)

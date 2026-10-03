@@ -1,0 +1,145 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-frontier-analysis-test --dump-structure %s | FileCheck %s
+// Shared phases are grouped by their original anchors. No control region is
+// unfolded, and region choices describe sites in a common invocation only.
+!vec = !pto.tile_buf<vec, 16x16xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func private @declaration()
+  func.func @empty() {
+    return
+  }
+  // CHECK-LABEL: declaration: phases=0 declaration-skipped
+  // CHECK-LABEL: empty: phases=0
+  // CHECK: root-sequence=[]
+
+  func.func @linear() {
+    %zero = arith.constant 0 : i64
+    %one = arith.constant {sync.test.value = "outer", sync.test.anchor = "definition"} 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !vec
+    pto.tadds ins(%tile, %one : !vec, f32) outs(%tile : !vec)
+    pto.tadds ins(%tile, %one : !vec, f32) outs(%tile : !vec)
+    return {sync.test.anchor = "return"}
+  }
+  // CHECK-LABEL: linear: phases=2
+  // CHECK: root-sequence=[0, 1]
+  // CHECK-NEXT: phase=0 anchor-phases=1 context=[]
+  // CHECK-NEXT: phase=1 anchor-phases=1 context=[]
+  // A definition's result cannot be used before it, but can be used after it.
+  // CHECK: available value="outer" anchor="definition" before=0 after=1
+  // No insertion point exists after the terminator.
+  // CHECK: available value="outer" anchor="return" before=1 after=0
+
+  func.func @nested(%condition: i1, %bound: index) {
+    %zero = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %one = arith.constant {sync.test.value = "outer"} 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !vec
+    %loop_result = scf.for %i = %c0 to %bound step %c1 iter_args(%acc = %one) -> (f32) {
+      %branch_result = scf.if %condition -> (f32) {
+        %local = arith.constant {sync.test.value = "local"} 2.0 : f32
+        %sum = arith.addf %acc, %local {sync.test.anchor = "then"} : f32
+        pto.tadds ins(%tile, %sum : !vec, f32) outs(%tile : !vec)
+        scf.yield %sum : f32
+      } else {
+        %sum = arith.addf %acc, %one {sync.test.anchor = "else"} : f32
+        // Even a statically zero-trip inner loop remains structured. A site
+        // record is not evidence that a payload occurrence executes.
+        scf.for %j = %c0 to %c0 step %c1 {
+          scf.if %condition {
+            pto.tadds ins(%tile, %sum : !vec, f32) outs(%tile : !vec)
+          }
+        }
+        scf.yield %sum : f32
+      } {sync.test.value = "branch", sync.test.anchor = "if"}
+      pto.tadds ins(%tile, %branch_result : !vec, f32) outs(%tile : !vec)
+      scf.yield %branch_result : f32
+    } {sync.test.value = "loop", sync.test.anchor = "for"}
+    %sum = arith.addf %loop_result, %one {sync.test.anchor = "continuation"} : f32
+    return
+  }
+  // CHECK-LABEL: nested:
+  // CHECK: root-sequence=structured
+  // Nested empty-else if retains the bypass edge to exit.
+  // CHECK: control=scf.if regions=2
+  // CHECK-NEXT: from=entry to=0 forwarded=0
+  // CHECK-NEXT: from=entry to=exit forwarded=0
+  // CHECK: control=scf.for regions=1 loop-regions=1 carried=0
+  // CHECK-NEXT: from=entry to=0 forwarded=0
+  // CHECK-NEXT: from=entry to=exit forwarded=0
+  // CHECK: control=scf.if regions=2
+  // CHECK-NEXT: from=entry to=0 forwarded=0
+  // CHECK-NEXT: from=entry to=1 forwarded=0
+  // CHECK: control=scf.for regions=1 loop-regions=1 carried=1
+  // Both zero-trip exit and repeated body successor remain visible.
+  // CHECK-NEXT: from=entry to=0 forwarded=1
+  // CHECK-NEXT: from=entry to=exit forwarded=1
+  // CHECK-NEXT: from=0 to=0 forwarded=1
+  // CHECK-NEXT: from=0 to=exit forwarded=1
+  // CHECK: region=0 sequence=structured
+  // CHECK-NEXT: region=0 argument=0 at-entry=1 before-owner=0 after-owner=0
+  // CHECK-NEXT: region=0 argument=1 at-entry=1 before-owner=0 after-owner=0
+  // CHECK: phase={{[0-9]+}} anchor-phases=1 context=[scf.for:0, scf.if:0]
+  // CHECK: phase={{[0-9]+}} anchor-phases=1 context=[scf.for:0, scf.if:1, scf.for:0, scf.if:0]
+  // CHECK: phase={{[0-9]+}} anchor-phases=1 context=[scf.for:0]
+  // Outer values are available in either arm; local values stay in their arm.
+  // CHECK: available value="outer" anchor="then" before=1 after=1
+  // CHECK: available value="local" anchor="then" before=1 after=1
+  // CHECK: available value="branch" anchor="then" before=0 after=0
+  // CHECK: available value="loop" anchor="then" before=0 after=0
+  // CHECK: available value="local" anchor="else" before=0 after=0
+  // CHECK: available value="branch" anchor="if" before=0 after=1
+  // CHECK: available value="local" anchor="for" before=0 after=0
+  // CHECK: available value="loop" anchor="for" before=0 after=1
+  // CHECK: available value="local" anchor="continuation" before=0 after=0
+  // CHECK: available value="branch" anchor="continuation" before=0 after=0
+  // CHECK: available value="loop" anchor="continuation" before=1 after=1
+  // This excludes arms of the same if invocation, not different loop iterations.
+  // CHECK: sites="then","else" exclusive-in-common-invocation=1
+  // CHECK: sites="then","continuation" exclusive-in-common-invocation=0
+
+  func.func @while_regions(%condition: i1) {
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !vec
+    %result = scf.while (%state = %one) : (f32) -> f32 {
+      %before = arith.addf %state, %one {sync.test.value = "before", sync.test.anchor = "condition"} : f32
+      pto.tadds ins(%tile, %before : !vec, f32) outs(%tile : !vec)
+      scf.condition(%condition) %before : f32
+    } do {
+    ^bb0(%state: f32):
+      %after = arith.addf %state, %one {sync.test.value = "after", sync.test.anchor = "body"} : f32
+      pto.tadds ins(%tile, %after : !vec, f32) outs(%tile : !vec)
+      scf.yield %after : f32
+    } attributes {sync.test.value = "while", sync.test.anchor = "while"}
+    return
+  }
+  // CHECK-LABEL: while_regions:
+  // CHECK: root-sequence=structured
+  // CHECK: control=scf.while regions=2 loop-regions=2 carried=1
+  // While entry must run the condition region, including when the body is skipped.
+  // CHECK-NEXT: from=entry to=0 forwarded=1
+  // CHECK-NEXT: from=0 to=exit forwarded=1
+  // CHECK-NEXT: from=0 to=1 forwarded=1
+  // CHECK-NEXT: region=0 sequence=[{{[0-9]+}}]
+  // CHECK-NEXT: region=0 argument=0 at-entry=1 before-owner=0 after-owner=0
+  // CHECK-NEXT: from=1 to=0 forwarded=1
+  // CHECK-NEXT: region=1 sequence=[{{[0-9]+}}]
+  // CHECK-NEXT: region=1 argument=0 at-entry=1 before-owner=0 after-owner=0
+  // CHECK: phase={{[0-9]+}} anchor-phases=1 context=[scf.while:0]
+  // CHECK-NEXT: phase={{[0-9]+}} anchor-phases=1 context=[scf.while:1]
+  // Control transfers values through arguments, not cross-region SSA dominance.
+  // CHECK: available value="before" anchor="body" before=0 after=0
+  // CHECK: available value="after" anchor="while" before=0 after=0
+  // CHECK: available value="while" anchor="while" before=0 after=1
+  // While's condition and body regions are not exclusive alternatives.
+  // CHECK: sites="condition","body" exclusive-in-common-invocation=0
+  // CHECK: original-ir-unchanged; construction-not-run
+}

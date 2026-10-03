@@ -1,0 +1,114 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --frontier-repair-family=finite-one-way --report-frontier-costs --emit-pto-ir %s -o %t.cost.ir 2> %t.cost.json
+// RUN: %python -c "import json,sys; from pathlib import Path; r=[json.loads(x) for x in Path(sys.argv[1]).read_text().splitlines() if x.startswith('{')]; m=next(x['metrics'] for x in r if x.get('report')=='frontier-costs-v1'); assert m['physical_dynamic_pairs']==6; assert 'before physical repair' in m['dynamic_counts']" %t.cost.json
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --frontier-repair-family=finite-one-way --emit-pto-ir %s -o %t.ir
+// RUN: FileCheck %s --check-prefix=IR < %t.ir
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --frontier-repair-family=finite-one-way %s -o %t.cpp
+// RUN: FileCheck %s --check-prefix=CPP < %t.cpp
+// RUN: %python %S/Inputs/minimum_demand/check_one_way_physical.py %s %t.ir
+// RUN: pto-frontier-analysis-test --one-way-physical-check %s
+// RUN: %python %S/Inputs/minimum_demand/check_repair_failures.py pto-test-opt %s %S/frontier_synch_upper_vector_physical.pto
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --emit-pto-ir %s -o %t.failed 2>&1 | FileCheck %s --check-prefix=FIXED
+!vec = !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!gm = !pto.partition_tensor_view<1x128xi32>
+module attributes {pto.target_arch = "a3"} {
+  func.func @one_way(%gm0: !gm,%gm1: !gm,%gm2: !gm,%gm3: !gm,%gm4: !gm,%gm5: !gm,%gm6: !gm,%gm7: !gm) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %addr_data0 = arith.constant 0 : i64
+    %data0 = pto.alloc_tile addr = %addr_data0 : !vec
+    %addr_out0 = arith.constant 8192 : i64
+    %out0 = pto.alloc_tile addr = %addr_out0 : !vec
+    %addr_tmp0 = arith.constant 16384 : i64
+    %tmp0 = pto.alloc_tile addr = %addr_tmp0 : !vec
+    %addr_data1 = arith.constant 1024 : i64
+    %data1 = pto.alloc_tile addr = %addr_data1 : !vec
+    %addr_out1 = arith.constant 9216 : i64
+    %out1 = pto.alloc_tile addr = %addr_out1 : !vec
+    %addr_tmp1 = arith.constant 17408 : i64
+    %tmp1 = pto.alloc_tile addr = %addr_tmp1 : !vec
+    %addr_data2 = arith.constant 2048 : i64
+    %data2 = pto.alloc_tile addr = %addr_data2 : !vec
+    %addr_out2 = arith.constant 10240 : i64
+    %out2 = pto.alloc_tile addr = %addr_out2 : !vec
+    %addr_tmp2 = arith.constant 18432 : i64
+    %tmp2 = pto.alloc_tile addr = %addr_tmp2 : !vec
+    %addr_data3 = arith.constant 3072 : i64
+    %data3 = pto.alloc_tile addr = %addr_data3 : !vec
+    %addr_out3 = arith.constant 11264 : i64
+    %out3 = pto.alloc_tile addr = %addr_out3 : !vec
+    %addr_tmp3 = arith.constant 19456 : i64
+    %tmp3 = pto.alloc_tile addr = %addr_tmp3 : !vec
+    %addr_data4 = arith.constant 4096 : i64
+    %data4 = pto.alloc_tile addr = %addr_data4 : !vec
+    %addr_out4 = arith.constant 12288 : i64
+    %out4 = pto.alloc_tile addr = %addr_out4 : !vec
+    %addr_tmp4 = arith.constant 20480 : i64
+    %tmp4 = pto.alloc_tile addr = %addr_tmp4 : !vec
+    %addr_data5 = arith.constant 5120 : i64
+    %data5 = pto.alloc_tile addr = %addr_data5 : !vec
+    %addr_out5 = arith.constant 13312 : i64
+    %out5 = pto.alloc_tile addr = %addr_out5 : !vec
+    %addr_tmp5 = arith.constant 21504 : i64
+    %tmp5 = pto.alloc_tile addr = %addr_tmp5 : !vec
+    %addr_data6 = arith.constant 6144 : i64
+    %data6 = pto.alloc_tile addr = %addr_data6 : !vec
+    %addr_out6 = arith.constant 14336 : i64
+    %out6 = pto.alloc_tile addr = %addr_out6 : !vec
+    %addr_tmp6 = arith.constant 22528 : i64
+    %tmp6 = pto.alloc_tile addr = %addr_tmp6 : !vec
+    %addr_data7 = arith.constant 7168 : i64
+    %data7 = pto.alloc_tile addr = %addr_data7 : !vec
+    %addr_out7 = arith.constant 15360 : i64
+    %out7 = pto.alloc_tile addr = %addr_out7 : !vec
+    %addr_tmp7 = arith.constant 23552 : i64
+    %tmp7 = pto.alloc_tile addr = %addr_tmp7 : !vec
+    pto.tload ins(%gm0 : !gm) outs(%data0 : !vec)
+    pto.barrier <PIPE_MTE2>
+    pto.tload ins(%gm1 : !gm) outs(%data1 : !vec)
+    pto.barrier <PIPE_MTE2>
+    pto.tload ins(%gm2 : !gm) outs(%data2 : !vec)
+    pto.barrier <PIPE_MTE2>
+    pto.tload ins(%gm3 : !gm) outs(%data3 : !vec)
+    pto.barrier <PIPE_MTE2>
+    pto.tload ins(%gm4 : !gm) outs(%data4 : !vec)
+    pto.barrier <PIPE_MTE2>
+    pto.tload ins(%gm5 : !gm) outs(%data5 : !vec)
+    pto.barrier <PIPE_MTE2>
+    pto.tload ins(%gm6 : !gm) outs(%data6 : !vec)
+    pto.barrier <PIPE_MTE2>
+    pto.tload ins(%gm7 : !gm) outs(%data7 : !vec)
+    pto.txor ins(%data0, %data0, %tmp0 : !vec, !vec, !vec) outs(%out0 : !vec)
+    pto.txor ins(%data1, %data1, %tmp1 : !vec, !vec, !vec) outs(%out1 : !vec)
+    pto.txor ins(%data2, %data2, %tmp2 : !vec, !vec, !vec) outs(%out2 : !vec)
+    pto.txor ins(%data3, %data3, %tmp3 : !vec, !vec, !vec) outs(%out3 : !vec)
+    pto.txor ins(%data4, %data4, %tmp4 : !vec, !vec, !vec) outs(%out4 : !vec)
+    pto.txor ins(%data5, %data5, %tmp5 : !vec, !vec, !vec) outs(%out5 : !vec)
+    pto.txor ins(%data6, %data6, %tmp6 : !vec, !vec, !vec) outs(%out6 : !vec)
+    pto.txor ins(%data7, %data7, %tmp7 : !vec, !vec, !vec) outs(%out7 : !vec)
+    return
+  }
+}
+// IR-DAG: pto.frontier.physical_status = "certified-finite-one-way-repair"
+// IR-DAG: fixed_required = 8
+// IR-DAG: repair_excess = "2"
+// IR-DAG: guarantee = "restricted minimality and minimum total repair excess"
+// IR-DAG: original_finite_drains
+// IR: pto.tload
+// IR: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// IR: pto.barrier <PIPE_MTE2>
+// IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// IR: pto.txor
+// IR: pto.barrier <PIPE_ALL>
+// IR-NOT: sync.logical_
+// CPP: TLOAD(
+// CPP: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+// CPP: pipe_barrier(PIPE_MTE2);
+// CPP: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+// CPP: TXOR(
+// FIXED: no certified physical plan:
+// FIXED-SAME: selected finite plan requires 8 IDs; available 6

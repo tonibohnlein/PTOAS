@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --emit-pto-ir %s -o %t.ir
+// RUN: FileCheck %s --check-prefix=IR < %t.ir
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch %s -o %t.cpp
+// RUN: FileCheck %s --check-prefix=CPP < %t.cpp
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='algorithm=frontier-synch' %s | FileCheck %s --check-prefix=IR
+// RUN: pto-frontier-analysis-test --finite-physical-check %s | FileCheck %s --check-prefix=ORACLE
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='algorithm=frontier-synch dump-frontier-demands=true report-frontier-costs=true' %s -o %t.diagnostic.ir 2> %t.diagnostic.log
+// RUN: FileCheck %s --check-prefix=IR < %t.diagnostic.ir
+// RUN: FileCheck %s --check-prefix=REPORT < %t.diagnostic.log
+// REPORT-DAG: "physical_ids":"assigned; finite directed pools under recorded target/ABI premises"
+// REPORT-DAG: "physical_ids":[0,0]
+// REPORT-DAG: "allocator":"saved-summary-cyclic"
+// REPORT-DAG: "available":6
+// REPORT-DAG: "required":1
+// REPORT-DAG: "status":"certified-under-recorded-premises"
+// ORACLE: verified explicit physical matching, causal budgets 0/1/6/7, shared hidden reservations and abstract eligible-ID exclusions, SET observation and thirteen mutations; shared input consumed without native admission
+// A real once-executed phase per physical pipe: native chain pairs are empty.
+!vec = !pto.tile_buf<vec, 16x128xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func @explicit_vector(%src: !pto.partition_tensor_view<16x128xf32>,
+                             %dst: !pto.partition_tensor_view<16x128xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %next = arith.constant 8192 : i64
+    %input = pto.alloc_tile addr = %zero : !vec
+    %output = pto.alloc_tile addr = %next : !vec
+    pto.tload ins(%src : !pto.partition_tensor_view<16x128xf32>) outs(%input : !vec)
+    pto.tabs ins(%input : !vec) outs(%output : !vec)
+    pto.tstore ins(%output : !vec) outs(%dst : !pto.partition_tensor_view<16x128xf32>)
+    return
+  }
+}
+// IR: pto.frontier.physical_status = "certified-finite"
+// IR: pto.tload
+// IR: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// IR: pto.tabs
+// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// IR: pto.tstore
+// IR-NOT: sync.logical_
+// CPP: TLOAD(
+// CPP: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+// CPP: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+// CPP: TABS(
+// CPP: set_flag(PIPE_V, PIPE_MTE3, EVENT_ID0);
+// CPP: wait_flag(PIPE_V, PIPE_MTE3, EVENT_ID0);
+// CPP: TSTORE(

@@ -1,0 +1,128 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-frontier-analysis-test --dump-demands %s | FileCheck %s
+// RUN: not pto-frontier-analysis-test --dump-demands %S/frontier_synch_structure.pto 2>&1 | FileCheck %s --check-prefix=STRUCTURED
+// RUN: not pto-frontier-analysis-test --dump-demands %S/tgather_compare_macro_sync_model.pto 2>&1 | FileCheck %s --check-prefix=STRUCTURED
+// Hazard witness codes: RAW=0, WAR=1, WAW=2. These helpers use the existing
+// translator's pipe/effect metadata; there is no new extraction path.
+// STRUCTURED: explicit demand inspection requires a straight-line single-phase sequence
+!vec = !pto.tile_buf<vec, 16x16xf32>
+!half = !pto.tile_buf<vec, 8x16xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func private @write_v(!vec) attributes {pto.tileop.helper, pto.tileop.kind = "vector", pto.tileop.effects = ["write"]}
+  func.func private @write_m(!vec) attributes {pto.tileop.helper, pto.tileop.kind = "cube", pto.tileop.effects = ["write"]}
+  func.func private @read_v(!vec) attributes {pto.tileop.helper, pto.tileop.kind = "vector", pto.tileop.effects = ["read"]}
+  func.func private @read_m(!vec) attributes {pto.tileop.helper, pto.tileop.kind = "cube", pto.tileop.effects = ["read"]}
+  func.func private @rmw_v(!vec) attributes {pto.tileop.helper, pto.tileop.kind = "vector", pto.tileop.effects = ["readwrite"]}
+  func.func private @copy_m(!vec, !vec) attributes {pto.tileop.helper, pto.tileop.kind = "cube", pto.tileop.effects = ["read", "write"]}
+  func.func private @read_pair(!vec, !vec) attributes {pto.tileop.helper, pto.tileop.kind = "vector", pto.tileop.effects = ["read", "read"]}
+  func.func private @write_half_m(!half) attributes {pto.tileop.helper, pto.tileop.kind = "cube", pto.tileop.effects = ["write"]}
+
+  func.func @reader_mediated() {
+    %a = pto.alloc_tile : !vec
+    func.call @write_v(%a) : (!vec) -> ()
+    func.call @read_m(%a) : (!vec) -> ()
+    func.call @write_v(%a) : (!vec) -> ()
+    return
+  }
+  // CHECK-LABEL: reader_mediated: phases=3
+  // CHECK: generators=2 retained=2 bypasses=1 nonadjacent-local=0 pipes=[1, 2]
+  // CHECK-NEXT: site=0 phase=0 rank=1 S=[0, 0] T=[1, 0]
+  // CHECK-NEXT: site=1 phase=1 rank=1 S=[1, 0] T=[1, 1]
+  // CHECK-NEXT: site=2 phase=2 rank=2 S=[1, 1] T=[2, 1]
+  // CHECK-NEXT: demand=0->1 retained=1 witnesses= 0:0,0
+  // CHECK-NEXT: demand=1->2 retained=1 witnesses= 1:0,0
+
+  func.func @rmw() {
+    %a = pto.alloc_tile : !vec
+    func.call @write_v(%a) : (!vec) -> ()
+    func.call @read_m(%a) : (!vec) -> ()
+    func.call @rmw_v(%a) : (!vec) -> ()
+    return
+  }
+  // CHECK-LABEL: rmw: phases=3
+  // CHECK: generators=3 retained=2 bypasses=0 nonadjacent-local=0
+  // CHECK: demand=0->1 retained=1 witnesses= 0:0,0
+  // RMW queries the previous writer, even when a reader covers the RAW edge.
+  // CHECK-NEXT: demand=0->2 retained=0 witnesses= 0:0,0
+  // CHECK-NEXT: demand=1->2 retained=1 witnesses= 1:0,0
+
+  func.func @initial_readers() {
+    %a = pto.alloc_tile : !vec
+    func.call @read_m(%a) : (!vec) -> ()
+    func.call @read_m(%a) : (!vec) -> ()
+    func.call @write_v(%a) : (!vec) -> ()
+    return
+  }
+  // CHECK-LABEL: initial_readers: phases=3
+  // CHECK: generators=1 retained=1 bypasses=0 nonadjacent-local=0 pipes=[2, 1]
+  // CHECK: site=1 phase=1 rank=2 S=[0, 0] T=[2, 0]
+  // CHECK-NEXT: site=2 phase=2 rank=1 S=[2, 0] T=[2, 1]
+  // CHECK-NEXT: demand=1->2 retained=1 witnesses= 1:0,0
+
+  func.func @waw() {
+    %a = pto.alloc_tile : !vec
+    func.call @write_v(%a) : (!vec) -> ()
+    func.call @write_m(%a) : (!vec) -> ()
+    return
+  }
+  // CHECK-LABEL: waw: phases=2
+  // CHECK: generators=1 retained=1 bypasses=0
+  // CHECK: demand=0->1 retained=1 witnesses= 2:0,0
+
+  func.func @cross_footprint_path() {
+    %zero = arith.constant 0 : i64
+    %other = arith.constant 2048 : i64
+    %a = pto.alloc_tile addr = %zero : !vec
+    %b = pto.alloc_tile addr = %other : !vec
+    func.call @write_v(%a) : (!vec) -> ()
+    func.call @copy_m(%a, %b) : (!vec, !vec) -> ()
+    func.call @read_pair(%a, %b) : (!vec, !vec) -> ()
+    return
+  }
+  // CHECK-LABEL: cross_footprint_path: phases=3 footprints=2 alias-pairs=0
+  // CHECK: generators=3 retained=2 bypasses=0 nonadjacent-local=0
+  // CHECK: demand=0->1 retained=1 witnesses= 0:0,0
+  // CHECK-NEXT: demand=0->2 retained=0 witnesses= 0:0,0
+  // CHECK-NEXT: demand=1->2 retained=1 witnesses= 0:1,1
+
+  func.func @nonadjacent_local() {
+    %zero = arith.constant 0 : i64
+    %other = arith.constant 2048 : i64
+    %a = pto.alloc_tile addr = %zero : !vec
+    %b = pto.alloc_tile addr = %other : !vec
+    func.call @write_v(%a) : (!vec) -> ()
+    func.call @write_v(%b) : (!vec) -> ()
+    func.call @read_v(%a) : (!vec) -> ()
+    return
+  }
+  // CHECK-LABEL: nonadjacent_local: phases=3
+  // CHECK: generators=1 retained=1 bypasses=0 nonadjacent-local=1 pipes=[1]
+  // CHECK: site=1 phase=1 rank=2 S=[0] T=[2]
+  // CHECK-NEXT: site=2 phase=2 rank=3 S=[1] T=[3]
+  // CHECK-NEXT: demand=0->2 retained=1 witnesses= 0:0,0
+  func.func @partial_alias_lifetime() {
+    %zero = arith.constant 0 : i64
+    %offset = arith.constant 512 : i64
+    %whole = pto.alloc_tile addr = %zero : !vec
+    %part = pto.alloc_tile addr = %offset : !half
+    func.call @write_v(%whole) : (!vec) -> ()
+    func.call @write_half_m(%part) : (!half) -> ()
+    func.call @read_v(%whole) : (!vec) -> ()
+    return
+  }
+  // CHECK-LABEL: partial_alias_lifetime: phases=3 footprints=2 alias-pairs=1
+  // The partial overlapping footprint cannot kill the whole footprint's writer.
+  // Its required WAW/RAW path allows the exact rank reduction to cover that edge.
+  // CHECK: generators=3 retained=2 bypasses=0 nonadjacent-local=0
+  // CHECK: demand=0->1 retained=1 witnesses= 2:0,1
+  // CHECK-NEXT: demand=0->2 retained=0 witnesses= 0:0,0
+  // CHECK-NEXT: demand=1->2 retained=1 witnesses= 0:1,0
+  // CHECK: original-ir-unchanged; construction-not-run
+}

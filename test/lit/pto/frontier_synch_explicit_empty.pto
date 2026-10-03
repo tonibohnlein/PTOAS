@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --emit-pto-ir %s -o %t.ir
+// RUN: FileCheck %s --check-prefix=IR < %t.ir
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch %s -o %t.cpp
+// RUN: FileCheck %s --check-prefix=CPP < %t.cpp
+module attributes {pto.target_arch = "a3"} {
+  func.func @empty_explicit() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    return
+  }
+}
+// IR: func.func @empty_explicit
+// IR-SAME: exit_abi = "empty invocation; no outstanding command or payload"
+// IR-SAME: nodes = 0
+// IR-SAME: pto.frontier.physical_status = "certified-finite"
+// IR-NOT: pto.set_flag
+// IR-NOT: pto.wait_flag
+// IR-NOT: pto.barrier
+// IR: return
+// CPP: empty_explicit(
+// CPP-NOT: set_flag(
+// CPP-NOT: wait_flag(
+// CPP-NOT: pipe_barrier(

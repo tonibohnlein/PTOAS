@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-frontier-analysis-test --stationary-cell-check %s | FileCheck %s
+// CHECK: verified stationary shared-cell import, modeled hazard certificate, independent finite closure/covers
+// CHECK-SAME: , fallback and rollback
+!vec = !pto.tile_buf<vec, 16x16xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func private @write(!vec) attributes {pto.tileop.helper,
+    pto.tileop.kind = "vector", pto.tileop.effects = ["write"]}
+  func.func private @read(!vec) attributes {pto.tileop.helper,
+    pto.tileop.kind = "cube", pto.tileop.effects = ["read"]}
+  func.func @overlap(%n: index) {
+    %zero = arith.constant 0 : i64
+    %other = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %zero : !vec
+    %b = pto.alloc_tile addr = %other : !vec
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    scf.for %i = %c0 to %n step %c1 {
+    func.call @write(%a) : (!vec) -> ()
+    func.call @read(%b) : (!vec) -> ()
+    func.call @write(%b) : (!vec) -> ()
+    }
+    return
+  }
+  func.func @readers(%n: index) {
+    %zero = arith.constant 0 : i64
+    %other = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %zero : !vec
+    %b = pto.alloc_tile addr = %other : !vec
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    scf.for %i = %c0 to %n step %c1 {
+    func.call @write(%a) : (!vec) -> ()
+    func.call @read(%a) : (!vec) -> ()
+    func.call @read(%b) : (!vec) -> ()
+    func.call @write(%b) : (!vec) -> ()
+    }
+    return
+  }
+  func.func @rmw(%n: index) {
+    %zero = arith.constant 0 : i64
+    %other = arith.constant 2048 : i64
+    %a = pto.alloc_tile addr = %zero : !vec
+    %b = pto.alloc_tile addr = %other : !vec
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    scf.for %i = %c0 to %n step %c1 {
+    pto.tadds ins(%a, %one : !vec, f32) outs(%a : !vec)
+    pto.tadds ins(%b, %one : !vec, f32) outs(%b : !vec)
+    }
+    return
+  }
+  func.func @unknown_bounds(%n: index) {
+    %zero = arith.constant 0 : i64
+    %a = pto.alloc_tile : !vec
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    scf.for %i = %c0 to %n step %c1 {
+    pto.tadds ins(%a, %one : !vec, f32) outs(%a : !vec)
+    }
+    return
+  }
+}

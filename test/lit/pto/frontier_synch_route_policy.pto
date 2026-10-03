@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: env PTO_GENERAL_TEST_FUNCTION=mixed_policy pto-frontier-analysis-test --general-counted-check %s | FileCheck %s
+// CHECK: verified general affine counted queries, negative rows, uniform selectors and parent crossings
+!acc = !pto.tile_buf<acc, 32x32xf32, blayout=col_major, slayout=row_major, fractal=1024>
+!vec = !pto.tile_buf<vec, 16x128xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func @mixed_policy(%f: !pto.ptr<f32>, %n: index, %c: i8) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %limit = arith.minsi %n, %c4 : index
+    %offset = arith.index_cast %c : i8 to index
+    %c32 = arith.constant 32 : index
+    %addr = arith.constant 0 : i64
+    %view = pto.make_tensor_view %f, shape = [%c32, %c32], strides = [%c32, %c1]
+      : !pto.tensor_view<?x?xf32>
+    %dst = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c32, %c32]
+      : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+    %src = pto.alloc_tile addr = %addr : !acc
+    scf.for %i = %c0 to %limit step %c1 {
+      pto.tstore ins(%src : !acc) outs(%dst : !pto.partition_tensor_view<32x32xf32>)
+      %scaled = arith.muli %i, %c2 : index
+      %row = arith.addi %scaled, %offset : index
+      scf.for %j = %c0 to %row step %c1 {
+        %value = pto.load %f[%c0] : !pto.ptr<f32> -> f32
+      }
+    }
+    %other = arith.constant 8192 : i64
+    %a = pto.alloc_tile addr = %addr : !vec
+    %x = pto.alloc_tile addr = %other : !vec
+    scf.for %k = %c0 to %limit step %c1 {
+      pto.tabs ins(%a : !vec) outs(%a : !vec)
+      pto.tabs ins(%x : !vec) outs(%x : !vec)
+    }
+    return
+  }
+}

@@ -27,6 +27,9 @@ configure_lit_site_cfg(
 set(PTOIR_TEST_DEPENDS
   ptoas_runtime_deps
   pto-test-opt
+  pto-frontier-analysis-test
+  pto-frontier-demand-test
+  pto-frontier-rotating-test
   pto-vpto-scheduler-tracker-test
   pto-bisheng-scheduler-test
 )
