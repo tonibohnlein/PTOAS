@@ -1,0 +1,137 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --arithmetic %s | FileCheck %s
+// RUN: %python %S/Inputs/check_arithmetic_program.py pto-sync-input-test %s
+// CHECK-LABEL: recognition nested_reset
+// CHECK: recognize arithmetic: applicable
+// CHECK: arithmetic sites=3 parameters=2
+// CHECK-LABEL: recognition triangular
+// CHECK: recognize arithmetic: applicable
+// CHECK: arithmetic sites=2 parameters=1
+// CHECK-LABEL: recognition siblings
+// CHECK: recognize arithmetic: applicable
+// CHECK: arithmetic sites=4 parameters=2
+// CHECK-LABEL: recognition empty_minimum
+// CHECK: recognize arithmetic: applicable
+// CHECK-LABEL: recognition ssa_prerequisite
+// CHECK: recognize arithmetic: missing-premise
+// CHECK: issue additional-prerequisite
+// CHECK: arithmetic sites=0 parameters=0 primitives=0
+// CHECK-LABEL: recognition existing_sync
+// CHECK: recognize arithmetic: missing-premise
+// CHECK: issue additional-prerequisite
+// CHECK: arithmetic sites=0 parameters=0 primitives=0
+// CHECK-LABEL: recognition opaque_bound
+// CHECK: recognize arithmetic: not-applicable
+// CHECK: issue loop-domain
+// CHECK: arithmetic sites=0 parameters=0 primitives=0
+// CHECK: source-unchanged; dependency-analysis-not-run
+
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=2>
+!ring3 = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=3>
+module {
+  func.func @nested_reset(%n: index, %k: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    %alias = pto.alloc_tile addr = %zero : !tile
+    scf.for %t = %i0 to %n step %i1 {
+      scf.for %i = %i0 to %k step %i1 {
+        %slot = arith.remui %i, %i2 : index
+        %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+        pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+        %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+      }
+      %last = pto.tgetval ins(%alias, %i0 : !tile, index) outs : f32
+    }
+    return
+  }
+  func.func @triangular(%n: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %t = %i0 to %n step %i1 {
+      pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      scf.for %i = %i0 to %t step %i1 {
+        %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+  func.func @siblings(%n: index, %k: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+    scf.for %i = %i0 to %n step %i1 {
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    }
+    scf.for %j = %i0 to %k step %i1 {
+      pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+    }
+    %last = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    return
+  }
+  func.func @empty_minimum() {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %minimum = arith.constant -9223372036854775808 : index
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %i0 to %minimum step %i1 {
+      pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+    }
+    return
+  }
+  func.func @ssa_prerequisite() {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    %added = arith.addf %v, %one : f32
+    pto.tsetval ins(%i0, %added : index, f32) outs(%tile : !tile)
+    return
+  }
+  func.func @existing_sync() {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    pto.barrier #pto.pipe<PIPE_V>
+    return
+  }
+  func.func @opaque_bound(%n: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %bound = arith.addi %n, %i1 : index
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %i0 to %bound step %i1 {
+      pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+    }
+    return
+  }
+}

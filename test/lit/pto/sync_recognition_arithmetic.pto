@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-arithmetic-recognition-test | FileCheck %s
+// CHECK-LABEL: difference: applicable class=differences dimensions=4 coefficient=1
+// CHECK: row -1, 0, 0, 1 constant=0 equality=0
+// CHECK-LABEL: octagon: applicable class=octagons
+// CHECK-LABEL: three-coordinates: applicable class=bounded-coefficients
+// CHECK-LABEL: bounded: applicable class=bounded-coefficients dimensions=4 coefficient=7
+// CHECK-LABEL: positive-round: applicable class=differences
+// CHECK: row -1, 0, 0, 0 constant=1 equality=0
+// CHECK-LABEL: negative-round: applicable class=differences
+// CHECK: row -1, 0, 0, 0 constant=-2 equality=0
+// CHECK-LABEL: impossible-equality: applicable class=differences
+// CHECK-NEXT: piece empty=1 rows=0
+// CHECK-LABEL: cancellation: applicable class=differences
+// CHECK: row 0, 1, 0, 0 constant=0 equality=0
+// CHECK-LABEL: constant-false: applicable class=differences
+// CHECK-NEXT: piece empty=1 rows=0
+// CHECK-LABEL: constant-true: applicable class=differences
+// CHECK-NEXT: piece empty=0 rows=1
+// CHECK-LABEL: too-large: not-applicable
+// CHECK-NEXT: issue coefficient-limit
+// CHECK-LABEL: division: not-applicable
+// CHECK-NEXT: issue unsupported-expression
+// CHECK-LABEL: modulo: not-applicable
+// CHECK-NEXT: issue unsupported-expression
+// CHECK-LABEL: nonlinear: not-applicable
+// CHECK-NEXT: issue unsupported-expression
+// CHECK-LABEL: dimension-limit: not-applicable
+// CHECK: issue dimension-limit
+// CHECK-LABEL: pipe-limit: not-applicable
+// CHECK-NEXT: issue pipe-limit
+// CHECK-LABEL: missing-role: missing-premise
+// CHECK-NEXT: issue missing-role
+// CHECK-LABEL: missing-primitives: missing-premise
+// CHECK-NEXT: issue missing-primitives
+// CHECK-LABEL: period-mismatch: not-applicable
+// CHECK-NEXT: issue period-mismatch
+// CHECK-LABEL: residue-valid: applicable class=differences
+// CHECK-LABEL: residue-invalid: not-applicable
+// CHECK-NEXT: issue invalid-residue
+// CHECK-LABEL: missing-parameter: not-applicable
+// CHECK: issue invalid-coordinate
+// CHECK-LABEL: coefficient-overflow: not-applicable
+// CHECK-NEXT: issue coefficient-overflow
+
+// CHECK: minimum-coefficient: applicable class=differences
+// CHECK: row -1, 0, 0, 0 constant=-1 equality=0
+// CHECK: duplicate-coordinate: not-applicable
+// CHECK: issue invalid-coordinate
+// CHECK: missing-residue: not-applicable
+// CHECK: issue invalid-residue
+// CHECK: union-class: applicable class=octagons
+// CHECK: producer-limit: not-applicable exports=0
+// CHECK: producer-limit: not-applicable exports=0
+// CHECK: invalid-tags: not-applicable
+// CHECK: issue invalid-coordinate

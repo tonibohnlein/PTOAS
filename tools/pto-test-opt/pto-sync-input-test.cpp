@@ -10,6 +10,7 @@
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -18,6 +19,7 @@
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
+void dumpArithmeticJSON(func::FuncOp function, const pto::frontiersynch::ArithmeticProgram& program);
 namespace {
 LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &input) {
   pto::SyncStorageEffects storage;
@@ -81,22 +83,71 @@ void dumpRecognition(StringRef label, const pto::frontiersynch::RecognitionResul
     } else {
       llvm::outs() << "unknown";
     }
+    if (access.guard) {
+      llvm::outs() << " guard=" << *access.guard;
+    }
     llvm::outs() << "\n";
   }
 }
-LogicalResult recognize(func::FuncOp function, const pto::SyncInput &input) {
+void dumpGuarded(StringRef label, const pto::frontiersynch::GuardedRecognition &result) {
+  dumpRecognition(label, result.result);
+  llvm::outs() << "  guarded phases=" << result.phases.size() << " guards=" << result.guards.size()
+               << " entry-guards=" << (result.entryGuardsAvailable ? "available" : "late") << "\n";
+  for (auto [id, guard] : llvm::enumerate(result.guards)) {
+    llvm::outs() << "  guard " << id << " parent=";
+    if (guard.parent) {
+      llvm::outs() << *guard.parent;
+    } else {
+      llvm::outs() << "true";
+    }
+    llvm::outs() << " arm=" << (guard.takeThen ? "then" : "else") << "\n";
+  }
+  for (const auto &phase : result.phases) {
+    llvm::outs() << "  guarded-phase " << phase.phase->opName.getStringRef() << " guard=";
+    if (phase.guard) {
+      llvm::outs() << *phase.guard;
+    } else {
+      llvm::outs() << "true";
+    }
+    llvm::outs() << "\n";
+  }
+}
+LogicalResult recognize(func::FuncOp function, const pto::SyncInput &input, bool arithmeticOnly) {
   pto::frontiersynch::PhaseIndex index;
   pto::SyncStorageEffects effects;
   if (failed(index.build(function, input)) || failed(effects.build(input))) {
     return failure();
   }
   llvm::outs() << "recognition " << function.getSymName() << "\n";
+  namespace fs = pto::frontiersynch;
+  // Fixed test-client class: up to 8 pipes, 8 coordinates, period 2, coefficient 8.
+  // Production callers choose their class limits, never observed input maxima.
+  auto arithmetic = fs::recognizeArithmeticProgram(function, index, input, effects, {8, 8, 2, 8});
+  auto status = arithmetic.extraction.state == fs::RecognitionState::Applicable ?
+                arithmetic.recognition.state : arithmetic.extraction.state;
+  llvm::outs() << "recognize arithmetic: " << fs::recognitionName(status) << " backend=unavailable\n";
+  for (const auto &diagnostic : arithmetic.extraction.diagnostics) {
+    llvm::outs() << "  issue " << fs::recognitionName(diagnostic.issue) << "\n";
+  }
+  for (const auto &diagnostic : arithmetic.recognition.diagnostics) {
+    llvm::outs() << "  issue " << fs::recognitionName(diagnostic.issue) << "\n";
+  }
+  llvm::outs() << "  arithmetic sites=" << arithmetic.sites.size()
+               << " parameters=" << arithmetic.parameters.size()
+               << " primitives=" << arithmetic.primitives.relations.size()
+               << " class=" << fs::recognitionName(arithmetic.recognition.arithmeticClass) << "\n";
+  if (arithmeticOnly) {
+    dumpArithmeticJSON(function, arithmetic);
+    return success();
+  }
   if (!function.isDeclaration()) {
     dumpRecognition("explicit", pto::frontiersynch::recognizeExplicit(function.front(), index, effects));
+    dumpGuarded("finite-guarded", pto::frontiersynch::recognizeFiniteGuarded(function.getBody(), index, effects));
   }
   function.walk<WalkOrder::PreOrder>([&](scf::ForOp loop) {
     llvm::outs() << "  loop " << loop.getLoc() << "\n";
     dumpRecognition("rotating", pto::frontiersynch::recognizeRotating(loop, index, input, effects));
+    dumpGuarded("guarded-rotating", pto::frontiersynch::recognizeGuardedRotating(loop, index, input, effects));
   });
   return success();
 }
@@ -173,17 +224,21 @@ int main(int argc, char **argv) {
   const bool capabilities = argc == 3 && StringRef(argv[1]) == "--capabilities";
   const bool phaseIndex = argc == 3 && StringRef(argv[1]) == "--phase-index";
   const bool storageEffects = argc == 3 && StringRef(argv[1]) == "--storage-effects";
+  const bool arithmetic = argc == 3 && StringRef(argv[1]) == "--arithmetic";
   const bool recognition = argc == 3 && StringRef(argv[1]) == "--recognize";
-  if (argc != 2 && !recognition && !expectFailure && !capabilities && !phaseIndex && !storageEffects) {
+  if (argc != 2 && !arithmetic && !recognition && !expectFailure &&
+      !capabilities && !phaseIndex && !storageEffects) {
     llvm::errs() << "usage: pto-sync-input-test "
-                 << "[--expect-failure|--capabilities|--phase-index|--storage-effects|--recognize] input.pto\n";
+                 << "[--expect-failure|--capabilities|--phase-index|--storage-effects|"
+                 "--recognize|--arithmetic] input.pto\n";
     return 1;
   }
   DialectRegistry dialects;
   dialects.insert<pto::PTODialect, func::FuncDialect, arith::ArithDialect, scf::SCFDialect>();
   MLIRContext context(dialects);
   context.disableMultithreading();
-  const auto filename = argv[expectFailure || capabilities || phaseIndex || storageEffects || recognition ? 2 : 1];
+  const bool hasOption = expectFailure || capabilities || phaseIndex || storageEffects || recognition || arithmetic;
+  const auto filename = argv[hasOption ? 2 : 1];
   auto module = parseSourceFile<ModuleOp>(filename, &context);
   if (!module || failed(verify(*module))) {
     return 1;
@@ -205,7 +260,7 @@ int main(int argc, char **argv) {
     if (!translated) {
       return 1;
     }
-    if (recognition && failed(recognize(function, input))) {
+    if ((recognition || arithmetic) && failed(recognize(function, input, arithmetic))) {
       return 1;
     }
     if (phaseIndex && failed(dumpPhaseIndex(function, input))) {

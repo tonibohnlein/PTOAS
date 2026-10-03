@@ -143,6 +143,12 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/SyncEffectRanges.cpp
   FrontierSynch/PhaseIndex.cpp
   FrontierSynch/Recognition.cpp
+  FrontierSynch/GuardedRecognition.cpp
+  FrontierSynch/ArithmeticProgram.cpp
+  FrontierSynch/ArithmeticResidues.cpp
+  FrontierSynch/ArithmeticAccesses.cpp
+  FrontierSynch/ArithmeticRecognition.cpp
+  FrontierSynch/ArithmeticRows.cpp
   FrontierSynch/RotationPattern.cpp
   Passes/PTOInjectBarrierAllSync.cpp
   InsertSync/InsertSyncDebug.cpp
