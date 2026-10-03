@@ -269,7 +269,7 @@ private:
   LogicalResult analyzeHazards() {
     // --- Reused front-end: build the hazard set H (no id assignment) --------
 
-    PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, opAccessMemInfos, func, SyncAnalysisMode::NORMALSYNC);
+    PTOIRTranslator translator(syncIR, buffer2MemInfoMap, opAccessMemInfos, func, SyncAnalysisMode::NORMALSYNC);
     translator.Build();
     if (syncIR.size() <= 1) {
       return success();

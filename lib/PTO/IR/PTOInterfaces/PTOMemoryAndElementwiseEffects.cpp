@@ -62,7 +62,8 @@ PTO_DEFINE_BINARY_EFFECTS(TAddSCOp, getSrc0Mutable(), getSrc1Mutable(), getDstMu
 void TAxpyOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_READ(effects, getSrcMutable());
-  PTO_ADD_READ(effects, getScalarMutable());
+  // The scalar operand is a numeric SSA value, not a storage resource.
+  PTO_ADD_READ(effects, getDstMutable());
   PTO_ADD_WRITE(effects, getDstMutable());
 }
 

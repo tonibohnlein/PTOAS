@@ -27,6 +27,7 @@ configure_lit_site_cfg(
 set(PTOIR_TEST_DEPENDS
   ptoas_runtime_deps
   pto-test-opt
+  pto-sync-input-test
   pto-vpto-scheduler-tracker-test
   pto-bisheng-scheduler-test
 )

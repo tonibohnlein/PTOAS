@@ -1939,7 +1939,7 @@ public:
     // the module attribute, so the oracle and the emitter cannot drift apart.
     isA5 = pto::isTargetArchA5(func.getOperation());
 
-    PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, opAccessMemInfos, func, SyncAnalysisMode::NORMALSYNC);
+    PTOIRTranslator translator(syncIR, buffer2MemInfoMap, opAccessMemInfos, func, SyncAnalysisMode::NORMALSYNC);
     translator.Build();
 
     for (auto &element : syncIR) {

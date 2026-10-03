@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test %s | FileCheck %s
+// CHECK: atomic_store_effects: phases=5
+// CHECK: pto.tstore {{.*}} reads=1 writes=1 core=1
+// CHECK: pto.tstore {{.*}} reads=2 writes=1 core=1
+// CHECK: pto.tstore {{.*}} reads=1 writes=1 core=1
+// CHECK: pto.tstore {{.*}} reads=1 writes=1 core=1
+// CHECK: pto.tstore {{.*}} reads=2 writes=1 core=1
+// CHECK: source-unchanged; dependency-analysis-not-run
+!af = !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!ai = !pto.tile_buf<loc=acc, dtype=i32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+module attributes {pto.target_arch = "a3"} {
+  func.func @atomic_store_effects(%f: !pto.ptr<f32>, %i: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 4096 : i64
+    %fv = pto.make_tensor_view %f, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %fd = pto.partition_view %fv, offsets = [%c0, %c0], sizes = [%c32, %c32]
+      : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+    %iv = pto.make_tensor_view %i, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xi32>
+    %id = pto.partition_view %iv, offsets = [%c0, %c0], sizes = [%c32, %c32]
+      : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<32x32xi32>
+    %fa = pto.alloc_tile addr = %addr0 : !af
+    %ia = pto.alloc_tile addr = %addr1 : !ai
+    pto.tstore ins(%fa : !af) outs(%fd : !pto.partition_tensor_view<32x32xf32>)
+    pto.tstore ins(%fa : !af) outs(%fd : !pto.partition_tensor_view<32x32xf32>) {atomicType = #pto<atomic_type atomic_add>}
+    pto.tstore ins(%fa : !af) outs(%fd : !pto.partition_tensor_view<32x32xf32>)
+    pto.tstore ins(%ia : !ai) outs(%id : !pto.partition_tensor_view<32x32xi32>)
+    pto.tstore ins(%ia : !ai) outs(%id : !pto.partition_tensor_view<32x32xi32>) {atomicType = #pto<atomic_type atomic_add>}
+    return
+  }
+}
