@@ -15,7 +15,7 @@
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
-#include "mlir/Interfaces/FunctionInterfaces.h"
+#include "PTO/IR/PTOSyncCapabilities.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/Matchers.h"
@@ -287,32 +287,16 @@ static bool isSyncHelperMemoryOperand(Type type) {
 // Physical core context is shared instruction metadata; pipe names alone
 // cannot distinguish AIC and AIV movement instructions.
 static pto::TCoreType getSyncPhysicalCoreType(Operation *anchor) {
-  std::optional<pto::TCoreType> core;
-  bool conflict = false;
-  auto merge = [&](pto::TCoreType next) {
-    if (core && *core != next) {
-      conflict = true;
-    }
-    core = next;
-  };
-  for (Operation *op = anchor; op; op = op->getParentOp()) {
-    if (isa<FunctionOpInterface, ModuleOp>(op)) {
-      if (auto raw = op->getAttr(pto::FunctionKernelKindAttr::name)) {
-        if (auto kind = dyn_cast<pto::FunctionKernelKindAttr>(raw)) {
-          merge(kind.getKernelKind() == pto::FunctionKernelKind::Cube ?
-                    pto::TCoreType::CUBE : pto::TCoreType::VECTOR);
-        } else {
-          conflict = true;
-        }
-      }
-    }
-    if (isa<pto::SectionCubeOp>(op)) {
-      merge(pto::TCoreType::CUBE);
-    } else if (isa<pto::SectionVectorOp>(op)) {
-      merge(pto::TCoreType::VECTOR);
-    }
+  switch (pto::recoverSyncPhysicalCore(anchor)) {
+  case pto::SyncPhysicalCore::AIC:
+    return pto::TCoreType::CUBE;
+  case pto::SyncPhysicalCore::AIV:
+    return pto::TCoreType::VECTOR;
+  case pto::SyncPhysicalCore::Unknown:
+  case pto::SyncPhysicalCore::Conflict:
+    return pto::TCoreType::CUBE_OR_VECTOR;
   }
-  return conflict || !core ? pto::TCoreType::CUBE_OR_VECTOR : *core;
+  llvm_unreachable("unknown physical core enumeration");
 }
 
 } // namespace

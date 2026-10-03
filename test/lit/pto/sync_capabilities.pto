@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --capabilities %s | FileCheck %s
+// CHECK: aic-m-fix: available
+// CHECK: aic-m-mte3: absent
+// CHECK: aic-mte2-fix: available (no application scenario)
+// CHECK: aiv-s-v: available
+// CHECK: aiv-m-v: absent
+// CHECK: scalar-barrier: absent
+// CHECK: vector-barrier: available
+// CHECK: unknown-target: unknown
+// CHECK: unknown-core: unknown
+// CHECK: same-pipe-event: absent
+// CHECK: source-unchanged; dependency-analysis-not-run
+module {}

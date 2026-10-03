@@ -8,6 +8,7 @@
 // Inspect the shared instruction contract without any dependency analyzer.
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOSyncCapabilities.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
@@ -15,6 +16,30 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
 namespace {
+void dumpCapabilities() {
+  using namespace pto;
+  auto dump = [](StringRef name, std::optional<bool> available, bool noScenario = false) {
+    llvm::outs() << name << ": " << (available ? (*available ? "available" : "absent") : "unknown");
+    if (noScenario) {
+      llvm::outs() << " (no application scenario)";
+    }
+    llvm::outs() << "\n";
+  };
+  auto event = [&](StringRef name, StringRef architecture, SyncPhysicalCore core, PIPE source, PIPE target) {
+    auto capability = getSyncEventAvailability(architecture, core, source, target);
+    dump(name, capability.available, capability.noApplicationScenario);
+  };
+  event("aic-m-fix", "a3", SyncPhysicalCore::AIC, PIPE::PIPE_M, PIPE::PIPE_FIX);
+  event("aic-m-mte3", "a3", SyncPhysicalCore::AIC, PIPE::PIPE_M, PIPE::PIPE_MTE3);
+  event("aic-mte2-fix", "a3", SyncPhysicalCore::AIC, PIPE::PIPE_MTE2, PIPE::PIPE_FIX);
+  event("aiv-s-v", "a2", SyncPhysicalCore::AIV, PIPE::PIPE_S, PIPE::PIPE_V);
+  event("aiv-m-v", "a2", SyncPhysicalCore::AIV, PIPE::PIPE_M, PIPE::PIPE_V);
+  dump("scalar-barrier", getSyncBarrierAvailability("a3", SyncPhysicalCore::AIV, PIPE::PIPE_S));
+  dump("vector-barrier", getSyncBarrierAvailability("a3", SyncPhysicalCore::AIV, PIPE::PIPE_V));
+  event("unknown-target", "a5", SyncPhysicalCore::AIV, PIPE::PIPE_V, PIPE::PIPE_MTE3);
+  dump("unknown-core", getSyncBarrierAvailability("a3", SyncPhysicalCore::Unknown, PIPE::PIPE_V));
+  event("same-pipe-event", "a3", SyncPhysicalCore::AIV, PIPE::PIPE_V, PIPE::PIPE_V);
+}
 std::string render(Operation *op) {
   std::string text;
   llvm::raw_string_ostream stream(text);
@@ -24,17 +49,21 @@ std::string render(Operation *op) {
 }
 int main(int argc, char **argv) {
   const bool expectFailure = argc == 3 && StringRef(argv[1]) == "--expect-failure";
-  if (argc != 2 && !expectFailure) {
-    llvm::errs() << "usage: pto-sync-input-test [--expect-failure] input.pto\n";
+  const bool capabilities = argc == 3 && StringRef(argv[1]) == "--capabilities";
+  if (argc != 2 && !expectFailure && !capabilities) {
+    llvm::errs() << "usage: pto-sync-input-test [--expect-failure|--capabilities] input.pto\n";
     return 1;
   }
   DialectRegistry dialects;
   dialects.insert<pto::PTODialect, func::FuncDialect, arith::ArithDialect, scf::SCFDialect>();
   MLIRContext context(dialects);
   context.disableMultithreading();
-  auto module = parseSourceFile<ModuleOp>(argv[expectFailure ? 2 : 1], &context);
+  auto module = parseSourceFile<ModuleOp>(argv[expectFailure || capabilities ? 2 : 1], &context);
   if (!module || failed(verify(*module))) {
     return 1;
+  }
+  if (capabilities) {
+    dumpCapabilities();
   }
   const auto before = render(module->getOperation());
   pto::SyncInput input;
