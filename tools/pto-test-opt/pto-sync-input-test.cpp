@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Inspect the shared instruction contract without any dependency analyzer.
 #include "PTO/Transforms/InsertSync/SyncInput.h"
+#include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
@@ -17,6 +18,46 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
 namespace {
+LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &input) {
+  pto::SyncStorageEffects storage;
+  if (failed(storage.build(input))) {
+    return failure();
+  }
+  llvm::outs() << "storage " << function.getSymName() << ": cells=" << storage.cells().size()
+               << " all-exact=" << storage.allAccessesExact() << "\n";
+  for (auto [id, cell] : llvm::enumerate(storage.cells())) {
+    llvm::outs() << "  cell " << id << " space=" << static_cast<unsigned>(cell.space)
+                 << " [" << cell.begin << "," << cell.end << ")\n";
+  }
+  for (auto [id, effect] : llvm::enumerate(storage.effects())) {
+    auto precision = effect.precision == pto::SyncAccessPrecision::Exact ? "exact" :
+                     effect.precision == pto::SyncAccessPrecision::UpperBound ? "upper" : "unknown";
+    llvm::outs() << "  effect " << id << " " << effect.phase->opName.getStringRef()
+                 << (effect.mode == pto::SyncAccessMode::Read ? " read " : " write ")
+                 << precision << " definite-write=" << effect.hasDefiniteWrites() << " cells=";
+    llvm::interleaveComma(effect.cells, llvm::outs());
+    llvm::outs() << "\n";
+  }
+  if (auto queries = function->getAttrOfType<DenseI64ArrayAttr>("test.overlap")) {
+    if (queries.size() % 2 != 0) {
+      return failure();
+    }
+    for (int64_t i = 0; i < queries.size(); i += 2) {
+      if (queries[i] < 0 || queries[i + 1] < 0) {
+        return failure();
+      }
+      llvm::outs() << "  overlap " << queries[i] << "," << queries[i + 1] << "="
+                   << storage.mayOverlap(static_cast<std::size_t>(queries[i]),
+                                         static_cast<std::size_t>(queries[i + 1])) << "\n";
+    }
+  }
+  // Rebuilding must neither accumulate cells nor retain prior phase mappings.
+  auto cellCount = storage.cells().size(), effectCount = storage.effects().size();
+  if (failed(storage.build(input)) || storage.cells().size() != cellCount || storage.effects().size() != effectCount) {
+    return failure();
+  }
+  return success();
+}
 LogicalResult dumpPhaseIndex(func::FuncOp function, const pto::SyncInput &input) {
   namespace fs = pto::frontiersynch;
   fs::PhaseIndex index;
@@ -89,15 +130,18 @@ int main(int argc, char **argv) {
   const bool expectFailure = argc == 3 && StringRef(argv[1]) == "--expect-failure";
   const bool capabilities = argc == 3 && StringRef(argv[1]) == "--capabilities";
   const bool phaseIndex = argc == 3 && StringRef(argv[1]) == "--phase-index";
-  if (argc != 2 && !expectFailure && !capabilities && !phaseIndex) {
-    llvm::errs() << "usage: pto-sync-input-test [--expect-failure|--capabilities|--phase-index] input.pto\n";
+  const bool storageEffects = argc == 3 && StringRef(argv[1]) == "--storage-effects";
+  if (argc != 2 && !expectFailure && !capabilities && !phaseIndex && !storageEffects) {
+    llvm::errs() << "usage: pto-sync-input-test "
+                 << "[--expect-failure|--capabilities|--phase-index|--storage-effects] input.pto\n";
     return 1;
   }
   DialectRegistry dialects;
   dialects.insert<pto::PTODialect, func::FuncDialect, arith::ArithDialect, scf::SCFDialect>();
   MLIRContext context(dialects);
   context.disableMultithreading();
-  auto module = parseSourceFile<ModuleOp>(argv[expectFailure || capabilities || phaseIndex ? 2 : 1], &context);
+  const auto filename = argv[expectFailure || capabilities || phaseIndex || storageEffects ? 2 : 1];
+  auto module = parseSourceFile<ModuleOp>(filename, &context);
   if (!module || failed(verify(*module))) {
     return 1;
   }
@@ -119,6 +163,9 @@ int main(int argc, char **argv) {
       return 1;
     }
     if (phaseIndex && failed(dumpPhaseIndex(function, input))) {
+      return 1;
+    }
+    if (storageEffects && failed(dumpStorageEffects(function, input))) {
       return 1;
     }
     llvm::outs() << function.getSymName() << ": phases=" << input.instructions().size() << "\n";

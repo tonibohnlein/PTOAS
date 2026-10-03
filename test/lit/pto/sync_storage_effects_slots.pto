@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
+
+// A dynamic slot is a union of possible ranges, not a definite overwrite of
+// every slot. A constant slot and scalar offset identify one exact element.
+// CHECK-LABEL: storage slots: cells=4 all-exact=0
+// CHECK: cell 0 {{.*}} [0,4)
+// CHECK: cell 1 {{.*}} [4,1024)
+// CHECK: cell 2 {{.*}} [1024,1028)
+// CHECK: cell 3 {{.*}} [1028,2048)
+// CHECK: effect 0 pto.tsetval write upper definite-write=0 cells=0, 1, 2, 3
+// CHECK: effect 1 pto.tsetval write exact definite-write=1 cells=0
+// CHECK: effect 2 pto.tgetval read exact definite-write=0 cells=2
+// CHECK: overlap 0,1=1
+// CHECK: overlap 0,2=1
+// CHECK: overlap 1,2=0
+// CHECK: source-unchanged; dependency-analysis-not-run
+
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=2>
+module {
+  func.func @slots(%slot: index) attributes {test.overlap = array<i64: 0, 1, 0, 2, 1, 2>} {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    %dynamic = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+    %first = pto.multi_tile_get %ring[%i0] : !ring -> !tile
+    %second = pto.multi_tile_get %ring[%i1] : !ring -> !tile
+    pto.tsetval ins(%i0, %one : index, f32) outs(%dynamic : !tile)
+    pto.tsetval ins(%i0, %one : index, f32) outs(%first : !tile)
+    %v = pto.tgetval ins(%second, %i0 : !tile, index) outs : f32
+    return
+  }
+}
