@@ -6,6 +6,13 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
+// RUN: pto-sync-input-test --recognize %s | FileCheck %s --check-prefix=RECOGNIZE
+
+// RECOGNIZE-LABEL: recognition reused_ranges
+// RECOGNIZE: recognize explicit: missing-premise
+// RECOGNIZE: issue inexact-footprint
+// RECOGNIZE-LABEL: recognition scalar_only
+// RECOGNIZE: recognize explicit: applicable backend=unavailable
 
 // One large allocation is reused as two smaller allocations with distinct SSA
 // roots. Cells must be shared by byte identity, not by root or operation name.

@@ -9,6 +9,9 @@
 #define PTO_TRANSFORMS_INSERTSYNC_SYNCEFFECTRANGES_H
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 namespace mlir::pto::detail {
+// Requires a nonnull root. Physical extents stay in slot order, without union
+// normalization. Empty means unknown.
+SmallVector<SyncStorageCell> physicalSlotRanges(const BaseMemInfo& memory);
 void resolveEffectRanges(const SyncInput& input, SyncStorageEffect& effect);
 } // namespace mlir::pto::detail
 #endif

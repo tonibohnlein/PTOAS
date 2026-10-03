@@ -1,0 +1,109 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --recognize %s | FileCheck %s
+
+// CHECK-LABEL: recognition mixed_stride
+// CHECK: recognize rotating: not-applicable
+// CHECK: issue common-stride
+// CHECK-LABEL: recognition aliasing
+// CHECK: recognize rotating: not-applicable
+// CHECK: issue overlapping-families
+// CHECK-LABEL: recognition variable_modulus
+// CHECK: recognize rotating: not-applicable
+// CHECK: issue slot-expression
+// CHECK-LABEL: recognition conditional
+// CHECK: recognize rotating: not-applicable
+// CHECK: issue structured-body
+// CHECK-LABEL: recognition nonunit
+// CHECK: recognize rotating: not-applicable
+// CHECK: issue loop-domain
+// CHECK: source-unchanged; dependency-analysis-not-run
+
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=2>
+module {
+  func.func @mixed_stride(%n: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    scf.for %i = %i0 to %n step %i1 {
+      %slot = arith.remui %i, %i2 : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      %fixed = pto.multi_tile_get %ring[%i0] : !ring -> !tile
+      %v = pto.tgetval ins(%fixed, %i0 : !tile, index) outs : f32
+    }
+    return
+  }
+  func.func @aliasing(%n: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    %other = pto.alloc_multi_tile addr = %zero : !ring
+    scf.for %i = %i0 to %n step %i1 {
+      %slot = arith.remui %i, %i2 : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      %second = pto.multi_tile_get %other[%slot] : !ring -> !tile
+      %v = pto.tgetval ins(%second, %i0 : !tile, index) outs : f32
+    }
+    return
+  }
+  func.func @variable_modulus(%n: index, %b: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    scf.for %i = %i0 to %n step %i1 {
+      %slot = arith.remui %i, %b : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    }
+    return
+  }
+  func.func @conditional(%n: index, %g: i1) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    scf.for %i = %i0 to %n step %i1 {
+      %slot = arith.remui %i, %i2 : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      scf.if %g {
+      pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      }
+    }
+    return
+  }
+  func.func @nonunit(%n: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    scf.for %i = %i0 to %n step %i2 {
+      %slot = arith.remui %i, %i2 : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    }
+    return
+  }
+}
