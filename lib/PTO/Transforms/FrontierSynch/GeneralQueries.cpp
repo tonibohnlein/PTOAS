@@ -6,7 +6,10 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exact uniform Presburger query/selector adapters over the shared source model.
+// Composition joins fixed event identities before arithmetic projection; missing
+// fixed tags use the general relation operation without changing admission.
 #include "GeneralQueries.h"
+#include "SymbolicComposition.h"
 #include "StructuredInternal.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
@@ -66,18 +69,13 @@ FailureOr<Int> coefficientImpl(Value value, scf::ForOp outer, DenseMap<Value, st
 }
 R canonical(R relation, SymbolicSchemaHandle schema)
 {
-    relation = relation.simplify();
+    relation = normalizeSymbolicRelation(std::move(relation));
     relation.setSpace(*schema->space(Tuple::Event, Tuple::Event));
     return relation;
 }
-R compose(R a, const R& b, SymbolicSchemaHandle schema)
-{
-    a.compose(b); return canonical(std::move(a), schema);
-}
 R subtract(const R& a, const R& b, SymbolicSchemaHandle schema)
 {
-    auto right = b.hasOnlyDivLocals() ? b : b.computeReprWithOnlyDivLocals();
-    return canonical(a.subtract(right), schema);
+    return canonical(subtractSymbolicRelations(a, b, schema, Tuple::Event, Tuple::Event), schema);
 }
 FailureOr<R> materialize(SymbolicEvaluator& evaluator, const SymbolicRoot& root)
 {
@@ -106,6 +104,14 @@ FailureOr<R> crossing(const R& relation, ArrayRef<std::size_t> owners)
     return result;
 }
 } // namespace
+presburger::PresburgerRelation composeGeneralEventRelations(
+    presburger::PresburgerRelation first, const presburger::PresburgerRelation& second,
+    SymbolicSchemaHandle schema)
+{
+    auto result = composeSymbolicRelations(std::move(first), second, schema,
+        Tuple::Event, Tuple::Event, Tuple::Event);
+    return canonical(std::move(result), std::move(schema));
+}
 AnalysisContract generalAnalysisContract()
 {
     AnalysisContract result;
@@ -233,11 +239,26 @@ FailureOr<std::shared_ptr<const GeneralQueries>> generalQueries(const SelectedAn
     }
     auto source = selected.structured;
     auto premises = sourcePremises(source);
-    auto evaluator = succeeded(premises) ? SymbolicEvaluator::uniform(*premises) :
-                                          FailureOr<SymbolicEvaluator>(failure());
-    if (failed(evaluator)) { reason = "child Presburger backend unavailable"; return failure(); }
-    auto present = materialize(*evaluator, (*premises)->presence());
-    auto native = materialize(*evaluator, (*premises)->native());
+    if (failed(premises)) { reason = "child Presburger backend unavailable"; return failure(); }
+    FailureOr<R> present = failure(), native = failure();
+    if (selected.signedAnalysis) {
+        // These are already context-qualified Unit->Event and Event->Event
+        // relations. Export the accepted analysis instead of evaluating the
+        // same original native/presence expressions through a second backend.
+        auto p = selected.signedAnalysis->presence()->toSymbolic();
+        auto n = selected.signedAnalysis->native()->toSymbolic();
+        if (succeeded(p) && succeeded(n) && p->schema() == source->schema() &&
+            n->schema() == source->schema()) {
+            present = p->relation();
+            native = n->relation();
+        }
+    }
+    if (failed(present) || failed(native)) {
+        auto evaluator = SymbolicEvaluator::uniform(*premises);
+        if (failed(evaluator)) { reason = "child Presburger backend unavailable"; return failure(); }
+        present = materialize(*evaluator, (*premises)->presence());
+        native = materialize(*evaluator, (*premises)->native());
+    }
     auto minimum = selected.minimum->toSymbolic(), reach = selected.reachability->toSymbolic();
     if (failed(present) || failed(native) || failed(minimum) || failed(reach) ||
         minimum->schema() != source->schema() || reach->schema() != source->schema()) {
@@ -316,14 +337,24 @@ FailureOr<SelectedAnalysisHandle> composeGeneralRegions(func::FuncOp function, S
         auto g = crossing(*generators, sides), n = crossing(*native, sides);
         if (failed(g) || failed(n)) { return failure(); }
         auto edges = g->unionSet(*n);
-        auto bridge = compose(compose(left->first, edges, schema), right->first, schema);
+        auto bridge = composeGeneralEventRelations(
+            composeGeneralEventRelations(left->first, edges, schema), right->first, schema);
         auto reach = canonical(left->first.unionSet(right->first).unionSet(bridge), schema);
-        auto strict = subtract(reach, *identity, schema);
         // Only paths with endpoints in a crossing generator can remove it.
-        auto fromCrossing = strict.intersectDomain(g->getDomainSet());
-        auto toCrossing = strict.intersectRange(g->getRangeSet());
-        auto alternatives = compose(fromCrossing, toCrossing, schema);
-        auto retained = subtract(*g, native->unionSet(alternatives), schema);
+        // Restrict before difference: (R\Id)|S = (R|S)\Id. This avoids
+        // complementing unrelated internal child paths while exporting the
+        // same complete reflexive reachability to a subsequent parent merge.
+        auto retained = *g;
+        if (g->getNumDisjuncts() != 0) {
+            // Outer masks may overapproximate the candidate coordinates. Final
+            // subtraction from G keeps the exact selected demand relation.
+            auto fromCrossing = subtract(reach.intersectDomain(
+                symbolicEndpointSupport(*g, schema, Tuple::Event, true)), *identity, schema);
+            auto toCrossing = subtract(reach.intersectRange(
+                symbolicEndpointSupport(*g, schema, Tuple::Event, false)), *identity, schema);
+            auto alternatives = composeGeneralEventRelations(fromCrossing, toCrossing, schema);
+            retained = subtract(*g, native->unionSet(alternatives), schema);
+        }
         auto minimum = canonical(left->second.unionSet(right->second).unionSet(retained), schema);
         return std::make_pair(std::move(reach), std::move(minimum));
     };

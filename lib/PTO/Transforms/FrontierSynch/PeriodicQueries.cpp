@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Symbolic entry/exit queries for a qualified stationary period, not unfolding.
+// Symbolic queries for a qualified period within its original loop invocation.
 #include "RegionalRequests.h"
 #include "mlir/IR/Matchers.h"
 namespace mlir::pto::frontiersynch {
@@ -24,28 +24,50 @@ LogicalResult liftPeriodicQueries(SelectedAnalysis& selected, const SignedInputs
     if (selected.sites.size() != selected.periodic.sites().size()) {
         reason = "periodic symbolic query site-count identity mismatch"; return failure();
     }
+    SmallVector<Value> coordinates;
     for (auto [position, site] : llvm::enumerate(selected.sites)) {
         if (site >= schema->sites().size() || schema->sites()[site].phase != selected.periodic.sites()[position] ||
-            schema->sites()[site].coordinates.size() != 1 ||
-            schema->sites()[site].coordinates.front() != selected.loop.getInductionVar()) {
-            reason = "periodic symbolic query coordinate is not the sole original loop induction value";
+            schema->sites()[site].coordinates.empty() ||
+            schema->sites()[site].coordinates.back() != selected.loop.getInductionVar()) {
+            reason = "periodic symbolic query final coordinate is not the original loop induction value";
+            return failure();
+        }
+        if (position == 0) {
+            coordinates = schema->sites()[site].coordinates;
+        } else if (ArrayRef<Value>(coordinates) != ArrayRef<Value>(schema->sites()[site].coordinates)) {
+            reason = "periodic symbolic query sites do not share the original enclosing coordinates";
             return failure();
         }
     }
+    if (coordinates.empty()) { reason = "periodic symbolic query has no executed sites"; return failure(); }
+    const unsigned iteration = coordinates.size() - 1;
     SmallVector<SignedPiece> queries, demands, present;
     auto piece = [&](std::size_t a, std::size_t b, Kind source, Kind target, const Int& distance, bool exact) {
         SignedPiece value;
         value.domain = {selected.sites[a], source};
         value.range = {selected.sites[b], target};
-        value.residues.assign(2 + schema->parameters().size(), Int(0));
+        // Signed tuples contain their site's active axes; global schema padding
+        // is preserved by the original presence/import and symbolic export.
+        value.residues.assign(2 * coordinates.size() + schema->parameters().size(), Int(0));
+        // A compact period describes one invocation of this loop. Equal outer
+        // coordinates prevent its threshold from relating distinct task/batch
+        // invocations whose inner IV happens to have the same numerical value.
+        for (unsigned outer = 0; outer < iteration; ++outer) {
+            SignedAtom forward, backward;
+            forward.terms = {{{SignedAxisRole::Domain, outer}, 1}, {{SignedAxisRole::Range, outer}, -1}};
+            backward.terms = {{{SignedAxisRole::Range, outer}, 1}, {{SignedAxisRole::Domain, outer}, -1}};
+            forward.bound = backward.bound = Int(0);
+            value.atoms.push_back(std::move(forward));
+            value.atoms.push_back(std::move(backward));
+        }
         // Original IV difference equals executed ordinal difference for unit progression.
         SignedAtom lower;
-        lower.terms = {{{SignedAxisRole::Domain, 0}, 1}, {{SignedAxisRole::Range, 0}, -1}};
+        lower.terms = {{{SignedAxisRole::Domain, iteration}, 1}, {{SignedAxisRole::Range, iteration}, -1}};
         lower.bound = -distance;
         value.atoms.push_back(lower);
         if (exact) {
             SignedAtom upper;
-            upper.terms = {{{SignedAxisRole::Range, 0}, 1}, {{SignedAxisRole::Domain, 0}, -1}};
+            upper.terms = {{{SignedAxisRole::Range, iteration}, 1}, {{SignedAxisRole::Domain, iteration}, -1}};
             upper.bound = distance;
             value.atoms.push_back(upper);
         }

@@ -6,13 +6,125 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exact materialization is explicit and separately charged from DAG creation.
-#include "PTO/Transforms/FrontierSynch/SymbolicDemandAnalysis.h"
+// Typed finite-tag joins avoid unrelated arithmetic products; normalization
+// and bound-context handling remain in the evaluator's original cache path.
+#include "SymbolicComposition.h"
 #include "llvm/ADT/SmallString.h"
+#include <map>
+#include <set>
+#include <limits>
 namespace mlir::pto::frontiersynch {
 namespace {
 using Relation = presburger::PresburgerRelation;
 using Op = SymbolicRelationOp;
 using llvm::DynamicAPInt;
+using Tag = std::pair<int64_t, int64_t>;
+SmallVector<std::optional<DynamicAPInt>> equalityConstants(const presburger::IntegerRelation& poly)
+{
+    SmallVector<std::optional<DynamicAPInt>> constants(poly.getNumVars());
+    // Exact propagation through equality rows only. Each successful step
+    // derives one previously unknown constant; there are at most numVars steps.
+    // Inequalities and unresolved affine rows never authorize a tag split.
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (unsigned index = 0; index < poly.getNumEqualities(); ++index) {
+            auto row = poly.getEquality(index);
+            DynamicAPInt known = row.back();
+            std::optional<unsigned> unknown;
+            bool multiple = false;
+            for (unsigned column = 0; column < poly.getNumVars(); ++column) {
+                if (row[column] == DynamicAPInt(0)) { continue; }
+                if (constants[column]) { known += row[column] * *constants[column]; }
+                else if (unknown) { multiple = true; break; }
+                else { unknown = column; }
+            }
+            if (multiple || !unknown || (-known) % row[*unknown] != DynamicAPInt(0)) { continue; }
+            constants[*unknown] = (-known) / row[*unknown];
+            changed = true;
+        }
+    }
+    return constants;
+}
+std::optional<int64_t> literalConstant(ArrayRef<std::optional<DynamicAPInt>> constants, unsigned position)
+{
+    if (position >= constants.size() || !constants[position]) { return std::nullopt; }
+    const auto& value = *constants[position];
+    if (value < DynamicAPInt(std::numeric_limits<int64_t>::min()) ||
+        value > DynamicAPInt(std::numeric_limits<int64_t>::max())) { return std::nullopt; }
+    return static_cast<int64_t>(value);
+}
+std::optional<Tag> finiteTag(ArrayRef<std::optional<DynamicAPInt>> constants, unsigned start,
+                           SymbolicTuple tuple, SymbolicSchemaHandle schema)
+{
+    if (tuple != SymbolicTuple::Occurrence && tuple != SymbolicTuple::Event) { return std::nullopt; }
+    auto site = literalConstant(constants, start);
+    std::optional<int64_t> kind = int64_t(0);
+    if (tuple == SymbolicTuple::Event) {
+        kind = literalConstant(constants, start + schema->coordinateDepth() + 1);
+    }
+    if (!site || !kind) { return std::nullopt; }
+    return Tag{*site, *kind};
+}
+Relation nonemptyIntegerDisjuncts(const Relation& relation)
+{
+    auto result = Relation::getEmpty(relation.getSpace());
+    for (const auto& piece : relation.getAllDisjuncts()) {
+        // Exact integer emptiness, including parity contradictions. Rational
+        // feasibility is insufficient for LLVM19's complement construction.
+        if (!piece.isIntegerEmpty()) { result.unionInPlace(piece); }
+    }
+    return result;
+}
+void eliminateUnitLocals(presburger::IntegerRelation& piece)
+{
+    // A local with coefficient +/-1 is uniquely an integer affine expression
+    // of the remaining variables. Substitution preserves every constraint and
+    // existential solution exactly; nonunit/division locals stay represented.
+    while (true) {
+        std::optional<std::pair<unsigned, unsigned>> pivot;
+        unsigned localStart = piece.getVarKindOffset(presburger::VarKind::Local);
+        for (unsigned equality = 0; equality < piece.getNumEqualities() && !pivot; ++equality) {
+            for (unsigned local = localStart; local < piece.getNumVars(); ++local) {
+                auto coefficient = piece.atEq(equality, local);
+                if (coefficient == DynamicAPInt(1) || coefficient == DynamicAPInt(-1)) {
+                    pivot = std::make_pair(equality, local);
+                    break;
+                }
+            }
+        }
+        if (!pivot) { return; }
+        auto [equality, local] = *pivot;
+        SmallVector<DynamicAPInt> defining(piece.getEquality(equality));
+        for (unsigned row = 0; row < piece.getNumEqualities(); ++row) {
+            if (row == equality) { continue; }
+            auto factor = piece.atEq(row, local) / defining[local];
+            if (factor == DynamicAPInt(0)) { continue; }
+            for (unsigned column = 0; column < piece.getNumCols(); ++column) {
+                piece.atEq(row, column) -= factor * defining[column];
+            }
+        }
+        for (unsigned row = 0; row < piece.getNumInequalities(); ++row) {
+            auto factor = piece.atIneq(row, local) / defining[local];
+            if (factor == DynamicAPInt(0)) { continue; }
+            for (unsigned column = 0; column < piece.getNumCols(); ++column) {
+                piece.atIneq(row, column) -= factor * defining[column];
+            }
+        }
+        piece.removeEquality(equality);
+        piece.removeVar(local);
+    }
+}
+Relation normalizedSubtrahend(const Relation& relation)
+{
+    // Discard empty clauses before QE and also any empty clauses produced by
+    // its disjunctive representation. This preserves the set exactly and avoids
+    // LLVM19 subtraction treating a rationally feasible integer-empty clause
+    // as a redundant-constraint witness that can erase valid left points.
+    auto nonempty = normalizeSymbolicRelation(relation);
+    if (nonempty.hasOnlyDivLocals()) { return nonempty; }
+    return normalizeSymbolicRelation(nonempty.computeReprWithOnlyDivLocals());
+}
 DynamicAPInt integer(IntegerAttr attribute)
 {
     const auto type = dyn_cast<IntegerType>(attribute.getType());
@@ -38,7 +150,8 @@ Relation specialize(const SymbolicPrimitive& primitive, const SymbolicContext& c
     }
     return result;
 }
-FailureOr<Relation> operation(const SymbolicRelationNode& node, const Relation& left, const Relation& right)
+FailureOr<Relation> operation(const SymbolicRelationNode& node, const Relation& left, const Relation& right,
+    SymbolicSchemaHandle schema, SymbolicTuple intermediate, bool bound)
 {
     switch (node.operation) {
         case Op::Union:
@@ -46,15 +159,11 @@ FailureOr<Relation> operation(const SymbolicRelationNode& node, const Relation& 
         case Op::Intersect:
             return left.intersect(right);
         case Op::Difference: {
-            // Stable public contract: normalize non-division existential RHS
-            // locals exactly, never via IntegerRelation::projectOut.
-            const auto normalized = right.hasOnlyDivLocals() ? right : right.computeReprWithOnlyDivLocals();
-            return left.subtract(normalized);
+            return subtractSymbolicRelations(left, right, std::move(schema), node.domain, node.range, bound);
         }
         case Op::Compose: {
-            auto result = left;
-            result.compose(right); // MLIR copies operands and introduces fresh locals.
-            return result;
+            return composeSymbolicRelations(left, right, std::move(schema),
+                node.domain, intermediate, node.range, bound);
         }
         case Op::Domain: {
             // LLVM 19 inverse() leaves an empty relation's top-level space unchanged.
@@ -78,6 +187,136 @@ FailureOr<Relation> operation(const SymbolicRelationNode& node, const Relation& 
     }
 }
 } // namespace
+
+presburger::PresburgerRelation normalizeSymbolicRelation(presburger::PresburgerRelation relation)
+{
+    auto simplified = Relation::getEmpty(relation.getSpace());
+    for (auto piece : relation.getAllDisjuncts()) {
+        eliminateUnitLocals(piece);
+        piece.simplify();
+        simplified.unionInPlace(piece);
+    }
+    return nonemptyIntegerDisjuncts(simplified);
+}
+
+presburger::PresburgerSet symbolicEndpointSupport(
+    const presburger::PresburgerRelation& relation, SymbolicSchemaHandle schema,
+    SymbolicTuple endpoint, bool domain, bool bound)
+{
+    auto space = *schema->space(SymbolicTuple::Unit, endpoint, bound);
+    auto result = Relation::getEmpty(space);
+    std::set<Tag> tags;
+    for (const auto& poly : relation.getAllDisjuncts()) {
+        auto constants = equalityConstants(poly);
+        auto tag = finiteTag(constants, domain ? 0 : poly.getNumDomainVars(), endpoint, schema);
+        if (!tag) { return presburger::PresburgerSet(Relation::getUniverse(space)); }
+        tags.insert(*tag);
+    }
+    for (const auto& tag : tags) {
+        presburger::IntegerRelation poly(space);
+        poly.addBound(presburger::BoundType::EQ, 0, DynamicAPInt(tag.first));
+        if (endpoint == SymbolicTuple::Event) {
+            poly.addBound(presburger::BoundType::EQ, schema->coordinateDepth() + 1, DynamicAPInt(tag.second));
+        }
+        result.unionInPlace(poly);
+    }
+    return presburger::PresburgerSet(result);
+}
+
+presburger::PresburgerRelation composeSymbolicRelations(
+    presburger::PresburgerRelation first, const presburger::PresburgerRelation& second,
+    SymbolicSchemaHandle schema, SymbolicTuple source, SymbolicTuple intermediate,
+    SymbolicTuple target, bool bound)
+{
+    auto outputSpace = *schema->space(source, target, bound);
+    if (first.getNumDisjuncts() == 0 || second.getNumDisjuncts() == 0) {
+        return Relation::getEmpty(outputSpace);
+    }
+    auto generic = [&]() {
+        first.compose(second); // Backend introduces fresh existential locals.
+        first.setSpace(outputSpace);
+        return std::move(first);
+    };
+    if (intermediate != SymbolicTuple::Occurrence && intermediate != SymbolicTuple::Event) {
+        return generic();
+    }
+    // Union distributes over composition. Equality at the intermediate tuple
+    // includes site, and for events kind; preserve all other original axes.
+    using Buckets = std::map<Tag, Relation>;
+    auto partition = [&](const Relation& relation, bool range, Buckets& buckets) {
+        for (const auto& poly : relation.getAllDisjuncts()) {
+            unsigned start = range ? poly.getNumDomainVars() : 0;
+            auto constants = equalityConstants(poly);
+            auto tag = finiteTag(constants, start, intermediate, schema);
+            if (!tag) { return false; }
+            auto entry = buckets.try_emplace(*tag, Relation::getEmpty(relation.getSpace())).first;
+            entry->second.unionInPlace(poly);
+        }
+        return true;
+    };
+    Buckets left, right;
+    if (!partition(first, true, left) || !partition(second, false, right)) { return generic(); }
+    auto result = Relation::getEmpty(outputSpace);
+    for (auto& [tag, relation] : left) {
+        auto found = right.find(tag);
+        if (found == right.end()) { continue; }
+        relation.compose(found->second);
+        relation.setSpace(outputSpace);
+        result.unionInPlace(relation);
+    }
+    return result;
+}
+
+presburger::PresburgerRelation subtractSymbolicRelations(
+    const presburger::PresburgerRelation& first, const presburger::PresburgerRelation& second,
+    SymbolicSchemaHandle schema, SymbolicTuple source, SymbolicTuple target, bool bound)
+{
+    auto outputSpace = *schema->space(source, target, bound);
+    auto generic = [&]() {
+        // Preserve exact integer projection of arbitrary existential RHS locals.
+        const auto normalized = normalizedSubtrahend(second);
+        auto result = first.subtract(normalized);
+        result.setSpace(outputSpace);
+        return result;
+    };
+    if (first.getNumDisjuncts() == 0) { return Relation::getEmpty(outputSpace); }
+    if (second.getNumDisjuncts() == 0) {
+        auto result = first;
+        result.setSpace(outputSpace);
+        return result;
+    }
+    if ((source != SymbolicTuple::Occurrence && source != SymbolicTuple::Event) ||
+        (target != SymbolicTuple::Occurrence && target != SymbolicTuple::Event)) { return generic(); }
+    using Endpoints = std::pair<Tag, Tag>;
+    using Buckets = std::map<Endpoints, Relation>;
+    auto partition = [&](const Relation& relation, Buckets& buckets) {
+        for (const auto& poly : relation.getAllDisjuncts()) {
+            auto constants = equalityConstants(poly);
+            auto a = finiteTag(constants, 0, source, schema);
+            auto b = finiteTag(constants, poly.getNumDomainVars(), target, schema);
+            if (!a || !b) { return false; }
+            auto entry = buckets.try_emplace(Endpoints{*a, *b}, Relation::getEmpty(relation.getSpace())).first;
+            entry->second.unionInPlace(poly);
+        }
+        return true;
+    };
+    Buckets left, right;
+    if (!partition(first, left) || !partition(second, right)) { return generic(); }
+    auto result = Relation::getEmpty(outputSpace);
+    // Distinct fixed endpoint tuples are disjoint. Normalize only matching
+    // RHS buckets, rather than projecting unrelated native/cross-pipe paths.
+    for (auto& [endpoints, relation] : left) {
+        auto found = right.find(endpoints);
+        if (found != right.end()) {
+            const auto& rhs = found->second;
+            const auto normalized = normalizedSubtrahend(rhs);
+            relation = relation.subtract(normalized);
+        }
+        relation.setSpace(outputSpace);
+        result.unionInPlace(relation);
+    }
+    return result;
+}
 
 FailureOr<SymbolicContext> decodeSymbolicBindings(
     SymbolicSchemaHandle schema, ArrayRef<ImmutableParameterBinding> bindings)
@@ -157,7 +396,8 @@ FailureOr<const Relation*> SymbolicEvaluator::evaluate(std::size_t id)
             if (failed(right)) {
                 return failure();
             }
-            auto result = operation(node, **left, **right);
+            auto result = operation(node, **left, **right, analysis->owner,
+                analysis->graph[node.first].range, bool(context));
             if (failed(result)) {
                 return failure();
             }

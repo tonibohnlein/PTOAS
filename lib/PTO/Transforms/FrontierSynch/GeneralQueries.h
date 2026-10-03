@@ -12,6 +12,12 @@
 #include "mlir/Analysis/Presburger/PWMAFunction.h"
 namespace mlir::pto::frontiersynch {
 AnalysisContract generalAnalysisContract();
+// Exact composition of Event->Event relations aligned to the supplied original
+// schema. Literal intermediate event identities avoid unrelated disjunct joins;
+// nonliteral identities retain ordinary Presburger composition semantics.
+presburger::PresburgerRelation composeGeneralEventRelations(
+    presburger::PresburgerRelation first, const presburger::PresburgerRelation& second,
+    SymbolicSchemaHandle schema);
 struct GeneralEndpoint {
     PipelineType source, target;
     bool outgoing = false;

@@ -128,23 +128,18 @@ FailureOr<SmallVector<const CompoundInstanceElement*>> RegionalRequests::fixedLo
     if (!matchPattern(loop.getStep(), m_ConstantInt(&step)) || !step.isStrictlyPositive()) {
         reason = "positive constant progression not established"; return failure();
     }
+    // Region operations with no shared phases do not change payload
+    // participation. Their original code remains in place during emission.
     for (auto& operation : *loop.getBody()) {
-        if (operation.getNumRegions()) {
-            reason = "whole-loop fixed body has nested control"; return failure();
+        if (operation.getNumRegions() && !signatures.find(&operation)->second.sites.empty()) {
+            reason = "whole-loop fixed body has conditional or nested shared payload"; return failure();
         }
     }
     SmallVector<const CompoundInstanceElement*> phases;
     for (auto id : signature.sites) {
         auto* phase = trace.sites()[id].phase;
-        // A fixed shared record must not depend on an iteration-local SSA view.
-        for (auto memories : {ArrayRef<const BaseMemInfo*>(phase->useVec),
-                              ArrayRef<const BaseMemInfo*>(phase->defVec)}) {
-            for (const auto* memory : memories) {
-                if (!memory->baseBuffer ||
-                    !cast<LoopLikeOpInterface>(loop.getOperation()).isDefinedOutsideOfLoop(memory->baseBuffer)) {
-                    reason = "iteration-dependent storage lacks stationary qualification"; return failure();
-                }
-            }
+        if (phase->elementOp->getBlock() != loop.getBody()) {
+            reason = "whole-loop fixed body has conditional or nested shared payload"; return failure();
         }
         phases.push_back(phase);
     }
@@ -246,6 +241,21 @@ RegionalRequests::Candidate RegionalRequests::stationaryRegion(Operation* owner,
     std::string reason;
     auto phases = fixedLoopPhases(loop, signature, reason);
     if (failed(phases)) { return {{}, RegionalStatus::UnmetObligation, reason}; }
+    // Stationary-cell recovery needs invariant modeled geometry. The separate
+    // pairwise modeled quotient below does not infer locations from SSA roots.
+    for (const auto* phase : *phases) {
+        // A fixed shared record must not depend on an iteration-local SSA view.
+        for (auto memories : {ArrayRef<const BaseMemInfo*>(phase->useVec),
+                              ArrayRef<const BaseMemInfo*>(phase->defVec)}) {
+            for (const auto* memory : memories) {
+                if (!memory->baseBuffer ||
+                    !cast<LoopLikeOpInterface>(loop.getOperation()).isDefinedOutsideOfLoop(memory->baseBuffer)) {
+                    return {{}, RegionalStatus::UnmetObligation,
+                        "iteration-dependent storage lacks stationary qualification"};
+                }
+            }
+        }
+    }
     auto imported = StationaryCellInput::build(input, *phases, costs, reason);
     if (failed(imported)) { return {{}, RegionalStatus::UnmetObligation, reason}; }
     auto result = std::make_shared<SelectedAnalysis>();
@@ -310,26 +320,15 @@ RegionalRequests::Candidate RegionalRequests::upperFixedBodyRegion(
     if (!matchPattern(loop.getStep(), m_ConstantInt(&step)) || !step.isOne()) {
         return {{}, RegionalStatus::UnmetObligation, "upper fixed-body query adapter requires unit progression"};
     }
-    for (auto& operation : *loop.getBody()) {
-        if (operation.getNumRegions()) {
-            return {{}, RegionalStatus::NotApplicable, "upper fixed body contains variable nested participation"};
-        }
-    }
-    SmallVector<const CompoundInstanceElement*> phases;
-    for (auto id : signature.sites) {
-        auto* phase = trace.sites()[id].phase;
-        if (phase->elementOp->getBlock() != loop.getBody()) {
-            return {{}, RegionalStatus::UnmetObligation, "upper origin is not in the original fixed body"};
-        }
-        phases.push_back(phase);
-    }
+    auto phases = fixedLoopPhases(loop, signature, reason);
+    if (failed(phases)) { return {{}, RegionalStatus::NotApplicable, reason}; }
     auto primitives = arithmeticPrimitives(owner, ArithmeticClass::Octagons, reason);
     if (failed(primitives)) { return {{}, RegionalStatus::UnmetObligation, reason}; }
     auto source = imported.find(owner)->second.first;
     if (!source->relations().extras.relation().isIntegerEmpty()) {
         return {{}, RegionalStatus::UnmetObligation, "upper fixed-body extra prerequisite distance is not supplied"};
     }
-    auto upper = FixedBodyUpper::build(input, phases, costs, reason);
+    auto upper = FixedBodyUpper::build(input, *phases, costs, reason);
     if (failed(upper)) { return {{}, RegionalStatus::UnmetObligation, reason}; }
     auto result = std::make_shared<SelectedAnalysis>();
     result->kind = SelectedAnalysis::Kind::Periodic;
@@ -352,14 +351,18 @@ RegionalRequests::Candidate RegionalRequests::periodicRegion(Operation* owner, c
     auto& phases = *qualified;
     CostScope backend(costs, CostStage::Backend);
     SmallVector<PeriodicPrerequisite> generators;
-    for (auto [b, target] : llvm::enumerate(phases)) {
-        for (auto [a, source] : llvm::enumerate(phases)) {
-            DepBaseMemInfoPairVec witnesses;
-            if (input.memory().DepBetween(source->defVec, target->useVec, witnesses) ||
-                input.memory().DepBetween(source->useVec, target->defVec, witnesses) ||
-                input.memory().DepBetween(source->defVec, target->defVec, witnesses)) {
-                generators.push_back({a, b, llvm::DynamicAPInt(a < b ? 0 : 1)});
-            }
+    const auto conflicts = trace.conflicts();
+    // These are the same static SharedModeled pairs imported by
+    // EndpointRelations::modeledRequirements. Loop-local SSA views do not
+    // change this selected model; no occurrence-specific alias claim is made.
+    DenseMap<std::size_t, std::size_t> localSites;
+    for (auto [position, site] : llvm::enumerate(signature.sites)) { localSites.try_emplace(site, position); }
+    for (std::size_t b = 0; b < phases.size(); ++b) {
+        for (auto source : conflicts[signature.sites[b]]) {
+            auto found = localSites.find(source);
+            if (found == localSites.end()) { continue; }
+            const auto a = found->second;
+            generators.push_back({a, b, llvm::DynamicAPInt(a < b ? 0 : 1)});
         }
     }
     auto result = std::make_shared<SelectedAnalysis>();

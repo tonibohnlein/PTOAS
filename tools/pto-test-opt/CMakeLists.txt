@@ -98,6 +98,8 @@ add_llvm_executable(pto-frontier-analysis-test
   frontier-structured-counter-driver.cpp
   frontier-symbolic-allocation-driver.cpp
   frontier-adjacent-local-upper-driver.cpp
+  frontier-general-composition-driver.cpp
+  frontier-periodic-nested-query-driver.cpp
   frontier-single-stream-driver.cpp
   frontier-general-counted-driver.cpp
   PARTIAL_SOURCES_INTENDED
