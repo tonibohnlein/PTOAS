@@ -11,6 +11,7 @@
 #include "StationaryCells.h"
 #include "SingleStreamLoop.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/DenseSet.h"
 namespace mlir::pto::frontiersynch {
@@ -138,8 +139,8 @@ FailureOr<SmallVector<const CompoundInstanceElement*>> RegionalRequests::fixedLo
         for (auto memories : {ArrayRef<const BaseMemInfo*>(phase->useVec),
                               ArrayRef<const BaseMemInfo*>(phase->defVec)}) {
             for (const auto* memory : memories) {
-                auto* definition = memory->baseBuffer ? memory->baseBuffer.getDefiningOp() : nullptr;
-                if (!memory->baseBuffer || !definition || loop->isProperAncestor(definition)) {
+                if (!memory->baseBuffer ||
+                    !cast<LoopLikeOpInterface>(loop.getOperation()).isDefinedOutsideOfLoop(memory->baseBuffer)) {
                     reason = "iteration-dependent storage lacks stationary qualification"; return failure();
                 }
             }
@@ -552,11 +553,13 @@ LogicalResult RegionalRequests::qualifyMatching(Operation* owner, SelectedAnalys
                 reason = "unmet local-adjacency premise for exact direct construction"; return failure();
             }
         }
-        if (failed(arithmeticInput(selected.loop, reason))) { return failure(); }
         if (periodicEndpointWidth(selected.loop) > IntegerType::kMaxWidth) {
             reason = "periodic endpoint arithmetic not representable"; return failure();
         }
-        selected.structured = imported.find(selected.loop)->second.first;
+        // Direct offset endpoints use the original loop bounds and IV at
+        // their legal cuts. They need no signed-relation import or separate
+        // mathematical interpretation of unrelated source scalar operations.
+        // Arithmetic composition requests its own exact adapter separately.
         return success();
     }
     CostScope selector(costs, CostStage::Selectors);

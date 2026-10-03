@@ -14,7 +14,12 @@ namespace mlir::pto::frontiersynch {
 unsigned periodicEndpointWidth(scf::ForOp loop)
 {
     auto width = DataLayout::closest(loop).getTypeSizeInBits(loop.getInductionVar().getType()).getFixedValue();
-    return width <= IntegerType::kMaxWidth - 2 ? unsigned(width) + 2 : IntegerType::kMaxWidth + 1;
+    // Endpoint additions need two spare bits. Use a scalar width supported by
+    // PTO's C++ lowering instead of an arbitrary width (e.g. i66 -> int64_t).
+    for (unsigned supported : {8U, 16U, 32U, 64U, 128U}) {
+        if (width <= supported - 2) { return supported; }
+    }
+    return IntegerType::kMaxWidth + 1;
 }
 LogicalResult emitPeriodicDemands(
     const TraceDemandAnalysis& trace, const SelectedAnalysis& selected, IRMapping& mapping,

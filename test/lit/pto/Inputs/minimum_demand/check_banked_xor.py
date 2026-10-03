@@ -118,12 +118,17 @@ def execute(function, n, correlated=False, effects=None, active=None, scalar_inp
             result = None
             if name == "arith.constant":
                 result = IntegerAttr(operation.attributes["value"]).value
-            elif name in ("arith.addi", "arith.subi", "arith.remui", "arith.muli"):
+            elif name in ("arith.addi", "arith.subi", "arith.remui", "arith.muli", "arith.divui"):
                 a, b = operands
                 if name == "arith.remui":
                     if b <= 0:
                         raise ValueError("invalid modulo")
                     result = a % b
+                elif name == "arith.divui":
+                    if b <= 0:
+                        raise ValueError("invalid unsigned divisor")
+                    width = int(str(operation.results[0].type)[1:])
+                    result = (a % (1 << width)) // b
                 elif name == "arith.addi":
                     result = a + b
                 elif name == "arith.subi":
@@ -174,6 +179,10 @@ def execute(function, n, correlated=False, effects=None, active=None, scalar_inp
                 key = (attr_name(operation.attributes["src_pipe"]),
                        attr_name(operation.attributes["dst_pipe"]), str(operation.attributes["event_id"]))
                 commands.append(("set" if name == "pto.set_flag" else "wait", key))
+            elif name in ("pto.set_flag_dyn", "pto.wait_flag_dyn"):
+                key = (attr_name(operation.attributes["src_pipe"]),
+                       attr_name(operation.attributes["dst_pipe"]), f"#pto.event<EVENT_ID{operands[0]}>")
+                commands.append(("set" if name == "pto.set_flag_dyn" else "wait", key))
             elif name == "pto.barrier":
                 commands.append(("barrier", attr_name(operation.attributes["pipe"])))
             elif name not in ("pto.alloc_tile", "pto.alloc_multi_tile", "pto.multi_tile_get", "scf.yield",

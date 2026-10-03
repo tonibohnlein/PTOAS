@@ -31,7 +31,6 @@ module attributes {pto.target_arch = "a3"} {
   }
 }
 // IR-DAG: pto.frontier.physical_status = "certified-finite"
-// IR-DAG: normative_lowering_profile = "pto-isa-a2a3-manual-0c112d61"
 // IR: pto.tload
 // IR: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
 // IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]

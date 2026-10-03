@@ -307,6 +307,10 @@ Frontier selects exact or conservative demands, inserts direct logical
 synchronization, then assigns physical event IDs. Generated plans are published
 only after placement, matching and causal reuse succeed. Unsupported analysis
 or physical-realization interfaces still produce explicit diagnostics.
+Flat invocation-owned fixed-body loops can use quotient-based physical
+allocation across multiple pipes, with uniform IDs for dynamic bounds and
+finite-prefix budgets for constant bounds. Nested symbolic allocation and
+capacity repair still require their supported interfaces.
 
 Both algorithms use `--insert-sync-gm-alias=may-not-alias|may-alias`. The default
 `may-not-alias` retains the legacy assumption for distinct resolved GM roots;

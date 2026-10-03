@@ -9,7 +9,9 @@
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=existing --emit-pto-ir %s -o - | FileCheck %s --check-prefix=IR
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=existing %s -o - | FileCheck %s --check-prefix=CPP
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --dump-frontier-demands --emit-pto-ir %s -o - 2>&1 | FileCheck %s --check-prefix=FRONTIER
-// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --dump-frontier-demands %s -o - 2>&1 | FileCheck %s --check-prefixes=FRONTIER,UNFINISHED
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-algorithm=frontier-synch --dump-frontier-demands %s -o %t.frontier.cpp 2> %t.frontier.dump
+// RUN: FileCheck %s --check-prefix=FRONTIER < %t.frontier.dump
+// RUN: FileCheck %s --check-prefix=CPP < %t.frontier.cpp
 // RUN: not pto-test-opt --pto-insert-sync='algorithm=invalid' %s 2>&1 | FileCheck %s --check-prefix=INVALID
 // RUN: not ptoas --pto-arch=a3 --enable-insert-sync --insert-sync-algorithm=invalid %s -o - 2>&1 | FileCheck %s --check-prefix=INVALID
 // RUN: pto-test-opt --pto-insert-sync='algorithm=existing' --pto-insert-sync-debug=3 %s -o %t.existing 2> %t.existing.trace
@@ -25,11 +27,11 @@
 // FRONTIER: "F_star_pairs":{{\[\[0,1\]\]}}
 // FRONTIER-SAME: "algorithm":"frontier-synch"
 // FRONTIER-SAME: "requirements":"shared-modeled"
-// UNFINISHED: frontier-synch physical event-ID realization is pending; the separate assignment stage is not implemented
 // INVALID: unknown synchronization algorithm; expected existing or frontier-synch
 
 module attributes {pto.target_arch = "a3"} {
-  func.func @shared_algorithm(%gm: !pto.partition_tensor_view<16x16xf32>) {
+  func.func @shared_algorithm(%gm: !pto.partition_tensor_view<16x16xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %a0 = arith.constant 0 : i64
     %a1 = arith.constant 1024 : i64
     %src = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 16x16xf32>

@@ -275,6 +275,9 @@ LogicalResult emitExplicitPhysical(const SyncInput& input, const TraceDemandAnal
         return assignSingleStreamPhysical(input, trace, result, costs);
     }
     if (result.selected && result.selected->kind == SelectedAnalysis::Kind::Periodic) {
+        if (result.sets || result.waits) {
+            return emitPeriodicPhysical(input, trace, result, costs);
+        }
         return certifyPeriodicLocals(input, result, costs);
     }
     CostScope allocation(costs, CostStage::Allocation);

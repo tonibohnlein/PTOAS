@@ -6,18 +6,104 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/PeriodicEventAssignment.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/ExplicitPhysicalEmission.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/DirectEmissionInternal.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Matchers.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Parser/Parser.h"
+#include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <limits>
 namespace {
 using namespace mlir;
 namespace fs = pto::frontiersynch;
 using llvm::DynamicAPInt;
 using Graph = SmallVector<llvm::BitVector>;
 using Pipe = pto::PipelineType;
+std::string render(func::FuncOp function)
+{
+    std::string text;
+    llvm::raw_string_ostream stream(text);
+    function->print(stream);
+    return text;
+}
+bool productionChecks(llvm::StringRef path, MLIRContext& context)
+{
+    auto module = parseSourceFile<ModuleOp>(path, &context);
+    if (!module) { return false; }
+    for (auto function : module->getOps<func::FuncOp>()) {
+        if (!function->hasAttr("test.periodic_physical")) { continue; }
+        pto::SyncInput input;
+        if (failed(input.build(function))) { return false; }
+        auto trace = fs::TraceDemandAnalysis::build(function, input);
+        if (failed(trace)) { return false; }
+        fs::CostLedger costs;
+        const auto original = render(function);
+        auto plan = fs::emitDirectDemands(function, input, *trace, costs);
+        if (!plan.emitted || plan.selected->kind != fs::SelectedAnalysis::Kind::Periodic ||
+            failed(fs::emitExplicitPhysical(input, *trace, plan, costs))) { return false; }
+        if (render(function) != original || plan.privateSelectors) { return false; }
+        auto missing = fs::emitDirectDemands(function, input, *trace, costs);
+        pto::LogicalWaitOp acquisition;
+        missing.pending->walk([&](pto::LogicalWaitOp wait) { acquisition = wait; });
+        if (!acquisition) { return false; }
+        acquisition.erase();
+        if (succeeded(fs::emitExplicitPhysical(input, *trace, missing, costs)) || render(function) != original) {
+            return false;
+        }
+    }
+    return true;
+}
+bool ordinalLoweringChecks(MLIRContext& context)
+{
+    context.getOrLoadDialect<func::FuncDialect>();
+    context.getOrLoadDialect<arith::ArithDialect>();
+    // Evaluate the actual production scalar IR, including noncontiguous IDs
+    // and signed Index spans too wide for a signed i64 subtraction.
+    fs::PeriodicEventAssignment assignment;
+    assignment.status = fs::PeriodicAssignmentStatus::Certified;
+    assignment.eligibleIds = {1, 3, 5};
+    assignment.phases.resize(2);
+    struct Sample { int64_t lower, source, step; };
+    const Sample samples[] = {{0, 0, 1}, {-5, 7, 2}, {-100, 61, 7},
+        {std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::max(), 1}};
+    for (const auto& sample : samples) {
+        for (std::size_t phase = 0; phase < assignment.phases.size(); ++phase) {
+            OpBuilder builder(&context);
+            auto module = ModuleOp::create(builder.getUnknownLoc());
+            OwningOpRef<ModuleOp> owned(module);
+            builder.setInsertionPointToEnd(module.getBody());
+            auto function = builder.create<func::FuncOp>(module.getLoc(), "ordinal",
+                builder.getFunctionType({}, {builder.getIndexType()}));
+            builder.setInsertionPointToStart(function.addEntryBlock());
+            Value lower = builder.create<arith::ConstantIndexOp>(module.getLoc(), sample.lower);
+            Value source = builder.create<arith::ConstantIndexOp>(module.getLoc(), sample.source);
+            auto id = fs::lowerPeriodicPhysicalId(builder, module.getLoc(), source, lower, sample.step,
+                                                 assignment, phase);
+            builder.create<func::ReturnOp>(module.getLoc(), id);
+            PassManager manager(&context);
+            manager.addPass(createCanonicalizerPass());
+            if (failed(manager.run(module))) { return false; }
+            APInt actual;
+            auto terminal = cast<func::ReturnOp>(function.getBody().front().getTerminator());
+            if (!matchPattern(terminal.getOperand(0), m_ConstantInt(&actual))) { return false; }
+            const auto distance = DynamicAPInt(sample.source) - DynamicAPInt(sample.lower);
+            const auto ordinal = (distance / DynamicAPInt(sample.step)) * 2 + DynamicAPInt(static_cast<int64_t>(phase));
+            auto slot = static_cast<int64_t>(ordinal % DynamicAPInt(3));
+            if (actual.getSExtValue() != assignment.eligibleIds[slot]) { return false; }
+        }
+    }
+    return true;
+}
 struct Pair {
     std::size_t source, target, phase, period;
     std::size_t publication = 0, acquisition = 0;
@@ -231,7 +317,14 @@ bool boundaryChecks(ArrayRef<const pto::CompoundInstanceElement*> sites)
 } // namespace
 int runPeriodicAllocationChecks(llvm::StringRef path, mlir::MLIRContext& context)
 {
-    static_cast<void>(path);
+    if (!productionChecks(path, context)) {
+        llvm::errs() << "periodic physical production/rollback check failed\n";
+        return 1;
+    }
+    if (!ordinalLoweringChecks(context)) {
+        llvm::errs() << "periodic physical ordinal lowering oracle failed\n";
+        return 1;
+    }
     SmallVector<std::unique_ptr<pto::CompoundInstanceElement>> owned;
     SmallVector<const pto::CompoundInstanceElement*> sites;
     for (unsigned site = 0; site < 4; ++site) {
