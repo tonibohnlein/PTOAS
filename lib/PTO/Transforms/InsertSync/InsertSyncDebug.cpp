@@ -166,24 +166,41 @@ static void dumpSyncOp(llvm::raw_ostream &os, const SyncOperation *op,
   }
 }
 
+static void dumpMemInfo(llvm::raw_ostream &os, const BaseMemInfo *info,
+                        mlir::AsmState *state) {
+  if (!info) {
+    os << "<null>";
+    return;
+  }
+  if (state && info->rootBuffer) {
+    info->rootBuffer.printAsOperand(os, *state);
+  } else {
+    os << "<null-root>";
+  }
+  os << "(" << getMemScopeName(info->scope) << ") base=";
+  if (state && info->baseBuffer) {
+    info->baseBuffer.printAsOperand(os, *state);
+  } else {
+    os << "<null-base>";
+  }
+  os << " size=" << info->allocateSize
+     << " physical=" << info->hasKnownPhysicalAddresses
+     << " unknown-range=" << info->aliasesUnknownRange << " addresses=[";
+  for (size_t index = 0; index < info->baseAddresses.size(); ++index) {
+    if (index != 0) {
+      os << ",";
+    }
+    os << info->baseAddresses[index];
+  }
+  os << "]";
+}
+
 static void dumpMemInfoList(llvm::raw_ostream &os, llvm::StringRef tag,
                             const SmallVector<const BaseMemInfo *> &list,
                             mlir::AsmState *state) {
   os << tag << "=[";
   for (size_t i = 0; i < list.size(); ++i) {
-    const BaseMemInfo *info = list[i];
-    if (!info) {
-      os << "<null>";
-    } else if (info->rootBuffer) {
-      if (state) {
-        info->rootBuffer.printAsOperand(os, *state);
-      } else {
-        os << "<value>";
-      }
-      os << "(" << getMemScopeName(info->scope) << ")";
-    } else {
-      os << "<null-root>";
-    }
+    dumpMemInfo(os, list[i], state);
     if (i + 1 != list.size()) {
       os << ", ";
     }

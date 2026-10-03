@@ -382,7 +382,10 @@ struct PTORemoveIdentityTMovPass
       Buffer2MemInfoMap buffer2MemInfoMap;
       PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func,
                                  SyncAnalysisMode::NORMALSYNC);
-      translator.Build();
+      if (failed(translator.Build())) {
+        signalPassFailure();
+        return;
+      }
 
       for (TMovOp op : memInfoCandidates) {
         if (isIdentityTMovByMemInfo(op, buffer2MemInfoMap)) {

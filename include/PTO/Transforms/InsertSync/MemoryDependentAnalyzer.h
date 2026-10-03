@@ -19,9 +19,14 @@
 namespace mlir {
 namespace pto {
  
+// Assumption for distinct resolved GM roots; same-root range analysis is unchanged.
+enum class GMAliasPolicy { MayNotAlias, MayAlias };
+
 class MemoryDependentAnalyzer {
 public:
-  MemoryDependentAnalyzer() = default;
+  explicit MemoryDependentAnalyzer(GMAliasPolicy policy = GMAliasPolicy::MayNotAlias)
+      : gmAliasPolicy(policy) {}
+  GMAliasPolicy gmPolicy() const { return gmAliasPolicy; }
   ~MemoryDependentAnalyzer() = default;
  
   // 检查两组内存信息之间是否存在依赖
@@ -33,6 +38,7 @@ public:
   bool MemAlias(const BaseMemInfo *a, const BaseMemInfo *b) const;
  
 private:
+  GMAliasPolicy gmAliasPolicy;
   bool isGMBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b) const;
   
   bool isBufferAddressRangeOverlap(const BaseMemInfo *a, const BaseMemInfo *b) const;

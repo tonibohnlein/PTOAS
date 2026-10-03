@@ -283,7 +283,9 @@ bool MemoryDependentAnalyzer::isGMBufferOverlap(const BaseMemInfo *a,
     Value realRootA = GetRealRoot(a->rootBuffer);
     Value realRootB = GetRealRoot(b->rootBuffer);
     if (realRootA != realRootB) {
-        return false;
+      // Distinct roots may name the same object unless the caller selects
+      // the legacy assumption that different GM roots are disjoint.
+      return gmAliasPolicy == GMAliasPolicy::MayAlias;
     }
     if (a->allocateSize == 0 || b->allocateSize == 0) {
       return true;
