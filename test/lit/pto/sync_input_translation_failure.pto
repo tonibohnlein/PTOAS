@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --expect-failure %s 2>&1 | FileCheck %s
+// CHECK: requires planner-assigned slot addresses or a constant level3 base
+// CHECK: translation-failed; records-empty
+// CHECK: source-unchanged; dependency-analysis-not-run
+// RUN: not pto-test-opt --pto-insert-sync %s 2>&1 | FileCheck %s --check-prefix=PASS
+// PASS: requires planner-assigned slot addresses or a constant level3 base
+// PASS-NOT: LLVM ERROR
+module {
+  func.func @nested_failure(%take: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %c1 step %c1 {
+      scf.if %take {
+        %tile = pto.alloc_multi_tile : !pto.multi_tile_buf<vec, 16x16xf32, count=2>
+      }
+    }
+    return
+  }
+}
