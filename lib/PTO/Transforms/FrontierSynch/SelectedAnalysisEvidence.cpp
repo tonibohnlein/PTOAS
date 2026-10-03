@@ -191,6 +191,14 @@ void guardedEvidence(
     }
     attrs.set("representation", builder.getStringAttr("finite-guarded-circuit"));
     attrs.set("predicates", builder.getArrayAttr(predicates));
+    if (!selected.localReplacementGuardedCovers.empty()) {
+        SmallVector<Attribute> original;
+        for (const auto& edge : selected.localReplacementGuardedCovers) {
+            original.push_back(integers(builder, {sites.lookup(selected.guarded.phases()[edge.source]),
+                sites.lookup(selected.guarded.phases()[edge.consumer]), edge.predicate}));
+        }
+        attrs.set("local_replacement_guarded_covers", builder.getArrayAttr(original));
+    }
     attrs.set("demands", builder.getArrayAttr(demands));
 }
 } // namespace
@@ -207,6 +215,18 @@ Attribute retainSelectedAnalysis(
     if (upper) {
         attrs.set("lower_baseline", builder.getStringAttr("native-only; no inferred physical conflict facts"));
         attrs.set("upper_certificate", builder.getStringAttr("covers original modeled closure"));
+        if (selected.localReplacementBase) {
+            attrs.set("local_replacement_base", relation(builder, selected.localReplacementBase));
+            attrs.set("local_replacement_rule", builder.getStringAttr(
+                "selected covers; actual native predecessor; selected-cover reduction again"));
+        }
+        if (!selected.localReplacementGenerators.empty()) {
+            SmallVector<Attribute> original;
+            for (const auto& edge : selected.localReplacementGenerators) {
+                original.push_back(integers(builder, {selected.sites[edge.source], selected.sites[edge.consumer]}));
+            }
+            attrs.set("local_replacement_generators", builder.getArrayAttr(original));
+        }
         if (selected.upper) {
             SmallVector<Attribute> terms;
             for (const auto& term : selected.upper->excessTerms()) {

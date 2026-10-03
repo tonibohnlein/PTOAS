@@ -83,6 +83,10 @@ public:
         ArrayRef<const CompoundInstanceElement*> sequence, ArrayRef<Predicate> occurrences,
         ArrayRef<StorageFootprint> footprints, ArrayRef<StorageAlias> aliases, PredicateArena predicates,
         ArrayRef<GuardedDemand> additional = {});
+    // Strengthen only surviving local covers to the actual executed native
+    // predecessor and run this reducer again. Atomic conservative transform;
+    // occurrence guards and the original Boolean evaluation identities stay.
+    LogicalResult adjacentLocalUpper();
     const PredicateArena& predicates() const { return conditions; }
     ArrayRef<const CompoundInstanceElement*> phases() const { return sites; }
     ArrayRef<Predicate> occurrences() const { return presence; }

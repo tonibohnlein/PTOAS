@@ -23,6 +23,7 @@
 #include "frontier-guarded-dump.h"
 #include <string>
 
+int runAdjacentLocalUpperChecks(mlir::MLIRContext& context);
 int runSyncTargetPreflightChecks(llvm::StringRef path, mlir::MLIRContext& context);
 int runGMAliasChecks(llvm::StringRef path, mlir::MLIRContext& context);
 int runOneWayRepairChecks(llvm::StringRef path, mlir::MLIRContext& context);
@@ -407,6 +408,7 @@ int main(int argc, char** argv)
     bool gmAlias = argc == 3 && llvm::StringRef(argv[1]) == "--gm-alias-check";
     bool oneWayRepair = argc == 3 && llvm::StringRef(argv[1]) == "--one-way-repair-check";
     bool oneWayPhysical = argc == 3 && llvm::StringRef(argv[1]) == "--one-way-physical-check";
+    bool adjacentLocalUpper = argc == 3 && llvm::StringRef(argv[1]) == "--adjacent-local-upper-check";
     bool symbolicAllocation = argc == 3 && llvm::StringRef(argv[1]) == "--symbolic-allocation-check";
     bool structuredCounters = argc == 3 && llvm::StringRef(argv[1]) == "--structured-counter-check";
     bool periodicAllocation = argc == 3 && llvm::StringRef(argv[1]) == "--periodic-allocation-check";
@@ -423,7 +425,8 @@ int main(int argc, char** argv)
                        !preflight && !gmAlias && !atomicStore && !regional &&
                        !stationary && !counted &&
                        !generalCounted && !finitePhysical && !upper && !singleStream && !periodicAllocation &&
-                       !oneWayRepair && !oneWayPhysical && !structuredCounters && !symbolicAllocation;
+                       !oneWayRepair && !oneWayPhysical && !structuredCounters &&
+                       !symbolicAllocation && !adjacentLocalUpper;
     auto mode = regularMode ? parseMode(argv[1]) : mlir::FailureOr<Mode>(Mode::Inspect);
     if ((argc != 2 && argc != 3) || mlir::failed(mode)) {
         llvm::errs() << "usage: pto-frontier-analysis-test "
@@ -440,6 +443,7 @@ int main(int argc, char** argv)
     context.disableMultithreading();
     if (oneWayRepair) { return runOneWayRepairChecks(argv[2], context); }
     if (oneWayPhysical) { return runOneWayPhysicalChecks(argv[2], context); }
+    if (adjacentLocalUpper) { return runAdjacentLocalUpperChecks(context); }
     if (symbolicAllocation) { return runSymbolicAllocationChecks(context); }
     if (structuredCounters) { return runStructuredCounterChecks(context); }
     if (periodicAllocation) { return runPeriodicAllocationChecks(argv[2], context); }

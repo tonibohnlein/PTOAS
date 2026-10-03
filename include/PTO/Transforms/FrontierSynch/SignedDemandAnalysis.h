@@ -158,6 +158,13 @@ public:
     // per valuation premises as M5. P, total primitive dimension and pipe count
     // are fixed for the polynomial class. No numeric P/trip enumeration occurs.
     static SignedResult<SignedAnalysisHandle> build(SignedSpaceHandle space, const SignedInputs& inputs);
+    // Strengthen only surviving same-pipe covers to the actual adjacent source,
+    // then reduce the selected upper graph. The supplied covers remain required;
+    // callers retain their original coverage witness and advertise SoundUpper.
+    // Native includes reflexive Start/Completion events for every executed
+    // occurrence, and all inputs already use the supplied selected context.
+    static SignedResult<SignedAnalysisHandle> adjacentLocalUpper(SignedSpaceHandle space,
+        SignedRelationHandle context, SignedRelationHandle native, SignedRelationHandle minimum);
     SignedSpaceHandle space() const { return owner; }
     SignedRelationHandle context() const { return admitted; }
     SignedRelationHandle presence() const { return present; }
@@ -172,6 +179,8 @@ public:
 
 private:
     SignedDemandAnalysis() = default;
+    static SignedResult<SignedAnalysisHandle> finish(SignedSpaceHandle space, SignedRelationHandle context,
+        SignedRelationHandle present, SignedRelationHandle native, SignedRelationHandle generators);
     SignedSpaceHandle owner;
     SignedRelationHandle admitted, present, id, n, g, r, h, f;
     struct PipePair {

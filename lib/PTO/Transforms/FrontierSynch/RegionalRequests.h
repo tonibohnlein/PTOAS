@@ -82,7 +82,7 @@ private:
         scf::ForOp loop, const Signature& signature, std::string& reason);
     Candidate arithmeticRegion(Operation* owner, const Signature& signature, ArithmeticClass arithmetic);
     Candidate guardedRegion(Operation* owner, const Signature& signature);
-    LogicalResult qualifyMatching(Operation* owner, SelectedAnalysis& selected, std::string& reason);
+    LogicalResult qualifyMatching(Operation* owner, SelectedAnalysis& selected, std::string& reason, bool allowUpper);
     std::shared_ptr<const PhaseIndex> placements;
     Candidate composeRegion(
         Operation* owner, const Signature& signature, RegionalMode mode, const AnalysisNeeds& needs,
@@ -92,7 +92,7 @@ private:
     std::map<Operation*, std::pair<StructuredInputHandle, std::string>> imported;
     std::map<std::pair<Operation*, ArithmeticClass>, std::pair<std::optional<SignedInputs>, std::string>> primitives;
     DenseMap<Operation*, RegionalContextHandle> regionalContexts;
-    void record(Operation* owner, StringRef route, StringRef outcome, StringRef reason);
+    void record(Operation* owner, StringRef route, StringRef outcome, StringRef reason, bool routeInterval = false);
     func::FuncOp function;
     const SyncInput& input;
     const TraceDemandAnalysis& trace;

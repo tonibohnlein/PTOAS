@@ -8,6 +8,7 @@
 // Validate matching, placement, directed eligibility and causal rearm before
 // replacing any logical command. Source function publication remains separate.
 #include "ExplicitPhysicalEmission.h"
+#include "GeneralPhysicalEmission.h"
 #include "DirectEmissionInternal.h"
 #include "SingleStreamLoop.h"
 #include "PTO/Transforms/FrontierSynch/FiniteEventAssignment.h"
@@ -279,6 +280,9 @@ LogicalResult emitExplicitPhysical(const SyncInput& input, const TraceDemandAnal
             return emitPeriodicPhysical(input, trace, result, costs);
         }
         return certifyPeriodicLocals(input, result, costs);
+    }
+    if (result.selected && result.selected->kind == SelectedAnalysis::Kind::General) {
+        return emitGeneralPhysical(input, trace, result, costs);
     }
     if (result.selected && (result.selected->kind == SelectedAnalysis::Kind::Signed ||
                             result.selected->kind == SelectedAnalysis::Kind::Guarded)) {

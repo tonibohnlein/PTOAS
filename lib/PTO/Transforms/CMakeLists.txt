@@ -165,6 +165,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/PeriodicEventAssignment.cpp
   FrontierSynch/PeriodicPhysicalEmission.cpp
   FrontierSynch/SymbolicPhysicalEmission.cpp
+  FrontierSynch/GeneralPhysicalEmission.cpp
   FrontierSynch/StructuredEventCounters.cpp
   FrontierSynch/PeriodicDemandAnalysis.cpp
   FrontierSynch/AccessIncidences.cpp

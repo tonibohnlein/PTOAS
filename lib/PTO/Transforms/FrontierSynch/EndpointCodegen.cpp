@@ -181,6 +181,15 @@ LogicalResult EndpointCodegen::emit(
     for (Value parameter : input->schema()->parameters()) {
         parameters.push_back(integer(builder, loc, mapping.lookup(parameter)));
     }
+    // Selector pieces are alternatives of one functional endpoint map. Keep
+    // its first-piece convention, then combine alternatives with the same
+    // logical identity into one command. Coordinate selection remains pure
+    // scalar code and never queries effects or dependencies at runtime.
+    struct Alternative {
+        Value enabled;
+        SmallVector<Value> generation;
+    };
+    std::map<std::size_t, Alternative> alternatives;
     Value previous = boolean(builder, loc, false);
     for (const auto& piece : selector.pieces()) {
         if (piece.guard->empty() ||
@@ -191,37 +200,55 @@ LogicalResult EndpointCodegen::emit(
         Value first = builder.create<arith::XOrIOp>(loc, previous, boolean(builder, loc, true));
         Value enabled = builder.create<arith::AndIOp>(loc, present, first);
         previous = builder.create<arith::OrIOp>(loc, previous, present);
-        auto selected = builder.create<scf::IfOp>(loc, enabled, false);
+        const std::size_t other = source == target ? 0 : *piece.output.site;
+        SmallVector<Value> generation;
+        if (source != target && !outgoing) {
+            for (const auto& coordinate : piece.coordinates) {
+                generation.push_back(endpoint(builder, loc, coordinate, coordinates, parameters));
+            }
+        }
+        auto found = alternatives.find(other);
+        if (found == alternatives.end()) {
+            alternatives.emplace(other, Alternative{enabled, std::move(generation)});
+        } else {
+            if (found->second.generation.size() != generation.size()) {
+                result.reason = "endpoint alternatives disagree on source occurrence dimensions";
+                return failure();
+            }
+            for (auto [index, coordinate] : llvm::enumerate(generation)) {
+                found->second.generation[index] = builder.create<arith::SelectOp>(
+                    loc, enabled, coordinate, found->second.generation[index]);
+            }
+            found->second.enabled = builder.create<arith::OrIOp>(loc, found->second.enabled, enabled);
+        }
+    }
+    for (auto& [other, alternative] : alternatives) {
+        auto selected = builder.create<scf::IfOp>(loc, alternative.enabled, false);
         OpBuilder body = selected.getThenBodyBuilder();
         if (source == target) {
             body.create<pto::BarrierOp>(loc, pto::PipeAttr::get(builder.getContext(), static_cast<pto::PIPE>(target)));
             ++result.barriers;
             continue;
         }
-        std::size_t sourceSite = outgoing ? site : *piece.output.site;
-        std::size_t consumerSite = outgoing ? *piece.output.site : site;
+        std::size_t sourceSite = outgoing ? site : other;
+        std::size_t consumerSite = outgoing ? other : site;
         int64_t key = sourceSite * input->schema()->sites().size() + consumerSite;
-        SmallVector<Value> generation;
         if (outgoing) {
             for (Value iv : original.inductionVariables) {
                 Value coordinate = mapping.lookup(iv);
                 if (!isa<IndexType>(coordinate.getType())) {
                     coordinate = body.create<arith::IndexCastOp>(loc, body.getIndexType(), coordinate);
                 }
-                generation.push_back(coordinate);
-            }
-        } else {
-            for (const auto& coordinate : piece.coordinates) {
-                generation.push_back(endpoint(body, loc, coordinate, coordinates, parameters));
+                alternative.generation.push_back(coordinate);
             }
         }
         auto src = pto::PipeAttr::get(builder.getContext(), static_cast<pto::PIPE>(source));
         auto dst = pto::PipeAttr::get(builder.getContext(), static_cast<pto::PIPE>(target));
         if (outgoing) {
-            body.create<pto::LogicalSetOp>(loc, src, dst, builder.getI64IntegerAttr(key), generation);
+            body.create<pto::LogicalSetOp>(loc, src, dst, builder.getI64IntegerAttr(key), alternative.generation);
             ++result.sets;
         } else {
-            body.create<pto::LogicalWaitOp>(loc, src, dst, builder.getI64IntegerAttr(key), generation);
+            body.create<pto::LogicalWaitOp>(loc, src, dst, builder.getI64IntegerAttr(key), alternative.generation);
             ++result.waits;
         }
     }

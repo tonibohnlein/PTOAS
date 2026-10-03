@@ -168,6 +168,13 @@ SignedResult<SignedAnalysisHandle> SignedDemandAnalysis::build(SignedSpaceHandle
         }
     }
     const auto eventPresent = Access::make(space, Tuple::Unit, Tuple::Event, std::move(events));
+    if (b.status != SignedStatus::Success || !native) { return {b.status}; }
+    return finish(std::move(space), inputs.context, eventPresent, native, generators);
+}
+SignedResult<SignedAnalysisHandle> SignedDemandAnalysis::finish(SignedSpaceHandle space, R context,
+    R eventPresent, R native, R generators)
+{
+    Builder b;
     const auto eventId = b.take(signed_detail::identity(eventPresent));
     const auto step = b.unite(eventId, b.compose(generators, native));
     auto reach = native;
@@ -184,7 +191,7 @@ SignedResult<SignedAnalysisHandle> SignedDemandAnalysis::build(SignedSpaceHandle
     }
     auto result = std::shared_ptr<SignedDemandAnalysis>(new SignedDemandAnalysis());
     result->owner = std::move(space);
-    result->admitted = inputs.context;
+    result->admitted = context;
     result->present = eventPresent;
     result->id = eventId;
     result->n = native;
@@ -200,12 +207,15 @@ SignedResult<SignedAnalysisHandle> SignedDemandAnalysis::build(SignedSpaceHandle
     }
     for (auto source : pipes) {
         for (auto target : pipes) {
-            auto relation = filterPipes(minimum, source, target).value;
+            auto relation = b.take(filterPipes(minimum, source, target));
+            if (!relation) { return {b.status}; }
             auto outgoing = SignedSelector::build(relation);
             if (!outgoing.succeeded()) {
                 return {outgoing.status};
             }
-            auto incoming = SignedSelector::build(relation->inverse().value);
+            auto inverse = b.inverse(relation);
+            if (!inverse) { return {b.status}; }
+            auto incoming = SignedSelector::build(inverse);
             if (!incoming.succeeded()) {
                 return {incoming.status};
             }
@@ -213,6 +223,41 @@ SignedResult<SignedAnalysisHandle> SignedDemandAnalysis::build(SignedSpaceHandle
         }
     }
     return {SignedStatus::Success, SignedAnalysisHandle(result)};
+}
+SignedResult<SignedAnalysisHandle> SignedDemandAnalysis::adjacentLocalUpper(SignedSpaceHandle space,
+    R context, R native, R minimum)
+{
+    if (!space || !matches(context, space, Tuple::Unit, Tuple::Unit) ||
+        !matches(native, space, Tuple::Event, Tuple::Event) ||
+        !matches(minimum, space, Tuple::Event, Tuple::Event)) { return {SignedStatus::InvalidInput}; }
+    Builder b;
+    const auto present = b.take(native->domainSet());
+    const auto id = present ? b.take(signed_detail::identity(present)) : R{};
+    SmallVector<SignedPiece, 0> completionOrder, localCovers;
+    const auto sites = space->schema()->sites();
+    auto collect = [sites](R relation, Kind target, SmallVectorImpl<SignedPiece>& output) {
+        for (const auto& piece : relation->pieces()) {
+            if (piece.domain.kind == Kind::Completion && piece.range.kind == target &&
+                sites[*piece.domain.site].phase->kPipeValue == sites[*piece.range.site].phase->kPipeValue) {
+                output.push_back(piece);
+            }
+        }
+    };
+    collect(native, Kind::Completion, completionOrder);
+    collect(minimum, Kind::Start, localCovers);
+    auto order = b.subtract(Access::make(space, Tuple::Event, Tuple::Event, std::move(completionOrder)), id);
+    order = b.operation(order, context, &SignedRelation::restrictContext);
+    auto adjacent = b.subtract(order, b.compose(order, order));
+    if (!adjacent) { return {b.status}; }
+    SmallVector<SignedPiece, 0> starts(adjacent->pieces().begin(), adjacent->pieces().end());
+    for (auto& piece : starts) { piece.range.kind = Kind::Start; }
+    adjacent = Access::make(space, Tuple::Event, Tuple::Event, std::move(starts));
+    auto local = Access::make(space, Tuple::Event, Tuple::Event, std::move(localCovers));
+    auto consumers = b.take(local->rangeSet());
+    adjacent = b.operation(adjacent, consumers, &SignedRelation::restrictRange);
+    const auto generators = b.unite(minimum, adjacent);
+    if (b.status != SignedStatus::Success || !generators || !present) { return {b.status}; }
+    return finish(std::move(space), context, present, native, generators);
 }
 SignedResult<SignedSelectorHandle> SignedDemandAnalysis::outgoing(PipelineType source, PipelineType target) const
 {

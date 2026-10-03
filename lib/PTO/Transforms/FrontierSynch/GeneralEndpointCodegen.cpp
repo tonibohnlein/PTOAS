@@ -318,8 +318,17 @@ LogicalResult prepareGeneralEndpoints(SelectedAnalysis& selected, std::string& r
             }
         }
     }
-    selected.generalEndpoints = plan;
-    return success();
+    // PTO C++ lowering supports these concrete integer representations.
+    // Arbitrary MLIR widths otherwise fall through to a narrower C++ type.
+    for (unsigned width : {8U, 16U, 32U, 64U, 128U}) {
+        if (plan->arithmeticWidth <= width) {
+            plan->arithmeticWidth = width;
+            selected.generalEndpoints = plan;
+            return success();
+        }
+    }
+    reason = "general endpoint arithmetic exceeds the supported target integer representation";
+    return failure();
 }
 LogicalResult emitGeneralEndpoints(IRMapping& mapping, const SelectedAnalysis& selected, DirectEmissionResult& result)
 {

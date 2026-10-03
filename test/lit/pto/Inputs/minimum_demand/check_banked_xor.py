@@ -103,7 +103,7 @@ def execute(function, n, correlated=False, effects=None, active=None, scalar_inp
         def collect(region_block):
             for view in region_block.operations:
                 operation = view.operation
-                if operation.name in ("pto.tload", "pto.txor", "pto.trowexpandmul", "pto.tstore"):
+                if operation.name in ("pto.tload", "pto.txor", "pto.trowexpandmul", "pto.tstore", "pto.load"):
                     payload_sites[operation] = len(payload_sites)
                 for region in operation.regions:
                     for nested in region.blocks:
@@ -121,7 +121,9 @@ def execute(function, n, correlated=False, effects=None, active=None, scalar_inp
                 return operands
             if name == "arith.constant":
                 text = str(operation.attributes["value"])
-                if text in ("true", "false"):
+                if str(operation.results[0].type) == "f32":
+                    result = float(text.split(" : ")[0])
+                elif text in ("true", "false"):
                     result = int(text == "true")
                 else:
                     # MLIR's Python IntegerAttr.value narrows to int64. Parse
@@ -129,12 +131,15 @@ def execute(function, n, correlated=False, effects=None, active=None, scalar_inp
                     match = re.match(r"(-?\d+)(?: : .*)?$", text)
                     assert match, "unsupported scalar integer constant"
                     result = int(match.group(1))
-            elif name in ("arith.addi", "arith.subi", "arith.remui", "arith.muli", "arith.divui"):
+            elif name in ("arith.addi", "arith.subi", "arith.remui", "arith.muli", "arith.divui", "arith.floordivsi"):
                 a, b = operands
                 if name == "arith.remui":
                     if b <= 0:
                         raise ValueError("invalid modulo")
                     result = a % b
+                elif name == "arith.floordivsi":
+                    assert b > 0, "represented endpoint floor divisor must be positive"
+                    result = a // b
                 elif name == "arith.divui":
                     if b <= 0:
                         raise ValueError("invalid unsigned divisor")
@@ -191,16 +196,27 @@ def execute(function, n, correlated=False, effects=None, active=None, scalar_inp
                 address, slots, size = operands[0]
                 result = set().union(*(physical_cells(address + size * slot, size) for slot in
                                      ([operands[1]] if correlated else range(slots))))
-            elif name in ("pto.tload", "pto.txor", "pto.trowexpandmul", "pto.tstore"):
-                commands.append(("payload", {"pto.tload": "PIPE_MTE2", "pto.txor": "PIPE_V",
-                                             "pto.trowexpandmul": "PIPE_V", "pto.tstore": "PIPE_MTE3"}[name]))
+            elif name in ("pto.make_tensor_view", "pto.partition_view"):
+                # These fixtures model GM through the shared conservative class.
+                result = operands[0]
+            elif name in ("pto.tload", "pto.txor", "pto.trowexpandmul", "pto.tstore", "pto.load"):
+                pipe = {"pto.tload": "PIPE_MTE2", "pto.txor": "PIPE_V", "pto.trowexpandmul": "PIPE_V",
+                        "pto.tstore": "PIPE_MTE3", "pto.load": "PIPE_S"}[name]
+                if name == "pto.tstore" and ("loc=acc" in str(operation.operands[0].type) or
+                                             "<acc," in str(operation.operands[0].type)):
+                    pipe = "PIPE_FIX"
+                commands.append(("payload", pipe))
                 if occurrences_out is not None:
                     occurrences_out.append((payload_sites[operation], list(frames)))
                 if effects is not None:
-                    if name in ("pto.txor", "pto.trowexpandmul"):
+                    if name == "pto.load":
+                        effects.append((operands[0], set()))
+                    elif name in ("pto.txor", "pto.trowexpandmul"):
                         effects.append((operands[0] | operands[1] | operands[2], operands[2] | operands[3]))
                     else:
                         effects.append((operands[0], operands[1]))
+                if name == "pto.load":
+                    result = 0
             elif name in ("pto.set_flag", "pto.wait_flag"):
                 key = (attr_name(operation.attributes["src_pipe"]),
                        attr_name(operation.attributes["dst_pipe"]), str(operation.attributes["event_id"]))

@@ -145,6 +145,30 @@ LogicalResult GuardedDemandAnalysis::buildPrepared(
     return success();
 }
 
+LogicalResult GuardedDemandAnalysis::adjacentLocalUpper()
+{
+    PredicateArena predicates = conditions;
+    ConflictBuilder builder(predicates, presence);
+    for (const auto& edge : covers) {
+        if (sites[edge.source]->kPipeValue != sites[edge.consumer]->kPipeValue) {
+            builder.add(edge.source, edge.consumer, edge.predicate, {});
+            continue;
+        }
+        Predicate later = 0;
+        for (auto previous = edge.consumer; previous > edge.source;) {
+            --previous;
+            if (sites[previous]->kPipeValue != sites[edge.consumer]->kPipeValue) { continue; }
+            auto actual = predicates.conjunction(presence[previous], predicates.negate(later));
+            builder.add(previous, edge.consumer, predicates.conjunction(edge.predicate, actual), {});
+            later = predicates.disjunction(later, presence[previous]);
+        }
+    }
+    GuardedDemandAnalysis pending;
+    if (failed(pending.buildPrepared(sites, presence, std::move(predicates), builder.edges))) { return failure(); }
+    *this = std::move(pending);
+    return success();
+}
+
 void GuardedDemandAnalysis::initializeNative()
 {
     reach.assign(2 * sites.size(), SmallVector<Predicate>(2 * sites.size(), 0));

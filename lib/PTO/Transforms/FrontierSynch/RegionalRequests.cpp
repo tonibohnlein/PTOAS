@@ -72,13 +72,14 @@ RegionalContextHandle RegionalRequests::contextFor(Operation* owner)
     regionalContexts[owner] = context;
     return context;
 }
-void RegionalRequests::record(Operation* owner, StringRef route, StringRef outcome, StringRef reason)
+void RegionalRequests::record(
+    Operation* owner, StringRef route, StringRef outcome, StringRef reason, bool routeInterval)
 {
     history.push_back({owner == function ? &function.getBody() : owner->getParentRegion(),
                        route.str(), outcome.str(), reason.str(),
                        costs.active() && !attemptStarts.empty() ?
                            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                               std::chrono::steady_clock::now() - attemptStarts.back()).count() : 0});
+                               std::chrono::steady_clock::now() - attemptStarts.back()).count() : 0, !routeInterval});
 }
 RegionalRequests::Candidate RegionalRequests::explicitRegion(Operation* owner, const Signature& signature)
 {
@@ -529,7 +530,8 @@ RegionalRequests::Candidate RegionalRequests::guardedRegion(Operation* owner, co
     result->contract.interfaces = interfaceBit(DemandInterface::MinimumRepresentation);
     return {result, RegionalStatus::Ready, {}};
 }
-LogicalResult RegionalRequests::qualifyMatching(Operation* owner, SelectedAnalysis& selected, std::string& reason)
+LogicalResult RegionalRequests::qualifyMatching(
+    Operation* owner, SelectedAnalysis& selected, std::string& reason, bool allowUpper)
 {
     if (!placements) { reason = "shared endpoint availability index not established"; return failure(); }
     if (selected.kind == SelectedAnalysis::Kind::BoundaryLoop) {
@@ -609,31 +611,79 @@ LogicalResult RegionalRequests::qualifyMatching(Operation* owner, SelectedAnalys
         auto nonadjacent = SignedRelation::import(selected.minimum->space(), SymbolicTuple::Event,
                                                   SymbolicTuple::Event, pieces);
         auto retained = nonadjacent.succeeded() ? selected.minimum->intersect(nonadjacent.value) : nonadjacent;
-        if (!retained.succeeded() || !retained.value->empty()) {
-            reason = "unmet local-adjacency premise for exact direct construction"; return failure();
+        if (!retained.succeeded()) {
+            reason = "local adjacency query is not represented"; return failure();
+        }
+        if (!retained.value->empty()) {
+            if (!allowUpper) {
+                reason = "unmet local-adjacency premise for exact direct construction"; return failure();
+            }
+            // Delay strengthening until after the first cover reduction. The
+            // previous selected closure is covered by native completion order
+            // into the actual immediate predecessor, even when an intervening
+            // site is absent. Reduce again and rebuild executable selectors.
+            auto upper = SignedDemandAnalysis::adjacentLocalUpper(
+                selected.minimum->space(), selected.context, selected.native, selected.minimum);
+            if (!upper.succeeded()) {
+                reason = "adjacent local upper construction: " + signedDiagnostic(upper.status).str();
+                return failure();
+            }
+            selected.localReplacementBase = selected.reachability;
+            selected.signedAnalysis = upper.value;
+            selected.minimum = upper.value->minimum();
+            selected.reachability = upper.value->reachability();
+            selected.contract.closure = SelectedClosure::SoundUpper;
+            selected.route += "/adjacent-local-upper";
+            selected.generalInterchange.reset();
         }
         return prepareEndpoints(selected, reason);
     }
     if (selected.kind == SelectedAnalysis::Kind::General) { return prepareGeneralEndpoints(selected, reason); }
     if (selected.kind == SelectedAnalysis::Kind::Explicit) {
-        for (auto id : selected.explicitReduction.retained()) {
-            const auto& edge = selected.generators[id];
-            auto pipe = trace.sites()[selected.sites[edge.source]].phase->kPipeValue;
-            if (pipe != trace.sites()[selected.sites[edge.consumer]].phase->kPipeValue) { continue; }
-            for (auto between = edge.source + 1; between < edge.consumer; ++between) {
-                if (trace.sites()[selected.sites[between]].phase->kPipeValue == pipe) {
-                    reason = "unmet local-adjacency premise for exact direct construction"; return failure();
-                }
-            }
-        }
-        return success();
-    }
-    for (const auto& local : selected.guarded.localDemands()) {
-        // Only an arena-proven false nonadjacency permits direct construction.
-        // Unknown Boolean feasibility is an unmet premise, not an extra barrier.
-        if (local.nonadjacent != 0) {
+        if (selected.explicitReduction.nonadjacentLocal().empty()) { return success(); }
+        if (!allowUpper) {
             reason = "unmet local-adjacency premise for exact direct construction"; return failure();
         }
+        SmallVector<const CompoundInstanceElement*> phases;
+        for (auto site : selected.sites) { phases.push_back(trace.sites()[site].phase); }
+        SmallVector<Demand> adjacent;
+        for (auto id : selected.explicitReduction.retained()) {
+            auto edge = selected.generators[id];
+            if (phases[edge.source]->kPipeValue == phases[edge.consumer]->kPipeValue) {
+                auto previous = edge.consumer;
+                do { --previous; } while (phases[previous]->kPipeValue != phases[edge.consumer]->kPipeValue);
+                if (edge.source != previous) {
+                    edge.source = previous;
+                    edge.witnesses.clear();
+                    edge.originalBarrier = nullptr;
+                }
+            }
+            adjacent.push_back(std::move(edge));
+        }
+        RankReduction reduction;
+        if (failed(reduction.build(phases, adjacent))) {
+            reason = "adjacent local upper explicit reduction failed"; return failure();
+        }
+        selected.localReplacementGenerators = selected.generators;
+        selected.generators = std::move(adjacent);
+        selected.explicitReduction = std::move(reduction);
+        selected.contract.closure = SelectedClosure::SoundUpper;
+        selected.route += "/adjacent-local-upper";
+        return success();
+    }
+    bool nonadjacent = llvm::any_of(selected.guarded.localDemands(), [](const auto& local) {
+        return local.nonadjacent != 0;
+    });
+    if (nonadjacent) {
+        if (!allowUpper) {
+            reason = "unmet local-adjacency premise for exact direct construction"; return failure();
+        }
+        llvm::append_range(selected.localReplacementGuardedCovers, selected.guarded.retained());
+        if (failed(selected.guarded.adjacentLocalUpper())) {
+            reason = "adjacent local upper guarded reduction failed"; return failure();
+        }
+        selected.contract.closure = SelectedClosure::SoundUpper;
+        selected.route += "/adjacent-local-upper";
     }
     auto nodes = selected.guarded.predicates().nodes();
     for (const auto& edge : selected.guarded.retained()) {
@@ -689,69 +739,92 @@ RegionalRequestResult RegionalRequests::request(
     auto requested = needs;
     if (mode == RegionalMode::MinimumExact) { requested = AnalysisNeeds::minimumExact();
         requested.interfaces = needs.interfaces; }
-    auto attempt = [&](StringRef route, Candidate candidate) {
+    auto attempt = [&](StringRef route, auto buildCandidate) {
+        // Defer construction so this clock measures this route, including its
+        // recursive requests and endpoint qualification, rather than a prefix
+        // accumulated since the enclosing regional request began.
+        attemptStarts.push_back(costs.active() ? std::chrono::steady_clock::now() :
+                                               std::chrono::steady_clock::time_point{});
+        auto finishAttempt = llvm::make_scope_exit([&]() { attemptStarts.pop_back(); });
+        Candidate candidate = buildCandidate();
         if (!candidate.analysis) {
             bool unmet = candidate.status == RegionalStatus::UnmetObligation;
-            record(owner, route, unmet ? "unmet-obligation" : "not-applicable", candidate.obligation);
+            record(owner, route, unmet ? "unmet-obligation" : "not-applicable", candidate.obligation, true);
             if (unmet) { result.obligation = candidate.obligation; }
             return false;
         }
         std::string reason;
         if (!candidate.analysis->contract.accepts(requested, reason)) {
-            record(owner, route, "unmet-obligation", reason); result.obligation = reason; return false;
+            record(owner, route, "unmet-obligation", reason, true); result.obligation = reason; return false;
         }
         if (preparation == RegionalPreparation::SelectorMatching &&
-            failed(qualifyMatching(owner, *candidate.analysis, reason))) {
-            record(owner, route, "unmet-obligation", reason); result.obligation = reason; return false;
+            failed(qualifyMatching(owner, *candidate.analysis, reason,
+                requested.allowSoundUpper && !requested.suppliedExactEffects))) {
+            record(owner, route, "unmet-obligation", reason, true); result.obligation = reason; return false;
+        }
+        if (!candidate.analysis->contract.accepts(requested, reason)) {
+            record(owner, route, "unmet-obligation", reason, true); result.obligation = reason; return false;
         }
         candidate.analysis->requestContext = context;
         candidate.analysis->regionalContext = contextFor(owner);
         result.analysis = candidate.analysis;
         result.outcome = "ready";
         result.obligation.clear();
-        record(owner, route, "ready", ""); return true;
+        record(owner, route, "ready", "", true); return true;
     };
     if (representation == RegionalRepresentation::NativeSummaries) {
-        auto explicitResult = explicitRegion(owner, signature);
-        bool accepted = attempt("regional-explicit", std::move(explicitResult));
+        bool accepted = attempt("regional-explicit", [&]() { return explicitRegion(owner, signature); });
         if (!accepted) {
-            accepted = attempt("correlated-single-stream-boundaries", boundaryLoopRegion(owner, signature, requested));
+            accepted = attempt("correlated-single-stream-boundaries", [&]() {
+                return boundaryLoopRegion(owner, signature, requested);
+            });
         }
-        if (!accepted) { accepted = attempt("regional-counted-readers", countedRegion(owner, signature)); }
         if (!accepted) {
-            accepted = attempt("regional-affine-counted-readers", generalCountedRegion(owner, signature));
+            accepted = attempt("regional-counted-readers", [&]() { return countedRegion(owner, signature); });
         }
-        if (!accepted) { accepted = attempt("regional-stationary-cells", stationaryRegion(owner, signature)); }
-        if (!accepted) { accepted = attempt("regional-periodic-quotient", periodicRegion(owner, signature)); }
+        if (!accepted) {
+            accepted = attempt("regional-affine-counted-readers", [&]() {
+                return generalCountedRegion(owner, signature);
+            });
+        }
+        if (!accepted) {
+            accepted = attempt("regional-stationary-cells", [&]() { return stationaryRegion(owner, signature); });
+        }
+        if (!accepted) {
+            accepted = attempt("regional-periodic-quotient", [&]() { return periodicRegion(owner, signature); });
+        }
         if (accepted) { cache.emplace(key, result); return result; }
     }
     if ((representation == RegionalRepresentation::ArithmeticRelations ||
          representation == RegionalRepresentation::PresburgerRelations) &&
-        attempt("regional-counted-readers", countedRegion(owner, signature))) {
+        attempt("regional-counted-readers", [&]() { return countedRegion(owner, signature); })) {
         cache.emplace(key, result); return result;
     }
     if (representation == RegionalRepresentation::PresburgerRelations &&
-        attempt("regional-affine-counted-readers", generalCountedRegion(owner, signature))) {
+        attempt("regional-affine-counted-readers", [&]() { return generalCountedRegion(owner, signature); })) {
         cache.emplace(key, result); return result;
     }
     if (representation == RegionalRepresentation::ArithmeticRelations) {
-        auto candidate = stationaryRegion(owner, signature);
-        if (!candidate.analysis) { candidate = periodicRegion(owner, signature); }
-        if (candidate.analysis) {
-            std::string reason;
-            auto inputs = arithmeticPrimitives(owner, ArithmeticClass::Octagons, reason);
-            auto lifted = [&]() {
-                if (failed(inputs)) { return failure(); }
-                CostScope backend(costs, CostStage::Backend);
-                return liftPeriodicQueries(*candidate.analysis, *inputs, reason);
-            }();
-            if (failed(lifted)) {
-                candidate = {{}, RegionalStatus::UnmetObligation, reason};
-            } else {
-                candidate.analysis->structured = imported.find(owner)->second.first;
+        auto buildQueries = [&]() -> Candidate {
+            auto candidate = stationaryRegion(owner, signature);
+            if (!candidate.analysis) { candidate = periodicRegion(owner, signature); }
+            if (candidate.analysis) {
+                std::string reason;
+                auto inputs = arithmeticPrimitives(owner, ArithmeticClass::Octagons, reason);
+                auto lifted = [&]() {
+                    if (failed(inputs)) { return failure(); }
+                    CostScope backend(costs, CostStage::Backend);
+                    return liftPeriodicQueries(*candidate.analysis, *inputs, reason);
+                }();
+                if (failed(lifted)) {
+                    candidate = {{}, RegionalStatus::UnmetObligation, reason};
+                } else {
+                    candidate.analysis->structured = imported.find(owner)->second.first;
+                }
             }
-        }
-        if (attempt("regional-periodic-symbolic-queries", std::move(candidate))) {
+            return candidate;
+        };
+        if (attempt("regional-periodic-symbolic-queries", [&]() { return buildQueries(); })) {
             cache.emplace(key, result); return result;
         }
     }
@@ -779,8 +852,9 @@ RegionalRequestResult RegionalRequests::request(
         cache.emplace(key, result); return result;
     }
     if (representation == RegionalRepresentation::NativeSummaries) {
-        if (attempt("regional-sequence-composition",
-            composeRegion(owner, signature, mode, requested, preparation, policy))) {
+        if (attempt("regional-sequence-composition", [&]() {
+            return composeRegion(owner, signature, mode, requested, preparation, policy);
+        })) {
             cache.emplace(key, result); return result;
         }
     }
@@ -793,26 +867,31 @@ RegionalRequestResult RegionalRequests::request(
     if ((representation == RegionalRepresentation::PresburgerRelations ||
          (representation == RegionalRepresentation::NativeSummaries && generalChild &&
           policy == RegionalRoutePolicy::GeneralExtension)) &&
-        attempt("presburger-region-composition",
-            generalComposeRegion(owner, signature, mode, requested, preparation, policy))) {
+        attempt("presburger-region-composition", [&]() {
+            return generalComposeRegion(owner, signature, mode, requested, preparation, policy);
+        })) {
         cache.emplace(key, result); return result;
     }
     {
-        if (attempt("regional-difference-bounds", arithmeticRegion(owner, signature, ArithmeticClass::Differences))) {
+        if (attempt("regional-difference-bounds", [&]() {
+            return arithmeticRegion(owner, signature, ArithmeticClass::Differences);
+        })) {
             cache.emplace(key, result); return result;
         }
         if (representation != RegionalRepresentation::DifferenceRelations &&
-            attempt("regional-integer-octagons", arithmeticRegion(owner, signature, ArithmeticClass::Octagons))) {
+            attempt("regional-integer-octagons", [&]() {
+                return arithmeticRegion(owner, signature, ArithmeticClass::Octagons);
+            })) {
             cache.emplace(key, result); return result;
         }
     }
     if (representation == RegionalRepresentation::NativeSummaries &&
-        attempt("regional-finite-guarded", guardedRegion(owner, signature))) {
+        attempt("regional-finite-guarded", [&]() { return guardedRegion(owner, signature); })) {
         cache.emplace(key, result); return result;
     }
     if (requested.allowSoundUpper && !requested.suppliedExactEffects &&
         representation != RegionalRepresentation::DifferenceRelations &&
-        attempt("regional-fixed-body-upper", upperFixedBodyRegion(owner, signature, requested))) {
+        attempt("regional-fixed-body-upper", [&]() { return upperFixedBodyRegion(owner, signature, requested); })) {
         cache.emplace(key, result); return result;
     }
     // Preserve the optional general fallback after the cheap candidates, but
@@ -820,8 +899,9 @@ RegionalRequestResult RegionalRequests::request(
     if (representation == RegionalRepresentation::NativeSummaries && !generalChild &&
         policy == RegionalRoutePolicy::GeneralExtension) {
         auto priorObligation = result.obligation;
-        if (attempt("presburger-region-composition",
-            generalComposeRegion(owner, signature, mode, requested, preparation, policy))) {
+        if (attempt("presburger-region-composition", [&]() {
+            return generalComposeRegion(owner, signature, mode, requested, preparation, policy);
+        })) {
             cache.emplace(key, result); return result;
         }
         // The optional precision attempt retains its own diagnostic in the

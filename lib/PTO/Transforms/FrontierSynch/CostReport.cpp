@@ -45,7 +45,9 @@ llvm::json::Array attempts(ArrayRef<AnalysisAttempt> input)
                 {"route", attempt.route},
                 {"outcome", attempt.outcome},
                 {"obligation", attempt.obligation},
-                {"inclusive_ns", attempt.inclusiveNanoseconds}});
+                {"timing_scope", attempt.requestCheckpoint ?
+                    "regional-request-checkpoint" : "inclusive-route-interval"},
+                {attempt.requestCheckpoint ? "request_checkpoint_ns" : "inclusive_ns", attempt.inclusiveNanoseconds}});
     }
     return result;
 }
@@ -271,7 +273,8 @@ llvm::json::Object costReport(
             "physical assignment certified under recorded target/ABI premises" : "not-certified"},
         {"failure_category", result.emitted ? llvm::json::Value(nullptr) : llvm::json::Value("NoCertifiedPlan")},
         {"reason", result.reason},
-        {"accounting", "exclusive nested stages; inclusive attempts are non-additive"},
+        {"accounting", "exclusive nested stages; inclusive route intervals and cumulative request checkpoints "
+                       "are non-additive"},
         {"excluded_costs", "cost-report metrics/serialization/IO; pass dispatch overhead; work outside this pass"},
         {"attempts", attempts(result.attempts)},
         {"rejected_attempts", static_cast<int64_t>(rejected)},
@@ -324,7 +327,8 @@ void reportPreanalysisFailure(func::FuncOp function, const CostLedger& costs, ll
         {"rejected_attempts", 0},
         {"metrics", nullptr},
         {"demand_dump_enabled", dumpDemands},
-        {"accounting", "exclusive nested stages; inclusive attempts are non-additive"},
+        {"accounting", "exclusive nested stages; inclusive route intervals and cumulative request checkpoints "
+                       "are non-additive"},
         {"excluded_costs", "cost-report metrics/serialization/IO; pass dispatch overhead; work outside this pass"}};
     finishCostReport(report, costs, DirectEmissionResult{});
     auto* stages = report["stages"].getAsObject();

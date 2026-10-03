@@ -41,6 +41,9 @@ struct AnalysisAttempt {
     Region* region = nullptr;
     std::string route, outcome, obligation;
     int64_t inclusiveNanoseconds = 0;
+    // Wrapper/final regional records are cumulative request checkpoints,
+    // distinct from explicitly timed constructor+qualification intervals.
+    bool requestCheckpoint = false;
 };
 struct RegionalContext;
 class RegionalRequests;
@@ -73,6 +76,11 @@ struct SelectedAnalysis {
     mutable std::shared_ptr<const GeneralQueries> generalInterchange;
     std::shared_ptr<const GeneralEndpointPlan> generalEndpoints;
     SignedRelationHandle context, minimum, native, reachability;
+    // Coverage witness for delayed local strengthening; this is the previous
+    // selected closure, not an inferred exact physical-effects certificate.
+    SignedRelationHandle localReplacementBase;
+    SmallVector<Demand> localReplacementGenerators;
+    SmallVector<GuardedDemand> localReplacementGuardedCovers;
     // Matching maps are qualified before accepting a logical route and reused
     // during emission. This is the executable endpoint analysis interface.
     std::map<std::tuple<PipelineType, PipelineType, bool>, SignedSelectorHandle> endpoints;
