@@ -8,6 +8,7 @@
 // Inspect original region structure and supplied effects without expanding loops.
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 #include "RotationPattern.h"
+#include "RecognitionInternal.h"
 #include "../InsertSync/SyncEffectRanges.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -40,15 +41,10 @@ bool fixedBody(Block& block, const PhaseIndex& index, RecognitionResult& result)
             result.note(RecognitionIssue::StructuredBody, &op, true);
             fixed = false;
         } else if (phases.size() > 1) {
-            result.note(RecognitionIssue::MultiplePhases, &op);
             fixed = false;
-        } else if (phases.empty() && !metadata(op)) {
-            result.note(RecognitionIssue::UnmodeledOperation, &op);
         }
-        for (const auto* phase : phases) {
-            if (phase->kPipeValue == PipelineType::PIPE_UNASSIGNED) {
-                result.note(RecognitionIssue::UnknownPipe, &op);
-            }
+        if (!op.getNumRegions()) {
+            detail::inspectLeaf(op, index, result);
         }
     }
     return fixed;
@@ -159,13 +155,26 @@ RecognitionResult recognizeExplicit(Block& block, const PhaseIndex& index, const
     return result;
 }
 
-RecognitionResult recognizeRotating(scf::ForOp loop, const PhaseIndex& index,
-                                    const SyncInput& input, const SyncStorageEffects& effects)
+void detail::inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result)
 {
-    RecognitionResult result;
+    auto phases = index.phasesFor(&op);
+    if (phases.size() > 1) {
+        result.note(RecognitionIssue::MultiplePhases, &op);
+    } else if (phases.empty() && !metadata(op)) {
+        result.note(RecognitionIssue::UnmodeledOperation, &op);
+    }
+    for (const auto* phase : phases) {
+        if (phase->kPipeValue == PipelineType::PIPE_UNASSIGNED) {
+            result.note(RecognitionIssue::UnknownPipe, &op);
+        }
+    }
+}
+
+bool detail::checkRotatingDomain(scf::ForOp loop, RecognitionResult& result)
+{
     if (!loop) {
         result.note(RecognitionIssue::LoopDomain, nullptr, true);
-        return result;
+        return false;
     }
     if (!constantEquals(loop.getLowerBound(), 0) || !constantEquals(loop.getStep(), 1)) {
         result.note(RecognitionIssue::LoopDomain, loop, true);
@@ -173,18 +182,33 @@ RecognitionResult recognizeRotating(scf::ForOp loop, const PhaseIndex& index,
     if (loop.getNumRegionIterArgs()) {
         result.note(RecognitionIssue::LoopCarriedState, loop, true);
     }
-    if (!fixedBody(*loop.getBody(), index, result)) {
-        return result;
-    }
+    return true;
+}
+
+void detail::inspectRotatingPhases(scf::ForOp loop, ArrayRef<const CompoundInstanceElement*> phases,
+                                  const SyncInput& input, const SyncStorageEffects& effects, RecognitionResult& result)
+{
     Families families;
-    for (Operation& op : *loop.getBody()) {
-        for (const auto* phase : index.phasesFor(&op)) {
-            for (auto id : effects.effectsFor(phase)) {
-                inspectAccess(id, loop, input, effects, families, result);
-            }
+    for (const auto* phase : phases) {
+        for (auto id : effects.effectsFor(phase)) {
+            inspectAccess(id, loop, input, effects, families, result);
         }
     }
     checkDisjoint(families, result, loop);
+}
+
+RecognitionResult recognizeRotating(scf::ForOp loop, const PhaseIndex& index,
+                                    const SyncInput& input, const SyncStorageEffects& effects)
+{
+    RecognitionResult result;
+    if (!detail::checkRotatingDomain(loop, result) || !fixedBody(*loop.getBody(), index, result)) {
+        return result;
+    }
+    SmallVector<const CompoundInstanceElement*> phases;
+    for (Operation& op : *loop.getBody()) {
+        llvm::append_range(phases, index.phasesFor(&op));
+    }
+    detail::inspectRotatingPhases(loop, phases, input, effects, result);
     return result;
 }
 
@@ -214,6 +238,13 @@ StringRef recognitionName(RecognitionIssue issue)
     case RecognitionIssue::OverlappingFamilies: return "overlapping-families";
     case RecognitionIssue::AliasedOperand: return "aliased-operand";
     case RecognitionIssue::UnsupportedView: return "unsupported-view";
+    case RecognitionIssue::GuardInvariance: return "guard-invariance";
+    case RecognitionIssue::UnsupportedControl: return "unsupported-control";
+    case RecognitionIssue::ArithmeticDimension: return "arithmetic-dimension";
+    case RecognitionIssue::ArithmeticPeriod: return "arithmetic-period";
+    case RecognitionIssue::ArithmeticPipeLimit: return "arithmetic-pipe-limit";
+    case RecognitionIssue::ArithmeticConfiguration: return "arithmetic-configuration";
+    case RecognitionIssue::AdditionalPrerequisite: return "additional-prerequisite";
     default: return "invalid";
     }
 }
