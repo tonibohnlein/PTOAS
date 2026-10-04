@@ -10,6 +10,7 @@
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "SyncEffectRanges.h"
 #include "SyncRegionArithmetic.h"
+#include "SyncRegionDigits.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/Support/MathExtras.h"
@@ -148,6 +149,9 @@ bool materializeRegion(const SyncAccessRegion& region, AddressSpace space,
     if (region.base || !region.symbols.empty()) {
         return false;
     }
+    if (materializeDigitRegion(region, space, result)) {
+        return true;
+    }
     auto shape = sizes(region);
     if (!shape || !region.elementBytes) {
         return false;
@@ -194,7 +198,6 @@ bool materializeRegion(const SyncAccessRegion& region, AddressSpace space,
     }
     // Concrete cells are an optional view of an exact symbolic footprint.
     // Avoid expanding large blocked/strided buffers into one record per element.
-    constexpr uint64_t maxMaterializedSlices = 4096;
     uint64_t slices = 1;
     for (unsigned i = 0; i < shape->size(); ++i) {
         if (static_cast<int>(i) != contiguous) {

@@ -89,6 +89,7 @@ add_llvm_executable(pto-sync-input-test
   ProgramStructureChecks.cpp
   SyncAliasChecks.cpp
   SyncRegionContractChecks.cpp
+  SyncRegionDigitChecks.cpp
   SyncStep0Audit.cpp
   PARTIAL_SOURCES_INTENDED
 )
