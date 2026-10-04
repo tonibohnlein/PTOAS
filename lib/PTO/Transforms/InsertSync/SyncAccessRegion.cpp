@@ -8,6 +8,7 @@
 // Recover buffer descriptor geometry from types, addresses and view operations.
 // A descriptor is not a claim about an instruction's actual read/write region.
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
+#include "PTO/IR/PTOLinearAccess.h"
 #include "SyncRegionArithmetic.h"
 #include "SyncScalarEvolution.h"
 #include "mlir/IR/Matchers.h"
@@ -170,7 +171,7 @@ AffineExpr RegionBuilder::pointer(Value operand)
 {
     if (auto add = operand.getDefiningOp<AddPtrOp>()) {
         auto base = pointer(add.getPtr());
-        auto width = bytes(cast<PtrType>(add.getPtr().getType()).getElementType());
+        auto width = linearAccessBytes(cast<PtrType>(add.getPtr().getType()).getElementType());
         return base && width ? this->add(base, scale(value(add.getOffset()), width)) : AffineExpr{};
     }
     if (auto castOp = operand.getDefiningOp<CastPtrOp>()) {
