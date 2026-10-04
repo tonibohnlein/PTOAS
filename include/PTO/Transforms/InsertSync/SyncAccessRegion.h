@@ -14,6 +14,12 @@
 #include <optional>
 #include <string>
 namespace mlir::pto {
+struct SyncIterationDomain {
+    Value induction;
+    Value lower;
+    Value upper;
+    Value step;
+};
 // Coordinates d_i range over [0, extents[i]). byteOffset maps each element
 // to its first byte; elementBytes consecutive bytes are accessed there.
 // Symbols refer to unchanged SSA values. A null base denotes an absolute
@@ -24,6 +30,8 @@ struct SyncAccessRegion {
     SmallVector<AffineExpr> extents;
     SmallVector<Value> symbols;
     unsigned elementBytes = 0;
+    // Original counted-loop domains, outermost first. No trip-count unfolding.
+    SmallVector<SyncIterationDomain> iterations;
     bool empty() const;
 };
 struct SyncStorageEffect;

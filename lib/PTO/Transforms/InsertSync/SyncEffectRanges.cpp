@@ -9,6 +9,8 @@
 // from SyncInput. Buffer descriptors do not establish accessed byte sets.
 #include "SyncEffectRanges.h"
 #include <limits>
+#include "mlir/Interfaces/ViewLikeInterface.h"
+#include "llvm/ADT/STLExtras.h"
 
 namespace mlir::pto::detail {
 namespace {
@@ -28,6 +30,26 @@ SmallVector<SyncStorageCell> sharedRanges(const BaseMemInfo& memory)
     return result;
 }
 
+std::optional<SyncSlotSelection> slotSelection(const SyncInput& input, Value operand)
+{
+    while (auto* operation = operand.getDefiningOp()) {
+        if (auto selected = dyn_cast<MultiTileGetOp>(operation)) {
+            auto family = input.buffers().find(selected.getSource());
+            if (family == input.buffers().end() || family->second.size() != 1 ||
+                !family->second.front()->hasKnownPhysicalAddresses) {
+                return std::nullopt;
+            }
+            return SyncSlotSelection{selected.getSource(), selected.getSlot(), family->second.front()->baseAddresses};
+        }
+        auto view = dyn_cast<ViewLikeOpInterface>(operation);
+        if (!view || view.getViewSource() == operand) {
+            break;
+        }
+        operand = view.getViewSource();
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 SmallVector<SyncStorageCell> physicalSlotRanges(const SyncInput& input, const BaseMemInfo& memory)
@@ -39,17 +61,56 @@ SmallVector<SyncStorageCell> physicalSlotRanges(const SyncInput& input, const Ba
     return sharedRanges(*root->second.front());
 }
 
+void applyAccessCoverage(const SyncInput& input, SyncStorageEffect& effect,
+                         ArrayRef<SyncMemoryEffect> declarations)
+{
+    effect.region.reset();
+    effect.ranges.clear();
+    effect.cells.clear();
+    effect.exactRanges = false;
+    effect.precision = SyncAccessPrecision::Unknown;
+    effect.precisionReason = "shared read/write interface does not specify an access region";
+    auto aliases = input.buffers().find(effect.memory->baseBuffer);
+    if (!effect.descriptorRegion || effect.phase->macroOpInstanceId >= 0 ||
+        aliases == input.buffers().end() || aliases->second.size() != 1) {
+        return;
+    }
+    bool matched = false;
+    for (const auto& declared : declarations) {
+        const bool read = isa<MemoryEffects::Read>(declared.getEffect());
+        const bool write = isa<MemoryEffects::Write>(declared.getEffect());
+        if (declared.getValue() != effect.memory->baseBuffer ||
+            (effect.mode == SyncAccessMode::Read ? !read : !write)) {
+            continue;
+        }
+        // Unknown parameter/resource semantics must not be interpreted as a
+        // whole-buffer access, nor may one full declaration hide a partial one.
+        if (!declared.getEffectOnFullRegion() || declared.getParameters() ||
+            declared.getResource() != SideEffects::DefaultResource::get()) {
+            return;
+        }
+        matched = true;
+    }
+    if (!matched) {
+        return;
+    }
+    effect.region = effect.descriptorRegion;
+    effect.precision = SyncAccessPrecision::Exact;
+    effect.precisionReason.clear();
+    effect.exactRanges = materializeRegion(*effect.region, effect.memory->scope, effect.ranges);
+    if (!effect.exactRanges) {
+        effect.ranges.clear();
+    }
+}
+
 void resolveEffectRanges(const SyncInput& input, SyncStorageEffect& effect)
 {
     const auto& memory = *effect.memory;
     if (!memory.rootBuffer || !memory.baseBuffer) {
         return;
     }
+    effect.selection = slotSelection(input, memory.baseBuffer);
     effect.descriptorRegion = resolveBufferRegion(input, memory.baseBuffer, effect.phase->elementOp);
-    // The common interface supplies read/write operands, not an exact accessed
-    // region or a promise of containment in the allocation. Keep the geometry
-    // available to clients without guessing instruction semantics or kills.
-    effect.precision = SyncAccessPrecision::Unknown;
-    effect.precisionReason = "shared read/write interface does not specify an access region";
+    applyAccessCoverage(input, effect, input.effectsFor(*effect.phase));
 }
 } // namespace mlir::pto::detail
