@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
+// RUN: pto-sync-input-test --step0-json %s | FileCheck %s --check-prefix=STEP0
 // Buffer descriptor geometry does not establish an instruction's access set.
 !whole = !pto.tile_buf<vec, 2x16xf32>
 !partial = !pto.tile_buf<vec, 2x16xf32, valid=1x8>
@@ -129,7 +130,7 @@ module attributes {pto.target_arch = "a3"} {
 // CHECK: map=(d0, d1) -> (((d0 + 1) * 16 + d1) * 4) extents=1, 8
 // CHECK: overlap 0,1=1
 // CHECK: overlap 0,2=1
-// CHECK: overlap 1,2=1
+// CHECK: overlap 1,2=0
 // CHECK-LABEL: storage symbolic_gm: cells=0 all-exact=0
 // CHECK: descriptor base=pointer bytes=4 map=(d0, d1)[s0] -> (d0 * 64 + s0 * 4 + d1 * 4)
 // CHECK: descriptor base=pointer bytes=4 map=(d0, d1)[s0] -> (d0 * 64 + s0 * 4 + (d1 + 8) * 4)
@@ -154,3 +155,7 @@ module attributes {pto.target_arch = "a3"} {
 // CHECK: pto.tstore write unknown definite-write=0
 // CHECK-NOT: descriptor
 // CHECK: source-unchanged; dependency-analysis-not-run
+
+// STEP0: "function":"descriptor_updates"{{.*}}"unphased_declarations":1{{.*}}"pto.set_validshape":1
+// STEP0: "function":"conditional_metadata"{{.*}}"unphased_declarations":1{{.*}}"pto.set_validshape":1
+// STEP0: "function":"descriptor_backedge"{{.*}}"unphased_declarations":1{{.*}}"pto.set_validshape":1

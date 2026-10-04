@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
+// RUN: pto-sync-input-test --gm-alias=may-alias --storage-effects %s | FileCheck %s
+
+// The shared translator's initial root is not a root for every loop visit.
+// A carried view can refer to the second allocation; a zero-trip result refers
+// to the initial allocation. Neither is described by only one of those roots.
+// CHECK-LABEL: storage carried_local:
+// CHECK: overlap 0,1=1
+// CHECK: overlap 2,3=1
+// CHECK-LABEL: storage carried_gm:
+// CHECK: overlap 1,2=1
+// CHECK: overlap 5,6=1
+// CHECK: source-unchanged; dependency-analysis-not-run
+
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @carried_local(%n: index) attributes {test.overlap = array<i64: 0, 1, 2, 3>} {
+    %zero = arith.constant 0 : i64
+    %other = arith.constant 32 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %zero : !tile
+    %b = pto.alloc_tile addr = %other : !tile
+    %result = scf.for %i = %i0 to %n step %i1 iter_args(%p = %a) -> (!tile) {
+      %view = pto.subview %p[%i0, %i0] sizes [1, 8] : !tile -> !tile
+      pto.texpands ins(%one : f32) outs(%view : !tile)
+      %value = pto.tgetval ins(%b, %i0 : !tile, index) outs : f32
+      scf.yield %b : !tile
+    }
+    pto.texpands ins(%one : f32) outs(%result : !tile)
+    %value = pto.tgetval ins(%a, %i0 : !tile, index) outs : f32
+    return
+  }
+  func.func @carried_gm(%a: !pto.ptr<f32, gm>, %b: !pto.ptr<f32, gm>, %n: index) attributes {test.overlap = array<i64: 1, 2, 5, 6>} {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i8 = arith.constant 8 : index
+    %tile = pto.alloc_tile addr = %zero : !tile
+    %bv = pto.make_tensor_view %b, shape = [%i1, %i8], strides = [%i8, %i1] : !pto.tensor_view<?x?xf32>
+    %bp = pto.partition_view %bv, offsets = [%i0, %i0], sizes = [%i1, %i8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    %result = scf.for %i = %i0 to %n step %i1 iter_args(%p = %a) -> (!pto.ptr<f32, gm>) {
+      %v = pto.make_tensor_view %p, shape = [%i1, %i8], strides = [%i8, %i1] : !pto.tensor_view<?x?xf32>
+      %vp = pto.partition_view %v, offsets = [%i0, %i0], sizes = [%i1, %i8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+      pto.tstore ins(%tile : !tile) outs(%vp : !pto.partition_tensor_view<1x8xf32>)
+      pto.tload ins(%bp : !pto.partition_tensor_view<1x8xf32>) outs(%tile : !tile)
+      scf.yield %b : !pto.ptr<f32, gm>
+    }
+    %av = pto.make_tensor_view %a, shape = [%i1, %i8], strides = [%i8, %i1] : !pto.tensor_view<?x?xf32>
+    %ap = pto.partition_view %av, offsets = [%i0, %i0], sizes = [%i1, %i8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    %v = pto.make_tensor_view %result, shape = [%i1, %i8], strides = [%i8, %i1] : !pto.tensor_view<?x?xf32>
+    %vp = pto.partition_view %v, offsets = [%i0, %i0], sizes = [%i1, %i8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    pto.tstore ins(%tile : !tile) outs(%vp : !pto.partition_tensor_view<1x8xf32>)
+    pto.tload ins(%ap : !pto.partition_tensor_view<1x8xf32>) outs(%tile : !tile)
+    return
+  }
+}

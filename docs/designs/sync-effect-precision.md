@@ -4,6 +4,10 @@
 the same translator and operation interfaces as InsertSync. `SyncStorageEffects`
 retains these records without adding instruction-specific footprint rules.
 The source IR and borrowed input records must remain unchanged during analysis.
+Declarations on operations without a translated pipe phase are retained through
+`SyncInput::effectsFor(Operation*)`; their classification is not inferred from
+the presence of a read/write effect. The Step 0 corpus audit is documented in
+`test/step0/README.md`.
 
 ## What the representation establishes
 
@@ -44,18 +48,32 @@ Completeness of the upstream read/write records remains a separate premise;
 
 ## Filtering and alias policy
 
+Possible overlap uses the existing `MemoryDependentAnalyzer::MemAlias` query
+on shared buffer records. Planned local addresses, view ranges and possible
+slot addresses can establish disjointness even without exact instruction
+coverage. Unknown local addresses remain conservative; distinct SSA roots alone
+do not establish physical disjointness. Supplied exact access regions can refine
+the result further. Neither a disjointness test nor overlapping allocation
+ranges establish a definite overwrite.
+
+The shared root/range check is used only when the buffer's SSA dependencies do
+not cross region arguments or region-producing results. The existing translator
+may retain only the initial root of a loop-carried buffer; that root cannot prove
+disjointness for later iterations. A memoized dependency walk checks this
+condition once per build. Structured-control aliases remain conservative unless
+an independent descriptor-region proof establishes disjointness.
+
 Different known memory spaces are disjoint; an unknown space may overlap any
-space. Two reads require no storage ordering. These facts remain usable even
-when byte geometry is unresolved. Pipe assignments come from the shared
-instruction phases; same-pipe accesses can conflict.
+space. Two reads require no storage ordering. Pipe assignments come from the
+shared instruction phases; same-pipe accesses can conflict.
 
 For GM, `MayNotAlias` asserts independence of distinct resolved function-entry
 pointer roots, matching the existing default. `MayAlias` retains possible
 aliasing between them. Pointer offsets preserve provenance; selected, carried
 or unresolved pointers do not acquire an independence assumption. Absolute GM
 addresses need not be known. Same-root accesses remain potentially overlapping
-without an actual-region contract. Local allocation reuse never uses the GM
-root-independence assumption.
+when the shared ranges cannot separate them. Local allocation reuse never uses
+the GM root-independence assumption.
 
 ## Analysis status
 

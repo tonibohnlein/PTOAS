@@ -5,8 +5,10 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Inspect the shared instruction contract without any dependency analyzer.
+// Inspect shared inputs; the separate existing-check mode runs InsertSync.
 #include "PTO/Transforms/InsertSync/SyncInput.h"
+#include "PTO/Transforms/Passes.h"
+#include "mlir/Pass/PassManager.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
@@ -23,6 +25,7 @@ using namespace mlir;
 void dumpArithmeticJSON(func::FuncOp function, const pto::frontiersynch::ArithmeticProgram& program);
 int runSyncRegionContractChecks(func::FuncOp function, const pto::SyncInput &input);
 int runSyncAliasChecks(func::FuncOp function, const pto::SyncInput &input);
+LogicalResult auditSyncStep0(func::FuncOp function, const pto::SyncInput &input);
 namespace {
 LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &input) {
   pto::SyncStorageEffects storage;
@@ -263,6 +266,8 @@ int main(int argc, char **argv) {
     --argc;
   }
   const bool regionChecks = argc == 3 && StringRef(argv[1]) == "--region-contract-checks";
+  const bool step0 = argc == 3 && StringRef(argv[1]) == "--step0-json";
+  const bool existing = argc == 3 && StringRef(argv[1]) == "--existing-check";
   const bool roundtrip = argc == 3 && StringRef(argv[1]) == "--roundtrip";
   const bool aliasChecks = argc == 3 && StringRef(argv[1]) == "--alias-contract";
   const bool expectFailure = argc == 3 && StringRef(argv[1]) == "--expect-failure";
@@ -272,11 +277,13 @@ int main(int argc, char **argv) {
   const bool arithmetic = argc == 3 && StringRef(argv[1]) == "--arithmetic";
   const bool recognition = argc == 3 && StringRef(argv[1]) == "--recognize";
   if (argc != 2 && !arithmetic && !recognition && !expectFailure &&
-      !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip && !regionChecks) {
+      !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip &&
+      !regionChecks && !step0 && !existing) {
     llvm::errs() << "usage: pto-sync-input-test "
                  << "[--gm-alias=may-alias|may-not-alias] "
                  << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
-                 "--recognize|--arithmetic|--roundtrip|--region-contract-checks] input.pto\n";
+                 "--recognize|--arithmetic|--roundtrip|--region-contract-checks|"
+                 "--step0-json|--existing-check] input.pto\n";
     return 1;
   }
   DialectRegistry dialects;
@@ -284,11 +291,18 @@ int main(int argc, char **argv) {
   MLIRContext context(dialects);
   context.disableMultithreading();
   const bool hasOption = expectFailure || capabilities || phaseIndex || storageEffects ||
-                         recognition || arithmetic || aliasChecks || roundtrip || regionChecks;
+                         recognition || arithmetic || aliasChecks || roundtrip || regionChecks || step0 || existing;
   const auto filename = argv[hasOption ? 2 : 1];
   auto module = parseSourceFile<ModuleOp>(filename, &context);
   if (!module || failed(verify(*module))) {
     return 1;
+  }
+  if (existing) {
+    PassManager manager(&context);
+    pto::PTOInsertSyncOptions options;
+    options.gmAlias = policy == pto::GMAliasPolicy::MayAlias ? "may-alias" : "may-not-alias";
+    manager.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass(options));
+    return failed(manager.run(*module));
   }
   if (roundtrip) {
     module->print(llvm::outs());
@@ -311,6 +325,12 @@ int main(int argc, char **argv) {
     }
     if (!translated) {
       return 1;
+    }
+    if (step0) {
+      if (failed(auditSyncStep0(function, input))) {
+        return 1;
+      }
+      continue;
     }
     if (regionChecks && runSyncRegionContractChecks(function, input)) {
       return 1;
@@ -346,6 +366,8 @@ int main(int argc, char **argv) {
     llvm::errs() << "shared extraction mutated source IR\n";
     return 1;
   }
-  llvm::outs() << "source-unchanged; dependency-analysis-not-run\n";
+  if (!step0) {
+    llvm::outs() << "source-unchanged; dependency-analysis-not-run\n";
+  }
   return 0;
 }
