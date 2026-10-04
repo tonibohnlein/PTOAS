@@ -13,6 +13,7 @@
 #include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
+#include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/IR/PTO.h"
 #include "SyncPhaseCopyChecks.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
@@ -23,6 +24,10 @@
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
+LogicalResult dumpProgramRecognition(func::FuncOp, const pto::SyncInput &,
+    const pto::frontiersynch::ProgramRecognition &);
+LogicalResult verifyProgramStructure(func::FuncOp, const pto::SyncInput &,
+    const pto::frontiersynch::ProgramRecognition &);
 void dumpArithmeticJSON(func::FuncOp function, const pto::frontiersynch::ArithmeticProgram& program);
 int runSyncRegionContractChecks(func::FuncOp function, const pto::SyncInput &input);
 int runSyncAliasChecks(func::FuncOp function, const pto::SyncInput &input);
@@ -148,7 +153,8 @@ void dumpGuarded(StringRef label, const pto::frontiersynch::GuardedRecognition &
     llvm::outs() << "\n";
   }
 }
-LogicalResult recognize(func::FuncOp function, const pto::SyncInput &input, bool arithmeticOnly) {
+LogicalResult recognize(func::FuncOp function, const pto::SyncInput &input, bool arithmeticOnly,
+                        const pto::frontiersynch::ProgramRecognition *cached = nullptr) {
   pto::frontiersynch::PhaseIndex index;
   const auto& effects = input.accesses();
   if (failed(index.build(function, input))) {
@@ -158,7 +164,11 @@ LogicalResult recognize(func::FuncOp function, const pto::SyncInput &input, bool
   namespace fs = pto::frontiersynch;
   // Fixed test-client class: up to 8 pipes, 8 coordinates, period 2, coefficient 8.
   // Production callers choose their class limits, never observed input maxima.
-  auto arithmetic = fs::recognizeArithmeticProgram(function, index, input, effects, {8, 8, 2, 8});
+  std::optional<fs::ArithmeticProgram> direct;
+  if (!cached || !cached->arithmetic) {
+    direct = fs::recognizeArithmeticProgram(function, index, input, effects, {8, 8, 2, 8});
+  }
+  const auto& arithmetic = direct ? *direct : *cached->arithmetic;
   auto status = arithmetic.extraction.state == fs::RecognitionState::Applicable ?
                 arithmetic.recognition.state : arithmetic.extraction.state;
   llvm::outs() << "recognize arithmetic: " << fs::recognitionName(status) << " backend=unavailable\n";
@@ -178,15 +188,51 @@ LogicalResult recognize(func::FuncOp function, const pto::SyncInput &input, bool
   }
   if (!function.isDeclaration()) {
     dumpRecognition("explicit", pto::frontiersynch::recognizeExplicit(function.front(), index, effects));
-    dumpGuarded("finite-guarded", pto::frontiersynch::recognizeFiniteGuarded(function.getBody(), index, effects));
+    if (cached && cached->nodes.front().finiteGuardedResult) {
+      dumpGuarded("finite-guarded", *cached->nodes.front().finiteGuardedResult);
+    }
   }
   function.walk<WalkOrder::PreOrder>([&](scf::ForOp loop) {
     llvm::outs() << "  loop " << loop.getLoc() << "\n";
-    dumpRecognition("rotating", pto::frontiersynch::recognizeRotating(loop, index, input, effects));
-    dumpGuarded("guarded-rotating", pto::frontiersynch::recognizeGuardedRotating(loop, index, input, effects));
+    if (cached) {
+      for (const auto& node : cached->nodes) {
+        const bool hasLoopResult = node.anchor == loop.getOperation() &&
+            node.rotatingResult && node.guardedRotatingResult;
+        if (hasLoopResult) {
+          dumpRecognition("rotating", *node.rotatingResult);
+          dumpGuarded("guarded-rotating", *node.guardedRotatingResult);
+          break;
+        }
+      }
+    }
   });
   return success();
 }
+// Test consumer runs after the real frontier pass and inspects its cached state.
+class FrontierCheckPass : public PassWrapper<FrontierCheckPass, OperationPass<func::FuncOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(FrontierCheckPass)
+  void runOnOperation() override {
+    auto cached = getCachedAnalysis<pto::frontiersynch::FrontierAnalysis>();
+    auto* analysis = cached ? &cached->get() : nullptr;
+    const bool available = analysis && analysis->input() && analysis->result();
+    if (!available) {
+      getOperation().emitError("frontier pass did not preserve its analysis state");
+      signalPassFailure();
+      return;
+    }
+    const auto& input = *analysis->input();
+    const auto& program = *analysis->result();
+    const bool invalid = failed(verifyProgramStructure(getOperation(), input, program)) ||
+        failed(recognize(getOperation(), input, false, &program)) ||
+        failed(dumpProgramRecognition(getOperation(), input, program));
+    if (invalid) {
+      signalPassFailure();
+      return;
+    }
+    markAllAnalysesPreserved();
+  }
+};
 LogicalResult dumpPhaseIndex(func::FuncOp function, const pto::SyncInput &input) {
   namespace fs = pto::frontiersynch;
   fs::PhaseIndex index;
@@ -326,6 +372,19 @@ int main(int argc, char **argv) {
     dumpCapabilities();
   }
   const auto before = render(module->getOperation());
+  if (recognition) {
+    PassManager manager(&context);
+    pto::PTOFrontierAnalysisOptions options;
+    options.gmAlias = policy == pto::GMAliasPolicy::MayAlias ? "may-alias" : "may-not-alias";
+    manager.addNestedPass<func::FuncOp>(pto::createPTOFrontierAnalysisPass(options));
+    manager.addNestedPass<func::FuncOp>(std::make_unique<FrontierCheckPass>());
+    const bool invalid = failed(manager.run(*module)) || render(module->getOperation()) != before;
+    if (invalid) {
+      return 1;
+    }
+    llvm::outs() << "source-unchanged; dependency-analysis-not-run\n";
+    return 0;
+  }
   pto::SyncInput input(policy);
   for (auto function : module->getOps<func::FuncOp>()) {
     const bool translated = succeeded(input.build(function));

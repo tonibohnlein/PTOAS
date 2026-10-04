@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// The C++ structural oracle compares every source region, phase and guard.
+// Exercise guards whose descendants introduce additional loop coordinates,
+// sibling loops, and loop-carried scalar results without unrolling iterations.
+// RUN: pto-sync-input-test --recognize %s | FileCheck %s
+// CHECK-LABEL: recognition branch_encloses_loop
+// CHECK-LABEL: recognition sequential_loops
+// CHECK-LABEL: recognition carried_scalar
+
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @branch_encloses_loop(%n: index, %g: i1, %h: i1) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.if %g {
+      scf.for %i = %i0 to %n step %i1 {
+        pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+        scf.if %h {
+          %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+        } else {
+          scf.for %j = %i0 to %n step %i1 {
+            pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+          }
+        }
+      }
+    } else {
+      scf.for %k = %i0 to %n step %i1 {
+        %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+
+  func.func @sequential_loops(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %i0 to %n step %i1 {
+      pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+    }
+    %middle = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    scf.for %j = %i0 to %n step %i1 {
+      pto.tsetval ins(%i0, %middle : index, f32) outs(%tile : !tile)
+    }
+    %after = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    return
+  }
+
+  func.func @carried_scalar(%n: index) -> f32 {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    %result = scf.for %i = %i0 to %n step %i1 iter_args(%acc = %one) -> (f32) {
+      pto.tsetval ins(%i0, %acc : index, f32) outs(%tile : !tile)
+      %value = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+      %next = arith.addf %acc, %value : f32
+      scf.yield %next : f32
+    }
+    return %result : f32
+  }
+}

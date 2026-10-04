@@ -158,3 +158,82 @@ The existing `TEXTRACT` and transfer declarations continue through the same
 resolver. Partial `TLOAD`/`TSTORE` refinement is deferred. A declaration of a
 precise symbolic region does not imply that every compact recognizer accepts
 its expression form.
+
+## Program structure and recognition
+
+The registered `pto-frontier-analysis` pass builds an owning MLIR
+`FrontierAnalysis`: shared Step 0 input followed by the structure and recognition
+results. The analysis owns the shared records for as long as the results borrow
+them; MLIR invalidates it after IR-changing passes. The current arithmetic class
+is fixed to 8 pipes, 8 coordinates, period 2 and coefficient bound 8.
+
+`pto-sync-input-test --recognize input.pto` runs this real pass followed by a
+test consumer of its cached result. The consumer verifies structure against the
+original MLIR and emits the existing recognition text plus one JSON object per
+function. It also checks that the pass leaves the IR unchanged. There is no
+separate program-recognition mode. This is the analysis stage under development;
+it does not yet generate demands or insert synchronization.
+`--gm-alias=may-alias` and `--gm-alias=may-not-alias` select the existing shared
+policy. The pass is callable in a standard MLIR pipeline as
+`builtin.module(func.func(pto-frontier-analysis))`.
+
+The reusable `frontiersynch::recognizeProgram` API follows the original MLIR
+region structure without unrolling. Sequences contain maximal adjacent leaf
+runs, counted loops, and conditionals. Each conditional retains separate then
+and else sequences, including an empty else arm. Unsupported structured control
+is preserved and marked; its descendants are not silently accepted as an
+independent executable plan. Payload-bearing anchors link to their original
+shared phase, pipe and access-record IDs exactly once.
+
+Loop nodes retain the actual bounds, step and induction value. Descendants
+retain outer-to-inner loop coordinates. A shared guard chain records each branch
+choice, SSA availability before the branch, and availability before enclosing
+loops. These are availability observations, not a proof that every future
+synchronization endpoint can evaluate its guard. Empty-trip behavior stays in
+the loop bounds; no dynamic occurrences are instantiated.
+
+The report tries explicit recognition on leaf runs, finite-guarded recognition
+on sequences, and rotating/guarded-rotating recognition on counted loops. It
+also runs the existing arithmetic producer once on the whole function; that
+producer does not yet offer a per-subregion adapter. Attempts preserve their
+`applicable`, `not-applicable` or `missing-premise` status and diagnostics, with
+operation names and source locations where the recognizer supplies an anchor.
+All candidate results remain separate: acceptance of an inner loop does not
+certify composition through the outer loop. `analysis_ready` is therefore
+false; generator extraction, reduction and endpoint construction are later work.
+
+Node, payload and effect IDs are references, not dynamic occurrence ranks.
+Sequence child lists preserve source order; payload order within a leaf run
+preserves source order. Reports are deterministic for unchanged IR. The
+structural walk is linear in the IR plus the stored context/record links;
+recognizer work is additional (including repeated subtree checks and arithmetic
+primitive construction), so the complete report has no blanket linear bound.
+
+To compare recognition with a completed Step 0 corpus run:
+
+```sh
+python test/step0/run_recognition.py \
+  --tool /path/to/pto-sync-input-test \
+  --manifest /path/to/manifest.json \
+  --baseline /path/to/step0-results \
+  --output /path/to/new-recognition-results
+```
+
+The runner is serial, checks input and executable hashes, and verifies that each
+function retains all shared phases and effect IDs exactly once. Its summary
+counts candidate attempts only on regions containing payloads; overlapping
+candidate regions are not independent kernels and their counts must not be
+interpreted as whole-program acceptance. The per-function JSON includes access
+precision, descriptor/access-map presence and concrete-range availability to
+help distinguish missing effects from limitations of a recognizer's adapter.
+
+The pass-based structural audit preserved all 18,100 shared phases and 37,524
+effects across 784 modules (851 functions). The independent checker compared
+each result with the original MLIR, including source order, parentage, loop and
+branch ancestry, empty arms and shared-record ownership. The focused suite
+passed 67 RUN checks, with six full-CLI checks skipped; a separate may-alias
+invocation also passed. This establishes structural correctness on these inputs
+and input preservation, not broad exact-route coverage: no payload-bearing rotating
+candidate was accepted, and both arithmetic-accepted corpus functions had no
+shared payload phases. The reports expose the remaining access-precision,
+view-adapter, loop-normalization and control-support gaps.
