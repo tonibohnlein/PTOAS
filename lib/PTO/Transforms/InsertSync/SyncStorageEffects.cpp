@@ -63,7 +63,7 @@ LogicalResult SyncStorageEffects::build(const SyncInput& input)
                 effect.sharedProvenanceComplete = hasCompleteSharedProvenance(memory->baseBuffer, provenance);
                 effect.mode = mode;
                 detail::resolveEffectRanges(input, effect);
-                pending.phaseEffects[phase].push_back(pending.records.size());
+                pending.phaseEffects[phase->GetIndex()].push_back(pending.records.size());
                 pending.records.push_back(std::move(effect));
             }
         }
@@ -113,8 +113,14 @@ void SyncStorageEffects::partitionRanges()
 
 ArrayRef<std::size_t> SyncStorageEffects::effectsFor(const CompoundInstanceElement* phase) const
 {
-    auto found = phaseEffects.find(phase);
-    return found == phaseEffects.end() ? ArrayRef<std::size_t>{} : found->second;
+    if (!phase) {
+        return {};
+    }
+    auto found = phaseEffects.find(phase->GetIndex());
+    if (found == phaseEffects.end() || records[found->second.front()].phase->elementOp != phase->elementOp) {
+        return {};
+    }
+    return found->second;
 }
 
 bool SyncStorageEffects::allAccessesExact() const
