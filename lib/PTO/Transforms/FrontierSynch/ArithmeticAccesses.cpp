@@ -22,7 +22,7 @@ AffineExpr negate(AffineExpr expression)
         getAffineConstantExpr(-1, expression.getContext())) : AffineExpr{};
 }
 void emitRange(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEffect& effect,
-               const SyncStorageCell& range, AffineExpr origin)
+               const SyncStorageCell& range, AffineExpr origin, Value base = {})
 {
     const bool valid = range.begin < range.end && range.end <= static_cast<uint64_t>(INT64_MAX) && origin;
     if (!valid) {
@@ -36,6 +36,7 @@ void emitRange(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEff
     relation.sourceSite = siteId;
     relation.sourceDimensions = depth;
     relation.storageSpace = range.space;
+    relation.storageBase = base;
     relation.coordinates[depth] = {"byte", CoordinateKind::Storage};
     auto rows = builder.domain(site, 0);
     auto byte = getAffineDimExpr(depth, builder.context);
@@ -49,8 +50,8 @@ void emitRange(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEff
 bool symbolicRegion(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEffect& effect,
                     const SyncAccessRegion& region)
 {
-    if (region.base || !region.byteOffset) {
-        return false; // Unknown pointer identity is not a numeric address.
+    if (!region.byteOffset) {
+        return false;
     }
     SmallVector<AffineExpr> zeros(region.extents.size(), getAffineConstantExpr(0, builder.context));
     SmallVector<AffineExpr> symbols, occurrenceSymbols;
@@ -69,6 +70,9 @@ bool symbolicRegion(ProgramBuilder& builder, std::size_t siteId, const SyncStora
         return false;
     }
     SyncAccessRegion local = region;
+    // Materialize only the local byte union; preserve the physical base tag on
+    // the resulting relations rather than pretending it is an absolute address.
+    local.base = {};
     local.byteOffset = simplifyAffineExpr(offset, region.extents.size(), symbols.size());
     for (unsigned i = 0; i < symbols.size(); ++i) {
         if (local.byteOffset.isFunctionOfSymbol(i)) {
@@ -86,14 +90,64 @@ bool symbolicRegion(ProgramBuilder& builder, std::size_t siteId, const SyncStora
         return false;
     }
     for (const auto& piece : pieces) {
-        emitRange(builder, siteId, effect, piece, origin);
+        emitRange(builder, siteId, effect, piece, origin, region.base);
+    }
+    return true;
+}
+// region.base is already canonicalized by the shared view/pointer mapper.
+// Only function-entry GM pointers establish an invariant relative coordinate.
+bool canonicalGMBase(Value base)
+{
+    auto argument = dyn_cast<BlockArgument>(base);
+    auto type = dyn_cast<PtrType>(base.getType());
+    const bool valid = argument && type && type.getMemorySpace().getAddressSpace() == AddressSpace::GM;
+    if (!valid) {
+        return false;
+    }
+    auto function = dyn_cast<func::FuncOp>(argument.getOwner()->getParentOp());
+    return function && argument.getOwner() == &function.getBody().front();
+}
+bool checkStorageBases(ProgramBuilder& builder, const SyncInput& input, const SyncStorageEffects& effects)
+{
+    DenseSet<Value> gmBases;
+    bool absoluteGM = false;
+    for (const auto& site : builder.output.sites) {
+        if (builder.staticallyEmpty(site)) {
+            continue;
+        }
+        for (auto id : effects.effectsFor(site.phase)) {
+            const auto& effect = effects.effects()[id];
+            absoluteGM |= effect.exactRanges && effect.memory->scope == AddressSpace::GM;
+            for (const auto& region : effect.regions) {
+                if (!region.base) {
+                    absoluteGM |= effect.memory->scope == AddressSpace::GM;
+                    continue;
+                }
+                const bool valid = effect.memory->scope == AddressSpace::GM && canonicalGMBase(region.base) &&
+                    effect.memory->rootBuffer == region.base;
+                if (!valid) {
+                    builder.output.extraction.note(RecognitionIssue::SymbolicGeometry, site.phase->elementOp);
+                    return false;
+                }
+                gmBases.insert(region.base);
+            }
+        }
+    }
+    const bool unresolvedMixture = absoluteGM && !gmBases.empty();
+    const bool unresolvedAliases = gmBases.size() > 1 && input.memory().gmPolicy() == GMAliasPolicy::MayAlias;
+    if (unresolvedMixture || unresolvedAliases) {
+        builder.output.extraction.note(RecognitionIssue::SymbolicGeometry,
+                                      builder.output.sites.front().phase->elementOp);
+        return false;
     }
     return true;
 }
 }
 void extractAccesses(ProgramBuilder& builder, const SyncInput& input, const SyncStorageEffects& effects)
 {
-    (void)input; // Access maps already resolve geometry through this shared input.
+    if (!checkStorageBases(builder, input, effects)) {
+        return;
+    }
     for (auto [siteId, site] : llvm::enumerate(builder.output.sites)) {
         if (builder.staticallyEmpty(site)) {
             continue;

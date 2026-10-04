@@ -225,3 +225,28 @@ occurrence-level comparison relied on the removed scalar footprint shortcut;
 it is no longer evidence for exact IR extraction. The supplied-relation checker
 continues to test the arithmetic classes and immediate rejection of oversized
 producer configurations.
+
+## Arithmetic physical identity
+
+Arithmetic access relations use `(memory space, canonical base, byte)` as the
+physical identity. For planned local storage the base tag is absent and the
+byte is an absolute address. Distinct allocation SSA values therefore still
+conflict when their assigned addresses overlap.
+
+For GM accesses the shared view/pointer mapper retains a canonical function-entry
+pointer and an exact relative byte map. The arithmetic producer accepts this
+base only when it agrees with the shared memory record's root. Views, pointer
+casts and `addptr` retain that identity and contribute their byte offsets through
+the existing shared maps. A base tag is not an extra integer variable or a
+numerical pointer address. Consumers must compare both identity tags before
+comparing byte coordinates. The IR owns the borrowed base values, as it owns the
+payload anchors.
+
+One canonical GM base is supported under either existing alias policy. Distinct
+GM bases are disjoint only under the supplied `MayNotAlias` policy; under
+`MayAlias` the producer rejects multiple bases because their relative displacement
+is unknown. Opaque selected/carried pointers and mixtures of based and absolute
+GM addresses also reject without exporting partial primitives. This changes no
+instruction footprint or shared alias policy and introduces no new local
+allocation identity. The `--arithmetic` test dump exposes the base's argument
+number (`-1` denotes an absolute address); it never prints an address value.

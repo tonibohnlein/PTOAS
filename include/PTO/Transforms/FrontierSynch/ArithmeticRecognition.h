@@ -10,6 +10,7 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICRECOGNITION_H
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 #include "mlir/IR/IntegerSet.h"
+#include "mlir/IR/Value.h"
 #include <string>
 
 namespace mlir::pto::frontiersynch {
@@ -36,6 +37,11 @@ struct PrimitiveRelation {
     ArithmeticEvent sourceEvent = ArithmeticEvent::Payload;
     ArithmeticEvent targetEvent = ArithmeticEvent::Payload;
     std::optional<AddressSpace> storageSpace;
+    // Physical identity is (storageSpace, storageBase, byte). A null base means
+    // an absolute address; a nonnull base is a canonical GM entry pointer and
+    // the byte coordinate is relative to it, never its numeric pointer value.
+    // Distinct base tags require a supplied disjointness policy/certificate.
+    Value storageBase;
     // Leading dimensions belong to source, followed by target dimensions;
     // access relations then have one physical-byte dimension.
     unsigned sourceDimensions = 0;
