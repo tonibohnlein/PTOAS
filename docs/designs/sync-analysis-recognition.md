@@ -269,3 +269,44 @@ and failure preserves the caller's output. Unsupported forms use the previous
 exact materializer when possible, otherwise retain their symbolic access map.
 This does not guarantee concrete ranges for every layout or resolve symbolic
 origins whose simplification requires loop-domain facts.
+
+## Late numeric inner templates
+
+The `numeric-template` candidate keeps one outer counted loop and explicitly
+expands certified numeric inner visits into a fixed body. This is the draft's
+charged late expansion, not a nested-region composition theorem. It is reported
+after the existing candidates and does not select a backend or set
+`analysis_ready`. Each expanded payload retains its original phase, before/after
+cuts and full tuple of original inner induction values. The outer induction is
+`lower + step * ordinal`; bounds remain in the original IR. A zero outer trip
+count filters out all occurrences without deleting the body schema.
+
+Bounds, carried scalar recurrences and branch decisions must specialize exactly
+through the shared scalar analysis. Unknown state, remaining outer-dependent
+branches and additional payload prerequisites reject. Shared effects are
+substituted for each template occurrence. Local footprints must become exact
+constant byte unions; their common atoms use memory space and physical address,
+including reuse across distinct allocation SSA values. The resulting local
+storage certificate has period one and writer refresh at most one outer visit.
+
+GM effects remain in the records. A complete GM base is discharged only if it
+is read-only, or if exactly one **template payload** accesses it and all of that
+payload's read/write fragments share a constant translation per outer ordinal.
+For the latter case, the translation magnitude must cover the entire union's
+span, proving different visits disjoint. A separate reader or another expanded
+visit of the same original instruction invalidates this discharge. Distinct GM
+bases require the existing `MayNotAlias` policy. Because this first candidate
+exports no external GM storage selectors, it is accepted only when the outer
+loop is directly in the function and contains all its payloads; no surrounding
+payload interactions are discarded.
+
+Preflight counts expanded operation visits and potential payloads before
+allocating template occurrences. Fixed representation limits are 65,536 visits,
+4,096 payloads, 65,536 footprint/range/atom/reference fragments, and nesting depth
+16; callers may only narrow them. Both branch arms contribute to the preflight
+bound. Actual work is charged to expanded visits, shared scalar/map processing,
+materialized ranges and atom references. Atom endpoints are sorted once, and
+range-to-atom lookup uses binary search plus the emitted references. Exceeding a
+limit rejects with no partial template export. The candidate produces neither
+minimum demands nor reachability, endpoint selectors, event-ID allocation or
+synchronization commands.

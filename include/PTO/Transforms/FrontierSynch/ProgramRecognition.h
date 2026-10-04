@@ -10,6 +10,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_PROGRAMRECOGNITION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_PROGRAMRECOGNITION_H
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
+#include "PTO/Transforms/FrontierSynch/NumericTemplate.h"
 namespace mlir::pto::frontiersynch {
 enum class StructureKind { Sequence, ExplicitRun, Loop, Conditional, Unsupported };
 struct StructureNode {
@@ -28,6 +29,7 @@ struct StructureNode {
     std::optional<RecognitionResult> rotatingResult;
     std::optional<GuardedRecognition> finiteGuardedResult;
     std::optional<GuardedRecognition> guardedRotatingResult;
+    std::optional<NumericTemplate> numericTemplate;
 };
 struct ProgramPayload {
     const CompoundInstanceElement* phase = nullptr;

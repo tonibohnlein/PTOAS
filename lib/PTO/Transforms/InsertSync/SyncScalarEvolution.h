@@ -225,6 +225,11 @@ inline ScalarEvolution::Result ScalarEvolution::operation(Value v, Symbol symbol
         return {};
     }
     auto a = resolve(op->getOperand(0), symbol, depth), b = resolve(op->getOperand(1), symbol, depth);
+    // A consumer may deliberately reject unknown SSA symbols. A range alone
+    // does not supply an expression for arithmetic or division on that value.
+    if (!a.expression || !b.expression) {
+        return {};
+    }
     if (isa<arith::RemUIOp, arith::RemSIOp, arith::DivUIOp, arith::DivSIOp>(op)) {
         auto divisor = constant(op->getOperand(1));
         if (!divisor || *divisor <= 0 || !a.range || a.range->lower < 0) {

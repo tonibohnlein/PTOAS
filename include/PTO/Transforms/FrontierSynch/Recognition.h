@@ -19,7 +19,8 @@ enum class RecognitionIssue {
     InexactFootprint, WithinSlotFootprint, SymbolicGeometry, UnknownGeometry, LoopDomain, LoopCarriedState,
     SlotExpression, IndexArithmetic, CommonStride, OverlappingFamilies,
     AliasedOperand, UnsupportedView, GuardInvariance, UnsupportedControl,
-    ArithmeticDimension, ArithmeticPeriod, ArithmeticPipeLimit, ArithmeticConfiguration, AdditionalPrerequisite
+    ArithmeticDimension, ArithmeticPeriod, ArithmeticPipeLimit, ArithmeticConfiguration, AdditionalPrerequisite,
+    TemplateExpansionLimit, TemplateContext, GMDischarge
 };
 struct RecognitionDiagnostic {
     RecognitionIssue issue;
