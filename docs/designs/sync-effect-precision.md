@@ -15,16 +15,22 @@ and address, so separate SSA allocation roots do not hide address reuse.
 Straight-line valid-shape updates are tracked; unresolved control-dependent
 metadata remains unknown.
 
-A descriptor is not an accessed-byte set. The shared read/write interface does
-not currently specify the accessed subregion or guarantee that all native
-accesses stay inside the descriptor's valid extents. Therefore the current
-importer retains descriptor geometry separately and marks access precision
-`Unknown`. It does not infer a definite overwrite or materialize descriptor
-bytes as accessed cells. No opcode-specific recovery is performed, including
-for scalar reads and writes.
+A descriptor is not an accessed-byte set. The importer retains the original MLIR `MemoryEffectOpInterface` declarations
+alongside the translator's read/write records. A matching default-resource
+effect with `getEffectOnFullRegion()` set, no uninterpreted parameters, and one
+resolved operand mapping supplies whole-region coverage. For this bridge,
+that region is the operand's valid logical region mapped to physical bytes.
+Such a declaration produces an exact symbolic access; a concrete map can also
+be materialized and partitioned. Partial, absent or ambiguous declarations
+remain `Unknown` and cannot establish definite overwrite. Macro phases require
+their own declarations and cannot inherit whole-operation coverage.
 
-The access representation retains three precision values for a future generic
-region contract:
+Existing PTO effect definitions generally omit the full-region flag, so this
+bridge does not upgrade them automatically. No opcode-specific recovery is
+performed, including for scalar reads and writes. Arbitrary parameter attributes
+are preserved but not interpreted as access geometry.
+
+The access representation retains three precision values:
 
 | Precision | Meaning | Allowed use |
 |---|---|---|
@@ -54,12 +60,37 @@ root-independence assumption.
 ## Analysis status
 
 The structural recognizers remain available and report missing access premises
-instead of claiming exact applicability from buffer descriptors. Exact demand
-generation needs a generic accessed-region contract; this cleanup does not
-supply it. The existing InsertSync pass and its dependency analysis are unchanged.
+instead of claiming exact applicability from buffer descriptors. The generic
+whole-region bridge consumes a declaration; it does not prove native instruction
+coverage. Exact subregions still need a shared producer contract. The existing
+InsertSync pass and its dependency analysis are unchanged.
 
 The retained cell-partition utility splits supplied byte intervals at endpoints,
 not at every byte. Its cost is `O(R + S log(S+1) + I)` for records `R`, intervals
-`S` and effect-to-cell incidences `I`, excluding geometry recovery. The current
-importer supplies no exact intervals. The generic symbolic mapping and overlap
+`S` and effect-to-cell incidences `I`, excluding geometry recovery. The importer supplies exact intervals only for qualified full-region declarations. The generic symbolic mapping and overlap
 helpers are representations and queries, not a lifetime or demand algorithm.
+
+## Compact occurrence information
+
+The descriptor carries enclosing `scf.for` induction variables, bounds and steps
+in outer-to-inner order. The original `PhaseIndex` still owns branch/control and
+value-availability queries. No loop is expanded to obtain an address.
+
+Nonnegative counted-loop induction variables modulo a positive constant become
+MLIR affine modulo expressions. Constant-divisor quotients use the same signedness
+check. Addition/subtraction and constant multiplication are expanded only with
+MLIR's no-signed-wrap contract. Unsupported expressions remain SSA symbols;
+retaining them does not claim membership in an arithmetic fragment. Expression
+construction memoizes SSA values and limits recursive expansion depth.
+
+A selected buffer also retains its original selector and planner-assigned slot
+address table, including nonuniform tables for which no affine address map is
+currently constructed. This avoids replacing `addresses[k mod b]` by an
+unqualified union when passing compact storage information to future backends.
+The retained table is geometry, not an exact access or a dependence result.
+
+`sync_compact_access_bridge.pto` checks nested reset selectors, non-contiguous
+and irregular slot tables, wraparound handling and original-loop preservation.
+Its contract test injects synthetic MLIR coverage declarations to exercise the
+generic consumer; those declarations are not claims about the fixture operations'
+native footprints.

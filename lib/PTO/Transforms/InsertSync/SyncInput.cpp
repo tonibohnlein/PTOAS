@@ -10,6 +10,7 @@
 namespace mlir::pto {
 SyncInput::~SyncInput() = default;
 LogicalResult SyncInput::build(func::FuncOp function) {
+  declaredEffects.clear();
   phases.clear();
   nodes.clear();
   storage.clear();
@@ -23,8 +24,20 @@ LogicalResult SyncInput::build(func::FuncOp function) {
   for (const auto &node : nodes) {
     if (const auto *phase = dyn_cast<CompoundInstanceElement>(node.get())) {
       phases.push_back(phase);
+      if (phase->macroOpInstanceId < 0 && !declaredEffects.count(phase->elementOp)) {
+        if (auto interface = dyn_cast<MemoryEffectOpInterface>(phase->elementOp)) {
+          interface.getEffects(declaredEffects[phase->elementOp]);
+        }
+      }
     }
   }
   return success();
+}
+ArrayRef<SyncMemoryEffect> SyncInput::effectsFor(const CompoundInstanceElement& phase) const {
+  if (phase.macroOpInstanceId >= 0) {
+    return {};
+  }
+  auto found = declaredEffects.find(phase.elementOp);
+  return found == declaredEffects.end() ? ArrayRef<SyncMemoryEffect>{} : ArrayRef<SyncMemoryEffect>(found->second);
 }
 } // namespace mlir::pto

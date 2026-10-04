@@ -12,6 +12,8 @@
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 namespace mlir::pto {
+using SyncMemoryEffect = SideEffects::EffectInstance<MemoryEffects::Effect>;
+
 class SyncInput {
 public:
   explicit SyncInput(GMAliasPolicy policy = GMAliasPolicy::MayNotAlias) : analyzer(policy) {}
@@ -27,6 +29,9 @@ public:
   const SyncIRs &ir() const { return nodes; }
   const Buffer2MemInfoMap &buffers() const { return storage; }
   ArrayRef<const CompoundInstanceElement *> instructions() const { return phases; }
+  // Original MLIR effect declarations, including coverage, stage and resource.
+  // Macro phases need phase-specific declarations and therefore return none.
+  ArrayRef<SyncMemoryEffect> effectsFor(const CompoundInstanceElement& phase) const;
   MemoryDependentAnalyzer &memory() { return analyzer; }
   const MemoryDependentAnalyzer &memory() const { return analyzer; }
 private:
@@ -34,6 +39,7 @@ private:
   Buffer2MemInfoMap storage;
   SyncIRs nodes;
   SmallVector<const CompoundInstanceElement *> phases;
+  DenseMap<Operation*, SmallVector<SyncMemoryEffect>> declaredEffects;
 };
 } // namespace mlir::pto
 #endif

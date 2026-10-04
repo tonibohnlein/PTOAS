@@ -11,6 +11,7 @@
 #include "SyncRegionArithmetic.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MathExtras.h"
@@ -23,7 +24,7 @@ public:
         : input(input), context(access->getContext()), access(access) {}
     SyncAccessRegion region;
     AffineExpr number(int64_t value) { return getAffineConstantExpr(value, context); }
-    AffineExpr value(Value v)
+    AffineExpr value(Value v, unsigned depth = 0)
     {
         if (!v) {
             return {};
@@ -32,13 +33,22 @@ public:
         if (matchPattern(v, m_ConstantInt(&integer)) && integer.isSignedIntN(64)) {
             return number(integer.getSExtValue());
         }
-        auto found = llvm::find(region.symbols, v);
-        if (found == region.symbols.end()) {
-            region.symbols.push_back(v);
-            return getAffineSymbolExpr(region.symbols.size() - 1, context);
+        auto cached = expressions.find(v);
+        if (cached != expressions.end()) {
+            return cached->second;
         }
-        return getAffineSymbolExpr(found - region.symbols.begin(), context);
+        auto expanded = depth < 64 ? expand(v, depth + 1) : AffineExpr{};
+        if (!expanded) {
+            auto entry = symbolIds.try_emplace(v, region.symbols.size());
+            if (entry.second) {
+                region.symbols.push_back(v);
+            }
+            expanded = getAffineSymbolExpr(entry.first->second, context);
+        }
+        expressions[v] = expanded;
+        return expanded;
     }
+
     AffineExpr add(AffineExpr a, AffineExpr b) { return detail::checkedAdd(a, b); }
     AffineExpr mul(AffineExpr a, AffineExpr b) { return detail::checkedMul(a, b); }
     AffineExpr scale(AffineExpr a, int64_t factor) { return mul(a, number(factor)); }
@@ -50,6 +60,10 @@ private:
     MLIRContext* context;
     Operation* access;
     DenseMap<Value, TileBufType> boxedDescriptors;
+    DenseMap<Value, AffineExpr> expressions;
+    DenseMap<Value, unsigned> symbolIds;
+    AffineExpr expand(Value v, unsigned depth);
+    bool nonnegative(Value v);
     AffineExpr pointer(Value operand);
     AffineExpr tile(Value operand, TileBufType type, ArrayRef<AffineExpr> coordinates);
     AffineExpr tileBase(Value operand);
@@ -57,6 +71,55 @@ private:
     bool boxedPointerStrides(TileBufType type, int64_t& row, int64_t& col);
     bool currentShape(Value operand, Value& row, Value& col);
 };
+
+bool RegionBuilder::nonnegative(Value v)
+{
+    APInt constant;
+    if (matchPattern(v, m_ConstantInt(&constant))) {
+        return !constant.isNegative();
+    }
+    auto argument = dyn_cast<BlockArgument>(v);
+    auto loop = argument ? dyn_cast<scf::ForOp>(argument.getOwner()->getParentOp()) : scf::ForOp{};
+    APInt lower, step;
+    return loop && v == loop.getInductionVar() &&
+        matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) && !lower.isNegative() &&
+        matchPattern(loop.getStep(), m_ConstantInt(&step)) && step.isStrictlyPositive();
+}
+
+AffineExpr RegionBuilder::expand(Value v, unsigned depth)
+{
+    auto* op = v.getDefiningOp();
+    if (!op || op->getNumOperands() != 2) {
+        return {};
+    }
+    auto lhs = op->getOperand(0), rhs = op->getOperand(1);
+    if (isa<arith::RemUIOp, arith::RemSIOp, arith::DivUIOp, arith::DivSIOp>(op)) {
+        APInt divisor;
+        if (!nonnegative(lhs) || !matchPattern(rhs, m_ConstantInt(&divisor)) ||
+            !divisor.isSignedIntN(64) || !divisor.isStrictlyPositive()) {
+            return {};
+        }
+        auto expression = value(lhs, depth);
+        return isa<arith::RemUIOp, arith::RemSIOp>(op) ? expression % divisor.getSExtValue() :
+            expression.floorDiv(divisor.getSExtValue());
+    }
+    auto flags = dyn_cast<arith::ArithIntegerOverflowFlagsInterface>(op);
+    // Affine integer arithmetic must not silently erase machine wraparound.
+    if (!flags || !flags.hasNoSignedWrap()) {
+        return {};
+    }
+    auto left = value(lhs, depth), right = value(rhs, depth);
+    if (isa<arith::AddIOp>(op)) {
+        return add(left, right);
+    }
+    if (isa<arith::SubIOp>(op)) {
+        return add(left, scale(right, -1));
+    }
+    if (isa<arith::MulIOp>(op) && (isa<AffineConstantExpr>(left) || isa<AffineConstantExpr>(right))) {
+        return mul(left, right);
+    }
+    return {};
+}
 
 unsigned bytes(Type type)
 {
@@ -439,6 +502,13 @@ std::optional<SyncAccessRegion> resolveBufferRegion(const SyncInput& input, Valu
         return std::nullopt;
     }
     RegionBuilder builder(input, at);
+    for (auto* parent = at->getParentOp(); parent; parent = parent->getParentOp()) {
+        if (auto loop = dyn_cast<scf::ForOp>(parent)) {
+            builder.region.iterations.push_back({loop.getInductionVar(), loop.getLowerBound(),
+                                                 loop.getUpperBound(), loop.getStep()});
+        }
+    }
+    std::reverse(builder.region.iterations.begin(), builder.region.iterations.end());
     if (!builder.extents(operand)) {
         return std::nullopt;
     }
