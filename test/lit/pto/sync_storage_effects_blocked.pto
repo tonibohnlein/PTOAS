@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
+// CHECK-LABEL: storage blocked: cells=4 all-exact=0
+// CHECK: effect 0 pto.tmov read upper definite-write=0 cells=0
+// CHECK: effect 1 pto.tmov write upper definite-write=0 cells=1
+// CHECK: effect 2 pto.tmatmul read upper definite-write=0 cells=1
+// CHECK: effect 3 pto.tmatmul read upper definite-write=0 cells=2
+// CHECK: effect 4 pto.tmatmul write upper definite-write=0 cells=3
+// CHECK: effect 5 pto.tmatmul.acc read upper definite-write=0 cells=3
+// CHECK: effect 6 pto.tmatmul.acc read upper definite-write=0 cells=1
+// CHECK: effect 7 pto.tmatmul.acc read upper definite-write=0 cells=2
+// CHECK: effect 8 pto.tmatmul.acc write upper definite-write=0 cells=3
+// CHECK: overlap 0,1=0
+// CHECK: overlap 1,2=1
+// CHECK: conflict 1,2=1
+// CHECK: conflict 2,6=0
+// CHECK: conflict 4,5=1
+// CHECK: pto.tmov pipe=3 reads=1 writes=1
+// CHECK: read-space=2
+// CHECK: write-space=3
+// CHECK: pto.tmatmul pipe=2 reads=2 writes=1
+// CHECK: read-space=3
+// CHECK: read-space=4
+// CHECK: write-space=5
+// CHECK: pto.tmatmul.acc pipe=2 reads=3 writes=1
+// Identical numeric addresses in distinct spaces stay distinct. All roles and
+// blocked-layout extents come from the existing shared translator.
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @blocked() attributes {test.overlap = array<i64: 0, 1, 1, 2>, test.conflict = array<i64: 1, 2, 2, 6, 4, 5>} {
+    %zero = arith.constant 0 : i64
+    %mat = pto.alloc_tile addr = %zero : !pto.tile_buf<mat, 32x32xf32, blayout=col_major, slayout=row_major>
+    %left = pto.alloc_tile addr = %zero : !pto.tile_buf<left, 32x32xf32, slayout=row_major>
+    %right = pto.alloc_tile addr = %zero : !pto.tile_buf<right, 32x32xf32, slayout=col_major>
+    %acc = pto.alloc_tile addr = %zero : !pto.tile_buf<acc, 32x32xf32, blayout=col_major, slayout=row_major, fractal=1024>
+    pto.tmov ins(%mat : !pto.tile_buf<mat, 32x32xf32, blayout=col_major, slayout=row_major>) outs(%left : !pto.tile_buf<left, 32x32xf32, slayout=row_major>)
+    pto.tmatmul ins(%left, %right : !pto.tile_buf<left, 32x32xf32, slayout=row_major>, !pto.tile_buf<right, 32x32xf32, slayout=col_major>) outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+    pto.tmatmul.acc ins(%acc, %left, %right : !pto.tile_buf<acc, 32x32xf32, blayout=col_major, slayout=row_major, fractal=1024>, !pto.tile_buf<left, 32x32xf32, slayout=row_major>, !pto.tile_buf<right, 32x32xf32, slayout=col_major>) outs(%acc : !pto.tile_buf<acc, 32x32xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+    return
+  }
+}

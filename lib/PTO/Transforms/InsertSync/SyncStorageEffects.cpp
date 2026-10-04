@@ -19,6 +19,7 @@ LogicalResult SyncStorageEffects::build(const SyncInput& input)
     partition.clear();
     phaseEffects.clear();
     SyncStorageEffects pending;
+    pending.analyzer = input.memory();
     for (const auto* phase : input.instructions()) {
         if (!phase || !phase->elementOp) {
             return failure();
@@ -101,6 +102,9 @@ bool SyncStorageEffects::mayOverlap(std::size_t first, std::size_t second) const
     if (a.memory->scope != b.memory->scope) {
         return false;
     }
+    if (a.memory->scope == AddressSpace::GM) {
+        return analyzer.MemAlias(a.memory, b.memory);
+    }
     if (a.precision == SyncAccessPrecision::Unknown || b.precision == SyncAccessPrecision::Unknown) {
         return true;
     }
@@ -116,5 +120,15 @@ bool SyncStorageEffects::mayOverlap(std::size_t first, std::size_t second) const
         }
     }
     return false;
+}
+bool SyncStorageEffects::mayConflict(std::size_t first, std::size_t second) const
+{
+    if (first >= records.size() || second >= records.size()) {
+        return true;
+    }
+    if (records[first].mode == SyncAccessMode::Read && records[second].mode == SyncAccessMode::Read) {
+        return false;
+    }
+    return mayOverlap(first, second);
 }
 } // namespace mlir::pto

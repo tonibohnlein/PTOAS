@@ -31,6 +31,11 @@ def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
     and inserts explicit synchronization instructions.
   }];
  
+  let options = [
+    Option<"gmAlias", "gm-alias", "std::string", "\"may-not-alias\"",
+      "Distinct GM root assumption: may-not-alias (legacy default) or may-alias">
+  ];
+
   // Declare the constructor function name
   let constructor = "mlir::pto::createPTOInsertSyncPass()";
 

@@ -9,12 +9,12 @@
 // This extracts effects and pipe assignments, without dependency analysis.
 #ifndef PTO_TRANSFORMS_INSERTSYNC_SYNCINPUT_H
 #define PTO_TRANSFORMS_INSERTSYNC_SYNCINPUT_H
-#include "PTO/Transforms/InsertSync/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 namespace mlir::pto {
 class SyncInput {
 public:
-  SyncInput() = default;
+  explicit SyncInput(GMAliasPolicy policy = GMAliasPolicy::MayNotAlias) : analyzer(policy) {}
   ~SyncInput();
   SyncInput(const SyncInput &) = delete;
   SyncInput &operator=(const SyncInput &) = delete;
@@ -27,7 +27,10 @@ public:
   const SyncIRs &ir() const { return nodes; }
   const Buffer2MemInfoMap &buffers() const { return storage; }
   ArrayRef<const CompoundInstanceElement *> instructions() const { return phases; }
+  MemoryDependentAnalyzer &memory() { return analyzer; }
+  const MemoryDependentAnalyzer &memory() const { return analyzer; }
 private:
+  MemoryDependentAnalyzer analyzer;
   Buffer2MemInfoMap storage;
   SyncIRs nodes;
   SmallVector<const CompoundInstanceElement *> phases;
