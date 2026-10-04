@@ -30,6 +30,34 @@ inline DictionaryAttr makeAccessRegion(OpOperand& shape, bool capacity,
         builder.getNamedAttr("symbol_operands", builder.getDenseI64ArrayAttr(symbols))});
 }
 
+// Version 2 supplies the access domain independently of another operand.
+// Extents have no dimensions; their symbols and the selection's symbols both
+// refer to symbol_operands. No extents means one access, not an empty access.
+// coordinates selects logical elements; bytes selects offsets relative to the
+// affected operand's physical base and uses byte_width bytes at each offset.
+inline DictionaryAttr makeExplicitAccessRegion(OpOperand& operand, AffineMap extents,
+                                               AffineMap selection, ArrayRef<int64_t> symbols = {},
+                                               unsigned byteWidth = 0)
+{
+    Builder builder(operand.getOwner()->getContext());
+    return builder.getDictionaryAttr({
+        builder.getNamedAttr("pto.access_region", builder.getI64IntegerAttr(2)),
+        builder.getNamedAttr("extents", AffineMapAttr::get(extents)),
+        builder.getNamedAttr("coordinates", AffineMapAttr::get(selection)),
+        builder.getNamedAttr("symbol_operands", builder.getDenseI64ArrayAttr(symbols)),
+        builder.getNamedAttr("addressing", builder.getStringAttr(byteWidth ? "bytes" : "coordinates")),
+        builder.getNamedAttr("byte_width", builder.getI64IntegerAttr(byteWidth))});
+}
+
+inline DictionaryAttr makeByteAccessRegion(OpOperand& operand, AffineMap extents,
+                                           AffineMap byteOffsets, unsigned byteWidth,
+                                           ArrayRef<int64_t> symbols = {})
+{
+    NamedAttrList parameters(makeExplicitAccessRegion(operand, extents, byteOffsets, symbols, byteWidth));
+    parameters.set("addressing", StringAttr::get(operand.getOwner()->getContext(), "bytes"));
+    return parameters.getDictionary(operand.getOwner()->getContext());
+}
+
 inline void addAccessRegion(
     SmallVectorImpl<MemoryEffects::EffectInstance>& effects, OpOperand& operand,
     MemoryEffects::Effect* mode, DictionaryAttr region)

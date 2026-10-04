@@ -80,3 +80,25 @@ Step 0 audit. All 37,524 access records were preserved: 1,970 exact, 27,660 with
 conservative physical bounds, and 7,894 with unresolved access geometry. The two
 GEMM fixtures retained 17/17 and 21/21 exact accesses. These are pass-level checks;
 they do not establish generated C++ correctness or device behavior.
+
+### Explicit access domains
+
+Shared `MemoryEffectOpInterface` parameters now also accept version-2
+`pto.access_region` selections. Version 1 remains unchanged. Version 2 has
+`extents` (an affine map with no dimensions), `coordinates`, `symbol_operands`,
+`addressing` (`coordinates` or `bytes`) and `byte_width`, in addition to its
+version field. Both maps use the same scalar operand references. The number of
+selection dimensions equals the number of extent results.
+
+An empty extent list denotes a singleton access; an extent of zero denotes an
+empty access. Logical coordinates compose with the operand's layout. Byte
+selections have one result and a positive width, and are relative to the
+operand's physical base, including existing view offsets exactly once. Logical
+selections have zero byte width because the descriptor supplies element size.
+
+The domain and selection are an exact declaration by the producer. Runtime
+extents must be nonnegative on valid executions. Invalid parameters or
+unresolved geometry retain conservative effects. Packed sub-byte writes are
+not promoted to byte-wide definite overwrites. Exact symbolic maps are retained
+when concrete interval materialization is unavailable. No serialized operation
+syntax or consumer instruction whitelist is added.

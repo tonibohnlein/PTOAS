@@ -12,12 +12,13 @@
 #include "../../lib/PTO/Transforms/InsertSync/SyncEffectRanges.h"
 #include "llvm/Support/raw_ostream.h"
 #include "SyncScalarEvolutionChecks.h"
+#include "SyncExplicitAccessChecks.h"
 using namespace mlir;
 using namespace mlir::pto;
 
 int runSyncRegionContractChecks(func::FuncOp function, const SyncInput& input)
 {
-    if (!checkScalarEvolution(function)) {
+    if (!checkScalarEvolution(function) || !checkExplicitAccessContracts(function, input)) {
         return 1;
     }
     const auto& storage = input.accesses();
