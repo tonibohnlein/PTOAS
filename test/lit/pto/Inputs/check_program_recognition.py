@@ -74,10 +74,17 @@ def main():
         assert any(g["available_before_loops"] == [False] for g in doc["guards"])
         assert any(g["available_before_loops"] == [True] for g in doc["guards"])
         assert any(n.get("arm") == "else" and not n["children"] for n in nodes)
-        assert doc["arithmetic"]["state"] != "applicable"
+        assert doc["arithmetic"]["state"] == "applicable"
+        assert doc["arithmetic"]["class"] == "differences"
         assert not documents["empty"]["payloads"]
         assert any(a["state"] == "applicable" for a in routes(documents["fixed_storage_loop"], "rotating"))
     elif mode == "guarded":
+        for name in ("nested_arms", "invariant_loop", "varying_loop"):
+            assert documents[name]["arithmetic"]["state"] == "applicable"
+        late_arithmetic = documents["late_finite"]["arithmetic"]
+        assert late_arithmetic["state"] == "not-applicable"
+        assert {issue["issue"] for issue in late_arithmetic["issues"]} == {
+            "additional-prerequisite", "unsupported-control"}
         assert any(a["state"] == "applicable" for a in routes(documents["nested_arms"], "finite-guarded"))
         assert any(a["state"] == "applicable" and a["entry_guards_available"]
                    for a in routes(documents["invariant_loop"], "guarded-rotating"))

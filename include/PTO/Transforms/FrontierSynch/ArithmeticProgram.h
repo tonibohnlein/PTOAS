@@ -10,9 +10,14 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICPROGRAM_H
 #include "PTO/Transforms/FrontierSynch/ArithmeticRecognition.h"
 namespace mlir::pto::frontiersynch {
+struct ArithmeticGuard {
+    scf::IfOp branch;
+    bool takeThen = true;
+};
 struct ArithmeticSite {
     const CompoundInstanceElement* phase = nullptr;
     SmallVector<scf::ForOp> loops; // Outer to inner, one coordinate per loop.
+    SmallVector<ArithmeticGuard> guards; // Enclosing branch arms, outer to inner.
 };
 struct ArithmeticProgram {
     RecognitionResult extraction;
@@ -26,8 +31,10 @@ struct ArithmeticProgram {
 // proved affine expressions. Exact shared access maps retain symbolic origins
 // and finite within-origin byte unions. Carried scalar state requires an exact
 // shared recurrence; loop-result uses in domains/accesses remain unsupported.
-// Metadata follows the shared leaf contract. No synchronization, additional
-// prerequisites or branches are accepted by this producer.
+// Branch domains admit signed index comparisons and supported Boolean formulas;
+// their exact finite unions are charged to the output size. Metadata follows
+// the shared leaf contract. No synchronization or additional prerequisites are
+// accepted by this producer.
 // The shared producer must supply all payload effects. Output borrows input/IR.
 // Failure clears primitive/site/parameter exports; diagnostics remain available.
 ArithmeticProgram recognizeArithmeticProgram(func::FuncOp function, const PhaseIndex& index,

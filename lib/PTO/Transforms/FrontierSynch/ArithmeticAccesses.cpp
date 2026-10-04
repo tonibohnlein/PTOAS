@@ -43,7 +43,7 @@ void emitRange(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEff
     auto end = add(origin, getAffineConstantExpr(range.end - 1, builder.context));
     rows.push_back(add(byte, negate(begin)));
     rows.push_back(add(end, -byte));
-    builder.emit(relation, rows);
+    builder.emitForSites(relation, rows, {{&site, 0}});
     builder.output.primitives.relations.push_back(std::move(relation));
 }
 bool symbolicRegion(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEffect& effect,

@@ -124,6 +124,16 @@ void ProgramBuilder::emit(PrimitiveRelation& target, ArrayRef<AffineExpr> rows,
         }
         combinations *= period;
     }
+    // Entry i1 values have the mathematical representation 0 or 1. Keep this
+    // context in every relation, including unconditional sites outside a branch.
+    SmallVector<AffineExpr> constrainedRows(rows);
+    for (auto [id, parameter] : llvm::enumerate(output.parameters)) {
+        if (parameter.getType().isInteger(1)) {
+            auto value = getAffineSymbolExpr(id, context);
+            constrainedRows.push_back(value);
+            constrainedRows.push_back(1 - value);
+        }
+    }
     // Iterative mixed-radix enumeration: fixed P and D bound its expansion.
     SmallVector<uint64_t> residues(count, 0);
     bool more = true;
@@ -139,7 +149,7 @@ void ProgramBuilder::emit(PrimitiveRelation& target, ArrayRef<AffineExpr> rows,
                     getAffineConstantExpr(residue, context));
                 (id < target.dimensions ? dimensions : symbols).push_back(replacement);
             }
-            for (auto row : rows) {
+            for (auto row : constrainedRows) {
                 auto expression = mlir::pto::detail::substitute(row, dimensions, symbols);
                 if (expression) {
                     expression = simplifyAffineExpr(expression, target.dimensions, count - target.dimensions);

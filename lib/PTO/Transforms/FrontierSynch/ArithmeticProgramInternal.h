@@ -18,6 +18,10 @@ struct ProgramBuilder {
     PrimitiveRelation relation(PrimitiveKind kind, unsigned dimensions) const;
     bool staticallyEmpty(const ArithmeticSite& site) const;
     bool prepareValue(Value input, const ArithmeticSite& site);
+    bool prepareGuard(Value condition, const ArithmeticSite& site);
+    // Conjoin both endpoint guard domains at their respective coordinate offsets.
+    void emitForSites(PrimitiveRelation& relation, ArrayRef<AffineExpr> rows,
+                      ArrayRef<std::pair<const ArithmeticSite*, unsigned>> endpoints);
     AffineExpr value(Value input, const ArithmeticSite& site, unsigned offset) const;
     SmallVector<AffineExpr> domain(const ArithmeticSite& site, unsigned offset) const;
     // All rows are >= 0. Filter optionally restricts one original coordinate
