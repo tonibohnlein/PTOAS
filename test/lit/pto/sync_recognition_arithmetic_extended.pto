@@ -1,0 +1,129 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_arithmetic_extended.py pto-sync-input-test %s
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!view = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=2>
+module {
+  func.func @normalized_view(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i3 = arith.constant 3 : index
+    %i4 = arith.constant 4 : index
+    %ring = pto.alloc_multi_tile addr = %base : !ring
+    %upper = arith.addi %n, %i1 overflow<nsw> : index
+    scf.for %i = %i1 to %upper step %i2 {
+      %slot = arith.remui %i, %i2 : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      %view = pto.subview %tile[%i1, %i4] sizes [1, 8] : !tile -> !view
+      %v = pto.tgetval ins(%view, %i0 : !view, index) outs : f32
+    }
+    return
+  }
+  func.func @affine_nested_bound(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i3 = arith.constant 3 : index
+    %i4 = arith.constant 4 : index
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %i0 to %n step %i1 {
+      %upper = arith.addi %i, %i1 overflow<nsw> : index
+      scf.for %j = %i0 to %upper step %i1 {
+        %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+  func.func @shifted_access(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i3 = arith.constant 3 : index
+    %i4 = arith.constant 4 : index
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %i0 to %n step %i1 {
+      %offset = arith.addi %i, %i1 overflow<nsw> : index
+      %view = pto.subview %tile[%i0, %offset] sizes [1, 8] : !tile -> !view
+      %v = pto.tgetval ins(%view, %i0 : !view, index) outs : f32
+    }
+    return
+  }
+  func.func @swapped_slot(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i3 = arith.constant 3 : index
+    %i4 = arith.constant 4 : index
+    %ring = pto.alloc_multi_tile addr = %base : !ring
+    scf.for %i = %i0 to %n step %i1 {
+      %slot = arith.remui %i, %i2 : index
+      %next = arith.addi %slot, %i1 : index
+      %chosen = arith.remui %next, %i2 : index
+      %tile = pto.multi_tile_get %ring[%chosen] : !ring -> !tile
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    }
+    return
+  }
+  func.func @unsupported_period(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i3 = arith.constant 3 : index
+    %i4 = arith.constant 4 : index
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %i1 to %n step %i3 {
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    }
+    return
+  }
+  func.func @wrapped_bound(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i3 = arith.constant 3 : index
+    %i4 = arith.constant 4 : index
+    %tile = pto.alloc_tile addr = %base : !tile
+    %upper = arith.addi %n, %i1 : index
+    scf.for %i = %i0 to %upper step %i1 {
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    }
+    return
+  }
+  func.func @empty_rotating(%n: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    scf.for %i = %i1 to %i0 step %i1 {
+      %slot = arith.remui %i, %i2 : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    }
+    return
+  }
+  func.func @narrowed_dynamic_access(%n: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %i0 to %n step %i1 {
+      %v = pto.tgetval ins(%tile, %i : !tile, index) outs : f32
+    }
+    return
+  }
+
+}

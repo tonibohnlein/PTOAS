@@ -36,6 +36,11 @@ struct RotatingAccess {
     // Exact contiguous within-slot bytes, when proved. Empty for unresolved effects.
     std::optional<std::pair<uint64_t, uint64_t>> atom;
     std::optional<std::size_t> guard;
+    AffineExpr parameterOffset; // Replaces offset when nonnull; symbols below.
+    SmallVector<Value> parameters;
+    SmallVector<std::size_t> effects; // All supplied effect IDs merged into this fragment.
+    bool reads = false;
+    bool writes = false;
 };
 struct RecognitionResult {
     RecognitionState state = RecognitionState::Applicable;
@@ -60,6 +65,9 @@ struct GuardedRecognition {
     SmallVector<GuardNode> guards;
     SmallVector<GuardedPhase> phases;
     bool entryGuardsAvailable = true;
+    // Pure, speculatable definitions in operand-first order that make invariant
+    // expressions available at entry. No IR is moved by recognition.
+    SmallVector<Operation*> entryExpressions;
 };
 
 // Index and effects must come from the same unchanged SyncInput and function.

@@ -69,6 +69,7 @@ LogicalResult dumpProgramRecognition(func::FuncOp function, const pto::SyncInput
         if (node.guardedRotatingResult) {
             auto item = attempt("guarded-rotating", node.guardedRotatingResult->result);
             item["entry_guards_available"] = node.guardedRotatingResult->entryGuardsAvailable;
+            item["entry_expression_count"] = node.guardedRotatingResult->entryExpressions.size();
             attempts.push_back(std::move(item));
         }
         llvm::json::Object object{{"id", id}, {"kind", fs::structureName(node.kind)},

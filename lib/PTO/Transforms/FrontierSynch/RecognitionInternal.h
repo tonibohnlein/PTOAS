@@ -9,9 +9,13 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_RECOGNITIONINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 namespace mlir::pto::frontiersynch::detail {
+bool entryExpression(Value value, Operation* entry, const PhaseIndex& index,
+                     SmallVectorImpl<Operation*>& recipe);
+void normalizeFragments(RecognitionResult& result, const SyncStorageEffects& effects);
 void inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result);
 bool checkRotatingDomain(scf::ForOp loop, RecognitionResult& result, bool canonical = false);
 void inspectRotatingPhases(scf::ForOp loop, ArrayRef<const CompoundInstanceElement*> phases,
-                          const SyncInput& input, const SyncStorageEffects& effects, RecognitionResult& result);
+                          const SyncInput& input, const SyncStorageEffects& effects, RecognitionResult& result,
+                          const PhaseIndex& index, bool allowParameters = false);
 } // namespace mlir::pto::frontiersynch::detail
 #endif
