@@ -46,14 +46,19 @@ LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &in
                  << precision << " definite-write=" << effect.hasDefiniteWrites() << " cells=";
     llvm::interleaveComma(effect.cells, llvm::outs());
     llvm::outs() << "\n";
-    if (effect.descriptorRegion) {
-      const auto& region = *effect.descriptorRegion;
-      llvm::outs() << "    descriptor base=" << (region.base ? "pointer" : "absolute")
+    auto dumpRegion = [&](const pto::SyncAccessRegion& region, StringRef label) {
+      llvm::outs() << "    " << label << " base=" << (region.base ? "pointer" : "absolute")
                    << " bytes=" << region.elementBytes << " map=";
       AffineMap::get(region.extents.size(), region.symbols.size(), region.byteOffset).print(llvm::outs());
       llvm::outs() << " extents=";
       llvm::interleaveComma(region.extents, llvm::outs());
       llvm::outs() << " loops=" << region.iterations.size() << "\n";
+    };
+    if (effect.descriptorRegion) {
+      dumpRegion(*effect.descriptorRegion, "descriptor");
+    }
+    if (effect.region) {
+      dumpRegion(*effect.region, "access");
     }
     if (effect.selection) {
       llvm::outs() << "    selected-addresses=";

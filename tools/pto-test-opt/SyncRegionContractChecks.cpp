@@ -8,6 +8,7 @@
 // Test the generic consumer with synthetic MLIR effect declarations. These
 // declarations do not assert native coverage for the fixture's PTO operations.
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
+#include "PTO/IR/PTOAccessRegion.h"
 #include "../../lib/PTO/Transforms/InsertSync/SyncEffectRanges.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
@@ -36,6 +37,21 @@ int runSyncRegionContractChecks(func::FuncOp function, const SyncInput& input)
         }
         auto kind = effect.mode == SyncAccessMode::Read ?
             static_cast<MemoryEffects::Effect*>(MemoryEffects::Read::get()) : MemoryEffects::Write::get();
+        if (checked == 0) {
+            if (auto contract = function->getAttrOfType<DictionaryAttr>("test.selected_region")) {
+                SyncMemoryEffect selection(kind, operand, contract);
+                auto selectedCopy = effect;
+                mlir::pto::detail::applyAccessCoverage(input, selectedCopy, {selection});
+                auto begin = function->getAttrOfType<IntegerAttr>("test.selected_begin");
+                auto bytes = function->getAttrOfType<IntegerAttr>("test.selected_bytes");
+                if (!begin || !bytes || selectedCopy.precision != SyncAccessPrecision::Exact ||
+                    !selectedCopy.exactRanges || selectedCopy.ranges.size() != 1 ||
+                    selectedCopy.ranges[0].begin != begin.getValue().getZExtValue() ||
+                    selectedCopy.ranges[0].end - selectedCopy.ranges[0].begin != bytes.getValue().getZExtValue()) {
+                    return 1;
+                }
+            }
+        }
         SyncMemoryEffect full(kind, operand, 0, true);
         auto copy = effect;
         mlir::pto::detail::applyAccessCoverage(input, copy, {full});
@@ -53,6 +69,26 @@ int runSyncRegionContractChecks(func::FuncOp function, const SyncInput& input)
                 return 1;
             }
         } else if (!copy.ranges.empty()) {
+            return 1;
+        }
+        auto selected = makeAccessRegion(*operand, false,
+            AffineMap::getMultiDimIdentityMap(effect.descriptorRegion->extents.size(), function.getContext()));
+        SyncMemoryEffect identity(kind, operand, selected);
+        mlir::pto::detail::applyAccessCoverage(input, copy, {identity});
+        if (copy.precision != SyncAccessPrecision::Exact || !copy.region ||
+            copy.region->byteOffset != effect.descriptorRegion->byteOffset ||
+            copy.region->extents != effect.descriptorRegion->extents) {
+            return 1;
+        }
+        NamedAttrList malformed(selected);
+        malformed.set("shape_operand", IntegerAttr::get(IntegerType::get(function.getContext(), 64), -1));
+        SyncMemoryEffect invalid(kind, operand, malformed.getDictionary(function.getContext()));
+        mlir::pto::detail::applyAccessCoverage(input, copy, {invalid});
+        if (copy.precision != SyncAccessPrecision::Unknown || copy.region) {
+            return 1;
+        }
+        mlir::pto::detail::applyAccessCoverage(input, copy, {full, identity});
+        if (copy.precision != SyncAccessPrecision::Unknown || copy.region) {
             return 1;
         }
         SyncMemoryEffect partial(kind, operand);
