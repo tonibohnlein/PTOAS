@@ -13,9 +13,14 @@ struct SlotPattern {
     uint64_t stride = 0;
     uint64_t offset = 0;
     bool arithmeticProven = true;
+    AffineExpr parameterOffset;
+    SmallVector<Value> parameters;
 };
 std::optional<SlotPattern> matchSlot(Value slot, Value induction, uint64_t count);
-std::optional<std::pair<uint64_t, uint64_t>> withinSlotRange(const SyncStorageEffect& effect,
-                                                           const SyncInput& input, uint64_t bytes);
+std::optional<SlotPattern> matchRotatingSlot(Value slot, scf::ForOp loop, uint64_t count,
+                                            const PhaseIndex& index, bool allowParameters);
+using SlotRanges = SmallVector<std::pair<uint64_t, uint64_t>>;
+std::optional<SlotRanges> withinSlotRanges(const SyncStorageEffect& effect,
+                                         const SyncInput& input, uint64_t bytes);
 } // namespace mlir::pto::frontiersynch::detail
 #endif

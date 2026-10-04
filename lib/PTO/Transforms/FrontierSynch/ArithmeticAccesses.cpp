@@ -5,17 +5,27 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Physical byte relations: fixed exact effects, or residue-selected scalar slots.
+// Exact physical byte relations from shared access maps. A symbolic origin and
+// a fixed local byte union stay compact; unsupported local geometry is rejected.
 #include "ArithmeticProgramInternal.h"
-#include "RotationPattern.h"
 #include "../InsertSync/SyncEffectRanges.h"
+#include "../InsertSync/SyncRegionArithmetic.h"
 namespace mlir::pto::frontiersynch::detail {
 namespace {
-void emitRange(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEffect& effect,
-               const SyncStorageCell& range, std::optional<std::pair<unsigned, uint64_t>> filter = std::nullopt,
-               uint64_t modulus = 1)
+AffineExpr add(AffineExpr a, AffineExpr b)
 {
-    if (range.begin >= range.end || range.end > static_cast<uint64_t>(INT64_MAX)) {
+    return mlir::pto::detail::checkedAdd(a, b);
+}
+AffineExpr negate(AffineExpr expression)
+{
+    return expression ? mlir::pto::detail::checkedMul(expression,
+        getAffineConstantExpr(-1, expression.getContext())) : AffineExpr{};
+}
+void emitRange(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEffect& effect,
+               const SyncStorageCell& range, AffineExpr origin)
+{
+    const bool valid = range.begin < range.end && range.end <= static_cast<uint64_t>(INT64_MAX) && origin;
+    if (!valid) {
         builder.output.extraction.note(RecognitionIssue::UnknownGeometry, effect.phase->elementOp);
         return;
     }
@@ -29,67 +39,84 @@ void emitRange(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEff
     relation.coordinates[depth] = {"byte", CoordinateKind::Storage};
     auto rows = builder.domain(site, 0);
     auto byte = getAffineDimExpr(depth, builder.context);
-    rows.push_back(byte - static_cast<int64_t>(range.begin));
-    rows.push_back(static_cast<int64_t>(range.end - 1) - byte);
-    builder.emit(relation, rows, filter, modulus);
+    auto begin = add(origin, getAffineConstantExpr(range.begin, builder.context));
+    auto end = add(origin, getAffineConstantExpr(range.end - 1, builder.context));
+    rows.push_back(add(byte, negate(begin)));
+    rows.push_back(add(end, -byte));
+    builder.emit(relation, rows);
     builder.output.primitives.relations.push_back(std::move(relation));
 }
-void rotating(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEffect& effect, const SyncInput& input)
+bool symbolicRegion(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEffect& effect,
+                    const SyncAccessRegion& region)
 {
-    const auto& memory = *effect.memory;
-    auto* anchor = effect.phase->elementOp;
-    auto alias = input.buffers().find(memory.baseBuffer);
-    auto multi = memory.rootBuffer ? dyn_cast<MultiTileBufType>(memory.rootBuffer.getType()) : MultiTileBufType{};
-    if (!effect.selection || !multi || effect.selection->family != memory.rootBuffer ||
-        alias == input.buffers().end() ||
-        alias->second.size() != 1 || memory.aliasesUnknownRange) {
-        builder.output.extraction.note(effect.precision == SyncAccessPrecision::Exact ?
-                                       RecognitionIssue::SymbolicGeometry : RecognitionIssue::InexactFootprint, anchor);
-        return;
+    if (region.base || !region.byteOffset) {
+        return false; // Unknown pointer identity is not a numeric address.
     }
-    const auto count = multi.getCount();
-    if (!count || builder.limits.period % count) {
-        builder.output.extraction.note(RecognitionIssue::ArithmeticPeriod, anchor, true);
-        return;
-    }
-    auto slots = mlir::pto::detail::physicalSlotRanges(input, memory);
-    if (slots.size() != count) {
-        builder.output.extraction.note(RecognitionIssue::UnknownGeometry, anchor);
-        return;
-    }
-    const auto& site = builder.output.sites[siteId];
-    for (auto [dimension, storedLoop] : llvm::enumerate(site.loops)) {
-        auto loop = storedLoop;
-        auto pattern = matchSlot(effect.selection->selector, loop.getInductionVar(), count);
-        if (!pattern || !pattern->arithmeticProven || pattern->stride != 1 % count || pattern->offset != 0) {
-            continue;
+    SmallVector<AffineExpr> zeros(region.extents.size(), getAffineConstantExpr(0, builder.context));
+    SmallVector<AffineExpr> symbols, occurrenceSymbols;
+    for (auto [id, symbol] : llvm::enumerate(region.symbols)) {
+        symbols.push_back(getAffineSymbolExpr(id, builder.context));
+        auto value = builder.value(symbol, builder.output.sites[siteId], 0);
+        if (!value) {
+            return false;
         }
-        for (auto [slot, range] : llvm::enumerate(slots)) {
-            auto atom = withinSlotRange(effect, input, range.end - range.begin);
-            if (!atom) {
-                builder.output.extraction.note(effect.precision == SyncAccessPrecision::Exact ?
-                    RecognitionIssue::WithinSlotFootprint : RecognitionIssue::InexactFootprint, anchor);
-                return;
+        occurrenceSymbols.push_back(value);
+    }
+    auto localOrigin = mlir::pto::detail::substitute(region.byteOffset, zeros, symbols);
+    auto origin = mlir::pto::detail::substitute(region.byteOffset, zeros, occurrenceSymbols);
+    auto offset = add(region.byteOffset, negate(localOrigin));
+    if (!origin || !offset) {
+        return false;
+    }
+    SyncAccessRegion local = region;
+    local.byteOffset = simplifyAffineExpr(offset, region.extents.size(), symbols.size());
+    for (unsigned i = 0; i < symbols.size(); ++i) {
+        if (local.byteOffset.isFunctionOfSymbol(i)) {
+            return false;
+        }
+        for (auto extent : local.extents) {
+            if (extent.isFunctionOfSymbol(i)) {
+                return false;
             }
-            emitRange(builder, siteId, effect, {range.space, range.begin + atom->first, range.begin + atom->second},
-                      std::make_pair(dimension, slot), count);
         }
-        return;
     }
-    builder.output.extraction.note(RecognitionIssue::SlotExpression, anchor, true);
+    local.symbols.clear();
+    SmallVector<SyncStorageCell> pieces;
+    if (!mlir::pto::detail::materializeRegion(local, effect.memory->scope, pieces)) {
+        return false;
+    }
+    for (const auto& piece : pieces) {
+        emitRange(builder, siteId, effect, piece, origin);
+    }
+    return true;
 }
 }
 void extractAccesses(ProgramBuilder& builder, const SyncInput& input, const SyncStorageEffects& effects)
 {
+    (void)input; // Access maps already resolve geometry through this shared input.
     for (auto [siteId, site] : llvm::enumerate(builder.output.sites)) {
+        if (builder.staticallyEmpty(site)) {
+            continue;
+        }
         for (auto id : effects.effectsFor(site.phase)) {
             const auto& effect = effects.effects()[id];
-            if (effect.precision == SyncAccessPrecision::Exact && effect.exactRanges) {
+            if (effect.precision != SyncAccessPrecision::Exact) {
+                builder.output.extraction.note(RecognitionIssue::InexactFootprint, site.phase->elementOp);
+                continue;
+            }
+            if (effect.exactRanges) {
                 for (const auto& range : effect.ranges) {
-                    emitRange(builder, siteId, effect, range);
+                    emitRange(builder, siteId, effect, range, getAffineConstantExpr(0, builder.context));
                 }
-            } else {
-                rotating(builder, siteId, effect, input);
+                continue;
+            }
+            if (effect.regions.empty()) {
+                builder.output.extraction.note(RecognitionIssue::SymbolicGeometry, site.phase->elementOp);
+            }
+            for (const auto& region : effect.regions) {
+                if (!symbolicRegion(builder, siteId, effect, region)) {
+                    builder.output.extraction.note(RecognitionIssue::SymbolicGeometry, site.phase->elementOp);
+                }
             }
         }
     }

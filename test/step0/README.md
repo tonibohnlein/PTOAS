@@ -233,25 +233,39 @@ help distinguish missing effects from limitations of a recognizer's adapter.
 |---|---|---|
 | Explicit | Adjacent original leaves with exact materialized physical ranges | No unresolved control, multiple phases or unrepresented value prerequisites |
 | Finite guarded | Finite if/else tree with exact materialized ranges and guard DAG | Entry guard availability is reported separately; it is not an endpoint-code certificate |
-| Rotating | Fixed loop body, disjoint known slot families, fixed within-slot intervals and proved selectors | Constant nonnegative lower bound and positive step; no carried state or nested body |
-| Guarded rotating | The rotating contract with invariant branch participation | Conditions must be available before the loop; varying guards require another route |
+| Rotating | Fixed loop body, disjoint known slot families, exact fixed within-slot byte unions and proved selectors | Constant nonnegative lower bound and positive step; no carried state or nested body |
+| Guarded rotating | The rotating contract with invariant branch participation and parameter offsets | Conditions/offset parameters must be entry values or have pure speculatable entry recipes; varying guards require another route |
 | Arithmetic bundle | Complete exact primitive relations in the configured difference, octagon or bounded-coefficient class | Every piece, parameter, residue and coefficient is checked; no backend is run |
-| Arithmetic IR producer | Canonical counted nests, fixed exact ranges or recognized residue-selected ranges | The current producer is narrower than the bundle checker: zero lower bounds, unit steps, fixed period at most two, dimension at most eight, no unresolved control |
+| Arithmetic IR producer | Counted nests, exact shared maps with symbolic origins and fixed local byte unions | Constant nonnegative lower bounds, positive steps dividing the fixed period, proved affine upper bounds, period at most two, dimension at most eight, no unresolved control |
 
 Rotating recognition now consumes Step 0's exact symbolic maps. It subtracts
 the selected slot's shared physical origin and requires the remaining byte map
 and extents to be independent of iteration/parameter symbols. The shared range
-materializer then supplies the interval, preserving fixed subview offsets.
-Multiple pieces can be merged only when their union is contiguous; gaps are
-never replaced by their bounding range. This adds no instruction-specific
+materializer then supplies the byte union, preserving fixed subview offsets
+and gaps. All endpoints within a slot family define a common exact partition.
+Records for the same payload, selector and atom are consolidated while retaining
+every original effect ID and both read/write modes. The subsequent generator
+bounds count these normalized fragments; atomization can increase their number. This adds no instruction-specific
 footprint rules. `unsupported-slot-footprint` distinguishes a missing fixed-slot
 representation from an inexact access declaration.
 
 Loop normalization retains the original IR and expresses the slot pattern in
 the iteration ordinal `j`, where `iv = lower + step*j`. Products are widened
 before modular reduction. Selector arithmetic that lacks a proof under machine
-semantics still reports `index-arithmetic`. The arithmetic producer retains its
-separate canonical-loop restriction.
+semantics still reports `index-arithmetic`. Unsigned power-of-two remainders also
+admit same-width wrapping add/subtract/constant-multiply expressions, because
+machine wrap preserves those residues. Signed remainders and other moduli still
+need the shared scalar analysis's nonnegative/no-wrap proof.
+
+Guarded offsets retain their immutable SSA parameters and modular expression.
+A pure speculatable definition recomputed inside the loop can be exported as an
+operand-first entry recipe; the original IR is not changed, and actual entry
+availability remains separately reported. This is not endpoint code.
+
+The arithmetic producer retains original induction coordinates, substitutes
+fixed residues before classifying linear constraints, and emits exact physical
+byte relations from the same shared access maps. This is primitive extraction,
+not general integer projection or minimum-demand reduction.
 
 All routes share the phase index's detection of payload-result prerequisites.
 An unrepresented SSA dependency, including one used by control or yielded from
@@ -267,3 +281,13 @@ nested reset, triangular and sibling-loop examples, including zero and negative
 trip bounds. Integer-row normalization is also checked against direct integer
 evaluation. Structural verification continues to compare against original MLIR
 and the Step 0 corpus baseline. Full-CLI and device validation are separate.
+
+### Remaining draft contracts
+
+The current recognition layer does not implement the counted-pattern
+recognizers, supplied periodic-certificate interfaces or finite-overlay
+contracts. Arithmetic production is whole-function and excludes conditionals;
+the supplied primitive-bundle checker has its own broader contract. Additional
+forward prerequisites are detected but not extracted. These limitations remain
+distinct from the generator/reducer and composition backends, which recognition
+does not provide. No recognized input is reported as Section 8 Ready.

@@ -43,7 +43,8 @@ void collect(Region& root, Operation* entry, const PhaseIndex& index, GuardedRec
             }
             const bool available = entry && index.valueAvailable(branch.getCondition(), entry, Boundary::Before);
             output.entryGuardsAvailable &= available;
-            if (requireInvariant && !available) {
+            if (requireInvariant && !available &&
+                !detail::entryExpression(branch.getCondition(), entry, index, output.entryExpressions)) {
                 output.result.note(RecognitionIssue::GuardInvariance, &op);
             }
             const auto thenGuard = output.guards.size();
@@ -100,8 +101,13 @@ GuardedRecognition recognizeGuardedRotating(scf::ForOp loop, const PhaseIndex& i
         phases.push_back(item.phase);
         guards[item.phase] = item.guard;
     }
-    detail::inspectRotatingPhases(loop, phases, input, effects, output.result);
+    detail::inspectRotatingPhases(loop, phases, input, effects, output.result, index, true);
     for (auto& access : output.result.accesses) {
+        for (auto parameter : access.parameters) {
+            if (!detail::entryExpression(parameter, loop, index, output.entryExpressions)) {
+                output.result.note(RecognitionIssue::GuardInvariance, loop);
+            }
+        }
         access.guard = guards.lookup(effects.effects()[access.effect].phase);
     }
     return output;

@@ -117,8 +117,13 @@ void dumpRecognition(StringRef label, const pto::frontiersynch::RecognitionResul
   for (const auto &access : result.accesses) {
     auto family = families.try_emplace(access.family, families.size()).first->second;
     llvm::outs() << "  rotation family=" << family << " slots=" << access.slots
-                 << " stride=" << access.stride << " offset=" << access.offset
-                 << " refresh=" << access.refresh << " atom=";
+                 << " stride=" << access.stride << " offset=";
+    if (access.parameterOffset) {
+      llvm::outs() << "(" << access.parameterOffset << ") parameters=" << access.parameters.size();
+    } else {
+      llvm::outs() << access.offset;
+    }
+    llvm::outs() << " refresh=" << access.refresh << " atom=";
     if (access.atom) {
       llvm::outs() << "[" << access.atom->first << "," << access.atom->second << ")";
     } else {
@@ -127,13 +132,15 @@ void dumpRecognition(StringRef label, const pto::frontiersynch::RecognitionResul
     if (access.guard) {
       llvm::outs() << " guard=" << *access.guard;
     }
-    llvm::outs() << "\n";
+    llvm::outs() << " effects=" << access.effects.size() << " reads=" << access.reads
+                 << " writes=" << access.writes << "\n";
   }
 }
 void dumpGuarded(StringRef label, const pto::frontiersynch::GuardedRecognition &result) {
   dumpRecognition(label, result.result);
   llvm::outs() << "  guarded phases=" << result.phases.size() << " guards=" << result.guards.size()
-               << " entry-guards=" << (result.entryGuardsAvailable ? "available" : "late") << "\n";
+               << " entry-guards=" << (result.entryGuardsAvailable ? "available" : "late")
+               << " entry-expressions=" << result.entryExpressions.size() << "\n";
   for (auto [id, guard] : llvm::enumerate(result.guards)) {
     llvm::outs() << "  guard " << id << " parent=";
     if (guard.parent) {

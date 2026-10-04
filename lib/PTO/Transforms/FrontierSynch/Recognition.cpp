@@ -82,7 +82,8 @@ void checkDisjoint(const Families& families, RecognitionResult& result, Operatio
 }
 
 void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
-                   const SyncStorageEffects& effects, Families& families, RecognitionResult& result)
+                   const SyncStorageEffects& effects, Families& families, RecognitionResult& result,
+                   const PhaseIndex& index, bool allowParameters)
 {
     const auto& effect = effects.effects()[id];
     const auto& memory = *effect.memory;
@@ -96,7 +97,7 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
     const uint64_t count = multi ? multi.getCount() : 1;
     std::optional<detail::SlotPattern> pattern;
     if (effect.selection && effect.selection->family == memory.rootBuffer) {
-        pattern = detail::matchSlot(effect.selection->selector, loop.getInductionVar(), count);
+        pattern = detail::matchRotatingSlot(effect.selection->selector, loop, count, index, allowParameters);
     } else if (!effect.selection && count == 1) {
         pattern = detail::SlotPattern{};
     } else {
@@ -112,7 +113,12 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
     auto lower = constant(loop.getLowerBound()), step = constant(loop.getStep());
     if (lower && *lower >= 0 && step && *step > 0) {
         APInt modulus(128, count), stride(128, pattern->stride);
-        pattern->offset = (stride * APInt(128, *lower) + APInt(128, pattern->offset)).urem(modulus).getZExtValue();
+        auto shift = (stride * APInt(128, *lower)).urem(modulus).getZExtValue();
+        pattern->offset = (APInt(128, shift) + APInt(128, pattern->offset)).urem(modulus).getZExtValue();
+        if (pattern->parameterOffset) {
+            pattern->parameterOffset = (pattern->parameterOffset + static_cast<int64_t>(shift)) %
+                                       static_cast<int64_t>(count);
+        }
         pattern->stride = (stride * APInt(128, *step)).urem(modulus).getZExtValue();
     }
     auto found = families.find(memory.rootBuffer);
@@ -129,19 +135,32 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
         result.note(RecognitionIssue::CommonStride, anchor, true);
     }
     family.stride = pattern->stride;
-    std::optional<std::pair<uint64_t, uint64_t>> atom;
+    std::optional<detail::SlotRanges> atoms;
     if (family.slots.size() != count || memory.aliasesUnknownRange) {
         result.note(RecognitionIssue::UnknownGeometry, anchor);
     } else {
         const auto bytes = family.slots.front().end - family.slots.front().begin;
-        atom = detail::withinSlotRange(effect, input, bytes);
-        if (!atom) {
+        atoms = detail::withinSlotRanges(effect, input, bytes);
+        if (!atoms) {
             result.note(effect.precision == SyncAccessPrecision::Exact ?
                         RecognitionIssue::WithinSlotFootprint : RecognitionIssue::InexactFootprint, anchor);
         }
     }
-    result.accesses.push_back({id, memory.rootBuffer, count, pattern->stride, pattern->offset,
-                               count / std::gcd(count, pattern->stride), atom});
+    RotatingAccess access{id, memory.rootBuffer, count, pattern->stride, pattern->offset,
+                           count / std::gcd(count, pattern->stride), std::nullopt};
+    access.parameterOffset = pattern->parameterOffset;
+    access.parameters = pattern->parameters;
+    access.effects.push_back(id);
+    access.reads = effect.mode == SyncAccessMode::Read;
+    access.writes = effect.mode == SyncAccessMode::Write;
+    if (!atoms) {
+        result.accesses.push_back(std::move(access));
+        return;
+    }
+    for (auto atom : *atoms) {
+        access.atom = atom;
+        result.accesses.push_back(access);
+    }
 }
 } // namespace
 
@@ -230,15 +249,17 @@ bool detail::checkRotatingDomain(scf::ForOp loop, RecognitionResult& result, boo
 }
 
 void detail::inspectRotatingPhases(scf::ForOp loop, ArrayRef<const CompoundInstanceElement*> phases,
-                                  const SyncInput& input, const SyncStorageEffects& effects, RecognitionResult& result)
+                                  const SyncInput& input, const SyncStorageEffects& effects, RecognitionResult& result,
+                                  const PhaseIndex& index, bool allowParameters)
 {
     Families families;
     for (const auto* phase : phases) {
         for (auto id : effects.effectsFor(phase)) {
-            inspectAccess(id, loop, input, effects, families, result);
+            inspectAccess(id, loop, input, effects, families, result, index, allowParameters);
         }
     }
     checkDisjoint(families, result, loop);
+    detail::normalizeFragments(result, effects);
 }
 
 RecognitionResult recognizeRotating(scf::ForOp loop, const PhaseIndex& index,
@@ -255,7 +276,7 @@ RecognitionResult recognizeRotating(scf::ForOp loop, const PhaseIndex& index,
     for (Operation& op : *loop.getBody()) {
         llvm::append_range(phases, index.phasesFor(&op));
     }
-    detail::inspectRotatingPhases(loop, phases, input, effects, result);
+    detail::inspectRotatingPhases(loop, phases, input, effects, result, index);
     return result;
 }
 
