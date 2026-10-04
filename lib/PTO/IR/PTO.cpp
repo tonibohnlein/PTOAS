@@ -11,6 +11,7 @@
 
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOAccessRegion.h"
+#include "PTO/IR/PTOLinearAccess.h"
 #include "mlir/IR/Matchers.h"
 
 #include "mlir/Interfaces/InferIntRangeInterface.h"
