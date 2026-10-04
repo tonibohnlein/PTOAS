@@ -28,12 +28,21 @@ static bool ordinaryExtractTile(Value value) {
 // Required alignment is a power of two. Add/multiply preserve these low zero
 // bits even with machine wraparound (PTO index arithmetic is at least 32 bits).
 static bool extractOffsetAligned(Value value, uint64_t alignment, unsigned depth = 0) {
-  if (depth > 32) {
+  if (!value || depth > 32) {
     return false;
   }
   llvm::APInt constant;
   if (mlir::matchPattern(value, mlir::m_ConstantInt(&constant))) {
     return constant.countTrailingZeros() >= llvm::Log2_64(alignment);
+  }
+  if (auto argument = dyn_cast<mlir::BlockArgument>(value)) {
+    auto loop = dyn_cast<mlir::scf::ForOp>(argument.getOwner()->getParentOp());
+    // Executed induction values are lower + iteration * step. Both terms
+    // must be aligned; the bound may be dynamic or give zero trips. Other
+    // loop-carried arguments do not have this recurrence.
+    return loop && argument == loop.getInductionVar() &&
+        extractOffsetAligned(loop.getLowerBound(), alignment, depth + 1) &&
+        extractOffsetAligned(loop.getStep(), alignment, depth + 1);
   }
   if (auto multiply = value.getDefiningOp<arith::MulIOp>()) {
     return extractOffsetAligned(multiply.getLhs(), alignment, depth + 1) ||
