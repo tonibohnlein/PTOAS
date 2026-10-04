@@ -42,6 +42,8 @@ struct SyncStorageEffect {
     // Preserve address-table selection even when it has no affine byte map.
     std::optional<SyncSlotSelection> selection;
     std::optional<SyncAccessRegion> region;
+    // Union of exact declarations; region is populated for a single piece.
+    SmallVector<SyncAccessRegion> regions;
     // Empty only when the shared contract and physical mapping are exact.
     std::string precisionReason;
     // Whether ranges enumerate the exact set, rather than its capacity bound.
@@ -76,6 +78,11 @@ public:
     bool mayOverlap(std::size_t first, std::size_t second) const;
     // Read/read pairs need no ordering. Pipe and space come from shared phases.
     bool mayConflict(std::size_t first, std::size_t second) const;
+    // Preserve legacy buffer identities for insertion/allocation. The optional
+    // filter selects one operand of the second phase (broadcast hazards).
+    bool dependencies(const CompoundInstanceElement* first, SyncAccessMode firstMode,
+                      const CompoundInstanceElement* second, SyncAccessMode secondMode,
+                      DepBaseMemInfoPairVec& result, Value secondOperand = {}) const;
 
 private:
     MemoryDependentAnalyzer memory;

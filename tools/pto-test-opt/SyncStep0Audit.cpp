@@ -52,7 +52,8 @@ struct Audit {
     const SyncStorageEffects& storage;
     bool valid = true;
     int64_t declarations = 0, unphased = 0, operations = 0, expected = 0;
-    int64_t controlled = 0, descriptors = 0, symbolic = 0, selections = 0, planned = 0, exact = 0;
+    int64_t controlled = 0, descriptors = 0, symbolic = 0, selections = 0, planned = 0;
+    int64_t exact = 0, upper = 0, unknown = 0;
     llvm::json::Object unphasedKinds;
 
     void operation(Operation* op)
@@ -84,6 +85,8 @@ struct Audit {
     {
         planned += effect.memory->hasKnownPhysicalAddresses;
         exact += effect.precision == SyncAccessPrecision::Exact;
+        upper += effect.precision == SyncAccessPrecision::UpperBound;
+        unknown += effect.precision == SyncAccessPrecision::Unknown;
         if (effect.descriptorRegion) {
             ++descriptors;
             symbolic += !effect.descriptorRegion->symbols.empty() || bool(effect.descriptorRegion->base);
@@ -126,7 +129,8 @@ struct Audit {
             {"unphased_declarations", unphased}, {"unphased_kinds", std::move(unphasedKinds)},
             {"controlled_phases", controlled}, {"planned_effects", planned},
             {"descriptor_maps", descriptors}, {"symbolic_maps", symbolic},
-            {"slot_selections", selections}, {"exact_accesses", exact}
+            {"slot_selections", selections}, {"exact_accesses", exact},
+            {"upper_bound_accesses", upper}, {"unknown_accesses", unknown}
         };
         llvm::outs() << llvm::json::Value(std::move(result)) << "\n";
     }
@@ -136,8 +140,8 @@ struct Audit {
 LogicalResult auditSyncStep0(func::FuncOp function, const SyncInput& input)
 {
     frontiersynch::PhaseIndex index;
-    SyncStorageEffects storage;
-    if (failed(index.build(function, input)) || failed(storage.build(input))) {
+    const auto& storage = input.accesses();
+    if (failed(index.build(function, input))) {
         return failure();
     }
     Audit audit{input, index, storage};
