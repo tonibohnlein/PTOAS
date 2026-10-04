@@ -16,6 +16,7 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MathExtras.h"
+#include <limits>
 
 namespace mlir::pto {
 namespace {
@@ -56,6 +57,8 @@ private:
     TileBufType boxedPhysicalType(Value operand);
     bool boxedPointerStrides(TileBufType type, int64_t& row, int64_t& col);
     bool currentShape(Value operand, Value& row, Value& col);
+    bool selectionDomain(DictionaryAttr contract, int64_t version, ArrayRef<AffineExpr> symbols);
+    AffineExpr physicalBase(Value operand);
 };
 
 unsigned bytes(Type type)
@@ -431,39 +434,71 @@ AffineExpr RegionBuilder::map(Value operand, ArrayRef<AffineExpr> coordinates)
     return {};
 }
 
-bool RegionBuilder::selection(Value operand, DictionaryAttr contract)
+AffineExpr RegionBuilder::physicalBase(Value operand)
 {
-    auto version = contract.getAs<IntegerAttr>("pto.access_region");
+    if (isa<PtrType>(operand.getType())) {
+        return pointer(operand);
+    }
+    // Map the descriptor origin, including view offsets exactly once. A byte
+    // selection then bypasses the descriptor's element-coordinate layout.
+    SmallVector<AffineExpr> origin;
+    if (auto tileType = dyn_cast<TileBufType>(operand.getType())) {
+        origin.assign(tileType.getShape().size(), number(0));
+    } else {
+        return {};
+    }
+    return map(operand, origin);
+}
+
+bool RegionBuilder::selectionDomain(DictionaryAttr contract, int64_t version, ArrayRef<AffineExpr> symbols)
+{
+    if (version == 2) {
+        auto domain = contract.getAs<AffineMapAttr>("extents");
+        if (!domain || domain.getValue().getNumDims() != 0 ||
+            domain.getValue().getNumSymbols() != symbols.size()) {
+            return false;
+        }
+        for (auto expression : domain.getValue().getResults()) {
+            auto extent = detail::substitute(expression, {}, symbols);
+            auto constant = dyn_cast_or_null<AffineConstantExpr>(extent);
+            if (!extent || (constant && constant.getValue() < 0)) {
+                return false;
+            }
+            region.extents.push_back(extent);
+        }
+        return true;
+    }
     auto shapeIndex = contract.getAs<IntegerAttr>("shape_operand");
     auto capacity = contract.getAs<BoolAttr>("capacity");
-    auto coordinates = contract.getAs<AffineMapAttr>("coordinates");
-    auto indices = contract.getAs<DenseI64ArrayAttr>("symbol_operands");
-    if (contract.size() != 5 || !version || !version.getType().isInteger(64) || version.getInt() != 1 ||
-        !shapeIndex || !shapeIndex.getType().isInteger(64) ||
-        !capacity || !coordinates || !indices || shapeIndex.getInt() < 0 ||
+    if (!shapeIndex || !shapeIndex.getType().isInteger(64) || !capacity || shapeIndex.getInt() < 0 ||
         static_cast<uint64_t>(shapeIndex.getInt()) >= access->getNumOperands()) {
         return false;
     }
     auto shape = access->getOperand(shapeIndex.getInt());
-    if (capacity.getValue()) {
-        auto type = dyn_cast<TileBufType>(shape.getType());
-        if (!type || llvm::any_of(type.getShape(), [](int64_t size) { return size < 0; })) {
-            return false;
-        }
-        for (auto size : type.getShape()) {
-            region.extents.push_back(number(size));
-        }
-    } else if (!extents(shape)) {
+    if (!capacity.getValue()) {
+        return extents(shape);
+    }
+    auto type = dyn_cast<TileBufType>(shape.getType());
+    if (!type || llvm::any_of(type.getShape(), [](int64_t size) { return size < 0; })) {
         return false;
     }
-    auto transform = coordinates.getValue();
-    if (transform.getNumDims() != region.extents.size() || transform.getNumSymbols() != indices.size()) {
+    for (auto size : type.getShape()) {
+        region.extents.push_back(number(size));
+    }
+    return true;
+}
+
+bool RegionBuilder::selection(Value operand, DictionaryAttr contract)
+{
+    auto version = contract.getAs<IntegerAttr>("pto.access_region");
+    auto coordinates = contract.getAs<AffineMapAttr>("coordinates");
+    auto indices = contract.getAs<DenseI64ArrayAttr>("symbol_operands");
+    if (!version || !version.getType().isInteger(64) || !coordinates || !indices ||
+        !((version.getInt() == 1 && contract.size() == 5) ||
+          (version.getInt() == 2 && contract.size() == 6))) {
         return false;
     }
     SmallVector<AffineExpr> dimensions, symbols, selected;
-    for (unsigned i = 0; i < region.extents.size(); ++i) {
-        dimensions.push_back(getAffineDimExpr(i, context));
-    }
     for (int64_t index : indices.asArrayRef()) {
         if (index < 0 || static_cast<uint64_t>(index) >= access->getNumOperands()) {
             return false;
@@ -472,7 +507,21 @@ bool RegionBuilder::selection(Value operand, DictionaryAttr contract)
         if (!symbol.getType().isIntOrIndex()) {
             return false;
         }
-        symbols.push_back(value(symbol));
+        auto expression = value(symbol);
+        if (!expression) {
+            return false;
+        }
+        symbols.push_back(expression);
+    }
+    if (!selectionDomain(contract, version.getInt(), symbols)) {
+        return false;
+    }
+    auto transform = coordinates.getValue();
+    if (transform.getNumDims() != region.extents.size() || transform.getNumSymbols() != symbols.size()) {
+        return false;
+    }
+    for (unsigned i = 0; i < region.extents.size(); ++i) {
+        dimensions.push_back(getAffineDimExpr(i, context));
     }
     for (auto expression : transform.getResults()) {
         auto coordinate = detail::substitute(expression, dimensions, symbols);
@@ -480,6 +529,25 @@ bool RegionBuilder::selection(Value operand, DictionaryAttr contract)
             return false;
         }
         selected.push_back(coordinate);
+    }
+    if (version.getInt() == 2) {
+        auto addressing = contract.getAs<StringAttr>("addressing");
+        auto width = contract.getAs<IntegerAttr>("byte_width");
+        if (!addressing || !width || !width.getType().isInteger(64)) {
+            return false;
+        }
+        if (addressing.getValue() == "bytes") {
+            if (width.getInt() <= 0 || selected.size() != 1 ||
+                static_cast<uint64_t>(width.getInt()) > std::numeric_limits<unsigned>::max()) {
+                return false;
+            }
+            region.byteOffset = add(physicalBase(operand), selected.front());
+            region.elementBytes = static_cast<unsigned>(width.getInt());
+            return static_cast<bool>(region.byteOffset);
+        }
+        if (addressing.getValue() != "coordinates" || width.getInt() != 0) {
+            return false;
+        }
     }
     region.byteOffset = map(operand, selected);
     return static_cast<bool>(region.byteOffset);

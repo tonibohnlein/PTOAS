@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --region-contract-checks %s | FileCheck %s
+// CHECK: synthetic-region-contract explicit_access_contract: 1 passed
+// CHECK: synthetic-region-contract explicit_view_contract: 1 passed
+// CHECK: synthetic-region-contract pointer_contract: 0 passed
+module attributes {pto.target_arch = "a3"} {
+  func.func @explicit_access_contract(%offset: index) attributes {test.access_v2} {
+    %base = arith.constant 1024 : i64
+    %tile = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 2x8xf32>
+    %v = pto.tgetval ins(%tile, %offset : !pto.tile_buf<vec, 2x8xf32>, index) outs : f32
+    return
+  }
+  func.func @explicit_view_contract(%offset: index) attributes {test.access_v2} {
+    %base = arith.constant 992 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %tile = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 4x8xf32>
+    %view = pto.subview %tile[%i1, %i0] sizes [2, 8] : !pto.tile_buf<vec, 4x8xf32> -> !pto.tile_buf<vec, 2x8xf32>
+    %v = pto.tgetval ins(%view, %offset : !pto.tile_buf<vec, 2x8xf32>, index) outs : f32
+    return
+  }
+  func.func @pointer_contract(%ptr: !pto.ptr<f32, gm>, %offset: index) attributes {test.pointer_v2, test.no_region} {
+    %v = pto.load %ptr[%offset] : !pto.ptr<f32, gm> -> f32
+    return
+  }
+}
