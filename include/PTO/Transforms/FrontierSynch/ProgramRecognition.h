@@ -12,6 +12,7 @@
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateEndpoints.h"
+#include "PTO/Transforms/FrontierSynch/PeriodicAllocation.h"
 namespace mlir::pto::frontiersynch {
 enum class StructureKind { Sequence, ExplicitRun, Loop, Conditional, Unsupported };
 struct StructureNode {
@@ -33,6 +34,7 @@ struct StructureNode {
     std::optional<NumericTemplate> numericTemplate;
     std::optional<PeriodicAnalysis> periodicAnalysis;
     std::optional<NumericTemplateEndpoints> logicalEndpoints;
+    std::optional<PeriodicAllocation> periodicAllocation;
 };
 struct ProgramPayload {
     const CompoundInstanceElement* phase = nullptr;
@@ -60,8 +62,9 @@ struct ProgramRecognition {
 // Visits all regions without unrolling, fuses adjacent leaves, and runs the
 // existing checks independently. Applicable is not an executable analysis plan:
 // Supported numeric templates additionally compute minimum records and completion
-// queries plus guarded logical endpoint recipes at original cuts. No composition
-// certificate, emitted commands or physical event IDs are produced.
+// queries, guarded logical endpoint recipes at original cuts, and periodic
+// direction budgets. No composition certificate, emitted commands or physical
+// event IDs are produced.
 FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input,
                                                const ArithmeticLimits& limits);
 StringRef structureName(StructureKind kind);

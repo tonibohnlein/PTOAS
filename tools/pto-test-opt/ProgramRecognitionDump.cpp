@@ -13,6 +13,7 @@
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 llvm::json::Object dumpPeriodicAnalysis(const fs::PeriodicAnalysis& result);
+llvm::json::Object dumpPeriodicAllocation(const fs::PeriodicAllocation& result);
 llvm::json::Object dumpNumericTemplateEndpoints(const fs::NumericTemplateEndpoints& result, AsmState& state);
 llvm::json::Object dumpNumericTemplate(const fs::NumericTemplate& result, AsmState& state);
 namespace {
@@ -82,6 +83,9 @@ LogicalResult dumpProgramRecognition(func::FuncOp function, const pto::SyncInput
             }
             if (node.logicalEndpoints) {
                 candidate["logical_endpoints"] = dumpNumericTemplateEndpoints(*node.logicalEndpoints, state);
+            }
+            if (node.periodicAllocation) {
+                candidate["allocation"] = dumpPeriodicAllocation(*node.periodicAllocation);
             }
             attempts.push_back(std::move(candidate));
         }

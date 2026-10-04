@@ -7,5 +7,6 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: %python %S/Inputs/check_periodic_demands.py pto-sync-input-test
 // RUN: %python %S/Inputs/check_logical_endpoints.py pto-sync-input-test
+// RUN: %python %S/Inputs/check_periodic_allocation.py pto-sync-input-test
 // Numerical tests use the existing diagnostic helper; no production pass mode.
 module {}
