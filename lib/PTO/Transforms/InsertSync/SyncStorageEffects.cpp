@@ -135,9 +135,11 @@ bool SyncStorageEffects::mayOverlap(std::size_t first, std::size_t second) const
     // address/range analysis, including views, slot alternatives and GM policy.
     // Its historical distinct-root rule for unplanned local buffers is not a
     // physical disjointness proof, so use local ranges only after planning.
+    // A supplied selection describes its own bytes and may use native offset
+    // conversion; do not substitute an allocation bound for that access set.
     const bool comparable = a.memory->scope == AddressSpace::GM ||
         (a.memory->hasKnownPhysicalAddresses && b.memory->hasKnownPhysicalAddresses);
-    if (comparable && a.sharedProvenanceComplete && b.sharedProvenanceComplete &&
+    if (comparable && !a.region && !b.region && a.sharedProvenanceComplete && b.sharedProvenanceComplete &&
         !memory.MemAlias(a.memory, b.memory)) {
         return false;
     }

@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --region-contract-checks %s | FileCheck %s
+// Synthetic supplier, real generic geometry: selecting row 1, column 8 from a
+// view at root row 1, column 4 yields root byte (2*32+12)*4 = 304, length 32.
+// This does not assert native vector TEXTRACT coverage.
+// CHECK: synthetic-region-contract selected_view: 2 passed
+!root = !pto.tile_buf<vec, 4x32xf32>
+!view = !pto.tile_buf<vec, 2x16xf32>
+!dst = !pto.tile_buf<vec, 1x8xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func @selected_view() attributes {
+    test.selected_region = {pto.access_region = 1 : i64, shape_operand = 3 : i64,
+      capacity = false, coordinates = affine_map<(d0, d1)[s0, s1] -> (d0+s0, d1+s1)>,
+      symbol_operands = array<i64: 1, 2>},
+    test.selected_begin = 304 : i64, test.selected_bytes = 32 : i64
+  } {
+    %a0 = arith.constant 0 : i64
+    %a1024 = arith.constant 1024 : i64
+    %i1 = arith.constant 1 : index
+    %i4 = arith.constant 4 : index
+    %i8 = arith.constant 8 : index
+    %root = pto.alloc_tile addr = %a0 : !root
+    %view = pto.subview %root[%i1, %i4] sizes [2, 16] : !root -> !view
+    %dst = pto.alloc_tile addr = %a1024 : !dst
+    pto.textract ins(%view, %i1, %i8 : !view, index, index) outs(%dst : !dst)
+    return
+  }
+}

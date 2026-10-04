@@ -53,6 +53,7 @@ public:
     AffineExpr mul(AffineExpr a, AffineExpr b) { return detail::checkedMul(a, b); }
     AffineExpr scale(AffineExpr a, int64_t factor) { return mul(a, number(factor)); }
     bool extents(Value operand);
+    bool selection(Value operand, DictionaryAttr contract);
     AffineExpr map(Value operand, ArrayRef<AffineExpr> coordinates);
 
 private:
@@ -494,7 +495,79 @@ AffineExpr RegionBuilder::map(Value operand, ArrayRef<AffineExpr> coordinates)
     return {};
 }
 
+bool RegionBuilder::selection(Value operand, DictionaryAttr contract)
+{
+    auto version = contract.getAs<IntegerAttr>("pto.access_region");
+    auto shapeIndex = contract.getAs<IntegerAttr>("shape_operand");
+    auto capacity = contract.getAs<BoolAttr>("capacity");
+    auto coordinates = contract.getAs<AffineMapAttr>("coordinates");
+    auto indices = contract.getAs<DenseI64ArrayAttr>("symbol_operands");
+    if (contract.size() != 5 || !version || !version.getType().isInteger(64) || version.getInt() != 1 ||
+        !shapeIndex || !shapeIndex.getType().isInteger(64) ||
+        !capacity || !coordinates || !indices || shapeIndex.getInt() < 0 ||
+        static_cast<uint64_t>(shapeIndex.getInt()) >= access->getNumOperands()) {
+        return false;
+    }
+    auto shape = access->getOperand(shapeIndex.getInt());
+    if (capacity.getValue()) {
+        auto type = dyn_cast<TileBufType>(shape.getType());
+        if (!type || llvm::any_of(type.getShape(), [](int64_t size) { return size < 0; })) {
+            return false;
+        }
+        for (auto size : type.getShape()) {
+            region.extents.push_back(number(size));
+        }
+    } else if (!extents(shape)) {
+        return false;
+    }
+    auto transform = coordinates.getValue();
+    if (transform.getNumDims() != region.extents.size() || transform.getNumSymbols() != indices.size()) {
+        return false;
+    }
+    SmallVector<AffineExpr> dimensions, symbols, selected;
+    for (unsigned i = 0; i < region.extents.size(); ++i) {
+        dimensions.push_back(getAffineDimExpr(i, context));
+    }
+    for (int64_t index : indices.asArrayRef()) {
+        if (index < 0 || static_cast<uint64_t>(index) >= access->getNumOperands()) {
+            return false;
+        }
+        Value symbol = access->getOperand(index);
+        if (!symbol.getType().isIntOrIndex()) {
+            return false;
+        }
+        symbols.push_back(value(symbol));
+    }
+    for (auto expression : transform.getResults()) {
+        auto coordinate = detail::substitute(expression, dimensions, symbols);
+        if (!coordinate) {
+            return false;
+        }
+        selected.push_back(coordinate);
+    }
+    region.byteOffset = map(operand, selected);
+    return static_cast<bool>(region.byteOffset);
+}
+
 } // namespace
+
+std::optional<SyncAccessRegion> resolveSelectedRegion(const SyncInput& input, Value operand,
+                                                     Operation* at, DictionaryAttr contract)
+{
+    if (!operand || !at || !contract) {
+        return std::nullopt;
+    }
+    RegionBuilder builder(input, at);
+    for (auto* parent = at->getParentOp(); parent; parent = parent->getParentOp()) {
+        if (auto loop = dyn_cast<scf::ForOp>(parent)) {
+            builder.region.iterations.push_back({loop.getInductionVar(), loop.getLowerBound(),
+                                                 loop.getUpperBound(), loop.getStep()});
+        }
+    }
+    std::reverse(builder.region.iterations.begin(), builder.region.iterations.end());
+    return builder.selection(operand, contract) ?
+        std::optional<SyncAccessRegion>(std::move(builder.region)) : std::nullopt;
+}
 
 std::optional<SyncAccessRegion> resolveBufferRegion(const SyncInput& input, Value operand, Operation* at)
 {

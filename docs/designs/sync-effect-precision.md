@@ -112,3 +112,48 @@ and irregular slot tables, wraparound handling and original-loop preservation.
 Its contract test injects synthetic MLIR coverage declarations to exercise the
 generic consumer; those declarations are not claims about the fixture operations'
 native footprints.
+
+## Shared access selections
+
+`PTOAccessRegion.h` supplies a versioned parameter on the existing MLIR memory
+side-effect declaration. It preserves the effect operand and read/write mode,
+so existing InsertSync continues to consume the same dependencies. No new PTO
+syntax, Python operand, or lowering convention is introduced.
+
+A selection consists of a shape operand, a choice of valid or capacity extents,
+and an affine map from selection coordinates to coordinates of the affected
+operand. Map symbols refer to scalar operands of the same operation. An identity
+map describes a whole region; a translated map describes a subregion. The generic
+consumer composes either with the existing view/layout/physical-address map.
+It checks the schema, indices, dimensions and arithmetic before publishing an
+exact region. Missing or incompatible declarations remain unresolved. Several
+accesses of the same buffer/mode must agree; a known selection cannot hide an
+additional unspecified access. Malformed contracts publish no partial result.
+
+The first native producer is ordinary noncompact MAT-to-LEFT/RIGHT `textract`
+with 16/32-bit elements and boxed, aligned shapes using 512-byte fractals.
+Other fractal layouts are not certified: native block addressing need not agree
+with their descriptor map. Its read selection uses the
+destination capacity and extraction offsets; its write selection covers the
+destination capacity. The declaration accounts for native 16-bit offset
+conversion and A5 sub-block rounding. On A2/A3 the producer requires proven
+16-element offset alignment, including scalar constant-multiple expressions.
+Other transfer forms keep the existing unresolved read/write declaration. This
+is a qualification on the operation's shared semantics, not an opcode list in
+the synchronization consumer. Additional producers use the same contract.
+
+Explicit views already have geometry in `PTOIRTranslator` (including segmented
+local subviews) and `resolveBufferRegion`. Existing InsertSync maps each memory
+effect's operand to that buffer record; it does not apply extraction row/column
+operands to construct a read rectangle. `SyncStorageBounds` on the
+minimum-demand-sync branch similarly contains conservative allocation bounds.
+The earlier removed implementation supplied selection parameters as well as
+extensive native recipes. This version reuses the selection/geometry separation,
+without restoring its scalar, vector, padding, packed-type and compact-transfer
+recipe collection.
+
+The diagnostic dump shows `descriptor` and `access` separately so that a source
+buffer of 32 by 64 elements is not confused with a selected 16 by 16 region.
+When an exact selection is available, overlap checks use it instead of assuming
+that its accessed bytes equal the cached allocation range. Symbolic selections
+remain symbolic; this change does not normalize loop-carried bank recurrences.
