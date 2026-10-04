@@ -43,7 +43,7 @@ The manifest contains `cases`, each with `id`, `family`, `input` (prepared IR),
 preparation provenance alongside the manifest. Paths are local files selected by
 the operator, not remote downloads or shell fragments.
 
-For each input, the runner checks hashes, runs existing InsertSync, then audits
+For each input, the runner checks hashes, runs existing InsertSync and audits
 Step 0 with both GM alias policies. It requires identical collected information
 under both policies and preserves commands, logs, timing, hashes and failures.
 The output directory must be new. The tool disables MLIR multithreading; the
@@ -57,3 +57,26 @@ semantics, exact accessed-byte sets, a compact normal form for every expression,
 or acceptance by the tractable-case recognizers. Those stronger requirements
 remain explicit inputs to later analysis routes. In particular, buffer-range
 information never establishes a complete overwrite by itself.
+
+## Shared resolved accesses
+
+`SyncInput::accesses()` owns the resolved records used by existing InsertSync
+and the demand-analysis clients. Buffer records remain allocation/view geometry;
+instruction selections refine individual reads and writes without modifying those
+buffer records. Multiple exact declarations denote their union.
+
+A known enclosing physical range is retained as `UpperBound` when no exact
+selection is available. `Unknown` denotes unavailable geometry, not an empty
+access. Neither permits definite-overwrite reasoning. Exact symbolic maps remain
+exact descriptions even when overlap cannot be decided without iteration context.
+
+Existing InsertSync obtains dependency buffer pairs from the shared access query.
+Its hazard rules, insertion, motion and event-ID allocation are unchanged. The
+`--existing-dump` test option prints the resulting IR for insertion regressions.
+
+The shared-range integration was checked on the existing 784-module prepared
+corpus (851 functions): both GM policies passed existing InsertSync and the
+Step 0 audit. All 37,524 access records were preserved: 1,970 exact, 27,660 with
+conservative physical bounds, and 7,894 with unresolved access geometry. The two
+GEMM fixtures retained 17/17 and 21/21 exact accesses. These are pass-level checks;
+they do not establish generated C++ correctness or device behavior.
