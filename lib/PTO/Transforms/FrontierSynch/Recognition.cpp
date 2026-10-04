@@ -124,7 +124,7 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
         result.note(RecognitionIssue::UnknownGeometry, anchor);
     } else {
         const auto bytes = family.slots.front().end - family.slots.front().begin;
-        atom = detail::scalarAtom(effect, bytes);
+        atom = detail::withinSlotRange(effect, bytes);
         if (!atom) {
             result.note(RecognitionIssue::InexactFootprint, anchor);
         }
@@ -147,8 +147,34 @@ RecognitionResult recognizeExplicit(Block& block, const PhaseIndex& index, const
     }
     for (const auto* phase : *sequence) {
         for (auto id : effects.effectsFor(phase)) {
-            if (effects.effects()[id].precision != SyncAccessPrecision::Exact) {
-                result.note(RecognitionIssue::InexactFootprint, phase->elementOp);
+            if (effects.effects()[id].precision != SyncAccessPrecision::Exact || !effects.effects()[id].exactRanges) {
+                result.note(effects.effects()[id].precision == SyncAccessPrecision::Exact ?
+                            RecognitionIssue::SymbolicGeometry : RecognitionIssue::InexactFootprint, phase->elementOp);
+            }
+        }
+    }
+    return result;
+}
+
+RecognitionResult recognizeExplicitRun(ArrayRef<Operation*> operations, const PhaseIndex& index,
+                                       const SyncStorageEffects& effects)
+{
+    RecognitionResult result;
+    Operation* previous = nullptr;
+    for (auto* op : operations) {
+        if (!op || op->getNumRegions() || (previous && previous->getNextNode() != op)) {
+            result.note(RecognitionIssue::StructuredBody, op, true);
+            continue;
+        }
+        previous = op;
+        detail::inspectLeaf(*op, index, result);
+        for (const auto* phase : index.phasesFor(op)) {
+            for (auto id : effects.effectsFor(phase)) {
+                const auto& effect = effects.effects()[id];
+                if (effect.precision != SyncAccessPrecision::Exact || !effect.exactRanges) {
+                    result.note(effect.precision == SyncAccessPrecision::Exact ?
+                                RecognitionIssue::SymbolicGeometry : RecognitionIssue::InexactFootprint, op);
+                }
             }
         }
     }
@@ -229,6 +255,7 @@ StringRef recognitionName(RecognitionIssue issue)
     case RecognitionIssue::UnmodeledOperation: return "unmodeled-operation";
     case RecognitionIssue::UnknownPipe: return "unknown-pipe";
     case RecognitionIssue::InexactFootprint: return "inexact-footprint";
+    case RecognitionIssue::SymbolicGeometry: return "symbolic-storage-partition";
     case RecognitionIssue::UnknownGeometry: return "unknown-geometry";
     case RecognitionIssue::LoopDomain: return "loop-domain";
     case RecognitionIssue::LoopCarriedState: return "loop-carried-state";

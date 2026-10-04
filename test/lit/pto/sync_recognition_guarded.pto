@@ -5,10 +5,11 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+// Scalar operations have no private footprint recovery: access premises remain unresolved.
 // RUN: pto-sync-input-test --recognize %s | FileCheck %s
 // CHECK-LABEL: recognition nested_arms
-// CHECK: recognize finite-guarded: applicable backend=unavailable
-// CHECK-NEXT: guarded phases=3 guards=4 entry-guards=available
+// CHECK: recognize finite-guarded: missing-premise backend=unavailable
+// CHECK: guarded phases=3 guards=4 entry-guards=available
 // CHECK-NEXT: guard 0 parent=true arm=then
 // CHECK-NEXT: guard 1 parent=true arm=else
 // CHECK-NEXT: guard 2 parent=0 arm=then
@@ -18,7 +19,7 @@
 // CHECK-NEXT: guarded-phase pto.tsetval guard=1
 // CHECK-LABEL: recognition invariant_loop
 // CHECK: recognize finite-guarded: not-applicable
-// CHECK: recognize guarded-rotating: applicable backend=unavailable
+// CHECK: recognize guarded-rotating: missing-premise backend=unavailable
 // CHECK: rotation {{.*}} guard=0
 // CHECK: rotation {{.*}} guard=1
 // CHECK: guarded phases=2 guards=2 entry-guards=available
@@ -29,8 +30,8 @@
 // CHECK: issue guard-invariance
 // CHECK: guarded phases=1 guards=2 entry-guards=late
 // CHECK-LABEL: recognition late_finite
-// CHECK: recognize finite-guarded: applicable backend=unavailable
-// CHECK-NEXT: guarded phases=2 guards=2 entry-guards=late
+// CHECK: recognize finite-guarded: missing-premise backend=unavailable
+// CHECK: guarded phases=2 guards=2 entry-guards=late
 // CHECK: source-unchanged; dependency-analysis-not-run
 
 !tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>

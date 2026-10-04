@@ -5,16 +5,17 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+// Scalar operations have no private footprint recovery: access premises remain unresolved.
 // RUN: pto-sync-input-test --recognize %s | FileCheck %s
 
 // A parameter trip count is retained. The same recognition applies to zero,
 // short and large trips; only two static accesses are inspected.
 // CHECK-LABEL: recognition rotating
-// CHECK: recognize arithmetic: applicable backend=unavailable
+// CHECK: recognize arithmetic: missing-premise backend=unavailable
 // CHECK: recognize explicit: not-applicable
-// CHECK: recognize rotating: applicable backend=unavailable
-// CHECK-NEXT: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=[0,4)
-// CHECK-NEXT: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=[0,4)
+// CHECK: recognize rotating: missing-premise backend=unavailable
+// CHECK: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=unknown
+// CHECK: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=unknown
 // CHECK-LABEL: recognition tile_write
 // CHECK: recognize rotating: missing-premise backend=unavailable
 // CHECK-NEXT: issue inexact-footprint
@@ -22,13 +23,13 @@
 // CHECK-LABEL: recognition shifted
 // CHECK: recognize rotating: missing-premise backend=unavailable
 // CHECK: issue index-arithmetic
-// CHECK: rotation family=0 slots=2 stride=1 offset=1 refresh=2 atom=[0,4)
+// CHECK: rotation family=0 slots=2 stride=1 offset=1 refresh=2 atom=unknown
 // CHECK-LABEL: recognition nested
-// CHECK: recognize arithmetic: applicable backend=unavailable
+// CHECK: recognize arithmetic: missing-premise backend=unavailable
 // CHECK: recognize rotating: not-applicable backend=unavailable
 // CHECK-NEXT: issue structured-body
-// CHECK: recognize rotating: applicable backend=unavailable
-// CHECK: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=[0,4)
+// CHECK: recognize rotating: missing-premise backend=unavailable
+// CHECK: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=unknown
 // CHECK-LABEL: recognition unknown_geometry
 // CHECK: recognize rotating: missing-premise backend=unavailable
 // CHECK: issue unknown-geometry
@@ -36,14 +37,14 @@
 // CHECK-LABEL: recognition three_slots
 // CHECK: recognize arithmetic: not-applicable backend=unavailable
 // CHECK: issue arithmetic-period
-// CHECK: recognize rotating: applicable backend=unavailable
-// CHECK: rotation family=0 slots=3 stride=1 offset=0 refresh=3 atom=[0,4)
+// CHECK: recognize rotating: missing-premise backend=unavailable
+// CHECK: rotation family=0 slots=3 stride=1 offset=0 refresh=3 atom=unknown
 // CHECK-LABEL: recognition billion_trips
-// CHECK: recognize rotating: applicable backend=unavailable
-// CHECK: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=[0,4)
+// CHECK: recognize rotating: missing-premise backend=unavailable
+// CHECK: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=unknown
 // CHECK-LABEL: recognition zero_trips
-// CHECK: recognize rotating: applicable backend=unavailable
-// CHECK: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=[0,4)
+// CHECK: recognize rotating: missing-premise backend=unavailable
+// CHECK: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=unknown
 // CHECK: source-unchanged; dependency-analysis-not-run
 
 !tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>

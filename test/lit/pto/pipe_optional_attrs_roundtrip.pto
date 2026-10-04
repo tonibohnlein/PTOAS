@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --roundtrip %s | pto-sync-input-test --roundtrip - | FileCheck %s
+// Missing local_slot_num must remain missing while later clauses roundtrip.
+module attributes {pto.target_arch = "a3"} {
+  func.func @optional_pipe_attrs(%gm: !pto.ptr<f32>, %local: !pto.ptr<f32, vec>) {
+    %none = pto.initialize_l2g2l_pipe {dir_mask = 1, slot_size = 1024, slot_num = 2 } (%gm : !pto.ptr<f32>) -> !pto.pipe
+    %flags = pto.initialize_l2g2l_pipe {dir_mask = 1, slot_size = 1024, slot_num = 2 , flag_base = 0, nosplit = true} (%gm : !pto.ptr<f32>) -> !pto.pipe
+    %nosplit = pto.initialize_l2g2l_pipe {dir_mask = 1, slot_size = 1024, slot_num = 2 , nosplit = false} (%gm : !pto.ptr<f32>) -> !pto.pipe
+    %local_slots = pto.initialize_l2g2l_pipe {dir_mask = 1, slot_size = 1024, slot_num = 2 , local_slot_num = 1, flag_base = 0, nosplit = true} (%gm : !pto.ptr<f32>, %local : !pto.ptr<f32, vec>) -> !pto.pipe
+    return
+  }
+}
+// CHECK: initialize_l2g2l_pipe{{ *}}{dir_mask = 1, slot_size = 1024, slot_num = 2{{ *}}}
+// CHECK: initialize_l2g2l_pipe{{ *}}{dir_mask = 1, slot_size = 1024, slot_num = 2{{ *}}, flag_base = 0, nosplit = true}
+// CHECK: initialize_l2g2l_pipe{{ *}}{dir_mask = 1, slot_size = 1024, slot_num = 2{{ *}}, nosplit = false}
+// CHECK: initialize_l2g2l_pipe{{ *}}{dir_mask = 1, slot_size = 1024, slot_num = 2{{ *}}, local_slot_num = 1, flag_base = 0, nosplit = true}
