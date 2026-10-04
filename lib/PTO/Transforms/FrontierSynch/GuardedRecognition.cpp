@@ -38,6 +38,9 @@ void collect(Region& root, Operation* entry, const PhaseIndex& index, GuardedRec
         const auto work = stack.pop_back_val();
         Operation& op = *work.operation;
         if (auto branch = dyn_cast<scf::IfOp>(op)) {
+            if (index.needsValuePrerequisite(&op)) {
+                output.result.note(RecognitionIssue::AdditionalPrerequisite, &op);
+            }
             const bool available = entry && index.valueAvailable(branch.getCondition(), entry, Boundary::Before);
             output.entryGuardsAvailable &= available;
             if (requireInvariant && !available) {
@@ -86,6 +89,9 @@ GuardedRecognition recognizeGuardedRotating(scf::ForOp loop, const PhaseIndex& i
     GuardedRecognition output;
     if (!detail::checkRotatingDomain(loop, output.result)) {
         return output;
+    }
+    if (index.needsValuePrerequisite(loop)) {
+        output.result.note(RecognitionIssue::AdditionalPrerequisite, loop);
     }
     collect(loop.getRegion(), loop, index, output, true);
     SmallVector<const CompoundInstanceElement*> phases;

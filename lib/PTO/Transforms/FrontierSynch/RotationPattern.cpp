@@ -97,17 +97,4 @@ std::optional<SlotPattern> matchSlot(Value slot, Value induction, uint64_t count
     return pattern;
 }
 
-std::optional<std::pair<uint64_t, uint64_t>> withinSlotRange(const SyncStorageEffect& effect, uint64_t bytes)
-{
-    if (effect.precision != SyncAccessPrecision::Exact || !effect.exactRanges ||
-        effect.ranges.size() != 1 || effect.memory->baseAddresses.size() != 1) {
-        return std::nullopt;
-    }
-    const auto base = effect.memory->baseAddresses.front();
-    const auto& range = effect.ranges.front();
-    if (range.begin < base || range.end < range.begin || range.end - base > bytes) {
-        return std::nullopt;
-    }
-    return std::make_pair(range.begin - base, range.end - base);
-}
 } // namespace mlir::pto::frontiersynch::detail

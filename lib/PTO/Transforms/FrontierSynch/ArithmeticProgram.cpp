@@ -45,25 +45,17 @@ bool supportedBound(scf::ForOp loop, detail::ProgramBuilder& builder, func::Func
 void collect(func::FuncOp function, const PhaseIndex& index, detail::ProgramBuilder& builder)
 {
     auto& output = builder.output;
-    // Mark values transitively derived from a payload result. Such SSA uses
-    // may impose extra completion prerequisites absent from the storage model.
-    DenseSet<Value> payloadValues;
     function.walk<WalkOrder::PreOrder>([&](Operation* op) {
         if (op == function.getOperation()) {
             return;
         }
         auto phases = index.phasesFor(op);
-        const bool derived = llvm::any_of(op->getOperands(), [&](Value value) {
-            return payloadValues.contains(value);
-        });
-        if (derived && (!phases.empty() || op->getNumRegions() || isa<func::ReturnOp, scf::YieldOp>(op))) {
+        const bool controlPrerequisite = op->getNumRegions() && index.needsValuePrerequisite(op);
+        if (controlPrerequisite) {
             output.extraction.note(RecognitionIssue::AdditionalPrerequisite, op);
         }
-        if (derived || !phases.empty()) {
-            payloadValues.insert(op->getResults().begin(), op->getResults().end());
-        }
         if (auto loop = dyn_cast<scf::ForOp>(op)) {
-            detail::checkRotatingDomain(loop, output.extraction);
+            detail::checkRotatingDomain(loop, output.extraction, true);
             if (!supportedBound(loop, builder, function)) {
                 output.extraction.note(RecognitionIssue::LoopDomain, op, true);
             }
@@ -79,9 +71,6 @@ void collect(func::FuncOp function, const PhaseIndex& index, detail::ProgramBuil
                                    scf::YieldOp, func::ReturnOp>(op) &&
             op->getName().getDialectNamespace() != "arith") {
             output.extraction.note(RecognitionIssue::UnmodeledOperation, op);
-        }
-        if (isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp, RecordEventOp, WaitEventOp, BarrierOp>(op)) {
-            output.extraction.note(RecognitionIssue::AdditionalPrerequisite, op);
         }
         if (phases.size() == 1) {
             output.sites.push_back({phases.front(), enclosing(op)});
