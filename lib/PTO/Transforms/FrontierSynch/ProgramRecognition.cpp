@@ -170,6 +170,13 @@ FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const Sync
     if (!function.isDeclaration()) {
         result.arithmetic = recognizeArithmeticProgram(function, index, input, input.accesses(), limits);
     }
+    // Charged numerical inner expansion is a late compact-route candidate;
+    // it never changes the original region tree or the explicit-run route.
+    for (auto& node : result.nodes) {
+        if (!node.unsupportedContext && node.kind == StructureKind::Loop && node.payloadCount) {
+            node.numericTemplate = recognizeNumericTemplate(cast<scf::ForOp>(node.anchor), index, input);
+        }
+    }
     return result;
 }
 StringRef structureName(StructureKind kind) {
