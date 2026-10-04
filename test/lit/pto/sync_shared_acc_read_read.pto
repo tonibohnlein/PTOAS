@@ -1,0 +1,63 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --existing-dump %s | FileCheck %s
+// RUN: pto-sync-input-test --phase-copy-checks %s | FileCheck %s --check-prefix=COPY
+// COPY: phase-copy-check acc_read_read: passed
+// COPY: phase-copy-check disjoint_acc_reads: passed
+// Only read/read overlap on ACC connects the two instructions: matrix output
+// uses a separate accumulator, and the store writes global memory.
+// CHECK-LABEL: func.func @acc_read_read
+// CHECK: pto.tmatmul.acc
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>,
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>,
+// CHECK: pto.tstore
+// CHECK-LABEL: func.func @disjoint_acc_reads
+// CHECK-NOT: pto.set_flag
+// CHECK-NOT: pto.wait_flag
+// CHECK: return
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+!right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a3"} {
+  func.func @acc_read_read(%out: !pto.ptr<f32, gm>) {
+    %zero = arith.constant 0 : i64
+    %other = arith.constant 4096 : i64
+    %read_base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i16 = arith.constant 16 : index
+    %left = pto.alloc_tile addr = %zero : !left
+    %right = pto.alloc_tile addr = %zero : !right
+    %acc = pto.alloc_tile addr = %zero : !acc
+    %result = pto.alloc_tile addr = %other : !acc
+    %stored = pto.alloc_tile addr = %read_base : !acc
+    %view = pto.make_tensor_view %out, shape = [%i16, %i16], strides = [%i16, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%i0, %i0], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf32>
+    pto.tmatmul.acc ins(%acc, %left, %right : !acc, !left, !right) outs(%result : !acc)
+    pto.tstore ins(%stored : !acc) outs(%part : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+  func.func @disjoint_acc_reads(%out: !pto.ptr<f32, gm>) {
+    %zero = arith.constant 0 : i64
+    %other = arith.constant 4096 : i64
+    %read_base = arith.constant 8192 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i16 = arith.constant 16 : index
+    %left = pto.alloc_tile addr = %zero : !left
+    %right = pto.alloc_tile addr = %zero : !right
+    %acc = pto.alloc_tile addr = %zero : !acc
+    %result = pto.alloc_tile addr = %other : !acc
+    %stored = pto.alloc_tile addr = %read_base : !acc
+    %view = pto.make_tensor_view %out, shape = [%i16, %i16], strides = [%i16, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%i0, %i0], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf32>
+    pto.tmatmul.acc ins(%acc, %left, %right : !acc, !left, !right) outs(%result : !acc)
+    pto.tstore ins(%stored : !acc) outs(%part : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+}

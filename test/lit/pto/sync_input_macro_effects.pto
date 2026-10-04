@@ -5,6 +5,8 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --phase-copy-checks %s | FileCheck %s --check-prefix=COPY
+// COPY: phase-copy-check {{.*}}: passed
 // RUN: pto-sync-input-test %s | FileCheck %s
 // RUN: pto-sync-input-test --phase-index %s | FileCheck %s --check-prefix=INDEX
 // INDEX: phase-index pto.tgather anchor-phases=4 control-depth=0

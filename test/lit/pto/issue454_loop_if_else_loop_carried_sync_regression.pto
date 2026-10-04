@@ -1,3 +1,12 @@
+// RUN: pto-sync-input-test --phase-copy-checks %s | FileCheck %s --check-prefix=COPY
+// RUN: pto-sync-input-test --existing-dump %s | FileCheck %s --check-prefix=SYNC-IR
+// COPY: phase-copy-check {{.*}}: passed
+// SYNC-IR: pto.set_flag[<PIPE_FIX>, <PIPE_MTE1>, <EVENT_ID[[BACK:[0-9]+]]>]
+// SYNC-IR: scf.for
+// SYNC-IR: pto.wait_flag[<PIPE_FIX>, <PIPE_MTE1>, <EVENT_ID[[BACK]]>]
+// SYNC-IR: pto.wait_flag[<PIPE_M>, <PIPE_FIX>,
+// SYNC-IR-NEXT: scf.if
+// SYNC-IR: pto.set_flag[<PIPE_FIX>, <PIPE_MTE1>, <EVENT_ID[[BACK]]>]
 // RUN: ptoas --pto-arch=a3 --enable-insert-sync %s | FileCheck %s
 //
 // Regression guard for loop-carried sync under if/else in loop body:
