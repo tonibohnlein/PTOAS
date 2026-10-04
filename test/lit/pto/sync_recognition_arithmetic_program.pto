@@ -8,8 +8,8 @@
 // RUN: pto-sync-input-test --arithmetic %s | FileCheck %s
 // RUN: %python %S/Inputs/check_arithmetic_program.py pto-sync-input-test %s
 // CHECK-LABEL: recognition nested_reset
-// CHECK: recognize arithmetic: missing-premise
-// CHECK: arithmetic sites=0 parameters=0
+// CHECK: recognize arithmetic: applicable
+// CHECK: arithmetic sites=3 parameters=2
 // CHECK-LABEL: recognition triangular
 // CHECK: recognize arithmetic: applicable
 // CHECK: arithmetic sites=2 parameters=1

@@ -227,13 +227,43 @@ interpreted as whole-program acceptance. The per-function JSON includes access
 precision, descriptor/access-map presence and concrete-range availability to
 help distinguish missing effects from limitations of a recognizer's adapter.
 
-The pass-based structural audit preserved all 18,100 shared phases and 37,524
-effects across 784 modules (851 functions). The independent checker compared
-each result with the original MLIR, including source order, parentage, loop and
-branch ancestry, empty arms and shared-record ownership. The focused suite
-passed 67 RUN checks, with six full-CLI checks skipped; a separate may-alias
-invocation also passed. This establishes structural correctness on these inputs
-and input preservation, not broad exact-route coverage: no payload-bearing rotating
-candidate was accepted, and both arithmetic-accepted corpus functions had no
-shared payload phases. The reports expose the remaining access-precision,
-view-adapter, loop-normalization and control-support gaps.
+### Recognizer contracts and validation
+
+| Recognizer | Current accepted representation | Limits kept explicit |
+|---|---|---|
+| Explicit | Adjacent original leaves with exact materialized physical ranges | No unresolved control, multiple phases or unrepresented value prerequisites |
+| Finite guarded | Finite if/else tree with exact materialized ranges and guard DAG | Entry guard availability is reported separately; it is not an endpoint-code certificate |
+| Rotating | Fixed loop body, disjoint known slot families, fixed within-slot intervals and proved selectors | Constant nonnegative lower bound and positive step; no carried state or nested body |
+| Guarded rotating | The rotating contract with invariant branch participation | Conditions must be available before the loop; varying guards require another route |
+| Arithmetic bundle | Complete exact primitive relations in the configured difference, octagon or bounded-coefficient class | Every piece, parameter, residue and coefficient is checked; no backend is run |
+| Arithmetic IR producer | Canonical counted nests, fixed exact ranges or recognized residue-selected ranges | The current producer is narrower than the bundle checker: zero lower bounds, unit steps, fixed period at most two, dimension at most eight, no unresolved control |
+
+Rotating recognition now consumes Step 0's exact symbolic maps. It subtracts
+the selected slot's shared physical origin and requires the remaining byte map
+and extents to be independent of iteration/parameter symbols. The shared range
+materializer then supplies the interval, preserving fixed subview offsets.
+Multiple pieces can be merged only when their union is contiguous; gaps are
+never replaced by their bounding range. This adds no instruction-specific
+footprint rules. `unsupported-slot-footprint` distinguishes a missing fixed-slot
+representation from an inexact access declaration.
+
+Loop normalization retains the original IR and expresses the slot pattern in
+the iteration ordinal `j`, where `iv = lower + step*j`. Products are widened
+before modular reduction. Selector arithmetic that lacks a proof under machine
+semantics still reports `index-arithmetic`. The arithmetic producer retains its
+separate canonical-loop restriction.
+
+All routes share the phase index's detection of payload-result prerequisites.
+An unrepresented SSA dependency, including one used by control or yielded from
+a region, cannot be silently discarded by an otherwise exact storage route.
+Such cases report `additional-prerequisite`; this does not manufacture a storage
+conflict or claim that the required prerequisite is impossible to support.
+
+Regression checks cover positive and negative cases for every recognizer,
+including symbolic rotation, views, invariant/varying guards, physical aliasing,
+changing within-slot offsets and additional scalar prerequisites. Arithmetic
+exports are evaluated against independently enumerated finite executions of
+nested reset, triangular and sibling-loop examples, including zero and negative
+trip bounds. Integer-row normalization is also checked against direct integer
+evaluation. Structural verification continues to compare against original MLIR
+and the Step 0 corpus baseline. Full-CLI and device validation are separate.

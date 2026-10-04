@@ -13,6 +13,7 @@
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 
 namespace mlir::pto::frontiersynch {
 enum class Boundary { Before, After };
@@ -21,7 +22,8 @@ class PhaseIndex {
 public:
     // Function, SyncInput and records must outlive the index. Preserve original
     // payload anchors and region/control structure; rebuild if those change.
-    // Inserting commands into existing blocks does not change phase membership.
+    // Phase membership survives insertion; rebuild prerequisite/availability
+    // information whenever operations or their SSA uses change.
     // Build validates every anchor and publishes no partial index on failure.
     LogicalResult build(func::FuncOp source, const SyncInput& input);
     ArrayRef<const CompoundInstanceElement*> phasesFor(Operation* anchor) const;
@@ -35,6 +37,10 @@ public:
     // produce failure, rather than being silently flattened into a trace.
     FailureOr<SmallVector<const CompoundInstanceElement*>> explicitSequence(Block& block) const;
 
+    // A payload result flows into a payload/control/interface operation. These
+    // routes must account for its completion prerequisite, beyond storage.
+    bool needsValuePrerequisite(Operation* operation) const;
+
     // SSA availability at an operation boundary. This says nothing about a
     // legal internal macro cut, pipe completion or synchronization visibility.
     bool valueAvailable(Value value, Operation* anchor, Boundary boundary) const;
@@ -44,6 +50,7 @@ private:
     func::FuncOp function;
     DominanceInfo dominance;
     DenseMap<Operation*, SmallVector<const CompoundInstanceElement*>> anchorPhases;
+    DenseSet<Operation*> valuePrerequisites;
 };
 } // namespace mlir::pto::frontiersynch
 #endif

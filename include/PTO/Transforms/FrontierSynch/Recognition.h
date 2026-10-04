@@ -16,7 +16,7 @@ namespace mlir::pto::frontiersynch {
 enum class RecognitionState { Applicable, NotApplicable, MissingPremise };
 enum class RecognitionIssue {
     StructuredBody, MultiplePhases, UnmodeledOperation, UnknownPipe,
-    InexactFootprint, SymbolicGeometry, UnknownGeometry, LoopDomain, LoopCarriedState,
+    InexactFootprint, WithinSlotFootprint, SymbolicGeometry, UnknownGeometry, LoopDomain, LoopCarriedState,
     SlotExpression, IndexArithmetic, CommonStride, OverlappingFamilies,
     AliasedOperand, UnsupportedView, GuardInvariance, UnsupportedControl,
     ArithmeticDimension, ArithmeticPeriod, ArithmeticPipeLimit, ArithmeticConfiguration, AdditionalPrerequisite
@@ -29,10 +29,11 @@ struct RotatingAccess {
     std::size_t effect = 0;
     Value family;
     uint64_t slots = 1;
+    // Slot = (stride*j + offset) mod slots for iteration ordinal j.
     uint64_t stride = 0;
     uint64_t offset = 0;
     uint64_t refresh = 1;
-    // Exact within-slot scalar bytes, when proved. Empty for unresolved effects.
+    // Exact contiguous within-slot bytes, when proved. Empty for unresolved effects.
     std::optional<std::pair<uint64_t, uint64_t>> atom;
     std::optional<std::size_t> guard;
 };
