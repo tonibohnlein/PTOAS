@@ -51,7 +51,7 @@ void rotating(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEffe
         builder.output.extraction.note(RecognitionIssue::ArithmeticPeriod, anchor, true);
         return;
     }
-    auto slots = mlir::pto::detail::physicalSlotRanges(memory);
+    auto slots = mlir::pto::detail::physicalSlotRanges(input, memory);
     if (slots.size() != count) {
         builder.output.extraction.note(RecognitionIssue::UnknownGeometry, anchor);
         return;

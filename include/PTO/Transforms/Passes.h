@@ -62,6 +62,7 @@ std::unique_ptr<Pass> createPTOVerifyTFreePass();
 
 // Creates a pass for ...
 std::unique_ptr<Pass> createPTOInsertSyncPass();
+std::unique_ptr<Pass> createPTOInsertSyncPass(const PTOInsertSyncOptions &options);
 std::unique_ptr<Pass> createPTOInjectBarrierAllSyncPass();
 std::unique_ptr<Pass>
 createPTOBufidSyncPass(const PTOBufidSyncOptions &options = {});

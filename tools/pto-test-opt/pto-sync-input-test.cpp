@@ -20,6 +20,7 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
 void dumpArithmeticJSON(func::FuncOp function, const pto::frontiersynch::ArithmeticProgram& program);
+int runSyncAliasChecks(func::FuncOp function, const pto::SyncInput &input);
 namespace {
 LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &input) {
   pto::SyncStorageEffects storage;
@@ -52,6 +53,18 @@ LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &in
       llvm::outs() << "  overlap " << queries[i] << "," << queries[i + 1] << "="
                    << storage.mayOverlap(static_cast<std::size_t>(queries[i]),
                                          static_cast<std::size_t>(queries[i + 1])) << "\n";
+    }
+  }
+  if (auto queries = function->getAttrOfType<DenseI64ArrayAttr>("test.conflict")) {
+    if (queries.size() % 2 != 0) {
+      return failure();
+    }
+    for (int64_t i = 0; i < queries.size(); i += 2) {
+      if (queries[i] < 0 || queries[i + 1] < 0) {
+        return failure();
+      }
+      llvm::outs() << "  conflict " << queries[i] << "," << queries[i + 1] << "="
+                   << storage.mayConflict(queries[i], queries[i + 1]) << "\n";
     }
   }
   // Rebuilding must neither accumulate cells nor retain prior phase mappings.
@@ -220,6 +233,20 @@ std::string render(Operation *op) {
 }
 }
 int main(int argc, char **argv) {
+  auto policy = pto::GMAliasPolicy::MayNotAlias;
+  if (argc > 1 && StringRef(argv[1]).starts_with("--gm-alias=")) {
+    auto name = StringRef(argv[1]).drop_front(StringRef("--gm-alias=").size());
+    if (name != "may-alias" && name != "may-not-alias") {
+      llvm::errs() << "unknown GM alias policy; expected may-alias or may-not-alias\n";
+      return 1;
+    }
+    policy = name == "may-alias" ? pto::GMAliasPolicy::MayAlias : pto::GMAliasPolicy::MayNotAlias;
+    for (int i = 1; i + 1 < argc; ++i) {
+      argv[i] = argv[i + 1];
+    }
+    --argc;
+  }
+  const bool aliasChecks = argc == 3 && StringRef(argv[1]) == "--alias-contract";
   const bool expectFailure = argc == 3 && StringRef(argv[1]) == "--expect-failure";
   const bool capabilities = argc == 3 && StringRef(argv[1]) == "--capabilities";
   const bool phaseIndex = argc == 3 && StringRef(argv[1]) == "--phase-index";
@@ -227,9 +254,10 @@ int main(int argc, char **argv) {
   const bool arithmetic = argc == 3 && StringRef(argv[1]) == "--arithmetic";
   const bool recognition = argc == 3 && StringRef(argv[1]) == "--recognize";
   if (argc != 2 && !arithmetic && !recognition && !expectFailure &&
-      !capabilities && !phaseIndex && !storageEffects) {
+      !capabilities && !phaseIndex && !storageEffects && !aliasChecks) {
     llvm::errs() << "usage: pto-sync-input-test "
-                 << "[--expect-failure|--capabilities|--phase-index|--storage-effects|"
+                 << "[--gm-alias=may-alias|may-not-alias] "
+                 << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
                  "--recognize|--arithmetic] input.pto\n";
     return 1;
   }
@@ -237,7 +265,8 @@ int main(int argc, char **argv) {
   dialects.insert<pto::PTODialect, func::FuncDialect, arith::ArithDialect, scf::SCFDialect>();
   MLIRContext context(dialects);
   context.disableMultithreading();
-  const bool hasOption = expectFailure || capabilities || phaseIndex || storageEffects || recognition || arithmetic;
+  const bool hasOption = expectFailure || capabilities || phaseIndex || storageEffects ||
+                         recognition || arithmetic || aliasChecks;
   const auto filename = argv[hasOption ? 2 : 1];
   auto module = parseSourceFile<ModuleOp>(filename, &context);
   if (!module || failed(verify(*module))) {
@@ -247,7 +276,7 @@ int main(int argc, char **argv) {
     dumpCapabilities();
   }
   const auto before = render(module->getOperation());
-  pto::SyncInput input;
+  pto::SyncInput input(policy);
   for (auto function : module->getOps<func::FuncOp>()) {
     const bool translated = succeeded(input.build(function));
     if (expectFailure) {
@@ -258,6 +287,9 @@ int main(int argc, char **argv) {
       continue;
     }
     if (!translated) {
+      return 1;
+    }
+    if (aliasChecks && runSyncAliasChecks(function, input)) {
       return 1;
     }
     if ((recognition || arithmetic) && failed(recognize(function, input, arithmetic))) {

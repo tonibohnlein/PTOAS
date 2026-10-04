@@ -60,6 +60,9 @@ static bool hasGatherScatterLikeOps(func::FuncOp func) {
 }
 
 struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSyncPass> {
+  PTOInsertSyncPass() = default;
+  explicit PTOInsertSyncPass(const PTOInsertSyncOptions &options) { gmAlias = options.gmAlias; }
+
   static bool shouldSkip(func::FuncOp func) {
     // Backend-partitioned PTODSL containers carry private func declarations
     // in the outer child module to model cross-child calls. Those declaration
@@ -89,16 +92,21 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
+    if (gmAlias != "may-alias" && gmAlias != "may-not-alias") {
+      func.emitError("unknown GM alias policy; expected may-alias or may-not-alias");
+      signalPassFailure();
+      return;
+    }
     if (shouldSkip(func)) {
       return;
     }
 
-    SyncInput input;
+    SyncInput input(gmAlias == "may-alias" ? GMAliasPolicy::MayAlias : GMAliasPolicy::MayNotAlias);
     if (failed(input.build(func))) {
       signalPassFailure();
       return;
     }
-    MemoryDependentAnalyzer memAnalyzer;
+    auto &memAnalyzer = input.memory();
     auto &syncIR = input.ir();
     SyncOperations syncOpsStorage;
 
@@ -159,4 +167,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
 
 std::unique_ptr<Pass> mlir::pto::createPTOInsertSyncPass() {
   return std::make_unique<PTOInsertSyncPass>();
+}
+
+std::unique_ptr<Pass> mlir::pto::createPTOInsertSyncPass(const PTOInsertSyncOptions &options) {
+  return std::make_unique<PTOInsertSyncPass>(options);
 }

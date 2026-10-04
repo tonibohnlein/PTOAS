@@ -51,11 +51,15 @@ public:
     // All supplied effects have exact byte sets; this is not a control/alias
     // certificate for effects omitted by the input producer.
     bool allAccessesExact() const;
-    // Unknown coordinates may alias every access in the same memory space.
+    // Unknown local coordinates may alias every access in the same memory space.
+    // GM uses the shared root-alias policy, without needing absolute addresses.
     // A positive answer is not proof of conflict. Invalid IDs are conservative.
     bool mayOverlap(std::size_t first, std::size_t second) const;
+    // Read/read pairs need no ordering. Pipe and space come from shared phases.
+    bool mayConflict(std::size_t first, std::size_t second) const;
 
 private:
+    MemoryDependentAnalyzer analyzer;
     SmallVector<SyncStorageEffect> records;
     SmallVector<SyncStorageCell> partition;
     DenseMap<const CompoundInstanceElement*, SmallVector<std::size_t>> phaseEffects;

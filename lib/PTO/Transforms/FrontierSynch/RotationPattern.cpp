@@ -113,7 +113,9 @@ std::optional<std::pair<uint64_t, uint64_t>> scalarAtom(const SyncStorageEffect&
     auto type = dyn_cast<TileBufType>(operand.getType());
     auto number = integer(offset);
     if (!type || operand != effect.memory->baseBuffer || !number || *number < 0 ||
-        !type.getElementType().isIntOrFloat()) {
+        !type.getElementType().isIntOrFloat() ||
+        type.getSLayoutValueI32() != static_cast<int32_t>(SLayout::NoneBox) ||
+        type.getCompactModeI32() == static_cast<int32_t>(CompactMode::RowPlusOne)) {
         return std::nullopt;
     }
     const auto bits = type.getElementType().getIntOrFloatBitWidth();
