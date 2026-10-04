@@ -409,3 +409,56 @@ separately: SET observes prior completions without gating later payload starts;
 WAIT gates later starts without waiting for prior payload completions. Under
 same-pipe adjacency, the resulting payload-event closure equals the selected
 required order. For a nonadjacent local demand, the test checks coverage only.
+
+
+## Periodic directed budgets and cyclic offsets
+
+The numerical periodic result also supplies exact resource budgets for its
+canonical direct handoffs, under the draft's command and local-adjacency
+premises. The allocation summary groups retained cross-pipe records by direction
+and orders each group by source type. It verifies unique source and target
+phases and strict target ordering, including the wrap to the next period.
+These checks establish that truncating the payload execution retains a prefix
+of that direction's communication sequence. Same-pipe records consume no event
+IDs and are not included in these groups.
+
+For each phase, completion-to-start thresholds give the first later handoff
+whose publication is ordered after its consumption. The maximum phase distance
+is the exact uniform budget; absence of every such return path is represented
+as infinity. An exact finite-prefix query counts present handoffs and clips
+the phase lifetimes, handling zero trips and partial final periods without
+unfolding. Infinity is separate from an arithmetic failure. Entire candidate
+calculations use widened integers before minimization and subtraction; only an
+unrepresentable final finite result fails. No partial budget summary is
+published on failure.
+
+The builder makes `O(sum c_direction^2) <= O(m^2)` threshold queries.
+Hash grouping is expected linear; per-direction sorting is bounded by the
+same quadratic sum. Stored summaries are linear in the retained cross-pipe
+records. A finite-prefix budget takes linear work in that direction's phases;
+a uniform capacity comparison is constant work. Integer bit costs remain
+separate from these arithmetic-operation counts.
+
+For capacity `E > 0`, a handoff of phase `r` in source period `n` has cyclic
+local offset `(c*n+r) mod E`, evaluated with widened arithmetic. Capacity
+sufficiency is a separate query: evaluating an offset does not establish that
+reuse is safe. A zero-capacity direction is sufficient only for an empty finite
+handoff sequence; no modulo operation accepts zero capacity. The logical
+consumer reconstructs the source period using the existing endpoint identity.
+
+These are per-direction budget and offset recipes, not hardware event IDs.
+They assume no device capacity, perform no new hardware qualification, and do
+not prove that two directions mapped to overlapping physical resources can
+reuse those resources concurrently. A physical resource assignment still needs
+its own compatibility and capacity checks. No PTO commands, physical mapping,
+scarcity repair or new ordering is emitted here. The summary is relative to the
+canonical direct plan on the supplied covers, with no exceptional entry or
+interface paths that supply additional reuse.
+
+The independent finite oracle enumerates handoffs from all-conflict DAG covers,
+finds their first causally reusable successors, measures interval overlap, and
+checks every same-offset pair. Random quotient tests certify these abstract
+reuse-order formulas; physical canonical-plan claims additionally retain the
+model's local-adjacency premise. Tests also cover infinite uniform budgets with
+finite invocation budgets, large prefixes, widened offsets, malformed endpoint
+ordering, and representable minima with larger intermediate arithmetic.

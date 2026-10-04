@@ -15,6 +15,7 @@
 namespace fs = mlir::pto::frontiersynch;
 llvm::json::Object dumpPeriodicAnalysis(const fs::PeriodicAnalysis& result);
 bool appendLogicalChecks(const llvm::json::Object&, const fs::PeriodicAnalysis&, llvm::json::Object&);
+bool appendAllocationChecks(const llvm::json::Object&, const fs::PeriodicAnalysis&, llvm::json::Object&);
 namespace {
 std::optional<uint64_t> number(const llvm::json::Object& object, llvm::StringRef name)
 {
@@ -264,7 +265,7 @@ bool graphCase(const llvm::json::Object& input, llvm::json::Object& output)
     }
     if (analysis.error.empty()) {
         return queryTables(analysis, prefix, output) && rankQueries(input, analysis, output) &&
-            appendLogicalChecks(input, analysis, output);
+            appendLogicalChecks(input, analysis, output) && appendAllocationChecks(input, analysis, output);
     }
     return true;
 }
