@@ -12,6 +12,7 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
+llvm::json::Object dumpPeriodicAnalysis(const fs::PeriodicAnalysis& result);
 llvm::json::Object dumpNumericTemplate(const fs::NumericTemplate& result, AsmState& state);
 namespace {
 std::string valueName(Value value, AsmState& state) {
@@ -74,7 +75,11 @@ LogicalResult dumpProgramRecognition(func::FuncOp function, const pto::SyncInput
             attempts.push_back(std::move(item));
         }
         if (node.numericTemplate) {
-            attempts.push_back(dumpNumericTemplate(*node.numericTemplate, state));
+            auto candidate = dumpNumericTemplate(*node.numericTemplate, state);
+            if (node.periodicAnalysis) {
+                candidate["analysis"] = dumpPeriodicAnalysis(*node.periodicAnalysis);
+            }
+            attempts.push_back(std::move(candidate));
         }
         llvm::json::Object object{{"id", id}, {"kind", fs::structureName(node.kind)},
             {"parent", node.parent ? static_cast<int64_t>(*node.parent) : -1},

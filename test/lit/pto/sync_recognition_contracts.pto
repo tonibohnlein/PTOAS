@@ -39,7 +39,7 @@
 // CHECK-LABEL: recognition explicit_exact
 // CHECK: recognize explicit: applicable
 // CHECK: recognize finite-guarded: applicable
-// CHECK: source-unchanged; dependency-analysis-not-run
+// CHECK: source-unchanged; synchronization-insertion-not-run
 !tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 !view = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 !ring = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=2>
