@@ -15,7 +15,7 @@
 #define MLIR_DIALECT_PTO_TRANSFORMS_INSERTSYNCANALYSIS_H
  
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
-#include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
+#include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include <array>
  
@@ -39,12 +39,12 @@ using SyncRecordList = std::array<SyncRecord, kMaxMultiBufferCount>;
 class InsertSyncAnalysis {
 public:
   InsertSyncAnalysis(SyncIRs &syncIR,
-                     MemoryDependentAnalyzer &memDepAnalyzer,
+                     const SyncStorageEffects &accesses,
                      SyncOperations &syncOperations, func::FuncOp func,
                      SyncAnalysisMode syncAnalysisMode =
                          SyncAnalysisMode::NORMALSYNC)
       : syncIR_(syncIR), 
-        memAnalyzer_(memDepAnalyzer),
+        accesses_(accesses),
         syncOperations_(syncOperations), 
         func_(func),
         syncAnalysisMode_(syncAnalysisMode) {}
@@ -58,7 +58,7 @@ public:
 private:
   // --- Data Members ---
   SyncIRs &syncIR_;
-  MemoryDependentAnalyzer &memAnalyzer_;
+  const SyncStorageEffects &accesses_;
   SyncOperations &syncOperations_;
   func::FuncOp func_;
   SyncAnalysisMode syncAnalysisMode_;
