@@ -11,11 +11,15 @@
 #include "PTO/IR/PTOAccessRegion.h"
 #include "../../lib/PTO/Transforms/InsertSync/SyncEffectRanges.h"
 #include "llvm/Support/raw_ostream.h"
+#include "SyncScalarEvolutionChecks.h"
 using namespace mlir;
 using namespace mlir::pto;
 
 int runSyncRegionContractChecks(func::FuncOp function, const SyncInput& input)
 {
+    if (!checkScalarEvolution(function)) {
+        return 1;
+    }
     SyncStorageEffects storage;
     if (failed(storage.build(input))) {
         return 1;

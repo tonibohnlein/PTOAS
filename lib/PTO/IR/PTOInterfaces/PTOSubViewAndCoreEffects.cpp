@@ -143,11 +143,15 @@ static void addEffect(
   }
 }
 
+#include "PTOMatrixAccessEffects.cpp"
+
 // === TLoadOp ===
 // Read: src, Write: dst
 // 针对 OpOperand* 的重载
 void TLoadOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  // [Fix] 单个操作数，直接取地址
+  if (addMatrixLoadAccessEffects(*this, effects)) {
+    return;
+  }
   addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }
@@ -169,6 +173,9 @@ void TAbsOp::getEffects(
 // === TStoreOp ===
 // Read: src and old dst for AtomicAdd; Write: dst (GM).
 void TStoreOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  if (addMatrixStoreAccessEffects(*this, effects)) {
+    return;
+  }
   if (getAtomicType() == AtomicType::AtomicAdd) {
     addEffect(effects, &getDstMutable(), MemoryEffects::Read::get());
   }

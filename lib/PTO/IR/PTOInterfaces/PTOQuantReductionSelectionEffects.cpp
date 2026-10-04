@@ -228,7 +228,10 @@ void TPrintOp::getEffects(
 // === TMatmulOp ===
 // Read: lhs, rhs, (bias), Write: dst
 void TMatmulOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  // Singleton -> 直接取地址
+  if (getAccPhase() == AccPhase::Unspecified &&
+      addMatrixMultiplyAccessEffects(effects, getLhsMutable(), getRhsMutable(), getDstMutable(), nullptr)) {
+    return;
+  }
   addEffect(effects, &getLhsMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getRhsMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
@@ -237,6 +240,10 @@ void TMatmulOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEff
 // === TMatmulAccOp ===
 // Read: acc_in, lhs, rhs, Write: dst
 void TMatmulAccOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  if (getAccPhase() == AccPhase::Unspecified &&
+      addMatrixMultiplyAccessEffects(effects, getLhsMutable(), getRhsMutable(), getDstMutable(), &getAccInMutable())) {
+    return;
+  }
   addEffect(effects, &getAccInMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getLhsMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getRhsMutable(), MemoryEffects::Read::get());
