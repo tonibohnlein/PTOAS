@@ -11,7 +11,6 @@
 #include "RecognitionInternal.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
-#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "llvm/ADT/DenseSet.h"
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -33,8 +32,7 @@ bool supportedDomain(scf::ForOp loop, detail::ProgramBuilder& builder)
                            matchPattern(loop.getStep(), m_ConstantInt(&step));
     const bool positive = constants && lower.isSignedIntN(64) && step.isSignedIntN(64) &&
                           lower.getSExtValue() >= 0 && step.getSExtValue() > 0;
-    const bool supported = positive && builder.limits.period % step.getSExtValue() == 0 &&
-                           loop.getNumRegionIterArgs() == 0;
+    const bool supported = positive && builder.limits.period % step.getSExtValue() == 0;
     if (!supported) {
         return false;
     }
@@ -56,6 +54,16 @@ void collect(func::FuncOp function, const PhaseIndex& index, detail::ProgramBuil
             if (!supportedDomain(loop, builder)) {
                 output.extraction.note(RecognitionIssue::LoopDomain, op, true);
             }
+            auto bodyLoops = enclosing(loop);
+            bodyLoops.push_back(loop);
+            // Retain the original recurrence. The shared scalar semantics must
+            // prove every carried argument as a function of these coordinates;
+            // unrecognized state never becomes a free execution parameter.
+            for (Value argument : loop.getRegionIterArgs()) {
+                if (!builder.prepareValue(argument, {nullptr, bodyLoops})) {
+                    output.extraction.note(RecognitionIssue::LoopCarriedState, op, true);
+                }
+            }
             return;
         }
         if (op->getNumRegions()) {
@@ -63,12 +71,9 @@ void collect(func::FuncOp function, const PhaseIndex& index, detail::ProgramBuil
             return;
         }
         detail::inspectLeaf(*op, index, output.extraction);
-        // Only these structural/value operations have no separate prerequisites.
-        if (phases.empty() && !isa<AllocTileOp, AllocMultiTileOp, MultiTileGetOp, SubViewOp,
-                                   scf::YieldOp, func::ReturnOp>(op) &&
-            !isa<ViewLikeOpInterface>(op) && op->getName().getDialectNamespace() != "arith") {
-            output.extraction.note(RecognitionIssue::UnmodeledOperation, op);
-        }
+        // The shared leaf contract already distinguishes metadata from payloads
+        // and unknown effects. Any metadata used by a domain or footprint must
+        // additionally pass that consumer's exact scalar/geometry extraction.
         if (phases.size() == 1) {
             output.sites.push_back({phases.front(), enclosing(op)});
         }

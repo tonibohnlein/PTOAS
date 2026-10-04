@@ -12,6 +12,8 @@ import shutil
 import subprocess
 import sys
 
+from arithmetic_membership import membership_index
+
 executable = shutil.which(sys.argv[1])
 if executable is None:
     raise RuntimeError("arithmetic test executable unavailable")
@@ -47,31 +49,7 @@ def explicit_trace(name, bounds):
     return []  # empty_minimum has a negative upper bound.
 
 
-def membership_index(document):
-    grouped = {}
-    for relation in document["relations"]:
-        key = (relation["kind"], relation["source"], relation["target"],
-               relation["source_event"], relation["target_event"])
-        for piece in relation["pieces"]:
-            if not piece["empty"]:
-                grouped.setdefault((key, tuple(piece["residues"])), []).append(piece["rows"])
-    period = document["period"]
 
-    def contains(key, values):
-        residues = tuple(x % period for x in values)
-        quotients = tuple(x // period for x in values)
-        for rows in grouped.get((key, residues), []):
-            valid = True
-            for row in rows:
-                assert len(row["coefficients"]) == len(values)
-                value = row["constant"] + sum(a * b for a, b in zip(row["coefficients"], quotients))
-                if not (value == 0 if row["equality"] else value >= 0):
-                    valid = False
-                    break
-            if valid:
-                return True
-        return False
-    return contains
 
 
 checks = 0
