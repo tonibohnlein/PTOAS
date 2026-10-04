@@ -1,0 +1,58 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// Shared scalar declarations make finite guarded effects exact. Rotating
+// recognition still requires its own within-slot representation.
+// RUN: %python %S/Inputs/check_program_recognition.py pto-sync-input-test %s
+// RUN: %python %S/Inputs/check_program_recognition.py pto-sync-input-test %S/sync_recognition_guarded.pto guarded
+// RUN: %python %S/Inputs/check_program_recognition.py pto-sync-input-test %S/sync_recognition_arithmetic_program.pto arithmetic
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=2>
+module {
+  func.func @structure(%n: index, %k: index, %g: i1) {
+    %zero = arith.constant 0 : i64
+    %base = arith.constant 4096 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+    %before = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    scf.for %t = %i0 to %n step %i1 {
+      scf.for %i = %i0 to %k step %i1 {
+        %slot = arith.remui %i, %i2 : index
+        %selected = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+        pto.tsetval ins(%i0, %one : index, f32) outs(%selected : !tile)
+        %value = pto.tgetval ins(%selected, %i0 : !tile, index) outs : f32
+      }
+      %late = arith.cmpi eq, %t, %i0 : index
+      scf.if %g {
+        scf.if %late {
+          pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+        }
+      } else {
+        %other = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+      }
+    }
+    %after = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    return
+  }
+  func.func @fixed_storage_loop(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %i0 to %n step %i1 {
+      pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+    }
+    return
+  }
+  func.func @empty() { return }
+}

@@ -23,6 +23,22 @@
 
 include "mlir/Pass/PassBase.td"
 
+// Initial analysis stage of the frontier synchronization algorithm.
+def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "func::FuncOp"> {
+  let summary = "Build shared effects and structured frontier analysis";
+  let description = [{
+    Preserves original MLIR regions and links shared physical effects to
+    structural recognition results. This analysis stage does not insert
+    synchronization and is not a complete synchronization constructor.
+  }];
+  let constructor = "mlir::pto::createPTOFrontierAnalysisPass()";
+  let options = [
+    Option<"gmAlias", "gm-alias", "std::string", "\"may-not-alias\"",
+      "Distinct GM root assumption: may-not-alias or may-alias">
+  ];
+  let dependentDialects = ["mlir::pto::PTODialect", "mlir::scf::SCFDialect"];
+}
+
 // Define PTOInsertSync Pass
 def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
   let summary = "Insert synchronization flags for PTO dialect";

@@ -143,6 +143,8 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/SyncAccessRegion.cpp
   InsertSync/SyncRegionOverlap.cpp
   InsertSync/SyncEffectRanges.cpp
+  FrontierSynch/FrontierAnalysis.cpp
+  FrontierSynch/ProgramRecognition.cpp
   FrontierSynch/PhaseIndex.cpp
   FrontierSynch/Recognition.cpp
   FrontierSynch/GuardedRecognition.cpp

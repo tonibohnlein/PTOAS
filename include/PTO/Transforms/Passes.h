@@ -47,6 +47,9 @@ std::unique_ptr<Pass> createVPTOSplitCVModulePass();
 std::unique_ptr<Pass> createVPTONormalizeContainerPass();
 std::unique_ptr<Pass> createPTOVerifyTFreePass();
 
+std::unique_ptr<Pass> createPTOFrontierAnalysisPass();
+std::unique_ptr<Pass> createPTOFrontierAnalysisPass(const PTOFrontierAnalysisOptions &options);
+
 // Creates a pass for ...
 std::unique_ptr<Pass> createPTOInsertSyncPass();
 std::unique_ptr<Pass> createPTOInsertSyncPass(const PTOInsertSyncOptions &options);
