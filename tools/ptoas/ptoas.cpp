@@ -146,6 +146,12 @@ llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
                                             llvm::cl::init(false));
 
+llvm::cl::opt<std::string> insertSyncGMAlias(
+    "insert-sync-gm-alias",
+    llvm::cl::desc("Distinct GM root assumption for automatic synchronization: "
+                   "may-not-alias (legacy default) or may-alias"),
+    llvm::cl::init("may-not-alias"));
+
 llvm::cl::opt<bool> enableVmiFastmath(
     "vmi-fastmath",
     llvm::cl::desc("Enable VMI conversion fast paths that may change NaN "

@@ -107,7 +107,7 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
     }
     auto found = families.find(memory.rootBuffer);
     if (found == families.end()) {
-        auto slots = mlir::pto::detail::physicalSlotRanges(memory);
+        auto slots = mlir::pto::detail::physicalSlotRanges(input, memory);
         found = families.try_emplace(memory.rootBuffer, Family{std::nullopt, std::move(slots)}).first;
     }
     auto& family = found->second;

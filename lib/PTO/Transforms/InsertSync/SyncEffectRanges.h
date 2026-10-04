@@ -11,7 +11,7 @@
 namespace mlir::pto::detail {
 // Requires a nonnull root. Physical extents stay in slot order, without union
 // normalization. Empty means unknown.
-SmallVector<SyncStorageCell> physicalSlotRanges(const BaseMemInfo& memory);
+SmallVector<SyncStorageCell> physicalSlotRanges(const SyncInput& input, const BaseMemInfo& memory);
 void resolveEffectRanges(const SyncInput& input, SyncStorageEffect& effect);
 } // namespace mlir::pto::detail
 #endif

@@ -1,8 +1,9 @@
 # Synchronization effect precision
 
 `SyncStorageEffects` consumes the instruction phases and read/write records
-owned by `SyncInput`. It resolves physical geometry and partitions known
-ranges. It does not generate demands or change the original program.
+owned by `SyncInput`. It consumes physical geometry from the shared translator and partitions known
+ranges. Read/write modes and pipe assignments use the same interfaces as InsertSync;
+this layer has no independent instruction-support whitelist. It does not generate demands or change the original program.
 
 ## Contract
 
@@ -16,11 +17,11 @@ are used. A failed build exposes no partial result.
 |---|---|---|
 | Exact | The listed byte set equals the accessed set. | Track exact dependencies; an exact write overwrites every listed cell. |
 | UpperBound | The accessed bytes are contained in the listed set. | Rule out disjoint accesses; retain possible conflicts. Do not discard old writers or readers because of this write. |
-| Unknown | No physical byte bound is established. | Retain possible aliasing with all accesses in the same memory space. An unknown space may alias any space. |
+| Unknown | No absolute physical byte bound is established. | Retain possible overlap under the shared alias policy. Different known spaces remain disjoint; an unknown space may alias any space. |
 
 These statements assume valid accesses within the operand's storage, including
 in-bounds dynamic view offsets and slot selectors. Overflowing address/extent
-computations yield unknown geometry. General input validation remains an
+computations are rejected by extraction or retained as unknown geometry. General input validation remains an
 IR/front-end responsibility.
 
 Precision describes the **supplied records**. `allAccessesExact()` does not
@@ -35,21 +36,42 @@ Consequently, a large allocation followed by two smaller allocations over its
 address range shares cells with both of them. Allocation reuse does not start
 a new storage history.
 
-The initial implementation resolves constant local allocations with plain,
-byte-addressable tile layouts, immediate constant subviews, and physical slots
-of multi-tile allocations. Row/column segments preserve holes in subviews.
-Planned multi-buffer addresses take precedence over contiguous slot inference.
-A constant slot selects one range; a dynamic slot retains the union of possible
-slots. Nested or dynamic subviews retain their root's bound. Unsupported
-layouts, unresolved roots, global pointer geometry and unknown addresses remain
-unknown. No disjointness is inferred merely from different global pointer SSA
-values.
+Known local ranges come directly from `BaseMemInfo`: memory space, physical
+addresses and allocation/segment extent. This includes blocked layouts, padded
+storage and views already resolved by the translator. It does not reconstruct
+allocations or reject a layout merely because it is not plain. Address-plus-size
+arithmetic is checked. Root records retain slot order for periodic analysis;
+access records retain any constant-slot selection. Dynamic slot choices remain
+unions of possible ranges, never definite writes to every slot.
 
-A known allocation extent is not an exact instruction footprint. The first
-exact instruction refinement covers constant `tgetval`/`tsetval` element
-accesses with unambiguous contiguous coordinates. Other supplied tile accesses
-remain upper bounds until an instruction-specific footprint rule proves more.
-In particular, a tile write is not assumed to overwrite its entire allocation.
+An allocation or view extent remains an upper bound on an instruction's byte
+accesses. The existing optional constant `tgetval`/`tsetval` refinement supplies
+exact element accesses only with certified contiguous coordinates. Its absence
+does not prevent other instructions from supplying conservative effects.
+Exact routes still require exact input; no full overwrite is inferred merely
+from a write effect or a known allocation size.
+
+### Runtime GM pointers and alias policy
+
+Absolute GM addresses need not be known during compilation. Shared records retain
+pointer roots and view provenance; `mayOverlap` delegates GM queries to the same
+`MemoryDependentAnalyzer` owned by `SyncInput`. Neither root-relative offsets nor
+the placeholder address zero become absolute storage-cell identities.
+
+`--insert-sync-gm-alias=may-not-alias` preserves the existing default assumption:
+distinct resolved GM roots denote disjoint storage. `--insert-sync-gm-alias=may-alias`
+retains possible overlap across those roots. Both modes keep same-root overlap
+checks and conservative handling of lost provenance. The pass option is
+`pto-insert-sync{gm-alias=may-alias}`; direct clients select `GMAliasPolicy` when
+constructing `SyncInput`. The shared-input test tool accepts `--gm-alias=...`
+before its inspection option.
+
+Local allocation reuse is independent of the GM policy: overlapping physical
+ranges share storage even with different SSA roots. Distinct known memory spaces
+are disjoint. `mayConflict` additionally discards read/read pairs; operation
+interfaces already determine which spaces each phase reads or writes and which
+pipe executes it. Same-pipe accesses can still conflict. Event-direction
+availability does not justify removing a storage demand.
 
 ## Partition and cost
 
@@ -66,8 +88,10 @@ expanded subview rows/columns and alternative slots. This is an output-sensitive
 bound: `I` can be quadratic in the number of interval endpoints, and expansion
 is not polynomial in the bit length of an arbitrary encoded slot count.
 
-`mayOverlap(a,b)` uses sorted cell lists, taking linear time in their combined
-length; unknown geometry answers conservatively. A positive answer means
+`mayOverlap(a,b)` uses sorted cell lists for known local ranges, taking linear
+time in their combined length. GM delegates to the shared alias checker, whose
+range comparison costs the product of its two address-list lengths; unknown
+geometry follows the policy described above. A positive answer means
 possible overlap, not a proved dynamic dependence.
 
 ## Next consumers: recognition and demand generation
@@ -94,6 +118,7 @@ implementation milestone, not part of this geometry layer.
 
 The `sync_storage_effects_*` lit fixtures exercise reused physical ranges across
 SSA roots, disjoint intervals, subview holes, unresolved views and addresses,
-partial scalar writes, exact scalar reads, and constant/dynamic slot selection.
+partial scalar writes, exact scalar reads, constant/dynamic slot selection,
+blocked layouts, runtime GM roots under both policies, and read/read filtering.
 The shared-input driver also verifies that the source IR is unchanged and that
 rebuilding the partition does not accumulate records.

@@ -1,0 +1,51 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --storage-effects %s | FileCheck %s --check-prefix=NO
+// RUN: pto-sync-input-test --gm-alias=may-not-alias --storage-effects %s | FileCheck %s --check-prefix=NO
+// RUN: pto-sync-input-test --gm-alias=may-alias --storage-effects %s | FileCheck %s --check-prefix=MAY
+// RUN: pto-sync-input-test --gm-alias=may-alias --alias-contract %s | FileCheck %s --check-prefix=CONTRACT
+// RUN: pto-sync-input-test --gm-alias=may-not-alias --alias-contract %s | FileCheck %s --check-prefix=CONTRACT
+// RUN: not pto-sync-input-test --gm-alias=invalid --storage-effects %s 2>&1 | FileCheck %s --check-prefix=ERROR
+// RUN: not ptoas --pto-arch=a3 --enable-insert-sync --insert-sync-gm-alias=invalid %s 2>&1 | FileCheck %s --check-prefix=ERROR
+// ERROR: unknown GM alias policy; expected may-alias or may-not-alias
+// CONTRACT: shared-alias-contract: passed
+// NO-LABEL: storage gm_dynamic
+// NO: overlap 1,2=0
+// NO: overlap 1,4=1
+// NO: conflict 1,2=0
+// NO: conflict 1,4=1
+// NO: conflict 2,4=0
+// MAY-LABEL: storage gm_dynamic
+// MAY: overlap 1,2=1
+// MAY: overlap 1,4=1
+// MAY: conflict 1,2=1
+// MAY: conflict 1,4=1
+// MAY: conflict 2,4=0
+// Both addresses and the pointer offset are runtime values. GM alias policy
+// applies to roots, while addptr preserves the original root. The two loads
+// never conflict with each other through their read/read GM accesses.
+module attributes {pto.target_arch = "a3"} {
+  func.func @gm_dynamic(%a: !pto.ptr<f32, gm>, %b: !pto.ptr<f32, gm>, %offset: index) attributes {test.overlap = array<i64: 1, 2, 1, 4>, test.conflict = array<i64: 1, 2, 1, 4, 2, 4>} {
+    %zero = arith.constant 0 : i64
+    %far = arith.constant 4096 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %a_offset = pto.addptr %a, %offset : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
+    %va = pto.make_tensor_view %a_offset, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %vb = pto.make_tensor_view %b, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %pa = pto.partition_view %va, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    %pb = pto.partition_view %vb, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    %src = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf32>
+    %dst = pto.alloc_tile addr = %far : !pto.tile_buf<vec, 16x16xf32>
+    pto.tstore ins(%src : !pto.tile_buf<vec, 16x16xf32>) outs(%pa : !pto.partition_tensor_view<16x16xf32>)
+    pto.tload ins(%pb : !pto.partition_tensor_view<16x16xf32>) outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tload ins(%pa : !pto.partition_tensor_view<16x16xf32>) outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+}

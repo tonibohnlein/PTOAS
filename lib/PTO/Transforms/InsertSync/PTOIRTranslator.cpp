@@ -25,6 +25,7 @@
 // [P0 新增] 引入副作用接口和 PTO 接口
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
+#include <limits>
 #include <optional>
 
 #define DEBUG_TYPE "pto-ir-translator"
@@ -49,7 +50,7 @@ static uint64_t getStaticBufferSizeInBytes(ArrayRef<int64_t> shape,
     return 0;
   }
   for (int64_t dim : shape) {
-    if (dim == ShapedType::kDynamic) {
+    if (dim <= 0 || static_cast<uint64_t>(dim) > std::numeric_limits<uint64_t>::max() / size) {
       return 0;
     }
     size *= static_cast<uint64_t>(dim);
@@ -76,10 +77,15 @@ static uint64_t getTileBufferFootprintBytes(pto::TileBufType type) {
       type.getBLayoutValueI32() == static_cast<int32_t>(pto::BLayout::RowMajor);
   uint64_t major = static_cast<uint64_t>(rowMajor ? shape[0] : shape[1]);
   uint64_t minor = static_cast<uint64_t>(rowMajor ? shape[1] : shape[0]);
-  if (major == 0 || minor == 0) {
+  if (shape[0] <= 0 || shape[1] <= 0) {
     return 0;
   }
-  return ((major - 1) * (minor + 1) + minor) * elemBytes;
+  const auto maximum = std::numeric_limits<uint64_t>::max();
+  if (major - 1 > (maximum - minor) / (minor + 1)) {
+    return 0;
+  }
+  const auto elements = (major - 1) * (minor + 1) + minor;
+  return elements > maximum / elemBytes ? 0 : elements * elemBytes;
 }
 
 static pto::AddressSpace getTileAddressSpace(pto::TileBufType type) {
@@ -171,19 +177,6 @@ static bool isStaticRank2Shape(ArrayRef<int64_t> shape) {
          });
 }
 
-static int64_t getTileMajorStride(pto::TileBufType type) {
-  ArrayRef<int64_t> shape = type.getShape();
-  int64_t rows = shape[0];
-  int64_t cols = shape[1];
-  bool rowMajor =
-      type.getBLayoutValueI32() == static_cast<int32_t>(pto::BLayout::RowMajor);
-  int64_t stride = rowMajor ? cols : rows;
-  if (type.getCompactModeI32() == static_cast<int32_t>(pto::CompactMode::RowPlusOne)) {
-    ++stride;
-  }
-  return stride;
-}
-
 static std::optional<SmallVector<uint64_t>>
 getPtoSubViewBaseAddresses(pto::SubViewOp op, pto::TileBufType sourceType,
                            int64_t elemBytes) {
@@ -218,23 +211,30 @@ getPtoSubViewBaseAddresses(pto::SubViewOp op, pto::TileBufType sourceType,
     return std::nullopt;
   }
 
-  bool rowMajor =
-      sourceType.getBLayoutValueI32() == static_cast<int32_t>(pto::BLayout::RowMajor);
-  int64_t majorStride = getTileMajorStride(sourceType);
-
+  auto shape = sourceType.getShape();
+  if (rowOffset > shape[0] || colOffset > shape[1] ||
+      rowSize > shape[0] - rowOffset || colSize > shape[1] - colOffset || elemBytes <= 0) {
+    return std::nullopt;
+  }
+  const bool rowMajor = sourceType.getBLayoutValueI32() == static_cast<int32_t>(pto::BLayout::RowMajor);
+  uint64_t stride = static_cast<uint64_t>(rowMajor ? shape[1] : shape[0]);
+  if (sourceType.getCompactModeI32() == static_cast<int32_t>(pto::CompactMode::RowPlusOne)) {
+    ++stride;
+  }
+  const auto start = static_cast<uint64_t>(rowMajor ? rowOffset : colOffset);
+  const auto count = static_cast<uint64_t>(rowMajor ? rowSize : colSize);
+  const auto minor = static_cast<uint64_t>(rowMajor ? colOffset : rowOffset);
+  const auto maximum = std::numeric_limits<uint64_t>::max();
   SmallVector<uint64_t> addresses;
-  if (rowMajor) {
-    addresses.reserve(static_cast<size_t>(rowSize));
-    for (int64_t row = 0; row < rowSize; ++row) {
-      int64_t elemOffset = (rowOffset + row) * majorStride + colOffset;
-      addresses.push_back(static_cast<uint64_t>(elemOffset * elemBytes));
+  for (uint64_t i = 0; i < count; ++i) {
+    if (start + i > (maximum - minor) / stride) {
+      return std::nullopt;
     }
-  } else {
-    addresses.reserve(static_cast<size_t>(colSize));
-    for (int64_t col = 0; col < colSize; ++col) {
-      int64_t elemOffset = (colOffset + col) * majorStride + rowOffset;
-      addresses.push_back(static_cast<uint64_t>(elemOffset * elemBytes));
+    const auto element = (start + i) * stride + minor;
+    if (element > maximum / static_cast<uint64_t>(elemBytes)) {
+      return std::nullopt;
     }
+    addresses.push_back(element * static_cast<uint64_t>(elemBytes));
   }
 
   return addresses;
@@ -556,12 +556,19 @@ PTOIRTranslator::UpdateAllocMultiTileOpMemInfo(pto::AllocMultiTileOp op) {
       return op.emitError("planned address count does not match slot count");
     }
     for (int64_t address : planned.asArrayRef()) {
+      if (address < 0 || slotBytes > std::numeric_limits<uint64_t>::max() - static_cast<uint64_t>(address)) {
+        return op.emitError("planned slot range is negative or overflows");
+      }
       addresses.push_back(static_cast<uint64_t>(address));
     }
     hasKnownAddresses = true;
   } else if (Value base = op.getAddr()) {
     if (std::optional<uint64_t> knownBase = getKnownPhysicalAddress(base)) {
       for (uint32_t slot = 0; slot < multiType.getCount(); ++slot) {
+        if (static_cast<uint64_t>(slot) + 1 >
+            (std::numeric_limits<uint64_t>::max() - *knownBase) / slotBytes) {
+          return op.emitError("physical slot range overflows");
+        }
         addresses.push_back(*knownBase + slot * slotBytes);
       }
       hasKnownAddresses = true;
@@ -1044,8 +1051,8 @@ static uint64_t getSubViewSegmentSize(pto::SubViewOp op,
   int64_t colSize = cast<IntegerAttr>(sizesAttr[1]).getInt();
   bool rowMajor =
       sourceType.getBLayoutValueI32() == static_cast<int32_t>(pto::BLayout::RowMajor);
-  return static_cast<uint64_t>((rowMajor ? colSize : rowSize) *
-                               static_cast<int64_t>(elemBytes));
+  const auto length = static_cast<uint64_t>(rowMajor ? colSize : rowSize);
+  return length > std::numeric_limits<uint64_t>::max() / elemBytes ? 0 : length * elemBytes;
 }
 
 // 校验所有父 buffer 的 MemInfo 均为单基地址且已分配，方可精确推导别名。
@@ -1088,7 +1095,7 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
 
   uint64_t segmentSize = getSubViewSegmentSize(op, sourceType, elemBytes);
 
-  if (!hasSingleBaseAllocatedParents(buffer2MemInfoMap_[source])) {
+  if (!segmentSize || !hasSingleBaseAllocatedParents(buffer2MemInfoMap_[source])) {
     UpdateConservativeAliasBufferInfo(result, source);
     return;
   }
@@ -1100,6 +1107,13 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
     addresses.reserve(subViewAddresses->size());
     uint64_t parentBase = parentInfo->baseAddresses[0];
     for (uint64_t offset : *subViewAddresses) {
+      if (offset > parentInfo->allocateSize || segmentSize > parentInfo->allocateSize - offset ||
+          offset > std::numeric_limits<uint64_t>::max() - parentBase ||
+          segmentSize > std::numeric_limits<uint64_t>::max() - (parentBase + offset)) {
+        newInfo->aliasesUnknownRange = true;
+        addresses.clear();
+        break;
+      }
       addresses.push_back(parentBase + offset);
     }
     newInfo->baseAddresses = std::move(addresses);

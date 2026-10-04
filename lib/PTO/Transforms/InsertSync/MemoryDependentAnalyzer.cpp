@@ -14,6 +14,7 @@
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -133,8 +134,15 @@ static bool isLocalBufferOverlapCrossRoot(const BaseMemInfo *a,
 
   for (uint64_t addrA : a->baseAddresses) {
     for (uint64_t addrB : b->baseAddresses) {
+      const auto maximum = std::numeric_limits<uint64_t>::max();
+      if (addrA > maximum - rootBaseA || addrB > maximum - rootBaseB) {
+        return true;
+      }
       uint64_t aStart = rootBaseA + addrA;
       uint64_t bStart = rootBaseB + addrB;
+      if (a->allocateSize > maximum - aStart || b->allocateSize > maximum - bStart) {
+        return true;
+      }
       uint64_t aEnd = aStart + a->allocateSize;
       uint64_t bEnd = bStart + b->allocateSize;
       uint64_t maxStart = std::max(aStart, bStart);
@@ -282,8 +290,11 @@ bool MemoryDependentAnalyzer::isGMBufferOverlap(const BaseMemInfo *a,
   if (a->rootBuffer != b->rootBuffer) {
     Value realRootA = GetRealRoot(a->rootBuffer);
     Value realRootB = GetRealRoot(b->rootBuffer);
-    if (realRootA != realRootB) {
-        return false;
+    if (realRootA && realRootB && realRootA != realRootB) {
+      return gmAliasPolicy == GMAliasPolicy::MayAlias;
+    }
+    if (!realRootA || !realRootB) {
+      return true;
     }
     if (a->allocateSize == 0 || b->allocateSize == 0) {
       return true;
@@ -318,6 +329,10 @@ bool MemoryDependentAnalyzer::isBufferOverlap(const BaseMemInfo *a,
                                               int bIndex) const {
   uint64_t aStart = a->baseAddresses[aIndex];
   uint64_t bStart = b->baseAddresses[bIndex];
+  if (a->allocateSize > std::numeric_limits<uint64_t>::max() - aStart ||
+      b->allocateSize > std::numeric_limits<uint64_t>::max() - bStart) {
+    return true;
+  }
   uint64_t aEnd = aStart + a->allocateSize;
   uint64_t bEnd = bStart + b->allocateSize;
  

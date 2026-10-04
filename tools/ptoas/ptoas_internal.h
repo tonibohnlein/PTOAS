@@ -122,6 +122,7 @@ extern llvm::cl::opt<VPTOSchedulerCLIMode> vptoSchedulerMode;
 extern llvm::cl::opt<bool> vptoSchedulerTrace;
 extern llvm::cl::opt<bool> vptoSchedulerRemat;
 extern llvm::cl::opt<bool> enableInsertSync;
+extern llvm::cl::opt<std::string> insertSyncGMAlias;
 extern llvm::cl::opt<bool> enableVmiFastmath;
 extern llvm::cl::opt<bool> enableBufidSync;
 extern llvm::cl::opt<bool> enableBufidSyncDebug;

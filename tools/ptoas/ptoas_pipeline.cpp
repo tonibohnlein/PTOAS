@@ -598,15 +598,18 @@ struct SerialAutoSyncPass
 
   enum class Mode { InsertSync, Bufid, BarrierAll };
 
-  SerialAutoSyncPass(Mode mode, bool enableBufidDebug)
-      : mode(mode), enableBufidDebug(enableBufidDebug) {}
+  SerialAutoSyncPass(Mode mode, bool enableBufidDebug, std::string gmAlias = "may-not-alias")
+      : mode(mode), enableBufidDebug(enableBufidDebug), gmAlias(std::move(gmAlias)) {}
 
   void runOnOperation() override {
     OpPassManager functionPM(func::FuncOp::getOperationName());
     switch (mode) {
-    case Mode::InsertSync:
-      functionPM.addPass(pto::createPTOInsertSyncPass());
+    case Mode::InsertSync: {
+      PTOInsertSyncOptions options;
+      options.gmAlias = gmAlias;
+      functionPM.addPass(pto::createPTOInsertSyncPass(options));
       break;
+    }
     case Mode::Bufid: {
       PTOBufidSyncOptions options;
       options.enableBufidSyncDebug = enableBufidDebug;
@@ -630,6 +633,7 @@ struct SerialAutoSyncPass
 private:
   Mode mode;
   bool enableBufidDebug;
+  std::string gmAlias;
 };
 } // namespace
 
@@ -1177,6 +1181,10 @@ static bool moduleHasTAssign(ModuleOp module) {
 
 static LogicalResult validateTAssignConfiguration(ModuleOp module,
                                                   PTOBuildLevel level) {
+  if (enableInsertSync && insertSyncGMAlias != "may-alias" && insertSyncGMAlias != "may-not-alias") {
+    module.emitError("unknown GM alias policy; expected may-alias or may-not-alias");
+    return failure();
+  }
   const bool hasTAssign = moduleHasTAssign(module);
   if (hasTAssign && level != PTOBuildLevel::Level3) {
     llvm::errs() << "Error: pto.tassign is only supported when "
@@ -1362,9 +1370,11 @@ static void appendAutoSyncPasses(PassManager &pm) {
   if (enableInsertSync) {
     if (emitMlirIR) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
-          SerialAutoSyncPass::Mode::InsertSync, false));
+          SerialAutoSyncPass::Mode::InsertSync, false, insertSyncGMAlias));
     } else {
-      pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass());
+      PTOInsertSyncOptions options;
+      options.gmAlias = insertSyncGMAlias;
+      pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass(options));
     }
   }
   else if (enableBufidSync) {
