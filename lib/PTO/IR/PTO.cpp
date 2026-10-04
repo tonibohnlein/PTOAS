@@ -13,6 +13,7 @@
 #include "PTO/IR/PTOAccessRegion.h"
 #include "PTO/IR/PTOLinearAccess.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 
 #include "mlir/Interfaces/InferIntRangeInterface.h"
 

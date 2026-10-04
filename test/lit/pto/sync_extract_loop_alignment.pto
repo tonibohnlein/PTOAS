@@ -1,0 +1,198 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
+// RUN: pto-sync-input-test --phase-copy-checks %s | FileCheck %s --check-prefix=COPY
+// COPY: phase-copy-check {{.*}}: passed
+// A loop IV is aligned only when both its lower bound and step are aligned.
+// Symbolic upper bounds, nesting and empty iterations preserve that property.
+!src = !pto.tile_buf<mat, 128x256xbf16, blayout=col_major, slayout=row_major>
+!dst = !pto.tile_buf<left, 128x64xbf16, slayout=row_major>
+module attributes {pto.target_arch = "a3"} {
+// CHECK-LABEL: storage aligned_iv:
+// CHECK: pto.textract read exact
+// CHECK: access base=absolute bytes=2 map={{.*}} extents=128, 64 loops=1
+// CHECK: pto.textract write exact
+  func.func @aligned_iv(%runtime: index) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %lo = arith.constant 0 : index
+    %step = arith.constant 128 : index
+    %end = arith.constant 256 : index
+    %src = pto.alloc_tile addr = %base : !src
+    %dst = pto.alloc_tile addr = %base : !dst
+    scf.for %q = %lo to %end step %step {
+      pto.textract ins(%src, %zero, %q : !src, index, index) outs(%dst : !dst)
+    }
+    return
+  }
+// CHECK-LABEL: storage aligned_nonzero:
+// CHECK: pto.textract read exact
+// CHECK: access base=absolute bytes=2 map={{.*}} extents=128, 64 loops=1
+// CHECK: pto.textract write exact
+  func.func @aligned_nonzero(%runtime: index) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %lo = arith.constant 16 : index
+    %step = arith.constant 32 : index
+    %end = arith.constant 128 : index
+    %src = pto.alloc_tile addr = %base : !src
+    %dst = pto.alloc_tile addr = %base : !dst
+    scf.for %q = %lo to %end step %step {
+      pto.textract ins(%src, %zero, %q : !src, index, index) outs(%dst : !dst)
+    }
+    return
+  }
+// CHECK-LABEL: storage bad_lower:
+// CHECK: pto.textract read upper
+// CHECK: pto.textract write upper
+  func.func @bad_lower(%runtime: index) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %lo = arith.constant 8 : index
+    %step = arith.constant 16 : index
+    %end = arith.constant 128 : index
+    %src = pto.alloc_tile addr = %base : !src
+    %dst = pto.alloc_tile addr = %base : !dst
+    scf.for %q = %lo to %end step %step {
+      pto.textract ins(%src, %zero, %q : !src, index, index) outs(%dst : !dst)
+    }
+    return
+  }
+// CHECK-LABEL: storage bad_step:
+// CHECK: pto.textract read upper
+// CHECK: pto.textract write upper
+  func.func @bad_step(%runtime: index) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %lo = arith.constant 0 : index
+    %step = arith.constant 8 : index
+    %end = arith.constant 128 : index
+    %src = pto.alloc_tile addr = %base : !src
+    %dst = pto.alloc_tile addr = %base : !dst
+    scf.for %q = %lo to %end step %step {
+      pto.textract ins(%src, %zero, %q : !src, index, index) outs(%dst : !dst)
+    }
+    return
+  }
+// CHECK-LABEL: storage unknown_lower:
+// CHECK: pto.textract read upper
+// CHECK: pto.textract write upper
+  func.func @unknown_lower(%runtime: index) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %step = arith.constant 16 : index
+    %end = arith.constant 128 : index
+    %src = pto.alloc_tile addr = %base : !src
+    %dst = pto.alloc_tile addr = %base : !dst
+    scf.for %q = %runtime to %end step %step {
+      pto.textract ins(%src, %zero, %q : !src, index, index) outs(%dst : !dst)
+    }
+    return
+  }
+// CHECK-LABEL: storage unknown_step:
+// CHECK: pto.textract read upper
+// CHECK: pto.textract write upper
+  func.func @unknown_step(%runtime: index) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %lo = arith.constant 0 : index
+    %end = arith.constant 128 : index
+    %src = pto.alloc_tile addr = %base : !src
+    %dst = pto.alloc_tile addr = %base : !dst
+    scf.for %q = %lo to %end step %runtime {
+      pto.textract ins(%src, %zero, %q : !src, index, index) outs(%dst : !dst)
+    }
+    return
+  }
+// CHECK-LABEL: storage dynamic_end:
+// CHECK: pto.textract read exact
+// CHECK: access base=absolute bytes=2 map={{.*}} extents=128, 64 loops=1
+// CHECK: pto.textract write exact
+  func.func @dynamic_end(%runtime: index) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %lo = arith.constant 0 : index
+    %step = arith.constant 128 : index
+    %src = pto.alloc_tile addr = %base : !src
+    %dst = pto.alloc_tile addr = %base : !dst
+    scf.for %q = %lo to %runtime step %step {
+      pto.textract ins(%src, %zero, %q : !src, index, index) outs(%dst : !dst)
+    }
+    return
+  }
+// CHECK-LABEL: storage zero_trip:
+// CHECK: pto.textract read exact
+// CHECK: access base=absolute bytes=2 map={{.*}} extents=128, 64 loops=1
+// CHECK: pto.textract write exact
+  func.func @zero_trip(%runtime: index) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %lo = arith.constant 0 : index
+    %step = arith.constant 128 : index
+    %end = arith.constant 0 : index
+    %src = pto.alloc_tile addr = %base : !src
+    %dst = pto.alloc_tile addr = %base : !dst
+    scf.for %q = %lo to %end step %step {
+      pto.textract ins(%src, %zero, %q : !src, index, index) outs(%dst : !dst)
+    }
+    return
+  }
+// CHECK-LABEL: storage short_trip:
+// CHECK: pto.textract read exact
+// CHECK: access base=absolute bytes=2 map={{.*}} extents=128, 64 loops=1
+// CHECK: pto.textract write exact
+  func.func @short_trip(%runtime: index) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %lo = arith.constant 0 : index
+    %step = arith.constant 128 : index
+    %end = arith.constant 1 : index
+    %src = pto.alloc_tile addr = %base : !src
+    %dst = pto.alloc_tile addr = %base : !dst
+    scf.for %q = %lo to %end step %step {
+      pto.textract ins(%src, %zero, %q : !src, index, index) outs(%dst : !dst)
+    }
+    return
+  }
+// CHECK-LABEL: storage nested_iv:
+// CHECK: pto.textract read exact
+// CHECK: access base=absolute bytes=2 map={{.*}} extents=128, 64 loops=2
+// CHECK: pto.textract write exact
+  func.func @nested_iv() {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %sixteen = arith.constant 16 : index
+    %end = arith.constant 128 : index
+    %src = pto.alloc_tile addr = %base : !src
+    %dst = pto.alloc_tile addr = %base : !dst
+    scf.for %outer = %zero to %end step %sixteen {
+      scf.for %q = %outer to %end step %sixteen {
+        pto.textract ins(%src, %zero, %q : !src, index, index) outs(%dst : !dst)
+      }
+    }
+    return
+  }
+// CHECK-LABEL: storage carried_offset:
+// CHECK: pto.textract read upper
+// CHECK: pto.textract write upper
+  func.func @carried_offset() {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %sixteen = arith.constant 16 : index
+    %end = arith.constant 128 : index
+    %src = pto.alloc_tile addr = %base : !src
+    %dst = pto.alloc_tile addr = %base : !dst
+    %last = scf.for %q = %zero to %end step %sixteen iter_args(%offset = %zero) -> (index) {
+      pto.textract ins(%src, %zero, %offset : !src, index, index) outs(%dst : !dst)
+      %next = arith.addi %offset, %one : index
+      scf.yield %next : index
+    }
+    return
+  }
+}

@@ -139,6 +139,21 @@ non-power-of-two vectors are excluded because allocation stride can exceed
 stored width. These declarations describe valid executions; they do not add
 runtime bounds checks.
 
+The shared A3 `TEXTRACT` alignment check also uses `scf.for` induction values:
+an aligned lower bound and aligned step imply that every executed offset is
+aligned. This supports nested loops and dynamic upper bounds; unknown lower
+bounds, unknown steps and unrelated loop-carried arguments remain conservative.
+The selected region still uses the destination dimensions and source layout,
+including separated physical strips for blocked matrix layouts.
+
+After this alignment refinement, all 784 prepared corpus modules still pass
+existing InsertSync under both GM alias policies and the Step 0 audit. Of the
+same 37,524 access records, 5,772 are exact, 26,815 retain conservative physical
+bounds and 4,937 have unresolved geometry. The focused suite now passes 63 RUN
+checks, with the same six full-CLI checks skipped. In the nested `down_proj`
+kernel, all 12 TEXTRACT operations now have exact source and destination
+selections; other conservative or unresolved accesses remain explicit.
+
 The existing `TEXTRACT` and transfer declarations continue through the same
 resolver. Partial `TLOAD`/`TSTORE` refinement is deferred. A declaration of a
 precise symbolic region does not imply that every compact recognizer accepts
