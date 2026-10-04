@@ -73,6 +73,11 @@ def main():
                     continue
                 for attempt in node["attempts"]:
                     counts[attempt["route"] + ":" + attempt["state"]] += 1
+                    analysis = attempt.get("analysis")
+                    if analysis is not None:
+                        state = "failed" if analysis["error"] else "ready"
+                        counts["minimum-analysis:" + state] += 1
+                        counts["minimum-analysis:records"] += len(analysis["retained"])
                     for issue in attempt["issues"]:
                         issues[attempt["route"] + ":" + issue["issue"]] += 1
             arithmetic = doc["arithmetic"]
@@ -88,7 +93,7 @@ def main():
     summary = {"attempted": len(cases), "passed": len(cases) - len(failures), "failures": failures,
                "counts": dict(counts), "issues": dict(issues), "tool_sha256": tool_hash,
                "manifest_sha256": digest(args.manifest),
-               "scope": "candidate recognition; no demand generation or composition acceptance"}
+               "scope": "structural recognition and shared-record preservation; demand correctness checked separately"}
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2))
     return bool(failures)

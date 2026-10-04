@@ -44,7 +44,7 @@
 // CHECK-LABEL: recognition zero_trips
 // CHECK: recognize rotating: applicable backend=unavailable
 // CHECK: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=[0,4)
-// CHECK: source-unchanged; dependency-analysis-not-run
+// CHECK: source-unchanged; synchronization-insertion-not-run
 
 !tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 !ring = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=2>
