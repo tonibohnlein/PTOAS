@@ -29,7 +29,11 @@ struct ArithmeticProgram {
 // No unfolding: counted nests with constant nonnegative lower bounds and
 // positive steps dividing the configured residue period. Upper bounds use
 // proved affine expressions. Exact shared access maps retain symbolic origins
-// and finite within-origin byte unions. Carried scalar state requires an exact
+// and finite within-origin byte unions. GM regions retain canonical function
+// entry pointer identities. Distinct GM bases require the shared MayNotAlias
+// policy; one base works under either policy. Unresolved bases and mixtures of
+// absolute and based GM addresses are rejected. Local allocation SSA roots
+// never distinguish physical bytes. Carried scalar state requires an exact
 // shared recurrence; loop-result uses in domains/accesses remain unsupported.
 // Branch domains admit signed index comparisons and supported Boolean formulas;
 // their exact finite unions are charged to the output size. Metadata follows
