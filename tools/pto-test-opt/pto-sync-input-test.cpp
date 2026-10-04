@@ -30,6 +30,7 @@ LogicalResult verifyProgramStructure(func::FuncOp, const pto::SyncInput &,
     const pto::frontiersynch::ProgramRecognition &);
 void dumpArithmeticJSON(func::FuncOp function, const pto::frontiersynch::ArithmeticProgram& program);
 int runSyncRegionContractChecks(func::FuncOp function, const pto::SyncInput &input);
+int runPeriodicDemandChecks(llvm::StringRef path);
 int runSyncAliasChecks(func::FuncOp function, const pto::SyncInput &input);
 LogicalResult auditSyncStep0(func::FuncOp function, const pto::SyncInput &input);
 namespace {
@@ -309,6 +310,10 @@ std::string render(Operation *op) {
 }
 }
 int main(int argc, char **argv) {
+  // Test-only numerical graph input; the production pass still consumes MLIR.
+  if (argc == 3 && StringRef(argv[1]) == "--periodic-checks") {
+    return runPeriodicDemandChecks(argv[2]);
+  }
   auto policy = pto::GMAliasPolicy::MayNotAlias;
   if (argc > 1 && StringRef(argv[1]).starts_with("--gm-alias=")) {
     auto name = StringRef(argv[1]).drop_front(StringRef("--gm-alias=").size());
@@ -389,7 +394,7 @@ int main(int argc, char **argv) {
     if (invalid) {
       return 1;
     }
-    llvm::outs() << "source-unchanged; dependency-analysis-not-run\n";
+    llvm::outs() << "source-unchanged; synchronization-insertion-not-run\n";
     return 0;
   }
   pto::SyncInput input(policy);

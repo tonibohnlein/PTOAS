@@ -307,6 +307,60 @@ allocating template occurrences. Fixed representation limits are 65,536 visits,
 bound. Actual work is charged to expanded visits, shared scalar/map processing,
 materialized ranges and atom references. Atom endpoints are sorted once, and
 range-to-atom lookup uses binary search plus the emitted references. Exceeding a
-limit rejects with no partial template export. The candidate produces neither
-minimum demands nor reachability, endpoint selectors, event-ID allocation or
-synchronization commands.
+limit rejects with no partial template export. Recognition supplies the effect
+word to the exact numerical analysis below. It does not supply external storage
+selectors, executable endpoint code, event-ID allocation or synchronization commands.
+
+
+## Exact numerical periodic demand analysis
+
+An accepted numeric template now feeds a generic storage scan and numerical
+periodic reducer. The scan accepts explicit payload identities, pipes and
+physical atom read/write modes. It consolidates modes before changing state,
+tracks the previous writer and the latest read-only reader on each pipe, and
+emits RAW, WAR and consecutive-writer WAW generators. Native completion order
+protects the earlier readers on that pipe. Deduplicated endpoint pairs retain
+their storage witnesses. Supplied forward prerequisites are also supported by
+the scan. Its expected cost is `O(n + c + e)` for payloads, atom incidences and
+supplied prerequisites; resetting a lifetime discards its reader-map capacity.
+
+For the constant local effect word, every written atom is refreshed in the next
+visit. Scanning two visits therefore finds every generator sourced in visit
+zero. Keeping those records derives the period-one generator certificate.
+The template's existing whole-base GM discharge excludes internal GM conflicts;
+all original payloads, including those with only discharged GM effects, remain
+in native pipe order. Type numbers continue to identify the original template
+payload, its phase, fixed inner coordinates and insertion cuts.
+
+The reducer itself takes arbitrary forward numeric displacement records, not
+only distance-zero/one records from this adapter. It deduplicates them, builds
+start/completion vertices with native chains and wrap edges (including one-site
+pipes), and computes one completion-seeded shortest-path index per pipe. A
+best/second incoming-edge scan decides each record's redundancy against the
+original graph, preserving ties between distinct edge identities. This avoids
+rerunning shortest paths after deleting individual records and never expands
+the dependence distance into an iteration window.
+
+Canonical record sorting costs `O(g log g)`. After deduplication, graph and
+arithmetic work is `O(k(V + E) log(V + 1) + kE + g)`, with
+`O(V + E + km)` space for `m` payload types, `V = 2m` event types and
+`E = O(m + g)` edges. The ordered priority set holds at most one entry per
+vertex. Integer arithmetic is checked; representational overflow rejects the
+complete result without exporting a partial proof. These are arithmetic-operation
+bounds, not unit-cost claims for arbitrarily wide integers.
+
+The result contains the exact minimum-demand records and completion-origin
+reachability thresholds, including completion-to-completion queries. Unreachable
+thresholds are distinct from invalid queries. Finite-prefix helpers check endpoint
+presence, support partial final periods, and distinguish reflexive from strict
+completion queries. Threshold lookup uses indexed arrays; a profile query adds
+an expected constant-time pipe lookup. These results do not provide start-origin
+queries, external storage selectors, executable endpoint code, physical IDs or
+repairs; `analysis_ready` remains false until the required interfaces exist.
+
+The numerical test helper accepts synthetic effect words and arbitrary periodic
+records. Its independent Python oracle enumerates all conflicting occurrence
+pairs, adds native order, and computes finite DAG reachability and covers without
+using the lifetime scan. It checks exact demands, per-pipe ranks, finite-prefix
+queries and thresholds, alongside very large distances, overflow rejection,
+partial periods, initial readers, read-modify-write and tied alternatives.
