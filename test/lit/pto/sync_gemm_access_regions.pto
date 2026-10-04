@@ -1,0 +1,139 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
+// RUN: pto-sync-input-test --step0-json %s | FileCheck %s --check-prefix=AUDIT
+// All payload accesses in this full aligned GEMM use shared exact declarations.
+// Conversion to f16 changes the destination byte width, not its rectangle.
+// CHECK-LABEL: storage full_gemm:
+// CHECK: effect 0 pto.tload read exact
+// CHECK: effect 1 pto.tload write exact definite-write=1
+// CHECK: effect 2 pto.tload read exact
+// CHECK: effect 3 pto.tload write exact definite-write=1
+// CHECK: effect 4 pto.textract read exact
+// CHECK: effect 5 pto.textract write exact
+// CHECK: effect 6 pto.textract read exact
+// CHECK: effect 7 pto.textract write exact
+// CHECK: effect 8 pto.tmatmul read exact
+// CHECK: effect 9 pto.tmatmul read exact
+// CHECK: effect 10 pto.tmatmul write exact
+// CHECK: effect 11 pto.tmatmul.acc read exact
+// CHECK: effect 12 pto.tmatmul.acc read exact
+// CHECK: effect 13 pto.tmatmul.acc read exact
+// CHECK: effect 14 pto.tmatmul.acc write exact
+// CHECK: effect 15 pto.tstore read exact
+// CHECK: effect 16 pto.tstore write exact
+// CHECK: access {{.*}}bytes=2{{.*}}extents=16, 16
+// CHECK-LABEL: storage partial_shapes:
+// CHECK: effect 0 pto.tload read unknown
+// CHECK: effect 1 pto.tload write unknown
+// CHECK: effect 2 pto.tmatmul read unknown
+// CHECK: effect 3 pto.tmatmul read unknown
+// CHECK: effect 4 pto.tmatmul write unknown
+// CHECK: effect 5 pto.tstore read unknown
+// CHECK: effect 6 pto.tstore write unknown
+// CHECK-LABEL: storage separate_accumulator:
+// CHECK: effect 0 pto.tmatmul.acc read unknown
+// CHECK: effect 3 pto.tmatmul.acc write unknown
+// CHECK-LABEL: storage wide_stride:
+// CHECK: effect 0 pto.tload read unknown
+// CHECK: effect 1 pto.tload write unknown
+// CHECK-LABEL: storage alternate_fractal:
+// CHECK: effect 0 pto.tload read unknown
+// CHECK: effect 1 pto.tload write unknown
+// AUDIT: "exact_accesses":17
+// AUDIT: "exact_accesses":0
+// AUDIT: "exact_accesses":0
+// AUDIT: "exact_accesses":0
+// AUDIT: "exact_accesses":0
+!mat = !pto.tile_buf<mat, 16x16xf16, slayout=col_major>
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+!right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+!partial_mat = !pto.tile_buf<mat, 32x16xf16, valid=16x16, slayout=col_major>
+!partial_left = !pto.tile_buf<left, 32x16xf16, valid=16x16, slayout=row_major>
+!partial_acc = !pto.tile_buf<acc, 32x16xf32, valid=16x16, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a3"} {
+  func.func @full_gemm(%a: !pto.ptr<f16, gm>, %b: !pto.ptr<f16, gm>, %c: !pto.ptr<f16, gm>) {
+    %zero = arith.constant 0 : index
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i16 = arith.constant 16 : index
+    %base0 = arith.constant 0 : i64
+    %base512 = arith.constant 512 : i64
+    %av = pto.make_tensor_view %a, shape = [%i16, %i16], strides = [%i16, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %avp = pto.partition_view %av, offsets = [%zero, %zero], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf16>
+    %bv = pto.make_tensor_view %b, shape = [%i16, %i16], strides = [%i16, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %bvp = pto.partition_view %bv, offsets = [%zero, %zero], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf16>
+    %cv = pto.make_tensor_view %c, shape = [%i16, %i16], strides = [%i16, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %cvp = pto.partition_view %cv, offsets = [%zero, %zero], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf16>
+    %am = pto.alloc_tile addr = %base0 : !mat
+    %bm = pto.alloc_tile addr = %base512 : !mat
+    %al = pto.alloc_tile addr = %base0 : !left
+    %br = pto.alloc_tile addr = %base0 : !right
+    %acc = pto.alloc_tile addr = %base0 : !acc
+    pto.tload ins(%avp : !pto.partition_tensor_view<16x16xf16>) outs(%am : !mat)
+    pto.tload ins(%bvp : !pto.partition_tensor_view<16x16xf16>) outs(%bm : !mat)
+    pto.textract ins(%am, %i0, %i0 : !mat, index, index) outs(%al : !left)
+    pto.textract ins(%bm, %i0, %i0 : !mat, index, index) outs(%br : !right)
+    pto.tmatmul ins(%al, %br : !left, !right) outs(%acc : !acc)
+    pto.tmatmul.acc ins(%acc, %al, %br : !acc, !left, !right) outs(%acc : !acc)
+    pto.tstore ins(%acc : !acc) outs(%cvp : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+  func.func @partial_shapes(%a: !pto.ptr<f16, gm>, %c: !pto.ptr<f32, gm>) {
+    %zero = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i16 = arith.constant 16 : index
+    %base0 = arith.constant 0 : i64
+    %av = pto.make_tensor_view %a, shape = [%i16, %i16], strides = [%i16, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %avp = pto.partition_view %av, offsets = [%zero, %zero], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf16>
+    %cv = pto.make_tensor_view %c, shape = [%i16, %i16], strides = [%i16, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %cvp = pto.partition_view %cv, offsets = [%zero, %zero], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf32>
+    %am = pto.alloc_tile addr = %base0 : !partial_mat
+    %al = pto.alloc_tile addr = %base0 : !partial_left
+    %br = pto.alloc_tile addr = %base0 : !right
+    %acc = pto.alloc_tile addr = %base0 : !partial_acc
+    pto.tload ins(%avp : !pto.partition_tensor_view<16x16xf16>) outs(%am : !partial_mat)
+    pto.tmatmul ins(%al, %br : !partial_left, !right) outs(%acc : !partial_acc)
+    pto.tstore ins(%acc : !partial_acc) outs(%cvp : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+  func.func @separate_accumulator() {
+    %base0 = arith.constant 0 : i64
+    %base1024 = arith.constant 1024 : i64
+    %al = pto.alloc_tile addr = %base0 : !left
+    %br = pto.alloc_tile addr = %base0 : !right
+    %old = pto.alloc_tile addr = %base0 : !acc
+    %new = pto.alloc_tile addr = %base1024 : !acc
+    pto.tmatmul.acc ins(%old, %al, %br : !acc, !left, !right) outs(%new : !acc)
+    return
+  }
+  func.func @wide_stride(%a: !pto.ptr<f16, gm>) {
+    %zero = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i16 = arith.constant 16 : index
+    %i65536 = arith.constant 65536 : index
+    %base0 = arith.constant 0 : i64
+    %av = pto.make_tensor_view %a, shape = [%i16, %i16], strides = [%i65536, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %avp = pto.partition_view %av, offsets = [%zero, %zero], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf16>
+    %am = pto.alloc_tile addr = %base0 : !mat
+    pto.tload ins(%avp : !pto.partition_tensor_view<16x16xf16>) outs(%am : !mat)
+    return
+  }
+  func.func @alternate_fractal(%a: !pto.ptr<f16, gm>) {
+    %zero = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i32 = arith.constant 32 : index
+    %base0 = arith.constant 0 : i64
+    %av = pto.make_tensor_view %a, shape = [%i32, %i32], strides = [%i32, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %avp = pto.partition_view %av, offsets = [%zero, %zero], sizes = [%i32, %i32] : !pto.tensor_view<?x?xf16>
+    %am = pto.alloc_tile addr = %base0 : !pto.tile_buf<mat, 32x32xf16, slayout=col_major, fractal=1024>
+    pto.tload ins(%avp : !pto.partition_tensor_view<32x32xf16>) outs(%am : !pto.tile_buf<mat, 32x32xf16, slayout=col_major, fractal=1024>)
+    return
+  }
+}

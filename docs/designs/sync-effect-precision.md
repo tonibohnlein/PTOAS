@@ -157,3 +157,40 @@ buffer of 32 by 64 elements is not confused with a selected 16 by 16 region.
 When an exact selection is available, overlap checks use it instead of assuming
 that its accessed bytes equal the cached allocation range. Symbolic selections
 remain symbolic; this change does not normalize loop-carried bank recurrences.
+
+
+## Full aligned GEMM accesses and bank formulas
+
+The shared declarations also describe ordinary full aligned matrix loads,
+matmul/accumulating matmul, and accumulator stores. Loads use matching rank-two
+ND source views and full MAT tiles; matmuls use coherent M-by-K, K-by-N and
+M-by-N operands; stores preserve the logical rectangle when converting f32 to
+f16. The qualification checks native layouts, dimensions, valid extents and
+stride encodings. Partial-valid shapes, optional transfer modifiers, unsupported
+layouts, and a distinct accumulating input retain their prior declarations.
+These are shared operation semantics; the synchronization consumer interprets
+only the coordinate maps.
+
+Scalar address normalization uses constants, counted-loop induction ranges,
+checked affine arithmetic and value-preserving casts. It can derive the closed
+form of an unconditional carried counter
+`bank_next = (bank + increment) mod modulus`, with a constant canonical seed,
+nonnegative increment, positive modulus and a proof that the update cannot
+wrap. With loop lower bound L and positive constant step S, the value at the
+start of the iteration is
+`(seed + increment * ((iv - L) floordiv S)) mod modulus`.
+The seed is reapplied at every loop entry; it is not carried across enclosing
+iterations. Direct `iv mod modulus` expressions use the same representation.
+No loop is unrolled and the original program is unchanged.
+
+For unflagged machine arithmetic the normalizer requires a proven signed range;
+index arithmetic must fit both supported 32- and 64-bit widths. Explicit
+no-signed-wrap operations retain their contract. Unknown expressions remain
+original SSA symbols. Conditional updates, noncanonical seeds, unproved casts,
+and loop results (including zero-trip results) are not replaced by the carried
+counter formula. Symbolic trip counts are supported for the counter itself;
+other arithmetic may still require bounded ranges or overflow flags.
+
+These maps are inputs for later analysis, not a certificate that an entire
+nested GEMM satisfies a periodic or arithmetic route. In particular, nested
+control and whole-region recognition remain separate from exact access coverage.
