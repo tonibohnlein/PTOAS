@@ -9,6 +9,7 @@
 // A descriptor is not a claim about an instruction's actual read/write region.
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "SyncRegionArithmetic.h"
+#include "SyncScalarEvolution.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -21,32 +22,18 @@ namespace {
 class RegionBuilder {
 public:
     RegionBuilder(const SyncInput& input, Operation* access)
-        : input(input), context(access->getContext()), access(access) {}
+        : input(input), context(access->getContext()), access(access), scalars(context) {}
     SyncAccessRegion region;
     AffineExpr number(int64_t value) { return getAffineConstantExpr(value, context); }
-    AffineExpr value(Value v, unsigned depth = 0)
+    AffineExpr value(Value v)
     {
-        if (!v) {
-            return {};
-        }
-        APInt integer;
-        if (matchPattern(v, m_ConstantInt(&integer)) && integer.isSignedIntN(64)) {
-            return number(integer.getSExtValue());
-        }
-        auto cached = expressions.find(v);
-        if (cached != expressions.end()) {
-            return cached->second;
-        }
-        auto expanded = depth < 64 ? expand(v, depth + 1) : AffineExpr{};
-        if (!expanded) {
-            auto entry = symbolIds.try_emplace(v, region.symbols.size());
+        return scalars.value(v, [&](Value symbol) {
+            auto entry = symbolIds.try_emplace(symbol, region.symbols.size());
             if (entry.second) {
-                region.symbols.push_back(v);
+                region.symbols.push_back(symbol);
             }
-            expanded = getAffineSymbolExpr(entry.first->second, context);
-        }
-        expressions[v] = expanded;
-        return expanded;
+            return getAffineSymbolExpr(entry.first->second, context);
+        });
     }
 
     AffineExpr add(AffineExpr a, AffineExpr b) { return detail::checkedAdd(a, b); }
@@ -61,10 +48,8 @@ private:
     MLIRContext* context;
     Operation* access;
     DenseMap<Value, TileBufType> boxedDescriptors;
-    DenseMap<Value, AffineExpr> expressions;
+    detail::ScalarEvolution scalars;
     DenseMap<Value, unsigned> symbolIds;
-    AffineExpr expand(Value v, unsigned depth);
-    bool nonnegative(Value v);
     AffineExpr pointer(Value operand);
     AffineExpr tile(Value operand, TileBufType type, ArrayRef<AffineExpr> coordinates);
     AffineExpr tileBase(Value operand);
@@ -72,55 +57,6 @@ private:
     bool boxedPointerStrides(TileBufType type, int64_t& row, int64_t& col);
     bool currentShape(Value operand, Value& row, Value& col);
 };
-
-bool RegionBuilder::nonnegative(Value v)
-{
-    APInt constant;
-    if (matchPattern(v, m_ConstantInt(&constant))) {
-        return !constant.isNegative();
-    }
-    auto argument = dyn_cast<BlockArgument>(v);
-    auto loop = argument ? dyn_cast<scf::ForOp>(argument.getOwner()->getParentOp()) : scf::ForOp{};
-    APInt lower, step;
-    return loop && v == loop.getInductionVar() &&
-        matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) && !lower.isNegative() &&
-        matchPattern(loop.getStep(), m_ConstantInt(&step)) && step.isStrictlyPositive();
-}
-
-AffineExpr RegionBuilder::expand(Value v, unsigned depth)
-{
-    auto* op = v.getDefiningOp();
-    if (!op || op->getNumOperands() != 2) {
-        return {};
-    }
-    auto lhs = op->getOperand(0), rhs = op->getOperand(1);
-    if (isa<arith::RemUIOp, arith::RemSIOp, arith::DivUIOp, arith::DivSIOp>(op)) {
-        APInt divisor;
-        if (!nonnegative(lhs) || !matchPattern(rhs, m_ConstantInt(&divisor)) ||
-            !divisor.isSignedIntN(64) || !divisor.isStrictlyPositive()) {
-            return {};
-        }
-        auto expression = value(lhs, depth);
-        return isa<arith::RemUIOp, arith::RemSIOp>(op) ? expression % divisor.getSExtValue() :
-            expression.floorDiv(divisor.getSExtValue());
-    }
-    auto flags = dyn_cast<arith::ArithIntegerOverflowFlagsInterface>(op);
-    // Affine integer arithmetic must not silently erase machine wraparound.
-    if (!flags || !flags.hasNoSignedWrap()) {
-        return {};
-    }
-    auto left = value(lhs, depth), right = value(rhs, depth);
-    if (isa<arith::AddIOp>(op)) {
-        return add(left, right);
-    }
-    if (isa<arith::SubIOp>(op)) {
-        return add(left, scale(right, -1));
-    }
-    if (isa<arith::MulIOp>(op) && (isa<AffineConstantExpr>(left) || isa<AffineConstantExpr>(right))) {
-        return mul(left, right);
-    }
-    return {};
-}
 
 unsigned bytes(Type type)
 {
@@ -549,6 +485,38 @@ bool RegionBuilder::selection(Value operand, DictionaryAttr contract)
     return static_cast<bool>(region.byteOffset);
 }
 
+// Failed scalar expansions may have visited intermediate SSA values. Export
+// only symbols used by the final address or extents, keeping maps compact.
+void compactSymbols(SyncAccessRegion& region)
+{
+    SmallVector<bool> used(region.symbols.size(), false);
+    auto mark = [&](AffineExpr expression) {
+        expression.walk([&](AffineExpr part) {
+            if (auto symbol = dyn_cast<AffineSymbolExpr>(part)) {
+                used[symbol.getPosition()] = true;
+            }
+        });
+    };
+    mark(region.byteOffset);
+    for (auto extent : region.extents) {
+        mark(extent);
+    }
+    SmallVector<Value> symbols;
+    SmallVector<AffineExpr> replacement;
+    for (auto [i, original] : llvm::enumerate(region.symbols)) {
+        replacement.push_back(used[i] ? getAffineSymbolExpr(symbols.size(), region.byteOffset.getContext()) :
+                                       getAffineConstantExpr(0, region.byteOffset.getContext()));
+        if (used[i]) {
+            symbols.push_back(original);
+        }
+    }
+    region.byteOffset = region.byteOffset.replaceSymbols(replacement);
+    for (auto& extent : region.extents) {
+        extent = extent.replaceSymbols(replacement);
+    }
+    region.symbols = std::move(symbols);
+}
+
 } // namespace
 
 std::optional<SyncAccessRegion> resolveSelectedRegion(const SyncInput& input, Value operand,
@@ -565,8 +533,11 @@ std::optional<SyncAccessRegion> resolveSelectedRegion(const SyncInput& input, Va
         }
     }
     std::reverse(builder.region.iterations.begin(), builder.region.iterations.end());
-    return builder.selection(operand, contract) ?
-        std::optional<SyncAccessRegion>(std::move(builder.region)) : std::nullopt;
+    if (!builder.selection(operand, contract)) {
+        return std::nullopt;
+    }
+    compactSymbols(builder.region);
+    return std::move(builder.region);
 }
 
 std::optional<SyncAccessRegion> resolveBufferRegion(const SyncInput& input, Value operand, Operation* at)
@@ -593,6 +564,7 @@ std::optional<SyncAccessRegion> resolveBufferRegion(const SyncInput& input, Valu
     if (!builder.region.byteOffset) {
         return std::nullopt;
     }
+    compactSymbols(builder.region);
     return std::move(builder.region);
 }
 
