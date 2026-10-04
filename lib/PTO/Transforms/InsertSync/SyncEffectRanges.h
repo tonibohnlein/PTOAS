@@ -14,6 +14,10 @@ namespace mlir::pto::detail {
 SmallVector<SyncStorageCell> physicalSlotRanges(const SyncInput& input, const BaseMemInfo& memory);
 bool materializeRegion(const SyncAccessRegion& region, AddressSpace space,
                        SmallVectorImpl<SyncStorageCell>& result);
+// Consume supplied interface declarations without consulting opcode semantics.
+// Full-region coverage denotes the descriptor's entire valid logical region.
+void applyAccessCoverage(const SyncInput& input, SyncStorageEffect& effect,
+                         ArrayRef<SyncMemoryEffect> declarations);
 void resolveEffectRanges(const SyncInput& input, SyncStorageEffect& effect);
 } // namespace mlir::pto::detail
 #endif

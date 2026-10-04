@@ -68,10 +68,12 @@ recognizer, not treated as separate storage. Refining such roots into a common
 family remains a possible extension.
 
 Within-slot fragments must come from an exact shared access region. The earlier
-`tgetval`/`tsetval` recovery shortcut has been removed. The current shared input
-supplies read/write operands and descriptor geometry but no actual access
-region, so those examples now report `inexact-footprint`. Structural checks
-still report slot expressions, families and refresh distances.
+`tgetval`/`tsetval` recovery shortcut has been removed. The shared input now
+retains MLIR effect declarations and maps qualified full-region coverage to
+descriptor geometry. Current PTO declarations omit that coverage, so those
+examples still report `inexact-footprint`. Structural checks still report slot
+expressions, families and refresh distances. See `sync-effect-precision.md` for
+the coverage contract and preserved loop/slot information.
 
 ## Guarded regions
 
@@ -199,8 +201,8 @@ are independent of trip counts. These operation counts exclude shared input
 recovery and the later symbolic reduction backend.
 
 Counted-pattern and compositional recognizers remain unimplemented. Practical
-coverage next needs a generic exact access-region contract, broader bounds/views and
-arithmetic conditions. The arithmetic reduction/selector backend and rotating
+coverage next needs producer-supplied coverage or exact subregions through the
+shared interface, broader bounds/views and arithmetic conditions. The arithmetic reduction/selector backend and rotating
 generator/quotient backend are also still separate work.
 
 ## Validation

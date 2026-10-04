@@ -21,6 +21,7 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
 void dumpArithmeticJSON(func::FuncOp function, const pto::frontiersynch::ArithmeticProgram& program);
+int runSyncRegionContractChecks(func::FuncOp function, const pto::SyncInput &input);
 int runSyncAliasChecks(func::FuncOp function, const pto::SyncInput &input);
 namespace {
 LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &input) {
@@ -49,7 +50,12 @@ LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &in
       AffineMap::get(region.extents.size(), region.symbols.size(), region.byteOffset).print(llvm::outs());
       llvm::outs() << " extents=";
       llvm::interleaveComma(region.extents, llvm::outs());
-      llvm::outs() << "\n";
+      llvm::outs() << " loops=" << region.iterations.size() << "\n";
+    }
+    if (effect.selection) {
+      llvm::outs() << "    selected-addresses=";
+      llvm::interleaveComma(effect.selection->addresses, llvm::outs());
+      llvm::outs() << " dynamic=" << !effect.selection->selector.getDefiningOp<arith::ConstantOp>() << "\n";
     }
   }
   if (auto queries = function->getAttrOfType<DenseI64ArrayAttr>("test.overlap")) {
@@ -256,6 +262,7 @@ int main(int argc, char **argv) {
     }
     --argc;
   }
+  const bool regionChecks = argc == 3 && StringRef(argv[1]) == "--region-contract-checks";
   const bool roundtrip = argc == 3 && StringRef(argv[1]) == "--roundtrip";
   const bool aliasChecks = argc == 3 && StringRef(argv[1]) == "--alias-contract";
   const bool expectFailure = argc == 3 && StringRef(argv[1]) == "--expect-failure";
@@ -265,11 +272,11 @@ int main(int argc, char **argv) {
   const bool arithmetic = argc == 3 && StringRef(argv[1]) == "--arithmetic";
   const bool recognition = argc == 3 && StringRef(argv[1]) == "--recognize";
   if (argc != 2 && !arithmetic && !recognition && !expectFailure &&
-      !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip) {
+      !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip && !regionChecks) {
     llvm::errs() << "usage: pto-sync-input-test "
                  << "[--gm-alias=may-alias|may-not-alias] "
                  << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
-                 "--recognize|--arithmetic|--roundtrip] input.pto\n";
+                 "--recognize|--arithmetic|--roundtrip|--region-contract-checks] input.pto\n";
     return 1;
   }
   DialectRegistry dialects;
@@ -277,7 +284,7 @@ int main(int argc, char **argv) {
   MLIRContext context(dialects);
   context.disableMultithreading();
   const bool hasOption = expectFailure || capabilities || phaseIndex || storageEffects ||
-                         recognition || arithmetic || aliasChecks || roundtrip;
+                         recognition || arithmetic || aliasChecks || roundtrip || regionChecks;
   const auto filename = argv[hasOption ? 2 : 1];
   auto module = parseSourceFile<ModuleOp>(filename, &context);
   if (!module || failed(verify(*module))) {
@@ -303,6 +310,9 @@ int main(int argc, char **argv) {
       continue;
     }
     if (!translated) {
+      return 1;
+    }
+    if (regionChecks && runSyncRegionContractChecks(function, input)) {
       return 1;
     }
     if (aliasChecks && runSyncAliasChecks(function, input)) {

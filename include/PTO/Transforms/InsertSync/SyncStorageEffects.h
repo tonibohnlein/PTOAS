@@ -24,6 +24,12 @@ struct SyncStorageCell {
     uint64_t end = 0;
 };
 
+struct SyncSlotSelection {
+    Value family;
+    Value selector;
+    SmallVector<uint64_t> addresses;
+};
+
 struct SyncStorageEffect {
     const CompoundInstanceElement* phase = nullptr;
     const BaseMemInfo* memory = nullptr;
@@ -31,6 +37,8 @@ struct SyncStorageEffect {
     SyncAccessPrecision precision = SyncAccessPrecision::Unknown;
     // Buffer geometry is retained independently from actual access precision.
     std::optional<SyncAccessRegion> descriptorRegion;
+    // Preserve address-table selection even when it has no affine byte map.
+    std::optional<SyncSlotSelection> selection;
     std::optional<SyncAccessRegion> region;
     // Empty only when the shared contract and physical mapping are exact.
     std::string precisionReason;

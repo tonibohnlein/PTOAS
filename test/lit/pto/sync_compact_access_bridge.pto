@@ -1,0 +1,108 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
+// RUN: pto-sync-input-test --region-contract-checks %s | FileCheck %s --check-prefix=CONTRACT
+// Full-coverage declarations are synthesized only by the contract unit test.
+// Ordinary PTO effect import remains unqualified; no per-op footprint recipes.
+!tile = !pto.tile_buf<vec, 1x8xf32>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<vec, 1x8xf32>, count=2>
+!three = !pto.multi_tile_buf<!pto.tile_buf<vec, 1x8xf32>, count=3>
+module attributes {pto.target_arch = "a3"} {
+  func.func @static_region() attributes {test.region_bytes = 32 : i64} {
+    %base = arith.constant 1024 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    pto.texpands ins(%one : f32) outs(%tile : !tile)
+    return
+  }
+  func.func @nested_reset(%tiles: index, %steps: index) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %value = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %base : !ring
+    scf.for %t = %zero to %tiles step %one {
+      scf.for %k = %zero to %steps step %one {
+        %slot = arith.remui %k, %two : index
+        %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+        pto.texpands ins(%value : f32) outs(%tile : !tile)
+      }
+    }
+    return
+  }
+  func.func @strided_slot_table(%steps: index) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %value = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile {pto.multi_buffer_addrs = array<i64: 128, 320>} : !ring
+    scf.for %k = %zero to %steps step %one {
+      %slot = arith.remsi %k, %two : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      pto.texpands ins(%value : f32) outs(%tile : !tile)
+    }
+    return
+  }
+  func.func @irregular_slot_table(%steps: index) attributes {test.no_region} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %three = arith.constant 3 : index
+    %value = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile {pto.multi_buffer_addrs = array<i64: 0, 64, 160>} : !three
+    scf.for %k = %zero to %steps step %one {
+      %slot = arith.remui %k, %three : index
+      %tile = pto.multi_tile_get %ring[%slot] : !three -> !tile
+      pto.texpands ins(%value : f32) outs(%tile : !tile)
+    }
+    return
+  }
+  func.func @wrapping_expression(%offset: index) {
+    %base = arith.constant 0 : i64
+    %one = arith.constant 1 : index
+    %value = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %base : !ring
+    %slot = arith.addi %offset, %one : index
+    %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+    pto.texpands ins(%value : f32) outs(%tile : !tile)
+    return
+  }
+  func.func @no_wrap_expression(%offset: index) {
+    %base = arith.constant 0 : i64
+    %one = arith.constant 1 : index
+    %value = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %base : !ring
+    %slot = arith.addi %offset, %one overflow<nsw> : index
+    %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+    pto.texpands ins(%value : f32) outs(%tile : !tile)
+    return
+  }
+}
+// CHECK-LABEL: storage static_region:
+// CHECK: write unknown definite-write=0
+// CHECK: map=(d0, d1) -> ((d0 * 8 + d1) * 4 + 1024) extents=1, 8 loops=0
+// CHECK-LABEL: storage nested_reset:
+// CHECK: map=(d0, d1)[s0] -> ((d0 * 8 + d1) * 4 + (s0 mod 2) * 32) extents=1, 8 loops=2
+// CHECK: selected-addresses=0, 32 dynamic=1
+// CHECK-LABEL: storage strided_slot_table:
+// CHECK: (s0 mod 2) * 192 + 128
+// CHECK: selected-addresses=128, 320 dynamic=1
+// CHECK-LABEL: storage irregular_slot_table:
+// CHECK: write unknown definite-write=0
+// CHECK-NOT: descriptor base=
+// CHECK: selected-addresses=0, 64, 160 dynamic=1
+// CHECK-LABEL: storage wrapping_expression:
+// CHECK: map=(d0, d1)[s0] -> ((d0 * 8 + d1) * 4 + s0 * 32)
+// CHECK-LABEL: storage no_wrap_expression:
+// CHECK: map=(d0, d1)[s0] -> ((d0 * 8 + d1) * 4 + (s0 + 1) * 32)
+// CONTRACT: synthetic-region-contract static_region: 1 passed
+// CONTRACT: synthetic-region-contract nested_reset: 1 passed
+// CONTRACT: synthetic-region-contract strided_slot_table: 1 passed
+// CONTRACT: synthetic-region-contract irregular_slot_table: 0 passed
+// CONTRACT: synthetic-region-contract wrapping_expression: 1 passed
+// CONTRACT: synthetic-region-contract no_wrap_expression: 1 passed
