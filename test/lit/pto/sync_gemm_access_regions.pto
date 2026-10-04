@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
+// RUN: pto-sync-input-test --gm-alias=may-alias --storage-effects %s | FileCheck %s --check-prefix=MAY
 // RUN: pto-sync-input-test --step0-json %s | FileCheck %s --check-prefix=AUDIT
 // All payload accesses in this full aligned GEMM use shared exact declarations.
 // Conversion to f16 changes the destination byte width, not its rectangle.
@@ -28,23 +29,26 @@
 // CHECK: effect 15 pto.tstore read exact
 // CHECK: effect 16 pto.tstore write exact
 // CHECK: access {{.*}}bytes=2{{.*}}extents=16, 16
+// CHECK: overlap 0,2=0
+// MAY-LABEL: storage full_gemm:
+// MAY: overlap 0,2=1
 // CHECK-LABEL: storage partial_shapes:
 // CHECK: effect 0 pto.tload read unknown
-// CHECK: effect 1 pto.tload write unknown
-// CHECK: effect 2 pto.tmatmul read unknown
-// CHECK: effect 3 pto.tmatmul read unknown
-// CHECK: effect 4 pto.tmatmul write unknown
-// CHECK: effect 5 pto.tstore read unknown
+// CHECK: effect 1 pto.tload write upper
+// CHECK: effect 2 pto.tmatmul read upper
+// CHECK: effect 3 pto.tmatmul read upper
+// CHECK: effect 4 pto.tmatmul write upper
+// CHECK: effect 5 pto.tstore read upper
 // CHECK: effect 6 pto.tstore write unknown
 // CHECK-LABEL: storage separate_accumulator:
-// CHECK: effect 0 pto.tmatmul.acc read unknown
-// CHECK: effect 3 pto.tmatmul.acc write unknown
+// CHECK: effect 0 pto.tmatmul.acc read upper
+// CHECK: effect 3 pto.tmatmul.acc write upper
 // CHECK-LABEL: storage wide_stride:
 // CHECK: effect 0 pto.tload read unknown
-// CHECK: effect 1 pto.tload write unknown
+// CHECK: effect 1 pto.tload write upper
 // CHECK-LABEL: storage alternate_fractal:
 // CHECK: effect 0 pto.tload read unknown
-// CHECK: effect 1 pto.tload write unknown
+// CHECK: effect 1 pto.tload write upper
 // AUDIT: "exact_accesses":17
 // AUDIT: "exact_accesses":0
 // AUDIT: "exact_accesses":0
@@ -58,7 +62,7 @@
 !partial_left = !pto.tile_buf<left, 32x16xf16, valid=16x16, slayout=row_major>
 !partial_acc = !pto.tile_buf<acc, 32x16xf32, valid=16x16, blayout=col_major, slayout=row_major, fractal=1024>
 module attributes {pto.target_arch = "a3"} {
-  func.func @full_gemm(%a: !pto.ptr<f16, gm>, %b: !pto.ptr<f16, gm>, %c: !pto.ptr<f16, gm>) {
+  func.func @full_gemm(%a: !pto.ptr<f16, gm>, %b: !pto.ptr<f16, gm>, %c: !pto.ptr<f16, gm>) attributes {test.overlap = array<i64: 0, 2>} {
     %zero = arith.constant 0 : index
     %i0 = arith.constant 0 : index
     %i1 = arith.constant 1 : index

@@ -113,11 +113,11 @@ int main()
     builder.setInsertionPointToStart(function->addEntryBlock());
     builder.create<func::ReturnOp>(builder.getUnknownLoc());
     pto::SyncInput shared;
-    pto::SyncStorageEffects effects;
     fs::PhaseIndex index;
-    if (failed(shared.build(*function)) || failed(index.build(*function, shared)) || failed(effects.build(shared))) {
+    if (failed(shared.build(*function)) || failed(index.build(*function, shared))) {
         return 1;
     }
+    const auto& effects = shared.accesses();
     for (auto limits : {fs::ArithmeticLimits{8, 8, INT64_MAX, 8}, fs::ArithmeticLimits{8, 100, 2, 8}}) {
         auto program = fs::recognizeArithmeticProgram(*function, index, shared, effects, limits);
         llvm::outs() << "producer-limit: " << fs::recognitionName(program.extraction.state)

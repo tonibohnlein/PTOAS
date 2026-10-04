@@ -7,9 +7,14 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
+#include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 namespace mlir::pto {
+SyncInput::SyncInput(GMAliasPolicy policy)
+    : analyzer(policy), resolvedAccesses(std::make_unique<SyncStorageEffects>()) {}
 SyncInput::~SyncInput() = default;
+const SyncStorageEffects& SyncInput::accesses() const { return *resolvedAccesses; }
 LogicalResult SyncInput::build(func::FuncOp function) {
+  resolvedAccesses = std::make_unique<SyncStorageEffects>();
   declaredEffects.clear();
   phases.clear();
   nodes.clear();
@@ -31,7 +36,7 @@ LogicalResult SyncInput::build(func::FuncOp function) {
       interface.getEffects(declaredEffects[operation]);
     }
   });
-  return success();
+  return resolvedAccesses->build(*this);
 }
 ArrayRef<SyncMemoryEffect> SyncInput::effectsFor(const CompoundInstanceElement& phase) const {
   if (phase.macroOpInstanceId >= 0) {

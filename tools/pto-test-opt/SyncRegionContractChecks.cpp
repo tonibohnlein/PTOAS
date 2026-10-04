@@ -20,10 +20,7 @@ int runSyncRegionContractChecks(func::FuncOp function, const SyncInput& input)
     if (!checkScalarEvolution(function)) {
         return 1;
     }
-    SyncStorageEffects storage;
-    if (failed(storage.build(input))) {
-        return 1;
-    }
+    const auto& storage = input.accesses();
     unsigned checked = 0;
     for (const auto& effect : storage.effects()) {
         if (!effect.descriptorRegion) {
@@ -88,21 +85,21 @@ int runSyncRegionContractChecks(func::FuncOp function, const SyncInput& input)
         malformed.set("shape_operand", IntegerAttr::get(IntegerType::get(function.getContext(), 64), -1));
         SyncMemoryEffect invalid(kind, operand, malformed.getDictionary(function.getContext()));
         mlir::pto::detail::applyAccessCoverage(input, copy, {invalid});
-        if (copy.precision != SyncAccessPrecision::Unknown || copy.region) {
+        if (copy.precision == SyncAccessPrecision::Exact || copy.region) {
             return 1;
         }
         mlir::pto::detail::applyAccessCoverage(input, copy, {full, identity});
-        if (copy.precision != SyncAccessPrecision::Unknown || copy.region) {
+        if (copy.precision != SyncAccessPrecision::Exact || copy.regions.size() != 2) {
             return 1;
         }
         SyncMemoryEffect partial(kind, operand);
         mlir::pto::detail::applyAccessCoverage(input, copy, {full, partial});
-        if (copy.precision != SyncAccessPrecision::Unknown || copy.region || copy.exactRanges || !copy.ranges.empty()) {
+        if (copy.precision == SyncAccessPrecision::Exact || copy.region || copy.exactRanges) {
             return 1;
         }
         SyncMemoryEffect parameters(kind, operand, StringAttr::get(function.getContext(), "opaque"), 0, true);
         mlir::pto::detail::applyAccessCoverage(input, copy, {parameters});
-        if (copy.precision != SyncAccessPrecision::Unknown) {
+        if (copy.precision == SyncAccessPrecision::Exact) {
             return 1;
         }
         mlir::pto::detail::applyAccessCoverage(input, copy, input.effectsFor(*effect.phase));

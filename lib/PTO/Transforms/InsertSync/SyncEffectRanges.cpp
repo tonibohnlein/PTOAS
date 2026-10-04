@@ -61,23 +61,48 @@ SmallVector<SyncStorageCell> physicalSlotRanges(const SyncInput& input, const Ba
     return sharedRanges(*root->second.front());
 }
 
-void applyAccessCoverage(const SyncInput& input, SyncStorageEffect& effect,
-                         ArrayRef<SyncMemoryEffect> declarations)
+namespace {
+void retainBufferBound(SyncStorageEffect& effect)
 {
     effect.region.reset();
+    effect.regions.clear();
     effect.ranges.clear();
     effect.cells.clear();
     effect.exactRanges = false;
-    effect.precision = SyncAccessPrecision::Unknown;
-    effect.precisionReason = "shared read/write interface does not specify an access region";
+    // The translator's ranges enclose accesses through this buffer, including
+    // slot alternatives. A cached initial alias of a loop-carried pointer does
+    // not enclose all visits, so it cannot be used as a bound here.
+    if (effect.sharedProvenanceComplete) {
+        effect.ranges = sharedRanges(*effect.memory);
+    }
+    effect.precision = effect.ranges.empty() ? SyncAccessPrecision::Unknown : SyncAccessPrecision::UpperBound;
+    effect.precisionReason = effect.ranges.empty() ? "access geometry unresolved" : "buffer range bounds the access";
+}
+
+std::optional<SyncAccessRegion> declaredRegion(const SyncInput& input, const SyncStorageEffect& effect,
+                                              const SyncMemoryEffect& declaration)
+{
+    if (declaration.getResource() != SideEffects::DefaultResource::get()) {
+        return std::nullopt;
+    }
+    auto parameters = declaration.getParameters();
+    if (auto contract = dyn_cast_or_null<DictionaryAttr>(parameters)) {
+        return resolveSelectedRegion(input, effect.memory->baseBuffer, effect.phase->elementOp, contract);
+    }
+    return declaration.getEffectOnFullRegion() && !parameters ? effect.descriptorRegion : std::nullopt;
+}
+} // namespace
+
+void applyAccessCoverage(const SyncInput& input, SyncStorageEffect& effect,
+                         ArrayRef<SyncMemoryEffect> declarations)
+{
+    retainBufferBound(effect);
     auto aliases = input.buffers().find(effect.memory->baseBuffer);
     if (effect.phase->macroOpInstanceId >= 0 ||
         aliases == input.buffers().end() || aliases->second.size() != 1) {
         return;
     }
-    bool matched = false;
-    Attribute parameters;
-    bool full = false;
+    SmallVector<SyncAccessRegion> regions;
     for (const auto& declared : declarations) {
         const bool read = isa<MemoryEffects::Read>(declared.getEffect());
         const bool write = isa<MemoryEffects::Write>(declared.getEffect());
@@ -85,34 +110,31 @@ void applyAccessCoverage(const SyncInput& input, SyncStorageEffect& effect,
             (effect.mode == SyncAccessMode::Read ? !read : !write)) {
             continue;
         }
-        if (declared.getResource() != SideEffects::DefaultResource::get()) {
-            return;
+        auto region = declaredRegion(input, effect, declared);
+        if (!region) {
+            return; // An unresolved declaration must not be hidden by an exact one.
         }
-        // Several declarations for the same buffer/mode must agree. A known
-        // selection cannot hide a second unresolved or different access.
-        if (matched && (parameters != declared.getParameters() || full != declared.getEffectOnFullRegion())) {
-            return;
-        }
-        parameters = declared.getParameters();
-        full = declared.getEffectOnFullRegion();
-        matched = true;
+        regions.push_back(std::move(*region));
     }
-    if (!matched) {
+    if (regions.empty()) {
         return;
     }
-    if (auto contract = dyn_cast_or_null<DictionaryAttr>(parameters)) {
-        effect.region = resolveSelectedRegion(input, effect.memory->baseBuffer, effect.phase->elementOp, contract);
-    } else if (full && !parameters) {
-        effect.region = effect.descriptorRegion;
-    }
-    if (!effect.region) {
-        return;
+    effect.regions = std::move(regions);
+    if (effect.regions.size() == 1) {
+        effect.region = effect.regions.front();
     }
     effect.precision = SyncAccessPrecision::Exact;
     effect.precisionReason.clear();
-    effect.exactRanges = materializeRegion(*effect.region, effect.memory->scope, effect.ranges);
-    if (!effect.exactRanges) {
-        effect.ranges.clear();
+    effect.ranges.clear();
+    effect.exactRanges = true;
+    for (const auto& region : effect.regions) {
+        SmallVector<SyncStorageCell> piece;
+        if (!materializeRegion(region, effect.memory->scope, piece)) {
+            effect.exactRanges = false;
+            effect.ranges.clear();
+            break;
+        }
+        effect.ranges.append(piece);
     }
 }
 
