@@ -178,6 +178,7 @@ module attributes {pto.target_arch = "a3"} {
     %other = pto.alloc_tile addr = %zero : !tile
     scf.for %t = %i0 to %n step %i1 {
       pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      %metadata = arith.addi %t, %i0 : index
       %v = pto.tgetval ins(%other, %i0 : !tile, index) outs : f32
     }
     return

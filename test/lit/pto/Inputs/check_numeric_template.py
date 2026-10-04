@@ -28,11 +28,42 @@ def coordinates(payload):
     return tuple(item["value"] for item in payload["coordinates"])
 
 
+def check_endpoints(template):
+    plan = template["logical_endpoints"]
+    assert not plan["error"] and plan["selection_recipes_ready"]
+    assert not plan["physical_ids_ready"] and not plan["ir_emitted"]
+    anchors = plan["anchors"]
+    assert len(anchors) == len(template["payloads"])
+    static = {}
+    for anchor, payload in zip(anchors, template["payloads"]):
+        assert anchor["phase"] == payload["phase"] and anchor["coordinates"] == payload["coordinates"]
+        cuts = anchor["before_cut"], anchor["after_cut"]
+        assert cuts[0] != cuts[1]
+        assert static.setdefault(anchor["phase"], cuts) == cuts
+    groups = plan["groups"]
+    assert len({group["cut"] for group in groups}) == len(groups)
+    indices = [index for group in groups for index in group["recipes"]]
+    assert sorted(indices) == list(range(len(plan["recipes"])))
+    for group in groups:
+        for index in group["recipes"]:
+            recipe = plan["recipes"][index]
+            producer = recipe["kind"] == "set"
+            anchor = anchors[recipe["source"] if producer else recipe["target"]]
+            assert group["cut"] == anchor["after_cut" if producer else "before_cut"]
+    # Each actual inner visit matches only its own full tuple, even when many
+    # expanded types share one original operation and static insertion point.
+    for identity, visit in enumerate(anchors):
+        selected = [i for i, anchor in enumerate(anchors)
+                    if anchor["phase"] == visit["phase"] and anchor["coordinates"] == visit["coordinates"]]
+        assert selected == [identity]
+
+
 def check_common(document, template):
     assert not document["analysis_ready"] and not template["interfaces_ready"]
     assert template["scope"] == "whole-function"
     assert template["period"] == template["refresh"] == 1
     payloads = template["payloads"]
+    check_endpoints(template)
     assert template["counted_payloads"] >= len(payloads)
     assert template["counted_visits"] >= template["counted_payloads"]
     keys = [(p["phase"], coordinates(p)) for p in payloads]
@@ -69,6 +100,14 @@ def check_examples(documents, policy):
         assert effect["mode"] == ("write" if index % 2 == 0 else "read")
         start = 32 * ((index // 2) % 2)
         assert byte_set(effect["ranges"]) == {(6, byte) for byte in range(start, start + 4)}
+    recurrence_anchors = recurrence["logical_endpoints"]["anchors"]
+    for i in range(0, 6, 2):
+        assert recurrence_anchors[i]["after_cut"] == recurrence_anchors[i + 1]["before_cut"]
+    assert recurrence_anchors[0]["before_cut"] == recurrence_anchors[2]["before_cut"]
+    assert recurrence_anchors[0]["coordinates"] != recurrence_anchors[2]["coordinates"]
+    # The inner loop's end and the following outer-body operation are distinct cuts.
+    zero_anchors = candidate(documents["zero_outer"])["logical_endpoints"]["anchors"]
+    assert zero_anchors[1]["after_cut"] != zero_anchors[2]["before_cut"]
     nested = candidate(documents["nested_coordinates"])
     assert nested["lower"] == 1 and nested["step"] == 2
     assert [coordinates(p) for p in nested["payloads"]] == [(i, j) for i in (1, 3) for j in (0, 1)]
@@ -77,6 +116,8 @@ def check_examples(documents, policy):
     assert [p["effects"][0]["mode"] for p in branch["payloads"]] == ["write"] + ["read"] * 4
     reuse = candidate(documents["local_reuse"])
     assert len(reuse["atoms"]) == 1
+    reuse_anchors = reuse["logical_endpoints"]["anchors"]
+    assert reuse_anchors[0]["after_cut"] != reuse_anchors[1]["before_cut"]
     assert [p["effects"][0]["atoms"] for p in reuse["payloads"]] == [[0], [0]]
     for name, stride in (("streaming_global", 16), ("negative_stream", -16)):
         effect, = candidate(documents[name])["payloads"][0]["effects"]

@@ -22,11 +22,13 @@ unchanged. This is a developer test tool, not a production synchronization mode.
 | `missing-premise` | The shape may qualify, but an effect, geometry, or arithmetic obligation remains unresolved. |
 | `not-applicable` | The supplied syntax is outside the implemented class, or contradicts one of its structural premises. |
 
-An applicable input is not Section 8's `Ready` result. The current client
-separately reports `backend=unavailable`: these recognizers do not yet produce
-generators, reduced demands, endpoints, boundary selectors or reachability
-queries. Failed recognition neither proves physical infeasibility nor changes
-the selected ordering. No compiler fallback is invoked by the diagnostic.
+An applicable input is not Section 8's `Ready` result. The base recognizers
+report `backend=unavailable` when no analysis backend is attached. The late
+numeric-template path additionally exports minimum demand records,
+completion-origin queries and logical endpoint recipes, described below; it
+still lacks the remaining interfaces and physical realization. Failed
+recognition neither proves physical infeasibility nor changes the selected
+ordering. No compiler fallback is invoked by the diagnostic.
 
 As with the precision layer, completeness of the shared effect producer is an
 input contract. Unrepresented side-effecting operations are reported, but this
@@ -309,7 +311,7 @@ materialized ranges and atom references. Atom endpoints are sorted once, and
 range-to-atom lookup uses binary search plus the emitted references. Exceeding a
 limit rejects with no partial template export. Recognition supplies the effect
 word to the exact numerical analysis below. It does not supply external storage
-selectors, executable endpoint code, event-ID allocation or synchronization commands.
+selectors, emitted endpoint code, event-ID allocation or synchronization commands.
 
 
 ## Exact numerical periodic demand analysis
@@ -355,7 +357,7 @@ thresholds are distinct from invalid queries. Finite-prefix helpers check endpoi
 presence, support partial final periods, and distinguish reflexive from strict
 completion queries. Threshold lookup uses indexed arrays; a profile query adds
 an expected constant-time pipe lookup. These results do not provide start-origin
-queries, external storage selectors, executable endpoint code, physical IDs or
+queries, external storage selectors, emitted endpoint code, physical IDs or
 repairs; `analysis_ready` remains false until the required interfaces exist.
 
 The numerical test helper accepts synthetic effect words and arbitrary periodic
@@ -364,3 +366,46 @@ pairs, adds native order, and computes finite DAG reachability and covers withou
 using the lifetime scan. It checks exact demands, per-pipe ranks, finite-prefix
 queries and thresholds, alongside very large distances, overflow rejection,
 partial periods, initial readers, read-modify-write and tied alternatives.
+
+
+## Direct logical endpoint recipes
+
+Each retained periodic record now produces a logical direct-insertion recipe.
+For a cross-pipe record `a -> b` at displacement `d`, SET follows the original
+source payload and executes at source ordinal `t` exactly when
+`d < T && t < T - d`. WAIT precedes the original target at ordinal `j` exactly
+when `j < T && j >= d`. Both identify the same logical notification by
+`(record, source ordinal)`, with source ordinal `j - d` at WAIT. This namespace
+belongs to one plan and must be preserved if plans are later composed. These
+guards publish no notifications for absent targets, so this route needs no
+cleanup for surplus publications. Same-pipe records request a barrier before
+the consumer under the same-pipe adjacency premise of the model.
+
+The numeric adapter retains each endpoint's own original phase and complete
+inner-coordinate tuple. It also records the actual IR insertion points:
+`Before(op) = (block, op)` and `After(op) = (block, op.next)`. Recipes sharing
+that static key form a cut group. At each dynamic visit, coordinate predicates
+and ordinal guards select the active instances before grouping commands;
+different visits of one static cut are never coalesced. Active commands at one
+cut are ordered SET, barrier, WAIT, with one barrier per pipe. Metadata or region
+boundaries do not make distinct cuts equivalent automatically.
+
+Counted-loop helpers compute trip counts and original-IV ordinals using checked
+integer relations, including nonunit steps, zero trips and the full signed
+bound span. Invalid steps or off-grid induction values are errors; an endpoint
+whose occurrence or partner is absent is inactive. Recipe construction takes
+linear work in retained records and anchor-coordinate output, with expected
+linear static-cut grouping. Per-recipe ordinal selection is constant arithmetic
+work; matching an anchor also reads its coordinate tuple. Ordering `q` active
+commands at one cut costs `O(q log q)`. No production helper enumerates the
+outer trip count.
+
+These are executable selection recipes and placement descriptions, not emitted
+PTO operations or physical event IDs. No start-origin query interface, external
+storage selectors, physical allocation or scarcity repair is added, and the
+whole Section 8 result is still not ready. The periodic index remains unchanged.
+The command oracle checks fresh logical matching and models the mechanisms
+separately: SET observes prior completions without gating later payload starts;
+WAIT gates later starts without waiting for prior payload completions. Under
+same-pipe adjacency, the resulting payload-event closure equals the selected
+required order. For a nonadjacent local demand, the test checks coverage only.
