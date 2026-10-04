@@ -14,6 +14,7 @@ namespace mlir::pto::frontiersynch {
 LogicalResult PhaseIndex::build(func::FuncOp source, const SyncInput& input)
 {
     anchorPhases.clear();
+    valuePrerequisites.clear();
     dominance.invalidate();
     function = {};
     if (!source) {
@@ -29,7 +30,40 @@ LogicalResult PhaseIndex::build(func::FuncOp source, const SyncInput& input)
     }
     anchorPhases = std::move(pending);
     function = source;
+    // Follow SSA use chains once, including values yielded by nested regions.
+    SmallVector<Value> work;
+    DenseSet<Value> seen;
+    auto append = [&](ValueRange values) {
+        for (Value value : values) {
+            if (seen.insert(value).second) {
+                work.push_back(value);
+            }
+        }
+    };
+    for (const auto& entry : anchorPhases) {
+        append(entry.first->getResults());
+    }
+    while (!work.empty()) {
+        Value value = work.pop_back_val();
+        for (Operation* user : value.getUsers()) {
+            const bool terminator = user->hasTrait<OpTrait::IsTerminator>();
+            const bool consumesCompletion = !phasesFor(user).empty() || user->getNumRegions() || terminator;
+            if (consumesCompletion) {
+                valuePrerequisites.insert(user);
+            }
+            append(user->getResults());
+            const bool yieldsToRegion = terminator && user->getParentOp() != source.getOperation();
+            if (yieldsToRegion) {
+                append(user->getParentOp()->getResults());
+            }
+        }
+    }
     return success();
+}
+
+bool PhaseIndex::needsValuePrerequisite(Operation* operation) const
+{
+    return valuePrerequisites.contains(operation);
 }
 
 bool PhaseIndex::contains(Operation* operation) const

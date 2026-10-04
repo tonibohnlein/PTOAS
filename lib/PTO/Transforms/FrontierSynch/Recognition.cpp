@@ -49,11 +49,14 @@ bool fixedBody(Block& block, const PhaseIndex& index, RecognitionResult& result)
     }
     return fixed;
 }
-bool constantEquals(Value value, int64_t expected)
+std::optional<int64_t> constant(Value value)
 {
     APInt number;
-    return matchPattern(value, m_ConstantInt(&number)) && number.isSignedIntN(64) &&
-           number.getSExtValue() == expected;
+    const bool known = matchPattern(value, m_ConstantInt(&number)) && number.isSignedIntN(64);
+    if (!known) {
+        return std::nullopt;
+    }
+    return number.getSExtValue();
 }
 struct Family {
     std::optional<uint64_t> stride;
@@ -92,10 +95,9 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
     auto multi = dyn_cast<MultiTileBufType>(memory.rootBuffer.getType());
     const uint64_t count = multi ? multi.getCount() : 1;
     std::optional<detail::SlotPattern> pattern;
-    if (auto get = memory.baseBuffer.getDefiningOp<MultiTileGetOp>();
-        get && get.getSource() == memory.rootBuffer) {
-        pattern = detail::matchSlot(get.getSlot(), loop.getInductionVar(), count);
-    } else if (memory.baseBuffer == memory.rootBuffer && count == 1) {
+    if (effect.selection && effect.selection->family == memory.rootBuffer) {
+        pattern = detail::matchSlot(effect.selection->selector, loop.getInductionVar(), count);
+    } else if (!effect.selection && count == 1) {
         pattern = detail::SlotPattern{};
     } else {
         result.note(RecognitionIssue::UnsupportedView, anchor);
@@ -104,6 +106,14 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
     if (!pattern) {
         result.note(RecognitionIssue::SlotExpression, anchor, true);
         return;
+    }
+    // The exported pattern uses the iteration ordinal j, with iv = lower+step*j.
+    // Widen products before reducing; large constants must not wrap in the host.
+    auto lower = constant(loop.getLowerBound()), step = constant(loop.getStep());
+    if (lower && *lower >= 0 && step && *step > 0) {
+        APInt modulus(128, count), stride(128, pattern->stride);
+        pattern->offset = (stride * APInt(128, *lower) + APInt(128, pattern->offset)).urem(modulus).getZExtValue();
+        pattern->stride = (stride * APInt(128, *step)).urem(modulus).getZExtValue();
     }
     auto found = families.find(memory.rootBuffer);
     if (found == families.end()) {
@@ -124,9 +134,10 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
         result.note(RecognitionIssue::UnknownGeometry, anchor);
     } else {
         const auto bytes = family.slots.front().end - family.slots.front().begin;
-        atom = detail::withinSlotRange(effect, bytes);
+        atom = detail::withinSlotRange(effect, input, bytes);
         if (!atom) {
-            result.note(RecognitionIssue::InexactFootprint, anchor);
+            result.note(effect.precision == SyncAccessPrecision::Exact ?
+                        RecognitionIssue::WithinSlotFootprint : RecognitionIssue::InexactFootprint, anchor);
         }
     }
     result.accesses.push_back({id, memory.rootBuffer, count, pattern->stride, pattern->offset,
@@ -184,6 +195,11 @@ RecognitionResult recognizeExplicitRun(ArrayRef<Operation*> operations, const Ph
 void detail::inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result)
 {
     auto phases = index.phasesFor(&op);
+    const bool extra = index.needsValuePrerequisite(&op) ||
+        isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp, RecordEventOp, WaitEventOp, BarrierOp>(op);
+    if (extra) {
+        result.note(RecognitionIssue::AdditionalPrerequisite, &op);
+    }
     if (phases.size() > 1) {
         result.note(RecognitionIssue::MultiplePhases, &op);
     } else if (phases.empty() && !metadata(op)) {
@@ -196,13 +212,15 @@ void detail::inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResu
     }
 }
 
-bool detail::checkRotatingDomain(scf::ForOp loop, RecognitionResult& result)
+bool detail::checkRotatingDomain(scf::ForOp loop, RecognitionResult& result, bool canonical)
 {
     if (!loop) {
         result.note(RecognitionIssue::LoopDomain, nullptr, true);
         return false;
     }
-    if (!constantEquals(loop.getLowerBound(), 0) || !constantEquals(loop.getStep(), 1)) {
+    auto lower = constant(loop.getLowerBound()), step = constant(loop.getStep());
+    const bool normalized = lower && *lower >= 0 && step && *step > 0;
+    if (!normalized || (canonical && (*lower != 0 || *step != 1))) {
         result.note(RecognitionIssue::LoopDomain, loop, true);
     }
     if (loop.getNumRegionIterArgs()) {
@@ -230,6 +248,9 @@ RecognitionResult recognizeRotating(scf::ForOp loop, const PhaseIndex& index,
     if (!detail::checkRotatingDomain(loop, result) || !fixedBody(*loop.getBody(), index, result)) {
         return result;
     }
+    if (index.needsValuePrerequisite(loop)) {
+        result.note(RecognitionIssue::AdditionalPrerequisite, loop);
+    }
     SmallVector<const CompoundInstanceElement*> phases;
     for (Operation& op : *loop.getBody()) {
         llvm::append_range(phases, index.phasesFor(&op));
@@ -255,6 +276,7 @@ StringRef recognitionName(RecognitionIssue issue)
     case RecognitionIssue::UnmodeledOperation: return "unmodeled-operation";
     case RecognitionIssue::UnknownPipe: return "unknown-pipe";
     case RecognitionIssue::InexactFootprint: return "inexact-footprint";
+    case RecognitionIssue::WithinSlotFootprint: return "unsupported-slot-footprint";
     case RecognitionIssue::SymbolicGeometry: return "symbolic-storage-partition";
     case RecognitionIssue::UnknownGeometry: return "unknown-geometry";
     case RecognitionIssue::LoopDomain: return "loop-domain";

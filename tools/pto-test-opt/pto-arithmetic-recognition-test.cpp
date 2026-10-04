@@ -53,11 +53,52 @@ void dump(StringRef name, const fs::ArithmeticPrimitives& input, fs::ArithmeticL
         }
     }
 }
+// Check row normalization against integer evaluation, independently of its
+// gcd/floor implementation, for both equalities and inequalities.
+bool checkIntegerRows(MLIRContext& context)
+{
+    auto x = getAffineDimExpr(0, &context), y = getAffineDimExpr(1, &context);
+    unsigned checks = 0;
+    for (int a = -2; a <= 2; ++a) {
+        for (int b = -2; b <= 2; ++b) {
+            for (int c = -3; c <= 3; ++c) {
+                for (bool equality : {false, true}) {
+                    auto result = fs::recognizeArithmetic(bundle(a*x + b*y + c, equality), {3, 4, 1, 7});
+                    const bool valid = result.state == fs::RecognitionState::Applicable && result.pieces.size() == 1;
+                    if (!valid) {
+                        return false;
+                    }
+                    const auto& piece = result.pieces.front();
+                    for (int xv = -3; xv <= 3; ++xv) {
+                        for (int yv = -3; yv <= 3; ++yv) {
+                            int original = a*xv + b*yv + c;
+                            bool actual = !piece.empty;
+                            for (const auto& row : piece.rows) {
+                                auto value = row.coefficients[0]*xv + row.coefficients[1]*yv + row.constant;
+                                actual &= row.equality ? value == 0 : value >= 0;
+                            }
+                            if (actual != (equality ? original == 0 : original >= 0)) {
+                                return false;
+                            }
+                            ++checks;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    llvm::outs() << "integer-row-equivalence: " << checks << " passed\n";
+    return true;
+}
+
 }
 int main()
 {
     MLIRContext context;
     context.disableMultithreading();
+    if (!checkIntegerRows(context)) {
+        return 1;
+    }
     auto x = getAffineDimExpr(0, &context), y = getAffineDimExpr(1, &context), z = getAffineDimExpr(2, &context);
     auto n = getAffineSymbolExpr(0, &context);
     dump("difference", bundle(n - x));

@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-arithmetic-recognition-test | FileCheck %s
+// CHECK: integer-row-equivalence: 17150 passed
 // CHECK-LABEL: difference: applicable class=differences dimensions=4 coefficient=1
 // CHECK: row -1, 0, 0, 1 constant=0 equality=0
 // CHECK-LABEL: octagon: applicable class=octagons

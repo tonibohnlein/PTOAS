@@ -39,9 +39,9 @@ void rotating(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEffe
     const auto& memory = *effect.memory;
     auto* anchor = effect.phase->elementOp;
     auto alias = input.buffers().find(memory.baseBuffer);
-    auto get = memory.baseBuffer.getDefiningOp<MultiTileGetOp>();
     auto multi = memory.rootBuffer ? dyn_cast<MultiTileBufType>(memory.rootBuffer.getType()) : MultiTileBufType{};
-    if (!get || !multi || get.getSource() != memory.rootBuffer || alias == input.buffers().end() ||
+    if (!effect.selection || !multi || effect.selection->family != memory.rootBuffer ||
+        alias == input.buffers().end() ||
         alias->second.size() != 1 || memory.aliasesUnknownRange) {
         builder.output.extraction.note(effect.precision == SyncAccessPrecision::Exact ?
                                        RecognitionIssue::SymbolicGeometry : RecognitionIssue::InexactFootprint, anchor);
@@ -60,14 +60,15 @@ void rotating(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEffe
     const auto& site = builder.output.sites[siteId];
     for (auto [dimension, storedLoop] : llvm::enumerate(site.loops)) {
         auto loop = storedLoop;
-        auto pattern = matchSlot(get.getSlot(), loop.getInductionVar(), count);
+        auto pattern = matchSlot(effect.selection->selector, loop.getInductionVar(), count);
         if (!pattern || !pattern->arithmeticProven || pattern->stride != 1 % count || pattern->offset != 0) {
             continue;
         }
         for (auto [slot, range] : llvm::enumerate(slots)) {
-            auto atom = withinSlotRange(effect, range.end - range.begin);
+            auto atom = withinSlotRange(effect, input, range.end - range.begin);
             if (!atom) {
-                builder.output.extraction.note(RecognitionIssue::InexactFootprint, anchor);
+                builder.output.extraction.note(effect.precision == SyncAccessPrecision::Exact ?
+                    RecognitionIssue::WithinSlotFootprint : RecognitionIssue::InexactFootprint, anchor);
                 return;
             }
             emitRange(builder, siteId, effect, {range.space, range.begin + atom->first, range.begin + atom->second},

@@ -6,7 +6,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # Shared scalar declarations make finite guarded effects exact. Rotating
-# recognition still requires its own within-slot representation.
+# recognition consumes the same exact symbolic maps.
 """Check structure, context and shared-record identities independently of JSON layout."""
 import json
 from pathlib import Path
@@ -70,7 +70,7 @@ def main():
         assert len(root_children[0]["payloads"]) == 2
         assert len(root_children[2]["payloads"]) == 1
         assert max(len(n["loops"]) for n in nodes) == 2
-        assert sorted(a["state"] for a in routes(doc, "rotating")) == ["missing-premise", "not-applicable"]
+        assert sorted(a["state"] for a in routes(doc, "rotating")) == ["applicable", "not-applicable"]
         assert any(g["available_before_loops"] == [False] for g in doc["guards"])
         assert any(g["available_before_loops"] == [True] for g in doc["guards"])
         assert any(n.get("arm") == "else" and not n["children"] for n in nodes)
@@ -79,7 +79,7 @@ def main():
         assert any(a["state"] == "applicable" for a in routes(documents["fixed_storage_loop"], "rotating"))
     elif mode == "guarded":
         assert any(a["state"] == "applicable" for a in routes(documents["nested_arms"], "finite-guarded"))
-        assert any(a["state"] == "missing-premise" and a["entry_guards_available"]
+        assert any(a["state"] == "applicable" and a["entry_guards_available"]
                    for a in routes(documents["invariant_loop"], "guarded-rotating"))
         assert any(any(i["issue"] == "guard-invariance" for i in a["issues"])
                    for a in routes(documents["varying_loop"], "guarded-rotating"))

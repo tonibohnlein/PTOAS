@@ -10,7 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 namespace mlir::pto::frontiersynch::detail {
 void inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result);
-bool checkRotatingDomain(scf::ForOp loop, RecognitionResult& result);
+bool checkRotatingDomain(scf::ForOp loop, RecognitionResult& result, bool canonical = false);
 void inspectRotatingPhases(scf::ForOp loop, ArrayRef<const CompoundInstanceElement*> phases,
                           const SyncInput& input, const SyncStorageEffects& effects, RecognitionResult& result);
 } // namespace mlir::pto::frontiersynch::detail

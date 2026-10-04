@@ -15,6 +15,7 @@ struct SlotPattern {
     bool arithmeticProven = true;
 };
 std::optional<SlotPattern> matchSlot(Value slot, Value induction, uint64_t count);
-std::optional<std::pair<uint64_t, uint64_t>> withinSlotRange(const SyncStorageEffect& effect, uint64_t bytes);
+std::optional<std::pair<uint64_t, uint64_t>> withinSlotRange(const SyncStorageEffect& effect,
+                                                           const SyncInput& input, uint64_t bytes);
 } // namespace mlir::pto::frontiersynch::detail
 #endif

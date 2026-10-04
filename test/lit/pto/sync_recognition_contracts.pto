@@ -1,0 +1,137 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --recognize %s | FileCheck %s
+// RUN: %python %S/Inputs/check_rotating_normalization.py pto-sync-input-test %s
+// A view retains the same bank selector and a fixed 80-byte within-slot offset.
+// CHECK-LABEL: recognition rotating_view
+// CHECK: recognize arithmetic: applicable
+// CHECK: recognize rotating: applicable
+// CHECK: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=[80,84)
+// CHECK: recognize guarded-rotating: applicable
+// CHECK-LABEL: recognition normalized_loop
+// CHECK: recognize rotating: applicable
+// CHECK: rotation family=0 slots=2 stride=1 offset=1 refresh=2 atom=[0,4)
+// CHECK-LABEL: recognition unknown_step
+// CHECK: recognize rotating: not-applicable
+// CHECK: issue loop-domain
+// CHECK-LABEL: recognition changing_fragment
+// CHECK: recognize rotating: missing-premise
+// CHECK: issue unsupported-slot-footprint
+// CHECK-LABEL: recognition constant_slot
+// CHECK: recognize rotating: applicable
+// CHECK: rotation family=0 slots=2 stride=0 offset=1 refresh=1 atom=[0,4)
+// CHECK-LABEL: recognition scalar_dependency
+// CHECK: recognize arithmetic: missing-premise
+// CHECK: issue additional-prerequisite
+// CHECK: recognize explicit: missing-premise
+// CHECK: issue additional-prerequisite
+// CHECK: recognize finite-guarded: missing-premise
+// CHECK: issue additional-prerequisite
+// CHECK-LABEL: recognition existing_barrier
+// CHECK: recognize explicit: missing-premise
+// CHECK: issue additional-prerequisite
+// CHECK: recognize finite-guarded: missing-premise
+// CHECK-LABEL: recognition explicit_exact
+// CHECK: recognize explicit: applicable
+// CHECK: recognize finite-guarded: applicable
+// CHECK: source-unchanged; dependency-analysis-not-run
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!view = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=2>
+module {
+  func.func @rotating_view(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i4 = arith.constant 4 : index
+    %ring = pto.alloc_multi_tile addr = %base : !ring
+    scf.for %i = %i0 to %n step %i1 {
+      %slot = arith.remsi %i, %i2 : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      %view = pto.subview %tile[%i1, %i4] sizes [1, 8] : !tile -> !view
+      %v = pto.tgetval ins(%view, %i0 : !view, index) outs : f32
+    }
+    return
+  }
+  func.func @normalized_loop(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i3 = arith.constant 3 : index
+    %ring = pto.alloc_multi_tile addr = %base : !ring
+    scf.for %i = %i1 to %n step %i3 {
+      %slot = arith.remui %i, %i2 : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    }
+    return
+  }
+  func.func @unknown_step(%n: index, %step: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i2 = arith.constant 2 : index
+    %ring = pto.alloc_multi_tile addr = %base : !ring
+    scf.for %i = %i0 to %n step %step {
+      %slot = arith.remui %i, %i2 : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    }
+    return
+  }
+  func.func @changing_fragment(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %ring = pto.alloc_multi_tile addr = %base : !ring
+    scf.for %i = %i0 to %n step %i1 {
+      %slot = arith.remui %i, %i2 : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      %v = pto.tgetval ins(%tile, %slot : !tile, index) outs : f32
+    }
+    return
+  }
+  func.func @constant_slot(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %ring = pto.alloc_multi_tile addr = %base : !ring
+    scf.for %i = %i0 to %n step %i1 {
+      %tile = pto.multi_tile_get %ring[%i1] : !ring -> !tile
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    }
+    return
+  }
+  func.func @scalar_dependency() {
+    %base = arith.constant 0 : i64
+    %other = arith.constant 2048 : i64
+    %i0 = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    %b = pto.alloc_tile addr = %other : !tile
+    %v = pto.tgetval ins(%a, %i0 : !tile, index) outs : f32
+    %w = arith.addf %v, %one : f32
+    pto.tsetval ins(%i0, %w : index, f32) outs(%b : !tile)
+    return
+  }
+  func.func @existing_barrier() {
+    pto.barrier #pto.pipe<PIPE_V>
+    return
+  }
+  func.func @explicit_exact() {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    pto.tsetval ins(%i0, %one : index, f32) outs(%a : !tile)
+    %v = pto.tgetval ins(%a, %i0 : !tile, index) outs : f32
+    return
+  }
+}
