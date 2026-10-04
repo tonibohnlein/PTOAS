@@ -28,10 +28,7 @@ int runSyncAliasChecks(func::FuncOp function, const pto::SyncInput &input);
 LogicalResult auditSyncStep0(func::FuncOp function, const pto::SyncInput &input);
 namespace {
 LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &input) {
-  pto::SyncStorageEffects storage;
-  if (failed(storage.build(input))) {
-    return failure();
-  }
+  const auto& storage = input.accesses();
   llvm::outs() << "storage " << function.getSymName() << ": cells=" << storage.cells().size()
                << " all-exact=" << storage.allAccessesExact() << "\n";
   for (auto [id, cell] : llvm::enumerate(storage.cells())) {
@@ -93,7 +90,8 @@ LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &in
   }
   // Rebuilding must neither accumulate cells nor retain prior phase mappings.
   auto cellCount = storage.cells().size(), effectCount = storage.effects().size();
-  if (failed(storage.build(input)) || storage.cells().size() != cellCount || storage.effects().size() != effectCount) {
+  pto::SyncStorageEffects rebuilt;
+  if (failed(rebuilt.build(input)) || rebuilt.cells().size() != cellCount || rebuilt.effects().size() != effectCount) {
     return failure();
   }
   return success();
@@ -151,8 +149,8 @@ void dumpGuarded(StringRef label, const pto::frontiersynch::GuardedRecognition &
 }
 LogicalResult recognize(func::FuncOp function, const pto::SyncInput &input, bool arithmeticOnly) {
   pto::frontiersynch::PhaseIndex index;
-  pto::SyncStorageEffects effects;
-  if (failed(index.build(function, input)) || failed(effects.build(input))) {
+  const auto& effects = input.accesses();
+  if (failed(index.build(function, input))) {
     return failure();
   }
   llvm::outs() << "recognition " << function.getSymName() << "\n";
@@ -272,7 +270,8 @@ int main(int argc, char **argv) {
   }
   const bool regionChecks = argc == 3 && StringRef(argv[1]) == "--region-contract-checks";
   const bool step0 = argc == 3 && StringRef(argv[1]) == "--step0-json";
-  const bool existing = argc == 3 && StringRef(argv[1]) == "--existing-check";
+  const bool existingDump = argc == 3 && StringRef(argv[1]) == "--existing-dump";
+  const bool existing = existingDump || (argc == 3 && StringRef(argv[1]) == "--existing-check");
   const bool roundtrip = argc == 3 && StringRef(argv[1]) == "--roundtrip";
   const bool aliasChecks = argc == 3 && StringRef(argv[1]) == "--alias-contract";
   const bool expectFailure = argc == 3 && StringRef(argv[1]) == "--expect-failure";
@@ -288,7 +287,7 @@ int main(int argc, char **argv) {
                  << "[--gm-alias=may-alias|may-not-alias] "
                  << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
                  "--recognize|--arithmetic|--roundtrip|--region-contract-checks|"
-                 "--step0-json|--existing-check] input.pto\n";
+                 "--step0-json|--existing-check|--existing-dump] input.pto\n";
     return 1;
   }
   DialectRegistry dialects;
@@ -307,7 +306,13 @@ int main(int argc, char **argv) {
     pto::PTOInsertSyncOptions options;
     options.gmAlias = policy == pto::GMAliasPolicy::MayAlias ? "may-alias" : "may-not-alias";
     manager.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass(options));
-    return failed(manager.run(*module));
+    if (failed(manager.run(*module))) {
+      return 1;
+    }
+    if (existingDump) {
+      module->print(llvm::outs());
+    }
+    return 0;
   }
   if (roundtrip) {
     module->print(llvm::outs());

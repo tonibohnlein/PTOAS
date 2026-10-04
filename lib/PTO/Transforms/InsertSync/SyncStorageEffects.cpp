@@ -10,7 +10,6 @@
 #include "SyncEffectRanges.h"
 #include "llvm/ADT/STLExtras.h"
 #include <map>
-#include <set>
 
 namespace mlir::pto {
 namespace {
@@ -80,18 +79,23 @@ void SyncStorageEffects::partitionRanges()
     std::map<AddressSpace, std::map<uint64_t, SmallVector<Event>>> spaces;
     for (auto [id, effect] : llvm::enumerate(records)) {
         for (const auto& range : effect.ranges) {
+            if (range.begin >= range.end) {
+                continue;
+            }
             spaces[range.space][range.begin].push_back({id, true});
             spaces[range.space][range.end].push_back({id, false});
         }
     }
     for (const auto& [space, points] : spaces) {
-        std::set<std::size_t> active;
+        std::map<std::size_t, unsigned> active;
         for (auto point = points.begin(); point != points.end(); ++point) {
             for (const auto& event : point->second) {
                 if (event.start) {
-                    active.insert(event.effect);
+                    ++active[event.effect];
                 } else {
-                    active.erase(event.effect);
+                    if (--active[event.effect] == 0) {
+                        active.erase(event.effect);
+                    }
                 }
             }
             auto next = std::next(point);
@@ -101,7 +105,7 @@ void SyncStorageEffects::partitionRanges()
             const auto cell = partition.size();
             partition.push_back({space, point->first, next->first});
             for (auto effect : active) {
-                records[effect].cells.push_back(cell);
+                records[effect.first].cells.push_back(cell);
             }
         }
     }
@@ -139,14 +143,28 @@ bool SyncStorageEffects::mayOverlap(std::size_t first, std::size_t second) const
     // conversion; do not substitute an allocation bound for that access set.
     const bool comparable = a.memory->scope == AddressSpace::GM ||
         (a.memory->hasKnownPhysicalAddresses && b.memory->hasKnownPhysicalAddresses);
-    if (comparable && !a.region && !b.region && a.sharedProvenanceComplete && b.sharedProvenanceComplete &&
+    if (comparable && a.regions.empty() && b.regions.empty() &&
+        a.sharedProvenanceComplete && b.sharedProvenanceComplete &&
         !memory.MemAlias(a.memory, b.memory)) {
         return false;
     }
-    if (a.region && b.region && regionsProvablyDisjoint(*a.region, *b.region)) {
+    if (!a.regions.empty() && !b.regions.empty() &&
+        llvm::all_of(a.regions, [&](const auto& left) {
+            return llvm::all_of(b.regions, [&](const auto& right) { return regionsProvablyDisjoint(left, right); });
+        })) {
         return false;
     }
-    if ((a.region && a.region->empty()) || (b.region && b.region->empty())) {
+    auto empty = [](const auto& access) {
+        return !access.regions.empty() &&
+            llvm::all_of(access.regions, [](const auto& region) { return region.empty(); });
+    };
+    if (empty(a) || empty(b)) {
+        return false;
+    }
+    // Distinct GM roots follow the user's alias policy even with exact maps.
+    // Never apply the legacy same-root range test to an instruction selection.
+    if (a.memory->scope == AddressSpace::GM && a.memory->rootBuffer != b.memory->rootBuffer &&
+        a.sharedProvenanceComplete && b.sharedProvenanceComplete && !memory.MemAlias(a.memory, b.memory)) {
         return false;
     }
     if (a.memory->scope == AddressSpace::GM) {
@@ -181,5 +199,31 @@ bool SyncStorageEffects::mayConflict(std::size_t first, std::size_t second) cons
         return false;
     }
     return mayOverlap(first, second);
+}
+bool SyncStorageEffects::dependencies(const CompoundInstanceElement* first, SyncAccessMode firstMode,
+                                      const CompoundInstanceElement* second, SyncAccessMode secondMode,
+                                      DepBaseMemInfoPairVec& result, Value secondOperand) const
+{
+    bool found = false;
+    for (auto left : effectsFor(first)) {
+        const auto& a = records[left];
+        if (a.mode != firstMode) {
+            continue;
+        }
+        for (auto right : effectsFor(second)) {
+            const auto& b = records[right];
+            if (b.mode != secondMode || (secondOperand && b.memory->baseBuffer != secondOperand)) {
+                continue;
+            }
+            if (mayOverlap(left, right)) {
+                auto pair = std::make_pair(a.memory, b.memory);
+                if (!llvm::is_contained(result, pair)) {
+                    result.push_back(pair);
+                }
+                found = true;
+            }
+        }
+    }
+    return found;
 }
 } // namespace mlir::pto

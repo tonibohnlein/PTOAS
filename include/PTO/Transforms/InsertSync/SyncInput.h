@@ -14,9 +14,11 @@
 namespace mlir::pto {
 using SyncMemoryEffect = SideEffects::EffectInstance<MemoryEffects::Effect>;
 
+class SyncStorageEffects;
+
 class SyncInput {
 public:
-  explicit SyncInput(GMAliasPolicy policy = GMAliasPolicy::MayNotAlias) : analyzer(policy) {}
+  explicit SyncInput(GMAliasPolicy policy = GMAliasPolicy::MayNotAlias);
   ~SyncInput();
   SyncInput(const SyncInput &) = delete;
   SyncInput &operator=(const SyncInput &) = delete;
@@ -35,6 +37,7 @@ public:
   // Retain declarations even for operations with no translated pipe phase.
   // Their classification remains explicit work for the consuming analysis.
   ArrayRef<SyncMemoryEffect> effectsFor(Operation* operation) const;
+  const SyncStorageEffects &accesses() const;
   MemoryDependentAnalyzer &memory() { return analyzer; }
   const MemoryDependentAnalyzer &memory() const { return analyzer; }
 private:
@@ -43,6 +46,7 @@ private:
   SyncIRs nodes;
   SmallVector<const CompoundInstanceElement *> phases;
   DenseMap<Operation*, SmallVector<SyncMemoryEffect>> declaredEffects;
+  std::unique_ptr<SyncStorageEffects> resolvedAccesses;
 };
 } // namespace mlir::pto
 #endif

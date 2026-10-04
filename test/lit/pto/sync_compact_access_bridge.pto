@@ -85,7 +85,7 @@ module attributes {pto.target_arch = "a3"} {
   }
 }
 // CHECK-LABEL: storage static_region:
-// CHECK: write unknown definite-write=0
+// CHECK: write upper definite-write=0
 // CHECK: map=(d0, d1) -> ((d0 * 8 + d1) * 4 + 1024) extents=1, 8 loops=0
 // CHECK-LABEL: storage nested_reset:
 // CHECK: map=(d0, d1)[s0] -> ((d0 * 8 + d1) * 4 + (s0 mod 2) * 32) extents=1, 8 loops=2

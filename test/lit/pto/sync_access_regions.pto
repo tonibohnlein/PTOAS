@@ -123,30 +123,30 @@ module attributes {pto.target_arch = "a3"} {
   }
 }
 
-// CHECK-LABEL: storage valid_and_nested: cells=0 all-exact=0
-// CHECK: write unknown definite-write=0
+// CHECK-LABEL: storage valid_and_nested: cells=4 all-exact=0
+// CHECK: write upper definite-write=0
 // CHECK: map=(d0, d1) -> ((d0 * 16 + d1) * 4) extents=1, 8
 // CHECK: map=(d0, d1) -> ((d0 * 16 + d1 + 8) * 4) extents=1, 8
 // CHECK: map=(d0, d1) -> (((d0 + 1) * 16 + d1) * 4) extents=1, 8
 // CHECK: overlap 0,1=1
 // CHECK: overlap 0,2=1
 // CHECK: overlap 1,2=0
-// CHECK-LABEL: storage symbolic_gm: cells=0 all-exact=0
+// CHECK-LABEL: storage symbolic_gm: cells=1 all-exact=0
 // CHECK: descriptor base=pointer bytes=4 map=(d0, d1)[s0] -> (d0 * 64 + s0 * 4 + d1 * 4)
 // CHECK: descriptor base=pointer bytes=4 map=(d0, d1)[s0] -> (d0 * 64 + s0 * 4 + (d1 + 8) * 4)
 // CHECK: overlap 1,3=1
 // CHECK: overlap 1,5=1
-// CHECK-LABEL: storage dynamic_extent: cells=0 all-exact=0
+// CHECK-LABEL: storage dynamic_extent: cells=1 all-exact=0
 // CHECK: descriptor base=absolute bytes=4 {{.*}} extents=s0, s1
-// CHECK-LABEL: storage descriptor_updates: cells=0 all-exact=0
+// CHECK-LABEL: storage descriptor_updates: cells=1 all-exact=0
 // CHECK: extents=s0, s1
 // CHECK: extents=1, 8
-// CHECK-LABEL: storage conditional_metadata: cells=0 all-exact=0
+// CHECK-LABEL: storage conditional_metadata: cells=1 all-exact=0
 // CHECK-NOT: descriptor
 // CHECK: conditional_metadata: phases=1
-// CHECK-LABEL: storage dynamic_slot: cells=0 all-exact=0
+// CHECK-LABEL: storage dynamic_slot: cells=2 all-exact=0
 // CHECK: map=(d0, d1)[s0] -> ((d0 * 8 + d1) * 4 + s0 * 32) extents=1, 8
-// CHECK-LABEL: storage descriptor_backedge: cells=0 all-exact=0
+// CHECK-LABEL: storage descriptor_backedge: cells=1 all-exact=0
 // CHECK-NOT: descriptor base=
 // CHECK: descriptor_backedge: phases=1
 // CHECK-LABEL: storage selected_pointer:

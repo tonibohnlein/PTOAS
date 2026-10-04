@@ -21,8 +21,8 @@
 // CHECK: effect 0 pto.textract read exact
 // CHECK: access {{.*}}mod 65536{{.*}}extents=16, 16 loops=1
 // CHECK-LABEL: storage unproven_alignment:
-// CHECK: effect 0 pto.textract read unknown
-// CHECK: effect 1 pto.textract write unknown
+// CHECK: effect 0 pto.textract read upper
+// CHECK: effect 1 pto.textract write upper
 // CONTRACT: synthetic-region-contract two_windows: 4 passed
 // CONTRACT: synthetic-region-contract dynamic_window: 2 passed
 // CONTRACT: synthetic-region-contract unproven_alignment: 2 passed

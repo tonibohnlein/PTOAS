@@ -13,8 +13,8 @@
 // CHECK: effect 2 pto.textract read exact
 // CHECK: overlap 0,2=1
 // CHECK-LABEL: storage unsupported_fractal:
-// CHECK: effect 0 pto.textract read unknown
-// CHECK: effect 1 pto.textract write unknown
+// CHECK: effect 0 pto.textract read upper
+// CHECK: effect 1 pto.textract write upper
 !src1024 = !pto.tile_buf<mat, 32x32xf32, slayout=col_major, fractal=1024>
 !dst32 = !pto.tile_buf<left, 16x16xf32, blayout=col_major, slayout=row_major>
 !src = !pto.tile_buf<mat, 32x64xf16, slayout=col_major>
