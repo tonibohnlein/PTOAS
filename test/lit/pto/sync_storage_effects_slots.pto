@@ -9,13 +9,14 @@
 
 // Slot selectors belong to buffer geometry. Neither a dynamic nor a constant
 // slot establishes the actual accessed set or a definite overwrite.
+// Shared ranges distinguish fixed slots; a runtime selector may choose either.
 // CHECK-LABEL: storage slots: cells=0 all-exact=0
 // CHECK: effect 0 pto.tsetval write unknown definite-write=0 cells=
 // CHECK: effect 1 pto.tsetval write unknown definite-write=0 cells=
 // CHECK: effect 2 pto.tgetval read unknown definite-write=0 cells=
 // CHECK: overlap 0,1=1
 // CHECK: overlap 0,2=1
-// CHECK: overlap 1,2=1
+// CHECK: overlap 1,2=0
 // CHECK: source-unchanged; dependency-analysis-not-run
 
 !tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>

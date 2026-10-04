@@ -13,13 +13,41 @@
 #include <set>
 
 namespace mlir::pto {
+namespace {
+bool hasCompleteSharedProvenance(Value value, DenseMap<Value, bool>& cache)
+{
+    if (!value) {
+        return false;
+    }
+    auto found = cache.find(value);
+    if (found != cache.end()) {
+        return found->second;
+    }
+    cache[value] = false;
+    if (auto argument = dyn_cast<BlockArgument>(value)) {
+        auto function = dyn_cast<func::FuncOp>(argument.getOwner()->getParentOp());
+        return cache[value] = function && argument.getOwner() == &function.getBody().front();
+    }
+    auto* operation = value.getDefiningOp();
+    if (!operation || operation->getNumRegions() != 0) {
+        return false;
+    }
+    // Trace the descriptor's SSA dependencies, not just its cached initial root.
+    // A region argument or result needs a separate all-iterations alias proof.
+    return cache[value] = llvm::all_of(operation->getOperands(), [&](Value operand) {
+        return hasCompleteSharedProvenance(operand, cache);
+    });
+}
+} // namespace
+
 LogicalResult SyncStorageEffects::build(const SyncInput& input)
 {
     records.clear();
     partition.clear();
     phaseEffects.clear();
     SyncStorageEffects pending;
-    pending.gmAliasPolicy = input.memory().gmPolicy();
+    pending.memory = input.memory();
+    DenseMap<Value, bool> provenance;
     for (const auto* phase : input.instructions()) {
         if (!phase || !phase->elementOp) {
             return failure();
@@ -33,6 +61,7 @@ LogicalResult SyncStorageEffects::build(const SyncInput& input)
                 SyncStorageEffect effect;
                 effect.phase = phase;
                 effect.memory = memory;
+                effect.sharedProvenanceComplete = hasCompleteSharedProvenance(memory->baseBuffer, provenance);
                 effect.mode = mode;
                 detail::resolveEffectRanges(input, effect);
                 pending.phaseEffects[phase].push_back(pending.records.size());
@@ -102,6 +131,16 @@ bool SyncStorageEffects::mayOverlap(std::size_t first, std::size_t second) const
     if (a.memory->scope != b.memory->scope) {
         return false;
     }
+    // Buffer disjointness needs no full-write declaration. Reuse the shared
+    // address/range analysis, including views, slot alternatives and GM policy.
+    // Its historical distinct-root rule for unplanned local buffers is not a
+    // physical disjointness proof, so use local ranges only after planning.
+    const bool comparable = a.memory->scope == AddressSpace::GM ||
+        (a.memory->hasKnownPhysicalAddresses && b.memory->hasKnownPhysicalAddresses);
+    if (comparable && a.sharedProvenanceComplete && b.sharedProvenanceComplete &&
+        !memory.MemAlias(a.memory, b.memory)) {
+        return false;
+    }
     if (a.region && b.region && regionsProvablyDisjoint(*a.region, *b.region)) {
         return false;
     }
@@ -109,18 +148,7 @@ bool SyncStorageEffects::mayOverlap(std::size_t first, std::size_t second) const
         return false;
     }
     if (a.memory->scope == AddressSpace::GM) {
-        // Only the declared root policy is shared. Footprint comparison belongs
-        // to this storage analysis, not the legacy dependency analyzer.
-        if (gmAliasPolicy == GMAliasPolicy::MayAlias || !a.descriptorRegion || !b.descriptorRegion ||
-            !a.descriptorRegion->base || !b.descriptorRegion->base) {
-            return true;
-        }
-        auto firstRoot = dyn_cast<BlockArgument>(a.descriptorRegion->base);
-        auto secondRoot = dyn_cast<BlockArgument>(b.descriptorRegion->base);
-        const bool independent = firstRoot && secondRoot &&
-            isa<func::FuncOp>(firstRoot.getOwner()->getParentOp()) &&
-            isa<func::FuncOp>(secondRoot.getOwner()->getParentOp());
-        return !independent || firstRoot == secondRoot;
+        return true;
     }
     if (a.precision == SyncAccessPrecision::Unknown || b.precision == SyncAccessPrecision::Unknown) {
         return true;

@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
 // RUN: pto-sync-input-test --region-contract-checks %s | FileCheck %s --check-prefix=CONTRACT
+// RUN: pto-sync-input-test --step0-json %s | FileCheck %s --check-prefix=STEP0
 // Full-coverage declarations are synthesized only by the contract unit test.
 // Ordinary PTO effect import remains unqualified; no per-op footprint recipes.
 !tile = !pto.tile_buf<vec, 1x8xf32>
@@ -106,3 +107,10 @@ module attributes {pto.target_arch = "a3"} {
 // CONTRACT: synthetic-region-contract irregular_slot_table: 0 passed
 // CONTRACT: synthetic-region-contract wrapping_expression: 1 passed
 // CONTRACT: synthetic-region-contract no_wrap_expression: 1 passed
+
+// STEP0: "function":"static_region"
+// STEP0: "function":"nested_reset"
+// STEP0: "function":"strided_slot_table"
+// STEP0: "function":"irregular_slot_table"
+// STEP0: "function":"wrapping_expression"
+// STEP0: "function":"no_wrap_expression"

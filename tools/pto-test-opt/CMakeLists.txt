@@ -87,6 +87,7 @@ add_llvm_executable(pto-sync-input-test
   ArithmeticProgramDump.cpp
   SyncAliasChecks.cpp
   SyncRegionContractChecks.cpp
+  SyncStep0Audit.cpp
   PARTIAL_SOURCES_INTENDED
 )
 target_link_libraries(pto-sync-input-test PRIVATE

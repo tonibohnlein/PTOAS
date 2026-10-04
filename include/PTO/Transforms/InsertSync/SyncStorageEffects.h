@@ -33,6 +33,8 @@ struct SyncSlotSelection {
 struct SyncStorageEffect {
     const CompoundInstanceElement* phase = nullptr;
     const BaseMemInfo* memory = nullptr;
+    // Legacy roots/ranges do not include arbitrary structured-control backedges.
+    bool sharedProvenanceComplete = false;
     SyncAccessMode mode = SyncAccessMode::Read;
     SyncAccessPrecision precision = SyncAccessPrecision::Unknown;
     // Buffer geometry is retained independently from actual access precision.
@@ -67,15 +69,16 @@ public:
     // All supplied effects have exact byte sets; this is not a control/alias
     // certificate for effects omitted by the input producer.
     bool allAccessesExact() const;
-    // Unknown local coordinates may alias every access in the same memory space.
-    // GM uses the shared root-alias policy, without needing absolute addresses.
+    // Reuse InsertSync's buffer-range/alias checks, then refine with supplied
+    // access regions. Unknown local addresses remain conservative. GM uses the
+    // shared root-alias policy, without needing absolute addresses.
     // A positive answer is not proof of conflict. Invalid IDs are conservative.
     bool mayOverlap(std::size_t first, std::size_t second) const;
     // Read/read pairs need no ordering. Pipe and space come from shared phases.
     bool mayConflict(std::size_t first, std::size_t second) const;
 
 private:
-    GMAliasPolicy gmAliasPolicy = GMAliasPolicy::MayNotAlias;
+    MemoryDependentAnalyzer memory;
     SmallVector<SyncStorageEffect, 0> records;
     SmallVector<SyncStorageCell> partition;
     DenseMap<const CompoundInstanceElement*, SmallVector<std::size_t>> phaseEffects;

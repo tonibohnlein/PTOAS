@@ -32,6 +32,9 @@ public:
   // Original MLIR effect declarations, including coverage, stage and resource.
   // Macro phases need phase-specific declarations and therefore return none.
   ArrayRef<SyncMemoryEffect> effectsFor(const CompoundInstanceElement& phase) const;
+  // Retain declarations even for operations with no translated pipe phase.
+  // Their classification remains explicit work for the consuming analysis.
+  ArrayRef<SyncMemoryEffect> effectsFor(Operation* operation) const;
   MemoryDependentAnalyzer &memory() { return analyzer; }
   const MemoryDependentAnalyzer &memory() const { return analyzer; }
 private:
