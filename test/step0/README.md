@@ -236,7 +236,7 @@ help distinguish missing effects from limitations of a recognizer's adapter.
 | Rotating | Fixed loop body, disjoint known slot families, exact fixed within-slot byte unions and proved selectors | Constant nonnegative lower bound and positive step; no carried state or nested body |
 | Guarded rotating | The rotating contract with invariant branch participation and parameter offsets | Conditions/offset parameters must be entry values or have pure speculatable entry recipes; varying guards require another route |
 | Arithmetic bundle | Complete exact primitive relations in the configured difference, octagon or bounded-coefficient class | Every piece, parameter, residue and coefficient is checked; no backend is run |
-| Arithmetic IR producer | Counted nests, exact shared maps with symbolic origins and fixed local byte unions | Constant nonnegative lower bounds, positive steps dividing the fixed period, proved affine upper bounds, period at most two, dimension at most eight, no unresolved control |
+| Arithmetic IR producer | Counted nests, exact shared maps with symbolic origins and fixed local byte unions | Constant nonnegative lower bounds, positive steps dividing the fixed period, proved affine upper bounds, period at most two, dimension at most eight, exactly represented branch predicates |
 
 Rotating recognition now consumes Step 0's exact symbolic maps. It subtracts
 the selected slot's shared physical origin and requires the remaining byte map
@@ -271,6 +271,16 @@ accepted only when the shared scalar analysis proves their recurrence in loop
 coordinates; opaque carried state and loop-result-dependent geometry remain
 unmet obligations. No loop is unrolled to establish this contract.
 
+Index comparisons and Boolean combinations qualify occurrence, access, order
+and native-order primitives at each endpoint's own iteration coordinates.
+Entry Boolean parameters carry their 0/1 domain. Shared Boolean expressions
+are memoized; duplicate conjunction rows are removed. The producer accepts only
+bounded explicit guard unions (64 expression levels, 4096 pieces and 4096 rows
+per piece); exceeding a limit rejects the route without dropping alternatives.
+Unsigned comparisons, data-dependent guards and opaque branch-result geometry
+remain unsupported. Guard construction is charged separately from scanning the
+resulting arithmetic rows.
+
 All routes share the phase index's detection of payload-result prerequisites.
 An unrepresented SSA dependency, including one used by control or yielded from
 a region, cannot be silently discarded by an otherwise exact storage route.
@@ -290,8 +300,8 @@ and the Step 0 corpus baseline. Full-CLI and device validation are separate.
 
 The current recognition layer does not implement the counted-pattern
 recognizers, supplied periodic-certificate interfaces or finite-overlay
-contracts. Arithmetic production is whole-function and excludes conditionals;
-the supplied primitive-bundle checker has its own broader contract. Additional
+contracts. Arithmetic production is whole-function with the guarded input
+contract above; the supplied primitive-bundle checker has its own broader contract. Additional
 forward prerequisites are detected but not extracted. These limitations remain
 distinct from the generator/reducer and composition backends, which recognition
 does not provide. No recognized input is reported as Section 8 Ready.

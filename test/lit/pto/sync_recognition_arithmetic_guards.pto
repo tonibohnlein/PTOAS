@@ -1,0 +1,199 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_arithmetic_guards.py pto-sync-input-test %s
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!view = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=2>
+module {
+  func.func @first_last_prefetch(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %truth = arith.constant true
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %i0 to %n step %i1 {
+      %first = arith.cmpi eq, %i, %i0 : index
+      scf.if %first {
+        pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      }
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+      %next = arith.addi %i, %i1 overflow<nsw> : index
+      %more = arith.cmpi slt, %next, %n : index
+      scf.if %more {
+        pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      }
+    }
+    return
+  }
+  func.func @boolean_nested(%n: index, %flag: i1) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %truth = arith.constant true
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %i0 to %n step %i1 {
+      %lo = arith.cmpi sge, %i, %i1 : index
+      %hi = arith.cmpi sle, %i, %i2 : index
+      %inside = arith.andi %lo, %hi : i1
+      %enabled = arith.ori %inside, %flag : i1
+      %disabled = arith.xori %enabled, %truth : i1
+      scf.if %disabled {
+        pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      } else {
+        %different = arith.cmpi ne, %i, %i1 : index
+        scf.if %different {
+          %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+        }
+      }
+    }
+    return
+  }
+  func.func @guarded_reset(%n: index, %k: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %truth = arith.constant true
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %t = %i0 to %n step %i1 {
+      scf.for %i = %i0 to %k step %i1 {
+        %later = arith.cmpi sgt, %i, %i0 : index
+        scf.if %later {
+          %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+        } else {
+          pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+        }
+      }
+    }
+    return
+  }
+  func.func @boolean_context(%flag: i1) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %truth = arith.constant true
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.if %flag {
+      pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+    } else {
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    }
+    %after = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    return
+  }
+  func.func @empty_arm(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %truth = arith.constant true
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %i0 to %n step %i1 {
+      %first = arith.cmpi eq, %i, %i0 : index
+      scf.if %first {
+      } else {
+        %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+  func.func @unsigned_guard(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %truth = arith.constant true
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %i0 to %n step %i1 {
+      %unsigned = arith.cmpi ult, %i, %n : index
+      scf.if %unsigned {
+        pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      }
+    }
+    return
+  }
+  func.func @payload_guard() {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %truth = arith.constant true
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    %enabled = arith.cmpf ogt, %v, %one : f32
+    scf.if %enabled {
+      pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+    }
+    return
+  }
+  func.func @opaque_branch_result(%flag: i1) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %truth = arith.constant true
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    %selected = scf.if %flag -> (index) {
+      scf.yield %i0 : index
+    } else {
+      scf.yield %i1 : index
+    }
+    %ring = pto.alloc_multi_tile addr = %base : !ring
+    %chosen = pto.multi_tile_get %ring[%selected] : !ring -> !tile
+    %v = pto.tgetval ins(%chosen, %i0 : !tile, index) outs : f32
+    return
+  }
+  func.func @repeated_boolean_dag(%n: index) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %i0 to %n step %i1 {
+      %g0 = arith.cmpi ne, %i, %i1 : index
+      %g1 = arith.andi %g0, %g0 : i1
+      %g2 = arith.andi %g1, %g1 : i1
+      %g3 = arith.andi %g2, %g2 : i1
+      %g4 = arith.andi %g3, %g3 : i1
+      %g5 = arith.andi %g4, %g4 : i1
+      %g6 = arith.andi %g5, %g5 : i1
+      %g7 = arith.andi %g6, %g6 : i1
+      %g8 = arith.andi %g7, %g7 : i1
+      %g9 = arith.andi %g8, %g8 : i1
+      %g10 = arith.andi %g9, %g9 : i1
+      %g11 = arith.andi %g10, %g10 : i1
+      %g12 = arith.andi %g11, %g11 : i1
+      %g13 = arith.andi %g12, %g12 : i1
+      %g14 = arith.andi %g13, %g13 : i1
+      %g15 = arith.andi %g14, %g14 : i1
+      %g16 = arith.andi %g15, %g15 : i1
+      %g17 = arith.andi %g16, %g16 : i1
+      %g18 = arith.andi %g17, %g17 : i1
+      %g19 = arith.andi %g18, %g18 : i1
+      %g20 = arith.andi %g19, %g19 : i1
+      scf.if %g20 {
+        %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+      } else {
+        pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      }
+    }
+    return
+  }
+
+}

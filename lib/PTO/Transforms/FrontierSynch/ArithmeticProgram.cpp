@@ -25,6 +25,18 @@ SmallVector<scf::ForOp> enclosing(Operation* op)
     std::reverse(loops.begin(), loops.end());
     return loops;
 }
+SmallVector<ArithmeticGuard> enclosingGuards(Operation* op)
+{
+    SmallVector<ArithmeticGuard> guards;
+    auto* child = op;
+    for (auto* parent = op->getParentOp(); parent; child = parent, parent = parent->getParentOp()) {
+        if (auto branch = dyn_cast<scf::IfOp>(parent)) {
+            guards.push_back({branch, child->getParentRegion() == &branch.getThenRegion()});
+        }
+    }
+    std::reverse(guards.begin(), guards.end());
+    return guards;
+}
 bool supportedDomain(scf::ForOp loop, detail::ProgramBuilder& builder)
 {
     APInt lower, step;
@@ -36,7 +48,7 @@ bool supportedDomain(scf::ForOp loop, detail::ProgramBuilder& builder)
     if (!supported) {
         return false;
     }
-    return builder.prepareValue(loop.getUpperBound(), {nullptr, enclosing(loop)});
+    return builder.prepareValue(loop.getUpperBound(), {nullptr, enclosing(loop), {}});
 }
 void collect(func::FuncOp function, const PhaseIndex& index, detail::ProgramBuilder& builder)
 {
@@ -60,9 +72,15 @@ void collect(func::FuncOp function, const PhaseIndex& index, detail::ProgramBuil
             // prove every carried argument as a function of these coordinates;
             // unrecognized state never becomes a free execution parameter.
             for (Value argument : loop.getRegionIterArgs()) {
-                if (!builder.prepareValue(argument, {nullptr, bodyLoops})) {
+                if (!builder.prepareValue(argument, {nullptr, bodyLoops, {}})) {
                     output.extraction.note(RecognitionIssue::LoopCarriedState, op, true);
                 }
+            }
+            return;
+        }
+        if (auto branch = dyn_cast<scf::IfOp>(op)) {
+            if (!builder.prepareGuard(branch.getCondition(), {nullptr, enclosing(op), {}})) {
+                output.extraction.note(RecognitionIssue::UnsupportedControl, op, true);
             }
             return;
         }
@@ -75,7 +93,7 @@ void collect(func::FuncOp function, const PhaseIndex& index, detail::ProgramBuil
         // and unknown effects. Any metadata used by a domain or footprint must
         // additionally pass that consumer's exact scalar/geometry extraction.
         if (phases.size() == 1) {
-            output.sites.push_back({phases.front(), enclosing(op)});
+            output.sites.push_back({phases.front(), enclosing(op), enclosingGuards(op)});
         }
     });
 }
@@ -85,7 +103,7 @@ void occurrence(detail::ProgramBuilder& builder, std::size_t id)
     auto relation = builder.relation(PrimitiveKind::Occurrences, site.loops.size());
     relation.sourceSite = id;
     relation.sourceDimensions = site.loops.size();
-    builder.emit(relation, builder.domain(site, 0));
+    builder.emitForSites(relation, builder.domain(site, 0), {{&site, 0}});
     builder.output.primitives.relations.push_back(std::move(relation));
 }
 void order(detail::ProgramBuilder& builder, std::size_t a, std::size_t b)
@@ -106,13 +124,13 @@ void order(detail::ProgramBuilder& builder, std::size_t a, std::size_t b)
         auto y = getAffineDimExpr(left + common, builder.context);
         auto earlier = rows;
         earlier.push_back(y - x - 1);
-        builder.emit(relation, earlier);
+        builder.emitForSites(relation, earlier, {{&first, 0}, {&second, left}});
         rows.push_back(x - y);
         rows.push_back(y - x);
         ++common;
     }
     if (a < b) {
-        builder.emit(relation, rows);
+        builder.emitForSites(relation, rows, {{&first, 0}, {&second, left}});
     }
     builder.output.primitives.relations.push_back(relation);
     if (first.phase->kPipeValue != second.phase->kPipeValue) {
@@ -135,7 +153,7 @@ void order(detail::ProgramBuilder& builder, std::size_t a, std::size_t b)
             rows.push_back(difference);
             rows.push_back(-difference);
         }
-        builder.emit(relation, rows);
+        builder.emitForSites(relation, rows, {{&first, 0}, {&second, left}});
         builder.output.primitives.relations.push_back(std::move(relation));
     }
 }
