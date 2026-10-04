@@ -86,7 +86,7 @@ bool relativeRanges(const SyncAccessRegion& region, const SyncAccessRegion& orig
 }
 } // namespace
 
-std::optional<std::pair<uint64_t, uint64_t>> withinSlotRange(const SyncStorageEffect& effect,
+std::optional<SlotRanges> withinSlotRanges(const SyncStorageEffect& effect,
                                                            const SyncInput& input, uint64_t bytes)
 {
     if (effect.precision != SyncAccessPrecision::Exact || effect.regions.empty()) {
@@ -104,17 +104,23 @@ std::optional<std::pair<uint64_t, uint64_t>> withinSlotRange(const SyncStorageEf
         }
         llvm::append_range(ranges, piece);
     }
-    if (ranges.empty()) {
-        return std::make_pair(0, 0);
-    }
     llvm::sort(ranges, [](const auto& a, const auto& b) { return a.begin < b.begin; });
-    auto begin = ranges.front().begin, end = ranges.front().end;
+    SlotRanges normalized;
     for (const auto& range : ranges) {
-        if (range.begin > end || range.end > bytes) {
-            return std::nullopt; // A gap must not become a bounding interval.
+        if (range.end > bytes || range.begin > range.end) {
+            return std::nullopt;
         }
-        end = std::max(end, range.end);
+        if (range.begin == range.end) {
+            continue;
+        }
+        const bool touches = !normalized.empty() && range.begin <= normalized.back().second;
+        if (touches) {
+            normalized.back().second = std::max(normalized.back().second, range.end);
+        } else {
+            normalized.push_back({range.begin, range.end});
+        }
     }
-    return std::make_pair(begin, end);
+    return normalized;
 }
+
 } // namespace mlir::pto::frontiersynch::detail

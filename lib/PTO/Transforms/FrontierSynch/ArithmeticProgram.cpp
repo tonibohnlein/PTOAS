@@ -11,6 +11,7 @@
 #include "RecognitionInternal.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "llvm/ADT/DenseSet.h"
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -25,22 +26,19 @@ SmallVector<scf::ForOp> enclosing(Operation* op)
     std::reverse(loops.begin(), loops.end());
     return loops;
 }
-bool supportedBound(scf::ForOp loop, detail::ProgramBuilder& builder, func::FuncOp function)
+bool supportedDomain(scf::ForOp loop, detail::ProgramBuilder& builder)
 {
-    auto bound = loop.getUpperBound();
-    APInt number;
-    if (matchPattern(bound, m_ConstantInt(&number))) {
-        return number.isSignedIntN(64);
+    APInt lower, step;
+    const bool constants = matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) &&
+                           matchPattern(loop.getStep(), m_ConstantInt(&step));
+    const bool positive = constants && lower.isSignedIntN(64) && step.isSignedIntN(64) &&
+                          lower.getSExtValue() >= 0 && step.getSExtValue() > 0;
+    const bool supported = positive && builder.limits.period % step.getSExtValue() == 0 &&
+                           loop.getNumRegionIterArgs() == 0;
+    if (!supported) {
+        return false;
     }
-    if (auto argument = dyn_cast<BlockArgument>(bound);
-        argument && argument.getOwner() == &function.front() && isa<IndexType>(argument.getType())) {
-        if (builder.parameterIds.try_emplace(bound, builder.output.parameters.size()).second) {
-            builder.output.parameters.push_back(bound);
-            builder.output.primitives.parameters.push_back("p" + std::to_string(argument.getArgNumber()));
-        }
-        return true;
-    }
-    return llvm::any_of(enclosing(loop), [&](scf::ForOp parent) { return parent.getInductionVar() == bound; });
+    return builder.prepareValue(loop.getUpperBound(), {nullptr, enclosing(loop)});
 }
 void collect(func::FuncOp function, const PhaseIndex& index, detail::ProgramBuilder& builder)
 {
@@ -55,8 +53,7 @@ void collect(func::FuncOp function, const PhaseIndex& index, detail::ProgramBuil
             output.extraction.note(RecognitionIssue::AdditionalPrerequisite, op);
         }
         if (auto loop = dyn_cast<scf::ForOp>(op)) {
-            detail::checkRotatingDomain(loop, output.extraction, true);
-            if (!supportedBound(loop, builder, function)) {
+            if (!supportedDomain(loop, builder)) {
                 output.extraction.note(RecognitionIssue::LoopDomain, op, true);
             }
             return;
@@ -69,7 +66,7 @@ void collect(func::FuncOp function, const PhaseIndex& index, detail::ProgramBuil
         // Only these structural/value operations have no separate prerequisites.
         if (phases.empty() && !isa<AllocTileOp, AllocMultiTileOp, MultiTileGetOp, SubViewOp,
                                    scf::YieldOp, func::ReturnOp>(op) &&
-            op->getName().getDialectNamespace() != "arith") {
+            !isa<ViewLikeOpInterface>(op) && op->getName().getDialectNamespace() != "arith") {
             output.extraction.note(RecognitionIssue::UnmodeledOperation, op);
         }
         if (phases.size() == 1) {
@@ -171,6 +168,26 @@ ArithmeticProgram recognizeArithmeticProgram(func::FuncOp function, const PhaseI
     }
     detail::ProgramBuilder builder{output, limits, function.getContext(), DenseMap<Value, unsigned>()};
     collect(function, index, builder);
+    if (output.extraction.state != RecognitionState::Applicable) {
+        clearExports(output);
+        return output;
+    }
+    // Register symbolic footprint inputs before fixing each relation's shared
+    // parameter tuple. Geometry remains Step 0's authoritative access map.
+    for (const auto& site : output.sites) {
+        if (builder.staticallyEmpty(site)) {
+            continue;
+        }
+        for (auto id : effects.effectsFor(site.phase)) {
+            for (const auto& region : effects.effects()[id].regions) {
+                for (auto symbol : region.symbols) {
+                    if (!builder.prepareValue(symbol, site)) {
+                        output.extraction.note(RecognitionIssue::IndexArithmetic, site.phase->elementOp);
+                    }
+                }
+            }
+        }
+    }
     if (output.extraction.state != RecognitionState::Applicable) {
         clearExports(output);
         return output;

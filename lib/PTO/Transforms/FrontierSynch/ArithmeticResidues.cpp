@@ -8,6 +8,7 @@
 // Exact substitution x = P*q+r, with checked fixed-width coefficients.
 #include "ArithmeticProgramInternal.h"
 #include "ArithmeticRows.h"
+#include "../InsertSync/SyncScalarEvolution.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/Support/MathExtras.h"
 namespace mlir::pto::frontiersynch::detail {
@@ -24,57 +25,87 @@ PrimitiveRelation ProgramBuilder::relation(PrimitiveKind kind, unsigned dimensio
     }
     return result;
 }
+namespace {
+AffineExpr normalizeValue(Value input, const ArithmeticSite& site, unsigned offset,
+                          MLIRContext* context, llvm::function_ref<AffineExpr(Value)> parameter)
+{
+    mlir::pto::detail::ScalarEvolution evolution(context);
+    return evolution.value(input, [&](Value value) -> AffineExpr {
+        for (auto [id, storedLoop] : llvm::enumerate(site.loops)) {
+            auto loop = storedLoop;
+            if (value == loop.getInductionVar()) {
+                return getAffineDimExpr(offset + id, context);
+            }
+        }
+        return parameter(value);
+    });
+}
+}
+bool ProgramBuilder::prepareValue(Value input, const ArithmeticSite& site)
+{
+    auto expression = normalizeValue(input, site, 0, context, [&](Value value) -> AffineExpr {
+        auto argument = dyn_cast<BlockArgument>(value);
+        const bool entry = argument && isa<func::FuncOp>(argument.getOwner()->getParentOp()) &&
+                           value.getType().isIndex();
+        if (!entry) {
+            return {};
+        }
+        auto inserted = parameterIds.try_emplace(value, output.parameters.size());
+        if (inserted.second) {
+            output.parameters.push_back(value);
+            output.primitives.parameters.push_back("p" + std::to_string(argument.getArgNumber()));
+        }
+        return getAffineSymbolExpr(inserted.first->second, context);
+    });
+    return static_cast<bool>(expression);
+}
 AffineExpr ProgramBuilder::value(Value input, const ArithmeticSite& site, unsigned offset) const
 {
-    APInt number;
-    if (matchPattern(input, m_ConstantInt(&number)) && number.isSignedIntN(64)) {
-        return getAffineConstantExpr(number.getSExtValue(), context);
-    }
-    auto parameter = parameterIds.find(input);
-    if (parameter != parameterIds.end()) {
-        return getAffineSymbolExpr(parameter->second, context);
-    }
-    for (auto [id, storedLoop] : llvm::enumerate(site.loops)) {
+    return normalizeValue(input, site, offset, context, [&](Value input) -> AffineExpr {
+        auto parameter = parameterIds.find(input);
+        return parameter == parameterIds.end() ? AffineExpr{} : getAffineSymbolExpr(parameter->second, context);
+    });
+}
+bool ProgramBuilder::staticallyEmpty(const ArithmeticSite& site) const
+{
+    for (auto storedLoop : site.loops) {
         auto loop = storedLoop;
-        if (input == loop.getInductionVar()) {
-            return getAffineDimExpr(offset + id, context);
+        APInt lower, upper;
+        const bool known = matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) &&
+                           matchPattern(loop.getUpperBound(), m_ConstantInt(&upper));
+        if (known && lower.sge(upper)) {
+            return true;
         }
     }
-    return {};
+    return false;
 }
 SmallVector<AffineExpr> ProgramBuilder::domain(const ArithmeticSite& site, unsigned offset) const
 {
     SmallVector<AffineExpr> rows;
+    if (staticallyEmpty(site)) {
+        rows.push_back(getAffineConstantExpr(-1, context));
+        return rows;
+    }
     for (auto [id, storedLoop] : llvm::enumerate(site.loops)) {
         auto loop = storedLoop;
         const auto iv = getAffineDimExpr(offset + id, context);
-        rows.push_back(iv);
+        auto lower = value(loop.getLowerBound(), site, offset);
         auto upper = value(loop.getUpperBound(), site, offset);
+        auto step = cast<AffineConstantExpr>(value(loop.getStep(), site, offset)).getValue();
+        auto distance = mlir::pto::detail::checkedAdd(iv, mlir::pto::detail::checkedMul(
+            lower, getAffineConstantExpr(-1, context)));
+        rows.push_back(distance);
         auto constant = dyn_cast<AffineConstantExpr>(upper);
         // Avoid constructing INT64_MIN-1 for an already empty domain.
-        rows.push_back(constant && constant.getValue() <= 0 ? getAffineConstantExpr(-1, context) : upper - iv - 1);
+        auto bound = constant && constant.getValue() <= 0 ? getAffineConstantExpr(-1, context) :
+            mlir::pto::detail::checkedAdd(mlir::pto::detail::checkedAdd(upper, -iv),
+                                        getAffineConstantExpr(-1, context));
+        rows.push_back(bound);
+        if (step != 1) {
+            rows.push_back(distance ? -(distance % step) : AffineExpr{});
+        }
     }
     return rows;
-}
-namespace {
-std::optional<AffineExpr> substitute(const LinearRow& row, const PrimitiveRelation& relation,
-                                    ArrayRef<uint64_t> residues, uint64_t period, MLIRContext* context)
-{
-    int64_t constant = row.constant;
-    auto expression = getAffineConstantExpr(0, context);
-    for (auto [id, coefficient] : llvm::enumerate(row.coefficients)) {
-        int64_t shift = 0, scale = 0;
-        if (llvm::MulOverflow(coefficient, static_cast<int64_t>(residues[id]), shift) ||
-            llvm::AddOverflow(constant, shift, constant) ||
-            llvm::MulOverflow(coefficient, static_cast<int64_t>(period), scale)) {
-            return std::nullopt;
-        }
-        auto coordinate = id < relation.dimensions ? getAffineDimExpr(id, context) :
-                          getAffineSymbolExpr(id - relation.dimensions, context);
-        expression = expression + coordinate * scale;
-    }
-    return expression + constant;
-}
 }
 void ProgramBuilder::emit(PrimitiveRelation& target, ArrayRef<AffineExpr> rows,
                          std::optional<std::pair<unsigned, uint64_t>> filter, uint64_t modulus)
@@ -93,28 +124,32 @@ void ProgramBuilder::emit(PrimitiveRelation& target, ArrayRef<AffineExpr> rows,
         }
         combinations *= period;
     }
-    SmallVector<LinearRow> collected;
-    for (auto expression : rows) {
-        LinearRow row;
-        if (collectRow(expression, target.dimensions, count - target.dimensions, row)) {
-            output.extraction.note(RecognitionIssue::IndexArithmetic, nullptr);
-            return;
-        }
-        collected.push_back(std::move(row));
-    }
     // Iterative mixed-radix enumeration: fixed P and D bound its expansion.
     SmallVector<uint64_t> residues(count, 0);
     bool more = true;
     while (more) {
         if (!filter || residues[filter->first] % modulus == filter->second) {
             SmallVector<AffineExpr> constraints;
-            for (const auto& row : collected) {
-                auto expression = substitute(row, target, residues, period, context);
-                if (!expression) {
+            SmallVector<AffineExpr> dimensions, symbols;
+            for (auto [id, residue] : llvm::enumerate(residues)) {
+                auto coordinate = id < target.dimensions ? getAffineDimExpr(id, context) :
+                    getAffineSymbolExpr(id - target.dimensions, context);
+                auto replacement = mlir::pto::detail::checkedAdd(
+                    mlir::pto::detail::checkedMul(coordinate, getAffineConstantExpr(period, context)),
+                    getAffineConstantExpr(residue, context));
+                (id < target.dimensions ? dimensions : symbols).push_back(replacement);
+            }
+            for (auto row : rows) {
+                auto expression = mlir::pto::detail::substitute(row, dimensions, symbols);
+                if (expression) {
+                    expression = simplifyAffineExpr(expression, target.dimensions, count - target.dimensions);
+                }
+                LinearRow checked;
+                if (!expression || collectRow(expression, target.dimensions, count - target.dimensions, checked)) {
                     output.extraction.note(RecognitionIssue::IndexArithmetic, nullptr);
                     return;
                 }
-                constraints.push_back(*expression);
+                constraints.push_back(expression);
             }
             if (constraints.empty()) {
                 constraints.push_back(getAffineConstantExpr(0, context));
