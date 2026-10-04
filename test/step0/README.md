@@ -265,7 +265,11 @@ availability remains separately reported. This is not endpoint code.
 The arithmetic producer retains original induction coordinates, substitutes
 fixed residues before classifying linear constraints, and emits exact physical
 byte relations from the same shared access maps. This is primitive extraction,
-not general integer projection or minimum-demand reduction.
+not general integer projection or minimum-demand reduction. Pure metadata is
+classified through the shared leaf interface. Loop-carried scalar values are
+accepted only when the shared scalar analysis proves their recurrence in loop
+coordinates; opaque carried state and loop-result-dependent geometry remain
+unmet obligations. No loop is unrolled to establish this contract.
 
 All routes share the phase index's detection of payload-result prerequisites.
 An unrepresented SSA dependency, including one used by control or yielded from
