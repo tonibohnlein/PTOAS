@@ -88,7 +88,9 @@ private:
     MemoryDependentAnalyzer memory;
     SmallVector<SyncStorageEffect, 0> records;
     SmallVector<SyncStorageCell> partition;
-    DenseMap<const CompoundInstanceElement*, SmallVector<std::size_t>> phaseEffects;
+    // Translator indices are unique within this input and survive the copies
+    // used by InsertSync's loop-backedge scan, including multi-phase operations.
+    DenseMap<unsigned, SmallVector<std::size_t>> phaseEffects;
     void partitionRanges();
 };
 } // namespace mlir::pto

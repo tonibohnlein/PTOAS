@@ -14,6 +14,7 @@
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
 #include "PTO/IR/PTO.h"
+#include "SyncPhaseCopyChecks.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -268,6 +269,7 @@ int main(int argc, char **argv) {
     }
     --argc;
   }
+  const bool phaseCopies = argc == 3 && StringRef(argv[1]) == "--phase-copy-checks";
   const bool regionChecks = argc == 3 && StringRef(argv[1]) == "--region-contract-checks";
   const bool step0 = argc == 3 && StringRef(argv[1]) == "--step0-json";
   const bool existingDump = argc == 3 && StringRef(argv[1]) == "--existing-dump";
@@ -282,12 +284,12 @@ int main(int argc, char **argv) {
   const bool recognition = argc == 3 && StringRef(argv[1]) == "--recognize";
   if (argc != 2 && !arithmetic && !recognition && !expectFailure &&
       !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip &&
-      !regionChecks && !step0 && !existing) {
+      !regionChecks && !phaseCopies && !step0 && !existing) {
     llvm::errs() << "usage: pto-sync-input-test "
                  << "[--gm-alias=may-alias|may-not-alias] "
                  << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
                  "--recognize|--arithmetic|--roundtrip|--region-contract-checks|"
-                 "--step0-json|--existing-check|--existing-dump] input.pto\n";
+                 "--step0-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
     return 1;
   }
   DialectRegistry dialects;
@@ -295,7 +297,8 @@ int main(int argc, char **argv) {
   MLIRContext context(dialects);
   context.disableMultithreading();
   const bool hasOption = expectFailure || capabilities || phaseIndex || storageEffects ||
-                         recognition || arithmetic || aliasChecks || roundtrip || regionChecks || step0 || existing;
+                         recognition || arithmetic || aliasChecks || roundtrip || regionChecks ||
+                         phaseCopies || step0 || existing;
   const auto filename = argv[hasOption ? 2 : 1];
   auto module = parseSourceFile<ModuleOp>(filename, &context);
   if (!module || failed(verify(*module))) {
@@ -341,6 +344,13 @@ int main(int argc, char **argv) {
         return 1;
       }
       continue;
+    }
+    if (phaseCopies) {
+      if (!checkPhaseCopies(input)) {
+        llvm::errs() << "copied phase lost shared dependencies\n";
+        return 1;
+      }
+      llvm::outs() << "phase-copy-check " << function.getSymName() << ": passed\n";
     }
     if (regionChecks && runSyncRegionContractChecks(function, input)) {
       return 1;

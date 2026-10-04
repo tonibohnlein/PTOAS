@@ -1,3 +1,11 @@
+// RUN: pto-sync-input-test --phase-copy-checks %s | FileCheck %s --check-prefix=COPY
+// RUN: pto-sync-input-test --existing-dump %s | FileCheck %s --check-prefix=SYNC-IR
+// COPY: phase-copy-check {{.*}}: passed
+// SYNC-IR: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[POST:[0-9]+]]>]
+// SYNC-IR: scf.for
+// SYNC-IR: {{^    }}}
+// SYNC-IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[POST]]>]
+// SYNC-IR-NEXT: pto.trowexpanddiv
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s | FileCheck %s
 //
 // Regression guard for issue #533 (zero-trip loop):

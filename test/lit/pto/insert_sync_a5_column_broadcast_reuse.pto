@@ -6,6 +6,19 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+// RUN: sed 's/module {/module attributes {pto.target_arch = "a5"} {/' %s | pto-sync-input-test --existing-dump - | FileCheck %s --check-prefix=SYNC-IR
+// SYNC-IR-LABEL: func.func @column_broadcast_reuse
+// SYNC-IR: pto.tcolexpandmul
+// SYNC-IR-NEXT: pto.barrier <PIPE_ALL>
+// SYNC-IR-NEXT: pto.tmul
+// SYNC-IR-LABEL: func.func @column_broadcast_delayed_reuse
+// SYNC-IR: pto.tcolexpandmul
+// SYNC-IR-NEXT: pto.tmuls
+// SYNC-IR-NEXT: pto.barrier <PIPE_ALL>
+// SYNC-IR-NEXT: pto.tmul
+// SYNC-IR-LABEL: func.func @column_broadcast_no_reuse
+// SYNC-IR: pto.tcolexpandmul
+// SYNC-IR-NEXT: pto.tmul
 // RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync %s | FileCheck %s --check-prefix=A5
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s | FileCheck %s --check-prefix=A3
 

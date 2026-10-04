@@ -5,6 +5,8 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --phase-copy-checks %s | FileCheck %s --check-prefix=COPY
+// COPY: phase-copy-check {{.*}}: passed
 // RUN: pto-sync-input-test --storage-effects %s | FileCheck %s --check-prefix=RANGES
 // RUN: pto-sync-input-test --existing-dump %s | FileCheck %s --check-prefix=INSERT
 // The load's destination overlaps the extract's buffer, but only the overlapping
