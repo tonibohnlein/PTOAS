@@ -32,4 +32,3 @@ def membership_index(document):
                 return True
         return False
     return contains
-
