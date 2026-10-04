@@ -74,12 +74,21 @@ Existing InsertSync obtains dependency buffer pairs from the shared access query
 Its hazard rules, insertion, motion and event-ID allocation are unchanged. The
 `--existing-dump` test option prints the resulting IR for insertion regressions.
 
-The shared-range integration was checked on the existing 784-module prepared
+The shared-range refinement was checked on the existing 784-module prepared
 corpus (851 functions): both GM policies passed existing InsertSync and the
-Step 0 audit. All 37,524 access records were preserved: 1,970 exact, 27,660 with
-conservative physical bounds, and 7,894 with unresolved access geometry. The two
-GEMM fixtures retained 17/17 and 21/21 exact accesses. These are pass-level checks;
-they do not establish generated C++ correctness or device behavior.
+Step 0 audit, with no failures. All 37,524 access records were preserved.
+
+| Resolved precision | Before refinement | After refinement |
+|---|---:|---:|
+| Exact | 1,970 | 5,008 |
+| Conservative physical bound | 27,660 | 27,579 |
+| Unresolved access geometry | 7,894 | 4,937 |
+
+The same prepared-input manifest was used. Inputs and the test binary were
+hash-checked throughout the run. The two GEMM fixtures retained 17/17 and 21/21
+exact accesses. The focused diagnostic suite passed 61 RUN checks; six full-CLI
+checks were skipped. These are pass-level checks; they do not establish generated
+C++ correctness, device behavior, or exact effects for the remaining accesses.
 
 ### Explicit access domains
 
