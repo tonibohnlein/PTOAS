@@ -14,6 +14,7 @@
 #include <limits>
 namespace fs = mlir::pto::frontiersynch;
 llvm::json::Object dumpPeriodicAnalysis(const fs::PeriodicAnalysis& result);
+bool appendLogicalChecks(const llvm::json::Object&, const fs::PeriodicAnalysis&, llvm::json::Object&);
 namespace {
 std::optional<uint64_t> number(const llvm::json::Object& object, llvm::StringRef name)
 {
@@ -208,7 +209,7 @@ bool rankQueries(const llvm::json::Object& input, const fs::PeriodicAnalysis& an
 bool graphCase(const llvm::json::Object& input, llvm::json::Object& output)
 {
     const auto* pipes = input.getArray("pipes");
-    if (!pipes || pipes->size() > 64) {
+    if (!pipes || pipes->size() > 512) {
         return false;
     }
     std::vector<fs::PeriodicPayload> payloads;
@@ -262,7 +263,8 @@ bool graphCase(const llvm::json::Object& input, llvm::json::Object& output)
         return false;
     }
     if (analysis.error.empty()) {
-        return queryTables(analysis, prefix, output) && rankQueries(input, analysis, output);
+        return queryTables(analysis, prefix, output) && rankQueries(input, analysis, output) &&
+            appendLogicalChecks(input, analysis, output);
     }
     return true;
 }

@@ -88,6 +88,8 @@ add_llvm_executable(pto-sync-input-test
   ProgramRecognitionDump.cpp
   NumericTemplateDump.cpp
   PeriodicAnalysisDump.cpp
+  LogicalEndpointDump.cpp
+  LogicalEndpointChecks.cpp
   PeriodicDemandChecks.cpp
   ProgramStructureChecks.cpp
   SyncAliasChecks.cpp
