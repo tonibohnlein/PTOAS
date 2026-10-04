@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_INSERTSYNC_SYNCACCESSREGION_H
 #define PTO_TRANSFORMS_INSERTSYNC_SYNCACCESSREGION_H
 #include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/SmallVector.h"
 #include <optional>
@@ -39,6 +40,10 @@ class SyncInput;
 // Describe the operand's valid buffer region at a program point. This says
 // where descriptor coordinates map, not which bytes an instruction accesses.
 std::optional<SyncAccessRegion> resolveBufferRegion(const SyncInput& input, Value operand, Operation* at);
+// Compose an exact shared access selection with the operand's descriptor map.
+// Invalid, unknown or unavailable contracts return no region.
+std::optional<SyncAccessRegion> resolveSelectedRegion(const SyncInput& input, Value operand,
+                                                     Operation* at, DictionaryAttr contract);
 // Equal symbolic terms cancel before comparison. Unknown is not disjoint.
 bool regionsProvablyDisjoint(const SyncAccessRegion& a, const SyncAccessRegion& b);
 } // namespace mlir::pto

@@ -140,9 +140,15 @@ void TExpandsOp::getEffects(
   PTO_ADD_WRITE(effects, getDstMutable());
 }
 
+// Shared selection semantics for ordinary matrix extraction.
+#include "PTOExtractAccessEffects.cpp"
+
 // TEXTRACT: Read(src) -> Write(dst)
 void TExtractOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  if (addExtractAccessEffects(*this, effects)) {
+    return;
+  }
   addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
   addOptionalEffects(effects, getFpMutable(), /*read=*/true, /*write=*/false);
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());

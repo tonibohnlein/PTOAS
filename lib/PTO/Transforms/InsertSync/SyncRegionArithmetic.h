@@ -59,5 +59,43 @@ inline AffineExpr checkedMul(AffineExpr a, AffineExpr b)
     int64_t result = 0;
     return x && y && !llvm::MulOverflow(*x, *y, result) ? a * b : AffineExpr{};
 }
+inline AffineExpr substitute(AffineExpr expression, ArrayRef<AffineExpr> dimensions,
+                             ArrayRef<AffineExpr> symbols, unsigned depth = 0)
+{
+    if (!expression || depth > 64) {
+        return {};
+    }
+    if (auto d = dyn_cast<AffineDimExpr>(expression)) {
+        return d.getPosition() < dimensions.size() ? dimensions[d.getPosition()] : AffineExpr{};
+    }
+    if (auto s = dyn_cast<AffineSymbolExpr>(expression)) {
+        return s.getPosition() < symbols.size() ? symbols[s.getPosition()] : AffineExpr{};
+    }
+    if (isa<AffineConstantExpr>(expression)) {
+        return expression;
+    }
+    auto binary = cast<AffineBinaryOpExpr>(expression);
+    auto a = substitute(binary.getLHS(), dimensions, symbols, depth + 1);
+    auto b = substitute(binary.getRHS(), dimensions, symbols, depth + 1);
+    if (!a || !b) {
+        return {};
+    }
+    if (expression.getKind() == AffineExprKind::Add) {
+        return checkedAdd(a, b);
+    }
+    if (expression.getKind() == AffineExprKind::Mul) {
+        return checkedMul(a, b);
+    }
+    auto divisor = dyn_cast<AffineConstantExpr>(b);
+    if (!divisor || divisor.getValue() <= 0) {
+        return {};
+    }
+    switch (expression.getKind()) {
+    case AffineExprKind::Mod: return a % divisor.getValue();
+    case AffineExprKind::FloorDiv: return a.floorDiv(divisor.getValue());
+    case AffineExprKind::CeilDiv: return a.ceilDiv(divisor.getValue());
+    default: return {};
+    }
+}
 } // namespace mlir::pto::detail
 #endif

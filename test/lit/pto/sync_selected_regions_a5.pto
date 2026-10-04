@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
+// A5 offsets are converted to uint16 then rounded down to sub-block boundaries.
+// CHECK-LABEL: storage rounded:
+// CHECK: effect 0 pto.textract read exact
+// CHECK: access {{.*}}extents=16, 16 loops=0
+// CHECK: effect 2 pto.textract read exact
+// CHECK: overlap 0,2=1
+// CHECK-LABEL: storage unsupported_fractal:
+// CHECK: effect 0 pto.textract read unknown
+// CHECK: effect 1 pto.textract write unknown
+!src1024 = !pto.tile_buf<mat, 32x32xf32, slayout=col_major, fractal=1024>
+!dst32 = !pto.tile_buf<left, 16x16xf32, blayout=col_major, slayout=row_major>
+!src = !pto.tile_buf<mat, 32x64xf16, slayout=col_major>
+!dst = !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>
+module attributes {pto.target_arch = "a5"} {
+  func.func @rounded() attributes {test.overlap = array<i64: 0, 2>} {
+    %a0 = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %src = pto.alloc_tile addr = %a0 : !src
+    %dst = pto.alloc_tile addr = %a0 : !dst
+    pto.textract ins(%src, %i1, %i1 : !src, index, index) outs(%dst : !dst)
+    pto.textract ins(%src, %i0, %i0 : !src, index, index) outs(%dst : !dst)
+    return
+  }
+  func.func @unsupported_fractal() {
+    %a0 = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i16 = arith.constant 16 : index
+    %src = pto.alloc_tile addr = %a0 : !src1024
+    %dst = pto.alloc_tile addr = %a0 : !dst32
+    pto.textract ins(%src, %i16, %i0 : !src1024, index, index) outs(%dst : !dst32)
+    return
+  }
+}

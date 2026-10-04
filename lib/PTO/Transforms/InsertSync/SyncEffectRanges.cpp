@@ -71,11 +71,13 @@ void applyAccessCoverage(const SyncInput& input, SyncStorageEffect& effect,
     effect.precision = SyncAccessPrecision::Unknown;
     effect.precisionReason = "shared read/write interface does not specify an access region";
     auto aliases = input.buffers().find(effect.memory->baseBuffer);
-    if (!effect.descriptorRegion || effect.phase->macroOpInstanceId >= 0 ||
+    if (effect.phase->macroOpInstanceId >= 0 ||
         aliases == input.buffers().end() || aliases->second.size() != 1) {
         return;
     }
     bool matched = false;
+    Attribute parameters;
+    bool full = false;
     for (const auto& declared : declarations) {
         const bool read = isa<MemoryEffects::Read>(declared.getEffect());
         const bool write = isa<MemoryEffects::Write>(declared.getEffect());
@@ -83,18 +85,29 @@ void applyAccessCoverage(const SyncInput& input, SyncStorageEffect& effect,
             (effect.mode == SyncAccessMode::Read ? !read : !write)) {
             continue;
         }
-        // Unknown parameter/resource semantics must not be interpreted as a
-        // whole-buffer access, nor may one full declaration hide a partial one.
-        if (!declared.getEffectOnFullRegion() || declared.getParameters() ||
-            declared.getResource() != SideEffects::DefaultResource::get()) {
+        if (declared.getResource() != SideEffects::DefaultResource::get()) {
             return;
         }
+        // Several declarations for the same buffer/mode must agree. A known
+        // selection cannot hide a second unresolved or different access.
+        if (matched && (parameters != declared.getParameters() || full != declared.getEffectOnFullRegion())) {
+            return;
+        }
+        parameters = declared.getParameters();
+        full = declared.getEffectOnFullRegion();
         matched = true;
     }
     if (!matched) {
         return;
     }
-    effect.region = effect.descriptorRegion;
+    if (auto contract = dyn_cast_or_null<DictionaryAttr>(parameters)) {
+        effect.region = resolveSelectedRegion(input, effect.memory->baseBuffer, effect.phase->elementOp, contract);
+    } else if (full && !parameters) {
+        effect.region = effect.descriptorRegion;
+    }
+    if (!effect.region) {
+        return;
+    }
     effect.precision = SyncAccessPrecision::Exact;
     effect.precisionReason.clear();
     effect.exactRanges = materializeRegion(*effect.region, effect.memory->scope, effect.ranges);
