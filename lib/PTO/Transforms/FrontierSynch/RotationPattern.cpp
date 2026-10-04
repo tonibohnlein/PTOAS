@@ -97,32 +97,17 @@ std::optional<SlotPattern> matchSlot(Value slot, Value induction, uint64_t count
     return pattern;
 }
 
-std::optional<std::pair<uint64_t, uint64_t>> scalarAtom(const SyncStorageEffect& effect, uint64_t bytes)
+std::optional<std::pair<uint64_t, uint64_t>> withinSlotRange(const SyncStorageEffect& effect, uint64_t bytes)
 {
-    Value operand, offset;
-    if (auto get = dyn_cast<TGetValOp>(effect.phase->elementOp); get && effect.mode == SyncAccessMode::Read) {
-        operand = get.getSrc();
-        offset = get.getOffset();
-    } else if (auto set = dyn_cast<TSetValOp>(effect.phase->elementOp);
-               set && effect.mode == SyncAccessMode::Write) {
-        operand = set.getDst();
-        offset = set.getOffset();
-    } else {
+    if (effect.precision != SyncAccessPrecision::Exact || !effect.exactRanges ||
+        effect.ranges.size() != 1 || effect.memory->baseAddresses.size() != 1) {
         return std::nullopt;
     }
-    auto type = dyn_cast<TileBufType>(operand.getType());
-    auto number = integer(offset);
-    if (!type || operand != effect.memory->baseBuffer || !number || *number < 0 ||
-        !type.getElementType().isIntOrFloat() ||
-        type.getSLayoutValueI32() != static_cast<int32_t>(SLayout::NoneBox) ||
-        type.getCompactModeI32() == static_cast<int32_t>(CompactMode::RowPlusOne)) {
+    const auto base = effect.memory->baseAddresses.front();
+    const auto& range = effect.ranges.front();
+    if (range.begin < base || range.end < range.begin || range.end - base > bytes) {
         return std::nullopt;
     }
-    const auto bits = type.getElementType().getIntOrFloatBitWidth();
-    if (!bits || bits % 8 != 0 || static_cast<uint64_t>(*number) >= bytes / (bits / 8)) {
-        return std::nullopt;
-    }
-    const auto begin = static_cast<uint64_t>(*number) * (bits / 8);
-    return std::make_pair(begin, begin + bits / 8);
+    return std::make_pair(range.begin - base, range.end - base);
 }
 } // namespace mlir::pto::frontiersynch::detail

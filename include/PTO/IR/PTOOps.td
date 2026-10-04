@@ -2170,9 +2170,7 @@ def InitializeL2G2LPipeOp : PTO_Op<"initialize_l2g2l_pipe", [
     `{` `dir_mask` `=` $dir_mask `,`
         `slot_size` `=` $slot_size `,`
         `slot_num` `=` $slot_num
-        (`,` `local_slot_num` `=` $local_slot_num^)?
-        (`,` `flag_base` `=` $flag_base^)?
-        (`,` `nosplit` `=` $nosplit^)?
+        custom<PipeOptionalAttrs>($local_slot_num, $flag_base, $nosplit)
         `}`
     `(` $gm_addr `:` type($gm_addr)
         (`,` $local_addr^ `:` type($local_addr))?

@@ -71,8 +71,9 @@ GuardedRecognition recognizeFiniteGuarded(Region& region, const PhaseIndex& inde
     collect(region, entry, index, output, false);
     for (const auto& item : output.phases) {
         for (auto id : effects.effectsFor(item.phase)) {
-            if (effects.effects()[id].precision != SyncAccessPrecision::Exact) {
-                output.result.note(RecognitionIssue::InexactFootprint, item.phase->elementOp);
+            if (effects.effects()[id].precision != SyncAccessPrecision::Exact || !effects.effects()[id].exactRanges) {
+                output.result.note(effects.effects()[id].precision == SyncAccessPrecision::Exact ?
+                    RecognitionIssue::SymbolicGeometry : RecognitionIssue::InexactFootprint, item.phase->elementOp);
             }
         }
     }

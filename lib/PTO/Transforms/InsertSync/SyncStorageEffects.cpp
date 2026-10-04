@@ -19,7 +19,7 @@ LogicalResult SyncStorageEffects::build(const SyncInput& input)
     partition.clear();
     phaseEffects.clear();
     SyncStorageEffects pending;
-    pending.analyzer = input.memory();
+    pending.gmAliasPolicy = input.memory().gmPolicy();
     for (const auto* phase : input.instructions()) {
         if (!phase || !phase->elementOp) {
             return failure();
@@ -102,10 +102,31 @@ bool SyncStorageEffects::mayOverlap(std::size_t first, std::size_t second) const
     if (a.memory->scope != b.memory->scope) {
         return false;
     }
+    if (a.region && b.region && regionsProvablyDisjoint(*a.region, *b.region)) {
+        return false;
+    }
+    if ((a.region && a.region->empty()) || (b.region && b.region->empty())) {
+        return false;
+    }
     if (a.memory->scope == AddressSpace::GM) {
-        return analyzer.MemAlias(a.memory, b.memory);
+        // Only the declared root policy is shared. Footprint comparison belongs
+        // to this storage analysis, not the legacy dependency analyzer.
+        if (gmAliasPolicy == GMAliasPolicy::MayAlias || !a.descriptorRegion || !b.descriptorRegion ||
+            !a.descriptorRegion->base || !b.descriptorRegion->base) {
+            return true;
+        }
+        auto firstRoot = dyn_cast<BlockArgument>(a.descriptorRegion->base);
+        auto secondRoot = dyn_cast<BlockArgument>(b.descriptorRegion->base);
+        const bool independent = firstRoot && secondRoot &&
+            isa<func::FuncOp>(firstRoot.getOwner()->getParentOp()) &&
+            isa<func::FuncOp>(secondRoot.getOwner()->getParentOp());
+        return !independent || firstRoot == secondRoot;
     }
     if (a.precision == SyncAccessPrecision::Unknown || b.precision == SyncAccessPrecision::Unknown) {
+        return true;
+    }
+    if ((a.precision == SyncAccessPrecision::Exact && !a.exactRanges) ||
+        (b.precision == SyncAccessPrecision::Exact && !b.exactRanges)) {
         return true;
     }
     std::size_t i = 0, j = 0;

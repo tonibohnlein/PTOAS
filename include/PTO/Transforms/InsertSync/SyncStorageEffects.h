@@ -10,6 +10,7 @@
 #define PTO_TRANSFORMS_INSERTSYNC_SYNCSTORAGEEFFECTS_H
 
 #include "PTO/Transforms/InsertSync/SyncInput.h"
+#include "PTO/Transforms/InsertSync/SyncAccessRegion.h"
 #include "llvm/ADT/DenseMap.h"
 
 namespace mlir::pto {
@@ -28,6 +29,13 @@ struct SyncStorageEffect {
     const BaseMemInfo* memory = nullptr;
     SyncAccessMode mode = SyncAccessMode::Read;
     SyncAccessPrecision precision = SyncAccessPrecision::Unknown;
+    // Buffer geometry is retained independently from actual access precision.
+    std::optional<SyncAccessRegion> descriptorRegion;
+    std::optional<SyncAccessRegion> region;
+    // Empty only when the shared contract and physical mapping are exact.
+    std::string precisionReason;
+    // Whether ranges enumerate the exact set, rather than its capacity bound.
+    bool exactRanges = false;
     SmallVector<SyncStorageCell> ranges;
     SmallVector<std::size_t> cells;
 
@@ -59,8 +67,8 @@ public:
     bool mayConflict(std::size_t first, std::size_t second) const;
 
 private:
-    MemoryDependentAnalyzer analyzer;
-    SmallVector<SyncStorageEffect> records;
+    GMAliasPolicy gmAliasPolicy = GMAliasPolicy::MayNotAlias;
+    SmallVector<SyncStorageEffect, 0> records;
     SmallVector<SyncStorageCell> partition;
     DenseMap<const CompoundInstanceElement*, SmallVector<std::size_t>> phaseEffects;
     void partitionRanges();

@@ -1,0 +1,156 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
+// Buffer descriptor geometry does not establish an instruction's access set.
+!whole = !pto.tile_buf<vec, 2x16xf32>
+!partial = !pto.tile_buf<vec, 2x16xf32, valid=1x8>
+!slice = !pto.tile_buf<vec, 1x8xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func @valid_and_nested() attributes {test.overlap = array<i64: 0, 1, 0, 2, 1, 2>} {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i8 = arith.constant 8 : index
+    %one = arith.constant 1.0 : f32
+    %root = pto.alloc_tile addr = %base : !whole
+    %valid = pto.alloc_tile addr = %base : !partial
+    %right = pto.subview %root[%i0, %i8] sizes [1, 8] : !whole -> !slice
+    %left = pto.subview %root[%i1, %i0] sizes [1, 8] : !whole -> !slice
+    %nested = pto.subview %left[%i0, %i0] sizes [1, 8] : !slice -> !slice
+    pto.texpands ins(%one : f32) outs(%valid : !partial)
+    pto.texpands ins(%one : f32) outs(%right : !slice)
+    pto.texpands ins(%one : f32) outs(%nested : !slice)
+    return
+  }
+  func.func @symbolic_gm(%ptr: !pto.ptr<f32, gm>, %offset: index) attributes {test.overlap = array<i64: 1, 3, 1, 5>} {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i8 = arith.constant 8 : index
+    %i16 = arith.constant 16 : index
+    %p = pto.addptr %ptr, %offset : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
+    %view = pto.make_tensor_view %p, shape = [%i1, %i16], strides = [%i16, %i1] : !pto.tensor_view<?x?xf32>
+    %a = pto.partition_view %view, offsets = [%i0, %i0], sizes = [%i1, %i8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    %b = pto.partition_view %view, offsets = [%i0, %i8], sizes = [%i1, %i8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    %tile = pto.alloc_tile addr = %base : !slice
+    pto.tstore ins(%tile : !slice) outs(%a : !pto.partition_tensor_view<1x8xf32>)
+    pto.tstore ins(%tile : !slice) outs(%b : !pto.partition_tensor_view<1x8xf32>)
+    pto.tstore ins(%tile : !slice) outs(%a : !pto.partition_tensor_view<1x8xf32>)
+    return
+  }
+  func.func @dynamic_extent(%rows: index, %cols: index) {
+    %base = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base valid_row = %rows valid_col = %cols : !pto.tile_buf<vec, 16x16xf32, valid=?x?>
+    pto.texpands ins(%one : f32) outs(%tile : !pto.tile_buf<vec, 16x16xf32, valid=?x?>)
+    return
+  }
+  func.func @descriptor_updates(%rows: index, %cols: index) {
+    %base = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %i1 = arith.constant 1 : index
+    %i8 = arith.constant 8 : index
+    %tile = pto.alloc_tile addr = %base valid_row = %rows valid_col = %cols : !pto.tile_buf<vec, 16x16xf32, valid=?x?>
+    pto.texpands ins(%one : f32) outs(%tile : !pto.tile_buf<vec, 16x16xf32, valid=?x?>)
+    pto.set_validshape %tile, %i1, %i8 : !pto.tile_buf<vec, 16x16xf32, valid=?x?>
+    pto.texpands ins(%one : f32) outs(%tile : !pto.tile_buf<vec, 16x16xf32, valid=?x?>)
+    return
+  }
+  func.func @conditional_metadata(%rows: index, %cols: index, %condition: i1) {
+    %base = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base valid_row = %rows valid_col = %cols : !pto.tile_buf<vec, 16x16xf32, valid=?x?>
+    scf.if %condition {
+      pto.set_validshape %tile, %rows, %cols : !pto.tile_buf<vec, 16x16xf32, valid=?x?>
+    }
+    pto.texpands ins(%one : f32) outs(%tile : !pto.tile_buf<vec, 16x16xf32, valid=?x?>)
+    return
+  }
+  func.func @dynamic_slot(%slot: index) {
+    %base = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %base : !pto.multi_tile_buf<!slice, count=2>
+    %tile = pto.multi_tile_get %ring[%slot] : !pto.multi_tile_buf<!slice, count=2> -> !slice
+    pto.texpands ins(%one : f32) outs(%tile : !slice)
+    return
+  }
+  func.func @descriptor_backedge() {
+    %base = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i8 = arith.constant 8 : index
+    %i16 = arith.constant 16 : index
+    %tile = pto.alloc_tile addr = %base valid_row = %i1 valid_col = %i8 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+    scf.for %i = %i0 to %i2 step %i1 {
+      pto.texpands ins(%one : f32) outs(%tile : !pto.tile_buf<vec, 1x16xf32, valid=?x?>)
+      pto.set_validshape %tile, %i1, %i16 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+    }
+    return
+  }
+  func.func @selected_pointer(%a: !pto.ptr<f32, gm>, %b: !pto.ptr<f32, gm>, %condition: i1) attributes {test.overlap = array<i64: 1, 3>} {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i8 = arith.constant 8 : index
+    %selected = arith.select %condition, %a, %b : !pto.ptr<f32, gm>
+    %va = pto.make_tensor_view %a, shape = [%i1, %i8], strides = [%i8, %i1] : !pto.tensor_view<?x?xf32>
+    %vs = pto.make_tensor_view %selected, shape = [%i1, %i8], strides = [%i8, %i1] : !pto.tensor_view<?x?xf32>
+    %pa = pto.partition_view %va, offsets = [%i0, %i0], sizes = [%i1, %i8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    %ps = pto.partition_view %vs, offsets = [%i0, %i0], sizes = [%i1, %i8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    %tile = pto.alloc_tile addr = %base : !slice
+    pto.tstore ins(%tile : !slice) outs(%pa : !pto.partition_tensor_view<1x8xf32>)
+    pto.tstore ins(%tile : !slice) outs(%ps : !pto.partition_tensor_view<1x8xf32>)
+    return
+  }
+  func.func @overflow_stride(%ptr: !pto.ptr<f32, gm>) {
+    %base = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %huge = arith.constant 9223372036854775807 : index
+    %view = pto.make_tensor_view %ptr, shape = [%i1, %i1], strides = [%huge, %i1] : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%i0, %i0], sizes = [%i1, %i1] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x1xf32>
+    %tile = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x8xf32, valid=1x1>
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 1x8xf32, valid=1x1>) outs(%part : !pto.partition_tensor_view<1x1xf32>)
+    return
+  }
+}
+
+// CHECK-LABEL: storage valid_and_nested: cells=0 all-exact=0
+// CHECK: write unknown definite-write=0
+// CHECK: map=(d0, d1) -> ((d0 * 16 + d1) * 4) extents=1, 8
+// CHECK: map=(d0, d1) -> ((d0 * 16 + d1 + 8) * 4) extents=1, 8
+// CHECK: map=(d0, d1) -> (((d0 + 1) * 16 + d1) * 4) extents=1, 8
+// CHECK: overlap 0,1=1
+// CHECK: overlap 0,2=1
+// CHECK: overlap 1,2=1
+// CHECK-LABEL: storage symbolic_gm: cells=0 all-exact=0
+// CHECK: descriptor base=pointer bytes=4 map=(d0, d1)[s0] -> (d0 * 64 + s0 * 4 + d1 * 4)
+// CHECK: descriptor base=pointer bytes=4 map=(d0, d1)[s0] -> (d0 * 64 + s0 * 4 + (d1 + 8) * 4)
+// CHECK: overlap 1,3=1
+// CHECK: overlap 1,5=1
+// CHECK-LABEL: storage dynamic_extent: cells=0 all-exact=0
+// CHECK: descriptor base=absolute bytes=4 {{.*}} extents=s0, s1
+// CHECK-LABEL: storage descriptor_updates: cells=0 all-exact=0
+// CHECK: extents=s0, s1
+// CHECK: extents=1, 8
+// CHECK-LABEL: storage conditional_metadata: cells=0 all-exact=0
+// CHECK-NOT: descriptor
+// CHECK: conditional_metadata: phases=1
+// CHECK-LABEL: storage dynamic_slot: cells=0 all-exact=0
+// CHECK: map=(d0, d1)[s0] -> ((d0 * 8 + d1) * 4 + s0 * 32) extents=1, 8
+// CHECK-LABEL: storage descriptor_backedge: cells=0 all-exact=0
+// CHECK-NOT: descriptor base=
+// CHECK: descriptor_backedge: phases=1
+// CHECK-LABEL: storage selected_pointer:
+// CHECK: overlap 1,3=1
+// CHECK-LABEL: storage overflow_stride:
+// CHECK: pto.tstore write unknown definite-write=0
+// CHECK-NOT: descriptor
+// CHECK: source-unchanged; dependency-analysis-not-run

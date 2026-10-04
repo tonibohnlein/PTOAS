@@ -16,7 +16,7 @@ namespace mlir::pto::frontiersynch {
 enum class RecognitionState { Applicable, NotApplicable, MissingPremise };
 enum class RecognitionIssue {
     StructuredBody, MultiplePhases, UnmodeledOperation, UnknownPipe,
-    InexactFootprint, UnknownGeometry, LoopDomain, LoopCarriedState,
+    InexactFootprint, SymbolicGeometry, UnknownGeometry, LoopDomain, LoopCarriedState,
     SlotExpression, IndexArithmetic, CommonStride, OverlappingFamilies,
     AliasedOperand, UnsupportedView, GuardInvariance, UnsupportedControl,
     ArithmeticDimension, ArithmeticPeriod, ArithmeticPipeLimit, ArithmeticConfiguration, AdditionalPrerequisite
@@ -67,6 +67,9 @@ struct GuardedRecognition {
 // Section 8 Ready: no demands, endpoint code, selectors or queries are produced.
 RecognitionResult recognizeExplicit(Block& block, const PhaseIndex& index,
                                     const SyncStorageEffects& effects);
+// A maximal adjacent run of original leaf operations, without cloning or unfolding.
+RecognitionResult recognizeExplicitRun(ArrayRef<Operation*> operations, const PhaseIndex& index,
+                                       const SyncStorageEffects& effects);
 RecognitionResult recognizeRotating(scf::ForOp loop, const PhaseIndex& index,
                                     const SyncInput& input, const SyncStorageEffects& effects);
 GuardedRecognition recognizeFiniteGuarded(Region& region, const PhaseIndex& index,

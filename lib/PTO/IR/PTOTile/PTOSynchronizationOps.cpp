@@ -8,6 +8,50 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+// Optional comma-led groups cannot distinguish local_slot_num from
+// flag_base/nosplit after the comma. Parse the keyword before selecting a field.
+static ParseResult parsePipeOptionalAttrs(OpAsmParser &parser, IntegerAttr &localSlots,
+                                          IntegerAttr &flagBase, BoolAttr &nosplit) {
+    while (succeeded(parser.parseOptionalComma())) {
+        StringRef keyword;
+        if (parser.parseKeyword(&keyword) || parser.parseEqual()) {
+            return failure();
+        }
+        if (keyword == "local_slot_num" || keyword == "flag_base") {
+            IntegerAttr &attribute = keyword == "local_slot_num" ? localSlots : flagBase;
+            if (attribute) {
+                return parser.emitError(parser.getCurrentLocation(), "duplicate pipe attribute");
+            }
+            if (parser.parseAttribute(attribute, parser.getBuilder().getI32Type())) {
+                return failure();
+            }
+        } else if (keyword == "nosplit") {
+            if (nosplit) {
+                return parser.emitError(parser.getCurrentLocation(), "duplicate nosplit attribute");
+            }
+            if (parser.parseAttribute(nosplit)) {
+                return failure();
+            }
+        } else {
+            return parser.emitError(parser.getCurrentLocation(), "unexpected optional pipe attribute");
+        }
+    }
+    return success();
+}
+
+static void printPipeOptionalAttrs(OpAsmPrinter &printer, Operation *, IntegerAttr localSlots,
+                                   IntegerAttr flagBase, BoolAttr nosplit) {
+    if (localSlots) {
+        printer << ", local_slot_num = " << localSlots.getInt();
+    }
+    if (flagBase) {
+        printer << ", flag_base = " << flagBase.getInt();
+    }
+    if (nosplit) {
+        printer << ", nosplit = " << (nosplit.getValue() ? "true" : "false");
+    }
+}
+
 void mlir::pto::SyncAllOp::print(OpAsmPrinter &p) {
     SmallVector<Value, mlir::pto::kValue2> operands;
     if (getGmWorkspace()) {
