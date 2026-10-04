@@ -67,13 +67,11 @@ with overlapping physical addresses are rejected by this initial family
 recognizer, not treated as separate storage. Refining such roots into a common
 family remains a possible extension.
 
-The first exact within-slot fragments are constant scalar `tgetval`/`tsetval`
-accesses to checked plain tile storage. This can prove an exact symbolic scalar
-fragment even when the precision layer retained the union of all possible
-slots for its dynamic access. Other tile operations retain an
-`inexact-footprint` obligation. Unsupported views and conditional alias
-alternatives remain explicit obligations; unknown physical geometry does not
-prevent reporting an otherwise recognized slot expression.
+Within-slot fragments must come from an exact shared access region. The earlier
+`tgetval`/`tsetval` recovery shortcut has been removed. The current shared input
+supplies read/write operands and descriptor geometry but no actual access
+region, so those examples now report `inexact-footprint`. Structural checks
+still report slot expressions, families and refresh distances.
 
 ## Guarded regions
 
@@ -147,8 +145,8 @@ completion/completion and start/completion paths, including each payload's own
 start-to-completion edge. They represent native closure, not just adjacent edges.
 
 Fixed exact effects use the shared physical ranges, so overlapping SSA roots
-refer to the same bytes. Dynamic scalar slots use `iv rem slot_count`, actual
-physical slot intervals, and exact scalar within-slot footprints. Slots need
+refer to the same bytes. Dynamic slots require `iv rem slot_count`, actual
+physical slot intervals, and exact supplied within-slot footprints. Slots need
 not be evenly spaced, and distinct allocations need not be disjoint for this
 arithmetic route. The slot count must divide the configured residue period.
 All quotient substitutions use checked integer arithmetic.
@@ -201,13 +199,13 @@ are independent of trip counts. These operation counts exclude shared input
 recovery and the later symbolic reduction backend.
 
 Counted-pattern and compositional recognizers remain unimplemented. Practical
-coverage next needs exact tile-operation footprints, broader bounds/views and
+coverage next needs a generic exact access-region contract, broader bounds/views and
 arithmetic conditions. The arithmetic reduction/selector backend and rotating
 generator/quotient backend are also still separate work.
 
 ## Validation
 
-The lit tests cover exact versus upper-bound explicit effects, parameterized
+The lit tests cover missing access-region premises, parameterized
 two- and three-slot loops, zero and large trip counts, independent assessment
 of nested loops, unknown geometry, shifted-index obligations, mismatched
 strides, physical aliasing across SSA roots, runtime moduli, conditional bodies
@@ -219,9 +217,9 @@ iteration-varying loop guards, late finite guards, all three arithmetic classes,
 negative-bound normalization, impossible equalities, residue/schema mismatches,
 configured bounds and checked coefficient overflow.
 
-The arithmetic program fixture compares emitted relations against independently
-unfolded nested-reset, triangular and sibling-loop traces over small positive,
-zero and negative bounds. It checks occurrence membership, reference order,
-native closure and read/write bytes, including slot holes and shared addresses.
-Rejected prerequisite/control cases must export nothing. The generic checker
-also tests immediate rejection of oversized producer configurations.
+The arithmetic program fixture now verifies that missing access contracts and
+rejected control/prerequisite cases export no partial bundle. Its former
+occurrence-level comparison relied on the removed scalar footprint shortcut;
+it is no longer evidence for exact IR extraction. The supplied-relation checker
+continues to test the arithmetic classes and immediate rejection of oversized
+producer configurations.

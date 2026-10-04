@@ -9,37 +9,30 @@
 // RUN: pto-sync-input-test --recognize %s | FileCheck %s --check-prefix=RECOGNIZE
 
 // RECOGNIZE-LABEL: recognition reused_ranges
-// RECOGNIZE: recognize explicit: missing-premise
-// RECOGNIZE: issue inexact-footprint
+// RECOGNIZE: recognize explicit: missing-premise backend=unavailable
 // RECOGNIZE-LABEL: recognition scalar_only
-// RECOGNIZE: recognize explicit: applicable backend=unavailable
+// RECOGNIZE: recognize explicit: missing-premise backend=unavailable
 
 // One large allocation is reused as two smaller allocations with distinct SSA
-// roots. Cells must be shared by byte identity, not by root or operation name.
-// A bounding tile write is not a definite overwrite; a scalar write is exact.
-// CHECK-LABEL: storage reused_ranges: cells=5 all-exact=0
-// CHECK: cell 0 {{.*}} [0,4)
-// CHECK: cell 1 {{.*}} [4,1024)
-// CHECK: cell 2 {{.*}} [1024,1028)
-// CHECK: cell 3 {{.*}} [1028,2048)
-// CHECK: cell 4 {{.*}} [4096,5120)
-// CHECK: effect 0 pto.texpands write upper definite-write=0 cells=0, 1, 2, 3
-// CHECK: effect 1 pto.texpands write upper definite-write=0 cells=0, 1
-// CHECK: effect 2 pto.texpands write upper definite-write=0 cells=2, 3
-// CHECK: effect 3 pto.tsetval write exact definite-write=1 cells=0
-// CHECK: effect 4 pto.tgetval read exact definite-write=0 cells=2
-// CHECK: effect 5 pto.tsetval write exact definite-write=1 cells=2
-// CHECK: effect 6 pto.texpands write upper definite-write=0 cells=4
+// roots. Descriptor addresses preserve reuse; unknown access regions do not
+// justify disjointness or definite overwrite, even for scalar operations.
+// CHECK-LABEL: storage reused_ranges: cells=0 all-exact=0
+// CHECK: effect 0 pto.texpands write unknown definite-write=0 cells=
+// CHECK: effect 1 pto.texpands write unknown definite-write=0 cells=
+// CHECK: effect 2 pto.texpands write unknown definite-write=0 cells=
+// CHECK: effect 3 pto.tsetval write unknown definite-write=0 cells=
+// CHECK: effect 4 pto.tgetval read unknown definite-write=0 cells=
+// CHECK: effect 5 pto.tsetval write unknown definite-write=0 cells=
+// CHECK: effect 6 pto.texpands write unknown definite-write=0 cells=
 // CHECK: overlap 0,1=1
 // CHECK: overlap 0,2=1
-// CHECK: overlap 1,2=0
+// CHECK: overlap 1,2=1
 // CHECK: overlap 4,5=1
-// CHECK: overlap 3,5=0
-// CHECK: overlap 0,6=0
-// CHECK-LABEL: storage scalar_only: cells=1 all-exact=1
-// CHECK: cell 0 {{.*}} [0,4)
-// CHECK: effect 0 pto.tsetval write exact definite-write=1 cells=0
-// CHECK: effect 1 pto.tgetval read exact definite-write=0 cells=0
+// CHECK: overlap 3,5=1
+// CHECK: overlap 0,6=1
+// CHECK-LABEL: storage scalar_only: cells=0 all-exact=0
+// CHECK: effect 0 pto.tsetval write unknown definite-write=0 cells=
+// CHECK: effect 1 pto.tgetval read unknown definite-write=0 cells=
 // CHECK: source-unchanged; dependency-analysis-not-run
 
 !large = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>

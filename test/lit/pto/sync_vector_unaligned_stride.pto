@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: not pto-sync-input-test --storage-effects %s 2>&1 | FileCheck %s
+// Native vector repeat strides cannot represent a 124-byte physical row.
+module attributes {pto.target_arch = "a3"} {
+  func.func @unaligned_stride() {
+    %base = arith.constant 0 : i64
+    %src = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 8x31xf32, valid=8x8>
+    return
+  }
+}
+// CHECK: expects result row-major none_box tile row byte size
+// CHECK-SAME: to be 32-byte aligned, but got 124 bytes
