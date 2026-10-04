@@ -180,6 +180,9 @@ FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const Sync
                 if (node.periodicAnalysis->error.empty()) {
                     node.logicalEndpoints = buildNumericTemplateEndpoints(*node.numericTemplate,
                                                                           *node.periodicAnalysis);
+                    if (node.logicalEndpoints->logical.error.empty()) {
+                        node.periodicAllocation = buildPeriodicAllocation(*node.periodicAnalysis);
+                    }
                 }
             }
         }
