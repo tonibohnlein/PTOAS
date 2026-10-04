@@ -16,9 +16,12 @@
 using namespace mlir;
 using namespace mlir::pto;
 
+bool checkSyncRegionDigits(func::FuncOp function);
+
 int runSyncRegionContractChecks(func::FuncOp function, const SyncInput& input)
 {
-    if (!checkScalarEvolution(function) || !checkExplicitAccessContracts(function, input)) {
+    if (!checkScalarEvolution(function) || !checkExplicitAccessContracts(function, input) ||
+        !checkSyncRegionDigits(function)) {
         return 1;
     }
     const auto& storage = input.accesses();

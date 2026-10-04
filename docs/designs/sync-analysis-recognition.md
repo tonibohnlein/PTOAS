@@ -250,3 +250,22 @@ GM addresses also reject without exporting partial primitives. This changes no
 instruction footprint or shared alias policy and introduces no new local
 allocation identity. The `--arithmetic` test dump exposes the base's argument
 number (`-1` denotes an absolute address); it never prints an address value.
+
+## Fixed local byte-map materialization
+
+The shared range materializer recognizes separable sums of constant multiples
+of a coordinate, its quotient and its remainder by one positive constant divisor
+per coordinate. Constant extents split exactly into full digit rectangles and a
+partial final rectangle. Within each rectangle, sorted strides merge byte
+intervals only when they touch or overlap; negative strides are reflected, zero
+strides add no bytes, and gaps remain explicit. The result is an exact union of
+physical ranges, independent of instruction names and layout names.
+
+Cost is charged to the parsed expression, generated rectangles, dimensions per
+rectangle and emitted sparse slices, rather than to every byte or element of a
+contiguous tile. Rectangles and aggregate sparse slices are each capped at
+4,096; parsing also has explicit depth and work limits. Arithmetic is checked,
+and failure preserves the caller's output. Unsupported forms use the previous
+exact materializer when possible, otherwise retain their symbolic access map.
+This does not guarantee concrete ranges for every layout or resolve symbolic
+origins whose simplification requires loop-domain facts.
