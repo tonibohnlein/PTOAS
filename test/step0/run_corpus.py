@@ -66,9 +66,13 @@ def main():
             raise RuntimeError(f"original input hash changed: {case['source']}")
         result = {"case": case}
         result["existing"] = run([tool, "--existing-check", str(prepared)], directory, "existing", args.timeout)
+        result["existing-may-alias"] = run(
+            [tool, "--gm-alias=may-alias", "--existing-check", str(prepared)],
+            directory, "existing-may-alias", args.timeout)
         family = families[case["family"]]
         family["attempted"] += 1
-        if result["existing"]["status"] == "ok":
+        existing_ok = all(result[name]["status"] == "ok" for name in ("existing", "existing-may-alias"))
+        if existing_ok:
             summary["accepted"] += 1
             family["accepted"] += 1
         passed = True
@@ -90,7 +94,7 @@ def main():
             for function in first:
                 unphased.update(function["unphased_kinds"])
                 totals.update({k: v for k, v in function.items() if isinstance(v, int)})
-        if result["existing"]["status"] != "ok" or not passed:
+        if not existing_ok or not passed:
             summary["failures"].append({"id": case["id"], "directory": str(directory)})
         if digest(prepared) != case["sha256"]:
             raise RuntimeError(f"analysis mutated input: {prepared}")
