@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_arithmetic_bases.py pto-sync-input-test %s
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!mat = !pto.tile_buf<mat, 16x16xf16, slayout=col_major>
+module attributes {pto.target_arch = "a3"} {
+  func.func @same_base(%p: !pto.ptr<f32, gm>, %n: index) {
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    scf.for %i = %i0 to %n step %i1 {
+      %next = pto.addptr %p, %i : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
+      %cast = pto.castptr %next : !pto.ptr<f32, gm> -> !pto.ptr<i32, gm>
+      %v = pto.load %cast[%i0] : !pto.ptr<i32, gm> -> i32
+      pto.store %one, %p[%i] : !pto.ptr<f32, gm>, f32
+    }
+    return
+  }
+  func.func @same_base_views(%p: !pto.ptr<f16, gm>) {
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i16 = arith.constant 16 : index
+    %i32 = arith.constant 32 : index
+    %i256 = arith.constant 256 : index
+    %zero = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %zero : !mat
+    %view = pto.make_tensor_view %p, shape = [%i32, %i16], strides = [%i16, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%i16, %i0], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf16>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%tile : !mat)
+    %next = pto.addptr %p, %i256 : !pto.ptr<f16, gm> -> !pto.ptr<f16, gm>
+    %v = pto.load %next[%i0] : !pto.ptr<f16, gm> -> f16
+    return
+  }
+  func.func @distinct_bases(%p: !pto.ptr<f32, gm>, %q: !pto.ptr<f32, gm>) {
+    %i0 = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %v = pto.load %p[%i0] : !pto.ptr<f32, gm> -> f32
+    pto.store %one, %q[%i0] : !pto.ptr<f32, gm>, f32
+    return
+  }
+  func.func @selected_base(%p: !pto.ptr<f32, gm>, %q: !pto.ptr<f32, gm>, %g: i1) {
+    %i0 = arith.constant 0 : index
+    %selected = arith.select %g, %p, %q : !pto.ptr<f32, gm>
+    %v = pto.load %selected[%i0] : !pto.ptr<f32, gm> -> f32
+    return
+  }
+  func.func @carried_base(%p: !pto.ptr<f32, gm>, %n: index) {
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %result = scf.for %i = %i0 to %n step %i1 iter_args(%ptr = %p) -> (!pto.ptr<f32, gm>) {
+      %v = pto.load %ptr[%i0] : !pto.ptr<f32, gm> -> f32
+      %next = pto.addptr %ptr, %i1 : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
+      scf.yield %next : !pto.ptr<f32, gm>
+    }
+    return
+  }
+  func.func @absolute_mixture(%p: !pto.ptr<f32, gm>) {
+    %i0 = arith.constant 0 : index
+    %zero = arith.constant 0 : i64
+    %absolute = pto.castptr %zero : i64 -> !pto.ptr<f32, gm>
+    %a = pto.load %absolute[%i0] : !pto.ptr<f32, gm> -> f32
+    %b = pto.load %p[%i0] : !pto.ptr<f32, gm> -> f32
+    return
+  }
+  func.func @local_reuse() {
+    %i0 = arith.constant 0 : index
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %zero : !tile
+    %b = pto.alloc_tile addr = %zero : !tile
+    pto.tsetval ins(%i0, %one : index, f32) outs(%a : !tile)
+    %v = pto.tgetval ins(%b, %i0 : !tile, index) outs : f32
+    return
+  }
+}

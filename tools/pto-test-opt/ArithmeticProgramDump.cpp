@@ -43,6 +43,8 @@ void dumpArithmeticJSON(func::FuncOp function, const fs::ArithmeticProgram& prog
             {"target_event", static_cast<unsigned>(relation.targetEvent)},
             {"source_dimensions", relation.sourceDimensions}, {"target_dimensions", relation.targetDimensions},
             {"space", relation.storageSpace ? static_cast<int64_t>(*relation.storageSpace) : -1},
+            {"base_argument", relation.storageBase
+                ? static_cast<int64_t>(cast<BlockArgument>(relation.storageBase).getArgNumber()) : -1},
             {"dimensions", relation.dimensions}, {"pieces", std::move(pieces)}});
     }
     llvm::json::Array sites, parameters;
