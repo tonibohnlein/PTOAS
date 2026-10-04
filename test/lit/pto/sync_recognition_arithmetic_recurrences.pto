@@ -1,0 +1,114 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_arithmetic_recurrences.py pto-sync-input-test %s
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=2>
+!ring3 = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=3>
+module {
+  func.func @metadata_view(%ptr: !pto.ptr<f32, gm>) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i16 = arith.constant 16 : index
+    %one = arith.constant 1.0 : f32
+    %view = pto.make_tensor_view %ptr, shape = [%i16, %i16], strides = [%i16, %i1] : !pto.tensor_view<?x?xf32>
+    %partition = pto.partition_view %view, offsets = [%i0, %i0], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    %tile = pto.alloc_tile addr = %zero : !tile
+    %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    return
+  }
+  func.func @carried_banks(%n: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i16 = arith.constant 16 : index
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    %last = scf.for %i = %i0 to %n step %i1 iter_args(%bank = %i1) -> (index) {
+      %tile = pto.multi_tile_get %ring[%bank] : !ring -> !tile
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+      %inc = arith.addi %bank, %i1 : index
+      %next = arith.remui %inc, %i2 : index
+      scf.yield %next : index
+    }
+    return
+  }
+  func.func @carried_nested_reset(%n: index, %k: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i16 = arith.constant 16 : index
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    scf.for %t = %i0 to %n step %i1 {
+      %last = scf.for %i = %i0 to %k step %i1 iter_args(%bank = %i1) -> (index) {
+        %tile = pto.multi_tile_get %ring[%bank] : !ring -> !tile
+        %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+        %inc = arith.addi %bank, %i1 : index
+        %next = arith.remui %inc, %i2 : index
+        scf.yield %next : index
+      }
+    }
+    return
+  }
+  func.func @unknown_carried(%n: index, %seed: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i16 = arith.constant 16 : index
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    %last = scf.for %i = %i0 to %n step %i1 iter_args(%bank = %seed) -> (index) {
+      %tile = pto.multi_tile_get %ring[%bank] : !ring -> !tile
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+      %inc = arith.addi %bank, %i1 : index
+      %next = arith.remui %inc, %i2 : index
+      scf.yield %next : index
+    }
+    return
+  }
+  func.func @unknown_carried_address(%n: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i16 = arith.constant 16 : index
+    %one = arith.constant 1.0 : f32
+    %last = scf.for %i = %i0 to %n step %i1 iter_args(%address = %i0) -> (index) {
+      %cast = arith.index_cast %address : index to i64
+      %tile = pto.alloc_tile addr = %cast : !tile
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+      %next = arith.addi %address, %i1 : index
+      scf.yield %next : index
+    }
+    return
+  }
+  func.func @loop_result_address(%n: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i16 = arith.constant 16 : index
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    %last = scf.for %i = %i0 to %n step %i1 iter_args(%bank = %i1) -> (index) {
+      %tile = pto.multi_tile_get %ring[%bank] : !ring -> !tile
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+      %inc = arith.addi %bank, %i1 : index
+      %next = arith.remui %inc, %i2 : index
+      scf.yield %next : index
+    }
+    %after = pto.multi_tile_get %ring[%last] : !ring -> !tile
+    %v = pto.tgetval ins(%after, %i0 : !tile, index) outs : f32
+    return
+  }
+}

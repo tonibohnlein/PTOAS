@@ -24,8 +24,10 @@ struct ArithmeticProgram {
 // No unfolding: counted nests with constant nonnegative lower bounds and
 // positive steps dividing the configured residue period. Upper bounds use
 // proved affine expressions. Exact shared access maps retain symbolic origins
-// and finite within-origin byte unions. No synchronization, extra prerequisites
-// or branches are accepted by this producer.
+// and finite within-origin byte unions. Carried scalar state requires an exact
+// shared recurrence; loop-result uses in domains/accesses remain unsupported.
+// Metadata follows the shared leaf contract. No synchronization, additional
+// prerequisites or branches are accepted by this producer.
 // The shared producer must supply all payload effects. Output borrows input/IR.
 // Failure clears primitive/site/parameter exports; diagnostics remain available.
 ArithmeticProgram recognizeArithmeticProgram(func::FuncOp function, const PhaseIndex& index,
