@@ -19,7 +19,10 @@ void MScatterOp::getEffects(
 // TGETVAL: Read(src) -> scalar result
 void TGetValOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(effects, getSrcMutable());
+  if (!pto::addLinearAccess(effects, getSrcMutable(), getOffsetMutable(), getDst().getType(),
+                            MemoryEffects::Read::get(), true)) {
+    PTO_ADD_READ(effects, getSrcMutable());
+  }
 }
 
 void THistogramOp::getEffects(
@@ -38,7 +41,10 @@ void TGetScaleAddrOp::getEffects(
 // TSETVAL: Write(dst) (single element update)
 void TSetValOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_WRITE(effects, getDstMutable());
+  if (!pto::addLinearAccess(effects, getDstMutable(), getOffsetMutable(), getVal().getType(),
+                            MemoryEffects::Write::get(), true)) {
+    PTO_ADD_WRITE(effects, getDstMutable());
+  }
 }
 
 // SET_VALIDSHAPE: update runtime valid row/col metadata on source tile in-place.
@@ -154,9 +160,15 @@ void TExtractOp::getEffects(
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }
 
+// Shared selections for the ordinary aligned vector insertion.
+#include "PTOInsertAccessEffects.cpp"
+
 // TINSERT: Read(src) -> Write(dst)
 void TInsertOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  if (addInsertAccessEffects(*this, effects)) {
+    return;
+  }
   addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
   addOptionalEffects(effects, getFpMutable(), /*read=*/true, /*write=*/false);
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());

@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "VPTOMemOpInternal.h"
+#include "PTO/IR/PTOLinearAccess.h"
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -25,5 +26,8 @@ LogicalResult PTOStoreOp::verify() {
 void PTOStoreOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  effects.emplace_back(MemoryEffects::Write::get(), &getPtrMutable());
+  if (!addLinearAccess(effects, getPtrMutable(), getOffsetMutable(), getValue().getType(),
+                       MemoryEffects::Write::get(), false)) {
+    effects.emplace_back(MemoryEffects::Write::get(), &getPtrMutable());
+  }
 }

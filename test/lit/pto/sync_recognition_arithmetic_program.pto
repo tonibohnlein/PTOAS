@@ -11,13 +11,13 @@
 // CHECK: recognize arithmetic: missing-premise
 // CHECK: arithmetic sites=0 parameters=0
 // CHECK-LABEL: recognition triangular
-// CHECK: recognize arithmetic: missing-premise
-// CHECK: arithmetic sites=0 parameters=0
+// CHECK: recognize arithmetic: applicable
+// CHECK: arithmetic sites=2 parameters=1
 // CHECK-LABEL: recognition siblings
-// CHECK: recognize arithmetic: missing-premise
-// CHECK: arithmetic sites=0 parameters=0
+// CHECK: recognize arithmetic: applicable
+// CHECK: arithmetic sites=4 parameters=2
 // CHECK-LABEL: recognition empty_minimum
-// CHECK: recognize arithmetic: missing-premise
+// CHECK: recognize arithmetic: applicable
 // CHECK-LABEL: recognition ssa_prerequisite
 // CHECK: recognize arithmetic: missing-premise
 // CHECK: issue additional-prerequisite

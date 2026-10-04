@@ -102,3 +102,35 @@ unresolved geometry retain conservative effects. Packed sub-byte writes are
 not promoted to byte-wide definite overwrites. Exact symbolic maps are retained
 when concrete interval materialization is unavailable. No serialized operation
 syntax or consumer instruction whitelist is added.
+
+### Instruction declarations using the shared interface
+
+The following refinements are produced by the instructions' existing
+`MemoryEffectOpInterface`; neither synchronization consumer has an opcode table:
+
+- `TGETVAL`/`TSETVAL`: one scalar in VEC storage, at the operand's physical base
+  plus the element offset narrowed to unsigned 32 bits. Supported views contribute
+  their offset once. Dynamic offsets remain symbolic.
+- `pto.load`/`pto.store`: one scalar or a one-dimensional, fixed power-of-two
+  vector, relative to a typed pointer. Offsets and `addptr` strides count complete
+  pointee objects. Odd-length vectors, scalable vectors and packed element types
+  retain the existing conservative declaration.
+- Ordinary aligned VEC-to-VEC `TINSERT`: reads the source valid rectangle and
+  writes that rectangle at the destination row/column offsets, narrowed to
+  unsigned 16 bits. The initial exact path requires known aligned allocation
+  bases, row-major noncompact layouts, matching supported element types and
+  native transfer lengths/gaps that fit. Other layouts, conversion forms,
+  unaligned transfers and unavailable geometry retain conservative ranges.
+
+The scalar tile offset follows `Tile::GetValue`/`SetValue` in the PTO-ISA tile
+interface. The insert rectangle and block bounds follow the aligned ND paths
+in `common/arch/memory/tinsert_common.hpp` and `npu/a5/TInsert.hpp`. Pointer
+selections follow complete-object indexing in the EmitC and LLVM lowerings;
+non-power-of-two vectors are excluded because allocation stride can exceed
+stored width. These declarations describe valid executions; they do not add
+runtime bounds checks.
+
+The existing `TEXTRACT` and transfer declarations continue through the same
+resolver. Partial `TLOAD`/`TSTORE` refinement is deferred. A declaration of a
+precise symbolic region does not imply that every compact recognizer accepts
+its expression form.

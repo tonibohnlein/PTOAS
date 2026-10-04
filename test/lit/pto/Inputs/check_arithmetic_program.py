@@ -5,7 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Rejected access contracts must not leak partial arithmetic exports."""
+"""Check complete scalar exports and absence of partial exports on rejection."""
 import json
 import shutil
 import subprocess
@@ -20,7 +20,14 @@ documents = [json.loads(line.removeprefix("arithmetic-json ")) for line in resul
              if line.startswith("arithmetic-json ")]
 if len(documents) != 7:
     raise RuntimeError("expected all seven arithmetic fixtures")
+accepted = {"triangular": (2, 1), "siblings": (4, 2), "empty_minimum": (1, 0)}
 for document in documents:
-    if document["relations"] or document["sites"] or document["parameters"]:
-        raise RuntimeError(document["function"] + ": partial exports on rejection")
-print("arithmetic rejection exports: 7 passed")
+    name = document["function"]
+    if name in accepted:
+        sites, parameters = accepted[name]
+        if (len(document["sites"]) != sites or len(document["parameters"]) != parameters
+                or not document["relations"]):
+            raise RuntimeError(name + ": incomplete arithmetic exports")
+    elif document["relations"] or document["sites"] or document["parameters"]:
+        raise RuntimeError(name + ": partial exports on rejection")
+print("arithmetic exports: 3 accepted, 4 rejected")

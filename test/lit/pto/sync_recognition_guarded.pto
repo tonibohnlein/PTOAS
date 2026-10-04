@@ -5,10 +5,11 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Scalar operations have no private footprint recovery: access premises remain unresolved.
+// Shared scalar declarations make finite guarded effects exact. Rotating
+// recognition still requires its own within-slot representation.
 // RUN: pto-sync-input-test --recognize %s | FileCheck %s
 // CHECK-LABEL: recognition nested_arms
-// CHECK: recognize finite-guarded: missing-premise backend=unavailable
+// CHECK: recognize finite-guarded: applicable backend=unavailable
 // CHECK: guarded phases=3 guards=4 entry-guards=available
 // CHECK-NEXT: guard 0 parent=true arm=then
 // CHECK-NEXT: guard 1 parent=true arm=else
@@ -30,7 +31,7 @@
 // CHECK: issue guard-invariance
 // CHECK: guarded phases=1 guards=2 entry-guards=late
 // CHECK-LABEL: recognition late_finite
-// CHECK: recognize finite-guarded: missing-premise backend=unavailable
+// CHECK: recognize finite-guarded: applicable backend=unavailable
 // CHECK: guarded phases=2 guards=2 entry-guards=late
 // CHECK: source-unchanged; dependency-analysis-not-run
 

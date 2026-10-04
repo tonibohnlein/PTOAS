@@ -1,0 +1,52 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --existing-dump %s | FileCheck %s
+// Both analyses consume the same instruction selection. The scalar read lies
+// outside/inside the loaded range although its enclosing buffer overlaps it.
+// CHECK-LABEL: func.func @disjoint_scalar
+// CHECK-NOT: pto.set_flag
+// CHECK-NOT: pto.wait_flag
+// CHECK: return
+// CHECK-LABEL: func.func @overlapping_scalar
+// CHECK: pto.set_flag
+// CHECK: pto.wait_flag
+// CHECK: return
+!src = !pto.tile_buf<vec, 32x32xf32>
+!load = !pto.tile_buf<vec, 16x16xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func @disjoint_scalar(%a: !pto.ptr<f32, gm>) {
+    %a0 = arith.constant 0 : i64
+    %offset = arith.constant 1024 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i16 = arith.constant 16 : index
+    %read = arith.constant 0 : index
+    %v = pto.make_tensor_view %a, shape = [%i16, %i16], strides = [%i16, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %p = pto.partition_view %v, offsets = [%i0, %i0], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf32>
+    %src = pto.alloc_tile addr = %a0 : !src
+    %loaded = pto.alloc_tile addr = %offset : !load
+    pto.tload ins(%p : !pto.partition_tensor_view<16x16xf32>) outs(%loaded : !load)
+    %val = pto.tgetval ins(%src, %read : !src, index) outs : f32
+    return
+  }
+  func.func @overlapping_scalar(%a: !pto.ptr<f32, gm>) {
+    %a0 = arith.constant 0 : i64
+    %offset = arith.constant 1024 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i16 = arith.constant 16 : index
+    %read = arith.constant 256 : index
+    %v = pto.make_tensor_view %a, shape = [%i16, %i16], strides = [%i16, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %p = pto.partition_view %v, offsets = [%i0, %i0], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf32>
+    %src = pto.alloc_tile addr = %a0 : !src
+    %loaded = pto.alloc_tile addr = %offset : !load
+    pto.tload ins(%p : !pto.partition_tensor_view<16x16xf32>) outs(%loaded : !load)
+    %val = pto.tgetval ins(%src, %read : !src, index) outs : f32
+    return
+  }
+}

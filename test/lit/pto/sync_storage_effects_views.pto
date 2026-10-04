@@ -18,9 +18,9 @@
 // CHECK: overlap 1,2=0
 // CHECK: overlap 3,2=0
 // CHECK: overlap 4,2=1
-// CHECK-LABEL: storage unknown: cells=1 all-exact=0
+// CHECK-LABEL: storage unknown: cells=0 all-exact=0
 // CHECK: effect 0 pto.texpands write unknown definite-write=0 cells=
-// CHECK: effect 1 pto.tgetval read upper definite-write=0 cells=
+// CHECK: effect 1 pto.tgetval read exact definite-write=0 cells=
 // CHECK: overlap 0,1=1
 // CHECK: source-unchanged; dependency-analysis-not-run
 
