@@ -102,7 +102,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       signalPassFailure();
       return;
     }
-    auto &memAnalyzer = input.memory();
+    const auto &accesses = input.accesses();
     auto &syncIR = input.ir();
     SyncOperations syncOpsStorage;
 
@@ -115,7 +115,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
                         func.getOperation());
 
     // 2. Analyzer: 依赖分析与插入逻辑 Sync
-    InsertSyncAnalysis analyzer(syncIR, memAnalyzer, syncOpsStorage, func,
+    InsertSyncAnalysis analyzer(syncIR, accesses, syncOpsStorage, func,
                                 SyncAnalysisMode::NORMALSYNC);
     analyzer.Run(/*insertBarAllAtLast=*/true);
 

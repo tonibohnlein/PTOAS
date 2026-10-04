@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --storage-effects %s | FileCheck %s --check-prefix=RANGES
+// RUN: pto-sync-input-test --existing-dump %s | FileCheck %s --check-prefix=INSERT
+// The load's destination overlaps the extract's buffer, but only the overlapping
+// case touches the extract's selected bytes. Both consumers use that selection.
+// RANGES-LABEL: storage disjoint_selection:
+// RANGES: overlap 1,2=0
+// RANGES-LABEL: storage overlapping_selection:
+// RANGES: overlap 1,2=1
+// RANGES-LABEL: storage unresolved_selection:
+// RANGES: effect 2 pto.textract read upper
+// RANGES: overlap 1,2=1
+// INSERT-LABEL: func.func @disjoint_selection
+// INSERT-NOT: pto.set_flag
+// INSERT-NOT: pto.wait_flag
+// INSERT: return
+// INSERT-LABEL: func.func @overlapping_selection
+// INSERT: pto.set_flag
+// INSERT: pto.wait_flag
+// INSERT: return
+// INSERT-LABEL: func.func @unresolved_selection
+// INSERT: pto.set_flag
+// INSERT: pto.wait_flag
+// INSERT: return
+!src = !pto.tile_buf<mat, 32x64xf16, slayout=col_major>
+!mat = !pto.tile_buf<mat, 16x16xf16, slayout=col_major>
+!dst = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+module attributes {pto.target_arch = "a3"} {
+  func.func @disjoint_selection(%a: !pto.ptr<f16, gm>) attributes {test.overlap = array<i64: 1, 2>} {
+    %a0 = arith.constant 0 : i64
+    %offset = arith.constant 1024 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i16 = arith.constant 16 : index
+    %v = pto.make_tensor_view %a, shape = [%i16, %i16], strides = [%i16, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %p = pto.partition_view %v, offsets = [%i0, %i0], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf16>
+    %src = pto.alloc_tile addr = %a0 : !src
+    %loaded = pto.alloc_tile addr = %offset : !mat
+    %dst = pto.alloc_tile addr = %a0 : !dst
+    pto.tload ins(%p : !pto.partition_tensor_view<16x16xf16>) outs(%loaded : !mat)
+    pto.textract ins(%src, %i0, %i0 : !src, index, index) outs(%dst : !dst)
+    return
+  }
+  func.func @overlapping_selection(%a: !pto.ptr<f16, gm>) attributes {test.overlap = array<i64: 1, 2>} {
+    %a0 = arith.constant 0 : i64
+    %offset = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i16 = arith.constant 16 : index
+    %v = pto.make_tensor_view %a, shape = [%i16, %i16], strides = [%i16, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %p = pto.partition_view %v, offsets = [%i0, %i0], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf16>
+    %src = pto.alloc_tile addr = %a0 : !src
+    %loaded = pto.alloc_tile addr = %offset : !mat
+    %dst = pto.alloc_tile addr = %a0 : !dst
+    pto.tload ins(%p : !pto.partition_tensor_view<16x16xf16>) outs(%loaded : !mat)
+    pto.textract ins(%src, %i0, %i0 : !src, index, index) outs(%dst : !dst)
+    return
+  }
+  func.func @unresolved_selection(%a: !pto.ptr<f16, gm>, %col: index) attributes {test.overlap = array<i64: 1, 2>} {
+    %a0 = arith.constant 0 : i64
+    %offset = arith.constant 1024 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i16 = arith.constant 16 : index
+    %v = pto.make_tensor_view %a, shape = [%i16, %i16], strides = [%i16, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %p = pto.partition_view %v, offsets = [%i0, %i0], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf16>
+    %src = pto.alloc_tile addr = %a0 : !src
+    %loaded = pto.alloc_tile addr = %offset : !mat
+    %dst = pto.alloc_tile addr = %a0 : !dst
+    pto.tload ins(%p : !pto.partition_tensor_view<16x16xf16>) outs(%loaded : !mat)
+    pto.textract ins(%src, %i0, %col : !src, index, index) outs(%dst : !dst)
+    return
+  }
+}

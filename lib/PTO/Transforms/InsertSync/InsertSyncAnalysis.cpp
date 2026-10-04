@@ -215,7 +215,7 @@ static bool containsExactAccess(const SmallVector<const BaseMemInfo *> &infos,
 static bool overwritesColumnBroadcastInput(
     const CompoundInstanceElement *writer,
     const CompoundInstanceElement *reader,
-    MemoryDependentAnalyzer &memAnalyzer) {
+    const SyncStorageEffects &accesses) {
   if (!reader->elementOp) {
     return false;
   }
@@ -228,14 +228,9 @@ static bool overwritesColumnBroadcastInput(
   if (!broadcast) {
     return false;
   }
-  SmallVector<const BaseMemInfo *> broadcastReads;
-  for (const BaseMemInfo *info : reader->useVec) {
-    if (info->baseBuffer == broadcast) {
-      broadcastReads.push_back(info);
-    }
-  }
   DepBaseMemInfoPairVec dependencies;
-  return memAnalyzer.DepBetween(writer->defVec, broadcastReads, dependencies);
+  return accesses.dependencies(writer, SyncAccessMode::Write, reader, SyncAccessMode::Read,
+                               dependencies, broadcast);
 }
 
 static bool isErasedA5VectorBarrier(func::FuncOp func,
@@ -601,16 +596,19 @@ bool InsertSyncAnalysis::IsMemInfoHasDependency(
     CompoundInstanceElement *frontCompound,
     DepBaseMemInfoPairVec &depBaseMemInfosVec) {
   bool hasDependency = false;
-  if (memAnalyzer_.DepBetween(nowCompound->useVec, frontCompound->defVec,
+  if (accesses_.dependencies(nowCompound, SyncAccessMode::Read,
+                             frontCompound, SyncAccessMode::Write,
                               depBaseMemInfosVec)) {
     hasDependency = true;
   }
-  if (memAnalyzer_.DepBetween(nowCompound->defVec, frontCompound->useVec,
+  if (accesses_.dependencies(nowCompound, SyncAccessMode::Write,
+                             frontCompound, SyncAccessMode::Read,
                               depBaseMemInfosVec)) {
     hasDependency = true;
   }
   if (!isTLoadToTLoadWAWExempt(nowCompound, frontCompound)) {
-    if (memAnalyzer_.DepBetween(nowCompound->defVec, frontCompound->defVec,
+    if (accesses_.dependencies(nowCompound, SyncAccessMode::Write,
+                             frontCompound, SyncAccessMode::Write,
                                 depBaseMemInfosVec)) {
       hasDependency = true;
     }
@@ -621,7 +619,8 @@ bool InsertSyncAnalysis::IsMemInfoHasDependency(
   // executing them concurrently across pipelines can trigger device-side issues.
   if (nowCompound->kPipeValue != frontCompound->kPipeValue) {
     DepBaseMemInfoPairVec rrDepVec;
-    if (memAnalyzer_.DepBetween(nowCompound->useVec, frontCompound->useVec,
+    if (accesses_.dependencies(nowCompound, SyncAccessMode::Read,
+                             frontCompound, SyncAccessMode::Read,
                                rrDepVec)) {
       collectAccReadReadDependencies(rrDepVec, depBaseMemInfosVec,
                                       hasDependency);
@@ -696,7 +695,7 @@ void InsertSyncAnalysis::InsertPipeBarrierSync(
   PipelineType barrierPipe = frontCompound->kPipeValue;
   if (barrierPipe == PipelineType::PIPE_V &&
       isTargetArchA5(func_) &&
-      overwritesColumnBroadcastInput(nowCompound, frontCompound, memAnalyzer_)) {
+      overwritesColumnBroadcastInput(nowCompound, frontCompound, accesses_)) {
     // A5 broadcasts reread the column vector for every output row. Reusing
     // that storage through a differently shaped tile can overwrite later
     // reads even when the elementwise output dependency is ordered. PIPE_V
