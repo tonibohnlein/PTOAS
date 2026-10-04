@@ -12,6 +12,7 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
+llvm::json::Object dumpNumericTemplate(const fs::NumericTemplate& result, AsmState& state);
 namespace {
 std::string valueName(Value value, AsmState& state) {
     std::string text;
@@ -71,6 +72,9 @@ LogicalResult dumpProgramRecognition(func::FuncOp function, const pto::SyncInput
             item["entry_guards_available"] = node.guardedRotatingResult->entryGuardsAvailable;
             item["entry_expression_count"] = node.guardedRotatingResult->entryExpressions.size();
             attempts.push_back(std::move(item));
+        }
+        if (node.numericTemplate) {
+            attempts.push_back(dumpNumericTemplate(*node.numericTemplate, state));
         }
         llvm::json::Object object{{"id", id}, {"kind", fs::structureName(node.kind)},
             {"parent", node.parent ? static_cast<int64_t>(*node.parent) : -1},

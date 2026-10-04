@@ -315,6 +315,9 @@ StringRef recognitionName(RecognitionIssue issue)
     case RecognitionIssue::ArithmeticPipeLimit: return "arithmetic-pipe-limit";
     case RecognitionIssue::ArithmeticConfiguration: return "arithmetic-configuration";
     case RecognitionIssue::AdditionalPrerequisite: return "additional-prerequisite";
+    case RecognitionIssue::TemplateExpansionLimit: return "template-expansion-limit";
+    case RecognitionIssue::TemplateContext: return "template-context";
+    case RecognitionIssue::GMDischarge: return "gm-discharge";
     default: return "invalid";
     }
 }
