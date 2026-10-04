@@ -85,6 +85,8 @@ target_link_libraries(pto-bisheng-scheduler-test PRIVATE PTOASBishengScheduler)
 add_llvm_executable(pto-sync-input-test
   pto-sync-input-test.cpp
   ArithmeticProgramDump.cpp
+  ProgramRecognitionDump.cpp
+  ProgramStructureChecks.cpp
   SyncAliasChecks.cpp
   SyncRegionContractChecks.cpp
   SyncStep0Audit.cpp
