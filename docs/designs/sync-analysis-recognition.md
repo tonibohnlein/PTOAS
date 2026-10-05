@@ -280,8 +280,10 @@ charged late expansion, not a nested-region composition theorem. It is reported
 after the existing candidates and does not select a backend or set
 `analysis_ready`. Each expanded payload retains its original phase, before/after
 cuts and full tuple of original inner induction values. The outer induction is
-`lower + step * ordinal`; bounds remain in the original IR. A zero outer trip
-count filters out all occurrences without deleting the body schema.
+`lower + step * ordinal`; bounds remain in the original IR. A statically proven
+zero outer trip count produces an empty-invocation certificate without expanding the body or
+normalizing unreachable accesses. The certificate is tied to those constant
+bounds. Runtime-zero loops retain their body schema and use endpoint guards.
 
 Bounds, carried scalar recurrences and branch decisions must specialize exactly
 through the shared scalar analysis. Unknown state, remaining outer-dependent
