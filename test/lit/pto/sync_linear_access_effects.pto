@@ -20,13 +20,13 @@
 // CHECK: overlap 0,3=1
 // CHECK-LABEL: storage tile_view: cells=1 all-exact=1
 // CHECK: cell 0 space=6 [1060,1064)
-// CHECK-LABEL: storage pointer_scalar: cells=0 all-exact=1
+// CHECK-LABEL: storage pointer_scalar: cells=2 all-exact=1
 // CHECK: access base=pointer bytes=4 map=() -> (4)
 // CHECK: access base=pointer bytes=4 map=() -> (8)
 // CHECK: access base=pointer bytes=4 map=()[s0] -> (s0 * 4)
 // CHECK: overlap 0,1=0
 // CHECK: overlap 0,2=1
-// CHECK-LABEL: storage pointer_vector: cells=0 all-exact=1
+// CHECK-LABEL: storage pointer_vector: cells=1 all-exact=1
 // CHECK: access base=pointer bytes=16 map=() -> (32)
 // CHECK: access base=pointer bytes=16 map=() -> (32)
 // CHECK: overlap 0,1=1

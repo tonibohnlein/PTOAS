@@ -59,6 +59,7 @@ private:
     bool boxedPointerStrides(TileBufType type, int64_t& row, int64_t& col);
     bool currentShape(Value operand, Value& row, Value& col);
     bool selectionDomain(DictionaryAttr contract, int64_t version, ArrayRef<AffineExpr> symbols);
+    bool validShapes(DictionaryAttr contract);
     AffineExpr physicalBase(Value operand);
 };
 
@@ -489,14 +490,50 @@ bool RegionBuilder::selectionDomain(DictionaryAttr contract, int64_t version, Ar
     return true;
 }
 
+bool RegionBuilder::validShapes(DictionaryAttr contract)
+{
+    auto attribute = contract.get("valid_shapes");
+    if (!attribute) {
+        return true;
+    }
+    auto shapes = dyn_cast<DenseI64ArrayAttr>(attribute);
+    if (!shapes || shapes.size() % 3 != 0) {
+        return false;
+    }
+    auto values = shapes.asArrayRef();
+    for (std::size_t i = 0; i < values.size(); i += 3) {
+        if (values[i] < 0 || static_cast<uint64_t>(values[i]) >= access->getNumOperands() ||
+            values[i + 1] <= 0 || values[i + 2] <= 0) {
+            return false;
+        }
+        // Preconditions observe descriptor metadata at this instruction, not
+        // merely the allocation's initial shape. Separate builders keep their
+        // symbols out of the selected operand's coordinate map.
+        RegionBuilder condition(input, access);
+        if (!condition.extents(access->getOperand(values[i])) || condition.region.extents.size() != 2) {
+            return false;
+        }
+        for (unsigned dimension = 0; dimension < 2; ++dimension) {
+            auto extent = dyn_cast<AffineConstantExpr>(condition.region.extents[dimension]);
+            if (!extent || extent.getValue() != values[i + 1 + dimension]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool RegionBuilder::selection(Value operand, DictionaryAttr contract)
 {
     auto version = contract.getAs<IntegerAttr>("pto.access_region");
     auto coordinates = contract.getAs<AffineMapAttr>("coordinates");
     auto indices = contract.getAs<DenseI64ArrayAttr>("symbol_operands");
     if (!version || !version.getType().isInteger(64) || !coordinates || !indices ||
-        !((version.getInt() == 1 && contract.size() == 5) ||
+        !((version.getInt() == 1 && contract.size() == (contract.get("valid_shapes") ? 6u : 5u)) ||
           (version.getInt() == 2 && contract.size() == 6))) {
+        return false;
+    }
+    if (!validShapes(contract)) {
         return false;
     }
     SmallVector<AffineExpr> dimensions, symbols, selected;
