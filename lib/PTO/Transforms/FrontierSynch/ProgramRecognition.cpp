@@ -122,8 +122,7 @@ private:
 };
 } // namespace
 
-FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input,
-                                               const ArithmeticLimits& limits) {
+FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input) {
     PhaseIndex index;
     if (failed(index.build(function, input))) {
         return failure();
@@ -166,9 +165,6 @@ FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const Sync
             node.rotatingResult = recognizeRotating(loop, index, input, input.accesses());
             node.guardedRotatingResult = recognizeGuardedRotating(loop, index, input, input.accesses());
         }
-    }
-    if (!function.isDeclaration()) {
-        result.arithmetic = recognizeArithmeticProgram(function, index, input, input.accesses(), limits);
     }
     // Charged numerical inner expansion is a late compact-route candidate;
     // it never changes the original region tree or the explicit-run route.

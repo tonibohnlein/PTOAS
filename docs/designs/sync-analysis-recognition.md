@@ -1,5 +1,33 @@
 # Analysis-route recognition
 
+## Active implementation
+
+The current executable route is a whole-function numerical template followed
+by periodic demand reduction, logical insertion and allocation without repair.
+The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
+
+| Stage | Entry point and implementation |
+|---|---|
+| Shared physical access extraction | `SyncInput::build`, in `InsertSync/`; consumed by both synchronization passes |
+| Structure and route checks | `FrontierAnalysis::initialize`, `ProgramRecognition.cpp`, `PhaseIndex.cpp` |
+| Numerical effect template | `NumericTemplate.cpp`, `NumericTemplateControl.cpp`, `NumericTemplateEffects.cpp`, `NumericTemplateStorage.cpp` |
+| Exact generators and reduction | `NumericTemplateAnalysis.cpp`, `LifetimeScan.cpp`, `PeriodicDemandGraph.cpp`, `PeriodicFrontier.cpp` |
+| Endpoint preparation and insertion | `NumericTemplateEndpoints.cpp`, `NumericTemplateInsertion.cpp`, `LogicalInsertion.cpp` |
+| Reuse certificate and physical IDs | `PeriodicAllocation.cpp`, `AllocationCertificate.cpp`, `PhysicalAllocation.cpp` |
+| Compact endpoint emission | `AllocationCompaction.cpp` |
+
+Arithmetic recognition builds its relation bundle only when a caller requests
+`FrontierAnalysis::recognizeArithmetic()`. Same-policy requests reuse the result;
+changing the alias policy resets it. MLIR invalidates the analysis after an
+IR-changing pass. Direct callers must keep the borrowed IR unchanged for the
+analysis lifetime. The full `--recognize` diagnostic requests it; the
+numerical insertion path does not. This avoids constructing an unused
+arithmetic candidate without changing the periodic result or adding a compiler
+mode. Arithmetic and guarded recognizers remain tested library functionality;
+they do not yet provide an alternative production insertion backend.
+
+## Recognizer interfaces
+
 The first recognizers inspect original MLIR using `SyncInput`, `PhaseIndex`,
 and `SyncStorageEffects`. They neither unfold loops nor construct demands.
 The library API is `FrontierSynch/Recognition.h`; its diagnostic client is:
@@ -26,7 +54,8 @@ An applicable input is not Section 8's `Ready` result. The base recognizers
 report `backend=unavailable` when no analysis backend is attached. The late
 numeric-template path additionally exports minimum demand records,
 completion-origin queries and logical endpoint recipes, described below; it
-still lacks the remaining interfaces and physical realization. Failed
+supports the allocation-only physical path for complete whole-function plans,
+but does not provide general regional composition or scarcity repair. Failed
 recognition neither proves physical infeasibility nor changes the selected
 ordering. No compiler fallback is invoked by the diagnostic.
 
@@ -70,12 +99,11 @@ recognizer, not treated as separate storage. Refining such roots into a common
 family remains a possible extension.
 
 Within-slot fragments must come from an exact shared access region. The earlier
-`tgetval`/`tsetval` recovery shortcut has been removed. The shared input now
-retains MLIR effect declarations and maps qualified full-region coverage to
-descriptor geometry. Current PTO declarations omit that coverage, so those
-examples still report `inexact-footprint`. Structural checks still report slot
-expressions, families and refresh distances. See `sync-effect-precision.md` for
-the coverage contract and preserved loop/slot information.
+recognizer-local `tgetval`/`tsetval` recovery shortcut has been removed. Access
+regions and their precision now come from the shared access producer; the
+recognizer does not maintain a second instruction-effect table. An unresolved
+footprint reports `inexact-footprint`, while structural checks still report
+slot expressions, families and refresh distances.
 
 ## Guarded regions
 

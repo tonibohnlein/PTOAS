@@ -15,8 +15,10 @@ namespace mlir::pto::frontiersynch {
 class FrontierAnalysis {
 public:
     explicit FrontierAnalysis(Operation* operation) : function(dyn_cast<func::FuncOp>(operation)) {}
-    // Fixed current arithmetic class; no limits are inferred from the input.
     LogicalResult initialize(GMAliasPolicy policy = GMAliasPolicy::MayNotAlias);
+    // Build and cache the whole-function arithmetic candidate only on request.
+    // Requires successful initialization; uses fixed class limits, not input-derived limits.
+    LogicalResult recognizeArithmetic();
     const SyncInput* input() const { return program ? storage.get() : nullptr; }
     const ProgramRecognition* result() const { return program ? &*program : nullptr; }
 private:
