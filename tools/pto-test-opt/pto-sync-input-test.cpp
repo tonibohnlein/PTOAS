@@ -331,7 +331,15 @@ std::string render(Operation *op) {
 LogicalResult runRegionExpressionChecks(func::FuncOp function);
 LogicalResult runRotatingAnalysisChecks(func::FuncOp function, const pto::SyncInput& input);
 LogicalResult dumpExplicitAnalysis(func::FuncOp function, const pto::SyncInput& input);
+int runArithmeticSelectorChecks();
+int runArithmeticDemandChecks();
 int main(int argc, char **argv) {
+  if (argc == 2 && StringRef(argv[1]) == "--arithmetic-demand-checks") {
+    return runArithmeticDemandChecks();
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--arithmetic-selector-checks") {
+    return runArithmeticSelectorChecks();
+  }
   // Test-only numerical graph input; the production pass still consumes MLIR.
   if (argc == 3 && StringRef(argv[1]) == "--guarded-periodic-checks") {
     return runGuardedPeriodicChecks(argv[2]);
