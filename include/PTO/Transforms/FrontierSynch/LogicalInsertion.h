@@ -10,6 +10,7 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_LOGICALINSERTION_H
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Block.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -37,6 +38,10 @@ struct PreparedLogicalPlan {
     PreparedLogicalPlan& operator=(const PreparedLogicalPlan&) = delete;
     Block& addPreparation(Operation* before);
     int64_t planId;
+    bool completeInvocation = false; // Drain whole-function work before return.
+    // Optional producer certificate for the immediately following allocation
+    // pass. It owns no borrowed analysis state; changing the plan invalidates it.
+    DictionaryAttr allocationCertificate;
     std::vector<LogicalPreparation> preparation;
     std::vector<PreparedLogicalEndpoint> endpoints;
 };

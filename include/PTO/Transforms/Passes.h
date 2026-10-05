@@ -49,6 +49,8 @@ std::unique_ptr<Pass> createPTOVerifyTFreePass();
 
 std::unique_ptr<Pass> createPTOFrontierAnalysisPass();
 std::unique_ptr<Pass> createPTOFrontierAnalysisPass(const PTOFrontierAnalysisOptions &options);
+std::unique_ptr<Pass> createPTOFrontierAllocatePass();
+std::unique_ptr<Pass> createPTOFrontierAllocatePass(const PTOFrontierAllocateOptions &options);
 
 // Creates a pass for ...
 std::unique_ptr<Pass> createPTOInsertSyncPass();

@@ -319,13 +319,16 @@ int main(int argc, char **argv) {
   const bool insertLogical = argc == 3 && StringRef(argv[1]) == "--insert-logical";
   const bool preparedInsertion = argc == 3 && StringRef(argv[1]) == "--prepared-insertion-checks";
   const bool insertionTrace = argc == 3 && StringRef(argv[1]) == "--insertion-trace";
-  if (argc != 2 && !arithmetic && !recognition && !insertLogical && !insertionTrace && !preparedInsertion &&
+  const bool physicalTrace = argc == 3 && StringRef(argv[1]) == "--physical-trace";
+  if (argc != 2 && !arithmetic && !recognition && !insertLogical && !insertionTrace &&
+      !physicalTrace && !preparedInsertion &&
       !expectFailure && !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip &&
       !regionChecks && !phaseCopies && !step0 && !existing) {
     llvm::errs() << "usage: pto-sync-input-test "
                  << "[--gm-alias=may-alias|may-not-alias] "
                  << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
-                 "--recognize|--insert-logical|--prepared-insertion-checks|--insertion-trace|--arithmetic|--roundtrip|"
+                 "--recognize|--insert-logical|--prepared-insertion-checks|--insertion-trace|"
+                 "--physical-trace|--arithmetic|--roundtrip|"
                  "--region-contract-checks|"
                  "--step0-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
     return 1;
@@ -335,7 +338,8 @@ int main(int argc, char **argv) {
   MLIRContext context(dialects);
   context.disableMultithreading();
   const bool hasOption = expectFailure || capabilities || phaseIndex || storageEffects ||
-                         recognition || insertLogical || insertionTrace || preparedInsertion || arithmetic ||
+                         recognition || insertLogical || insertionTrace || physicalTrace ||
+                         preparedInsertion || arithmetic ||
                          aliasChecks || roundtrip || regionChecks || phaseCopies || step0 || existing;
   const auto filename = argv[hasOption ? 2 : 1];
   auto module = parseSourceFile<ModuleOp>(filename, &context);
@@ -373,9 +377,9 @@ int main(int argc, char **argv) {
     module->print(llvm::outs());
     return 0;
   }
-  if (insertionTrace) {
+  if (insertionTrace || physicalTrace) {
     for (auto function : module->getOps<func::FuncOp>()) {
-      if (failed(runLogicalInsertionChecks(function, policy))) {
+      if (failed(runLogicalInsertionChecks(function, policy, physicalTrace))) {
         return 1;
       }
     }
