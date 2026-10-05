@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Bounded numerical test protocol, independent of MLIR payload instructions.
+#include "PTO/Transforms/FrontierSynch/ExplicitReduction.h"
 #include "PTO/Transforms/FrontierSynch/LifetimeScan.h"
 #include "PTO/Transforms/FrontierSynch/PeriodicAnalysis.h"
 #include "llvm/Support/JSON.h"
@@ -100,6 +101,31 @@ llvm::json::Object dumpScan(const fs::StorageScanResult& scan)
     return llvm::json::Object{{"error", scan.error}, {"generators", std::move(generators)},
                               {"witnesses", std::move(witnesses)}, {"protected_hazards", scan.protectedHazards}};
 }
+llvm::json::Array unsignedArray(llvm::ArrayRef<uint32_t> values)
+{
+    llvm::json::Array result;
+    for (auto value : values) {
+        result.push_back(value);
+    }
+    return result;
+}
+llvm::json::Object dumpReduction(const fs::ExplicitReduction& reduction)
+{
+    llvm::json::Array retained, starts, completions;
+    for (const auto& edge : reduction.retained) {
+        retained.push_back(llvm::json::Array{edge.source, edge.target});
+    }
+    for (const auto& row : reduction.startRanks) {
+        starts.push_back(unsignedArray(row));
+    }
+    for (const auto& row : reduction.completionRanks) {
+        completions.push_back(unsignedArray(row));
+    }
+    return llvm::json::Object{{"error", reduction.error}, {"retained", std::move(retained)},
+        {"payloads", unsignedArray(reduction.payloads)}, {"pipes", unsignedArray(reduction.pipeLabels)},
+        {"columns", unsignedArray(reduction.pipeColumns)}, {"ranks", unsignedArray(reduction.localRanks)},
+        {"starts", std::move(starts)}, {"completions", std::move(completions)}};
+}
 bool scanCase(const llvm::json::Object& input, llvm::json::Object& output)
 {
     std::vector<fs::ExplicitEffects> effects;
@@ -117,7 +143,25 @@ bool scanCase(const llvm::json::Object& input, llvm::json::Object& output)
             extra.push_back({record.source, record.target});
         }
     }
-    output = dumpScan(fs::scanStorageLifetimes(effects, extra));
+    const auto scan = fs::scanStorageLifetimes(effects, extra);
+    output = dumpScan(scan);
+    if (input.getBoolean("reduce").value_or(false)) {
+        auto generators = scan.generators;
+        if (const auto* entries = input.getArray("reduction_records")) {
+            std::vector<fs::PeriodicRecord> parsed;
+            if (!records(*entries, parsed)) {
+                return false;
+            }
+            generators.clear();
+            for (const auto& record : parsed) {
+                if (record.displacement != 0) {
+                    return false;
+                }
+                generators.push_back({record.source, record.target});
+            }
+        }
+        output["reduction"] = dumpReduction(fs::reduceExplicitDemands(effects, generators));
+    }
     return true;
 }
 bool queryTables(const fs::PeriodicAnalysis& analysis, uint64_t prefix, llvm::json::Object& output)

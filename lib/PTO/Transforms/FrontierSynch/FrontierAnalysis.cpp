@@ -15,6 +15,7 @@ LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy) {
     if (initialized && policy == requestedPolicy) {
         return success(program.has_value());
     }
+    explicitAnalysis.reset();
     program.reset();
     storage.reset();
     initialized = true;
@@ -33,6 +34,19 @@ LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy) {
     storage = std::move(pending);
     program = std::move(*recognized);
     return success();
+}
+LogicalResult FrontierAnalysis::analyzeExplicitFunction() {
+    if (!program || !storage || function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
+        return failure();
+    }
+    if (!explicitAnalysis) {
+        PhaseIndex index;
+        if (failed(index.build(function, *storage))) {
+            return failure();
+        }
+        explicitAnalysis = analyzeExplicit(function.front(), index, *storage);
+    }
+    return success(explicitAnalysis->error.empty());
 }
 LogicalResult FrontierAnalysis::recognizeArithmetic() {
     if (!program || !storage) {
@@ -70,7 +84,21 @@ public:
             signalPassFailure();
             return;
         }
-        auto prepared = frontiersynch::prepareNumericTemplateInsertion(getOperation(), *analysis.result());
+        FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepared = failure();
+        auto function = getOperation();
+        const bool straight = !function.isDeclaration() && llvm::hasSingleElement(function.getBody()) &&
+            llvm::all_of(function.front(), [](Operation& op) { return op.getNumRegions() == 0; });
+        if (straight) {
+            if (failed(analysis.analyzeExplicitFunction())) {
+                function.emitError(analysis.explicitResult() ? analysis.explicitResult()->error :
+                                   "explicit analysis unavailable");
+                signalPassFailure();
+                return;
+            }
+            prepared = frontiersynch::prepareExplicitInsertion(function, *analysis.explicitResult());
+        } else {
+            prepared = frontiersynch::prepareNumericTemplateInsertion(function, *analysis.result());
+        }
         if (failed(prepared) || failed(frontiersynch::insertLogicalSynchronization(getOperation(), **prepared))) {
             signalPassFailure();
         }
