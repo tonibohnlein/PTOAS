@@ -403,6 +403,16 @@ int main(int argc, char **argv) {
       if (failed(analysis.initialize(policy))) {
         return 1;
       }
+      // Insertion consumes the periodic result without constructing arithmetic.
+      // The full recognition report explicitly requests and caches that route.
+      if (analysis.result()->arithmetic || failed(analysis.recognizeArithmetic())) {
+        return 1;
+      }
+      const auto* arithmeticCandidate = analysis.result()->arithmetic ? &*analysis.result()->arithmetic : nullptr;
+      if (failed(analysis.initialize(policy)) || failed(analysis.recognizeArithmetic()) ||
+          (analysis.result()->arithmetic ? &*analysis.result()->arithmetic : nullptr) != arithmeticCandidate) {
+        return 1;
+      }
       const auto& input = *analysis.input();
       const auto& program = *analysis.result();
       if (failed(verifyProgramStructure(function, input, program)) ||
