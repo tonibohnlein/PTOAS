@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-test-opt --split-input-file --verify-diagnostics %s
+
+func.func @negative_plan(%ordinal: index) {
+  // expected-error@+1 {{plan_id and record_id must be nonnegative}}
+  pto.logical_set [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_FIX>] plan -1 record 0 ordinal %ordinal
+  return
+}
+
+// -----
+
+func.func @negative_record(%ordinal: index) {
+  // expected-error@+1 {{plan_id and record_id must be nonnegative}}
+  pto.logical_wait [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_FIX>] plan 0 record -1 ordinal %ordinal
+  return
+}
+
+// -----
+
+func.func @same_pipe(%ordinal: index) {
+  // expected-error@+1 {{source and destination pipes must differ}}
+  pto.logical_set [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_M>] plan 0 record 0 ordinal %ordinal
+  return
+}
+
+// -----
+
+func.func @all_pipe(%ordinal: index) {
+  // expected-error@+1 {{requires concrete source and destination pipes}}
+  pto.logical_wait [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_ALL>] plan 0 record 0 ordinal %ordinal
+  return
+}
+
+// -----
+
+func.func @unassigned_pipe(%ordinal: index) {
+  // expected-error@+1 {{requires concrete source and destination pipes}}
+  pto.logical_set [#pto.pipe<PIPE_UNASSIGNED>, #pto.pipe<PIPE_M>] plan 0 record 0 ordinal %ordinal
+  return
+}
+
+// -----
+
+func.func @sentinel_pipe(%ordinal: index) {
+  // expected-error@+1 {{requires concrete source and destination pipes}}
+  pto.logical_wait [#pto.pipe<PIPE_NUM>, #pto.pipe<PIPE_M>] plan 0 record 0 ordinal %ordinal
+  return
+}
+
+// -----
+
+func.func @virtual_pipe(%ordinal: index) {
+  // expected-error@+1 {{requires concrete source and destination pipes}}
+  pto.logical_set [#pto.pipe<VIRTUAL_PIPE_MTE2_L1A>, #pto.pipe<PIPE_M>] plan 0 record 0 ordinal %ordinal
+  return
+}
+
+// -----
+
+func.func @wrong_ordinal_type(%ordinal: i64) {
+  // expected-error@+1 {{operand #0 must be index}}
+  "pto.logical_wait"(%ordinal) {src_pipe = #pto.pipe<PIPE_M>, dst_pipe = #pto.pipe<PIPE_FIX>,
+    plan_id = 0 : i64, record_id = 0 : i64} : (i64) -> ()
+  return
+}

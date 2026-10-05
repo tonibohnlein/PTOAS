@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-test-opt %s | pto-test-opt | FileCheck %s
+// RUN: pto-test-opt %s --canonicalize --cse | FileCheck %s
+
+// Logical identities exceed the hardware EventAttr range and remain effectful.
+// CHECK-LABEL: func.func @logical_identities
+// CHECK: pto.logical_set[<PIPE_M>, <PIPE_FIX>] plan 0 record 17 ordinal %[[ORD:[a-zA-Z0-9_]+]]
+// CHECK-NEXT: pto.logical_wait[<PIPE_M>, <PIPE_FIX>] plan 0 record 17 ordinal %[[ORD]]
+// CHECK-NEXT: pto.logical_set[<PIPE_FIX>, <PIPE_M>] plan 9223372036854775807 record 18 ordinal %[[ORD]]
+// CHECK-NEXT: pto.logical_wait[<PIPE_FIX>, <PIPE_M>] plan 9223372036854775807 record 18 ordinal %[[ORD]]
+// CHECK-NEXT: return
+module {
+  func.func @logical_identities(%ordinal: index) {
+    pto.logical_set [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_FIX>] plan 0 record 17 ordinal %ordinal
+    pto.logical_wait [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_FIX>] plan 0 record 17 ordinal %ordinal
+    pto.logical_set [#pto.pipe<PIPE_FIX>, #pto.pipe<PIPE_M>] plan 9223372036854775807 record 18 ordinal %ordinal
+    pto.logical_wait [#pto.pipe<PIPE_FIX>, #pto.pipe<PIPE_M>] plan 9223372036854775807 record 18 ordinal %ordinal
+    return
+  }
+}

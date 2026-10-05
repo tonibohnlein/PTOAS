@@ -8,6 +8,8 @@
 // Shared pass state: input extraction followed by structural route recognition.
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 namespace mlir::pto::frontiersynch {
 LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy) {
     if (initialized && policy == requestedPolicy) {
@@ -54,8 +56,10 @@ public:
             signalPassFailure();
             return;
         }
-        // This stage only reads IR. Keep the owned result for the next stage.
-        markAllAnalysesPreserved();
+        if (failed(frontiersynch::insertLogicalSynchronization(getOperation(), *analysis.result()))) {
+            signalPassFailure();
+        }
+        // Inserted guards and commands invalidate structural analysis.
     }
 };
 } // namespace

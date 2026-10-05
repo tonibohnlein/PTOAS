@@ -23,20 +23,22 @@
 
 include "mlir/Pass/PassBase.td"
 
-// Initial analysis stage of the frontier synchronization algorithm.
+// Integrated analysis and logical synchronization insertion.
 def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "func::FuncOp"> {
-  let summary = "Build shared effects and structured frontier analysis";
+  let summary = "Compute frontier demands and insert logical synchronization";
   let description = [{
-    Preserves original MLIR regions and links shared physical effects to
-    structural recognition results. This analysis stage does not insert
-    synchronization and is not a complete synchronization constructor.
+    Computes exact minimum demands for supported numerical periodic templates
+    and inserts guarded logical SET/WAIT pairs and same-pipe barriers at their
+    original cuts. Preserves payloads and loop structure. Unsupported inputs
+    fail before insertion. Physical event-ID allocation is a separate pass;
+    logical commands cannot be lowered to hardware synchronization directly.
   }];
   let constructor = "mlir::pto::createPTOFrontierAnalysisPass()";
   let options = [
     Option<"gmAlias", "gm-alias", "std::string", "\"may-not-alias\"",
       "Distinct GM root assumption: may-not-alias or may-alias">
   ];
-  let dependentDialects = ["mlir::pto::PTODialect", "mlir::scf::SCFDialect"];
+  let dependentDialects = ["mlir::pto::PTODialect", "mlir::scf::SCFDialect", "mlir::arith::ArithDialect"];
 }
 
 // Define PTOInsertSync Pass

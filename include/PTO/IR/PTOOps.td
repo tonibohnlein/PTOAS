@@ -2642,6 +2642,46 @@ def TFreeOp : PTO_TOp<"tfree", [
 // Synchronization Ops
 //===----------------------------------------------------------------------===//
 
+// Logical synchronization keeps occurrence identities until physical allocation.
+// No memory-effect-free trait: canonicalization must preserve these commands.
+class PTO_LogicalSyncOp<string mnemonic> : PTO_Op<mnemonic> {
+  let arguments = (ins
+    PTO_PipeAttr:$src_pipe,
+    PTO_PipeAttr:$dst_pipe,
+    I64Attr:$plan_id,
+    I64Attr:$record_id,
+    Index:$source_ordinal
+  );
+  let results = (outs);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    `[` $src_pipe `,` $dst_pipe `]`
+    `plan` $plan_id `record` $record_id `ordinal` $source_ordinal attr-dict
+  }];
+}
+
+def LogicalSetOp : PTO_LogicalSyncOp<"logical_set"> {
+  let summary = "Publish a logical synchronization occurrence";
+  let description = [{
+    Publishes the logical identity (plan_id, record_id, source_ordinal) from
+    src_pipe to dst_pipe. The matching logical_wait carries the same identity.
+    plan_id and record_id are nonnegative analysis identities; source_ordinal
+    identifies the producer's loop visit. These values are not physical event
+    IDs. Physical allocation must resolve this operation before device lowering.
+  }];
+}
+
+def LogicalWaitOp : PTO_LogicalSyncOp<"logical_wait"> {
+  let summary = "Consume a logical synchronization occurrence";
+  let description = [{
+    Consumes the logical identity (plan_id, record_id, source_ordinal) published
+    by logical_set from src_pipe to dst_pipe. The source ordinal belongs to the
+    producer even when the consumer executes in a later loop visit. These
+    identities are not physical event IDs. Physical allocation must resolve
+    this operation before device lowering.
+  }];
+}
+
 def SetFlagOp : PTO_Op<"set_flag"> {
   let summary = "Set synchronization flag between pipes";
   let arguments = (ins

@@ -16,6 +16,7 @@
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/IR/PTO.h"
 #include "SyncPhaseCopyChecks.h"
+#include "SyncLogicalInsertionChecks.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -216,31 +217,6 @@ LogicalResult recognize(func::FuncOp function, const pto::SyncInput &input, bool
   });
   return success();
 }
-// Test consumer runs after the real frontier pass and inspects its cached state.
-class FrontierCheckPass : public PassWrapper<FrontierCheckPass, OperationPass<func::FuncOp>> {
-public:
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(FrontierCheckPass)
-  void runOnOperation() override {
-    auto cached = getCachedAnalysis<pto::frontiersynch::FrontierAnalysis>();
-    auto* analysis = cached ? &cached->get() : nullptr;
-    const bool available = analysis && analysis->input() && analysis->result();
-    if (!available) {
-      getOperation().emitError("frontier pass did not preserve its analysis state");
-      signalPassFailure();
-      return;
-    }
-    const auto& input = *analysis->input();
-    const auto& program = *analysis->result();
-    const bool invalid = failed(verifyProgramStructure(getOperation(), input, program)) ||
-        failed(recognize(getOperation(), input, false, &program)) ||
-        failed(dumpProgramRecognition(getOperation(), input, program));
-    if (invalid) {
-      signalPassFailure();
-      return;
-    }
-    markAllAnalysesPreserved();
-  }
-};
 LogicalResult dumpPhaseIndex(func::FuncOp function, const pto::SyncInput &input) {
   namespace fs = pto::frontiersynch;
   fs::PhaseIndex index;
@@ -340,13 +316,16 @@ int main(int argc, char **argv) {
   const bool storageEffects = argc == 3 && StringRef(argv[1]) == "--storage-effects";
   const bool arithmetic = argc == 3 && StringRef(argv[1]) == "--arithmetic";
   const bool recognition = argc == 3 && StringRef(argv[1]) == "--recognize";
-  if (argc != 2 && !arithmetic && !recognition && !expectFailure &&
+  const bool insertLogical = argc == 3 && StringRef(argv[1]) == "--insert-logical";
+  const bool insertionTrace = argc == 3 && StringRef(argv[1]) == "--insertion-trace";
+  if (argc != 2 && !arithmetic && !recognition && !insertLogical && !insertionTrace && !expectFailure &&
       !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip &&
       !regionChecks && !phaseCopies && !step0 && !existing) {
     llvm::errs() << "usage: pto-sync-input-test "
                  << "[--gm-alias=may-alias|may-not-alias] "
                  << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
-                 "--recognize|--arithmetic|--roundtrip|--region-contract-checks|"
+                 "--recognize|--insert-logical|--insertion-trace|--arithmetic|--roundtrip|"
+                 "--region-contract-checks|"
                  "--step0-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
     return 1;
   }
@@ -355,8 +334,8 @@ int main(int argc, char **argv) {
   MLIRContext context(dialects);
   context.disableMultithreading();
   const bool hasOption = expectFailure || capabilities || phaseIndex || storageEffects ||
-                         recognition || arithmetic || aliasChecks || roundtrip || regionChecks ||
-                         phaseCopies || step0 || existing;
+                         recognition || insertLogical || insertionTrace || arithmetic || aliasChecks ||
+                         roundtrip || regionChecks || phaseCopies || step0 || existing;
   const auto filename = argv[hasOption ? 2 : 1];
   auto module = parseSourceFile<ModuleOp>(filename, &context);
   if (!module || failed(verify(*module))) {
@@ -384,14 +363,41 @@ int main(int argc, char **argv) {
     dumpCapabilities();
   }
   const auto before = render(module->getOperation());
-  if (recognition) {
+  if (insertionTrace) {
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (failed(runLogicalInsertionChecks(function, policy))) {
+        return 1;
+      }
+    }
+    return 0;
+  }
+  if (insertLogical) {
     PassManager manager(&context);
     pto::PTOFrontierAnalysisOptions options;
     options.gmAlias = policy == pto::GMAliasPolicy::MayAlias ? "may-alias" : "may-not-alias";
     manager.addNestedPass<func::FuncOp>(pto::createPTOFrontierAnalysisPass(options));
-    manager.addNestedPass<func::FuncOp>(std::make_unique<FrontierCheckPass>());
-    const bool invalid = failed(manager.run(*module)) || render(module->getOperation()) != before;
-    if (invalid) {
+    if (failed(manager.run(*module))) {
+      return 1;
+    }
+    module->print(llvm::outs());
+    llvm::outs() << "\n";
+    return 0;
+  }
+  if (recognition) {
+    for (auto function : module->getOps<func::FuncOp>()) {
+      pto::frontiersynch::FrontierAnalysis analysis(function);
+      if (failed(analysis.initialize(policy))) {
+        return 1;
+      }
+      const auto& input = *analysis.input();
+      const auto& program = *analysis.result();
+      if (failed(verifyProgramStructure(function, input, program)) ||
+          failed(recognize(function, input, false, &program)) ||
+          failed(dumpProgramRecognition(function, input, program))) {
+        return 1;
+      }
+    }
+    if (render(module->getOperation()) != before) {
       return 1;
     }
     llvm::outs() << "source-unchanged; synchronization-insertion-not-run\n";

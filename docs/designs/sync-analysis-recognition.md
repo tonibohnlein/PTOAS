@@ -400,8 +400,9 @@ work; matching an anchor also reads its coordinate tuple. Ordering `q` active
 commands at one cut costs `O(q log q)`. No production helper enumerates the
 outer trip count.
 
-These are executable selection recipes and placement descriptions, not emitted
-PTO operations or physical event IDs. No start-origin query interface, external
+The read-only recognition API exports selection recipes and placement
+descriptions. The integrated pass below now emits their logical PTO operations;
+physical event IDs remain separate. No start-origin query interface, external
 storage selectors, physical allocation or scarcity repair is added, and the
 whole Section 8 result is still not ready. The periodic index remains unchanged.
 The command oracle checks fresh logical matching and models the mechanisms
@@ -462,3 +463,37 @@ reuse-order formulas; physical canonical-plan claims additionally retain the
 model's local-adjacency premise. Tests also cover infinite uniform budgets with
 finite invocation budgets, large prefixes, widened offsets, malformed endpoint
 ordering, and representable minima with larger intermediate arithmetic.
+
+
+## Integrated logical insertion
+
+`pto-frontier-analysis` now computes the numerical periodic demands and inserts
+their synchronization in one pass. Its supported input is one accepted
+whole-function numerical template, including the tested nested PyPTO and
+TileLang GEMMs. The diagnostic `--recognize` continues to inspect inputs without
+mutation; `pto-sync-input-test --insert-logical input.pto` runs the production
+pass and prints its transformed IR. Other recognized classes still need their
+analysis and endpoint backends before they can use this pass.
+
+The pass preflights the complete endpoint plan before insertion. It preserves
+original payloads, loops, branch decisions and allocation geometry. A command's
+guard selects its own inner-coordinate tuple and checks that its partner's
+outer iteration exists. Commands at a common original cut are emitted in
+SET, barrier, WAIT order. Local barriers on the same pipe at that cut share
+the disjunction of their guards. Zero trips execute no inserted commands;
+a last iteration never publishes a handoff whose consumer is absent.
+
+Cross-pipe commands are `pto.logical_set` and `pto.logical_wait`. Both carry
+source and destination pipes, a plan/record identity and the source outer
+ordinal. The identity is logical and scoped to the function invocation; it
+is not a physical hardware event ID. The IR operations survive round trips
+and have side effects. Physical lowering must replace them after allocation;
+EmitC and VPTO conversion reject unresolved logical commands. Same-pipe
+requirements use `pto.barrier` directly. No all-pipe barrier is introduced.
+
+Insertion does not consult periodic capacity summaries or assign physical
+IDs. It invalidates the borrowed analysis result after mutation. A rejected
+input receives a diagnostic instead of a partial synchronization plan.
+The independent insertion checker executes the generated integer predicates
+and original structured control, observes actual command occurrences, and
+compares their payload order with an all-conflict graph.
