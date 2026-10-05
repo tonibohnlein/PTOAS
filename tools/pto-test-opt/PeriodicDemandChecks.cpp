@@ -165,6 +165,48 @@ bool scanCase(const llvm::json::Object& input, llvm::json::Object& output)
     }
     return true;
 }
+bool allEventQueries(const fs::PeriodicAnalysis& analysis, uint64_t prefix, llvm::json::Object& output)
+{
+    const auto count = analysis.payloads.size();
+    llvm::json::Array thresholds, reachable, strict;
+    for (uint32_t a = 0; a < 2 * count; ++a) {
+        llvm::json::Array row;
+        const auto source = fs::PeriodicEvent{a / 2, static_cast<fs::PeriodicEventKind>(a % 2)};
+        for (uint32_t b = 0; b < 2 * count; ++b) {
+            const auto target = fs::PeriodicEvent{b / 2, static_cast<fs::PeriodicEventKind>(b % 2)};
+            const auto value = analysis.eventThreshold(source, target);
+            if (value.error != fs::PeriodicQueryError::None) {
+                return false;
+            }
+            row.push_back(value.displacement ? llvm::json::Value(*value.displacement) : llvm::json::Value(nullptr));
+        }
+        thresholds.push_back(std::move(row));
+    }
+    for (uint64_t a = 0; a < 2 * prefix; ++a) {
+        llvm::json::Array row, strictRow;
+        const auto source = fs::PeriodicEvent{static_cast<uint32_t>((a / 2) % count),
+                                              static_cast<fs::PeriodicEventKind>(a % 2)};
+        for (uint64_t b = 0; b < 2 * prefix; ++b) {
+            const auto target = fs::PeriodicEvent{static_cast<uint32_t>((b / 2) % count),
+                                                  static_cast<fs::PeriodicEventKind>(b % 2)};
+            const auto value = analysis.eventPrecedes(source, a / 2 / count, target, b / 2 / count, prefix);
+            const auto strictValue = analysis.eventPrecedes(source, a / 2 / count, target, b / 2 / count, prefix, true);
+            if (value.error != fs::PeriodicQueryError::None || strictValue.error != fs::PeriodicQueryError::None) {
+                return false;
+            }
+            row.push_back(value.value);
+            strictRow.push_back(strictValue.value);
+        }
+        reachable.push_back(std::move(row));
+        strict.push_back(std::move(strictRow));
+    }
+    output["event_thresholds"] = std::move(thresholds);
+    output["event_reachable"] = std::move(reachable);
+    output["event_strict"] = std::move(strict);
+    output["invalid_source_kind"] = static_cast<unsigned>(analysis.eventThreshold(
+        {0, static_cast<fs::PeriodicEventKind>(9)}, {0}).error);
+    return true;
+}
 bool queryTables(const fs::PeriodicAnalysis& analysis, uint64_t prefix, llvm::json::Object& output)
 {
     const auto count = analysis.payloads.size();
@@ -223,7 +265,7 @@ bool queryTables(const fs::PeriodicAnalysis& analysis, uint64_t prefix, llvm::js
     output["invalid_endpoint"] = static_cast<unsigned>(analysis.completionPrecedes(0, 0, {0}, 0, 0).error);
     output["invalid_kind"] = static_cast<unsigned>(analysis.completionThreshold(
         0, {0, static_cast<fs::PeriodicEventKind>(9)}).error);
-    return true;
+    return allEventQueries(analysis, prefix, output);
 }
 bool rankQueries(const llvm::json::Object& input, const fs::PeriodicAnalysis& analysis,
                  llvm::json::Object& output)

@@ -105,11 +105,17 @@ def check_graph(case, result):
     assert not result["error"], result["error"]
     assert result["minimum_demands_ready"] and result["completion_queries_ready"]
     assert not result["interfaces_ready"]
-    assert all(result[field] == 1 for field in ["invalid_threshold", "invalid_endpoint", "invalid_kind"])
+    invalid_fields = ["invalid_threshold", "invalid_endpoint", "invalid_kind", "invalid_source_kind"]
+    assert all(result[field] == 1 for field in invalid_fields)
     count = case.get("prefix", 0)
     reach, covers = unfolded(case, count)
     assert retained_instances(result, count) == covers, (case, result["retained"], covers)
     types = len(case["pipes"])
+    for source in range(2 * count):
+        for target in range(2 * count):
+            expected = bool((reach[source] >> target) & 1)
+            assert result["event_reachable"][source][target] == expected, (case, source, target)
+            assert result["event_strict"][source][target] == (expected and source != target)
     for source in range(count):
         for target in range(2 * count):
             expected = bool((reach[2 * source + 1] >> target) & 1)
@@ -130,6 +136,11 @@ def check_graph(case, result):
             expected = next((d for d in range(6 * types + 1)
                              if (long_reach[2 * source + 1] >> (2 * types * d + target)) & 1), None)
             assert result["thresholds"][source][target] == expected, (case, source, target, expected)
+    for source in range(2 * types):
+        for target in range(2 * types):
+            expected = next((d for d in range(6 * types + 1)
+                             if (long_reach[source] >> (2 * types * d + target)) & 1), None)
+            assert result["event_thresholds"][source][target] == expected, (case, source, target, expected)
     if "word" in case:
         assert not result["scan"]["error"]
         assert len(result["scan"]["generators"]) <= len(result["scan"]["witnesses"])

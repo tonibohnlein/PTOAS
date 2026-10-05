@@ -205,7 +205,8 @@ def main():
         path.write_text(original.replace("%k = %one to %five", "%k = %one to %n"))
         rejected = subprocess.run([tool, "--insert-logical", str(path)], capture_output=True, text=True,
                                   check=False, timeout=90)
-        assert rejected.returncode != 0 and "logical insertion requires" in rejected.stderr
+        assert rejected.returncode != 0
+        assert "sequence loop has no exact regional rotating or numerical template" in rejected.stderr
     assert summaries[0]["commands"] == summaries[1]["commands"] == 0
     assert summaries[-1]["payloads"] > summaries[2]["payloads"]
     print(f"logical IR insertion: {len(summaries)} exact command-order checks, rejection and roundtrip passed")

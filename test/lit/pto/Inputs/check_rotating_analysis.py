@@ -86,14 +86,15 @@ def main():
         "      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%alias : !left)\n"
         "      pto.tmatmul")
     with tempfile.TemporaryDirectory(prefix="rotating-reject-") as directory:
-        for text in (boundary,overlap):
+        for text, composed in ((boundary, True), (overlap, False)):
             path=Path(directory)/"case.pto"
             path.write_text(prefix+'module attributes {pto.target_arch = "a3"} {\n'+text+'\n}\n')
             result=subprocess.run([tool,"--rotating-analysis",str(path)],check=True,capture_output=True,text=True)
             doc=json.loads(result.stdout)
             require(not doc["prepared"] and doc["unchanged_preparation"],doc)
             rejected=subprocess.run([tool,"--insert-logical",str(path)],capture_output=True,text=True)
-            require(rejected.returncode != 0,"unsupported whole-region obligation accepted")
+            require((rejected.returncode == 0) == composed,
+                    "sequence composition acceptance disagrees with boundary contract: " + rejected.stderr)
     print("rotating analysis:7 runtime-bound loops, exact command closure and matching guards passed")
 
 

@@ -97,6 +97,7 @@ add_llvm_executable(pto-sync-input-test
   PeriodicDemandChecks.cpp
   ExplicitAnalysisDump.cpp
   RotatingAnalysisDump.cpp
+  RegionExpressionChecks.cpp
   ProgramStructureChecks.cpp
   SyncAliasChecks.cpp
   SyncRegionContractChecks.cpp

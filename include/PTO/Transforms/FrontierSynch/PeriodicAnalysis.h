@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Numerical periodic generators and their completion-origin frontier index.
+// Numerical periodic generators and exact event queries from completion frontiers.
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_PERIODICANALYSIS_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_PERIODICANALYSIS_H
 #include "llvm/ADT/ArrayRef.h"
@@ -60,6 +60,13 @@ struct PeriodicAnalysis {
     // Present-event queries only. The numerical threshold itself is uniform
     // in the trip count; finite-prefix helpers explicitly filter endpoints.
     PeriodicThreshold completionThreshold(uint32_t source, PeriodicEvent target) const;
+    // Reflexive all-event queries reuse the completion frontiers in O(1).
+    // A start-origin path either stays on its native start chain or first
+    // reaches a completion also reachable from its own payload's completion.
+    PeriodicThreshold eventThreshold(PeriodicEvent source, PeriodicEvent target) const;
+    PeriodicPredicate eventPrecedes(PeriodicEvent source, uint64_t sourcePeriod,
+                                   PeriodicEvent target, uint64_t targetPeriod,
+                                   uint64_t payloadPrefixLength, bool strict = false) const;
     PeriodicPredicate completionPrecedes(uint32_t source, uint64_t sourcePeriod,
                                         PeriodicEvent target, uint64_t targetPeriod,
                                         uint64_t payloadPrefixLength, bool strict = false) const;
@@ -69,7 +76,7 @@ struct PeriodicAnalysis {
 // Types occur in array order within a period. Nonzero-displacement generators
 // are forward; zero-displacement generators require source < target. Includes
 // native singleton wraps. Exactness relative to effects needs an external
-// generator certificate. No start-origin query or physical allocation export.
+// generator certificate. Physical allocation requires its separate interface.
 // On invalid input or checked integer overflow, no partial index is returned.
 PeriodicAnalysis analyzePeriodicDemands(llvm::ArrayRef<PeriodicPayload> payloads,
                                        llvm::ArrayRef<PeriodicRecord> records);

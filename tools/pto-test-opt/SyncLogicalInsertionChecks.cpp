@@ -11,8 +11,11 @@
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/Pass/PassManager.h"
+#include "PTO/Transforms/Passes.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
@@ -23,9 +26,14 @@ constexpr uint64_t MaxEvents = 100000;
 constexpr unsigned MaxDepth = 64;
 class Interpreter {
 public:
-    explicit Interpreter(const fs::NumericTemplate& input) : input(input) {
+    explicit Interpreter(const fs::NumericTemplate& input) : input(&input) {
         for (uint32_t i = 0; i < input.payloads.size(); ++i) {
             types[input.payloads[i].phase->elementOp].push_back(i);
+        }
+    }
+    explicit Interpreter(ArrayRef<const pto::CompoundInstanceElement*> phases) : genericPhases(phases) {
+        for (uint32_t i = 0; i < phases.size(); ++i) {
+            types[phases[i]->elementOp].push_back(i);
         }
     }
     llvm::json::Object run(func::FuncOp function);
@@ -41,7 +49,9 @@ private:
     bool command(Operation& op);
     void folded(Operation& op);
     void bind(ValueRange targets, ArrayRef<Attribute> sources);
-    const fs::NumericTemplate& input;
+    const fs::NumericTemplate* input = nullptr;
+    SmallVector<const pto::CompoundInstanceElement*> genericPhases;
+    SmallVector<int64_t> coordinates;
     DenseMap<Value, Attribute> values;
     DenseMap<Operation*, SmallVector<uint32_t>> types;
     llvm::json::Array events;
@@ -102,13 +112,16 @@ bool Interpreter::loop(scf::ForOp op, unsigned depth)
     }
     int64_t induction = *lower;
     while (induction < *upper) {
-        if (op == input.outer) {
+        if (input && op == input->outer) {
             ++outerTrips;
         }
         values[op.getInductionVar()] = IntegerAttr::get(op.getInductionVar().getType(), induction);
         bind(op.getRegionIterArgs(), state);
         SmallVector<Attribute> next;
-        if (!block(*op.getBody(), next, depth + 1) || next.size() != state.size()) {
+        coordinates.push_back(induction);
+        const bool executed = block(*op.getBody(), next, depth + 1);
+        coordinates.pop_back();
+        if (!executed || next.size() != state.size()) {
             return fail(error.empty() ? "trace loop yield arity mismatch" : StringRef(error));
         }
         state = std::move(next);
@@ -140,10 +153,28 @@ bool Interpreter::branch(scf::IfOp op, unsigned depth)
 }
 bool Interpreter::payload(Operation& op, ArrayRef<uint32_t> candidates)
 {
+    if (!input) {
+        if (candidates.size() != 1) {
+            return fail("structured trace requires one phase per payload anchor");
+        }
+        const auto type = candidates.front();
+        llvm::json::Array tuple;
+        for (auto coordinate : coordinates) {
+            tuple.push_back(coordinate);
+        }
+        events.push_back(llvm::json::Object{{"kind", "payload"}, {"type", type},
+            {"coordinates", std::move(tuple)},
+            {"pipe", static_cast<unsigned>(genericPhases[type]->kPipeValue)}});
+        ++payloads;
+        for (auto result : op.getResults()) {
+            values.erase(result);
+        }
+        return true;
+    }
     std::optional<uint32_t> selected;
     for (auto type : candidates) {
         bool matches = true;
-        for (const auto& coordinate : input.payloads[type].coordinates) {
+        for (const auto& coordinate : input->payloads[type].coordinates) {
             auto loopOp = coordinate.loop;
             const auto actual = integer(loopOp.getInductionVar());
             matches &= actual && *actual == coordinate.induction;
@@ -155,18 +186,18 @@ bool Interpreter::payload(Operation& op, ArrayRef<uint32_t> candidates)
             selected = type;
         }
     }
-    auto outer = input.outer;
+    auto outer = input->outer;
     const auto induction = integer(outer.getInductionVar());
-    if (!selected || !induction || *induction < input.lower || input.step <= 0) {
+    if (!selected || !induction || *induction < input->lower || input->step <= 0) {
         return fail("trace payload is outside its template domain");
     }
-    const uint64_t difference = static_cast<uint64_t>(*induction) - static_cast<uint64_t>(input.lower);
-    if (difference % static_cast<uint64_t>(input.step)) {
+    const uint64_t difference = static_cast<uint64_t>(*induction) - static_cast<uint64_t>(input->lower);
+    if (difference % static_cast<uint64_t>(input->step)) {
         return fail("trace payload outer coordinate is off grid");
     }
-    const auto& item = input.payloads[*selected];
+    const auto& item = input->payloads[*selected];
     events.push_back(llvm::json::Object{{"kind", "payload"}, {"type", *selected},
-        {"ordinal", difference / static_cast<uint64_t>(input.step)},
+        {"ordinal", difference / static_cast<uint64_t>(input->step)},
         {"pipe", static_cast<unsigned>(item.phase->kPipeValue)}});
     ++payloads;
     for (auto result : op.getResults()) {
@@ -344,4 +375,104 @@ LogicalResult runLogicalInsertionChecks(func::FuncOp function, pto::GMAliasPolic
     }
     llvm::outs() << llvm::json::Value(std::move(trace)) << "\n";
     return success(valid);
+}
+
+LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    pto::SyncInput input(policy);
+    if (failed(input.build(function))) {
+        return failure();
+    }
+    auto render = [&]() {
+        std::string text;
+        llvm::raw_string_ostream stream(text);
+        function.print(stream);
+        return text;
+    };
+    const auto before = render();
+    PassManager manager(function.getContext(), func::FuncOp::getOperationName());
+    pto::PTOFrontierAnalysisOptions options;
+    options.gmAlias = policy == pto::GMAliasPolicy::MayAlias ? "may-alias" : "may-not-alias";
+    manager.addPass(pto::createPTOFrontierAnalysisPass(options));
+    bool accepted = false;
+    if (function->hasAttr("test.recompose")) {
+        auto program = fs::recognizeProgram(function, input);
+        if (failed(program)) { return failure(); }
+        fs::RegionalAnalysis child;
+        {
+            auto original = fs::analyzeSequence(function, input, *program);
+            child = fs::sequenceRegionalResult(original);
+        } // Exported callbacks must retain the original analysis state.
+        auto arena = child.expressions;
+        fs::RegionalAnalysis empty;
+        empty.expressions = arena;
+        empty.capabilities = {true, true, true, true};
+        empty.presence = [](fs::RegionalEvent) -> std::optional<fs::RegionExpressions::Id> {
+            return std::nullopt;
+        };
+        empty.reachability = [](fs::RegionalEvent, fs::RegionalEvent) -> std::optional<fs::RegionExpressions::Id> {
+            return std::nullopt;
+        };
+        empty.prepare = []() -> FailureOr<std::unique_ptr<fs::PreparedLogicalPlan>> {
+            return std::make_unique<fs::PreparedLogicalPlan>(0);
+        };
+        std::vector<fs::RegionalAnalysis> regions(8, empty);
+        regions.push_back(std::move(child));
+        regions.insert(regions.end(), 8, empty);
+        auto composed = fs::composeRegionalSequence(function, arena, std::move(regions));
+        auto prepared = fs::prepareSequenceInsertion(composed);
+        accepted = succeeded(prepared) && succeeded(fs::insertLogicalSynchronization(function, **prepared));
+    } else {
+        accepted = succeeded(manager.run(function));
+    }
+    auto trace = accepted ? Interpreter(input.instructions()).run(function) : llvm::json::Object{};
+    const bool valid = !accepted || trace.getString("error").value_or("missing trace status").empty();
+    llvm::outs() << llvm::json::Value(llvm::json::Object{{"function", function.getSymName()},
+        {"accepted", accepted}, {"unchanged_on_failure", accepted || before == render()},
+        {"trace", std::move(trace)}}) << "\n";
+    return success(valid && succeeded(verify(function)));
+}
+
+LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    pto::SyncInput input(policy);
+    if (failed(input.build(function))) { return failure(); }
+    auto program = fs::recognizeProgram(function, input);
+    if (failed(program)) { return failure(); }
+    std::string before;
+    llvm::raw_string_ostream original(before);
+    function.print(original);
+    auto analysis = fs::analyzeSequence(function, input, *program);
+    auto prepared = fs::prepareSequenceInsertion(analysis);
+    auto* expressions = fs::sequenceExpressions(analysis);
+    bool validQueries = true;
+    for (uint32_t port = 0; port < analysis.occurrences.size(); ++port) {
+        auto result = fs::sequenceEventReachability(analysis, port, fs::PeriodicEventKind::Start,
+                                                   port, fs::PeriodicEventKind::Completion);
+        validQueries &= result.has_value();
+    }
+    uint64_t emitted = 0;
+    if (succeeded(prepared)) {
+        // Detached preparation owns every expression operation at original cuts.
+        for (const auto& stage : (**prepared).preparation) {
+            emitted += stage.code->getOperations().size();
+        }
+    }
+    std::string after;
+    llvm::raw_string_ostream current(after);
+    function.print(current);
+    llvm::outs() << llvm::json::Value(llvm::json::Object{
+        {"function", function.getSymName()}, {"error", analysis.error},
+        {"insertion_error", analysis.insertionError},
+        {"prepared", succeeded(prepared)},
+        {"queries_available", validQueries}, {"unchanged", before == after},
+        {"children", analysis.cost.children}, {"cells", analysis.cost.cells},
+        {"ports", analysis.cost.ports}, {"crossings", analysis.cost.crossings},
+        {"physical_fragments", analysis.cost.physicalFragments},
+        {"rotating_residues", analysis.cost.rotatingResidues}, {"numeric_visits", analysis.cost.numericVisits},
+        {"selector_comparisons", analysis.cost.selectorComparisons},
+        {"crossing_candidates", analysis.cost.crossingCandidates},
+        {"implication_checks", analysis.cost.implicationChecks},
+        {"expressions", expressions ? expressions->size() : 0}, {"emitted", emitted}}) << "\n";
+    return success(before == after);
 }

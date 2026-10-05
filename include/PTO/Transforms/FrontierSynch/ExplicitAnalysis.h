@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/ExplicitReduction.h"
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
+#include "PTO/Transforms/FrontierSynch/PeriodicAnalysis.h"
 #include <optional>
 #include <unordered_map>
 namespace mlir::pto::frontiersynch {
@@ -29,11 +30,24 @@ struct ExplicitAnalysis {
     StorageScanResult scan;
     ExplicitReduction reduction;
     std::vector<ExplicitCellBoundary> storageBoundary;
+    SmallVector<std::size_t> dischargedEffects; // Globally independent root-block GM effects.
 };
 // Borrowed phases and cell IDs remain valid only while input/IR are unchanged.
 // Input ranges must enumerate exact physical bytes; symbolic geometry is left
 // for compact backends. Shared partitioning cost is outside this scan/reduction.
 ExplicitAnalysis analyzeExplicit(Block& block, const PhaseIndex& index, const SyncInput& input);
+// The span must contain every payload between its first and last anchors in
+// one block, in reference order. Metadata between anchors is checked too.
+// Optional GM discharge is confined to root-block occurrences with no possible
+// conflict against any other phase in the complete input. It cannot certify
+// an effect repeated by an enclosing loop.
+ExplicitAnalysis analyzeExplicit(ArrayRef<const CompoundInstanceElement*> phases,
+                                 const PhaseIndex& index, const SyncInput& input,
+                                 bool dischargeIndependentGM = false);
+// Here event.type is an occurrence index, not a periodic type. No periods are
+// involved. Null means invalid input; the result is otherwise reflexive.
+std::optional<bool> explicitEventPrecedes(const ExplicitAnalysis& analysis,
+                                        PeriodicEvent source, PeriodicEvent target);
 // Whole-function route only. Preparation is detached and failure changes no IR.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareExplicitInsertion(
     func::FuncOp function, const ExplicitAnalysis& analysis);

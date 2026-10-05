@@ -1,0 +1,140 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// Shared implementation state for regional adapters, queries and endpoint preparation.
+#ifndef PTO_FRONTIERSYNCH_SEQUENCEANALYSISINTERNAL_H
+#define PTO_FRONTIERSYNCH_SEQUENCEANALYSISINTERNAL_H
+#include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/RegionExpressions.h"
+#include "PTO/Transforms/FrontierSynch/FamilyInsertion.h"
+#include "../InsertSync/SyncEffectRanges.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Matchers.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
+#include <map>
+#include <array>
+#include <numeric>
+#include <set>
+#include <tuple>
+namespace mlir::pto::frontiersynch {
+using Expr = RegionExpressions::Id;
+struct Pattern {
+    SyncStorageCell range;
+    uint32_t type = 0;
+    uint64_t residue = 0;
+    uint64_t period = 1;
+    bool read = false;
+    bool write = false;
+};
+struct Child {
+    RegionalAnalysis regional;
+    RegionalCost costs;
+    scf::ForOp loop;
+    Expr trips = 0;
+    std::vector<TemplateEndpointAnchor> anchors;
+    std::vector<Pattern> patterns;
+    ExplicitAnalysis explicitAnalysis;
+    PeriodicAnalysis periodic;
+    NumericTemplateEndpoints endpoints;
+    std::unique_ptr<PreparedLogicalPlan> prepared;
+};
+struct Port {
+    uint32_t child = 0;
+    uint32_t type = 0;
+    Expr ordinal = 0;
+};
+struct Selected { uint32_t port = 0; Expr present = 0; };
+struct CellBoundary {
+    std::vector<Selected> firstWriters, lastWriters;
+    std::map<uint32_t, std::vector<Selected>> firstReaders, lastReaders;
+};
+struct Crossing { uint32_t source = 0, target = 0; Expr guard = 0; };
+struct SequenceAnalysisState {
+    func::FuncOp function;
+    const SyncInput* input = nullptr;
+    const ProgramRecognition* program = nullptr;
+    PhaseIndex index;
+    std::shared_ptr<RegionExpressions> arena;
+    RegionExpressions& expressions;
+    SequenceCost costs;
+    std::string error;
+    std::vector<Child> children;
+    std::vector<SyncStorageCell> cells;
+    std::vector<Port> ports;
+    std::map<std::tuple<uint32_t, uint32_t, Expr>, uint32_t> portIds;
+    std::vector<Crossing> crossings;
+    std::map<std::pair<uint32_t, uint32_t>, uint32_t> crossingIds;
+    std::vector<std::vector<Expr>> graph;
+    std::vector<std::vector<CellBoundary>> boundaries;
+    explicit SequenceAnalysisState(func::FuncOp f, const SyncInput& i, const ProgramRecognition& p)
+        : function(f), input(&i), program(&p), arena(std::make_shared<RegionExpressions>()), expressions(*arena) {}
+    SequenceAnalysisState(func::FuncOp f, std::shared_ptr<RegionExpressions> a)
+        : function(f), arena(std::move(a)), expressions(*arena) {}
+    Expr yes() { return expressions.boolean(true); }
+    Expr no() { return expressions.boolean(false); }
+    Expr c(uint64_t value) { return expressions.constant(value); }
+    Expr both(Expr a, Expr b) { return expressions.land(a, b); }
+    Expr either(Expr a, Expr b) { return expressions.lor(a, b); }
+    Expr negate(Expr value) { return expressions.lnot(value); }
+    bool fail(StringRef message) { error = message.str(); return false; }
+    uint32_t pipe(uint32_t port) const {
+        const auto& p = ports[port];
+        return static_cast<uint32_t>(children[p.child].anchors[p.type].phase->kPipeValue);
+    }
+    uint32_t port(uint32_t child, uint32_t type, Expr ordinal) {
+        if (ports.size() >= UINT32_MAX / 2) { fail("sequence boundary event identity overflow"); return 0; }
+        auto key = std::make_tuple(child, type, ordinal);
+        auto [position, added] = portIds.emplace(key, ports.size());
+        if (added) { ports.push_back({child, type, ordinal}); }
+        return position->second;
+    }
+    Expr before(uint32_t a, uint32_t b) {
+        ++costs.selectorComparisons;
+        const auto& x = ports[a];
+        const auto& y = ports[b];
+        if (x.child != y.child) { return expressions.boolean(x.child < y.child); }
+        return either(expressions.lt(x.ordinal, y.ordinal),
+            both(expressions.eq(x.ordinal, y.ordinal), expressions.boolean(x.type < y.type)));
+    }
+    Expr same(uint32_t a, uint32_t b) {
+        const auto& x = ports[a];
+        const auto& y = ports[b];
+        return x.child == y.child && x.type == y.type ? expressions.eq(x.ordinal, y.ordinal) : no();
+    }
+    Expr present(uint32_t id) {
+        const auto& p = ports[id];
+        auto answer = children[p.child].regional.presence({p.type, p.ordinal, PeriodicEventKind::Start});
+        if (!answer) { fail("regional occurrence presence query unavailable"); return no(); }
+        return *answer;
+    }
+    void crossing(Selected source, Selected target) {
+        ++costs.crossingCandidates;
+        auto guard = both(source.present, target.present);
+        auto key = std::make_pair(source.port, target.port);
+        auto [position, added] = crossingIds.emplace(key, crossings.size());
+        if (added) { crossings.push_back({source.port, target.port, guard}); }
+        else { crossings[position->second].guard = either(crossings[position->second].guard, guard); }
+    }
+    bool collect();
+    bool explicitChild(const StructureNode& node);
+    bool loopChild(const StructureNode& node);
+    bool rotatingPatterns(Child& child, const RotatingAnalysis& analysis, const RecognitionResult& recognized);
+    bool numericPatterns(Child& child, const NumericTemplate& numeric);
+    bool partition();
+    void summarize();
+    void bindAdapters();
+    bool importSummaries();
+    void bridges();
+    void canonicalizeCrossings();
+    bool closure();
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare();
+};
+std::optional<int64_t> sequenceInteger(Value value);
+} // namespace mlir::pto::frontiersynch
+#endif
