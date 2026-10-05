@@ -8,7 +8,7 @@
 // RUN: %python %S/Inputs/check_logical_insertion.py pto-sync-input-test %s
 // A generic reused tile, two pipes, nested counted coordinates and a selected arm.
 // Runtime outer bounds deliberately use a nonzero lower bound and nonunit step.
-!tile = !pto.tile_buf<mat, 16x16xf16, slayout=col_major>
+!tile = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
 !left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
 module attributes {pto.target_arch = "a3"} {
   func.func @nested_transfer(%a: !pto.ptr<f16, gm>, %n: index) attributes {test.trace_arguments = array<i64: 8>} {

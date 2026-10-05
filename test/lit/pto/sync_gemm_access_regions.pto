@@ -49,16 +49,20 @@
 // CHECK-LABEL: storage alternate_fractal:
 // CHECK: effect 0 pto.tload read unknown
 // CHECK: effect 1 pto.tload write upper
+// CHECK-LABEL: storage unsupported_nd_to_zn:
+// CHECK: effect 0 pto.tload read unknown
+// CHECK: effect 1 pto.tload write upper
 // AUDIT: "exact_accesses":17
 // AUDIT: "exact_accesses":0
 // AUDIT: "exact_accesses":0
 // AUDIT: "exact_accesses":0
 // AUDIT: "exact_accesses":0
-!mat = !pto.tile_buf<mat, 16x16xf16, slayout=col_major>
+// AUDIT: "exact_accesses":0
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
 !left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
 !right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
 !acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
-!partial_mat = !pto.tile_buf<mat, 32x16xf16, valid=16x16, slayout=col_major>
+!partial_mat = !pto.tile_buf<mat, 32x16xf16, valid=16x16, blayout=col_major, slayout=row_major>
 !partial_left = !pto.tile_buf<left, 32x16xf16, valid=16x16, slayout=row_major>
 !partial_acc = !pto.tile_buf<acc, 32x16xf32, valid=16x16, blayout=col_major, slayout=row_major, fractal=1024>
 module attributes {pto.target_arch = "a3"} {
@@ -136,8 +140,19 @@ module attributes {pto.target_arch = "a3"} {
     %base0 = arith.constant 0 : i64
     %av = pto.make_tensor_view %a, shape = [%i32, %i32], strides = [%i32, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
     %avp = pto.partition_view %av, offsets = [%zero, %zero], sizes = [%i32, %i32] : !pto.tensor_view<?x?xf16>
-    %am = pto.alloc_tile addr = %base0 : !pto.tile_buf<mat, 32x32xf16, slayout=col_major, fractal=1024>
-    pto.tload ins(%avp : !pto.partition_tensor_view<32x32xf16>) outs(%am : !pto.tile_buf<mat, 32x32xf16, slayout=col_major, fractal=1024>)
+    %am = pto.alloc_tile addr = %base0 : !pto.tile_buf<mat, 32x32xf16, blayout=col_major, slayout=row_major, fractal=1024>
+    pto.tload ins(%avp : !pto.partition_tensor_view<32x32xf16>) outs(%am : !pto.tile_buf<mat, 32x32xf16, blayout=col_major, slayout=row_major, fractal=1024>)
+    return
+  }
+  func.func @unsupported_nd_to_zn(%a: !pto.ptr<f16, gm>) {
+    %zero = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i16 = arith.constant 16 : index
+    %base0 = arith.constant 0 : i64
+    %av = pto.make_tensor_view %a, shape = [%i16, %i16], strides = [%i16, %i1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %avp = pto.partition_view %av, offsets = [%zero, %zero], sizes = [%i16, %i16] : !pto.tensor_view<?x?xf16>
+    %am = pto.alloc_tile addr = %base0 : !pto.tile_buf<mat, 16x16xf16, slayout=col_major>
+    pto.tload ins(%avp : !pto.partition_tensor_view<16x16xf16>) outs(%am : !pto.tile_buf<mat, 16x16xf16, slayout=col_major>)
     return
   }
 }
