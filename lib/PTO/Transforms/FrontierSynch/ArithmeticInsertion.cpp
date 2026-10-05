@@ -13,10 +13,11 @@
 namespace mlir::pto::frontiersynch {
 namespace {
 using Pair = std::pair<std::size_t, std::size_t>;
+template<class SelectorSet>
 class Preparer {
 public:
     Preparer(func::FuncOp function, const ArithmeticProgram& program,
-             const ArithmeticSelectors& selectors, PreparedLogicalPlan& plan, std::string& error)
+             const SelectorSet& selectors, PreparedLogicalPlan& plan, std::string& error)
         : function(function), program(program), selectors(selectors), plan(plan), error(error),
           builder(function.getContext()), wide(builder.getIntegerType(128)) {}
     LogicalResult run()
@@ -39,17 +40,44 @@ private:
         Block* code = nullptr;
         std::map<std::string, Value> constants;
         llvm::DenseMap<Value, Value> quotients, residues;
+        llvm::DenseMap<std::size_t, SmallVector<Operation*>> arithmetic;
     };
     struct Partner { Value guard; SmallVector<Value> sourceCoordinates; };
     func::FuncOp function;
     const ArithmeticProgram& program;
-    const ArithmeticSelectors& selectors;
+    const SelectorSet& selectors;
     PreparedLogicalPlan& plan;
     std::string& error;
     OpBuilder builder;
     Type wide;
     std::map<Operation*, Cut> cuts;
     std::map<Pair, int64_t> records;
+    Cut* activeCut = nullptr;
+    // Intern before returning a Value: endpoint recipes retain raw Value handles,
+    // so erasing duplicates after preparing endpoints would invalidate them.
+    // All calls below construct pure, region-free arithmetic in this one cut.
+    template<class Op, class... Args>
+    Value emit(Location loc, Args&&... args)
+    {
+        Value value = builder.createOrFold<Op>(loc, std::forward<Args>(args)...);
+        auto* operation = value.getDefiningOp();
+        if (!operation || operation->getBlock() != activeCut->code ||
+            operation != &activeCut->code->back()) { return value; }
+        const auto hash = OperationEquivalence::computeHash(operation, OperationEquivalence::directHashValue,
+            OperationEquivalence::ignoreHashValue, OperationEquivalence::IgnoreLocations);
+        auto& bucket = activeCut->arithmetic[static_cast<std::size_t>(hash)];
+        for (auto* prior : bucket) {
+            if (prior == operation) { return value; }
+            if (OperationEquivalence::isEquivalentTo(operation, prior, OperationEquivalence::exactValueMatch,
+                    nullptr, OperationEquivalence::IgnoreLocations)) {
+                Value shared = prior->getResult(0);
+                operation->erase();
+                return shared;
+            }
+        }
+        bucket.push_back(operation);
+        return value;
+    }
     Value number(const BoundInteger& value, Cut& cut, Location loc)
     {
         std::string text;
@@ -63,33 +91,33 @@ private:
             error = "arithmetic selector constant exceeds the checked i128 emission range";
             return {};
         }
-        auto result = builder.create<arith::ConstantOp>(loc, wide,
-            IntegerAttr::get(wide, negative ? -integer.zextOrTrunc(128) : integer.zextOrTrunc(128))).getResult();
+        auto result = emit<arith::ConstantOp>(loc, wide,
+            IntegerAttr::get(wide, negative ? -integer.zextOrTrunc(128) : integer.zextOrTrunc(128)));
         cut.constants.emplace(text, result);
         return result;
     }
     Value number(int64_t value, Cut& cut, Location loc) { return number(BoundInteger(value), cut, loc); }
-    Value truth(bool value, Location loc) { return builder.create<arith::ConstantIntOp>(loc, value, 1); }
-    Value both(Value a, Value b, Location loc) { return builder.create<arith::AndIOp>(loc, a, b); }
-    Value either(Value a, Value b, Location loc) { return builder.create<arith::OrIOp>(loc, a, b); }
-    Value negate(Value a, Location loc) { return builder.create<arith::XOrIOp>(loc, a, truth(true, loc)); }
+    Value truth(bool value, Location loc) { return emit<arith::ConstantIntOp>(loc, value, 1); }
+    Value both(Value a, Value b, Location loc) { return emit<arith::AndIOp>(loc, a, b); }
+    Value either(Value a, Value b, Location loc) { return emit<arith::OrIOp>(loc, a, b); }
+    Value negate(Value a, Location loc) { return emit<arith::XOrIOp>(loc, a, truth(true, loc)); }
     Value compare(arith::CmpIPredicate predicate, Value a, Value b, Location loc)
     {
-        return builder.create<arith::CmpIOp>(loc, predicate, a, b);
+        return emit<arith::CmpIOp>(loc, predicate, a, b);
     }
     LogicalResult coordinate(Value input, Cut& cut, Location loc)
     {
         if (!input || (!input.getType().isIndex() && !input.getType().isInteger(1))) { return failure(); }
         if (cut.quotients.count(input)) { return success(); }
         Value original = input.getType().isIndex() ?
-            builder.create<arith::IndexCastOp>(loc, wide, input).getResult() :
-            builder.create<arith::ExtUIOp>(loc, wide, input).getResult();
+            emit<arith::IndexCastOp>(loc, wide, input) :
+            emit<arith::ExtUIOp>(loc, wide, input);
         auto period = number(static_cast<int64_t>(selectors.period), cut, loc);
         if (!period) { return failure(); }
-        auto quotient = builder.create<arith::FloorDivSIOp>(loc, original, period);
-        auto product = builder.create<arith::MulIOp>(loc, quotient, period);
+        auto quotient = emit<arith::FloorDivSIOp>(loc, original, period);
+        auto product = emit<arith::MulIOp>(loc, quotient, period);
         cut.quotients[input] = quotient;
-        cut.residues[input] = builder.create<arith::SubIOp>(loc, original, product);
+        cut.residues[input] = emit<arith::SubIOp>(loc, original, product);
         return success();
     }
     FailureOr<Value> domain(const ArithmeticSelectorPiece& piece, ArrayRef<Value> original,
@@ -109,7 +137,7 @@ private:
             if (atom.lhs >= quotients.size() || atom.rhs >= quotients.size()) { return failure(); }
             auto bound = number(atom.bound, cut, loc);
             if (!bound) { return failure(); }
-            auto difference = builder.create<arith::SubIOp>(loc, quotients[atom.lhs], quotients[atom.rhs]);
+            auto difference = emit<arith::SubIOp>(loc, quotients[atom.lhs], quotients[atom.rhs]);
             guard = both(guard, compare(arith::CmpIPredicate::sle, difference, bound, loc), loc);
         }
         return guard;
@@ -124,23 +152,102 @@ private:
                 if (term.input >= quotients.size()) { return failure(); }
                 auto offset = number(term.offset, cut, loc);
                 if (!offset) { return failure(); }
-                Value value = builder.create<arith::AddIOp>(loc, quotients[term.input], offset);
-                selected = selected ? builder.create<arith::MaxSIOp>(loc, selected, value).getResult() : value;
+                Value value = emit<arith::AddIOp>(loc, quotients[term.input], offset);
+                selected = selected ? emit<arith::MaxSIOp>(loc, selected, value) : value;
             }
             if (!selected) { return failure(); }
             auto period = number(static_cast<int64_t>(selectors.period), cut, loc);
             auto residue = number(static_cast<int64_t>(coordinate.residue), cut, loc);
             if (!period || !residue) { return failure(); }
-            auto product = builder.create<arith::MulIOp>(loc, selected, period);
-            auto original = builder.create<arith::AddIOp>(loc, product, residue);
+            auto product = emit<arith::MulIOp>(loc, selected, period);
+            auto original = emit<arith::AddIOp>(loc, product, residue);
             // On the piece domain this is an actual source occurrence in the
             // admitted IR execution, hence a representable original index.
             // Off-domain truncation is total and its value is never published.
-            values.push_back(builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), original));
+            values.push_back(emit<arith::IndexCastOp>(loc, builder.getIndexType(), original));
         }
         return values;
     }
-    LogicalResult prepare(const ArithmeticEndpointSelector& selector, bool forward)
+    // Each input quotient is a signed 64-bit coordinate. Reserve substantial
+    // i128 headroom before emitting any multiplied or summed affine expression.
+    FailureOr<Value> affine(const IntegerAffine& expression, ArrayRef<Value> quotients,
+                            Cut& cut, Location loc)
+    {
+        if (expression.coefficients.size() + 1 != quotients.size()) { return failure(); }
+        BoundInteger inputMagnitude(1), limit(1);
+        for (unsigned i = 0; i < 63; ++i) { inputMagnitude *= 2; }
+        for (unsigned i = 0; i < 119; ++i) { limit *= 2; }
+        auto magnitude = llvm::abs(expression.constant);
+        for (const auto& coefficient : expression.coefficients) {
+            magnitude += llvm::abs(coefficient) * inputMagnitude;
+        }
+        if (magnitude >= limit) {
+            error = "arithmetic selector affine expression exceeds the checked i128 emission range";
+            return failure();
+        }
+        Value sum = number(expression.constant, cut, loc);
+        if (!sum) { return failure(); }
+        for (auto [i, coefficient] : llvm::enumerate(expression.coefficients)) {
+            if (coefficient == 0) { continue; }
+            auto scalar = number(coefficient, cut, loc);
+            if (!scalar) { return failure(); }
+            Value term = emit<arith::MulIOp>(loc, quotients[i + 1], scalar);
+            sum = emit<arith::AddIOp>(loc, sum, term);
+        }
+        return sum;
+    }
+    FailureOr<Value> domain(const GeneralArithmeticSelectorPiece& piece, ArrayRef<Value> original,
+                            ArrayRef<Value> quotients, Cut& cut, Location loc)
+    {
+        if (piece.domain.isEmpty()) { return truth(false, loc); }
+        Value guard = truth(true, loc);
+        SmallVector<uint64_t> residues(piece.inputResidues.begin(), piece.inputResidues.end());
+        llvm::append_range(residues, piece.parameterResidues);
+        if (residues.size() != original.size() || quotients.size() != original.size() + 1) { return failure(); }
+        for (auto [i, residue] : llvm::enumerate(residues)) {
+            auto expected = number(static_cast<int64_t>(residue), cut, loc);
+            if (!expected) { return failure(); }
+            auto equal = compare(arith::CmpIPredicate::eq, cut.residues.lookup(original[i]), expected, loc);
+            guard = both(guard, equal, loc);
+        }
+        for (const auto& atom : piece.domain.constraints()) {
+            auto lhs = affine({atom.coefficients, BoundInteger(0)}, quotients, cut, loc);
+            auto bound = number(atom.bound, cut, loc);
+            if (failed(lhs) || !bound) { return failure(); }
+            guard = both(guard, compare(arith::CmpIPredicate::sle, *lhs, bound, loc), loc);
+        }
+        for (const auto& atom : piece.domain.congruences()) {
+            auto lhs = affine({atom.coefficients, BoundInteger(0)}, quotients, cut, loc);
+            auto modulus = number(atom.modulus, cut, loc), residue = number(atom.residue, cut, loc);
+            if (failed(lhs) || !modulus || !residue || atom.modulus <= 0) { return failure(); }
+            auto quotient = emit<arith::FloorDivSIOp>(loc, *lhs, modulus);
+            auto multiple = emit<arith::MulIOp>(loc, quotient, modulus);
+            auto remainder = emit<arith::SubIOp>(loc, *lhs, multiple);
+            guard = both(guard, compare(arith::CmpIPredicate::eq, remainder, residue, loc), loc);
+        }
+        return guard;
+    }
+    FailureOr<SmallVector<Value>> output(const GeneralArithmeticSelectorPiece& piece,
+                                         ArrayRef<Value> quotients, Cut& cut, Location loc)
+    {
+        SmallVector<Value> values;
+        for (const auto& coordinate : piece.outputs) {
+            auto numerator = affine(coordinate.numerator, quotients, cut, loc);
+            auto denominator = number(coordinate.denominator, cut, loc);
+            auto period = number(static_cast<int64_t>(selectors.period), cut, loc);
+            auto residue = number(static_cast<int64_t>(coordinate.residue), cut, loc);
+            if (failed(numerator) || !denominator || !period || !residue || coordinate.denominator <= 0) {
+                return failure();
+            }
+            auto quotient = emit<arith::FloorDivSIOp>(loc, *numerator, denominator);
+            auto product = emit<arith::MulIOp>(loc, quotient, period);
+            auto original = emit<arith::AddIOp>(loc, product, residue);
+            values.push_back(emit<arith::IndexCastOp>(loc, builder.getIndexType(), original));
+        }
+        return values;
+    }
+    template<class Selector>
+    LogicalResult prepare(const Selector& selector, bool forward)
     {
         if (selector.inputSite >= program.sites.size()) { return failure(); }
         const auto& site = program.sites[selector.inputSite];
@@ -153,6 +260,7 @@ private:
         auto& cut = cuts[before];
         if (!cut.code) { cut.code = &plan.addPreparation(before); }
         builder.setInsertionPointToEnd(cut.code);
+        activeCut = &cut;
         auto loc = before->getLoc();
         SmallVector<Value> original, quotients{number(0, cut, loc)};
         for (auto loop : site.loops) { original.push_back(loop.getInductionVar()); }
@@ -179,7 +287,7 @@ private:
                 else {
                     if (partner.sourceCoordinates.size() != tuple->size()) { return failure(); }
                     for (unsigned i = 0; i < tuple->size(); ++i) {
-                        partner.sourceCoordinates[i] = builder.create<arith::SelectOp>(
+                        partner.sourceCoordinates[i] = emit<arith::SelectOp>(
                             loc, selected, (*tuple)[i], partner.sourceCoordinates[i]);
                     }
                 }
@@ -192,7 +300,7 @@ private:
             auto kind = local ? LogicalCommandKind::Barrier :
                         forward ? LogicalCommandKind::Set : LogicalCommandKind::Wait;
             Value identity;
-            if (!local) { identity = builder.create<arith::ConstantIndexOp>(loc, 0); }
+            if (!local) { identity = emit<arith::ConstantIndexOp>(loc, 0); }
             PreparedLogicalEndpoint endpoint{before, kind, forward ? pipe : selector.outputPipe,
                 forward ? selector.outputPipe : pipe, record->second, partner.guard, identity};
             if (!local) {
@@ -226,7 +334,33 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticInsertion(
     if (!selectors.error.empty()) { error = selectors.error; return failure(); }
     auto plan = std::make_unique<PreparedLogicalPlan>(0);
     plan->completeInvocation = !program.sites.empty();
-    if (failed(Preparer(function, program, selectors, *plan, error).run())) {
+    if (failed(Preparer<ArithmeticSelectors>(function, program, selectors, *plan, error).run())) {
+        if (error.empty()) { error = "arithmetic selector cannot be emitted at its original cut"; }
+        return failure();
+    }
+    return plan;
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneralArithmeticInsertion(
+    func::FuncOp function, const ArithmeticProgram& program,
+    const GeneralArithmeticDemandAnalysis& analysis, std::string& error)
+{
+    const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
+    if (!analysis.error.empty() || !analysis.exactMinimum || !analysis.adjacentLocalDemands ||
+        bits.isScalable() || bits.getFixedValue() != 64 || analysis.period > 2 ||
+        analysis.parameterCount != program.parameters.size()) {
+        error = "arithmetic insertion requires exact adjacent demands and a supported index representation";
+        return failure();
+    }
+    SmallVector<uint32_t> pipes;
+    for (const auto& site : program.sites) {
+        if (!site.phase) { return failure(); }
+        pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue));
+    }
+    auto selectors = buildGeneralArithmeticSelectors(analysis, pipes);
+    if (!selectors.error.empty()) { error = selectors.error; return failure(); }
+    auto plan = std::make_unique<PreparedLogicalPlan>(0);
+    plan->completeInvocation = !program.sites.empty();
+    if (failed(Preparer<GeneralArithmeticSelectors>(function, program, selectors, *plan, error).run())) {
         if (error.empty()) { error = "arithmetic selector cannot be emitted at its original cut"; }
         return failure();
     }

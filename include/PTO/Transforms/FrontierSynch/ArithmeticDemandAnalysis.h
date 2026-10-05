@@ -9,6 +9,7 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICDEMANDANALYSIS_H
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
 #include "PTO/Transforms/FrontierSynch/DifferenceBoundRelations.h"
+#include "PTO/Transforms/FrontierSynch/IntegerRelations.h"
 #include <map>
 #include <vector>
 namespace mlir::pto::frontiersynch {
@@ -26,8 +27,12 @@ struct ArithmeticRelationKey {
 };
 // Columns: source quotient coordinates, target quotient coordinates, one shared
 // parameter quotient tuple. Original coordinates are period*q + their residue.
-// Every piece is closed and denotes integer points; an empty union is false.
-using ArithmeticRelation = std::map<ArithmeticRelationKey, std::vector<DifferenceBoundSystem>>;
+// Every piece denotes exact integer points; an empty union is false. The DBM
+// specialization is closed; general integer pieces retain normalized congruences.
+template<class System>
+using TypedArithmeticRelation = std::map<ArithmeticRelationKey, std::vector<System>>;
+using ArithmeticRelation = TypedArithmeticRelation<DifferenceBoundSystem>;
+using GeneralArithmeticRelation = TypedArithmeticRelation<IntegerSystem>;
 struct ArithmeticAnalysisCost {
     uint64_t primitivePieces = 0;
     uint64_t pieceJoins = 0;
@@ -36,24 +41,31 @@ struct ArithmeticAnalysisCost {
     uint64_t differences = 0;
     uint64_t outputPieces = 0;
 };
-struct ArithmeticDemandAnalysis {
+template<class System>
+struct TypedArithmeticDemandAnalysis {
     std::string error;
     uint64_t period = 1;
     unsigned parameterCount = 0, pipeCount = 0;
-    ArithmeticRelation generators;
-    ArithmeticRelation nativeOrder; // Reflexive N, restricted to present events.
-    ArithmeticRelation requiredOrder; // Strict H, all payload event pairs.
-    ArithmeticRelation minimumDemands; // F*: completion-to-start covers.
+    TypedArithmeticRelation<System> generators;
+    TypedArithmeticRelation<System> nativeOrder; // Reflexive N, restricted to present events.
+    TypedArithmeticRelation<System> requiredOrder; // Strict H, all payload event pairs.
+    TypedArithmeticRelation<System> minimumDemands; // F*: completion-to-start covers.
     ArithmeticAnalysisCost cost;
     // This certifies the relational construction only. Executable selectors,
     // cut availability and same-pipe adjacency remain consumer obligations.
     bool exactMinimum = false;
     bool adjacentLocalDemands = false; // No executed same-pipe payload lies between local endpoints.
 };
-// Input must supply complete physical primitives and the core-native model.
-// Only the difference-bound subclass is implemented here. Every join retains
+using ArithmeticDemandAnalysis = TypedArithmeticDemandAnalysis<DifferenceBoundSystem>;
+using GeneralArithmeticDemandAnalysis = TypedArithmeticDemandAnalysis<IntegerSystem>;
+// The DBM entry point accepts the difference-bound subclass. Input must supply
+// complete physical primitives and the core-native model. Every join retains
 // one parameter context and matches endpoint residue tuples exactly. No loop
 // unfolding, IR mutation, hardware-protection inference or endpoint synthesis.
 ArithmeticDemandAnalysis analyzeArithmeticDemands(const ArithmeticProgram& program);
+// Exact integer projection extends the same relational engine to recognized
+// octagons and bounded coefficients. Projected unions retain their congruences;
+// generated coefficients are not rechecked against the primitive-input bound.
+GeneralArithmeticDemandAnalysis analyzeGeneralArithmeticDemands(const ArithmeticProgram& program);
 } // namespace mlir::pto::frontiersynch
 #endif
