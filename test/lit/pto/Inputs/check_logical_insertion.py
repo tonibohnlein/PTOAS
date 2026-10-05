@@ -9,7 +9,7 @@
 from collections import defaultdict, deque
 
 
-def closure_with_commands(pipes, commands):
+def closure_with_commands(pipes, commands, include_commands=False):
     # commands: kind(set/barrier/wait), gap in reference payload order, pipe,
     # and logical identity for SET/WAIT. Gap 0 is before first payload.
     n = len(pipes)
@@ -22,7 +22,11 @@ def closure_with_commands(pipes, commands):
     acquisitions = {}
     for i, cmd in enumerate(commands):
         vertex = 2*n+i
-        rows[cmd['pipe']].append((2*cmd['gap'], i, vertex, cmd['kind']))
+        if cmd['kind'] == 'barrier' and cmd['pipe'] == 6:
+            for pipe in set(pipes):
+                rows[pipe].append((2*cmd['gap'], i, vertex, cmd['kind']))
+        else:
+            rows[cmd['pipe']].append((2*cmd['gap'], i, vertex, cmd['kind']))
         if cmd['kind'] != 'barrier':
             table = publications if cmd['kind'] == 'set' else acquisitions
             identity = tuple(cmd['identity'])
@@ -77,6 +81,8 @@ def closure_with_commands(pipes, commands):
     for a in reversed(schedule):
         for b in out[a]:
             reach[a] |= (1<<b) | reach[b]
+    if include_commands:
+        return reach
     mask = (1<<(2*n))-1
     return [r & mask for r in reach[:2*n]]
 
@@ -125,7 +131,10 @@ def validate(template, trace):
         if event["kind"] != "barrier":
             command["identity"] = (event["plan"], event["record"], event["source_ordinal"])
             assert event["pipe"] == event["source_pipe" if event["kind"] == "set" else "target_pipe"]
-        commands.append(command)
+        if event["kind"] == "barrier" and event["pipe"] == 6:
+            assert gap == len(payloads), "completion barrier must follow all payloads"
+        else:
+            commands.append(command)
     effects = [[{"atom": atom, "read": effect["mode"] == "read", "write": effect["mode"] != "read"}
                 for effect in item["effects"] for atom in effect["atoms"]] for item in word]
     case = {"pipes": [x["pipe"] for x in word], "word": effects, "records": [],
@@ -150,7 +159,7 @@ def main():
             template = recognized(tool, path)
             emitted = invoke(tool, "--insert-logical", path)
             assert "pto.logical_set" in emitted and "pto.logical_wait" in emitted
-            assert "pto.barrier" in emitted and "PIPE_ALL" not in emitted
+            assert "pto.barrier" in emitted and emitted.count("<PIPE_ALL>") == 1
             assert "pto.set_flag" not in emitted and "pto.wait_flag" not in emitted
             # Structured payloads and loops remain single original operations.
             for name in ["scf.for", "pto.tload", "pto.textract"]:
@@ -184,7 +193,10 @@ def main():
         empty_template = recognized(tool, path)
         assert empty_template["empty_invocation"] and not empty_template["payloads"]
         assert not empty_template["counted_visits"]
-        assert invoke(tool, "--insert-logical", path) == invoke(tool, "--roundtrip", path)
+        empty_inserted = invoke(tool, "--insert-logical", path)
+        empty_certificate = 'pto.cyclic_allocation = {directions = [], plan = 0 : i64, version = 1 : i64}, '
+        assert empty_certificate in empty_inserted
+        assert empty_inserted.replace(empty_certificate, '', 1) == invoke(tool, "--roundtrip", path)
         empty_trace = json.loads(invoke(tool, "--insertion-trace", path))
         assert empty_trace["outer_trips"] == 0 and not empty_trace["events"]
         validate(empty_template, empty_trace)
