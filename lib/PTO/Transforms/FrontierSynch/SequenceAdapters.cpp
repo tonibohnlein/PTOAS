@@ -13,6 +13,8 @@ void SequenceAnalysisState::bindAdapters()
     for (uint32_t id = 0; id < children.size(); ++id) {
         auto& child = children[id];
         auto& out = child.regional;
+        if (out.presence) { continue; }
+        for (const auto& anchor : child.anchors) { arena->forbidRecomputation(anchor.phase->elementOp); }
         out.expressions = arena;
         out.anchors = child.anchors;
         out.occurrenceLoops.assign(child.anchors.size(), child.loop);
@@ -183,6 +185,9 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
         auto [ac, at] = (*coordinates)[a.type]; auto [bc, bt] = (*coordinates)[b.type];
         return sequenceEventReachability(*owned, {ac, at, a.ordinal, a.kind}, {bc, bt, b.ordinal, b.kind});
     };
+    for (const auto& child : analysis.state->children) {
+        out.capabilities.contextualGuards |= child.regional.capabilities.contextualGuards;
+    }
     out.prepare = [owned]() -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
         auto result = prepareSequenceInsertion(*owned);
         if (succeeded(result)) { (*result)->completeInvocation = false; }

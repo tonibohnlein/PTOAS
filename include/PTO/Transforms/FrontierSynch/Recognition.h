@@ -84,6 +84,9 @@ RecognitionResult recognizeRotating(scf::ForOp loop, const PhaseIndex& index,
                                     const SyncInput& input, const SyncStorageEffects& effects);
 GuardedRecognition recognizeFiniteGuarded(Region& region, const PhaseIndex& index,
                                           const SyncStorageEffects& effects);
+// Adjacent original roots, including nested if/else, without visiting siblings.
+GuardedRecognition recognizeFiniteGuarded(ArrayRef<Operation*> roots, const PhaseIndex& index,
+                                          const SyncStorageEffects& effects);
 GuardedRecognition recognizeGuardedRotating(scf::ForOp loop, const PhaseIndex& index,
                                             const SyncInput& input, const SyncStorageEffects& effects);
 StringRef recognitionName(RecognitionState state);

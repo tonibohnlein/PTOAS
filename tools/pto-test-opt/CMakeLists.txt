@@ -107,7 +107,7 @@ add_llvm_executable(pto-sync-input-test
 )
 target_link_libraries(pto-sync-input-test PRIVATE
   PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
-  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect
+  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRLLVMDialect
 )
 add_dependencies(pto-sync-input-test PTOOpsIncGen PTOPassesIncGen)
 

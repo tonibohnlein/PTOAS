@@ -218,9 +218,9 @@ does not audit every registered operation for missing implicit effects.
 
 ## Milestones 3 and 4: regional composition and guarded analysis
 
-**Status: Milestone 3 implemented and accepted by architecture, correctness
-and performance reviewers; Milestone 4 is next.** Each milestone requires all
-three reviews before its commit. The target is exact demands and logical
+**Status: Milestones 3 and 4 implemented and accepted by architecture,
+correctness and performance reviewers.** Each milestone requires all three
+reviews before its commit. The target is exact demands and logical
 insertion; newly combined plans must not concatenate child allocation
 certificates. The existing complete GEMM route remains available.
 
@@ -354,6 +354,57 @@ explicit/periodic siblings. Enumerate feasible valuations only in the independen
 checker and compare required closure, covers and actual command matching. The
 analysis circuit bound is O(N³) in potential events; charge effect recovery and
 emitted guard duplication separately.
+
+#### Finite guarded implementation and costs
+
+`analyzeFiniteGuarded` accepts adjacent loop-free roots containing nested
+`scf.if` operations and exact shared physical ranges. It constructs one event
+pair per potential payload. Every ordered same-pipe pair contributes native
+start/start and completion/completion edges under endpoint presence. Shared
+Boolean closure and cover predicates give the exact selected demands without
+enumerating branch outcomes. Storage selectors distinguish first/last writers
+and the per-pipe readers before/after those writers, preserving physical reuse
+across SSA roots. The backend exports the same `RegionalAnalysis` interface as
+explicit and periodic children. Sequence traversal fuses each maximal loop-free
+span containing conditionals and composes it with its compact loop siblings.
+
+Endpoint preparation simplifies predicates using the branches enclosing the
+original cut. It reuses dominating values and can replay unavailable scalar
+expressions from the deterministic `arith` and `index` languages when their
+operations are region-free, memory-effect-free and speculatable. This contract
+excludes nondeterministic replay such as `llvm.freeze`. Nested presence uses
+`select(parent, condition, false)` so a poison value from an inactive arm cannot
+reach a synchronization guard. Unknown replay semantics and unavailable
+structured results reject placement while preserving exact query results.
+Same-pipe insertion additionally establishes executed-payload adjacency.
+Preparation is detached; failure leaves the original IR unchanged. Child plans
+contain no completion drain and do not carry concatenated allocation proofs.
+
+For `N` potential payloads and `U_c` accesses to cell `c`, conflict construction
+and storage selectors cost `O(sum_c U_c^2)` incidence work. Native selectors cost
+`O(N^2)`; closure and cover selection use `O(N^3)` shared-circuit operations and
+space. Physical partition construction is charged to the shared input layer.
+Omitting unresolved GM effects additionally compares each candidate effect with
+all effects in the shared input; charge those overlap queries separately (at
+most the regional effect count times the program effect count).
+The cubic bound describes analysis, not all emitted code. Each cut separately
+charges reachable DAG cofactoring (including sorting), emitted gates and scalar
+replay; cached values are shared only at that cut. Adjacency certification also
+charges its sufficient Boolean implication checks. Diagnostics record analysis
+nodes before preparation and total nodes/operations after cut specialization.
+
+Validation compares all-event queries and actual inserted command closure with
+independent finite graphs across nested/empty arms, conditional producers and
+readers, RMW, aliasing, late scalar guards and compact loop siblings. Additional
+cases check inactive-arm poison masking, rejection of nondeterministic replay,
+nonadjacent local covers and unavailable future structured guards. Guard
+valuations are enumerated only by tests. Independent-guard size checks exercise
+8 and 24 potential branches without expanding their executions. The final
+gate passed 98 targeted checks (five full-CLI checks were skipped by the local
+overlay harness), 64 guarded executions, and 32 sequence executions. The
+64/32 execution checks also passed with AddressSanitizer on the changed sources;
+leak checking was disabled because of the local tracing restriction. Existing
+frozen GEMM dynamic traces, IDs and generated-code sizes remain unchanged.
 
 Both milestones must preserve the current GEMM dynamic traces and IDs, at most
 24/28 static SET/WAIT sites and 13,700/17,182 C++ bytes for the frozen PyPTO/TileLang

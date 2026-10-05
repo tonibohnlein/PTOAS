@@ -36,6 +36,7 @@ struct RegionalStorageBoundary {
 };
 struct RegionalCapabilities {
     bool exactEffects = false, exactQueries = false, exactSelectors = false, endpointRecipes = false;
+    bool contextualGuards = false; // Endpoint circuits may contain branch-local predicates.
 };
 struct RegionalAnalysis {
     std::shared_ptr<RegionExpressions> expressions;
