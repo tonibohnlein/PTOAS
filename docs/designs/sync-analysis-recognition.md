@@ -2,8 +2,9 @@
 
 ## Active implementation
 
-The executable routes are whole-function explicit analysis and numerical-template
-periodic analysis. Both use common logical insertion. Physical allocation remains
+The executable routes are whole-function explicit analysis, numerical-template
+periodic analysis and direct rotating-footprint analysis. They use common logical
+insertion. Physical allocation remains
 available for certified numerical templates; the new explicit route stops at
 logical insertion.
 The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
@@ -13,6 +14,7 @@ The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
 | Shared physical access extraction | `SyncInput::build`, in `InsertSync/`; consumed by both synchronization passes |
 | Structure and route checks | `FrontierAnalysis::initialize`, `ProgramRecognition.cpp`, `PhaseIndex.cpp` |
 | Numerical effect template | `NumericTemplate.cpp`, `NumericTemplateControl.cpp`, `NumericTemplateEffects.cpp`, `NumericTemplateStorage.cpp` |
+| Direct rotating generators and quotient | `RotatingExtraction.cpp`, `RotatingAnalysis.cpp` |
 | Explicit scan, ranks and boundaries | `ExplicitAnalysis.cpp`, `ExplicitReduction.cpp`, `LifetimeScan.cpp` |
 | Exact generators and reduction | `NumericTemplateAnalysis.cpp`, `LifetimeScan.cpp`, `PeriodicDemandGraph.cpp`, `PeriodicFrontier.cpp` |
 | Endpoint preparation and insertion | `NumericTemplateEndpoints.cpp`, `NumericTemplateInsertion.cpp`, `LogicalInsertion.cpp` |
@@ -89,7 +91,8 @@ inputs. The MLIR integration checks physical reuse across SSA roots, subviews,
 disjoint bytes, actual endpoint cuts, hardware-protected accumulation, empty
 functions and rejection of symbolic effects/nonadjacent local demands. Shared
 range partitioning and original-IR traversal costs are additional to the bound
-above. All three milestone reviews must accept before completion.
+above. All three milestone reviews accepted; the local suite passed 90 checks with five
+full-CLI checks skipped. Committed as `75d01a49b`.
 
 ### Milestone 2: make rotating-footprint recognition executable directly
 
@@ -101,8 +104,9 @@ guarded offsets remain a subsequent circuit-backend extension.
 
 **Reuse.** Rotating recognition, scalar selector normalization, numerical
 weighted-quotient reduction and common logical insertion already exist. The
-current production numerical-template route scans a concrete effect word;
-it does not implement the paper's direct circular-phase generator extractor.
+numerical-template route scans a concrete effect word. The new direct route
+uses the paper's circular-phase generator extractor and shares quotient reduction
+and endpoint insertion with that route.
 
 **Deliver.**
 
@@ -137,6 +141,42 @@ analysis-and-insertion backends. Finite guarded reduction, immutable guarded
 rotating circuits, arithmetic reduction/selector synthesis, and regional
 composition remain separate milestones; an applicable recognizer alone does
 not establish their implementation.
+
+**Implemented direct route.** `extractRotatingGenerators` groups fixed fragments
+by family, atom and GCD residue, sorts modular phases, and emits the strict
+previous-writer and next-overwrite records. `analyzeRotating` reduces their union
+with the existing per-pipe quotient and binds the retained endpoints to original
+cuts. Both endpoint preparers share the counted-loop arithmetic. Hardware
+protection is restricted to certified stationary accumulator groups within one
+body visit; it never silently suppresses an inter-iteration record.
+
+The production pass uses this route for an eligible whole-function loop when no
+accepted numerical template is available. Existing numerical templates retain
+their allocation export. The direct route exports logical insertion and
+completion-origin queries; it supplies neither general regional selectors nor a
+physical-allocation certificate. Extra payloads outside the loop prevent this
+whole-function acceptance. No compact nesting theorem is assumed.
+
+After exact atom normalization, extraction takes expected `O(A log(A+1))`
+arithmetic/comparison work, plus GCD/inverse work per family, and returns `O(A)`
+records. The quotient size depends on the fixed body and records, not the
+numerical slot/refresh distance or trip count. Integer costs depend on encoded
+bit widths; arithmetic overflow is an explicit failure. This is a backend bound:
+Step 0 still materializes some address vectors/footprints, atom partitioning has
+its own cost, and existing numerical-template recognition may run first.
+Contiguous constant-base slot families are certified by one interval per family;
+explicit planner address lists still require inspection of their supplied entries.
+
+**Validation and status.** All three milestone reviews accepted. The local suite
+passed 92 checks (including one targeted rerun after correcting a stale diagnostic
+expectation), with five full-CLI checks skipped. The extractor oracle checked 392
+finite executions and eight invalid inputs. Actual-IR tests checked seven loops
+and two rejection cases. Milestone 2 is complete for the scope above; physical
+allocation and the remaining regional/guarded/arithmetic backends are separate.
+
+The `--explicit-analysis` and `--rotating-analysis` test diagnostics expose actual
+backend results. A recognizer's `backend=available` indicates an implementation
+exists, not that the region satisfies all insertion/interface obligations.
 
 ## Recognizer interfaces
 

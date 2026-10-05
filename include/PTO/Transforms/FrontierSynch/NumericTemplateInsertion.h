@@ -13,6 +13,10 @@
 namespace mlir::pto::frontiersynch {
 // Recognition borrows the unchanged function and SyncInput. Preparation validates
 // the complete template and creates detached arithmetic, leaving original IR intact.
+// Shared counted-loop endpoint arithmetic. Caller supplies certified recipes
+// and matching original cuts; no numeric effect-template assumption is made.
+LogicalResult prepareCountedEndpointCode(func::FuncOp function, const NumericTemplateEndpoints& endpoints,
+                                         PreparedLogicalPlan& prepared);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplateInsertion(
     func::FuncOp function, const ProgramRecognition& program, int64_t planId = 0);
 } // namespace mlir::pto::frontiersynch

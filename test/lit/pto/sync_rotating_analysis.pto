@@ -1,0 +1,142 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_rotating_analysis.py pto-sync-input-test %s
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+!right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+!ring2 = !pto.multi_tile_buf<!pto.tile_buf<left, 16x16xf16, slayout=row_major>, count=2>
+!ring3 = !pto.multi_tile_buf<!pto.tile_buf<left, 16x16xf16, slayout=row_major>, count=3>
+module attributes {pto.target_arch = "a3"} {
+  func.func @ring_zero(%n: index) attributes {test.trace_arguments = array<i64: 0>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %lower = arith.constant 0 : index
+    %step = arith.constant 1 : index
+    %banks = arith.constant 2 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %ring = pto.alloc_multi_tile addr = %base : !ring2
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %lower to %n step %step {
+      %slot = arith.remui %i, %banks : index
+      %left = pto.multi_tile_get %ring[%slot] : !ring2 -> !left
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+      pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+    }
+    return
+  }
+  func.func @ring_short(%n: index) attributes {test.trace_arguments = array<i64: 1>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %lower = arith.constant 0 : index
+    %step = arith.constant 1 : index
+    %banks = arith.constant 2 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %ring = pto.alloc_multi_tile addr = %base : !ring2
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %lower to %n step %step {
+      %slot = arith.remui %i, %banks : index
+      %left = pto.multi_tile_get %ring[%slot] : !ring2 -> !left
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+      pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+    }
+    return
+  }
+  func.func @ring_two(%n: index) attributes {test.trace_arguments = array<i64: 2>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %lower = arith.constant 0 : index
+    %step = arith.constant 1 : index
+    %banks = arith.constant 2 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %ring = pto.alloc_multi_tile addr = %base : !ring2
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %lower to %n step %step {
+      %slot = arith.remui %i, %banks : index
+      %left = pto.multi_tile_get %ring[%slot] : !ring2 -> !left
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+      pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+    }
+    return
+  }
+  func.func @ring_many(%n: index) attributes {test.trace_arguments = array<i64: 9>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %lower = arith.constant 0 : index
+    %step = arith.constant 1 : index
+    %banks = arith.constant 2 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %ring = pto.alloc_multi_tile addr = %base : !ring2
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %lower to %n step %step {
+      %slot = arith.remui %i, %banks : index
+      %left = pto.multi_tile_get %ring[%slot] : !ring2 -> !left
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+      pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+    }
+    return
+  }
+  func.func @nonunit_partial(%n: index) attributes {test.trace_arguments = array<i64: 20>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %lower = arith.constant 3 : index
+    %step = arith.constant 2 : index
+    %banks = arith.constant 3 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %ring = pto.alloc_multi_tile addr = %base : !ring3
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %lower to %n step %step {
+      %slot = arith.remui %i, %banks : index
+      %left = pto.multi_tile_get %ring[%slot] : !ring3 -> !left
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+      pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+    }
+    return
+  }
+  func.func @nonunit_empty(%n: index) attributes {test.trace_arguments = array<i64: 2>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %lower = arith.constant 3 : index
+    %step = arith.constant 2 : index
+    %banks = arith.constant 3 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %ring = pto.alloc_multi_tile addr = %base : !ring3
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %lower to %n step %step {
+      %slot = arith.remui %i, %banks : index
+      %left = pto.multi_tile_get %ring[%slot] : !ring3 -> !left
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+      pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+    }
+    return
+  }
+  func.func @noncoprime(%n: index) attributes {test.trace_arguments = array<i64: 14>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %lower = arith.constant 3 : index
+    %step = arith.constant 2 : index
+    %banks = arith.constant 2 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %ring = pto.alloc_multi_tile addr = %base : !ring2
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %lower to %n step %step {
+      %slot = arith.remui %i, %banks : index
+      %left = pto.multi_tile_get %ring[%slot] : !ring2 -> !left
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+      pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+    }
+    return
+  }
+}

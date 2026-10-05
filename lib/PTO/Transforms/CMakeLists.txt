@@ -154,6 +154,8 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/AllocationCertificate.cpp
   FrontierSynch/PhysicalAllocation.cpp
   FrontierSynch/AllocationCompaction.cpp
+  FrontierSynch/RotatingAnalysis.cpp
+  FrontierSynch/RotatingExtraction.cpp
   FrontierSynch/ExplicitAnalysis.cpp
   FrontierSynch/ExplicitReduction.cpp
   FrontierSynch/LifetimeScan.cpp

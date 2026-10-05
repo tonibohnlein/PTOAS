@@ -9,9 +9,9 @@
 // RUN: pto-sync-input-test --recognize %s | FileCheck %s --check-prefix=RECOGNIZE
 
 // RECOGNIZE-LABEL: recognition reused_ranges
-// RECOGNIZE: recognize explicit: missing-premise backend=unavailable
+// RECOGNIZE: recognize explicit: missing-premise backend=available
 // RECOGNIZE-LABEL: recognition scalar_only
-// RECOGNIZE: recognize explicit: applicable backend=unavailable
+// RECOGNIZE: recognize explicit: applicable backend=available
 
 // One large allocation is reused as two smaller allocations with distinct SSA
 // roots. InsertSync's shared ranges distinguish the disjoint smaller buffers
