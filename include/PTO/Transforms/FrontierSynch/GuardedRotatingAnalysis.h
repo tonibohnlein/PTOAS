@@ -10,6 +10,17 @@
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 #include "PTO/Transforms/FrontierSynch/GuardedPeriodicQuotient.h"
 namespace mlir::pto::frontiersynch {
+// Normalized conditional accesses used by finite physical-boundary exporters.
+// Offset is totalized on inactive arms. Read/write predicates already merge
+// coincident aliases at one payload, so an RMW remains a writer in summaries.
+struct GuardedRotatingFragment {
+    uint32_t payload = 0;
+    std::size_t effect = 0;
+    std::pair<uint64_t, uint64_t> slotAtom;
+    uint64_t slots = 0, divisor = 0, refresh = 0, inverseStride = 0;
+    RegionExpressions::Id offset = RegionExpressions::invalid;
+    RegionExpressions::Id read = RegionExpressions::invalid, write = RegionExpressions::invalid;
+};
 struct GuardedRotatingAnalysis {
     std::string error;
     scf::ForOp loop;
@@ -17,6 +28,7 @@ struct GuardedRotatingAnalysis {
     SmallVector<const CompoundInstanceElement*> phases;
     std::vector<GuardedPeriodicPayload> payloads;
     std::vector<GuardedPeriodicRecord> generators;
+    std::vector<GuardedRotatingFragment> fragments;
     GuardedPeriodicQuotient periodic;
     uint64_t refreshBound = 0;
 };
@@ -30,6 +42,6 @@ struct GuardedRotatingAnalysis {
 // use the numerical protected route until conditional protection is represented
 // in the required graph. Ordinary unprotected ACC effects are supported.
 GuardedRotatingAnalysis analyzeGuardedRotating(scf::ForOp loop, const SyncInput& input,
-                                               const GuardedRecognition& recognition);
+    const GuardedRecognition& recognition, std::shared_ptr<RegionExpressions> expressions = {});
 } // namespace mlir::pto::frontiersynch
 #endif

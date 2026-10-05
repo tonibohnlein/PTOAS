@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "FiniteGuardedInternal.h"
 namespace mlir::pto::frontiersynch {
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare()
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(const RegionalDemandFilter& filter)
 {
     insertionError.clear();
     auto plan = std::make_unique<PreparedLogicalPlan>(0);
@@ -22,7 +22,17 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare()
         builder.setInsertionPointToEnd(found->second);
         return arena->emitContextual(expression,builder,cut,contexts[cut]);
     };
-    for (const auto& demand : retained) {
+    for (auto demand : retained) {
+        if (filter) {
+            auto zero = arena->constant(0);
+            auto condition = filter({demand.source, zero, PeriodicEventKind::Completion},
+                                    {demand.target, zero, PeriodicEventKind::Start});
+            if (!condition || !arena->isBoolean(*condition)) {
+                insertionError = "finite guarded overlay filter has no exact predicate"; return failure();
+            }
+            demand.guard = both(demand.guard, *condition);
+        }
+        if (arena->constantValue(demand.guard) == 0) { continue; }
         auto p = pipe(demand.source), q = pipe(demand.target);
         if (p == q) {
             auto adjacent = yes();

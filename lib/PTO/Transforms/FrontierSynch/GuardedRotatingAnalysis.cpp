@@ -32,21 +32,20 @@ uint64_t inverse(uint64_t value, uint64_t modulus)
     if (result.isNegative()) { result += llvm::APInt(256, modulus); }
     return result.getZExtValue();
 }
-struct Fragment {
-    uint32_t payload = 0, family = 0, atom = 0;
-    uint64_t slots = 0, divisor = 0, refresh = 0, inverseStride = 0;
-    Expr offset = RegionExpressions::invalid, active = RegionExpressions::invalid;
-    Expr read = RegionExpressions::invalid, write = RegionExpressions::invalid;
+struct Fragment : GuardedRotatingFragment {
+    uint32_t family = 0, atom = 0;
+    Expr active = RegionExpressions::invalid;
     bool reads = false, writes = false;
 };
 class Extractor {
 public:
     GuardedRotatingAnalysis result;
-    Extractor(scf::ForOp loop, const SyncInput& input, const GuardedRecognition& recognized)
+    Extractor(scf::ForOp loop, const SyncInput& input, const GuardedRecognition& recognized,
+              std::shared_ptr<RegionExpressions> expressions)
         : input(input), recognized(recognized)
     {
         result.loop = loop;
-        result.expressions = std::make_shared<RegionExpressions>();
+        result.expressions = expressions ? std::move(expressions) : std::make_shared<RegionExpressions>();
     }
     void run()
     {
@@ -59,10 +58,12 @@ public:
             fail("guarded rotation requires a 64-bit index representation"); return;
         }
         if (!prepareGuards() || !prepareFragments()) { return; }
+        maskOffsets();
         if (mayHaveHardwareProtectedPair(input, result.phases)) {
             fail("guarded conditional accumulator protection is not supported"); return;
         }
         normalize();
+        for (const auto& fragment : fragments) { result.fragments.push_back(fragment); }
         for (std::size_t target = 0; target < fragments.size(); ++target) {
             neighbors(target, false);
             neighbors(target, true);
@@ -210,6 +211,8 @@ private:
             auto atom = atoms.emplace(std::make_tuple(family, access.atom->first, access.atom->second),
                                       atoms.size()).first->second;
             Fragment fragment;
+            fragment.effect = access.effect;
+            fragment.slotAtom = *access.atom;
             fragment.payload = position->second; fragment.family = family; fragment.atom = atom;
             fragment.slots = access.slots; fragment.divisor = description->second.divisor;
             fragment.refresh = description->second.refresh;
@@ -222,16 +225,29 @@ private:
             }
             fragment.active = result.payloads[fragment.payload].presence;
             if (access.guard) { fragment.active = dag().land(fragment.active, guards[*access.guard]); }
-            // Replayed scalar arithmetic may produce poison on an inactive
-            // original arm (for example, an overflow-flagged addition). Mask
-            // that offset before equality and neighbor circuits consume it;
-            // Boolean AND with an inactive guard would still propagate poison.
-            fragment.offset = dag().select(fragment.active, fragment.offset, c(0));
             fragment.reads = access.reads; fragment.writes = access.writes;
             fragments.push_back(fragment);
             result.refreshBound = std::max(result.refreshBound, fragment.refresh);
         }
         return true;
+    }
+    void maskOffsets()
+    {
+        std::map<std::pair<uint64_t, Expr>, Expr> active;
+        for (const auto& fragment : fragments) {
+            const auto key = std::make_pair(fragment.slots, fragment.offset);
+            auto [position, inserted] = active.emplace(key, no());
+            position->second = dag().lor(position->second, fragment.active);
+        }
+        for (auto& fragment : fragments) {
+            const auto key = std::make_pair(fragment.slots, fragment.offset);
+            // Replayed scalar arithmetic may poison an inactive original arm.
+            // Identical raw DAG inputs share a mask: any active user requires
+            // this value defined; when all users are inactive it remains masked.
+            // Sharing also preserves identical visit maps across different
+            // guards without asking boundary proofs to compare arithmetic.
+            fragment.offset = dag().select(active.at(key), fragment.offset, c(0));
+        }
     }
     bool sameCellFamily(const Fragment& a, const Fragment& b) const
     {
@@ -320,9 +336,9 @@ private:
 };
 } // namespace
 GuardedRotatingAnalysis analyzeGuardedRotating(scf::ForOp loop, const SyncInput& input,
-                                               const GuardedRecognition& recognition)
+    const GuardedRecognition& recognition, std::shared_ptr<RegionExpressions> expressions)
 {
-    Extractor extractor(loop, input, recognition);
+    Extractor extractor(loop, input, recognition, std::move(expressions));
     extractor.run();
     return std::move(extractor.result);
 }
