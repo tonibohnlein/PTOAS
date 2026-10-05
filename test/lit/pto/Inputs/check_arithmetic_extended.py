@@ -31,6 +31,10 @@ def byte_origin(name, coords):
         return 0
     if name == "normalized_view":
         return 1024 * (coords[0] % 2) + 80
+    if name == "masked_slot":
+        return 1024 * (coords[0] & 1)
+    if name == "negative_masked_slot":
+        return 1024 * ((1 - coords[0]) & 1)
     if name == "swapped_slot":
         return 1024 * ((coords[0] + 1) % 2)
     return 4 * (coords[-1] + (1 if name == "shifted_access" else 0))
@@ -44,7 +48,7 @@ def main():
                          capture_output=True, text=True, timeout=45)
     documents = [json.loads(line.removeprefix("arithmetic-json ")) for line in run.stdout.splitlines()
                  if line.startswith("arithmetic-json ")]
-    assert len(documents) == 8
+    assert len(documents) == 10
     checks = 0
     for document in documents:
         name = document["function"]
@@ -76,7 +80,7 @@ def main():
                                                                                   (source, target) == (1, 2))
                         assert contains((3, 0, 0, source, target), values) == expected, (name, "native", a, b, n)
                         checks += 1
-    print("extended arithmetic: 5 accepted, 3 rejected; semantic comparisons:", checks)
+    print("extended arithmetic: 7 accepted, 3 rejected; semantic comparisons:", checks)
 
 
 if __name__ == "__main__":
