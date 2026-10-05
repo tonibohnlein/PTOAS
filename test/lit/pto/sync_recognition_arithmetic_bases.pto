@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: %python %S/Inputs/check_arithmetic_bases.py pto-sync-input-test %s
 !tile = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-!mat = !pto.tile_buf<mat, 16x16xf16, slayout=col_major>
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
 module attributes {pto.target_arch = "a3"} {
   func.func @same_base(%p: !pto.ptr<f32, gm>, %n: index) {
     %i0 = arith.constant 0 : index

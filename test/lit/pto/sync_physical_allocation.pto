@@ -9,7 +9,7 @@
 // Two independent slots require two IDs in each direction, using the same two
 // numbers in both directions. The IDs need not
 // form a contiguous range; runtime bounds use a nonzero lower and nonunit step.
-!tile = !pto.tile_buf<mat, 16x16xf16, slayout=col_major>
+!tile = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
 !left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
 module attributes {pto.target_arch = "a3"} {
   func.func @two_slots(%a: !pto.ptr<f16, gm>, %n: index)
