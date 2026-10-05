@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
+#include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 namespace mlir::pto::frontiersynch {
 LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy) {
@@ -97,7 +98,20 @@ public:
             }
             prepared = frontiersynch::prepareExplicitInsertion(function, *analysis.explicitResult());
         } else {
-            prepared = frontiersynch::prepareNumericTemplateInsertion(function, *analysis.result());
+            // Preserve the existing certified numerical route (including its
+            // allocation export) when available. Direct rotating extraction
+            // covers symbolic rotations which have no fixed local effect word.
+            const bool numerical = llvm::any_of(analysis.result()->nodes, [](const auto& node) {
+                return node.numericTemplate &&
+                    node.numericTemplate->result.state == frontiersynch::RecognitionState::Applicable &&
+                    node.logicalEndpoints && node.logicalEndpoints->logical.error.empty();
+            });
+            if (!numerical) {
+                prepared = frontiersynch::prepareRotatingInsertion(function, *analysis.input(), *analysis.result());
+            }
+            if (failed(prepared)) {
+                prepared = frontiersynch::prepareNumericTemplateInsertion(function, *analysis.result());
+            }
         }
         if (failed(prepared) || failed(frontiersynch::insertLogicalSynchronization(getOperation(), **prepared))) {
             signalPassFailure();

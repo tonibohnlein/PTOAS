@@ -107,7 +107,7 @@ LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &in
 void dumpRecognition(StringRef label, const pto::frontiersynch::RecognitionResult &result) {
   namespace fs = pto::frontiersynch;
   llvm::outs() << "recognize " << label << ": " << fs::recognitionName(result.state)
-               << " backend=unavailable\n";
+               << " backend=" << (label == "explicit" || label == "rotating" ? "available" : "unavailable") << "\n";
   for (const auto &diagnostic : result.diagnostics) {
     llvm::outs() << "  issue " << fs::recognitionName(diagnostic.issue);
     if (diagnostic.anchor) {
@@ -285,6 +285,7 @@ std::string render(Operation *op) {
   return text;
 }
 }
+LogicalResult runRotatingAnalysisChecks(func::FuncOp function, const pto::SyncInput& input);
 LogicalResult dumpExplicitAnalysis(func::FuncOp function, const pto::SyncInput& input);
 int main(int argc, char **argv) {
   // Test-only numerical graph input; the production pass still consumes MLIR.
@@ -315,6 +316,7 @@ int main(int argc, char **argv) {
   const bool capabilities = argc == 3 && StringRef(argv[1]) == "--capabilities";
   const bool phaseIndex = argc == 3 && StringRef(argv[1]) == "--phase-index";
   const bool storageEffects = argc == 3 && StringRef(argv[1]) == "--storage-effects";
+  const bool rotatingAnalysis = argc == 3 && StringRef(argv[1]) == "--rotating-analysis";
   const bool explicitAnalysis = argc == 3 && StringRef(argv[1]) == "--explicit-analysis";
   const bool arithmetic = argc == 3 && StringRef(argv[1]) == "--arithmetic";
   const bool recognition = argc == 3 && StringRef(argv[1]) == "--recognize";
@@ -322,15 +324,15 @@ int main(int argc, char **argv) {
   const bool preparedInsertion = argc == 3 && StringRef(argv[1]) == "--prepared-insertion-checks";
   const bool insertionTrace = argc == 3 && StringRef(argv[1]) == "--insertion-trace";
   const bool physicalTrace = argc == 3 && StringRef(argv[1]) == "--physical-trace";
-  if (argc != 2 && !explicitAnalysis && !arithmetic && !recognition && !insertLogical && !insertionTrace &&
-      !physicalTrace && !preparedInsertion &&
+  if (argc != 2 && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !recognition && !insertLogical &&
+      !insertionTrace && !physicalTrace && !preparedInsertion &&
       !expectFailure && !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip &&
       !regionChecks && !phaseCopies && !step0 && !existing) {
     llvm::errs() << "usage: pto-sync-input-test "
                  << "[--gm-alias=may-alias|may-not-alias] "
                  << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
                  "--recognize|--insert-logical|--prepared-insertion-checks|--insertion-trace|"
-                 "--physical-trace|--arithmetic|--explicit-analysis|--roundtrip|"
+                 "--physical-trace|--arithmetic|--explicit-analysis|--rotating-analysis|--roundtrip|"
                  "--region-contract-checks|"
                  "--step0-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
     return 1;
@@ -339,8 +341,8 @@ int main(int argc, char **argv) {
   dialects.insert<pto::PTODialect, func::FuncDialect, arith::ArithDialect, scf::SCFDialect>();
   MLIRContext context(dialects);
   context.disableMultithreading();
-  const bool hasOption = explicitAnalysis || expectFailure || capabilities || phaseIndex || storageEffects ||
-                         recognition || insertLogical || insertionTrace || physicalTrace ||
+  const bool hasOption = rotatingAnalysis || explicitAnalysis || expectFailure || capabilities || phaseIndex ||
+                         storageEffects || recognition || insertLogical || insertionTrace || physicalTrace ||
                          preparedInsertion || arithmetic ||
                          aliasChecks || roundtrip || regionChecks || phaseCopies || step0 || existing;
   const auto filename = argv[hasOption ? 2 : 1];
@@ -442,6 +444,12 @@ int main(int argc, char **argv) {
     if (!translated) {
       return 1;
     }
+    if (rotatingAnalysis) {
+      if (failed(runRotatingAnalysisChecks(function, input))) {
+        return 1;
+      }
+      continue;
+    }
     if (explicitAnalysis) {
       if (failed(dumpExplicitAnalysis(function, input))) {
         return 1;
@@ -490,6 +498,9 @@ int main(int argc, char **argv) {
         llvm::outs() << "    write-space=" << static_cast<unsigned>(memory->scope) << "\n";
       }
     }
+  }
+  if (rotatingAnalysis) {
+    return 0;
   }
   if (before != render(module->getOperation())) {
     llvm::errs() << "shared extraction mutated source IR\n";
