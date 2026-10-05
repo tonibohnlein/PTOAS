@@ -25,7 +25,8 @@ void populateVPTOOpLoweringPatterns(VPTOTypeConverter &typeConverter, RewritePat
 }
 
 void markIllegalVPTOSyncOps(ConversionTarget &target) {
-  target.addIllegalOp<pto::SetFlagOp, pto::WaitFlagOp, pto::SetFlagDynOp, pto::WaitFlagDynOp, pto::SyncSetOp,
+  target.addIllegalOp<pto::LogicalSetOp, pto::LogicalWaitOp, pto::SetFlagOp, pto::WaitFlagOp,
+                      pto::SetFlagDynOp, pto::WaitFlagDynOp, pto::SyncSetOp,
                       pto::SyncWaitOp, pto::SetIntraBlockOp, pto::WaitIntraBlockOp, pto::BarrierOp, pto::MemBarOp,
                       pto::CmoCacheInvalidOp, pto::FenceBarrierAllOp, pto::DsbOp, pto::DcciOp, pto::GetBufOp,
                       pto::RlsBufOp, pto::GetBufDynOp, pto::RlsBufDynOp>();
