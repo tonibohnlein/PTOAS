@@ -1,0 +1,25 @@
+// RUN: pto-sync-input-test --prepared-insertion-checks %s | FileCheck %s
+// The common API accepts a plan without any recognition or loop representation.
+module {
+  func.func @straight_line(%guard: i1, %other: i1, %ordinal: index) -> index {
+    %a = arith.addi %ordinal, %ordinal {test.cut = 0 : i64} : index
+    %b = arith.addi %a, %ordinal {test.cut = 1 : i64} : index
+    %c = arith.addi %b, %ordinal {test.cut = 2 : i64} : index
+    return %c : index
+  }
+}
+// CHECK: prepared-insertion: unavailable operands and namespace collision rejected without mutation
+// CHECK-LABEL: func.func @straight_line
+// CHECK: pto.logical_set{{.*}} plan 7 record 0
+// CHECK: test.cut = 0
+// CHECK: arith.ori
+// CHECK: pto.logical_set{{.*}} plan 7 record 1
+// CHECK: pto.barrier <PIPE_V>
+// CHECK-NOT: pto.barrier
+// CHECK: pto.logical_wait{{.*}} plan 7 record 0
+// CHECK: test.cut = 1
+// CHECK: pto.logical_wait{{.*}} plan 7 record 1
+// CHECK: test.cut = 2
+// CHECK: pto.logical_set{{.*}} plan 8 record 0
+// CHECK: pto.logical_wait{{.*}} plan 8 record 0
+// CHECK: return

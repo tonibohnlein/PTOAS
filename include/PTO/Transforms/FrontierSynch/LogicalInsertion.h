@@ -5,15 +5,48 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Insert certified logical synchronization while preserving physical ID freedom.
+// Route-independent preparation and insertion of logical synchronization.
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_LOGICALINSERTION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_LOGICALINSERTION_H
-#include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Block.h"
+#include <cstdint>
+#include <memory>
+#include <vector>
 namespace mlir::pto::frontiersynch {
-// Requires fresh recognition borrowing this unchanged function and SyncInput.
-// Preflights the complete whole-function numeric-template plan before mutation.
-// Success invalidates recognition; unsupported input leaves original IR intact.
-// Emits logical SET/WAIT and local barriers, never physical event IDs.
-LogicalResult insertLogicalSynchronization(func::FuncOp function, const ProgramRecognition& program);
+enum class LogicalCommandKind { Set, Barrier, Wait };
+struct PreparedLogicalEndpoint {
+    Operation* before = nullptr;
+    LogicalCommandKind kind = LogicalCommandKind::Set;
+    uint32_t sourcePipe = 0;
+    uint32_t targetPipe = 0;
+    int64_t record = 0;
+    Value guard; // i1, evaluated at the cut before the command.
+    Value identity; // Index source-occurrence identity; absent for a barrier.
+};
+// A producer builds ordinary arith operations in detached blocks. Inputs may
+// refer to original SSA values or results of earlier preparation blocks.
+struct LogicalPreparation {
+    Operation* before = nullptr;
+    std::unique_ptr<Block> code;
+};
+struct PreparedLogicalPlan {
+    explicit PreparedLogicalPlan(int64_t planId) : planId(planId) {}
+    ~PreparedLogicalPlan();
+    PreparedLogicalPlan(const PreparedLogicalPlan&) = delete;
+    PreparedLogicalPlan& operator=(const PreparedLogicalPlan&) = delete;
+    Block& addPreparation(Operation* before);
+    int64_t planId;
+    std::vector<LogicalPreparation> preparation;
+    std::vector<PreparedLogicalEndpoint> endpoints;
+};
+// Producer obligations: certified demands, legal cuts, safely evaluable arithmetic,
+// paired guards and matching identities, and all endpoints sharing a cut in one
+// batch. No original IR may change between preparation and insertion. This API
+// checks structural validity, availability and namespace freshness, not the proof
+// of the supplied demand relation or dynamic matching.
+// Failure leaves the function intact. Success consumes detached preparation and
+// emits SET, coalesced local barriers, then WAIT at each cut. No physical IDs.
+LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogicalPlan& plan);
 } // namespace mlir::pto::frontiersynch
 #endif

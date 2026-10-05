@@ -5,315 +5,195 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Transactional preflight, then direct logical endpoint insertion at actual cuts.
+// Validate prepared endpoints, then insert logical commands at actual cuts.
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
-#include "mlir/IR/Matchers.h"
-#include "mlir/Interfaces/DataLayoutInterfaces.h"
-#include <algorithm>
+#include "mlir/IR/Verifier.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/MapVector.h"
 #include <map>
-#include <tuple>
 namespace mlir::pto::frontiersynch {
+PreparedLogicalPlan::~PreparedLogicalPlan()
+{
+    // Detached blocks can reference each other. Drop uses before destroying any.
+    for (auto& stage : preparation) {
+        if (stage.code) {
+            stage.code->dropAllReferences();
+        }
+    }
+}
+Block& PreparedLogicalPlan::addPreparation(Operation* before)
+{
+    preparation.push_back({before, std::make_unique<Block>()});
+    return *preparation.back().code;
+}
 namespace {
-std::optional<int64_t> constant(Value value)
-{
-    APInt number;
-    if (!matchPattern(value, m_ConstantInt(&number)) || !number.isSignedIntN(64)) {
-        return std::nullopt;
-    }
-    return number.getSExtValue();
-}
-bool sameRecipe(const EndpointRecipe& a, const EndpointRecipe& b)
-{
-    return std::tie(a.record, a.source, a.target, a.pipe, a.displacement, a.kind) ==
-           std::tie(b.record, b.source, b.target, b.pipe, b.displacement, b.kind);
-}
-bool sameCut(TemplateEndpointCut a, TemplateEndpointCut b)
-{
-    return a.block == b.block && a.before == b.before;
-}
-bool samePlan(const NumericTemplateEndpoints& a, const NumericTemplateEndpoints& b)
-{
-    if (!a.logical.error.empty() || a.outer != b.outer || a.anchors.size() != b.anchors.size() ||
-        a.groups.size() != b.groups.size() || a.logical.recipes.size() != b.logical.recipes.size()) {
-        return false;
-    }
-    for (auto [left, right] : llvm::zip(a.logical.recipes, b.logical.recipes)) {
-        if (!sameRecipe(left, right)) {
-            return false;
-        }
-    }
-    for (auto [left, right] : llvm::zip(a.anchors, b.anchors)) {
-        if (left.phase != right.phase || left.coordinates.size() != right.coordinates.size() ||
-            !sameCut(left.before, right.before) || !sameCut(left.after, right.after)) {
-            return false;
-        }
-        for (auto [x, y] : llvm::zip(left.coordinates, right.coordinates)) {
-            if (x.loop != y.loop || x.induction != y.induction) {
-                return false;
-            }
-        }
-    }
-    for (auto [left, right] : llvm::zip(a.groups, b.groups)) {
-        if (!sameCut(left.cut, right.cut) || left.recipes != right.recipes) {
-            return false;
-        }
-    }
-    return true;
-}
 bool concretePipe(uint32_t pipe)
 {
-    // This is the logical operation's enum contract, not device qualification.
     return pipe <= static_cast<uint32_t>(PIPE::PIPE_FIX) && pipe != static_cast<uint32_t>(PIPE::PIPE_ALL);
 }
-bool coordinateFits(TemplateCoordinate coordinate)
-{
-    if (!coordinate.loop) {
+class Availability {
+public:
+    explicit Availability(func::FuncOp function) : function(function), dominance(function) {}
+    bool cut(Operation* before)
+    {
+        if (!before || !before->getBlock()) {
+            return false;
+        }
+        for (auto* parent = before->getParentOp(); parent; parent = parent->getParentOp()) {
+            if (parent == function) {
+                return true;
+            }
+            if (parent->hasTrait<OpTrait::IsIsolatedFromAbove>()) {
+                return false;
+            }
+        }
         return false;
     }
-    auto type = coordinate.loop.getInductionVar().getType();
-    if (type.isIndex()) {
-        return true;
-    }
-    auto integer = dyn_cast<IntegerType>(type);
-    return integer && APInt(64, static_cast<uint64_t>(coordinate.induction), true).isSignedIntN(integer.getWidth());
-}
-bool validCuts(const NumericTemplateEndpoints& plan, DominanceInfo& dominance)
-{
-    for (const auto& group : plan.groups) {
-        const auto cut = group.cut;
-        if (!cut.block || !cut.before || cut.before->getBlock() != cut.block ||
-            !plan.outer->isProperAncestor(cut.before)) {
+    bool value(Value value, Operation* before)
+    {
+        if (!value) {
             return false;
         }
-        for (auto index : group.recipes) {
-            if (index >= plan.logical.recipes.size()) {
-                return false;
-            }
-            const auto& recipe = plan.logical.recipes[index];
-            const auto type = recipe.kind == EndpointKind::Set ? recipe.source : recipe.target;
-            if (type >= plan.anchors.size() || recipe.source >= plan.anchors.size() ||
-                recipe.target >= plan.anchors.size() || !concretePipe(recipe.pipe) ||
-                !concretePipe(static_cast<uint32_t>(plan.anchors[recipe.source].phase->kPipeValue)) ||
-                !concretePipe(static_cast<uint32_t>(plan.anchors[recipe.target].phase->kPipeValue))) {
-                return false;
-            }
-            for (auto coordinate : plan.anchors[type].coordinates) {
-                if (!coordinateFits(coordinate) || !coordinate.loop->isProperAncestor(cut.before) ||
-                    !dominance.properlyDominates(coordinate.loop.getInductionVar(), cut.before)) {
-                    return false;
-                }
-            }
+        auto found = prepared.find(value);
+        if (found != prepared.end()) {
+            return found->second == before || dominance.properlyDominates(found->second, before);
         }
+        // Never ask DominanceInfo about an unregistered detached definition.
+        auto* region = value.getParentRegion();
+        return region && region->getParentOp() &&
+            (region->getParentOp() == function || function->isProperAncestor(region->getParentOp())) &&
+            dominance.properlyDominates(value, before);
     }
-    return true;
-}
-const StructureNode* selectRoot(func::FuncOp function, const ProgramRecognition& program)
+    void define(Value value, Operation* before) { prepared[value] = before; }
+private:
+    func::FuncOp function;
+    DominanceInfo dominance;
+    llvm::DenseMap<Value, Operation*> prepared;
+};
+LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
 {
-    const StructureNode* selected = nullptr;
-    for (const auto& node : program.nodes) {
-        if (!node.numericTemplate || node.numericTemplate->result.state != RecognitionState::Applicable) {
-            continue;
-        }
-        if (selected || !node.numericTemplate->outer || !node.periodicAnalysis || !node.logicalEndpoints ||
-            node.numericTemplate->outer->getParentOp() != function.getOperation()) {
-            return nullptr;
-        }
-        selected = &node;
+    if (plan.planId < 0 || !RegisteredOperationName::lookup("pto.logical_set", function.getContext()) ||
+        !RegisteredOperationName::lookup("pto.logical_wait", function.getContext())) {
+        return function.emitError("logical insertion requires a nonnegative namespace and registered logical commands");
     }
-    return selected;
-}
-bool freshScope(func::FuncOp function, const ProgramRecognition& program, const StructureNode& node)
-{
-    auto outer = node.numericTemplate->outer;
-    for (const auto& payload : program.payloads) {
-        if (!payload.phase || !payload.phase->elementOp || !outer->isProperAncestor(payload.phase->elementOp)) {
-            return false;
-        }
-    }
-    bool clean = true;
+    bool collision = false;
     function.walk([&](Operation* operation) {
-        if (isa<LogicalSetOp, LogicalWaitOp, SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp,
-                RecordEventOp, WaitEventOp, BarrierOp>(operation)) {
-            clean = false;
+        if (isa<LogicalSetOp, LogicalWaitOp>(operation)) {
+            auto id = operation->getAttrOfType<IntegerAttr>("plan_id");
+            collision |= id && id.getInt() == plan.planId;
         }
     });
-    return clean;
-}
-LogicalResult preflight(func::FuncOp function, const ProgramRecognition& program, const StructureNode*& node)
-{
-    node = selectRoot(function, program);
-    if (!node || !function.getBody().hasOneBlock()) {
-        return function.emitError("logical insertion requires one complete whole-function numeric template");
+    if (collision) {
+        return function.emitError("logical insertion namespace is already in use");
     }
-    // Numeric-template arithmetic and logical occurrence identities use 64-bit
-    // index values. Reject an explicit incompatible IR layout before mutation.
-    const auto indexBits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
-    if (indexBits.isScalable() || indexBits.getFixedValue() != 64) {
-        return function.emitError("logical insertion requires the numeric template's 64-bit index representation");
-    }
-    const auto& input = *node->numericTemplate;
-    auto outer = input.outer;
-    auto lower = constant(outer.getLowerBound()), step = constant(outer.getStep());
-    const bool bounds = lower && step && *lower == input.lower && *step == input.step && *step > 0 &&
-        outer.getInductionVar().getType().isIndex();
-    if (input.emptyInvocation) {
-        auto upper = constant(outer.getUpperBound());
-        if (!upper || *upper > input.lower || !input.payloads.empty() || !input.atoms.empty()) {
-            return function.emitError("empty-invocation certificate no longer matches the loop bounds");
+    Availability available(function);
+    for (const auto& stage : plan.preparation) {
+        if (!available.cut(stage.before) || !stage.code || stage.code->getParent() || stage.code->getNumArguments()) {
+            return function.emitError("invalid detached logical preparation block or cut");
+        }
+        for (auto& operation : *stage.code) {
+            if (!operation.getName().isRegistered() || operation.getName().getDialectNamespace() != "arith" ||
+                operation.getNumRegions() || operation.getNumSuccessors() || failed(verify(&operation, false))) {
+                return function.emitError("logical preparation requires valid region-free arithmetic");
+            }
+            for (auto operand : operation.getOperands()) {
+                if (!available.value(operand, stage.before)) {
+                    return function.emitError("logical preparation operand is unavailable at its cut");
+                }
+            }
+            for (auto result : operation.getResults()) {
+                available.define(result, stage.before);
+            }
         }
     }
-    auto expected = buildNumericTemplateEndpoints(input, *node->periodicAnalysis);
-    DominanceInfo dominance(function);
-    const bool registered = RegisteredOperationName::lookup("pto.logical_set", function.getContext()) &&
-        RegisteredOperationName::lookup("pto.logical_wait", function.getContext());
-    if (!bounds || !registered || !expected.logical.error.empty() || !samePlan(*node->logicalEndpoints, expected) ||
-        !freshScope(function, program, *node) || !validCuts(expected, dominance)) {
-        return function.emitError("logical insertion has an unsupported or unavailable endpoint obligation");
+    for (const auto& endpoint : plan.endpoints) {
+        const bool barrier = endpoint.kind == LogicalCommandKind::Barrier;
+        const bool kind = barrier || endpoint.kind == LogicalCommandKind::Set ||
+            endpoint.kind == LogicalCommandKind::Wait;
+        if (!kind || !available.cut(endpoint.before) || endpoint.record < 0 ||
+            !concretePipe(endpoint.sourcePipe) || !concretePipe(endpoint.targetPipe) ||
+            (barrier != (endpoint.sourcePipe == endpoint.targetPipe)) ||
+            !available.value(endpoint.guard, endpoint.before) || !endpoint.guard.getType().isInteger(1) ||
+            (!barrier && (!available.value(endpoint.identity, endpoint.before) ||
+                         !endpoint.identity.getType().isIndex())) ||
+            (barrier && endpoint.identity)) {
+            return function.emitError("invalid or unavailable prepared logical endpoint");
+        }
     }
     return success();
 }
-class Emitter {
-public:
-    explicit Emitter(const NumericTemplateEndpoints& plan) : plan(plan), builder(plan.outer->getContext()) {}
-    void run()
-    {
-        if (plan.logical.recipes.empty()) {
-            return;
+void command(OpBuilder& builder, const PreparedLogicalEndpoint& endpoint, int64_t planId)
+{
+    auto location = endpoint.before->getLoc();
+    auto branch = builder.create<scf::IfOp>(location, endpoint.guard, false);
+    OpBuilder::InsertionGuard restore(builder);
+    builder.setInsertionPointToStart(branch.thenBlock());
+    OperationState state(location, endpoint.kind == LogicalCommandKind::Set ? "pto.logical_set" : "pto.logical_wait");
+    state.addOperands(endpoint.identity);
+    state.addAttribute("src_pipe", PipeAttr::get(builder.getContext(), static_cast<PIPE>(endpoint.sourcePipe)));
+    state.addAttribute("dst_pipe", PipeAttr::get(builder.getContext(), static_cast<PIPE>(endpoint.targetPipe)));
+    state.addAttribute("plan_id", builder.getI64IntegerAttr(planId));
+    state.addAttribute("record_id", builder.getI64IntegerAttr(endpoint.record));
+    builder.create(state);
+}
+void emitCut(OpBuilder& builder, ArrayRef<const PreparedLogicalEndpoint*> endpoints, int64_t planId)
+{
+    builder.setInsertionPoint(endpoints.front()->before);
+    auto location = endpoints.front()->before->getLoc();
+    std::map<uint32_t, Value> barriers;
+    for (const auto* endpoint : endpoints) {
+        if (endpoint->kind == LogicalCommandKind::Barrier) {
+            auto [entry, inserted] = barriers.emplace(endpoint->sourcePipe, endpoint->guard);
+            if (!inserted) {
+                entry->second = builder.create<arith::OrIOp>(location, entry->second, endpoint->guard);
+            }
         }
-        initializeOrdinals();
-        for (const auto& group : plan.groups) {
-            emitCut(group);
+    }
+    for (const auto* endpoint : endpoints) {
+        if (endpoint->kind == LogicalCommandKind::Set) {
+            command(builder, *endpoint, planId);
         }
     }
-private:
-    const NumericTemplateEndpoints& plan;
-    OpBuilder builder;
-    Value trips;
-    Value ordinal;
-    Value zero;
-    Value one;
-    Value number(uint64_t value, Location location)
-    {
-        auto type = builder.getIndexType();
-        return builder.create<arith::ConstantOp>(location, type, IntegerAttr::get(type, APInt(64, value)));
-    }
-    Value compare(arith::CmpIPredicate predicate, Value a, Value b, Location location)
-    {
-        return builder.create<arith::CmpIOp>(location, predicate, a, b);
-    }
-    void initializeOrdinals()
-    {
-        auto loop = plan.outer;
-        auto location = loop.getLoc();
-        builder.setInsertionPoint(loop);
-        zero = number(0, location);
-        one = number(1, location);
-        auto positive = compare(arith::CmpIPredicate::sgt, loop.getUpperBound(), loop.getLowerBound(), location);
-        auto difference = builder.create<arith::SubIOp>(location, loop.getUpperBound(), loop.getLowerBound());
-        auto span = builder.create<arith::SelectOp>(location, positive, difference, zero);
-        auto quotient = builder.create<arith::DivUIOp>(location, span, loop.getStep());
-        auto remainder = builder.create<arith::RemUIOp>(location, span, loop.getStep());
-        auto partial = compare(arith::CmpIPredicate::ne, remainder, zero, location);
-        auto extra = builder.create<arith::SelectOp>(location, partial, one, zero);
-        trips = builder.create<arith::AddIOp>(location, quotient, extra);
-        builder.setInsertionPointToStart(loop.getBody());
-        auto offset = builder.create<arith::SubIOp>(location, loop.getInductionVar(), loop.getLowerBound());
-        ordinal = builder.create<arith::DivUIOp>(location, offset, loop.getStep());
-    }
-    Value predicate(const EndpointRecipe& recipe, Location location)
-    {
-        auto delay = number(recipe.displacement, location);
-        auto selected = compare(arith::CmpIPredicate::ult, ordinal, trips, location);
-        Value boundary;
-        if (recipe.kind == EndpointKind::Set) {
-            auto remaining = builder.create<arith::SubIOp>(location, trips, delay);
-            auto hasTarget = compare(arith::CmpIPredicate::ult, delay, trips, location);
-            auto beforeEnd = compare(arith::CmpIPredicate::ult, ordinal, remaining, location);
-            boundary = builder.create<arith::AndIOp>(location, hasTarget, beforeEnd);
-        } else {
-            boundary = compare(arith::CmpIPredicate::uge, ordinal, delay, location);
-        }
-        selected = builder.create<arith::AndIOp>(location, selected, boundary);
-        const auto type = recipe.kind == EndpointKind::Set ? recipe.source : recipe.target;
-        for (auto coordinate : plan.anchors[type].coordinates) {
-            auto induction = coordinate.loop.getInductionVar();
-            auto expected = builder.create<arith::ConstantOp>(location, induction.getType(),
-                builder.getIntegerAttr(induction.getType(), coordinate.induction));
-            auto equal = compare(arith::CmpIPredicate::eq, induction, expected, location);
-            selected = builder.create<arith::AndIOp>(location, selected, equal);
-        }
-        return selected;
-    }
-    void command(const EndpointRecipe& recipe, Value guard, Location location)
-    {
+    for (auto [pipe, guard] : barriers) {
         auto branch = builder.create<scf::IfOp>(location, guard, false);
         OpBuilder::InsertionGuard restore(builder);
         builder.setInsertionPointToStart(branch.thenBlock());
-        const auto producer = plan.anchors[recipe.source].phase->kPipeValue;
-        const auto consumer = plan.anchors[recipe.target].phase->kPipeValue;
-        auto identity = ordinal;
-        if (recipe.kind == EndpointKind::Wait) {
-            identity = builder.create<arith::SubIOp>(location, ordinal, number(recipe.displacement, location));
-        }
-        OperationState state(location, recipe.kind == EndpointKind::Set ? "pto.logical_set" : "pto.logical_wait");
-        state.addOperands(identity);
-        state.addAttribute("src_pipe", PipeAttr::get(builder.getContext(), static_cast<PIPE>(producer)));
-        state.addAttribute("dst_pipe", PipeAttr::get(builder.getContext(), static_cast<PIPE>(consumer)));
-        state.addAttribute("plan_id", builder.getI64IntegerAttr(0));
-        state.addAttribute("record_id", builder.getI64IntegerAttr(recipe.record));
-        builder.create(state);
+        builder.create<BarrierOp>(location, PipeAttr::get(builder.getContext(), static_cast<PIPE>(pipe)));
     }
-    void emitCut(const TemplateEndpointGroup& group)
-    {
-        builder.setInsertionPoint(group.cut.before);
-        auto location = group.cut.before->getLoc();
-        SmallVector<std::pair<const EndpointRecipe*, Value>> selected;
-        std::map<uint32_t, Value> barriers;
-        for (auto index : group.recipes) {
-            const auto& recipe = plan.logical.recipes[index];
-            auto guard = predicate(recipe, location);
-            if (recipe.kind != EndpointKind::Barrier) {
-                selected.push_back({&recipe, guard});
-            } else {
-                auto [entry, inserted] = barriers.emplace(recipe.pipe, guard);
-                if (!inserted) {
-                    entry->second = builder.create<arith::OrIOp>(location, entry->second, guard);
-                }
-            }
-        }
-        for (const auto& entry : selected) {
-            if (entry.first->kind == EndpointKind::Set) {
-                command(*entry.first, entry.second, location);
-            }
-        }
-        for (const auto& [pipe, guard] : barriers) {
-            auto branch = builder.create<scf::IfOp>(location, guard, false);
-            OpBuilder::InsertionGuard restore(builder);
-            builder.setInsertionPointToStart(branch.thenBlock());
-            builder.create<BarrierOp>(location, PipeAttr::get(builder.getContext(), static_cast<PIPE>(pipe)));
-        }
-        for (const auto& entry : selected) {
-            if (entry.first->kind == EndpointKind::Wait) {
-                command(*entry.first, entry.second, location);
-            }
+    for (const auto* endpoint : endpoints) {
+        if (endpoint->kind == LogicalCommandKind::Wait) {
+            command(builder, *endpoint, planId);
         }
     }
-};
+}
 } // namespace
-LogicalResult insertLogicalSynchronization(func::FuncOp function, const ProgramRecognition& program)
+LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogicalPlan& plan)
 {
     if (!function) {
         return failure();
     }
-    const StructureNode* node = nullptr;
-    if (failed(preflight(function, program, node))) {
+    function.getContext()->getOrLoadDialect<PTODialect>();
+    function.getContext()->getOrLoadDialect<arith::ArithDialect>();
+    function.getContext()->getOrLoadDialect<scf::SCFDialect>();
+    if (failed(preflight(function, plan))) {
         return failure();
     }
-    Emitter emitter(*node->logicalEndpoints);
-    emitter.run();
+    for (auto& stage : plan.preparation) {
+        auto* target = stage.before->getBlock();
+        target->getOperations().splice(stage.before->getIterator(), stage.code->getOperations());
+    }
+    llvm::MapVector<Operation*, SmallVector<const PreparedLogicalEndpoint*>> cuts;
+    for (const auto& endpoint : plan.endpoints) {
+        cuts[endpoint.before].push_back(&endpoint);
+    }
+    OpBuilder builder(function.getContext());
+    for (const auto& cut : cuts) {
+        emitCut(builder, cut.second, plan.planId);
+    }
     return success();
 }
 } // namespace mlir::pto::frontiersynch
