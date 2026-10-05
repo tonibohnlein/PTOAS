@@ -5,7 +5,10 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Logical occurrence identities remain separate from physical event attributes.
+// Logical identities include an ordered member tuple and remain separate from
+// physical event attributes. ODS checks index operand types. Domain membership
+// and matching across SET/WAIT sites require the family certificate, not a local
+// operation verifier.
 #include "PTO/IR/PTO.h"
 
 namespace mlir::pto {

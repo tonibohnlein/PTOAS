@@ -164,6 +164,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/PeriodicQueries.cpp
   FrontierSynch/NumericTemplateAnalysis.cpp
   FrontierSynch/LogicalEndpoints.cpp
+  FrontierSynch/EndpointFamilies.cpp
   FrontierSynch/LogicalInsertion.cpp
   FrontierSynch/NumericTemplateInsertion.cpp
   FrontierSynch/NumericTemplateEndpoints.cpp

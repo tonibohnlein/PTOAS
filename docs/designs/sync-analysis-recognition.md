@@ -831,3 +831,28 @@ certified protected witnesses, then checks the sparse generators and actual
 inserted commands against the resulting required order. Cross-pipe event pairs
 are still selected by reduction. UnitFlag, physical ID allocation and command
 grouping are separate concerns and are not enabled by this rule.
+
+
+## Endpoint-family migration
+
+The endpoint interface preserves exact source/target coordinate maps and original
+record identities before logical commands are materialized. `EndpointFamilies`
+groups compatible finite members, separates overlapping source or target tuples,
+and assigns an order to pieces at each cut. Cyclic proposed group orders are
+split before emission. This finite planner costs O(R²(1 + D² + log(R+1))) time and
+O(R² + RD) space for R retained records and coordinate rank D; it never expands
+the runtime trip count.
+
+Logical SET/WAIT accept optional index member-coordinate operands. Their identity
+is (plan, static family/record ID, source ordinal, member tuple); old operations
+have an empty member tuple and remain valid. Coordinate provenance is serialized
+as versioned `pto.endpoint_families` metadata with plan-local loop and cut IDs;
+borrowed compiler pointers do not cross the IR boundary. This is producer-owned
+provenance, not a verification proof for arbitrary hand-edited annotations.
+
+Migration milestone 1 preserves this information for explicit, rotating and
+numerical-template producers. It does not yet group their emitted operations or
+change the allocation certificate. Milestone 2 prepares family sites directly;
+milestone 3 consumes retained member-to-allocation mappings and removes optional
+post-insertion reconstruction and the alternate emission path. The resource
+policy, demand relation and supported allocation routes remain unchanged.

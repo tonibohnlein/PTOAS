@@ -8,6 +8,7 @@
 // Route-independent preparation and insertion of logical synchronization.
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_LOGICALINSERTION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_LOGICALINSERTION_H
+#include "PTO/Transforms/FrontierSynch/EndpointFamilies.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -24,6 +25,7 @@ struct PreparedLogicalEndpoint {
     int64_t record = 0;
     Value guard; // i1, evaluated at the cut before the command.
     Value identity; // Index source-occurrence identity; absent for a barrier.
+    SmallVector<Value> memberCoordinates; // Canonical source member tuple, identical at SET and WAIT.
 };
 // A producer builds ordinary arith operations in detached blocks. Inputs may
 // refer to original SSA values or results of earlier preparation blocks.
@@ -44,6 +46,7 @@ struct PreparedLogicalPlan {
     DictionaryAttr allocationCertificate;
     std::vector<LogicalPreparation> preparation;
     std::vector<PreparedLogicalEndpoint> endpoints;
+    std::vector<EndpointFamily> families; // Exact source/target coordinate provenance.
 };
 // Producer obligations: certified demands, legal cuts, safely evaluable arithmetic,
 // paired guards and matching identities, and all endpoints sharing a cut in one

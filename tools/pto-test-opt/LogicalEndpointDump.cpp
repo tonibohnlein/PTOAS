@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Inspect logical recipes without turning logical identities into hardware IDs.
 #include "PTO/Transforms/FrontierSynch/NumericTemplateEndpoints.h"
+#include "PTO/Transforms/FrontierSynch/EndpointFamilies.h"
 #include "mlir/IR/AsmState.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/JSON.h"
@@ -71,6 +72,20 @@ llvm::json::Object dumpNumericTemplateEndpoints(const fs::NumericTemplateEndpoin
     }
     result["groups"] = std::move(groups);
     result["anchors"] = std::move(anchors);
+    auto planned = fs::buildEndpointFamilies(plan);
+    result["family_error"] = planned.error;
+    llvm::json::Array families;
+    for (const auto& family : planned.families) {
+        llvm::json::Array members;
+        for (const auto& member : family.members) {
+            members.push_back(llvm::json::Object{{"record", member.record},
+                {"source", member.source}, {"target", member.target}});
+        }
+        families.push_back(llvm::json::Object{{"id", family.id}, {"members", std::move(members)},
+            {"source_cut", cutID(family.sourceCut)}, {"target_cut", cutID(family.targetCut)},
+            {"source_order", family.sourceOrder}, {"target_order", family.targetOrder}});
+    }
+    result["families"] = std::move(families);
     result["canonical_cuts"] = cuts.size();
     return result;
 }

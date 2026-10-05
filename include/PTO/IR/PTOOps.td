@@ -2650,23 +2650,32 @@ class PTO_LogicalSyncOp<string mnemonic> : PTO_Op<mnemonic> {
     PTO_PipeAttr:$dst_pipe,
     I64Attr:$plan_id,
     I64Attr:$record_id,
-    Index:$source_ordinal
+    Index:$source_ordinal,
+    Variadic<Index>:$member_coordinates
   );
   let results = (outs);
   let hasVerifier = 1;
   let assemblyFormat = [{
     `[` $src_pipe `,` $dst_pipe `]`
-    `plan` $plan_id `record` $record_id `ordinal` $source_ordinal attr-dict
+    `plan` $plan_id `record` $record_id `ordinal` $source_ordinal
+    (`members` `(` $member_coordinates^ `)`)? attr-dict
   }];
 }
 
 def LogicalSetOp : PTO_LogicalSyncOp<"logical_set"> {
   let summary = "Publish a logical synchronization occurrence";
   let description = [{
-    Publishes the logical identity (plan_id, record_id, source_ordinal) from
-    src_pipe to dst_pipe. The matching logical_wait carries the same identity.
-    plan_id and record_id are nonnegative analysis identities; source_ordinal
-    identifies the producer's loop visit. These values are not physical event
+    Publishes the logical identity
+    (plan_id, record_id, source_ordinal, member_coordinates) from src_pipe to
+    dst_pipe. record_id identifies a demand family within the plan, while the
+    source ordinal and ordered member-coordinate tuple identify its instance.
+    Omitting members denotes the empty tuple and preserves the singleton-member
+    form. Different member tuples are different notifications, even when they
+    share a source ordinal. The matching logical_wait carries the same identity.
+
+    plan_id and record_id are nonnegative analysis identities. Member coordinates
+    are index values in the family's instance domain; the family certificate
+    establishes matching and valid domains. These values are not physical event
     IDs. Physical allocation must resolve this operation before device lowering.
   }];
 }
@@ -2674,11 +2683,16 @@ def LogicalSetOp : PTO_LogicalSyncOp<"logical_set"> {
 def LogicalWaitOp : PTO_LogicalSyncOp<"logical_wait"> {
   let summary = "Consume a logical synchronization occurrence";
   let description = [{
-    Consumes the logical identity (plan_id, record_id, source_ordinal) published
-    by logical_set from src_pipe to dst_pipe. The source ordinal belongs to the
-    producer even when the consumer executes in a later loop visit. These
-    identities are not physical event IDs. Physical allocation must resolve
-    this operation before device lowering.
+    Consumes the logical identity
+    (plan_id, record_id, source_ordinal, member_coordinates) published by
+    logical_set from src_pipe to dst_pipe. The ordinal and member-coordinate
+    tuple describe the producer's instance, even when the consumer executes in
+    a later loop visit or at different coordinates. Omitting members denotes
+    the empty tuple, as for logical_set. The family certificate establishes
+    matching and valid instance domains; the local verifier checks operand and
+    attribute types and concrete, distinct pipes. These identities are not
+    physical event IDs. Physical allocation must resolve this operation before
+    device lowering.
   }];
 }
 

@@ -53,6 +53,19 @@ LogicalResult runPreparedInsertionChecks(func::FuncOp function)
     if (!rejectedUnchanged(function, bad)) {
         return function.emitError("unavailable identity was accepted or rejection changed IR");
     }
+    bad.endpoints = {{cuts[0], Kind::Set, mte2, vector, 0, guard, ordinal, {Value()}}};
+    if (!rejectedUnchanged(function, bad)) {
+        return function.emitError("null family member was accepted or rejection changed IR");
+    }
+    bad.endpoints = {{cuts[0], Kind::Set, mte2, vector, 0, guard, ordinal},
+                     {cuts[1], Kind::Wait, mte2, vector, 0, guard, ordinal}};
+    fs::EndpointFamily malformed;
+    malformed.members.push_back({0, 0, 1, {}, {}});
+    bad.families.push_back(malformed);
+    if (!rejectedUnchanged(function, bad)) {
+        return function.emitError("invalid family cuts were accepted or rejection changed IR");
+    }
+    bad.families.clear();
     bad.endpoints.clear();
     OpBuilder builder(function.getContext());
     builder.setInsertionPointToEnd(&bad.addPreparation(cuts[2]));
