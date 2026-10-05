@@ -404,8 +404,8 @@ outer trip count.
 
 The read-only recognition API exports selection recipes and placement
 descriptions. The integrated pass below now emits their logical PTO operations;
-physical event IDs remain separate. No start-origin query interface, external
-storage selectors, physical allocation or scarcity repair is added, and the
+physical event IDs are assigned by the separate pass described below. No
+start-origin query interface, external storage selectors or scarcity repair is added, and the
 whole Section 8 result is still not ready. The periodic index remains unchanged.
 The command oracle checks fresh logical matching and models the mechanisms
 separately: SET observes prior completions without gating later payload starts;
@@ -497,8 +497,15 @@ original payloads, loops, branch decisions and allocation geometry. A command's
 guard selects its own inner-coordinate tuple and checks that its partner's
 outer iteration exists. Commands at a common original cut are emitted in
 SET, barrier, WAIT order. Local barriers on the same pipe at that cut share
-the disjunction of their guards. Zero trips execute no inserted commands;
-a last iteration never publishes a handoff whose consumer is absent.
+the disjunction of their guards. Zero trips execute no handoffs;
+a last iteration never publishes a handoff whose consumer is absent. A whole-function
+plan adds one terminal `PIPE_ALL` before return to complete outstanding payloads,
+including the final store. It is outside all computation loops. A statically
+empty invocation needs no drain. This is invocation completion, separate from
+the internal minimum-demand relation. The
+[Ascend static-Tensor contract](https://asc.gitcode.com/guide/programming_guide/programming_model/ai_core_simd_programming/cpp_tensor_programming/static_tensor_programming.html)
+requires a terminal `PipeBarrier<PIPE_ALL>()`; existing InsertSync emits the same
+completion mechanism.
 
 Cross-pipe commands are `pto.logical_set` and `pto.logical_wait`. Both carry
 source and destination pipes, a plan/record identity and the source outer
@@ -506,14 +513,90 @@ ordinal. The identity is logical and scoped to the function invocation; it
 is not a physical hardware event ID. The IR operations survive round trips
 and have side effects. Physical lowering must replace them after allocation;
 EmitC and VPTO conversion reject unresolved logical commands. Same-pipe
-requirements use `pto.barrier` directly. No all-pipe barrier is introduced.
+requirements use `pto.barrier` directly. No internal all-pipe barrier is introduced.
 
-Insertion does not consult periodic capacity summaries or assign physical
-IDs. It invalidates the borrowed analysis result after mutation. A rejected
+Insertion does not assign physical IDs. When the producer has a valid periodic
+capacity summary, it preserves the budgets and phase numbering in an owned
+`pto.cyclic_allocation` function attribute for the second pass. Insertion
+invalidates the borrowed analysis result after mutation. A rejected
 input receives a diagnostic instead of a partial synchronization plan.
 The independent insertion checker executes the generated integer predicates
 and original structured control, observes actual command occurrences, and
 compares their payload order with an all-conflict graph.
+
+## Allocation-only physical lowering
+
+Run the second pass immediately after logical insertion:
+
+```text
+pto-test-opt input.pto --pto-frontier-analysis \
+  --pto-frontier-allocate='eligible-ids=0,1,2,3,4,5'
+```
+
+The caller supplies an eligible subset of 0–5. The pass rejects reserved IDs
+6–7 even when explicitly supplied. There is no
+default pool. `pto-frontier-allocate` consumes the numerical producer's uniform
+cyclic certificate and allocates independently within each directed event domain.
+For A2/A3, the event identity is `(source pipe, destination pipe, numeric ID)`:
+equal numeric IDs in different directions identify different events. The
+[2201 synchronization documentation](https://asc.gitcode.com/guide/programming_guide/advanced_programming/hardware_implementation/architecture_spec/npu_arch_2201.html)
+states this explicitly. The
+[TQueSync guidance](https://asc.gitcode.com/api/SIMD-API/basic_api/sync_control/intra_core_sync/TQueSync.html)
+recommends 0–5 for static-Tensor programming, reserving 6–7 for system/framework
+uses. No numeric ID is permanently tied to a pipe pair: every supported pair
+can use any eligible number. SET/WAIT matching uses the pair and number together.
+The native enum's 0–7 range alone does not establish eligibility.
+It lowers the logical endpoints at their existing cuts, preserving their
+executed command sequence, payloads and control flow. A one-ID subset emits static flags; larger subsets
+emit dynamic flags with offset `(c*n+r) mod E`. Reducing the factors modulo `E`
+before multiplication prevents overflow for large source ordinals. Both ends
+use the producer's source ordinal and therefore select the same ID.
+
+Success removes every logical endpoint and the certificate. Failure emits a
+diagnostic and leaves the function unchanged. Preflight validates the eligible
+IDs, certificate shape, endpoint identities, complete static endpoint pairs,
+index width and all directed capacities before any rewrite. Existing physical
+event commands are rejected because their ID occupancy is not certified here.
+The certificate is an internal producer contract, not verification of arbitrary
+annotations: payload order, matching, guards and occurrence ordinals must not
+change between the two passes. Other demand producers can use the same lowering
+when they establish and encode this uniform cyclic contract.
+
+The two current GEMMs have directed budgets 4, 4, 2, 2, 1, 1. Each fits the
+six eligible numeric IDs; allocation uses only 0–3 across the six domains.
+Summing these budgets to 14 and comparing against six numeric IDs was an
+incorrect global-pool restriction. Repeating a number in different directions
+does not require a cross-direction reuse witness: those are different events.
+Same-direction reuse still requires the certified WAIT-before-SET order.
+Finite-invocation budget minimization, shared-resource allocation for a different
+target model, and scarcity repair remain separate work. Allocation failure does
+not establish infeasibility under those other strategies. Statically empty
+examples require no IDs.
+
+With `N` IR operations, allocation preflight and literal emission cost
+`O(N + records + endpoints)` for the six eligible numeric IDs. No dynamic loop
+is unrolled. Compaction first performs whole-function common-subexpression
+elimination; its cost is separate from the per-cut bound below.
+After preflight, endpoint compaction combines enumerated coordinates at a common
+cut. It retains residual guards and source ordinals, fits a modular ID formula,
+and verifies that formula against every original coordinate point. Exact unions
+of adjacent boxes describe the guard; missing points are never filled in.
+A precedence graph preserves the order of commands whose guards can overlap.
+A failed fit, overlapping copies of the same command, an intervening unrepresented
+command, or cyclic precedence leaves that cut in literal form. Compaction changes
+neither the demands nor handoff grouping. Consecutive physical ID lists use direct
+arithmetic instead of a select chain.
+
+For a cut with `r` records, at most `d >= 1` coordinate axes and capacity `E <= 6`, this
+optional code-generation step uses `O(E*d*d*r*r + d*r*log(r))` arithmetic/comparison
+operations and `O(r*r + d*r)` storage. It does not change demand-analysis complexity.
+The finite test oracle compares compact and literal emission command for command,
+including actual numeric IDs. Device speed is assessed separately; smaller code
+and preserved ordering alone do not establish a latency improvement.
+The test oracle executes both plans, checks unchanged cuts and payloads, matches
+each physical notification to its original logical identity, and requires every
+reuse to have a causal WAIT-before-SET path in the original logical command graph.
+It also checks failure atomicity, malformed certificates and insufficient pools.
 
 ## Hardware-protected storage conflicts
 

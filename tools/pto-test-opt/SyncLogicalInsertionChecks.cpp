@@ -10,6 +10,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
+#include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/MathExtras.h"
@@ -187,6 +188,20 @@ bool Interpreter::command(Operation& op)
     }
     const auto source = op.getAttrOfType<pto::PipeAttr>("src_pipe");
     const auto target = op.getAttrOfType<pto::PipeAttr>("dst_pipe");
+    if (isa<pto::SetFlagOp, pto::WaitFlagOp, pto::SetFlagDynOp, pto::WaitFlagDynOp>(op)) {
+        auto fixed = op.getAttrOfType<pto::EventAttr>("event_id");
+        auto id = fixed ? std::optional<int64_t>(static_cast<int64_t>(fixed.getEvent())) :
+            (op.getNumOperands() == 1 ? integer(op.getOperand(0)) : std::nullopt);
+        if (!source || !target || !id) {
+            return fail("trace physical command has an unknown ID");
+        }
+        const bool publish = isa<pto::SetFlagOp, pto::SetFlagDynOp>(op);
+        events.push_back(llvm::json::Object{{"kind", publish ? "set" : "wait"}, {"gap", payloads},
+            {"pipe", static_cast<unsigned>((publish ? source : target).getPipe())},
+            {"source_pipe", static_cast<unsigned>(source.getPipe())},
+            {"target_pipe", static_cast<unsigned>(target.getPipe())}, {"physical_id", *id}});
+        return true;
+    }
     const auto plan = op.getAttrOfType<IntegerAttr>("plan_id"), record = op.getAttrOfType<IntegerAttr>("record_id");
     const auto ordinal = op.getNumOperands() == 1 ?
         dyn_cast_or_null<IntegerAttr>(lookup(op.getOperand(0))) : IntegerAttr();
@@ -239,7 +254,8 @@ bool Interpreter::operation(Operation& op, unsigned depth)
         return payload(op, found->second);
     }
     const auto name = op.getName().getStringRef();
-    if (name == "pto.logical_set" || name == "pto.logical_wait" || name == "pto.barrier") {
+    if (name == "pto.logical_set" || name == "pto.logical_wait" || name == "pto.barrier" ||
+        isa<pto::SetFlagOp, pto::WaitFlagOp, pto::SetFlagDynOp, pto::WaitFlagDynOp>(op)) {
         return command(op);
     }
     if (op.getNumRegions()) {
@@ -271,7 +287,7 @@ llvm::json::Object traceLogicalInsertion(func::FuncOp function, const fs::Numeri
 {
     return Interpreter(input).run(function);
 }
-LogicalResult runLogicalInsertionChecks(func::FuncOp function, pto::GMAliasPolicy policy)
+LogicalResult runLogicalInsertionChecks(func::FuncOp function, pto::GMAliasPolicy policy, bool physical)
 {
     fs::FrontierAnalysis analysis(function);
     if (failed(analysis.initialize(policy))) {
@@ -294,6 +310,27 @@ LogicalResult runLogicalInsertionChecks(func::FuncOp function, pto::GMAliasPolic
     }
     auto trace = traceLogicalInsertion(function, *input);
     const bool valid = trace.getString("error").value_or("missing trace status").empty();
+    if (physical && valid) {
+        auto ids = function->getAttrOfType<DenseI64ArrayAttr>("test.eligible_ids");
+        auto render = [&]() {
+            std::string text;
+            llvm::raw_string_ostream stream(text);
+            function.print(stream);
+            return text;
+        };
+        // Test-only reference emission: retain every enumerated endpoint.
+        if (function->hasAttr("test.uncompact_endpoints")) {
+            function.walk([](Operation* op) { op->removeAttr("pto.endpoint_cut"); });
+        }
+        const auto before = render();
+        const auto eligible = ids ? ids.asArrayRef() : ArrayRef<int64_t>();
+        const bool allocated = succeeded(fs::allocatePhysicalEventIds(function, eligible));
+        auto after = allocated ? traceLogicalInsertion(function, *input) : llvm::json::Object{};
+        llvm::outs() << llvm::json::Value(llvm::json::Object{{"allocated", allocated},
+            {"unchanged_on_failure", allocated || before == render()}, {"logical", std::move(trace)},
+            {"physical", std::move(after)}}) << "\n";
+        return verify(function);
+    }
     llvm::outs() << llvm::json::Value(std::move(trace)) << "\n";
     return success(valid);
 }

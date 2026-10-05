@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Validate prepared endpoints, then insert logical commands at actual cuts.
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -126,10 +127,11 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
     }
     return success();
 }
-void command(OpBuilder& builder, const PreparedLogicalEndpoint& endpoint, int64_t planId)
+void command(OpBuilder& builder, const PreparedLogicalEndpoint& endpoint, int64_t planId, uint64_t cutId)
 {
     auto location = endpoint.before->getLoc();
     auto branch = builder.create<scf::IfOp>(location, endpoint.guard, false);
+    branch->setAttr("pto.endpoint_cut", builder.getI64IntegerAttr(cutId));
     OpBuilder::InsertionGuard restore(builder);
     builder.setInsertionPointToStart(branch.thenBlock());
     OperationState state(location, endpoint.kind == LogicalCommandKind::Set ? "pto.logical_set" : "pto.logical_wait");
@@ -140,7 +142,7 @@ void command(OpBuilder& builder, const PreparedLogicalEndpoint& endpoint, int64_
     state.addAttribute("record_id", builder.getI64IntegerAttr(endpoint.record));
     builder.create(state);
 }
-void emitCut(OpBuilder& builder, ArrayRef<const PreparedLogicalEndpoint*> endpoints, int64_t planId)
+void emitCut(OpBuilder& builder, ArrayRef<const PreparedLogicalEndpoint*> endpoints, int64_t planId, uint64_t cutId)
 {
     builder.setInsertionPoint(endpoints.front()->before);
     auto location = endpoints.front()->before->getLoc();
@@ -155,7 +157,7 @@ void emitCut(OpBuilder& builder, ArrayRef<const PreparedLogicalEndpoint*> endpoi
     }
     for (const auto* endpoint : endpoints) {
         if (endpoint->kind == LogicalCommandKind::Set) {
-            command(builder, *endpoint, planId);
+            command(builder, *endpoint, planId, cutId);
         }
     }
     for (auto [pipe, guard] : barriers) {
@@ -166,7 +168,7 @@ void emitCut(OpBuilder& builder, ArrayRef<const PreparedLogicalEndpoint*> endpoi
     }
     for (const auto* endpoint : endpoints) {
         if (endpoint->kind == LogicalCommandKind::Wait) {
-            command(builder, *endpoint, planId);
+            command(builder, *endpoint, planId, cutId);
         }
     }
 }
@@ -182,6 +184,9 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
     if (failed(preflight(function, plan))) {
         return failure();
     }
+    if (plan.allocationCertificate && function->hasAttr(CyclicAllocationAttr)) {
+        return function.emitError("logical insertion cannot replace an existing allocation certificate");
+    }
     for (auto& stage : plan.preparation) {
         auto* target = stage.before->getBlock();
         target->getOperations().splice(stage.before->getIterator(), stage.code->getOperations());
@@ -191,8 +196,18 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
         cuts[endpoint.before].push_back(&endpoint);
     }
     OpBuilder builder(function.getContext());
+    uint64_t cutId = 0;
     for (const auto& cut : cuts) {
-        emitCut(builder, cut.second, plan.planId);
+        emitCut(builder, cut.second, plan.planId, cutId++);
+    }
+    if (plan.completeInvocation) {
+        function.walk([&](func::ReturnOp ret) {
+            builder.setInsertionPoint(ret);
+            builder.create<BarrierOp>(ret.getLoc(), PipeAttr::get(function.getContext(), PIPE::PIPE_ALL));
+        });
+    }
+    if (plan.allocationCertificate) {
+        function->setAttr(CyclicAllocationAttr, plan.allocationCertificate);
     }
     return success();
 }

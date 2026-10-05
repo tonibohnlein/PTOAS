@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Validate numerical templates and prepare their guards and source identities.
 #include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
+#include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Dominance.h"
@@ -226,18 +227,20 @@ private:
     }
     Value predicate(const EndpointRecipe& recipe, Location location)
     {
-        auto delay = number(recipe.displacement, location);
-        auto selected = compare(arith::CmpIPredicate::ult, ordinal, trips, location);
-        Value boundary;
-        if (recipe.kind == EndpointKind::Set) {
-            auto remaining = builder.create<arith::SubIOp>(location, trips, delay);
-            auto hasTarget = compare(arith::CmpIPredicate::ult, delay, trips, location);
-            auto beforeEnd = compare(arith::CmpIPredicate::ult, ordinal, remaining, location);
-            boundary = builder.create<arith::AndIOp>(location, hasTarget, beforeEnd);
-        } else {
-            boundary = compare(arith::CmpIPredicate::uge, ordinal, delay, location);
+        // The command's cut is inside an executed outer iteration. Its ordinal
+        // is already in range; only the partner's presence needs a test.
+        Value selected = builder.create<arith::ConstantIntOp>(location, 1, 1);
+        if (recipe.displacement) {
+            auto delay = number(recipe.displacement, location);
+            if (recipe.kind == EndpointKind::Set) {
+                auto remaining = builder.create<arith::SubIOp>(location, trips, delay);
+                auto hasTarget = compare(arith::CmpIPredicate::ult, delay, trips, location);
+                auto beforeEnd = compare(arith::CmpIPredicate::ult, ordinal, remaining, location);
+                selected = builder.create<arith::AndIOp>(location, hasTarget, beforeEnd);
+            } else {
+                selected = compare(arith::CmpIPredicate::uge, ordinal, delay, location);
+            }
         }
-        selected = builder.create<arith::AndIOp>(location, selected, boundary);
         const auto type = recipe.kind == EndpointKind::Set ? recipe.source : recipe.target;
         for (auto coordinate : plan.anchors[type].coordinates) {
             auto induction = coordinate.loop.getInductionVar();
@@ -262,7 +265,10 @@ private:
                 identity = ordinal;
             } else if (recipe.kind == EndpointKind::Wait) {
                 kind = LogicalCommandKind::Wait;
-                identity = builder.create<arith::SubIOp>(location, ordinal, number(recipe.displacement, location));
+                identity = ordinal;
+                if (recipe.displacement) {
+                    identity = builder.create<arith::SubIOp>(location, ordinal, number(recipe.displacement, location));
+                }
             }
             prepared.endpoints.push_back({group.cut.before, kind,
                 static_cast<uint32_t>(plan.anchors[recipe.source].phase->kPipeValue),
@@ -283,7 +289,12 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplateInsertion(
         return failure();
     }
     auto prepared = std::make_unique<PreparedLogicalPlan>(planId);
+    prepared->completeInvocation = !node->numericTemplate->emptyInvocation;
     EndpointPreparer(*node->logicalEndpoints, *prepared).run();
+    if (node->periodicAllocation && node->periodicAllocation->error.empty()) {
+        prepared->allocationCertificate = encodeCyclicAllocation(*node->periodicAllocation, planId,
+                                                                 function.getContext());
+    }
     return prepared;
 }
 } // namespace mlir::pto::frontiersynch

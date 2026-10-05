@@ -29,7 +29,8 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "func::FuncOp"> {
   let description = [{
     Computes exact minimum demands for supported numerical periodic templates
     and inserts guarded logical SET/WAIT pairs and same-pipe barriers at their
-    original cuts. Preserves payloads and loop structure. Unsupported inputs
+    original cuts, with a terminal completion barrier for whole-function plans.
+    Preserves payloads and loop structure. Unsupported inputs
     fail before insertion. Physical event-ID allocation is a separate pass;
     logical commands cannot be lowered to hardware synchronization directly.
   }];
@@ -39,6 +40,22 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "func::FuncOp"> {
       "Distinct GM root assumption: may-not-alias or may-alias">
   ];
   let dependentDialects = ["mlir::pto::PTODialect", "mlir::scf::SCFDialect", "mlir::arith::ArithDialect"];
+}
+
+def PTOFrontierAllocate : Pass<"pto-frontier-allocate", "func::FuncOp"> {
+  let summary = "Allocate physical event IDs without changing logical handoffs";
+  let description = [{
+    Consumes the cyclic allocation certificate emitted by frontier analysis.
+    Allocates the supplied eligible IDs independently per direction and lowers logical
+    SET/WAIT commands. Fails before mutation if the certificate is unavailable,
+    invalid, or its budgets do not fit. No shared-pool optimization or repair.
+    Run directly after frontier analysis, before changing its certified plan.
+  }];
+  let constructor = "mlir::pto::createPTOFrontierAllocatePass()";
+  let options = [ListOption<"eligibleIds", "eligible-ids", "int64_t",
+    "Available numeric IDs from 0..5; 6 and 7 are reserved; each number supports every legal direction",
+    "::llvm::cl::ZeroOrMore">];
+  let dependentDialects = ["mlir::pto::PTODialect", "mlir::arith::ArithDialect", "mlir::scf::SCFDialect"];
 }
 
 // Define PTOInsertSync Pass

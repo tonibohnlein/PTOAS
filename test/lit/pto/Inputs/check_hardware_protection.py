@@ -77,7 +77,7 @@ def ir_checks(tool, source):
                 assert not any(groups), 'below-threshold shapes must retain barriers'
             trace = json.loads(invoke(tool, '--insertion-trace', path))
             validate(template, trace)
-            barriers = sum(e['kind'] == 'barrier' for e in trace['events'])
+            barriers = sum(e['kind'] == 'barrier' and e['pipe'] != 6 for e in trace['events'])
             assert barriers == (3 if expected else 7), (width, barriers)
         # A5 geometry uses a different left-tile layout; A2/A3 protection does not apply.
         text = original.replace('"a3"', '"a5"').replace('left, 32x16xf16, slayout=',
