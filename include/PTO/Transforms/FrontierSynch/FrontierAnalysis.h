@@ -11,6 +11,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_FRONTIERANALYSIS_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_FRONTIERANALYSIS_H
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
+#include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
 namespace mlir::pto::frontiersynch {
 class FrontierAnalysis {
 public:
@@ -19,6 +20,8 @@ public:
     // Build and cache the whole-function arithmetic candidate only on request.
     // Requires successful initialization; uses fixed class limits, not input-derived limits.
     LogicalResult recognizeArithmetic();
+    LogicalResult analyzeExplicitFunction();
+    const ExplicitAnalysis* explicitResult() const { return explicitAnalysis ? &*explicitAnalysis : nullptr; }
     const SyncInput* input() const { return program ? storage.get() : nullptr; }
     const ProgramRecognition* result() const { return program ? &*program : nullptr; }
 private:
@@ -27,6 +30,7 @@ private:
     GMAliasPolicy policy = GMAliasPolicy::MayNotAlias;
     std::unique_ptr<SyncInput> storage;
     std::optional<ProgramRecognition> program;
+    std::optional<ExplicitAnalysis> explicitAnalysis;
 };
 } // namespace mlir::pto::frontiersynch
 #endif

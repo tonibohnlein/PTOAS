@@ -2,8 +2,10 @@
 
 ## Active implementation
 
-The current executable route is a whole-function numerical template followed
-by periodic demand reduction, logical insertion and allocation without repair.
+The executable routes are whole-function explicit analysis and numerical-template
+periodic analysis. Both use common logical insertion. Physical allocation remains
+available for certified numerical templates; the new explicit route stops at
+logical insertion.
 The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
 
 | Stage | Entry point and implementation |
@@ -11,6 +13,7 @@ The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
 | Shared physical access extraction | `SyncInput::build`, in `InsertSync/`; consumed by both synchronization passes |
 | Structure and route checks | `FrontierAnalysis::initialize`, `ProgramRecognition.cpp`, `PhaseIndex.cpp` |
 | Numerical effect template | `NumericTemplate.cpp`, `NumericTemplateControl.cpp`, `NumericTemplateEffects.cpp`, `NumericTemplateStorage.cpp` |
+| Explicit scan, ranks and boundaries | `ExplicitAnalysis.cpp`, `ExplicitReduction.cpp`, `LifetimeScan.cpp` |
 | Exact generators and reduction | `NumericTemplateAnalysis.cpp`, `LifetimeScan.cpp`, `PeriodicDemandGraph.cpp`, `PeriodicFrontier.cpp` |
 | Endpoint preparation and insertion | `NumericTemplateEndpoints.cpp`, `NumericTemplateInsertion.cpp`, `LogicalInsertion.cpp` |
 | Reuse certificate and physical IDs | `PeriodicAllocation.cpp`, `AllocationCertificate.cpp`, `PhysicalAllocation.cpp` |
@@ -25,6 +28,115 @@ numerical insertion path does not. This avoids constructing an unused
 arithmetic candidate without changing the periodic result or adding a compiler
 mode. Arithmetic and guarded recognizers remain tested library functionality;
 they do not yet provide an alternative production insertion backend.
+
+## Next implementation milestones
+
+These milestones concern exact demand analysis in current Section 5; Section 4
+supplies direct insertion. Both extend the existing production pass. Recognition
+alone is not completion: an accepted route must compute demands and prepare the
+endpoint code needed by its caller. Neither milestone changes physical allocation
+or scarcity repair.
+
+### Milestone 1: complete the explicit straight-line route
+
+**Scope.** A supplied sequence of payload occurrences with resolved control and
+exact effects. Straight-line functions qualify; a known loop bound does not by
+itself authorize unrolling. Unresolved `if/else` is a separate guarded case.
+Fuse adjacent explicit children before analysis, but initially insert only when
+the accepted result covers the whole function. A child result cannot justify
+insertion without accounting for crossings with its surrounding regions.
+
+**Reuse.** `SyncInput`, `PhaseIndex`, the explicit recognizer,
+`scanStorageLifetimes`, shared hardware protection, and `PreparedLogicalPlan` /
+`insertLogicalSynchronization` already exist. The dedicated explicit rank reducer and route adapter now connect
+these components to production logical insertion.
+
+**Deliver.**
+
+1. Adapt shared exact ranges to one physical-cell partition, preserving overlaps
+   across distinct SSA roots and the configured GM alias policy. Retain payload
+   occurrence identities, pipes and legal cuts. Reuse shared geometry code.
+2. Run the existing lifetime scan, including supplied prerequisites, then add
+   the Section 5.2 completion-rank reducer. Return the retained demands and
+   required completion frontiers; keep storage boundary state for later reuse.
+3. Prepare logical SET/WAIT endpoints and coalesced local barriers through the
+   existing insertion interface. Recognize the paper's local-adjacency scope;
+   do not silently replace an out-of-scope local requirement with stronger order.
+4. Select this route in the existing pass for eligible straight-line functions.
+   Missing premises leave the original IR intact and report the unmet contract.
+
+**Acceptance.** Compare generator closure, minimum demands and frontier rows
+against an independent all-conflict graph on small examples and generated
+executions. Include RAW/WAR/WAW, RMW, cross-buffer transitive paths, physical
+reuse across roots, exact subregions, shared hardware protection, empty input,
+and rejected unknown effects. Check emitted logical edges and original payload
+preservation. Once cell incidences are supplied, scan, reduction and insertion
+have expected cost `O(n+c+e+nk+k|F*|)`; report range partitioning separately.
+No quadratic conflict graph is built by the production route.
+
+**Implemented contract.** Whole-function explicit input uses the exact enumerated
+physical cells already provided by `SyncStorageEffects`. Symbolic geometry,
+including unresolved GM base relationships, is rejected; the adapter does not
+infer disjointness from distinct SSA roots or bypass the configured alias policy.
+The pure scan/reducer supports supplied forward prerequisites; the current MLIR
+adapter rejects additional value prerequisites that it does not model and supplies
+only storage generators. It preserves starts and completions as distinct events.
+Boundary identities and rank rows are retained for reuse, but regional composition
+and an all-event query adapter are not implemented by this milestone.
+
+**Validation.** The independent reducer oracle covers 402 valid and five invalid
+inputs. The MLIR integration checks physical reuse across SSA roots, subviews,
+disjoint bytes, actual endpoint cuts, hardware-protected accumulation, empty
+functions and rejection of symbolic effects/nonadjacent local demands. Shared
+range partitioning and original-IR traversal costs are additional to the bound
+above. All three milestone reviews must accept before completion.
+
+### Milestone 2: make rotating-footprint recognition executable directly
+
+**Scope.** The paper's fixed-body, constant rotating-footprint language, with
+exact disjoint slot families, a common stride per family and fixed within-slot
+atoms. Trip count may remain symbolic. This is a generic access contract, not a
+GEMM recognizer or a theorem for arbitrary nested-loop composition. Immutable
+guarded offsets remain a subsequent circuit-backend extension.
+
+**Reuse.** Rotating recognition, scalar selector normalization, numerical
+weighted-quotient reduction and common logical insertion already exist. The
+current production numerical-template route scans a concrete effect word;
+it does not implement the paper's direct circular-phase generator extractor.
+
+**Deliver.**
+
+1. Export a normalized compact family/fragment contract. Certify regular slot
+   geometry from its supplied layout where possible, without enumerating all
+   slots; retain an explicit unmet obligation for unsupported geometry.
+2. Implement GCD/residue grouping, modular phases, sorting and circular writer
+   scans from the rotating-footprint theorem. Generate and deduplicate the
+   sparse RAW/WAR/WAW records, then reduce their union across all families.
+3. Feed these records to the existing quotient reducer, preserving the derived
+   period-one and refresh-distance certificate. Do not expand the trip count,
+   the numerical dependence distance or the joint address period.
+4. Adapt the retained records to the common endpoint interface, including zero
+   trips, first/last iterations and nonzero lower bounds/positive steps. Publish
+   each available query/selector interface explicitly; a missing regional export
+   must prevent composition from treating this as a complete child result.
+5. Enable logical insertion for a qualifying whole-loop function, with the
+   existing invocation-completion policy. Reuse the explicit route as the
+   independent finite-execution comparison, not as the production implementation.
+
+**Acceptance.** Compare finite unfoldings with the explicit route and independent
+conflict oracle. Include mixed 2/3/5-slot families, noncoprime strides, stationary
+storage, offset selectors, RMW, partial exact atoms, and trips shorter than a
+refresh period. A large encoded slot count/distance must leave the extractor's
+record count and quotient size independent of its numerical value. Extraction
+has `O(A log(A+1))` arithmetic/comparison work after per-family preprocessing;
+state geometry-recovery and integer bit costs separately. Endpoint tests verify
+matching and absence of terminal unmatched notifications.
+
+After these milestones, explicit and constant rotating inputs have real
+analysis-and-insertion backends. Finite guarded reduction, immutable guarded
+rotating circuits, arithmetic reduction/selector synthesis, and regional
+composition remain separate milestones; an applicable recognizer alone does
+not establish their implementation.
 
 ## Recognizer interfaces
 
@@ -74,21 +186,30 @@ enclosing loop.
 
 ## Rotating storage
 
-The first loop recognizer accepts canonical `scf.for` loops with lower bound
-zero, step one, no loop-carried SSA arguments, and a fixed body without nested
-regions or ambiguous phase order. The upper bound may be a parameter, including
-an enclosing invocation's parameter; no enumeration of its values is needed.
-Within-loop conditionals require a different guarded route and are not silently
-flattened. An enclosing loop containing an inner loop is rejected by this
-recognizer even if the inner loop qualifies independently.
+The rotating recognizer accepts `scf.for` loops with a constant nonnegative
+lower bound, a constant positive step, no loop-carried SSA arguments, and a
+fixed body without nested regions or ambiguous phase order. It normalizes the
+induction variable to an iteration ordinal. The upper bound may be a parameter;
+no enumeration of its values is needed. Within-loop conditionals use the guarded
+route. An enclosing loop containing an inner loop is rejected by this recognizer
+even if the inner loop qualifies independently.
 
 An access identifies a fixed physical allocation or a `multi_tile_get` family.
-Constant slots and `iv rem slot_count` (signed or unsigned, with nonnegative
-canonical induction) are recognized. Simple constant-stride/offset numerators
-are normalized to `(stride * iv + offset) mod slot_count`, but currently carry
-an `index-arithmetic` obligation: algebraic normalization alone does not prove
-equivalence under machine overflow and signed remainder. Runtime moduli,
-loop-carried selectors and unsupported expression forms are not accepted.
+The shared scalar analysis recovers constant-stride/offset selectors modulo a
+fixed slot count when integer semantics justify the normalization. Low-bit
+masks such as `i & 1` also express modulo a power of two, including for negative
+operands and with the constant on either side. The rotating recognizer additionally
+handles wrapping additions, subtractions and constant multiplications under an
+unsigned power-of-two remainder or its equivalent mask. This preserves the low
+bits without assuming that the intermediate arithmetic does not overflow.
+Unproved signed remainders, arbitrary masks, runtime moduli and loop-carried
+selectors remain unsupported. Invariant parameter offsets use the guarded route.
+
+`sync_recognition_rotation_extended.pto` checks masked parameter offsets and
+rejects noncontiguous masks. `sync_recognition_arithmetic_extended.pto` checks
+the resulting byte relations against concrete accesses, including negative
+masked operands. This extends recognition; it does not add arithmetic reduction
+or guarded endpoint synthesis.
 
 The recognizer records each fragment's family, normalized stride and offset,
 slot count, and candidate refresh distance `slots / gcd(stride, slots)`.
@@ -119,10 +240,11 @@ finite guarded analysis class, but recognition does not establish that paired
 synchronization endpoints can evaluate their guards. Predicate evaluation must
 respect the parent path, particularly for values defined inside an arm.
 
-The guarded rotating variant permits nested conditionals in the canonical loop
-body only when their conditions are available before the loop. This sufficient
-check establishes immutable participation across iterations. It does not try
-to prove invariance of expressions defined inside the loop. The same physical
+The guarded rotating variant permits nested conditionals when their conditions
+are available before the loop or can be recomputed there using a retained recipe
+of invariant, safely speculatable expressions. This check establishes immutable
+participation across iterations; predicates that depend on the induction
+variable do not satisfy it. The same physical
 slot and footprint checks as the unguarded route apply. No retention circuits
 or guarded endpoint code are generated yet.
 
