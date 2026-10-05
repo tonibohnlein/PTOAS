@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
+#include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "llvm/ADT/MapVector.h"
 namespace mlir::pto::frontiersynch {
@@ -118,6 +119,17 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         if (!rotatingPatterns(child, analysis, *node.rotatingResult)) { return false; }
         child.periodic = std::move(analysis.periodic);
         child.endpoints = std::move(analysis.endpoints);
+    } else if (node.guardedRotatingResult &&
+               node.guardedRotatingResult->result.state == RecognitionState::Applicable) {
+        auto analysis = analyzeGuardedRotating(child.loop, *input, *node.guardedRotatingResult, arena);
+        if (!analysis.error.empty()) { return fail(analysis.error); }
+        std::string exportError;
+        auto regional = guardedRotatingRegionalResult(function, *input, analysis, exportError);
+        if (failed(regional)) { return fail(exportError); }
+        child.regional = std::move(*regional);
+        child.anchors = child.regional.anchors;
+        children.push_back(std::move(child));
+        return true;
     } else {
         auto numeric = recognizeRegionalNumericTemplate(child.loop, index, *input);
         if (numeric.result.state != RecognitionState::Applicable) {

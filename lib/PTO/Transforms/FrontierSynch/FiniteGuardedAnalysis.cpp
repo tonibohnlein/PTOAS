@@ -160,6 +160,7 @@ RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analys
                 state->arena->eq(a.ordinal, zero), state->arena->eq(b.ordinal, zero)));
     };
     out.prepare = [state]() { return state->prepare(); };
+    out.prepareFiltered = [state](const RegionalDemandFilter& filter) { return state->prepare(filter); };
     return out;
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedInsertion(FiniteGuardedAnalysis& analysis)

@@ -9,12 +9,14 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_GUARDEDROTATINGINSERTION_H
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/RegionalAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 namespace mlir::pto::frontiersynch {
 // Prepare compact endpoints, hoisting immutable decisions before the loop.
 // Failure leaves original IR unchanged, including failed availability checks.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGuardedRotatingEndpoints(
-    func::FuncOp function, GuardedRotatingAnalysis& analysis, std::string& error);
+    func::FuncOp function, GuardedRotatingAnalysis& analysis, std::string& error,
+    const RegionalDemandFilter& filter = {});
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGuardedRotatingInsertion(
     func::FuncOp function, const SyncInput& input, const ProgramRecognition& program);
 } // namespace mlir::pto::frontiersynch

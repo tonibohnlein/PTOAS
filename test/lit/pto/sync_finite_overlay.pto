@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --finite-overlay-checks | FileCheck %s
+// CHECK: finite overlay checked 1152 event pairs across 32 contexts
+// RUN: %python %S/Inputs/check_finite_overlay_insertion.py pto-sync-input-test %s
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+!right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+!vec = !pto.tile_buf<vec, 2x64xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func @overlay(%guard: i1, %scalar: f32) attributes {test.trace_arguments = array<i64: 0, 0>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    %vec = pto.alloc_tile addr = %base : !vec
+    pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+    pto.tadds ins(%vec, %scalar : !vec, f32) outs(%vec : !vec)
+    pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+    return
+  }
+}
