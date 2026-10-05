@@ -38,9 +38,10 @@ bool adjacent(GuardedRotatingAnalysis& analysis, std::size_t record)
 }
 class Preparer {
 public:
-    Preparer(func::FuncOp function, GuardedRotatingAnalysis& analysis, PreparedLogicalPlan& plan, std::string& error)
+    Preparer(func::FuncOp function, GuardedRotatingAnalysis& analysis, PreparedLogicalPlan& plan, std::string& error,
+             const RegionalDemandFilter& filter)
         : function(function), analysis(analysis), plan(plan), arena(*analysis.expressions),
-          builder(function.getContext()), error(error) {}
+          builder(function.getContext()), error(error), filter(filter) {}
     LogicalResult run()
     {
         auto loop = analysis.loop;
@@ -95,7 +96,11 @@ private:
     Value tripValue;
     std::vector<Invariant> invariants;
     std::string& error;
-    struct Cut { Block* block = nullptr; llvm::DenseMap<Expr, Value> memo; };
+    const RegionalDemandFilter& filter;
+    struct Cut {
+        Block* block = nullptr;
+        RegionExpressions::CutEmission context;
+    };
     std::map<Operation*, Cut> cuts;
     LogicalResult endpoint(const Invariant& item, bool publish, bool local)
     {
@@ -107,16 +112,28 @@ private:
         if (!cut.block) { cut.block = &plan.addPreparation(before); }
         builder.setInsertionPointToEnd(cut.block);
         auto retained = analysis.periodic.retained[item.record];
-        cut.memo[retained] = item.retained;
-        cut.memo[edge.displacement] = item.distance;
-        cut.memo[trips] = tripValue;
+        cut.context.values[retained] = item.retained;
+        cut.context.values[edge.displacement] = item.distance;
+        cut.context.values[trips] = tripValue;
         // At a visited body cut ordinal < trips. Subtract before comparing to
         // avoid an overflowing source ordinal + displacement.
         auto available = publish ? arena.lt(edge.displacement, arena.sub(trips, ordinal)) :
                                    arena.le(edge.displacement, ordinal);
-        auto guard = arena.emit(arena.land(retained, available), builder, before, cut.memo);
+        auto guardExpression = arena.land(retained, available);
+        if (filter) {
+            auto sourceOrdinal = publish ? ordinal : arena.sub(ordinal, edge.displacement);
+            auto targetOrdinal = publish ? arena.add(ordinal, edge.displacement) : ordinal;
+            auto condition = filter({edge.source, sourceOrdinal, PeriodicEventKind::Completion},
+                                    {edge.target, targetOrdinal, PeriodicEventKind::Start});
+            if (!condition || !arena.isBoolean(*condition)) { return failure(); }
+            guardExpression = arena.land(guardExpression, *condition);
+        }
+        // A filter can introduce predicates beyond the loop invariants. Reuse
+        // seeded values and the same safe contextual replay rules as regions.
+        auto guard = filter ? arena.emitContextual(guardExpression, builder, before, cut.context) :
+                              arena.emit(guardExpression, builder, before, cut.context.values);
         auto identity = arena.emit(publish ? ordinal : arena.sub(ordinal, edge.displacement),
-                                   builder, before, cut.memo);
+                                   builder, before, cut.context.values);
         if (failed(guard) || failed(identity)) { return failure(); }
         auto kind = local ? LogicalCommandKind::Barrier :
                     publish ? LogicalCommandKind::Set : LogicalCommandKind::Wait;
@@ -129,24 +146,36 @@ private:
     {
         const auto& edge = analysis.generators[item.record];
         const bool local = analysis.payloads[edge.source].pipe == analysis.payloads[edge.target].pipe;
+        auto* source = analysis.phases[edge.source]->elementOp;
+        auto* target = analysis.phases[edge.target]->elementOp;
+        EndpointFamily family;
+        family.id = static_cast<uint32_t>(item.record);
+        family.sourcePipe = analysis.payloads[edge.source].pipe;
+        family.targetPipe = analysis.payloads[edge.target].pipe;
+        family.local = local;
+        family.sourceCut = {source->getBlock(), source->getNextNode()};
+        family.targetCut = {target->getBlock(), target};
+        family.members.push_back({static_cast<uint32_t>(item.record), edge.source, edge.target, {}, {}});
+        plan.families.push_back(std::move(family));
         if (!local && failed(endpoint(item, true, false))) { return failure(); }
         return endpoint(item, false, local);
     }
 };
 } // namespace
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGuardedRotatingEndpoints(
-    func::FuncOp function, GuardedRotatingAnalysis& analysis, std::string& error)
+    func::FuncOp function, GuardedRotatingAnalysis& analysis, std::string& error,
+    const RegionalDemandFilter& filter)
 {
     if (!analysis.error.empty() || !analysis.loop || !analysis.expressions ||
         analysis.generators.size() != analysis.periodic.retained.size() ||
-        analysis.generators.size() > static_cast<std::size_t>(INT64_MAX)) {
+        analysis.generators.size() >= static_cast<std::size_t>(UINT32_MAX)) {
         error = "guarded rotating analysis has no valid endpoint contract";
         return failure();
     }
     auto plan = std::make_unique<PreparedLogicalPlan>(0);
     plan->completeInvocation = !analysis.phases.empty();
     for (auto* phase : analysis.phases) { analysis.expressions->forbidRecomputation(phase->elementOp); }
-    if (failed(Preparer(function, analysis, *plan, error).run())) {
+    if (failed(Preparer(function, analysis, *plan, error, filter).run())) {
         if (error.empty()) {
             error = "guarded rotating endpoint invariants or bounds unavailable: " + analysis.expressions->error();
         }

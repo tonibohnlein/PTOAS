@@ -5,19 +5,18 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-#ifndef PTO_TRANSFORMS_FRONTIERSYNCH_GUARDEDROTATINGINSERTION_H
-#define PTO_TRANSFORMS_FRONTIERSYNCH_GUARDEDROTATINGINSERTION_H
+#ifndef PTO_TRANSFORMS_FRONTIERSYNCH_GUARDEDROTATINGREGIONAL_H
+#define PTO_TRANSFORMS_FRONTIERSYNCH_GUARDEDROTATINGREGIONAL_H
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 namespace mlir::pto::frontiersynch {
-// Prepare compact endpoints, hoisting immutable decisions before the loop.
-// Failure leaves original IR unchanged, including failed availability checks.
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGuardedRotatingEndpoints(
-    func::FuncOp function, GuardedRotatingAnalysis& analysis, std::string& error,
-    const RegionalDemandFilter& filter = {});
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGuardedRotatingInsertion(
-    func::FuncOp function, const SyncInput& input, const ProgramRecognition& program);
+// Export one counted immutable region on its existing expression arena. This
+// requires a finite encoded physical slot table, charged separately from the
+// compact periodic analysis. No iterations, offset values or guards are expanded.
+// The returned callbacks own the analysis and internal endpoint recipes. Original
+// IR and SyncInput phase anchors must remain alive and unchanged, as for all
+// regional exports. Preparation is detached and adds no invocation completion.
+FailureOr<RegionalAnalysis> guardedRotatingRegionalResult(func::FuncOp function, const SyncInput& input,
+    const GuardedRotatingAnalysis& analysis, std::string& error);
 } // namespace mlir::pto::frontiersynch
 #endif

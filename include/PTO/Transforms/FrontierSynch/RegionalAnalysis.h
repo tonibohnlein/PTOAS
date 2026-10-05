@@ -28,6 +28,7 @@ struct RegionalEvent {
     RegionExpressions::Id ordinal = 0;
     PeriodicEventKind kind = PeriodicEventKind::Start;
 };
+using RegionalDemandFilter = std::function<std::optional<RegionExpressions::Id>(RegionalEvent, RegionalEvent)>;
 struct RegionalSelector { RegionalEvent event; RegionExpressions::Id present = 0; };
 struct RegionalStorageBoundary {
     SyncStorageCell cell;
@@ -58,6 +59,10 @@ struct RegionalAnalysis {
     // Preparation is detached, adds no boundary drains, and cannot invalidate
     // the query/selector result if an endpoint-placement obligation fails.
     std::function<FailureOr<std::unique_ptr<PreparedLogicalPlan>>()> prepare;
+    // Optional overlay contract: refine each base cover before emitting either
+    // endpoint. Both sides query the same actual completion/start pair, using
+    // the inverse endpoint map at WAIT. Failure leaves original IR unchanged.
+    std::function<FailureOr<std::unique_ptr<PreparedLogicalPlan>>(const RegionalDemandFilter&)> prepareFiltered;
 };
 } // namespace mlir::pto::frontiersynch
 #endif

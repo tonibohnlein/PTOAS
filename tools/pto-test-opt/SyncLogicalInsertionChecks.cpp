@@ -338,6 +338,11 @@ llvm::json::Object Interpreter::run(func::FuncOp function)
         {"payloads", payloads}, {"outer_trips", outerTrips}, {"visits", visits}, {"events", std::move(events)}};
 }
 } // namespace
+llvm::json::Object traceStructuredLogicalInsertion(func::FuncOp function,
+    ArrayRef<const mlir::pto::CompoundInstanceElement*> phases)
+{
+    return Interpreter(phases).run(function);
+}
 llvm::json::Object traceLogicalInsertion(func::FuncOp function, const fs::NumericTemplate& input)
 {
     return Interpreter(input).run(function);

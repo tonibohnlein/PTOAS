@@ -10,6 +10,8 @@
 #define PTO_TEST_SYNC_LOGICAL_INSERTION_CHECKS_H
 #include "PTO/Transforms/FrontierSynch/NumericTemplate.h"
 #include "llvm/Support/JSON.h"
+llvm::json::Object traceStructuredLogicalInsertion(mlir::func::FuncOp function,
+    mlir::ArrayRef<const mlir::pto::CompoundInstanceElement*> phases);
 llvm::json::Object traceLogicalInsertion(mlir::func::FuncOp function,
                                         const mlir::pto::frontiersynch::NumericTemplate& input);
 mlir::LogicalResult runLogicalInsertionChecks(mlir::func::FuncOp function, mlir::pto::GMAliasPolicy policy,

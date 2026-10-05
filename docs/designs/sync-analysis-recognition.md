@@ -53,7 +53,7 @@ Physical allocation and scarcity repair are separate.
 | M6 | Immutable guarded rotating extraction, parameterized quotient circuits, and executable logical endpoints | Implemented; three reviews accepted |
 | M7 | Difference-bound reduction, endpoint selectors, and route integration | Implemented; three reviews accepted |
 | M8 | Integer octagon and bounded-coefficient reduction and selectors | Implemented; three reviews accepted |
-| M9 | Mixed regional composition and finite overlays using the implemented exports | Pending |
+| M9 | Mixed regional composition and finite overlays using the implemented exports | Implemented; three reviews accepted |
 
 M5 retains unknown geometry and alias relationships as explicit obligations.
 Operation-specific access semantics belong to the shared IR interface consumed
@@ -260,6 +260,62 @@ and steps retain their existing route.
 Validation and review evidence are recorded in `.local/route-completion-m8/`.
 This milestone adds logical analysis and insertion. It does not supply physical
 allocation certificates or solve general repeated nested-region composition.
+
+### M9 mixed regions and finite overlays
+
+The sequence composer now accepts immutable guarded rotating children alongside
+explicit, numerical periodic and finite guarded children. The guarded producer
+exports its existing shared reachability circuits, exact physical-cell boundary
+selectors and detached internal endpoint recipes into the common regional
+interface. Parameter offsets remain expressions. Zero trips disable selectors;
+restarting a later sibling loop preserves storage identity across the boundary.
+The composer partitions overlapping ranges together and reduces all crossings.
+
+The export enumerates the finite physical slot table, not dynamic iterations.
+Identical raw offsets share a poison-safe active-user mask; constructing these
+masks takes O(F log(F+1)) map work and O(F) Boolean nodes for F fragments.
+For V materialized fragment-slot visits and C cells, partitioning costs
+O(V log V), cell incidence scanning O(CV), and selector comparisons
+sum_c O(U_c^2), where U_c counts visits covering cell c. Modular multiplication
+adds O(log B) circuit operations per visit for slot count B. Native boundary
+selection costs O(m^2). The existing shared port-graph composition costs remain
+charged separately. Arbitrary nested arithmetic tuples still require regional
+selector/query adapters; a recognized whole-region arithmetic result alone
+is not accepted as a child export.
+
+`analyzeFiniteOverlay` implements the supplied-base-plus-finite-exception
+contract. Every exception identifies at most one actual edge per context in the
+unchanged base occurrence frame. It checks endpoint presence and forward order,
+constructs one shared port closure, deduplicates conditionally identical endpoint
+pairs and refines both base and added retention guards. It preserves storage
+selectors and wraps required-order queries. It does not infer that a proposed
+decomposition covers the physical effects, discover arbitrary exception sets,
+or treat an unbounded exception family as a finite list.
+
+Filtered endpoint preparation is an optional regional export, implemented by
+finite guarded and guarded rotating producers. Both SET and inverse WAIT apply
+the filter to the same actual source/target pair before emission. The overlay
+adapter retains endpoint maps and matching identities, checks availability at
+original cuts, and drops inherited allocation certificates. Its result can be
+supplied to sequence composition. Producers without filtered recipes cannot
+claim executable overlay insertion. Further nested overlays need a new filtered
+export from their producer; the query-only wrapper does not invent it.
+
+For P overlay ports, preprocessing takes O(P^2 q + P^3) query/circuit work.
+Each query or base retention evaluation adds O((P+1)q + P^2) work for base-query
+cost q, with logarithmic cache lookup factors. The r forwardness checks cost
+O(rG) sufficient-implication work over G shared DAG nodes. Local-adjacency checks
+also charge their complete DAG scans. Per-cut emission/replay and generated
+output are charged separately; the guarded adapter shares its memo in place.
+No SAT enumeration or trip-count expansion is used. A missing adjacency or
+endpoint-availability proof leaves the input unchanged.
+
+Validation: 115 regression RUN checks passed, with five full-CLI checks skipped.
+Independent checks cover 100 mixed-region physical closures, 1,152 overlay event
+pairs, and ten finite/compact overlay insertion traces. The two frozen GEMM
+plans, four-ID allocation and C++ sizes remain unchanged. Architecture,
+correctness and performance reviews accepted; evidence is under
+`.local/route-completion-m9/`.
 
 ### Milestone 1: complete the explicit straight-line route
 
