@@ -69,3 +69,21 @@ func.func @wrong_ordinal_type(%ordinal: i64) {
     plan_id = 0 : i64, record_id = 0 : i64} : (i64) -> ()
   return
 }
+
+// -----
+
+func.func @wrong_set_member_type(%ordinal: index, %member: i64) {
+  // expected-error@+1 {{operand #1 must be variadic of index}}
+  "pto.logical_set"(%ordinal, %member) {src_pipe = #pto.pipe<PIPE_M>, dst_pipe = #pto.pipe<PIPE_FIX>,
+    plan_id = 0 : i64, record_id = 0 : i64} : (index, i64) -> ()
+  return
+}
+
+// -----
+
+func.func @wrong_wait_second_member_type(%ordinal: index, %member: index, %other: i32) {
+  // expected-error@+1 {{operand #2 must be variadic of index}}
+  "pto.logical_wait"(%ordinal, %member, %other) {src_pipe = #pto.pipe<PIPE_M>, dst_pipe = #pto.pipe<PIPE_FIX>,
+    plan_id = 0 : i64, record_id = 0 : i64} : (index, index, i32) -> ()
+  return
+}

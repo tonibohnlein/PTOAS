@@ -119,6 +119,15 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareExplicitInsertion(
             !source->getNextNode()) {
             return failure();
         }
+        EndpointFamily family;
+        family.id = record;
+        family.sourcePipe = sourcePipe;
+        family.targetPipe = targetPipe;
+        family.local = sourcePipe == targetPipe;
+        family.sourceCut = {source->getBlock(), source->getNextNode()};
+        family.targetCut = {target->getBlock(), target};
+        family.members.push_back({static_cast<uint32_t>(record), edge.source, edge.target, {}, {}});
+        plan->families.push_back(std::move(family));
         if (sourcePipe == targetPipe) {
             if (analysis.reduction.localRanks[edge.target] != analysis.reduction.localRanks[edge.source] + 1) {
                 function.emitError("explicit minimum demand violates adjacent same-pipe insertion contract");
@@ -133,6 +142,22 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareExplicitInsertion(
                                        record, enabled, identity});
         }
         ++record;
+    }
+    // Match the shared insertion rule: SETs, local barriers, then WAITs.
+    llvm::DenseMap<Operation*, std::size_t> orders;
+    for (auto kind : {LogicalCommandKind::Set, LogicalCommandKind::Barrier, LogicalCommandKind::Wait}) {
+        for (const auto& endpoint : plan->endpoints) {
+            if (endpoint.kind != kind) {
+                continue;
+            }
+            auto& family = plan->families[endpoint.record];
+            auto order = orders[endpoint.before]++;
+            if (kind == LogicalCommandKind::Set) {
+                family.sourceOrder = order;
+            } else {
+                family.targetOrder = order;
+            }
+        }
     }
     return plan;
 }

@@ -23,4 +23,21 @@ module {
     pto.logical_wait [#pto.pipe<PIPE_FIX>, #pto.pipe<PIPE_M>] plan 9223372036854775807 record 18 ordinal %ordinal
     return
   }
+
+  // Members distinguish simultaneous handoffs within one family. These operations
+  // remain separate even when canonicalization sees the same outer ordinal.
+  // CHECK-LABEL: func.func @family_members
+  // CHECK-SAME: %[[OUTER:[a-zA-Z0-9_]+]]: index, %[[X:[a-zA-Z0-9_]+]]: index, %[[Y:[a-zA-Z0-9_]+]]: index
+  // CHECK: pto.logical_set[<PIPE_M>, <PIPE_FIX>] plan 2 record 3 ordinal %[[OUTER]] members(%[[X]], %[[Y]])
+  // CHECK-NEXT: pto.logical_set[<PIPE_M>, <PIPE_FIX>] plan 2 record 3 ordinal %[[OUTER]] members(%[[Y]], %[[X]])
+  // CHECK-NEXT: pto.logical_wait[<PIPE_M>, <PIPE_FIX>] plan 2 record 3 ordinal %[[OUTER]] members(%[[X]], %[[Y]])
+  // CHECK-NEXT: pto.logical_wait[<PIPE_M>, <PIPE_FIX>] plan 2 record 3 ordinal %[[OUTER]] members(%[[Y]], %[[X]])
+  // CHECK-NEXT: return
+  func.func @family_members(%ordinal: index, %x: index, %y: index) {
+    pto.logical_set [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_FIX>] plan 2 record 3 ordinal %ordinal members(%x, %y)
+    pto.logical_set [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_FIX>] plan 2 record 3 ordinal %ordinal members(%y, %x)
+    pto.logical_wait [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_FIX>] plan 2 record 3 ordinal %ordinal members(%x, %y)
+    pto.logical_wait [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_FIX>] plan 2 record 3 ordinal %ordinal members(%y, %x)
+    return
+  }
 }
