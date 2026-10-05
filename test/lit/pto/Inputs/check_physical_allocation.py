@@ -111,8 +111,8 @@ def run_checks(tool, optimizer, source):
         for changed, expected in [
             (logical.replace('version = 1 : i64', 'version = 2 : i64'), 'malformed'),
             (logical.replace('budget = 2 : i64', 'budget = -1 : i64', 1), 'no finite'),
-            (logical.replace('plan 0 record', 'plan 1 record', 1), 'does not match'),
-            ('\n'.join(line for line in logical.splitlines() if 'pto.logical_wait' not in line), 'missing logical'),
+            (logical.replace('plan 0 record', 'plan 1 record', 1), 'disagrees with its executable piece certificate'),
+            ('\n'.join(line for line in logical.splitlines() if 'pto.logical_wait' not in line), 'no logical endpoint'),
         ]:
             path.write_text(changed)
             result = opt(optimizer, path, [allocate], success=False)

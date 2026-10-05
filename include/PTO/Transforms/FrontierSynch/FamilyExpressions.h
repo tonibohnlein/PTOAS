@@ -15,7 +15,7 @@ namespace mlir::pto::frontiersynch {
 struct FamilyExpressions {
     std::string error;
     Value present;
-    Value member; // Ordinal in the input list; meaningful only when present.
+    Value member; // Selected label (default: list ordinal); meaningful only when present.
 };
 // The caller establishes a 64-bit index layout and availability of every loop
 // induction value at the insertion point. Each tuple uses the same ordered loop
@@ -23,8 +23,12 @@ struct FamilyExpressions {
 // exact raw induction coordinates preserve environment-evaluated nested bounds.
 // Invalid inputs return an error without creating IR. Empty input denotes no
 // members; a singleton empty tuple denotes one unconditional member. Emitted
-// arithmetic is total even outside the exact member domain.
+// arithmetic is total even outside the exact member domain. Optional labels map
+// each coordinate tuple to its original record identity without requiring paired
+// endpoints to have the same piece partition. An empty label list means ordinals.
+// A nonzero modulus (at most six) selects labels modulo that modulus and permits
+// verified modular affine expressions; zero retains the exact-label mapping.
 FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location,
-    ArrayRef<SmallVector<TemplateCoordinate>> members);
+    ArrayRef<SmallVector<TemplateCoordinate>> members, ArrayRef<int64_t> labels = {}, uint64_t modulus = 0);
 } // namespace mlir::pto::frontiersynch
 #endif

@@ -17,6 +17,7 @@
 #include "llvm/ADT/MapVector.h"
 #include <map>
 #include <set>
+#include <tuple>
 namespace mlir::pto::frontiersynch {
 PreparedLogicalPlan::~PreparedLogicalPlan()
 {
@@ -76,6 +77,47 @@ private:
     DominanceInfo dominance;
     llvm::DenseMap<Value, Operation*> prepared;
 };
+LogicalResult validatePieces(func::FuncOp function, const PreparedLogicalPlan& plan,
+                             const std::map<uint32_t, const EndpointFamily*>& owners)
+{
+    using Namespace = std::tuple<uint32_t, uint32_t, uint64_t>;
+    std::map<Namespace, uint32_t> namespaces;
+    for (const auto& [record, family] : owners) {
+        namespaces.try_emplace({family->sourcePipe, family->targetPipe, family->displacement}, record);
+    }
+    std::map<uint32_t, unsigned> kinds;
+    std::set<int64_t> pieces;
+    for (const auto& endpoint : plan.endpoints) {
+        const bool local = endpoint.kind == LogicalCommandKind::Barrier;
+        const bool publish = endpoint.kind == LogicalCommandKind::Set;
+        if (endpoint.records.empty() || endpoint.piece < 0 || !pieces.insert(endpoint.piece).second ||
+            endpoint.memberCoordinates.size() != (local ? 0U : 1U)) {
+            return function.emitError("invalid endpoint-piece identity or member selector");
+        }
+        for (auto record : endpoint.records) {
+            auto found = owners.find(record);
+            if (found == owners.end()) {
+                return function.emitError("endpoint piece has an unknown original record");
+            }
+            const auto& family = *found->second;
+            const auto key = Namespace{family.sourcePipe, family.targetPipe, family.displacement};
+            const unsigned bit = 1U << static_cast<unsigned>(endpoint.kind);
+            if ((kinds[record] & bit) || family.local != local ||
+                endpoint.sourcePipe != family.sourcePipe || endpoint.targetPipe != family.targetPipe ||
+                endpoint.before != (publish ? family.sourceCut.before : family.targetCut.before) ||
+                endpoint.record != namespaces.at(key)) {
+                return function.emitError("endpoint piece does not match its original record");
+            }
+            kinds[record] |= bit;
+        }
+    }
+    for (const auto& [record, family] : owners) {
+        if (kinds[record] != (family->local ? 2U : 5U)) {
+            return function.emitError("endpoint-piece partition is missing a record side");
+        }
+    }
+    return success();
+}
 LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
 {
     if (plan.planId < 0 || !RegisteredOperationName::lookup("pto.logical_set", function.getContext()) ||
@@ -142,6 +184,7 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
     }
     if (!plan.families.empty()) {
         std::map<int64_t, const EndpointFamily*> owners;
+        std::map<uint32_t, const EndpointFamily*> recordOwners;
         std::set<uint32_t> originalRecords;
         std::set<uint32_t> familyIds;
         for (const auto& family : plan.families) {
@@ -156,6 +199,7 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
                 owners.emplace(family.id, &family);
             }
             for (const auto& member : family.members) {
+                recordOwners.emplace(member.record, &family);
                 if (!originalRecords.insert(member.record).second) {
                     return function.emitError("duplicate endpoint-family member");
                 }
@@ -173,6 +217,9 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
                     }
                 }
             }
+        }
+        if (plan.independentPieces) {
+            return validatePieces(function, plan, recordOwners);
         }
         std::map<int64_t, unsigned> kinds;
         for (const auto& endpoint : plan.endpoints) {
@@ -249,10 +296,34 @@ void serializeFamilies(func::FuncOp function, const PreparedLogicalPlan& plan,
             builder.getNamedAttr("target_cut", builder.getI64IntegerAttr(cutIds.lookup(family.targetCut.before))),
             builder.getNamedAttr("members", builder.getArrayAttr(members))}));
     }
+    SmallVector<Attribute> pieces;
+    if (plan.independentPieces) {
+        std::map<uint32_t, uint64_t> displacements;
+        for (const auto& family : plan.families) {
+            for (const auto& member : family.members) {
+                displacements.emplace(member.record, family.displacement);
+            }
+        }
+        for (const auto& endpoint : plan.endpoints) {
+            SmallVector<int64_t> records(endpoint.records.begin(), endpoint.records.end());
+            pieces.push_back(builder.getDictionaryAttr({
+                builder.getNamedAttr("id", builder.getI64IntegerAttr(endpoint.piece)),
+                builder.getNamedAttr("family", builder.getI64IntegerAttr(endpoint.record)),
+                builder.getNamedAttr("kind", builder.getI64IntegerAttr(static_cast<unsigned>(endpoint.kind))),
+                builder.getNamedAttr("cut", builder.getI64IntegerAttr(cutIds.lookup(endpoint.before))),
+                builder.getNamedAttr("source_pipe", builder.getI64IntegerAttr(endpoint.sourcePipe)),
+                builder.getNamedAttr("target_pipe", builder.getI64IntegerAttr(endpoint.targetPipe)),
+                builder.getNamedAttr("displacement",
+                                     builder.getI64IntegerAttr(displacements.at(endpoint.records.front()))),
+                builder.getNamedAttr("records", builder.getDenseI64ArrayAttr(records))}));
+        }
+    }
     function->setAttr("pto.endpoint_families", builder.getDictionaryAttr({
-        builder.getNamedAttr("version", builder.getI64IntegerAttr(plan.groupedFamilies ? 2 : 1)),
+        builder.getNamedAttr("version",
+                             builder.getI64IntegerAttr(plan.independentPieces ? 3 : (plan.groupedFamilies ? 2 : 1))),
         builder.getNamedAttr("plan", builder.getI64IntegerAttr(plan.planId)),
-        builder.getNamedAttr("families", builder.getArrayAttr(families))}));
+        builder.getNamedAttr("families", builder.getArrayAttr(families)),
+        builder.getNamedAttr("pieces", builder.getArrayAttr(pieces))}));
 }
 void command(OpBuilder& builder, const PreparedLogicalEndpoint& endpoint, int64_t planId, uint64_t cutId)
 {
@@ -268,6 +339,9 @@ void command(OpBuilder& builder, const PreparedLogicalEndpoint& endpoint, int64_
     state.addAttribute("dst_pipe", PipeAttr::get(builder.getContext(), static_cast<PIPE>(endpoint.targetPipe)));
     state.addAttribute("plan_id", builder.getI64IntegerAttr(planId));
     state.addAttribute("record_id", builder.getI64IntegerAttr(endpoint.record));
+    if (endpoint.piece >= 0) {
+        state.addAttribute("pto.endpoint_piece", builder.getI64IntegerAttr(endpoint.piece));
+    }
     builder.create(state);
 }
 void emitCut(OpBuilder& builder, ArrayRef<const PreparedLogicalEndpoint*> endpoints, int64_t planId, uint64_t cutId)
