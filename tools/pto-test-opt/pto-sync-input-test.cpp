@@ -140,7 +140,7 @@ LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &in
 void dumpRecognition(StringRef label, const pto::frontiersynch::RecognitionResult &result) {
   namespace fs = pto::frontiersynch;
   llvm::outs() << "recognize " << label << ": " << fs::recognitionName(result.state)
-               << " backend=" << (label == "explicit" || label == "rotating" ? "available" : "unavailable") << "\n";
+               << " backend=available\n";
   for (const auto &diagnostic : result.diagnostics) {
     llvm::outs() << "  issue " << fs::recognitionName(diagnostic.issue);
     if (diagnostic.anchor) {
@@ -213,7 +213,7 @@ LogicalResult recognize(func::FuncOp function, const pto::SyncInput &input, bool
   const auto& arithmetic = direct ? *direct : *cached->arithmetic;
   auto status = arithmetic.extraction.state == fs::RecognitionState::Applicable ?
                 arithmetic.recognition.state : arithmetic.extraction.state;
-  llvm::outs() << "recognize arithmetic: " << fs::recognitionName(status) << " backend=unavailable\n";
+  llvm::outs() << "recognize arithmetic: " << fs::recognitionName(status) << " backend=available\n";
   for (const auto &diagnostic : arithmetic.extraction.diagnostics) {
     llvm::outs() << "  issue " << fs::recognitionName(diagnostic.issue) << "\n";
   }
@@ -333,7 +333,19 @@ LogicalResult runRotatingAnalysisChecks(func::FuncOp function, const pto::SyncIn
 LogicalResult dumpExplicitAnalysis(func::FuncOp function, const pto::SyncInput& input);
 int runArithmeticSelectorChecks();
 int runArithmeticDemandChecks();
+int runIntegerRelationChecks();
+int runGeneralArithmeticSelectorChecks();
+int runGeneralArithmeticDemandChecks();
 int main(int argc, char **argv) {
+  if (argc == 2 && StringRef(argv[1]) == "--general-arithmetic-demand-checks") {
+    return runGeneralArithmeticDemandChecks();
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--integer-relations") {
+    return runIntegerRelationChecks();
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--general-arithmetic-selector-checks") {
+    return runGeneralArithmeticSelectorChecks();
+  }
   if (argc == 2 && StringRef(argv[1]) == "--arithmetic-demand-checks") {
     return runArithmeticDemandChecks();
   }

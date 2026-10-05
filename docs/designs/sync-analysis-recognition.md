@@ -4,7 +4,8 @@
 
 The executable routes are explicit analysis, numerical-template periodic
 analysis, direct and immutable guarded rotating-footprint analysis, exact
-sequence composition, and finite guarded analysis. They use common logical insertion. Physical allocation
+sequence composition, finite guarded analysis, and restricted arithmetic analysis.
+They use common logical insertion. Physical allocation
 remains available for certified numerical templates; the other routes require
 an allocation export before they can complete physical compilation.
 The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
@@ -19,6 +20,7 @@ The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
 | Explicit scan, ranks and boundaries | `ExplicitAnalysis.cpp`, `ExplicitReduction.cpp`, `LifetimeScan.cpp` |
 | Sequence composition and boundary reduction | `SequenceAnalysis.cpp`, `SequenceStorage.cpp`, `SequenceQueries.cpp`, `SequenceAdapters.cpp` |
 | Finite guarded closure and insertion | `FiniteGuardedAnalysis.cpp`, `FiniteGuardedQueries.cpp`, `FiniteGuardedInsertion.cpp` |
+| Restricted arithmetic reduction and selectors | `ArithmeticDemandAnalysis.cpp`, `DifferenceBoundRelations.cpp`, `IntegerRelations.cpp`, `ArithmeticSelectors.cpp`, `GeneralArithmeticSelectors.cpp` |
 | Exact generators and reduction | `NumericTemplateAnalysis.cpp`, `LifetimeScan.cpp`, `PeriodicDemandGraph.cpp`, `PeriodicFrontier.cpp` |
 | Endpoint preparation and insertion | `NumericTemplateEndpoints.cpp`, `NumericTemplateInsertion.cpp`, `LogicalInsertion.cpp` |
 | Reuse certificate and physical IDs | `PeriodicAllocation.cpp`, `AllocationCertificate.cpp`, `PhysicalAllocation.cpp` |
@@ -31,9 +33,12 @@ IR-changing pass. Direct callers must keep the borrowed IR unchanged for the
 analysis lifetime. The full `--recognize` diagnostic requests it; the
 numerical insertion path does not. This avoids constructing an unused
 arithmetic candidate without changing the periodic result or adding a compiler
-mode. Arithmetic recognition still has no production reduction/insertion
-backend. Immutable guarded rotating loops and finite guarded regions now have
-analysis and logical insertion backends.
+mode. Recognized differences, integer octagons and bounded coefficients have
+production reduction and logical-insertion backends. A successful recognizer
+does not discharge endpoint availability, local adjacency or physical allocation.
+The arithmetic dispatcher tries the fixed period-one class first, then the fixed
+period-two class if the full first contract fails; it never infers class limits
+from observed maxima.
 
 ## Next route-completion milestones
 
@@ -47,7 +52,7 @@ Physical allocation and scarcity repair are separate.
 | M5 | Shared ordinary-access contracts, based GM cells, and common explicit/guarded effect acceptance | Implemented; three reviews accepted |
 | M6 | Immutable guarded rotating extraction, parameterized quotient circuits, and executable logical endpoints | Implemented; three reviews accepted |
 | M7 | Difference-bound reduction, endpoint selectors, and route integration | Implemented; three reviews accepted |
-| M8 | Integer octagon and bounded-coefficient reduction and selectors | Pending |
+| M8 | Integer octagon and bounded-coefficient reduction and selectors | Implemented; three reviews accepted |
 | M9 | Mixed regional composition and finite overlays using the implemented exports | Pending |
 
 M5 retains unknown geometry and alias relationships as explicit obligations.
@@ -193,7 +198,7 @@ pass an exact executed-adjacency test. Programs with potentially hardware-protec
 accumulator interactions remain with a route that models that protection; the
 arithmetic backend does not silently reinstate those software demands. Regional
 storage selectors and physical-allocation exports are not provided by this route
-yet. Integer octagons and bounded coefficients remain M8 work.
+yet. Integer octagons and bounded coefficients are covered by M8 below.
 
 Validation passed 107 RUN checks, including exact DBM/selector tests, 48 finite
 physical-conflict oracle valuations and 12 nested conditional insertion traces.
@@ -211,6 +216,50 @@ primitive pieces, joins, projections, compositions, differences and output piece
 they do not claim to count every inclusion test or arrangement cell. Runtime trip
 counts and numerical address distances are never enumerated. Logical emission is
 charged separately to the resulting selector representation.
+
+### M8 integer octagons and bounded coefficients
+
+The bounded-witness analysis is one policy-based implementation. Differences
+retain closed DBMs; integer octagons and bounded coefficients use exact affine
+inequalities and congruences. Physical identity, parameter/residue matching,
+native identities, cover subtraction and adjacency checks are shared.
+
+Octagonal projection pairs integral lower and upper bounds, with exact rounding
+of doubled unary coefficients. General projection scales the eliminated
+coordinate to unit inequality coefficients and keeps its divisibility condition.
+It enumerates congruence-period offsets from candidate lower bounds (or upper
+bounds when no lower exists), substitutes each candidate into all constraints,
+and retains the resulting exact union. This is integer bound-candidate
+elimination; it does not use a rational projection or a convex join. Coefficients,
+constants and modular periods use arbitrary-precision integers.
+
+For the configured fixed pipe/coordinate/coefficient/initial-period class, the
+elimination periods and derived directions are class-dependent constants.
+They are not dependence distances or trip counts. The fixed-depth witness
+construction therefore keeps polynomial representation and bit costs, although
+its degree and class constants can be large. The standalone integer-operation
+API makes no polynomial claim for an arbitrary binary-encoded modulus. Boolean
+subtraction uses an affine-threshold/modular arrangement rather than repeated
+unbounded piece splitting. Feasibility and exact inclusion prune that arrangement.
+
+Selectors eliminate output coordinates jointly and back-substitute rational
+witnesses. Their domains retain the divisibility conditions that make each
+rational output integral. Tagged first-match selection returns a consistent
+complete endpoint tuple; inverse selectors recover the same original source
+coordinates used by SET. The common arithmetic insertion adapter emits these
+formulas using checked i128 intermediates. It rejects formulas beyond its checked
+machine representation before changing IR.
+
+Pure arithmetic is folded and interned separately at each insertion cut before
+any Value escapes into an endpoint recipe. This shares repeated conditions and
+coordinate formulas without moving synchronization commands or invalidating
+stored endpoint identities. The fixed period-one recognizer avoids unnecessary
+parity pieces when all primitives already fit that class; period-two indexing
+and steps retain their existing route.
+
+Validation and review evidence are recorded in `.local/route-completion-m8/`.
+This milestone adds logical analysis and insertion. It does not supply physical
+allocation certificates or solve general repeated nested-region composition.
 
 ### Milestone 1: complete the explicit straight-line route
 

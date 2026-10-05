@@ -8,6 +8,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICINSERTION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICINSERTION_H
 #include "PTO/Transforms/FrontierSynch/ArithmeticSelectors.h"
+#include "PTO/Transforms/FrontierSynch/GeneralArithmeticSelectors.h"
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
 namespace mlir::pto::frontiersynch {
 // Analysis and selectors remain available if original cuts cannot carry their
@@ -15,5 +16,8 @@ namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticInsertion(
     func::FuncOp function, const ArithmeticProgram& program,
     const ArithmeticDemandAnalysis& analysis, std::string& error);
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneralArithmeticInsertion(
+    func::FuncOp function, const ArithmeticProgram& program,
+    const GeneralArithmeticDemandAnalysis& analysis, std::string& error);
 } // namespace mlir::pto::frontiersynch
 #endif

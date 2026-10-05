@@ -11,7 +11,7 @@
 // A parameter trip count is retained. The same recognition applies to zero,
 // short and large trips; only two static accesses are inspected.
 // CHECK-LABEL: recognition rotating
-// CHECK: recognize arithmetic: applicable backend=unavailable
+// CHECK: recognize arithmetic: applicable backend=available
 // CHECK: recognize explicit: not-applicable
 // CHECK: recognize rotating: applicable backend=available
 // CHECK: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=[0,4)
@@ -24,7 +24,7 @@
 // CHECK: recognize rotating: applicable backend=available
 // CHECK: rotation family=0 slots=2 stride=1 offset=1 refresh=2 atom=[0,4)
 // CHECK-LABEL: recognition nested
-// CHECK: recognize arithmetic: applicable backend=unavailable
+// CHECK: recognize arithmetic: applicable backend=available
 // CHECK: recognize rotating: not-applicable backend=available
 // CHECK-NEXT: issue structured-body
 // CHECK: recognize rotating: applicable backend=available
@@ -34,7 +34,7 @@
 // CHECK: issue unknown-geometry
 // CHECK: rotation family=0 slots=1 stride=0 offset=0 refresh=1 atom=unknown
 // CHECK-LABEL: recognition three_slots
-// CHECK: recognize arithmetic: missing-premise backend=unavailable
+// CHECK: recognize arithmetic: missing-premise backend=available
 // CHECK: issue index-arithmetic
 // CHECK: recognize rotating: applicable backend=available
 // CHECK: rotation family=0 slots=3 stride=1 offset=0 refresh=3 atom=[0,4)

@@ -64,7 +64,15 @@ LogicalResult FrontierAnalysis::recognizeArithmetic() {
     if (failed(index.build(function, *storage))) {
         return failure();
     }
-    program->arithmetic = recognizeArithmeticProgram(function, index, *storage, storage->accesses(), {8, 8, 2, 8});
+    // Try the smaller configured residue class first. Ordinary affine regions
+    // need no parity expansion; fixed-modulus/step-two inputs use the second
+    // class when the complete period-one primitive contract does not apply.
+    auto arithmetic = recognizeArithmeticProgram(function, index, *storage, storage->accesses(), {8, 8, 1, 8});
+    if (arithmetic.extraction.state != RecognitionState::Applicable ||
+        arithmetic.recognition.state != RecognitionState::Applicable) {
+        arithmetic = recognizeArithmeticProgram(function, index, *storage, storage->accesses(), {8, 8, 2, 8});
+    }
+    program->arithmetic = std::move(arithmetic);
     return success();
 }
 } // namespace mlir::pto::frontiersynch
@@ -130,10 +138,18 @@ public:
             SmallVector<const CompoundInstanceElement*> phases;
             for (const auto& site : arithmetic.sites) { phases.push_back(site.phase); }
             if (!frontiersynch::mayHaveHardwareProtectedPair(*analysis.input(), phases)) {
-                auto demands = frontiersynch::analyzeArithmeticDemands(arithmetic);
-                if (demands.error.empty()) {
-                    prepared = frontiersynch::prepareArithmeticInsertion(function, arithmetic, demands, routeError);
-                } else { routeError += "; arithmetic: " + demands.error; }
+                if (arithmetic.recognition.arithmeticClass == frontiersynch::ArithmeticClass::Differences) {
+                    auto demands = frontiersynch::analyzeArithmeticDemands(arithmetic);
+                    if (demands.error.empty()) {
+                        prepared = frontiersynch::prepareArithmeticInsertion(function, arithmetic, demands, routeError);
+                    } else { routeError += "; arithmetic: " + demands.error; }
+                } else {
+                    auto demands = frontiersynch::analyzeGeneralArithmeticDemands(arithmetic);
+                    if (demands.error.empty()) {
+                        prepared = frontiersynch::prepareGeneralArithmeticInsertion(
+                            function, arithmetic, demands, routeError);
+                    } else { routeError += "; arithmetic: " + demands.error; }
+                }
             }
         }
         if (failed(prepared)) { function.emitError(routeError); }
