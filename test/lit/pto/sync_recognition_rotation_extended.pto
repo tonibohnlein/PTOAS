@@ -29,6 +29,40 @@ module {
     }
     return
   }
+  func.func @masked_parameter_rotation(%n: index, %offset: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i3 = arith.constant 3 : index
+    %i4 = arith.constant 4 : index
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %zero : !ring
+    scf.for %i = %i0 to %n step %i1 {
+      %sum = arith.addi %i, %offset : index
+      %slot = arith.andi %i1, %sum : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    }
+    return
+  }
+  func.func @noncontiguous_mask(%n: index, %offset: index) {
+    %zero = arith.constant 0 : i64
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i3 = arith.constant 3 : index
+    %i4 = arith.constant 4 : index
+    %one = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %zero : !ring3
+    scf.for %i = %i0 to %n step %i1 {
+      %sum = arith.addi %i, %offset : index
+      %slot = arith.andi %sum, %i2 : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring3 -> !tile
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    }
+    return
+  }
   func.func @recomputed_invariant_guard(%n: index, %flag: index) {
     %zero = arith.constant 0 : i64
     %i0 = arith.constant 0 : index

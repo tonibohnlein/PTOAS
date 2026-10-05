@@ -230,6 +230,21 @@ inline ScalarEvolution::Result ScalarEvolution::operation(Value v, Symbol symbol
     if (!a.expression || !b.expression) {
         return {};
     }
+    if (isa<arith::AndIOp>(op)) {
+        auto mask = constant(op->getOperand(1));
+        auto input = a.expression;
+        if (!mask) {
+            mask = constant(op->getOperand(0));
+            input = b.expression;
+        }
+        // Low-bit masks compute Euclidean modulo even for negative operands.
+        // Keep the modulus representable by the signed affine-expression API.
+        if (mask && *mask >= 0 && *mask < INT64_MAX &&
+            llvm::isPowerOf2_64(static_cast<uint64_t>(*mask) + 1)) {
+            return {modulo(input, *mask + 1), Range{0, *mask}};
+        }
+        return {};
+    }
     if (isa<arith::RemUIOp, arith::RemSIOp, arith::DivUIOp, arith::DivSIOp>(op)) {
         auto divisor = constant(op->getOperand(1));
         if (!divisor || *divisor <= 0 || !a.range || a.range->lower < 0) {

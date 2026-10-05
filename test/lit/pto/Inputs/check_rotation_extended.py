@@ -27,10 +27,15 @@ def main():
                          text=True, timeout=45)
     blocks = {block.splitlines()[0]: block for block in
               re.split(r"^recognition ", run.stdout, flags=re.MULTILINE)[1:]}
-    assert len(blocks) == 8
+    assert len(blocks) == 10
     state, text = route(blocks["parameter_rotation"], "guarded-rotating")
     assert state == "applicable", text
     assert "parameters=1" in text and "stride=1" in text and "atom=[0,4)" in text, text
+    state, text = route(blocks["masked_parameter_rotation"], "guarded-rotating")
+    assert state == "applicable", text
+    assert "parameters=1" in text and "stride=1" in text and "atom=[0,4)" in text, text
+    state, text = route(blocks["noncontiguous_mask"], "guarded-rotating")
+    assert state != "applicable" and "issue slot-expression" in text, text
     state, text = route(blocks["recomputed_invariant_guard"], "guarded-rotating")
     assert state == "applicable", text
     assert "entry-guards=late entry-expressions=1" in text, text
@@ -51,7 +56,7 @@ def main():
         atoms = re.findall(r"atom=\[(\d+),(\d+)\).*?effects=(\d+) reads=(\d+) writes=(\d+)", text)
         actual = sorted(tuple(map(int, atom)) for atom in atoms)
         assert actual == expected, (name, actual, text)
-    print("extended rotation: parameter offset, guard recipe, three rejections, exact gaps and yielded prerequisites")
+    print("extended rotation: parameter offset, guard recipe, four rejections, exact gaps and yielded prerequisites")
 
 
 if __name__ == "__main__":

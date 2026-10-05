@@ -6,7 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Normalize rotating selectors with the shared scalar semantics. Unsigned
-// power-of-two remainders also permit wrapping arithmetic at the same width.
+// power-of-two remainders and low-bit masks also permit wrapping arithmetic
+// at the same width.
 #include "RotationPattern.h"
 #include "RecognitionInternal.h"
 #include "ArithmeticRows.h"
@@ -166,13 +167,24 @@ std::optional<SlotPattern> matchRotatingSlot(Value slot, scf::ForOp loop, uint64
             }
         }
     }
-    auto rem = slot.getDefiningOp<arith::RemUIOp>();
     unsigned width = slot.getType().isIndex() ? 32 :
                      (isa<IntegerType>(slot.getType()) ? cast<IntegerType>(slot.getType()).getWidth() : 0);
     const bool compatible = llvm::isPowerOf2_64(count) && width && llvm::Log2_64(count) < width;
-    const bool matches = rem && compatible && integer(rem.getRhs()) == static_cast<int64_t>(count);
-    if (matches) {
-        if (auto form = wrappingForm(rem.getLhs(), loop, count, index, allowParameters)) {
+    Value numerator;
+    if (compatible) {
+        auto rem = slot.getDefiningOp<arith::RemUIOp>();
+        if (rem && integer(rem.getRhs()) == static_cast<int64_t>(count)) {
+            numerator = rem.getLhs();
+        } else if (auto mask = slot.getDefiningOp<arith::AndIOp>()) {
+            if (integer(mask.getRhs()) == static_cast<int64_t>(count - 1)) {
+                numerator = mask.getLhs();
+            } else if (integer(mask.getLhs()) == static_cast<int64_t>(count - 1)) {
+                numerator = mask.getRhs();
+            }
+        }
+    }
+    if (numerator) {
+        if (auto form = wrappingForm(numerator, loop, count, index, allowParameters)) {
             symbols.clear();
             auto affine = getAffineConstantExpr(form->constant, loop.getContext());
             for (const auto& entry : form->coefficients) {
