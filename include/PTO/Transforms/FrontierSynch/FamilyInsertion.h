@@ -12,8 +12,8 @@
 namespace mlir::pto::frontiersynch {
 // The caller preflights cuts, bounds, 64-bit index arithmetic, and correspondence
 // of prepared.families to plan. Arithmetic is staged in detached blocks; failure
-// leaves the original function unchanged. SET and WAIT select the same member
-// ordinal from their respective original coordinate maps.
+// leaves the original function unchanged. Source and destination pieces select
+// the same original record identity, independently of their piece partitions.
 LogicalResult prepareFamilyEndpointCode(const NumericTemplateEndpoints& plan, PreparedLogicalPlan& prepared);
 } // namespace mlir::pto::frontiersynch
 #endif
