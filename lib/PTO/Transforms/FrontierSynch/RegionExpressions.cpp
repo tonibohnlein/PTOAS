@@ -116,26 +116,39 @@ RegionExpressions::Truth RegionExpressions::evaluateBoolean(const Node& node, Ar
 }
 bool RegionExpressions::refutesNegation(Id premise, Id consequence) const
 {
-    if (auto value = constantValue(consequence); value && *value != 0) { return true; }
-    bool binding = false;
-    Id bound = consequence;
-    while (nodes[bound].kind == Kind::Not) {
-        binding = !binding;
-        bound = nodes[bound].a;
-    }
-    SmallVector<Truth> values(static_cast<std::size_t>(premise) + 1, Truth::Unknown);
-    for (std::size_t i = 0; i < values.size(); ++i) {
-        if (!nodes[i].boolean) { continue; }
-        // A nonconstant predicate is an atom. Forgetting correlations between
-        // different atoms enlarges the valuation set, so a false result still
-        // proves the actual implication. Never substitute a constant's value.
-        if (i == bound && nodes[i].kind != Kind::Constant) {
-            values[i] = binding ? Truth::True : Truth::False;
-        } else {
-            values[i] = evaluateBoolean(nodes[i], values);
+    // These bindings are necessary if premise AND NOT consequence holds.
+    // Propagate only forced facts, never choose a Boolean valuation. Keeping
+    // comparisons as independent atoms enlarges the possible valuation set.
+    const auto count = static_cast<std::size_t>(std::max(premise, consequence)) + 1;
+    SmallVector<Truth> bindings(count, Truth::Unknown);
+    SmallVector<std::pair<Id, Truth>> pending{{premise, Truth::True}, {consequence, Truth::False}};
+    while (!pending.empty()) {
+        const auto [id, required] = pending.pop_back_val();
+        if (bindings[id] != Truth::Unknown) {
+            if (bindings[id] != required) { return true; }
+            continue;
+        }
+        bindings[id] = required;
+        const Node& node = nodes[id];
+        if (node.kind == Kind::Not) {
+            pending.push_back({node.a, required == Truth::True ? Truth::False : Truth::True});
+        } else if ((node.kind == Kind::And && required == Truth::True) ||
+                   (node.kind == Kind::Or && required == Truth::False)) {
+            pending.push_back({node.a, required});
+            pending.push_back({node.b, required});
         }
     }
-    return values[premise] == Truth::False;
+    SmallVector<Truth> values(count, Truth::Unknown);
+    for (std::size_t id = 0; id < count; ++id) {
+        if (!nodes[id].boolean) { continue; }
+        const auto evaluated = evaluateBoolean(nodes[id], values);
+        const auto required = bindings[id];
+        if (required != Truth::Unknown && evaluated != Truth::Unknown && required != evaluated) {
+            return true;
+        }
+        values[id] = required == Truth::Unknown ? evaluated : required;
+    }
+    return false;
 }
 bool RegionExpressions::implies(Id premise, Id consequence) const
 {

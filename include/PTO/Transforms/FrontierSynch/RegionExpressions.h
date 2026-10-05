@@ -11,6 +11,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -45,8 +46,8 @@ public:
     std::size_t size() const { return nodes.size(); }
     std::optional<uint64_t> constantValue(Id expression) const;
     bool isBoolean(Id expression) const;
-    // Sound sufficient implication by Boolean cofactors, without arithmetic
-    // reasoning or SAT. A conjunction of A distinct obligations costs O(A*G)
+    // Sound sufficient implication by forced Boolean facts, without arithmetic
+    // reasoning, Boolean search or SAT. A conjunction of A distinct obligations costs O(A*G)
     // for G DAG nodes; one obligation costs O(G). Does not grow the DAG.
     bool implies(Id premise, Id consequence) const;
 
@@ -63,6 +64,20 @@ public:
     // queries; that diagnostic is cleared at the next emission attempt.
     FailureOr<Value> emit(Id expression, OpBuilder& builder, Operation* cut,
                          llvm::DenseMap<Id, Value>& memo);
+
+    struct CutEmission {
+        llvm::DenseMap<Id, Value> values;
+        llvm::DenseMap<Value, Value> inputs;
+        llvm::DenseMap<Id, Id> cofactors;
+    };
+    // Context is private to one original cut. Enclosing branch decisions are
+    // substituted before availability checks. Missing scalar inputs may be
+    // replayed only through deterministic arith/index operations that are
+    // memory-effect-free, region-free and speculatable. Pure alone does not
+    // establish deterministic duplication (for example, LLVM freeze).
+    // Payloads are registered explicitly and may never be replayed.
+    void forbidRecomputation(Operation* operation) { forbiddenRecomputation.insert(operation); }
+    FailureOr<Value> emitContextual(Id expression, OpBuilder& builder, Operation* cut, CutEmission& context);
 
 private:
     enum class Kind { Constant, Input, Add, Sub, Div, Rem, Lt, Le, Eq, SLt, SLe, And, Or, Not, Select };
@@ -88,6 +103,8 @@ private:
                          const llvm::DenseMap<Id, Value>& memo, SmallVectorImpl<Id>& order);
     Value emitNode(const Node& node, OpBuilder& builder, Location location,
                    const llvm::DenseMap<Id, Value>& memo) const;
+    Id cofactorAtCut(Id expression, Operation* cut, llvm::DenseMap<Id, Id>& memo);
+    llvm::DenseSet<Operation*> forbiddenRecomputation;
     std::vector<Node> nodes;
     std::unordered_map<Node, Id, Hash> interned;
     std::string constructionMessage;

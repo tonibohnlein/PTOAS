@@ -12,6 +12,7 @@
 #include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Pass/PassManager.h"
@@ -37,6 +38,10 @@ public:
         }
     }
     llvm::json::Object run(func::FuncOp function);
+    std::optional<bool> truth(Value value) const {
+        auto result = integer(value);
+        return result ? std::optional<bool>(*result != 0) : std::nullopt;
+    }
 private:
     bool fail(StringRef message) { error = message.str(); return false; }
     Attribute lookup(Value value) const { return values.lookup(value); }
@@ -162,9 +167,13 @@ bool Interpreter::payload(Operation& op, ArrayRef<uint32_t> candidates)
         for (auto coordinate : coordinates) {
             tuple.push_back(coordinate);
         }
-        events.push_back(llvm::json::Object{{"kind", "payload"}, {"type", type},
+        llvm::json::Object event{{"kind", "payload"}, {"type", type},
             {"coordinates", std::move(tuple)},
-            {"pipe", static_cast<unsigned>(genericPhases[type]->kPipeValue)}});
+            {"pipe", static_cast<unsigned>(genericPhases[type]->kPipeValue)}};
+        if (auto label = op.getAttrOfType<StringAttr>("test.label")) {
+            event["label"] = label.getValue();
+        }
+        events.push_back(std::move(event));
         ++payloads;
         for (auto result : op.getResults()) {
             values.erase(result);
@@ -475,4 +484,82 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         {"implication_checks", analysis.cost.implicationChecks},
         {"expressions", expressions ? expressions->size() : 0}, {"emitted", emitted}}) << "\n";
     return success(before == after);
+}
+
+LogicalResult runFiniteGuardedAnalysisChecks(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    pto::SyncInput input(policy);
+    fs::PhaseIndex index;
+    if (failed(input.build(function)) || failed(index.build(function, input))) { return failure(); }
+    SmallVector<Operation*> roots;
+    for (auto& op : function.front()) { roots.push_back(&op); }
+    auto render = [&]() {
+        std::string text;
+        llvm::raw_string_ostream stream(text);
+        function.print(stream);
+        return text;
+    };
+    const auto before = render();
+    auto analysis = fs::analyzeFiniteGuarded(function, roots, index, input);
+    auto regional = fs::finiteGuardedRegionalResult(analysis);
+    auto prepared = fs::prepareFiniteGuardedInsertion(analysis);
+    bool queriesAvailable = true;
+    uint64_t emitted = 0;
+    if (succeeded(prepared)) {
+        for (const auto& stage : (**prepared).preparation) { emitted += stage.code->getOperations().size(); }
+    }
+    llvm::json::Object report{{"error", analysis.error}, {"insertion_error", analysis.insertionError},
+        {"prepared", succeeded(prepared)}, {"unchanged", before == render()},
+        {"cells", analysis.cost.cells}, {"ports", analysis.cost.ports},
+        {"analysis_expressions", analysis.cost.expressionNodes},
+        {"expressions", regional.expressions ? regional.expressions->size() : 0}, {"emitted", emitted}};
+    if (regional.reachability && regional.expressions) {
+        const auto zero = regional.expressions->constant(0);
+        for (uint32_t type = 0; type < regional.anchors.size(); ++type) {
+            queriesAvailable &= regional.reachability({type, zero, fs::PeriodicEventKind::Start},
+                {type, zero, fs::PeriodicEventKind::Completion}).has_value();
+        }
+        // Query execution is test-only and requested only for entry-available
+        // predicates. Analysis and detached preparation were checked unchanged above.
+        if (function->hasAttr("test.queries")) {
+            llvm::json::Array labels;
+            for (const auto& anchor : regional.anchors) {
+                auto label = anchor.phase->elementOp->getAttrOfType<StringAttr>("test.label");
+                labels.push_back(label ? label.getValue() : StringRef());
+            }
+            OpBuilder builder(function.getContext());
+            auto* cut = function.front().getTerminator();
+            Block queryCode;
+            builder.setInsertionPointToEnd(&queryCode);
+            llvm::DenseMap<fs::RegionExpressions::Id, Value> memo;
+            SmallVector<Value> values;
+            for (uint32_t a = 0; a < 2 * regional.anchors.size(); ++a) {
+                for (uint32_t b = 0; b < 2 * regional.anchors.size(); ++b) {
+                    auto predicate = regional.reachability({a/2, zero, a%2 ? fs::PeriodicEventKind::Completion :
+                        fs::PeriodicEventKind::Start}, {b/2, zero, b%2 ? fs::PeriodicEventKind::Completion :
+                        fs::PeriodicEventKind::Start});
+                    if (!predicate) { return failure(); }
+                    auto value = regional.expressions->emit(*predicate, builder, cut, memo);
+                    if (failed(value)) { return failure(); }
+                    values.push_back(*value);
+                }
+            }
+            function.front().getOperations().splice(cut->getIterator(), queryCode.getOperations());
+            Interpreter interpreter(input.instructions());
+            auto trace = interpreter.run(function);
+            if (!trace.getString("error").value_or("missing trace").empty()) { return failure(); }
+            llvm::json::Array queries;
+            for (auto value : values) {
+                auto evaluated = interpreter.truth(value);
+                if (!evaluated) { return failure(); }
+                queries.push_back(*evaluated);
+            }
+            report["labels"] = std::move(labels);
+            report["queries"] = std::move(queries);
+            report["trace"] = std::move(trace);
+        }
+    }
+    report["queries_available"] = queriesAvailable;
+    llvm::outs() << llvm::json::Value(std::move(report)) << "\n";
+    return verify(function);
 }

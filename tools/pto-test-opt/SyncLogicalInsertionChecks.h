@@ -17,4 +17,5 @@ mlir::LogicalResult runLogicalInsertionChecks(mlir::func::FuncOp function, mlir:
 mlir::LogicalResult runPreparedInsertionChecks(mlir::func::FuncOp function);
 mlir::LogicalResult runStructuredInsertionChecks(mlir::func::FuncOp function, mlir::pto::GMAliasPolicy policy);
 mlir::LogicalResult runSequenceAnalysisChecks(mlir::func::FuncOp function, mlir::pto::GMAliasPolicy policy);
+mlir::LogicalResult runFiniteGuardedAnalysisChecks(mlir::func::FuncOp function, mlir::pto::GMAliasPolicy policy);
 #endif

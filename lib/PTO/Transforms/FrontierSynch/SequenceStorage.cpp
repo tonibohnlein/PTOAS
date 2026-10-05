@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
+#include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 namespace mlir::pto::frontiersynch {
 std::optional<int64_t> sequenceInteger(Value value)
 {
@@ -142,13 +143,38 @@ bool SequenceAnalysisState::collect()
     if (root.kind != StructureKind::Sequence || root.region != &function.getBody()) {
         return fail("sequence route requires the function's structured sequence");
     }
-    for (auto id : root.children) {
-        const auto& node = program->nodes[id];
-        if (node.kind == StructureKind::ExplicitRun) {
-            if (!explicitChild(node)) { return false; }
-        } else if (node.kind == StructureKind::Loop) {
+    for (std::size_t position = 0; position < root.children.size();) {
+        const auto& node = program->nodes[root.children[position]];
+        if (node.kind == StructureKind::Loop) {
             if (!loopChild(node)) { return false; }
-        } else { return fail("sequence child lacks an exact regional interface"); }
+            ++position; continue;
+        }
+        SmallVector<Operation*> roots;
+        auto end = position;
+        bool guarded = false;
+        while (end < root.children.size()) {
+            const auto& child = program->nodes[root.children[end]];
+            if (child.kind == StructureKind::ExplicitRun) {
+                roots.append(child.operations.begin(),child.operations.end());
+            } else if (child.kind == StructureKind::Conditional) {
+                roots.push_back(child.anchor); guarded = true;
+            } else { break; }
+            ++end;
+        }
+        if (end == position) { return fail("sequence child lacks an exact regional interface"); }
+        if (guarded) {
+            auto analysis = analyzeFiniteGuarded(function,roots,index,*input,arena);
+            if (!analysis.error.empty()) { return fail(analysis.error); }
+            Child child;
+            child.regional = finiteGuardedRegionalResult(analysis);
+            child.anchors = child.regional.anchors;
+            children.push_back(std::move(child));
+        } else {
+            for (auto current = position; current < end; ++current) {
+                if (!explicitChild(program->nodes[root.children[current]])) { return false; }
+            }
+        }
+        position = end;
     }
     if (children.size() > UINT32_MAX) { return fail("sequence child identity overflow"); }
     return true;
@@ -186,6 +212,7 @@ void SequenceAnalysisState::summarize()
     boundaries.resize(children.size(), std::vector<CellBoundary>(cells.size()));
     for (uint32_t childId = 0; childId < children.size(); ++childId) {
         auto& child = children[childId];
+        if (child.regional.presence) { continue; }
         const auto comparisonsBefore = costs.selectorComparisons;
         for (uint32_t cellId = 0; cellId < cells.size(); ++cellId) {
             const auto& cell = cells[cellId];

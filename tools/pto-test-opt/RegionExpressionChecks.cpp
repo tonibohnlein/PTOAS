@@ -59,6 +59,14 @@ bool checkAlgebra(Value index, Value predicate)
     valid &= !expressions.implies(q, r); // Arithmetic correlation is deliberately not inferred.
     valid &= expressions.implies(expressions.boolean(false), q);
     valid &= expressions.implies(p, expressions.boolean(true));
+    // A retained cover and an active intermediate event cannot coexist when
+    // that intermediate supplies an alternative native-chain path.
+    auto endpoints = expressions.land(p, q);
+    auto alternative = expressions.land(endpoints, r);
+    auto cover = expressions.land(endpoints, expressions.lnot(alternative));
+    valid &= expressions.implies(cover, expressions.lnot(r));
+    valid &= !expressions.implies(endpoints, expressions.lnot(r));
+    valid &= !expressions.implies(expressions.lor(p, q), p);
     fs::RegionExpressions bad;
     valid &= bad.div(bad.input(index), bad.constant(0)) == fs::RegionExpressions::invalid;
     fs::RegionExpressions dynamic;
@@ -66,6 +74,37 @@ bool checkAlgebra(Value index, Value predicate)
     fs::RegionExpressions typed;
     valid &= typed.add(typed.input(index), typed.input(predicate)) == fs::RegionExpressions::invalid;
     return valid && expressions.error().empty();
+}
+bool checkImplicationTruthTables(Value index, Value predicate)
+{
+    fs::RegionExpressions expressions;
+    const auto p = expressions.input(predicate), x = expressions.input(index);
+    const auto q = expressions.lt(x, expressions.constant(5));
+    const auto r = expressions.lt(x, expressions.constant(6));
+    using Formula = std::pair<fs::RegionExpressions::Id, unsigned>;
+    // Eight valuations of three abstract atoms. Arithmetic correlations are
+    // deliberately omitted, matching the proof engine's conservative contract.
+    std::vector<Formula> formulas{{p, 0xaa}, {q, 0xcc}, {r, 0xf0},
+        {expressions.boolean(false), 0}, {expressions.boolean(true), 255}};
+    for (uint32_t i = 0; i < 3; ++i) {
+        auto [a, av] = formulas[i];
+        formulas.push_back({expressions.lnot(a), (~av) & 255});
+        for (uint32_t j = 0; j < 3; ++j) {
+            auto [b, bv] = formulas[j];
+            formulas.push_back({expressions.land(a, b), av & bv});
+            formulas.push_back({expressions.lor(a, b), av | bv});
+            formulas.push_back({expressions.select(a, b, r), (av & bv) | ((~av) & 0xf0)});
+            auto covered = expressions.land(expressions.land(a, b),
+                expressions.lnot(expressions.land(expressions.land(a, b), r)));
+            formulas.push_back({covered, av & bv & (~0xf0) & 255});
+        }
+    }
+    for (auto [premise, truth] : formulas) {
+        for (auto [consequence, implied] : formulas) {
+            if (expressions.implies(premise, consequence) && (truth & ~implied)) { return false; }
+        }
+    }
+    return expressions.constructionError().empty();
 }
 bool checkEmission(func::FuncOp function, ArrayRef<Operation*> cuts)
 {
@@ -142,6 +181,7 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
     }
     const auto before = render(function);
     if (!checkAlgebra(function.getArgument(0), function.getArgument(1)) || !checkEmission(function, cuts) ||
+        !checkImplicationTruthTables(function.getArgument(0), function.getArgument(1)) ||
         !checkPlacementRetry(function, cuts) ||
         !rejectedWithoutCode(function, cuts[0], cuts[0]->getResult(0)) ||
         !rejectedWithoutCode(function, cuts[1], hidden) || render(function) != before) {
