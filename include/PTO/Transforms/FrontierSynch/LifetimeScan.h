@@ -17,6 +17,7 @@ struct CellAccess {
     uint32_t atom = 0;
     bool read = false;
     bool write = false;
+    uint64_t protectionGroup = 0; // Certified same-pipe writer group; zero is unprotected.
 };
 struct ExplicitEffects {
     uint32_t payload = 0;
@@ -37,10 +38,15 @@ struct StorageScanResult {
     std::string error;
     std::vector<StorageGenerator> generators;
     std::vector<StorageWitness> witnesses;
+    uint64_t protectedHazards = 0;
 };
 // IDs must be unique; input order is reference order. Modes for the same atom
 // are consolidated before reading old state, including read-modify-write.
 // Native completion order on each pipe justifies retaining its latest reader.
+// Nonzero protection groups must certify hardware protection for EVERY ordered
+// pair of their writers to each grouped atom. This is a caller-supplied proof,
+// not an arbitrary pairwise exemption. IDs are local to one scan: remap them
+// before merging independently built inputs or repeating a dynamic scope.
 StorageScanResult scanStorageLifetimes(llvm::ArrayRef<ExplicitEffects> occurrences,
                                       llvm::ArrayRef<StorageGenerator> prerequisites = {});
 } // namespace mlir::pto::frontiersynch

@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_hardware_protection.py pto-sync-input-test %s
+// Two same-shape accumulation chains, separated by an initializer reset.
+!a = !pto.tile_buf<left, 32x16xf16, slayout=row_major>
+!b = !pto.tile_buf<right, 16x80xf16, slayout=col_major>
+!c = !pto.tile_buf<acc, 32x80xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a3"} {
+  func.func @accumulation() {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %a = pto.alloc_tile addr = %base : !a
+    %b = pto.alloc_tile addr = %base : !b
+    %c = pto.alloc_tile addr = %base : !c
+    scf.for %t = %zero to %two step %one {
+      pto.tmatmul ins(%a, %b : !a, !b) outs(%c : !c)
+      pto.tmatmul.acc ins(%c, %a, %b : !c, !a, !b) outs(%c : !c)
+      pto.tmatmul ins(%a, %b : !a, !b) outs(%c : !c)
+      pto.tmatmul.acc ins(%c, %a, %b : !c, !a, !b) outs(%c : !c)
+    }
+    return
+  }
+}

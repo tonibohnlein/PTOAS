@@ -37,7 +37,11 @@ bool accesses(const llvm::json::Array& array, std::vector<fs::CellAccess>& resul
         if (!atom || *atom > UINT32_MAX || !read || !write) {
             return false;
         }
-        result.push_back({static_cast<uint32_t>(*atom), *read, *write});
+        auto group = number(*object, "protection_group");
+        if (object->get("protection_group") && !group) {
+            return false;
+        }
+        result.push_back({static_cast<uint32_t>(*atom), *read, *write, group.value_or(0)});
     }
     return true;
 }
@@ -94,7 +98,7 @@ llvm::json::Object dumpScan(const fs::StorageScanResult& scan)
                                             static_cast<unsigned>(witness.hazard)});
     }
     return llvm::json::Object{{"error", scan.error}, {"generators", std::move(generators)},
-                              {"witnesses", std::move(witnesses)}};
+                              {"witnesses", std::move(witnesses)}, {"protected_hazards", scan.protectedHazards}};
 }
 bool scanCase(const llvm::json::Object& input, llvm::json::Object& output)
 {

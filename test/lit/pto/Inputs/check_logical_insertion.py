@@ -128,7 +128,8 @@ def validate(template, trace):
         commands.append(command)
     effects = [[{"atom": atom, "read": effect["mode"] == "read", "write": effect["mode"] != "read"}
                 for effect in item["effects"] for atom in effect["atoms"]] for item in word]
-    case = {"pipes": [x["pipe"] for x in word], "word": effects, "records": []}
+    case = {"pipes": [x["pipe"] for x in word], "word": effects, "records": [],
+            "protection": [dict(x.get("hardware_protection", [])) for x in word]}
     required, covers = unfolded(case, len(payloads))
     actual = closure_with_commands([x["pipe"] for x in payloads], commands)
     # The independent DAG helper is reflexive; the command oracle is strict.
