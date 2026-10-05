@@ -55,18 +55,18 @@ struct ProgramRecognition {
     // Stable identities in worklist order, never execution/reference ranks.
     SmallVector<ProgramPayload> payloads;
     SmallVector<ProgramGuard> guards;
-    // The existing arithmetic producer accepts a whole function only. No
-    // subtree is silently treated as an independent invocation.
+    // Filled on demand by FrontierAnalysis::recognizeArithmetic. The producer
+    // accepts a whole function only; subtrees are not independent invocations.
     std::optional<ArithmeticProgram> arithmetic;
 };
 // Visits all regions without unrolling, fuses adjacent leaves, and runs the
-// existing checks independently. Applicable is not an executable analysis plan:
+// structural checks independently. Arithmetic extraction is requested separately.
+// Applicable is not an executable analysis plan:
 // Supported numeric templates additionally compute minimum records and completion
 // queries, guarded logical endpoint recipes at original cuts, and periodic
 // direction budgets. No composition certificate, emitted commands or physical
 // event IDs are produced.
-FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input,
-                                               const ArithmeticLimits& limits);
+FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input);
 StringRef structureName(StructureKind kind);
 } // namespace mlir::pto::frontiersynch
 #endif

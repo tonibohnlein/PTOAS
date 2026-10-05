@@ -26,12 +26,26 @@ LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy) {
     if (failed(pending->build(function))) {
         return failure();
     }
-    auto recognized = recognizeProgram(function, *pending, {8, 8, 2, 8});
+    auto recognized = recognizeProgram(function, *pending);
     if (failed(recognized)) {
         return failure();
     }
     storage = std::move(pending);
     program = std::move(*recognized);
+    return success();
+}
+LogicalResult FrontierAnalysis::recognizeArithmetic() {
+    if (!program || !storage) {
+        return failure();
+    }
+    if (program->arithmetic || function.isDeclaration()) {
+        return success();
+    }
+    PhaseIndex index;
+    if (failed(index.build(function, *storage))) {
+        return failure();
+    }
+    program->arithmetic = recognizeArithmeticProgram(function, index, *storage, storage->accesses(), {8, 8, 2, 8});
     return success();
 }
 } // namespace mlir::pto::frontiersynch
