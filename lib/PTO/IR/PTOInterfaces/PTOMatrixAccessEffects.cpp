@@ -74,8 +74,8 @@ static bool addMatrixLoadAccessEffects(pto::TLoadOp op, PTOEffectList& effects)
         op.getLeftPaddingNum() || op.getRightPaddingNum() || op.getInitOutBuffer() || op.getInitCondition() ||
         op.getOffset() ||
         (op.getCachePolicyAttr() && op.getCachePolicyAttr().getValue() == pto::LoadCachePolicy::L2Bypass) ||
-        !fullMatrixAccessTile(op.getDst(), pto::AddressSpace::MAT, pto::BLayout::RowMajor,
-                              pto::SLayout::ColMajor, 512)) {
+        !fullMatrixAccessTile(op.getDst(), pto::AddressSpace::MAT, pto::BLayout::ColMajor,
+                              pto::SLayout::RowMajor, 512)) {
         return false;
     }
     auto shape = tile.getShape();
