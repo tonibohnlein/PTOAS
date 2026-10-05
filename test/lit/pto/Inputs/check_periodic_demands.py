@@ -29,6 +29,18 @@ def conflicts(left, right):
                for atom in left.keys() & right.keys())
 
 
+def unprotected_conflict(left, right, left_groups, right_groups, same_scope):
+    for atom in left.keys() & right.keys():
+        if not ((left[atom][1] and any(right[atom])) or (left[atom][0] and right[atom][1])):
+            continue
+        protected = (same_scope and left[atom][1] and right[atom][1]
+                     and left_groups.get(atom, 0) != 0
+                     and left_groups[atom] == right_groups.get(atom, 0))
+        if not protected:
+            return True
+    return False
+
+
 def native(pipes):
     edges = {(2 * i, 2 * i + 1) for i in range(len(pipes))}
     previous = {}
@@ -61,10 +73,13 @@ def unfolded(case, count):
     edges = native(pipes)
     if "word" in case:
         effects = [modes(case["word"][i % types]) for i in range(count)]
+        protection = case.get("protection", [{} for _ in range(types)])
         # This enumerates EVERY conflicting pair. It does not implement the scan.
         for source in range(count):
             for target in range(source + 1, count):
-                if conflicts(effects[source], effects[target]):
+                if unprotected_conflict(effects[source], effects[target],
+                                        protection[source % types], protection[target % types],
+                                        pipes[source] == pipes[target] and source // types == target // types):
                     edges.add((2 * source + 1, 2 * target))
     for source, target, distance in case.get("records", []):
         for occurrence in range(source, count, types):
@@ -127,9 +142,11 @@ def check_scan(case, result):
     edges = native([value["pipe"] for value in values])
     original = set(edges)
     effects = [modes(value["accesses"]) for value in values]
+    protection = [{a["atom"]: a.get("protection_group", 0) for a in v["accesses"]} for v in values]
     for source in range(len(values)):
         for target in range(source + 1, len(values)):
-            if conflicts(effects[source], effects[target]):
+            if unprotected_conflict(effects[source], effects[target], protection[source], protection[target],
+                                    values[source]["pipe"] == values[target]["pipe"]):
                 original.add((2 * source + 1, 2 * target))
     for source, target, _ in case.get("prerequisites", []):
         original.add((2 * ids[source] + 1, 2 * ids[target]))

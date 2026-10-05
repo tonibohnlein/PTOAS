@@ -10,11 +10,16 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_NUMERICTEMPLATEANALYSIS_H
 #include "PTO/Transforms/FrontierSynch/NumericTemplate.h"
 #include "PTO/Transforms/FrontierSynch/PeriodicAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/LifetimeScan.h"
 namespace mlir::pto::frontiersynch {
 // Result type IDs are indices into NumericTemplate::payloads. Original phase,
 // fixed inner coordinates and cuts remain in that template, without IR cloning.
 // The template's whole-function GM discharge and period-one refresh certificate
 // are prerequisites; no external storage selectors are synthesized here.
+// Exact effects with shared target protection attached. Repeated visits receive
+// distinct protection identities. Used by analysis and its diagnostic exporter.
+FailureOr<std::vector<ExplicitEffects>> numericTemplateOccurrences(const NumericTemplate& input,
+                                                                  unsigned visits = 1);
 PeriodicAnalysis analyzeNumericTemplate(const NumericTemplate& input);
 } // namespace mlir::pto::frontiersynch
 #endif
