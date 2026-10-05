@@ -91,6 +91,7 @@ add_llvm_executable(pto-sync-input-test
   LogicalEndpointDump.cpp
   LogicalEndpointChecks.cpp
   SyncLogicalInsertionChecks.cpp
+  PreparedInsertionChecks.cpp
   PeriodicAllocationDump.cpp
   PeriodicAllocationChecks.cpp
   PeriodicDemandChecks.cpp

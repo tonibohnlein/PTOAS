@@ -477,7 +477,22 @@ mutation; `pto-sync-input-test --insert-logical input.pto` runs the production
 pass and prints its transformed IR. Other recognized classes still need their
 analysis and endpoint backends before they can use this pass.
 
-The pass preflights the complete endpoint plan before insertion. It preserves
+`prepareNumericTemplateInsertion` is the route adapter: it validates the
+numerical result and constructs a `PreparedLogicalPlan`. This common plan
+contains legal cuts, source/destination pipes, presence guards, logical record
+and source-occurrence identities, and an explicit plan namespace. Guard and
+identity arithmetic is built in owned, detached MLIR blocks. Other demand
+backends can supply this same interface without numerical-template recipes.
+
+`insertLogicalSynchronization` validates SSA availability, types, cuts and
+namespace freshness before changing the function. It then installs the prepared
+arithmetic and inserts commands, grouping endpoints by their actual cuts. The
+producer must still establish demand correctness, dynamic endpoint matching,
+safe evaluation of its arithmetic and legal placement; structural validation
+cannot prove those analysis obligations. All endpoints sharing a cut must be
+submitted together, and different plans must use distinct namespaces.
+
+The numerical adapter preserves
 original payloads, loops, branch decisions and allocation geometry. A command's
 guard selects its own inner-coordinate tuple and checks that its partner's
 outer iteration exists. Commands at a common original cut are emitted in

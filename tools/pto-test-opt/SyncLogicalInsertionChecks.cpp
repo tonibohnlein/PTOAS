@@ -9,7 +9,7 @@
 #include "SyncLogicalInsertionChecks.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/MathExtras.h"
@@ -287,7 +287,9 @@ LogicalResult runLogicalInsertionChecks(func::FuncOp function, pto::GMAliasPolic
             input = &*node.numericTemplate;
         }
     }
-    if (!input || failed(fs::insertLogicalSynchronization(function, *program)) || failed(verify(function))) {
+    auto prepared = fs::prepareNumericTemplateInsertion(function, *program);
+    if (!input || failed(prepared) || failed(fs::insertLogicalSynchronization(function, **prepared)) ||
+        failed(verify(function))) {
         return failure();
     }
     auto trace = traceLogicalInsertion(function, *input);
