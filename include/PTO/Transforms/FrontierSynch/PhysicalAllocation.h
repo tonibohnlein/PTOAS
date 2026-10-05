@@ -32,11 +32,6 @@ struct PhysicalAllocationPlan {
     std::vector<PhysicalRecordAllocation> records;
 };
 FailureOr<PhysicalAllocationPlan> decodeCyclicAllocation(func::FuncOp function, ArrayRef<int64_t> eligibleIds);
-// Internal emission helpers. Compaction preserves each executed command and ID;
-// the returned pointers identify erased logical endpoints, never dereferenced.
-void emitAllocatedCommand(OpBuilder& builder, Operation* endpoint,
-                          const PhysicalRecordAllocation& record, Value phaseOffset = {});
-SmallVector<Operation*> compactAllocatedEndpoints(func::FuncOp function, const PhysicalAllocationPlan& plan);
 // Success lowers all logical commands; failure leaves the function unchanged.
 // The caller supplies an eligible subset of 0..5; 6/7 are reserved. Every
 // supported direction may use this numeric list:

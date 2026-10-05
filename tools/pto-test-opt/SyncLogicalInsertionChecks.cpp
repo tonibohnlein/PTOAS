@@ -330,10 +330,6 @@ LogicalResult runLogicalInsertionChecks(func::FuncOp function, pto::GMAliasPolic
             function.print(stream);
             return text;
         };
-        // Test-only reference emission: retain every enumerated endpoint.
-        if (function->hasAttr("test.uncompact_endpoints")) {
-            function.walk([](Operation* op) { op->removeAttr("pto.endpoint_cut"); });
-        }
         const auto before = render();
         const auto eligible = ids ? ids.asArrayRef() : ArrayRef<int64_t>();
         const bool allocated = succeeded(fs::allocatePhysicalEventIds(function, eligible));
