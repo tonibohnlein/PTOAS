@@ -12,6 +12,8 @@
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
+#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 namespace mlir::pto::frontiersynch {
 LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy) {
@@ -89,16 +91,16 @@ public:
         }
         FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepared = failure();
         auto function = getOperation();
+        std::string routeError;
         const bool straight = !function.isDeclaration() && llvm::hasSingleElement(function.getBody()) &&
             llvm::all_of(function.front(), [](Operation& op) { return op.getNumRegions() == 0; });
         if (straight) {
-            if (failed(analysis.analyzeExplicitFunction())) {
-                function.emitError(analysis.explicitResult() ? analysis.explicitResult()->error :
-                                   "explicit analysis unavailable");
-                signalPassFailure();
-                return;
+            if (succeeded(analysis.analyzeExplicitFunction())) {
+                prepared = frontiersynch::prepareExplicitInsertion(function, *analysis.explicitResult());
+            } else {
+                routeError = analysis.explicitResult() ? analysis.explicitResult()->error :
+                             "explicit analysis unavailable";
             }
-            prepared = frontiersynch::prepareExplicitInsertion(function, *analysis.explicitResult());
         } else {
             // Preserve the existing certified numerical route (including its
             // allocation export) when available. Direct rotating extraction
@@ -119,12 +121,22 @@ public:
                     function, *analysis.input(), *analysis.result());
             }
             if (failed(prepared)) {
-                std::string sequenceError;
                 prepared = frontiersynch::prepareSequenceInsertion(function, *analysis.input(),
-                                                                   *analysis.result(), sequenceError);
-                if (failed(prepared)) { function.emitError(sequenceError); }
+                                                                   *analysis.result(), routeError);
             }
         }
+        if (failed(prepared) && succeeded(analysis.recognizeArithmetic()) && analysis.result()->arithmetic) {
+            const auto& arithmetic = *analysis.result()->arithmetic;
+            SmallVector<const CompoundInstanceElement*> phases;
+            for (const auto& site : arithmetic.sites) { phases.push_back(site.phase); }
+            if (!frontiersynch::mayHaveHardwareProtectedPair(*analysis.input(), phases)) {
+                auto demands = frontiersynch::analyzeArithmeticDemands(arithmetic);
+                if (demands.error.empty()) {
+                    prepared = frontiersynch::prepareArithmeticInsertion(function, arithmetic, demands, routeError);
+                } else { routeError += "; arithmetic: " + demands.error; }
+            }
+        }
+        if (failed(prepared)) { function.emitError(routeError); }
         if (failed(prepared) || failed(frontiersynch::insertLogicalSynchronization(getOperation(), **prepared))) {
             signalPassFailure();
         }

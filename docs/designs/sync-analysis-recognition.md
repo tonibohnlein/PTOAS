@@ -46,7 +46,7 @@ Physical allocation and scarcity repair are separate.
 |---|---|---|
 | M5 | Shared ordinary-access contracts, based GM cells, and common explicit/guarded effect acceptance | Implemented; three reviews accepted |
 | M6 | Immutable guarded rotating extraction, parameterized quotient circuits, and executable logical endpoints | Implemented; three reviews accepted |
-| M7 | Difference-bound reduction, endpoint selectors, and route integration | Pending |
+| M7 | Difference-bound reduction, endpoint selectors, and route integration | Implemented; three reviews accepted |
 | M8 | Integer octagon and bounded-coefficient reduction and selectors | Pending |
 | M9 | Mixed regional composition and finite overlays using the implemented exports | Pending |
 
@@ -160,6 +160,57 @@ The quotient tests cover singleton wraps, absent intermediate sites, equal
 records, billion-sized distance bounds and arithmetic overflow rejection.
 Architecture, correctness and performance reviews accepted the milestone.
 Local build and validation artifacts are under `.local/route-completion-m6/`.
+
+### M7 difference-bound analysis and insertion
+
+The exact arithmetic backend now consumes the shared normalized primitive
+relations for difference bounds. It joins physical reads/writes by memory space,
+canonical base and byte, restricts conflicts to reference order, then applies the
+bounded-pipe-witness construction. Every composition keeps one shared parameter
+tuple and requires matching occurrence residues. Reflexive native order is kept
+separate from strict required reachability; subtracting native order and two-step
+strict reachability yields the minimum demands.
+
+`DifferenceBoundRelations` uses arbitrary-precision closed integer DBMs.
+Projection is the exact closed-submatrix operation. Union subtraction partitions
+fixed difference directions by their thresholds, with exact empty/subset pruning;
+it never replaces a union by an abstract join. Integer constants are not truncated
+by intermediate closure or strict-complement operations.
+
+Forward and inverse selectors retain original site tags and coordinate tuples.
+Their guards are exact projected domains; each output coordinate is a maximum of
+closed lower bounds. The minimum-demand functionality theorem makes these bounds
+select a unique endpoint. First-match selection removes duplicate piece matches.
+The insertion adapter prepares guards and tuple expressions at the original cuts
+in detached blocks, then uses the common logical insertion mechanism. Boolean
+parameters are zero-extended; index coordinates use signed widening. Checked i128
+arithmetic supports the producer's period one/two and 64-bit index contract.
+Unrepresentable selector constants cause explicit failure before IR mutation.
+
+The route accepts whole arithmetic regions, including supported nested counted
+loops and index-dependent branches. It does not unroll them. Local demands must
+pass an exact executed-adjacency test. Programs with potentially hardware-protected
+accumulator interactions remain with a route that models that protection; the
+arithmetic backend does not silently reinstate those software demands. Regional
+storage selectors and physical-allocation exports are not provided by this route
+yet. Integer octagons and bounded coefficients remain M8 work.
+
+Validation passed 107 RUN checks, including exact DBM/selector tests, 48 finite
+physical-conflict oracle valuations and 12 nested conditional insertion traces.
+Five full-CLI commands were skipped by the overlay runner. Both frozen GEMMs
+retain their dynamic plans and C++ sizes, with analysis/allocation around 0.097 s.
+Architecture, correctness and performance reviews accepted. Local evidence is
+in `.local/route-completion-m7/REPORT.md`.
+
+For fixed pipe count and arithmetic dimension, the construction is polynomial in
+the primitive representation and encoded constants’ bit lengths. Its degree can be large.
+A join/project on d coordinates uses O(d³) arbitrary-precision operations; union
+insertion also performs subset comparisons against existing pieces. Subtraction
+has a fixed-dimension threshold-arrangement cost. The cost counters record
+primitive pieces, joins, projections, compositions, differences and output pieces;
+they do not claim to count every inclusion test or arrangement cell. Runtime trip
+counts and numerical address distances are never enumerated. Logical emission is
+charged separately to the resulting selector representation.
 
 ### Milestone 1: complete the explicit straight-line route
 

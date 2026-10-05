@@ -9,6 +9,8 @@
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/SyncInput.h"
+#include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include <limits>
 #include <optional>
 namespace mlir::pto::frontiersynch {
@@ -120,5 +122,47 @@ void HardwareProtectionBuilder::observe(Operation* operation, ExplicitEffects& o
             access.protectionGroup = activeGroup;
         }
     }
+}
+bool mayHaveHardwareProtectedPair(const SyncInput& input,
+                                 llvm::ArrayRef<const CompoundInstanceElement*> phases)
+{
+    if (phases.size() > UINT32_MAX / 2 || llvm::any_of(phases, [](const auto* phase) { return !phase; })) {
+        return true;
+    }
+    std::vector<ExplicitEffects> candidates(phases.size());
+    for (uint32_t i = 0; i < phases.size(); ++i) {
+        auto& candidate = candidates[i];
+        candidate.payload = i; candidate.pipe = static_cast<uint32_t>(phases[i]->kPipeValue);
+        bool read = false, write = false;
+        for (auto id : input.accesses().effectsFor(phases[i])) {
+            const auto& effect = input.accesses().effects()[id];
+            if (effect.memory && effect.memory->scope == AddressSpace::ACC) {
+                read |= effect.mode == SyncAccessMode::Read;
+                write |= effect.mode == SyncAccessMode::Write;
+            }
+        }
+        if (write) { candidate.accesses.push_back({0, read, true}); }
+    }
+    // Test potential writer pairs through the common target rule. Collapsing
+    // accumulator atoms and skipping intermediate sites overapproximates
+    // possible protection; rejecting it is conservative. In particular an
+    // inactive intervening site cannot hide a newly protected pair. Check
+    // both orders and repeated sites, since pairs may cross iteration ends.
+    for (std::size_t a = 0; a < candidates.size(); ++a) {
+        if (candidates[a].accesses.empty()) { continue; }
+        for (std::size_t b = 0; b < candidates.size(); ++b) {
+            if (candidates[b].accesses.empty()) { continue; }
+            auto first = candidates[a], second = candidates[b];
+            second.payload = static_cast<uint32_t>(candidates.size() + b);
+            HardwareProtectionBuilder protection;
+            protection.observe(phases[a]->elementOp, first, {0});
+            protection.observe(phases[b]->elementOp, second, {0});
+            if (hardwareProtectsConflict(first.pipe, first.accesses.front().protectionGroup,
+                                        second.pipe, second.accesses.front().protectionGroup)) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 } // namespace mlir::pto::frontiersynch

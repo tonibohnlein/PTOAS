@@ -164,6 +164,10 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/AllocationCertificate.cpp
   FrontierSynch/PhysicalAllocation.cpp
   FrontierSynch/GuardedPeriodicQuotient.cpp
+  FrontierSynch/DifferenceBoundRelations.cpp
+  FrontierSynch/ArithmeticDemandAnalysis.cpp
+  FrontierSynch/ArithmeticSelectors.cpp
+  FrontierSynch/ArithmeticInsertion.cpp
   FrontierSynch/GuardedRotatingAnalysis.cpp
   FrontierSynch/GuardedRotatingInsertion.cpp
   FrontierSynch/RotatingAnalysis.cpp

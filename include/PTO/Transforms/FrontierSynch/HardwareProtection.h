@@ -13,7 +13,10 @@
 #include <unordered_set>
 namespace mlir {
 class Operation;
-namespace pto::frontiersynch {
+namespace pto {
+class SyncInput;
+class CompoundInstanceElement;
+namespace frontiersynch {
 // A group certifies protection between every ordered pair of its WRITERS to
 // one resource, on one pipe. It is not a completion-before-start edge. Group
 // identities include dynamic scope; zero means ordinary software ordering.
@@ -37,6 +40,12 @@ private:
     Type accumulatorType;
     std::unordered_set<uint32_t> activeAtoms;
 };
-} // namespace pto::frontiersynch
+// Conservative applicability check for routes that have no conditional
+// hardware-protection export. Uses the shared target rule, including pairs
+// crossing repeated visits; it does not change effects or add native edges.
+bool mayHaveHardwareProtectedPair(const SyncInput& input,
+                                 llvm::ArrayRef<const CompoundInstanceElement*> phases);
+} // namespace frontiersynch
+} // namespace pto
 } // namespace mlir
 #endif

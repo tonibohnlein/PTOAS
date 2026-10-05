@@ -59,7 +59,9 @@ public:
             fail("guarded rotation requires a 64-bit index representation"); return;
         }
         if (!prepareGuards() || !prepareFragments()) { return; }
-        if (hasPotentialProtection()) { fail("guarded conditional accumulator protection is not supported"); return; }
+        if (mayHaveHardwareProtectedPair(input, result.phases)) {
+            fail("guarded conditional accumulator protection is not supported"); return;
+        }
         normalize();
         for (std::size_t target = 0; target < fragments.size(); ++target) {
             neighbors(target, false);
@@ -230,44 +232,6 @@ private:
             result.refreshBound = std::max(result.refreshBound, fragment.refresh);
         }
         return true;
-    }
-    bool hasPotentialProtection()
-    {
-        std::vector<ExplicitEffects> candidates(result.phases.size());
-        for (uint32_t i = 0; i < result.phases.size(); ++i) {
-            auto& candidate = candidates[i];
-            candidate.payload = i; candidate.pipe = result.payloads[i].pipe;
-            bool read = false, write = false;
-            for (auto id : input.accesses().effectsFor(result.phases[i])) {
-                const auto& effect = input.accesses().effects()[id];
-                if (effect.memory && effect.memory->scope == AddressSpace::ACC) {
-                    read |= effect.mode == SyncAccessMode::Read;
-                    write |= effect.mode == SyncAccessMode::Write;
-                }
-            }
-            if (write) { candidate.accesses.push_back({0, read, true}); }
-        }
-        // Test potential writer pairs through the common target rule. Collapsing
-        // accumulator atoms and skipping intermediate sites overapproximates
-        // possible protection; rejecting it is conservative. In particular an
-        // inactive intervening site cannot hide a newly protected pair. Check
-        // both orders and repeated sites, since pairs may cross iteration ends.
-        for (std::size_t a = 0; a < candidates.size(); ++a) {
-            if (candidates[a].accesses.empty()) { continue; }
-            for (std::size_t b = 0; b < candidates.size(); ++b) {
-                if (candidates[b].accesses.empty()) { continue; }
-                auto first = candidates[a], second = candidates[b];
-                second.payload = static_cast<uint32_t>(candidates.size() + b);
-                HardwareProtectionBuilder protection;
-                protection.observe(result.phases[a]->elementOp, first, {0});
-                protection.observe(result.phases[b]->elementOp, second, {0});
-                if (hardwareProtectsConflict(first.pipe, first.accesses.front().protectionGroup,
-                                            second.pipe, second.accesses.front().protectionGroup)) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
     bool sameCellFamily(const Fragment& a, const Fragment& b) const
     {
