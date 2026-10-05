@@ -77,7 +77,7 @@ def main():
     tool, optimizer = shutil.which(sys.argv[1]), shutil.which(sys.argv[2])
     source = Path(sys.argv[3]).read_text()
     checked = 0
-    with tempfile.TemporaryDirectory(prefix="endpoint-compaction-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="family-emission-") as scratch:
         path = Path(scratch) / "case.pto"
         for inner_end in [1, 2, 5, 8, 9, 17]:
             for outer_end in [1, 2, 8]:
@@ -142,7 +142,7 @@ def main():
         assert physical.count("<PIPE_ALL>") == 1
         for name in ["scf.for", "pto.tload", "pto.textract"]:
             assert physical.count(name) == source.count(name)
-    print(f"endpoint compaction: {checked} independent ordering checks, family sites, terminal completion")
+    print(f"family emission: {checked} independent ordering checks, family sites, terminal completion")
 
 
 if __name__ == "__main__":
