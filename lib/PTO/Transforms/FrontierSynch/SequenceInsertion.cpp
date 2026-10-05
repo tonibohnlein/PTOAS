@@ -10,7 +10,7 @@ namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare()
 {
     auto result = std::make_unique<PreparedLogicalPlan>(0);
-    result->completeInvocation = !children.empty();
+    result->completeInvocation = llvm::any_of(children, [](const Child& child) { return !child.anchors.empty(); });
     result->groupedFamilies = true;
     result->independentPieces = true;
     uint32_t nextRecord = 0;
@@ -75,12 +75,17 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare()
     }
     std::map<Operation*, std::unique_ptr<DenseMap<Expr, Value>>> memos;
     std::map<Operation*, Block*> stages;
+    std::map<Operation*, RegionExpressions::CutEmission> contexts;
+    const bool contextual = llvm::any_of(children, [](const Child& child) {
+        return child.regional.capabilities.contextualGuards;
+    });
     auto emit = [&](Expr expression, Operation* cut) -> FailureOr<Value> {
         auto& memo = memos[cut];
         if (!memo) { memo = std::make_unique<DenseMap<Expr, Value>>(); stages[cut] = &result->addPreparation(cut); }
         OpBuilder builder(function.getContext());
         builder.setInsertionPointToEnd(stages[cut]);
-        return expressions.emit(expression, builder, cut, *memo);
+        return contextual ? expressions.emitContextual(expression,builder,cut,contexts[cut]) :
+                            expressions.emit(expression,builder,cut,*memo);
     };
     auto endpointGuard = [&](const Port& point, Expr guard) {
         const auto& child = children[point.child];

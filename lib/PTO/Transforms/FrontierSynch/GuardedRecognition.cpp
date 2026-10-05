@@ -12,7 +12,7 @@
 
 namespace mlir::pto::frontiersynch {
 namespace {
-void collect(Region& root, Operation* entry, const PhaseIndex& index, GuardedRecognition& output,
+void collect(ArrayRef<Operation*> roots, Operation* entry, const PhaseIndex& index, GuardedRecognition& output,
              bool requireInvariant)
 {
     // An explicit stack avoids host recursion on deeply nested if/else trees.
@@ -33,7 +33,7 @@ void collect(Region& root, Operation* entry, const PhaseIndex& index, GuardedRec
             stack.push_back({&op, guard});
         }
     };
-    append(root, std::nullopt);
+    for (auto* root : llvm::reverse(roots)) { stack.push_back({root, std::nullopt}); }
     while (!stack.empty()) {
         const auto work = stack.pop_back_val();
         Operation& op = *work.operation;
@@ -71,8 +71,29 @@ GuardedRecognition recognizeFiniteGuarded(Region& region, const PhaseIndex& inde
                                           const SyncStorageEffects& effects)
 {
     GuardedRecognition output;
-    Operation* entry = region.hasOneBlock() && !region.front().empty() ? &region.front().front() : nullptr;
-    collect(region, entry, index, output, false);
+    SmallVector<Operation*> roots;
+    if (region.empty()) { return output; }
+    if (!region.hasOneBlock()) {
+        output.result.note(RecognitionIssue::UnsupportedControl, region.getParentOp(), true);
+        return output;
+    }
+    for (Operation& op : region.front()) { roots.push_back(&op); }
+    return recognizeFiniteGuarded(roots, index, effects);
+}
+GuardedRecognition recognizeFiniteGuarded(ArrayRef<Operation*> roots, const PhaseIndex& index,
+                                          const SyncStorageEffects& effects)
+{
+    GuardedRecognition output;
+    Operation* entry = roots.empty() ? nullptr : roots.front();
+    Operation* previous = nullptr;
+    for (auto* root : roots) {
+        if (!root || !root->getBlock() || (previous && previous->getNextNode() != root)) {
+            output.result.note(RecognitionIssue::UnsupportedControl, root, true);
+            return output;
+        }
+        previous = root;
+    }
+    collect(roots, entry, index, output, false);
     for (const auto& item : output.phases) {
         for (auto id : effects.effectsFor(item.phase)) {
             if (effects.effects()[id].precision != SyncAccessPrecision::Exact || !effects.effects()[id].exactRanges) {
@@ -94,7 +115,9 @@ GuardedRecognition recognizeGuardedRotating(scf::ForOp loop, const PhaseIndex& i
     if (index.needsValuePrerequisite(loop)) {
         output.result.note(RecognitionIssue::AdditionalPrerequisite, loop);
     }
-    collect(loop.getRegion(), loop, index, output, true);
+    SmallVector<Operation*> roots;
+    for (Operation& op : loop.getBody()->getOperations()) { roots.push_back(&op); }
+    collect(roots, loop, index, output, true);
     SmallVector<const CompoundInstanceElement*> phases;
     DenseMap<const CompoundInstanceElement*, std::optional<std::size_t>> guards;
     for (const auto& item : output.phases) {
