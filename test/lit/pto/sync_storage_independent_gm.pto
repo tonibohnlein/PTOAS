@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --gm-alias=may-not-alias --storage-effects %s | FileCheck %s --check-prefix=NO
+// RUN: pto-sync-input-test --gm-alias=may-alias --storage-effects %s | FileCheck %s --check-prefix=MAY
+// The driver repeats each query, then queries before and after rebuilding the
+// same storage object. Local and invalid IDs cannot discharge a GM obligation.
+// NO-LABEL: storage alias_policy
+// NO: independent-gm 0=0
+// NO: independent-gm 1=0
+// NO: independent-gm 2=1
+// NO: independent-gm 4=0
+// NO: independent-gm 6=0
+// MAY-LABEL: storage alias_policy
+// MAY: independent-gm 0=0
+// MAY: independent-gm 1=0
+// MAY: independent-gm 2=0
+// MAY: independent-gm 4=0
+// MAY: independent-gm 6=0
+// NO-LABEL: storage isolated_write
+// NO: independent-gm 1=1
+// MAY-LABEL: storage isolated_write
+// MAY: independent-gm 1=1
+module attributes {pto.target_arch = "a3"} {
+  func.func @alias_policy(%a: !pto.ptr<f32, gm>, %b: !pto.ptr<f32, gm>, %offset: index)
+      attributes {test.independent_gm = array<i64: 0, 1, 2, 4, 6>} {
+    %zero = arith.constant 0 : i64
+    %far = arith.constant 4096 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %a_offset = pto.addptr %a, %offset : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
+    %va = pto.make_tensor_view %a_offset, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %vb = pto.make_tensor_view %b, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %pa = pto.partition_view %va, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    %pb = pto.partition_view %vb, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    %src = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf32>
+    %dst = pto.alloc_tile addr = %far : !pto.tile_buf<vec, 16x16xf32>
+    pto.tstore ins(%src : !pto.tile_buf<vec, 16x16xf32>) outs(%pa : !pto.partition_tensor_view<16x16xf32>)
+    pto.tload ins(%pb : !pto.partition_tensor_view<16x16xf32>) outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tload ins(%pa : !pto.partition_tensor_view<16x16xf32>) outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+  func.func @isolated_write(%a: !pto.ptr<f32, gm>) attributes {test.independent_gm = array<i64: 1>} {
+    %zero = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %view = pto.make_tensor_view %a, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    %src = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf32>
+    pto.tstore ins(%src : !pto.tile_buf<vec, 16x16xf32>) outs(%part : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+}

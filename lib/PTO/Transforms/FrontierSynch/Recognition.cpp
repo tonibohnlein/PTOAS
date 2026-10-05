@@ -206,13 +206,18 @@ RecognitionResult recognizeExplicit(Block& block, const PhaseIndex& index, const
         result.note(RecognitionIssue::StructuredBody, block.getParentOp(), true);
         return result;
     }
+    SmallVector<std::size_t> selected;
     for (const auto* phase : *sequence) {
         for (auto id : effects.effectsFor(phase)) {
+            selected.push_back(id);
             if (effects.effects()[id].precision != SyncAccessPrecision::Exact || !effects.effects()[id].exactRanges) {
                 result.note(effects.effects()[id].precision == SyncAccessPrecision::Exact ?
                             RecognitionIssue::SymbolicGeometry : RecognitionIssue::InexactFootprint, phase->elementOp);
             }
         }
+    }
+    if (result.state == RecognitionState::Applicable && !effects.hasExactCellPartition(selected)) {
+        result.note(RecognitionIssue::SymbolicGeometry, block.getParentOp());
     }
     return result;
 }
@@ -222,6 +227,7 @@ RecognitionResult recognizeExplicitRun(ArrayRef<Operation*> operations, const Ph
 {
     RecognitionResult result;
     Operation* previous = nullptr;
+    SmallVector<std::size_t> selected;
     for (auto* op : operations) {
         if (!op || op->getNumRegions() || (previous && previous->getNextNode() != op)) {
             result.note(RecognitionIssue::StructuredBody, op, true);
@@ -231,6 +237,7 @@ RecognitionResult recognizeExplicitRun(ArrayRef<Operation*> operations, const Ph
         detail::inspectLeaf(*op, index, result);
         for (const auto* phase : index.phasesFor(op)) {
             for (auto id : effects.effectsFor(phase)) {
+                selected.push_back(id);
                 const auto& effect = effects.effects()[id];
                 if (effect.precision != SyncAccessPrecision::Exact || !effect.exactRanges) {
                     result.note(effect.precision == SyncAccessPrecision::Exact ?
@@ -238,6 +245,9 @@ RecognitionResult recognizeExplicitRun(ArrayRef<Operation*> operations, const Ph
                 }
             }
         }
+    }
+    if (result.state == RecognitionState::Applicable && !effects.hasExactCellPartition(selected)) {
+        result.note(RecognitionIssue::SymbolicGeometry, previous);
     }
     return result;
 }

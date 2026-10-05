@@ -24,6 +24,7 @@ struct FiniteGuardedState {
     std::vector<RegionalStorageBoundary> storageBoundary;
     std::map<uint32_t, std::vector<RegionalSelector>> firstPayloads, lastPayloads;
     RegionalCost cost;
+    GMAliasPolicy gmAliasPolicy = GMAliasPolicy::MayAlias;
     std::string insertionError;
     uint32_t pipe(uint32_t type) const { return effects[type].pipe; }
     Expr yes() { return arena->boolean(true); }

@@ -144,12 +144,13 @@ static void addEffect(
 }
 
 #include "PTOMatrixAccessEffects.cpp"
+#include "PTOVectorAccessEffects.cpp"
 
 // === TLoadOp ===
 // Read: src, Write: dst
 // 针对 OpOperand* 的重载
 void TLoadOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  if (addMatrixLoadAccessEffects(*this, effects)) {
+  if (addMatrixLoadAccessEffects(*this, effects) || addVectorLoadAccessEffects(*this, effects)) {
     return;
   }
   addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
@@ -173,7 +174,7 @@ void TAbsOp::getEffects(
 // === TStoreOp ===
 // Read: src and old dst for AtomicAdd; Write: dst (GM).
 void TStoreOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  if (addMatrixStoreAccessEffects(*this, effects)) {
+  if (addMatrixStoreAccessEffects(*this, effects) || addVectorStoreAccessEffects(*this, effects)) {
     return;
   }
   if (getAtomicType() == AtomicType::AtomicAdd) {

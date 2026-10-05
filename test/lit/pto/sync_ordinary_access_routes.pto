@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_ordinary_access_routes.py pto-sync-input-test %s
+!tile = !pto.tile_buf<vec, 2x64xf32, valid=?x?>
+module attributes {pto.target_arch = "a3"} {
+  func.func @ordinary(%input: !pto.ptr<f32, gm>, %output: !pto.ptr<f32, gm>, %scalar: f32) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %cols = arith.constant 64 : index
+    %src = pto.make_tensor_view %input, shape = [%two, %cols], strides = [%cols, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %dst = pto.make_tensor_view %output, shape = [%two, %cols], strides = [%cols, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %a = pto.partition_view %src, offsets = [%zero, %zero], sizes = [%two, %cols] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<2x64xf32>
+    %b = pto.partition_view %dst, offsets = [%zero, %zero], sizes = [%two, %cols] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<2x64xf32>
+    %tile = pto.alloc_tile addr = %base valid_row = %two valid_col = %cols : !tile
+    pto.tload ins(%a : !pto.partition_tensor_view<2x64xf32>) outs(%tile : !tile)
+    pto.tadds ins(%tile, %scalar : !tile, f32) outs(%tile : !tile)
+    pto.tstore ins(%tile : !tile) outs(%b : !pto.partition_tensor_view<2x64xf32>)
+    return
+  }
+}

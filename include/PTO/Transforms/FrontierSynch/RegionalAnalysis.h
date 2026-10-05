@@ -46,6 +46,10 @@ struct RegionalAnalysis {
     std::map<uint32_t, std::vector<RegionalSelector>> firstPayloads, lastPayloads;
     RegionalCapabilities capabilities;
     RegionalCost cost;
+    // Exports, including discharged effects, belong to one unchanged invocation
+    // and alias context. Composition must not reinterpret that context.
+    // This field records the assumption on any exported based GM cells.
+    GMAliasPolicy gmAliasPolicy = GMAliasPolicy::MayAlias;
     // Queries include endpoint presence and reflexivity. Invalid input is nullopt;
     // a valid unreachable pair is the arena's false expression.
     std::function<std::optional<RegionExpressions::Id>(RegionalEvent)> presence;

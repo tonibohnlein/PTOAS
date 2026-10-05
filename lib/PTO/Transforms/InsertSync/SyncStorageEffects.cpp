@@ -8,6 +8,8 @@
 // Split physical ranges at endpoints, never by byte count or by SSA allocation.
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "SyncEffectRanges.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include <map>
 
@@ -44,6 +46,7 @@ LogicalResult SyncStorageEffects::build(const SyncInput& input)
     records.clear();
     partition.clear();
     phaseEffects.clear();
+    independentEffects.clear();
     SyncStorageEffects pending;
     pending.memory = input.memory();
     DenseMap<Value, bool> provenance;
@@ -76,36 +79,40 @@ LogicalResult SyncStorageEffects::build(const SyncInput& input)
 void SyncStorageEffects::partitionRanges()
 {
     struct Event { std::size_t effect; bool start; };
-    std::map<AddressSpace, std::map<uint64_t, SmallVector<Event>>> spaces;
+    using Points = std::map<uint64_t, SmallVector<Event>>;
+    // Preserve first-seen base order, rather than ordering SSA pointer addresses.
+    std::map<AddressSpace, llvm::MapVector<Value, Points>> spaces;
     for (auto [id, effect] : llvm::enumerate(records)) {
         for (const auto& range : effect.ranges) {
             if (range.begin >= range.end) {
                 continue;
             }
-            spaces[range.space][range.begin].push_back({id, true});
-            spaces[range.space][range.end].push_back({id, false});
+            spaces[range.space][range.base][range.begin].push_back({id, true});
+            spaces[range.space][range.base][range.end].push_back({id, false});
         }
     }
-    for (const auto& [space, points] : spaces) {
-        std::map<std::size_t, unsigned> active;
-        for (auto point = points.begin(); point != points.end(); ++point) {
-            for (const auto& event : point->second) {
-                if (event.start) {
-                    ++active[event.effect];
-                } else {
-                    if (--active[event.effect] == 0) {
-                        active.erase(event.effect);
+    for (const auto& [space, bases] : spaces) {
+        for (const auto& [base, points] : bases) {
+            std::map<std::size_t, unsigned> active;
+            for (auto point = points.begin(); point != points.end(); ++point) {
+                for (const auto& event : point->second) {
+                    if (event.start) {
+                        ++active[event.effect];
+                    } else {
+                        if (--active[event.effect] == 0) {
+                            active.erase(event.effect);
+                        }
                     }
                 }
-            }
-            auto next = std::next(point);
-            if (next == points.end() || active.empty()) {
-                continue;
-            }
-            const auto cell = partition.size();
-            partition.push_back({space, point->first, next->first});
-            for (auto effect : active) {
-                records[effect.first].cells.push_back(cell);
+                auto next = std::next(point);
+                if (next == points.end() || active.empty()) {
+                    continue;
+                }
+                const auto cell = partition.size();
+                partition.push_back({space, point->first, next->first, base});
+                for (auto effect : active) {
+                    records[effect.first].cells.push_back(cell);
+                }
             }
         }
     }
@@ -126,6 +133,49 @@ ArrayRef<std::size_t> SyncStorageEffects::effectsFor(const CompoundInstanceEleme
 bool SyncStorageEffects::allAccessesExact() const
 {
     return llvm::all_of(records, [](const auto& effect) { return effect.precision == SyncAccessPrecision::Exact; });
+}
+
+bool storageBasesAreComparable(ArrayRef<SyncStorageCell> ranges, GMAliasPolicy policy)
+{
+    llvm::DenseSet<Value> bases;
+    Operation* invocation = nullptr;
+    bool absoluteGM = false;
+    for (const auto& range : ranges) {
+        if (range.begin > range.end) { return false; }
+        if (range.begin == range.end) { continue; }
+        if (range.space != AddressSpace::GM) {
+            if (range.base) { return false; }
+            continue;
+        }
+        if (!range.base) { absoluteGM = true; continue; }
+        if (!isCanonicalGMBase(range.base)) { return false; }
+        auto* owner = cast<BlockArgument>(range.base).getOwner()->getParentOp();
+        if (invocation && invocation != owner) { return false; }
+        invocation = owner;
+        bases.insert(range.base);
+    }
+    return !(absoluteGM && !bases.empty()) &&
+        (bases.size() <= 1 || policy == GMAliasPolicy::MayNotAlias);
+}
+
+bool SyncStorageEffects::hasExactCellPartition(ArrayRef<std::size_t> effectIds) const
+{
+    SmallVector<SyncStorageCell> ranges;
+    for (auto id : effectIds) {
+        if (id >= records.size()) { return false; }
+        const auto& effect = records[id];
+        if (!effect.memory || effect.precision != SyncAccessPrecision::Exact || !effect.exactRanges) {
+            return false;
+        }
+        for (const auto& range : effect.ranges) {
+            if (range.space != effect.memory->scope ||
+                (range.base && (!effect.sharedProvenanceComplete || range.base != effect.memory->rootBuffer))) {
+                return false;
+            }
+            ranges.push_back(range);
+        }
+    }
+    return storageBasesAreComparable(ranges, memory.gmPolicy());
 }
 
 bool SyncStorageEffects::mayOverlap(std::size_t first, std::size_t second) const
@@ -205,6 +255,26 @@ bool SyncStorageEffects::mayConflict(std::size_t first, std::size_t second) cons
         return false;
     }
     return mayOverlap(first, second);
+}
+bool SyncStorageEffects::independentOfOtherPhases(std::size_t effect) const
+{
+    if (effect >= records.size() || !records[effect].memory ||
+        records[effect].memory->scope != AddressSpace::GM) {
+        return false;
+    }
+    auto cached = independentEffects.find(effect);
+    if (cached != independentEffects.end()) {
+        return cached->second;
+    }
+    bool independent = true;
+    for (std::size_t other = 0; other < records.size(); ++other) {
+        if (records[other].phase != records[effect].phase && mayConflict(effect, other)) {
+            independent = false;
+            break;
+        }
+    }
+    independentEffects.try_emplace(effect, independent);
+    return independent;
 }
 bool SyncStorageEffects::dependencies(const CompoundInstanceElement* first, SyncAccessMode firstMode,
                                       const CompoundInstanceElement* second, SyncAccessMode secondMode,

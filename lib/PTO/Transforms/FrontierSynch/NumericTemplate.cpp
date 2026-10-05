@@ -9,6 +9,7 @@
 #include "NumericTemplateInternal.h"
 #include "RecognitionInternal.h"
 #include "mlir/IR/Matchers.h"
+#include "llvm/ADT/DenseSet.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 std::optional<int64_t> constant(Value value)
@@ -112,9 +113,11 @@ NumericTemplate recognizeTemplate(scf::ForOp outer, const PhaseIndex& index,
     }
     if (regional) {
         const auto effects = input.accesses().effects();
+        llvm::DenseSet<std::size_t> checkedSources;
         for (const auto& payload : output.payloads) {
             for (const auto& effect : payload.effects) {
-                if (effect.discharge == TemplateDischarge::None) {
+                if (effect.discharge == TemplateDischarge::None ||
+                    !checkedSources.insert(effect.sourceEffect).second) {
                     continue;
                 }
                 for (std::size_t external = 0; external < effects.size(); ++external) {

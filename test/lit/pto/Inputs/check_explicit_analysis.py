@@ -70,7 +70,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="explicit-analysis-") as tmp:
         for document, function in zip(documents, functions):
             name = document["function"]
-            if name not in ("reject_symbolic", "reject_gm"):
+            if name != "reject_symbolic":
                 require(not document["error"], document)
                 check_graph(document)
             else:
@@ -97,7 +97,7 @@ def main():
                     require(seen == (a + 1 if command[1] == "set" else b), (name, seen, line))
                 if "pto.barrier" in line and "PIPE_ALL" not in line:
                     require(seen in local_targets, (name, seen, line))
-                if re.search(r"pto\.(tsetval|tgetval|textract|tmatmul)([ .]|$)", line):
+                if re.search(r"pto\.(tsetval|tgetval|textract|tmatmul|load)([ .]|$)", line):
                     seen += 1
             require(seen == len(document["occurrences"]), (name, seen))
             for opname in ("pto.tsetval", "pto.tgetval", "pto.textract", "pto.tmatmul"):

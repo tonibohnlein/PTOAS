@@ -60,10 +60,21 @@ void GetValidShapeOp::getEffects(
 }
 
 // Elementwise + reductions: mostly PIPE_V tilebuf ops
-PTO_DEFINE_BINARY_EFFECTS(TAddOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+void TAddOp::getEffects(PTOEffectList& effects) {
+  if (!addAlignedPointwiseAccessEffects(effects, {&getSrc0Mutable(), &getSrc1Mutable()}, getDstMutable())) {
+    PTO_ADD_READ(effects, getSrc0Mutable());
+    PTO_ADD_READ(effects, getSrc1Mutable());
+    PTO_ADD_WRITE(effects, getDstMutable());
+  }
+}
 PTO_DEFINE_BINARY_EFFECTS(TAddReluOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
 PTO_DEFINE_TERNARY_EFFECTS(TAddCOp, getSrc0Mutable(), getSrc1Mutable(), getSrc2Mutable(), getDstMutable())
-PTO_DEFINE_UNARY_EFFECTS(TAddSOp, getSrcMutable(), getDstMutable())
+void TAddSOp::getEffects(PTOEffectList& effects) {
+  if (!addAlignedPointwiseAccessEffects(effects, {&getSrcMutable()}, getDstMutable())) {
+    PTO_ADD_READ(effects, getSrcMutable());
+    PTO_ADD_WRITE(effects, getDstMutable());
+  }
+}
 PTO_DEFINE_BINARY_EFFECTS(TAddSCOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
 void TAxpyOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {

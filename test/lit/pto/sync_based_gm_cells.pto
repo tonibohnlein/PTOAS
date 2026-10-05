@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_based_gm_cells.py pto-sync-input-test %s
+// The same relative interval belongs to distinct cells for independent roots.
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a3"} {
+  func.func @based_gm(%a: !pto.ptr<f16, gm>, %b: !pto.ptr<f16, gm>) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %n = arith.constant 16 : index
+    %shift = arith.constant 128 : index
+    %base = arith.constant 0 : i64
+    %alias = pto.addptr %a, %shift : !pto.ptr<f16, gm> -> !pto.ptr<f16, gm>
+    %av = pto.make_tensor_view %a, shape = [%n, %n], strides = [%n, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %bv = pto.make_tensor_view %b, shape = [%n, %n], strides = [%n, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %ap = pto.partition_view %av, offsets = [%zero, %zero], sizes = [%n, %n] : !pto.tensor_view<?x?xf16>
+    %bp = pto.partition_view %bv, offsets = [%zero, %zero], sizes = [%n, %n] : !pto.tensor_view<?x?xf16>
+    %acc = pto.alloc_tile addr = %base : !acc
+    %mat = pto.alloc_tile addr = %base : !mat
+    pto.tstore ins(%acc : !acc) outs(%ap : !pto.partition_tensor_view<16x16xf16>)
+    pto.tload ins(%bp : !pto.partition_tensor_view<16x16xf16>) outs(%mat : !mat)
+    return
+  }
+}

@@ -95,7 +95,7 @@ module attributes {pto.target_arch = "a3"} {
     %x = pto.tgetval ins(%a, %offset : !tile, index) outs : f32
     return
   }
-  func.func @reject_gm(%p: !pto.ptr<f32, gm>) {
+  func.func @known_gm(%p: !pto.ptr<f32, gm>) {
     %zero = arith.constant 0 : index
     %x = pto.load %p[%zero] : !pto.ptr<f32, gm> -> f32
     return

@@ -30,6 +30,19 @@ inline DictionaryAttr makeAccessRegion(OpOperand& shape, bool capacity,
         builder.getNamedAttr("symbol_operands", builder.getDenseI64ArrayAttr(symbols))});
 }
 
+// The selection is exact only when all current valid shapes match these
+// (operand index, rows, columns) triples. Consumers resolve descriptor metadata
+// at the accessing operation; an unknown or unequal shape rejects the entire
+// selection rather than substituting the expected dimensions. Repeat the same
+// preconditions on every effect of an operation whose execution requires them.
+inline DictionaryAttr makeCheckedAccessRegion(OpOperand& shape, AffineMap coordinates,
+                                              ArrayRef<int64_t> validShapes)
+{
+    NamedAttrList parameters(makeAccessRegion(shape, false, coordinates));
+    parameters.set("valid_shapes", DenseI64ArrayAttr::get(shape.getOwner()->getContext(), validShapes));
+    return parameters.getDictionary(shape.getOwner()->getContext());
+}
+
 // Version 2 supplies the access domain independently of another operand.
 // Extents have no dimensions; their symbols and the selection's symbols both
 // refer to symbol_operands. No extents means one access, not an empty access.

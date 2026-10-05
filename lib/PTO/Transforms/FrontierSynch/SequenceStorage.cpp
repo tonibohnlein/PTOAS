@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
+#include "llvm/ADT/MapVector.h"
 namespace mlir::pto::frontiersynch {
 std::optional<int64_t> sequenceInteger(Value value)
 {
@@ -181,26 +182,31 @@ bool SequenceAnalysisState::collect()
 }
 bool SequenceAnalysisState::partition()
 {
-    std::map<AddressSpace, std::map<uint64_t, int64_t>> changes;
+    std::map<AddressSpace, llvm::MapVector<Value, std::map<uint64_t, int64_t>>> changes;
+    SmallVector<SyncStorageCell> identities;
     for (const auto& child : children) {
+        for (const auto& boundary : child.regional.storageBoundary) { identities.push_back(boundary.cell); }
         for (const auto& pattern : child.patterns) {
             ++costs.physicalFragments;
-            if (pattern.range.space == AddressSpace::GM) {
-                return fail("sequence explicit global ranges require a symbolic-base adapter");
-            }
+            identities.push_back(pattern.range);
             if (pattern.range.begin > pattern.range.end) { return fail("invalid physical interval"); }
             if (pattern.range.begin == pattern.range.end) { continue; }
-            ++changes[pattern.range.space][pattern.range.begin];
-            --changes[pattern.range.space][pattern.range.end];
+            ++changes[pattern.range.space][pattern.range.base][pattern.range.begin];
+            --changes[pattern.range.space][pattern.range.base][pattern.range.end];
         }
     }
-    for (const auto& [space, points] : changes) {
-        int64_t active = 0;
-        uint64_t previous = 0;
-        for (auto [point, delta] : points) {
-            if (active > 0 && point > previous) { cells.push_back({space, previous, point}); }
-            active += delta;
-            previous = point;
+    if (!storageBasesAreComparable(identities, input->memory().gmPolicy())) {
+        return fail("sequence storage bases have unresolved alias relationships");
+    }
+    for (const auto& [space, bases] : changes) {
+        for (const auto& [base, points] : bases) {
+            int64_t active = 0;
+            uint64_t previous = 0;
+            for (auto [point, delta] : points) {
+                if (active > 0 && point > previous) { cells.push_back({space, previous, point, base}); }
+                active += delta;
+                previous = point;
+            }
         }
     }
     if (cells.size() > UINT32_MAX) { return fail("sequence physical cell identity overflow"); }
@@ -219,7 +225,7 @@ void SequenceAnalysisState::summarize()
             auto& summary = boundaries[childId][cellId];
             std::vector<Selected> firstWrites, lastWrites, firstReads, lastReads;
             for (const auto& pattern : child.patterns) {
-                if (pattern.range.space != cell.space || pattern.range.begin > cell.begin ||
+                if (!sameStorageDomain(pattern.range, cell) || pattern.range.begin > cell.begin ||
                     pattern.range.end < cell.end) { continue; }
                 Expr exists = expressions.lt(c(pattern.residue), child.trips);
                 auto last = expressions.sub(child.trips, c(1));

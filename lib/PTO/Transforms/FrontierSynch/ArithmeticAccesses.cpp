@@ -36,7 +36,7 @@ void emitRange(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEff
     relation.sourceSite = siteId;
     relation.sourceDimensions = depth;
     relation.storageSpace = range.space;
-    relation.storageBase = base;
+    relation.storageBase = base ? base : range.base;
     relation.coordinates[depth] = {"byte", CoordinateKind::Storage};
     auto rows = builder.domain(site, 0);
     auto byte = getAffineDimExpr(depth, builder.context);
@@ -94,48 +94,30 @@ bool symbolicRegion(ProgramBuilder& builder, std::size_t siteId, const SyncStora
     }
     return true;
 }
-// region.base is already canonicalized by the shared view/pointer mapper.
-// Only function-entry GM pointers establish an invariant relative coordinate.
-bool canonicalGMBase(Value base)
-{
-    auto argument = dyn_cast<BlockArgument>(base);
-    auto type = dyn_cast<PtrType>(base.getType());
-    const bool valid = argument && type && type.getMemorySpace().getAddressSpace() == AddressSpace::GM;
-    if (!valid) {
-        return false;
-    }
-    auto function = dyn_cast<func::FuncOp>(argument.getOwner()->getParentOp());
-    return function && argument.getOwner() == &function.getBody().front();
-}
 bool checkStorageBases(ProgramBuilder& builder, const SyncInput& input, const SyncStorageEffects& effects)
 {
-    DenseSet<Value> gmBases;
-    bool absoluteGM = false;
+    SmallVector<SyncStorageCell> identities;
     for (const auto& site : builder.output.sites) {
         if (builder.staticallyEmpty(site)) {
             continue;
         }
         for (auto id : effects.effectsFor(site.phase)) {
             const auto& effect = effects.effects()[id];
-            absoluteGM |= effect.exactRanges && effect.memory->scope == AddressSpace::GM;
+            if (effect.exactRanges) { llvm::append_range(identities, effect.ranges); }
             for (const auto& region : effect.regions) {
-                if (!region.base) {
-                    absoluteGM |= effect.memory->scope == AddressSpace::GM;
-                    continue;
-                }
-                const bool valid = effect.memory->scope == AddressSpace::GM && canonicalGMBase(region.base) &&
-                    effect.memory->rootBuffer == region.base;
-                if (!valid) {
+                if (region.empty()) { continue; }
+                if (region.base && (effect.memory->scope != AddressSpace::GM ||
+                                    effect.memory->rootBuffer != region.base)) {
                     builder.output.extraction.note(RecognitionIssue::SymbolicGeometry, site.phase->elementOp);
                     return false;
                 }
-                gmBases.insert(region.base);
+                // A one-byte witness checks the identity of a symbolic region;
+                // this does not materialize or approximate its access domain.
+                identities.push_back({effect.memory->scope, 0, 1, region.base});
             }
         }
     }
-    const bool unresolvedMixture = absoluteGM && !gmBases.empty();
-    const bool unresolvedAliases = gmBases.size() > 1 && input.memory().gmPolicy() == GMAliasPolicy::MayAlias;
-    if (unresolvedMixture || unresolvedAliases) {
+    if (!storageBasesAreComparable(identities, input.memory().gmPolicy())) {
         builder.output.extraction.note(RecognitionIssue::SymbolicGeometry,
                                       builder.output.sites.front().phase->elementOp);
         return false;

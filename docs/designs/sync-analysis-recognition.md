@@ -2,11 +2,11 @@
 
 ## Active implementation
 
-The executable routes are whole-function explicit analysis, numerical-template
-periodic analysis and direct rotating-footprint analysis. They use common logical
-insertion. Physical allocation remains
-available for certified numerical templates; the new explicit route stops at
-logical insertion.
+The executable routes are explicit analysis, numerical-template periodic
+analysis, direct rotating-footprint analysis, exact sequence composition, and
+finite guarded analysis. They use common logical insertion. Physical allocation
+remains available for certified numerical templates; the other routes require
+an allocation export before they can complete physical compilation.
 The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
 
 | Stage | Entry point and implementation |
@@ -16,6 +16,8 @@ The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
 | Numerical effect template | `NumericTemplate.cpp`, `NumericTemplateControl.cpp`, `NumericTemplateEffects.cpp`, `NumericTemplateStorage.cpp` |
 | Direct rotating generators and quotient | `RotatingExtraction.cpp`, `RotatingAnalysis.cpp` |
 | Explicit scan, ranks and boundaries | `ExplicitAnalysis.cpp`, `ExplicitReduction.cpp`, `LifetimeScan.cpp` |
+| Sequence composition and boundary reduction | `SequenceAnalysis.cpp`, `SequenceStorage.cpp`, `SequenceQueries.cpp`, `SequenceAdapters.cpp` |
+| Finite guarded closure and insertion | `FiniteGuardedAnalysis.cpp`, `FiniteGuardedQueries.cpp`, `FiniteGuardedInsertion.cpp` |
 | Exact generators and reduction | `NumericTemplateAnalysis.cpp`, `LifetimeScan.cpp`, `PeriodicDemandGraph.cpp`, `PeriodicFrontier.cpp` |
 | Endpoint preparation and insertion | `NumericTemplateEndpoints.cpp`, `NumericTemplateInsertion.cpp`, `LogicalInsertion.cpp` |
 | Reuse certificate and physical IDs | `PeriodicAllocation.cpp`, `AllocationCertificate.cpp`, `PhysicalAllocation.cpp` |
@@ -28,8 +30,38 @@ IR-changing pass. Direct callers must keep the borrowed IR unchanged for the
 analysis lifetime. The full `--recognize` diagnostic requests it; the
 numerical insertion path does not. This avoids constructing an unused
 arithmetic candidate without changing the periodic result or adding a compiler
-mode. Arithmetic and guarded recognizers remain tested library functionality;
-they do not yet provide an alternative production insertion backend.
+mode. Arithmetic and immutable guarded rotating recognizers remain tested
+library functionality; they do not yet provide production insertion backends.
+Finite guarded regions do have an analysis and insertion backend.
+
+## Next route-completion milestones
+
+These milestones extend the existing pass. Each is complete only after its
+analysis, endpoint preparation, integration tests, and architecture, correctness,
+and performance reviews are accepted. Recognition alone is not completion.
+Physical allocation and scarcity repair are separate.
+
+| Milestone | Deliverable | Status |
+|---|---|---|
+| M5 | Shared ordinary-access contracts, based GM cells, and common explicit/guarded effect acceptance | Implemented; three reviews accepted |
+| M6 | Immutable guarded rotating extraction, parameterized quotient circuits, and executable logical endpoints | Pending |
+| M7 | Difference-bound reduction, endpoint selectors, and route integration | Pending |
+| M8 | Integer octagon and bounded-coefficient reduction and selectors | Pending |
+| M9 | Mixed regional composition and finite overlays using the implemented exports | Pending |
+
+M5 retains unknown geometry and alias relationships as explicit obligations.
+Operation-specific access semantics belong to the shared IR interface consumed
+by both passes; demand analysis contains no instruction footprint table.
+M6 must preserve shared circuits rather than enumerate guard valuations or
+expand numerical dependence distances. M7 and M8 must satisfy the draft's exact
+integer projection and fixed-class restrictions. M9 accepts only exports that
+its crossing analysis can consume; it does not assume a general compact theorem
+for repeatedly composing arbitrary nested regions.
+
+Each milestone is committed separately after review. The corpus report under
+`.local/composition-corpus-20261005/` is the baseline for additional accepted
+regions and whole functions. Partial recognition is reported separately from
+successful logical insertion and from physical compilation.
 
 ## Implementation milestones
 
@@ -38,6 +70,38 @@ supplies direct insertion. Both extend the existing production pass. Recognition
 alone is not completion: an accepted route must compute demands and prepare the
 endpoint code needed by its caller. Neither milestone changes physical allocation
 or scarcity repair.
+
+### M5 implemented access contract
+
+Ordinary aligned ND load/store and aligned TADD/TADDS publish selections through
+`MemoryEffectOpInterface`. All operand valid-shape preconditions are checked at
+the accessing instruction, including metadata updates. Native repeat-width
+limits, alignment, layouts, padding and special transfer modes constrain these
+contracts. Other operations retain their existing shared declarations; the
+frontier analysis has no instruction-specific footprint recovery.
+
+Finite GM cells carry their canonical function-entry pointer base. Equal byte
+offsets on different bases do not merge; different bases require the configured
+may-not-alias assumption before an exact cell partition is accepted. Local
+storage continues to use absolute addresses across SSA roots. Explicit,
+guarded, arithmetic and sequence adapters preserve this identity. Independent
+GM effects can be discharged where single-occurrence scope is established;
+the shared input caches those proofs.
+
+The 2026-10-06 validation passed 102 regression checks and all three reviews.
+On the original 784 prepared modules, logical insertion increased from two
+empty functions to 21 whole-module successes, adding 19 nonempty modules.
+Exact shared access records increased from 5,754 to 11,347 of 37,524.
+Existing insertion still succeeds on all 784; its 782 C++ successes are
+unchanged. The two supplemental device GEMMs preserve their dynamic commands,
+physical IDs and compact C++ output. Physical allocation for the new explicit
+and guarded results remains separate. Detailed results are recorded locally in
+`.local/route-completion-m5/REPORT.md`.
+
+Range partitioning costs `O(R log R + I)` plus shared geometry recovery; checking
+an exact common partition is linear in the selected ranges. Current valid-shape
+resolution can still require quadratic metadata work in long blocks. These
+costs precede the explicit scan/reduction bound, rather than being hidden in it.
 
 ### Milestone 1: complete the explicit straight-line route
 

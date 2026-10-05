@@ -97,11 +97,41 @@ LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &in
                    << storage.mayConflict(queries[i], queries[i + 1]) << "\n";
     }
   }
+  auto independenceQueries = function->getAttrOfType<DenseI64ArrayAttr>("test.independent_gm");
+  if (independenceQueries) {
+    for (auto id : independenceQueries.asArrayRef()) {
+      if (id < 0) {
+        return failure();
+      }
+      const bool independent = storage.independentOfOtherPhases(static_cast<std::size_t>(id));
+      if (storage.independentOfOtherPhases(static_cast<std::size_t>(id)) != independent) {
+        return failure();
+      }
+      llvm::outs() << "  independent-gm " << id << "=" << independent << "\n";
+    }
+  }
   // Rebuilding must neither accumulate cells nor retain prior phase mappings.
   auto cellCount = storage.cells().size(), effectCount = storage.effects().size();
   pto::SyncStorageEffects rebuilt;
   if (failed(rebuilt.build(input)) || rebuilt.cells().size() != cellCount || rebuilt.effects().size() != effectCount) {
     return failure();
+  }
+  if (independenceQueries) {
+    for (auto id : independenceQueries.asArrayRef()) {
+      if (rebuilt.independentOfOtherPhases(static_cast<std::size_t>(id)) !=
+          storage.independentOfOtherPhases(static_cast<std::size_t>(id))) {
+        return failure();
+      }
+    }
+    if (failed(rebuilt.build(input))) {
+      return failure();
+    }
+    for (auto id : independenceQueries.asArrayRef()) {
+      if (rebuilt.independentOfOtherPhases(static_cast<std::size_t>(id)) !=
+          storage.independentOfOtherPhases(static_cast<std::size_t>(id))) {
+        return failure();
+      }
+    }
   }
   return success();
 }

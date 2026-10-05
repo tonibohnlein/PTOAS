@@ -83,6 +83,17 @@ std::optional<std::pair<AffineExpr, AffineExpr>> bounds(const SyncAccessRegion& 
 }
 } // namespace
 
+bool isCanonicalGMBase(Value base)
+{
+    auto argument = dyn_cast_or_null<BlockArgument>(base);
+    auto type = base ? dyn_cast<PtrType>(base.getType()) : PtrType();
+    if (!argument || !type || type.getMemorySpace().getAddressSpace() != AddressSpace::GM) {
+        return false;
+    }
+    auto function = dyn_cast<func::FuncOp>(argument.getOwner()->getParentOp());
+    return function && !function.isDeclaration() && argument.getOwner() == &function.front();
+}
+
 bool regionsProvablyDisjoint(const SyncAccessRegion& a, const SyncAccessRegion& b)
 {
     // A static phase can execute at different iteration coordinates. Equal SSA
@@ -146,7 +157,23 @@ bool materializeRegion(const SyncAccessRegion& region, AddressSpace space,
         result.clear();
         return true;
     }
-    if (region.base || !region.symbols.empty()) {
+    if (region.base) {
+        if (space != AddressSpace::GM || !isCanonicalGMBase(region.base)) {
+            return false;
+        }
+        // Materialize offsets with the existing finite mapper, then restore
+        // their identity. Clearing a base is never an alias/disjointness proof.
+        SyncAccessRegion relative = region;
+        relative.base = {};
+        SmallVector<SyncStorageCell> pieces;
+        if (!materializeRegion(relative, space, pieces)) {
+            return false;
+        }
+        for (auto& piece : pieces) { piece.base = region.base; }
+        result.assign(pieces.begin(), pieces.end());
+        return true;
+    }
+    if (!region.symbols.empty()) {
         return false;
     }
     if (materializeDigitRegion(region, space, result)) {

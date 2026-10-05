@@ -130,6 +130,27 @@ exact region. Missing or incompatible declarations remain unresolved. Several
 accesses of the same buffer/mode must agree; a known selection cannot hide an
 additional unspecified access. Malformed contracts publish no partial result.
 
+An optional `valid_shapes` condition lists operand-index/row/column triples.
+The mapper must prove those current valid dimensions at the accessing operation
+before accepting a selection. Expected dimensions never replace unknown ones.
+An operation whose execution depends on several operands repeats all conditions
+on every declaration, so a failed source condition cannot leave an exact write.
+This uses the existing metadata resolver and preserves its control/backedge
+restrictions.
+
+Ordinary aligned ND load/store and aligned TADD/TADDS use these conditions.
+They qualify layouts, DMA alignment and field widths, vector tail behavior,
+and narrowed repeat counts. Padding and special modes retain conservative
+declarations. Exactness is available for constant valid dimensions recovered
+from operands even when the tile type spells them `?`.
+
+Finite pointer-relative GM intervals retain their canonical entry-pointer base
+in every cell and regional summary. A set of exact intervals is an exact common
+partition only after its base relationships are established: one shared base,
+or independent canonical bases under `MayNotAlias`. Mixed absolute/based GM
+addresses and unresolved distinct bases under `MayAlias` remain obligations.
+Local cells continue to identify storage by physical address across SSA roots.
+
 The first native producer is ordinary noncompact MAT-to-LEFT/RIGHT `textract`
 with 16/32-bit elements and boxed, aligned shapes using 512-byte fractals.
 Other fractal layouts are not certified: native block addressing need not agree

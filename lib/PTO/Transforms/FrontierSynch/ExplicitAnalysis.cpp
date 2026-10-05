@@ -102,20 +102,17 @@ bool independentGM(std::size_t id, const SyncInput& input)
         function.isDeclaration() || anchor->getBlock() != &function.front()) {
         return false;
     }
-    for (std::size_t other = 0; other < effects.size(); ++other) {
-        if (effects[other].phase != effect.phase && input.accesses().mayConflict(id, other)) {
-            return false;
-        }
-    }
-    return true;
+    return input.accesses().independentOfOtherPhases(id);
 }
 bool spanEffects(ArrayRef<const CompoundInstanceElement*> phases, const SyncInput& input,
                  bool dischargeIndependentGM, SmallVectorImpl<std::size_t>& discharged)
 {
+    SmallVector<std::size_t> retained;
     for (const auto* phase : phases) {
         for (auto id : input.accesses().effectsFor(phase)) {
             const auto& effect = input.accesses().effects()[id];
             if (effect.precision == SyncAccessPrecision::Exact && effect.exactRanges) {
+                retained.push_back(id);
                 continue;
             }
             if (!dischargeIndependentGM || !independentGM(id, input)) {
@@ -124,7 +121,7 @@ bool spanEffects(ArrayRef<const CompoundInstanceElement*> phases, const SyncInpu
             discharged.push_back(id);
         }
     }
-    return true;
+    return input.accesses().hasExactCellPartition(retained);
 }
 bool validSpan(ArrayRef<const CompoundInstanceElement*> phases, const PhaseIndex& index,
                const SyncInput& input, bool dischargeIndependentGM,
@@ -166,13 +163,19 @@ bool validSpan(ArrayRef<const CompoundInstanceElement*> phases, const PhaseIndex
 ExplicitAnalysis analyzeExplicit(Block& block, const PhaseIndex& index, const SyncInput& input)
 {
     const auto recognized = recognizeExplicit(block, index, input.accesses());
+    const bool structuralIssue = llvm::any_of(recognized.diagnostics, [](const auto& diagnostic) {
+        return diagnostic.issue != RecognitionIssue::InexactFootprint &&
+               diagnostic.issue != RecognitionIssue::SymbolicGeometry;
+    });
     const auto sequence = index.explicitSequence(block);
-    if (recognized.state != RecognitionState::Applicable || failed(sequence)) {
+    if (failed(sequence) || structuralIssue) {
         ExplicitAnalysis result;
         result.error = "explicit route requires resolved control and exact enumerated physical effects";
         return result;
     }
-    return analyzeSpan(*sequence, input);
+    // Function roots and regional spans use the same effect contract. A GM
+    // access proved independent of every other phase needs no storage edge.
+    return analyzeExplicit(*sequence, index, input, true);
 }
 ExplicitAnalysis analyzeExplicit(ArrayRef<const CompoundInstanceElement*> phases,
                                  const PhaseIndex& index, const SyncInput& input, bool dischargeIndependentGM)
