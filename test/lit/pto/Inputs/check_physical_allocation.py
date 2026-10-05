@@ -33,7 +33,7 @@ def check_physical(template, report, eligible):
         command = dict(kind=old['kind'], gap=old['gap'], pipe=old['pipe'])
         if old['kind'] != 'barrier':
             assert (old['source_pipe'], old['target_pipe']) == (new['source_pipe'], new['target_pipe'])
-            command['identity'] = (old['plan'], old['record'], old['source_ordinal'])
+            command['identity'] = (old['plan'], old['record'], old['source_ordinal'], tuple(old.get('members', [])))
             assert new['physical_id'] in eligible
             event = (new['source_pipe'], new['target_pipe'], new['physical_id'])
             uses.append((len(commands), new['kind'], event, command['identity']))

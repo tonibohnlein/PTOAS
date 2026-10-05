@@ -129,7 +129,8 @@ def validate(template, trace):
         assert event["gap"] == gap
         command = dict(event)
         if event["kind"] != "barrier":
-            command["identity"] = (event["plan"], event["record"], event["source_ordinal"])
+            command["identity"] = (event["plan"], event["record"], event["source_ordinal"],
+                                   tuple(event.get("members", [])))
             assert event["pipe"] == event["source_pipe" if event["kind"] == "set" else "target_pipe"]
         if event["kind"] == "barrier" and event["pipe"] == 6:
             assert gap == len(payloads), "completion barrier must follow all payloads"

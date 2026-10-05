@@ -5,7 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Compare compacted IR execution against literal cyclic endpoint emission."""
+"""Check family emission against independent ordering and cyclic phase oracles."""
 import json
 from pathlib import Path
 import shutil
@@ -17,7 +17,7 @@ from check_physical_allocation import check_physical, opt
 
 
 def synthetic_plan(positions, records, barrier=False):
-    """Exercise emission fallback only; this is not a storage-analysis certificate."""
+    """Exercise old saved-IR compatibility; this is not a storage-analysis certificate."""
     lines = ["module {", "func.func @emission() attributes {pto.cyclic_allocation = {",
              "version = 1 : i64, plan = 0 : i64, directions = [{source = 4 : i64,",
              "target = 3 : i64, budget = 2 : i64, records = array<i64: " +
@@ -38,23 +38,39 @@ def synthetic_plan(positions, records, barrier=False):
     return "\n".join(lines + ["}", "return", "}", "}"])
 
 
-def fallback_checks(optimizer, path):
-    """Declining compaction must leave all literal commands at the affected cut."""
+def compatibility_checks(optimizer, path):
+    """Saved version-one IR adapts each existing record to a singleton family."""
     passes = ["--pto-frontier-allocate=eligible-ids=1,3"]
-    path.write_text(synthetic_plan([0, 1, 2], [0, 2, 1]))
-    failed_fit = opt(optimizer, path, passes).stdout
-    assert failed_fit.count("pto.set_flag") == 3
-    assert failed_fit.count("pto.wait_flag") == 3
-    path.write_text(synthetic_plan([0, 1, 2], [0, 1, 2], barrier=True))
-    barrier = opt(optimizer, path, passes).stdout
-    assert barrier.count("pto.set_flag") == 3, "compaction crossed a local barrier"
-    assert barrier.count("pto.wait_flag") == 1, "unobstructed cut should still compact"
-    assert barrier.count("pto.barrier") == 1
-    # Affine phases over a point set with a hole must retain a union of boxes.
-    path.write_text(synthetic_plan([0, 1, 3, 4], [0, 1, 3, 2]))
-    holes = opt(optimizer, path, passes).stdout
-    assert holes.count("pto.set_flag") == 1 and holes.count("pto.wait_flag") == 1
-    assert "arith.ori" in holes and "arith.cmpi ule" in holes and "arith.cmpi uge" in holes
+    for positions, records, barrier in [([0, 1, 2], [0, 2, 1], False),
+                                       ([0, 1, 2], [0, 1, 2], True),
+                                       ([0, 1, 3, 4], [0, 1, 3, 2], False)]:
+        path.write_text(synthetic_plan(positions, records, barrier))
+        result = opt(optimizer, path, passes).stdout
+        assert result.count("pto.set_flag") == len(records)
+        assert result.count("pto.wait_flag") == len(records)
+        assert result.count("pto.barrier") == int(barrier)
+        assert "pto.endpoint_cut" not in result
+
+
+def check_phase_mapping(template, report, eligible):
+    """Use analysis records, independently of emitted guards and ID arithmetic."""
+    owners = {}
+    for family in template['logical_endpoints']['families']:
+        for member, record in enumerate(family['members']):
+            owners[family['id'], member] = record['record']
+    # The certificate's order is the periodic allocation handoff order.
+    phases = {}
+    for direction in template['allocation']['directions']:
+        for phase, handoff in enumerate(direction['handoffs']):
+            phases[handoff['record']] = (phase, len(direction['handoffs']), direction['uniform_budget'])
+    for logical, physical in zip(report['logical']['events'], report['physical']['events']):
+        if logical['kind'] not in ('set', 'wait'):
+            continue
+        member = logical.get('members', [0])[0]
+        record = owners[logical['record'], member]
+        phase, stride, budget = phases[record]
+        expected = eligible[(logical['source_ordinal'] * stride + phase) % budget]
+        assert physical['physical_id'] == expected, (logical, physical, expected)
 
 
 def main():
@@ -69,11 +85,9 @@ def main():
                 text = text.replace("array<i64: 8>", f"array<i64: {outer_end}>")
                 path.write_text(text)
                 compact = json.loads(invoke(tool, "--physical-trace", path))
-                check_physical(recognized(tool, path), compact, {1, 3})
-                path.write_text(text.replace("test.eligible_ids", "test.uncompact_endpoints, test.eligible_ids"))
-                literal = json.loads(invoke(tool, "--physical-trace", path))
-                for field in ["error", "events", "payloads", "outer_trips"]:
-                    assert compact["physical"][field] == literal["physical"][field], field
+                template = recognized(tool, path)
+                check_physical(template, compact, {1, 3})
+                check_phase_mapping(template, compact, [1, 3])
                 checked += 1
         # The same static payload cut is visited at 1, 3 and 7, leaving a hole at 5.
         # Preserve selected-arm execution as well as the sparse coordinates.
@@ -85,10 +99,9 @@ def main():
         hole = hole.replace(last, last + "\n        }")
         path.write_text(hole)
         compact = json.loads(invoke(tool, "--physical-trace", path))
-        check_physical(recognized(tool, path), compact, {1, 3})
-        path.write_text(hole.replace("test.eligible_ids", "test.uncompact_endpoints, test.eligible_ids"))
-        literal = json.loads(invoke(tool, "--physical-trace", path))
-        assert compact["physical"]["events"] == literal["physical"]["events"]
+        template = recognized(tool, path)
+        check_physical(template, compact, {1, 3})
+        check_phase_mapping(template, compact, [1, 3])
         checked += 1
         # Typed, nonzero coordinates must be normalized without narrowing.
         typed = source.replace("%inner_end = arith.constant 9 : index", """%inner_end = arith.constant 10 : i32
@@ -98,21 +111,38 @@ def main():
                               "%k = %inner_low to %inner_end step %inner_step : i32 {")
         path.write_text(typed)
         compact = json.loads(invoke(tool, "--physical-trace", path))
-        check_physical(recognized(tool, path), compact, {1, 3})
-        path.write_text(typed.replace("test.eligible_ids", "test.uncompact_endpoints, test.eligible_ids"))
-        literal = json.loads(invoke(tool, "--physical-trace", path))
-        assert compact["physical"]["events"] == literal["physical"]["events"]
+        template = recognized(tool, path)
+        check_physical(template, compact, {1, 3})
+        check_phase_mapping(template, compact, [1, 3])
         checked += 1
-        fallback_checks(optimizer, path)
+        # Numerical nested bounds may depend on an enclosing induction value.
+        # Include a context-dependent positive step.
+        for low, end, step in [('0', '3', '%one'), ('1', '3', '%i')]:
+            nested = source.replace('%inner_end = arith.constant 9 : index',
+                f'%inner_end = arith.constant 4 : index\n'
+                f'    %nest_low = arith.constant {low} : index\n    %nest_end = arith.constant {end} : index')
+            nested = nested.replace('scf.for %k = %one to %inner_end step %two {',
+                f'scf.for %i = %nest_low to %nest_end step %one {{\n      scf.for %k = %i to %inner_end step {step} {{')
+            nested = nested.replace('      }\n    }\n    return', '      }\n      }\n    }\n    return')
+            path.write_text(nested)
+            template = recognized(tool, path)
+            report = json.loads(invoke(tool, "--physical-trace", path))
+            check_physical(template, report, {1, 3})
+            check_phase_mapping(template, report, [1, 3])
+            checked += 1
+        compatibility_checks(optimizer, path)
         path.write_text(source)
         logical = opt(optimizer, path, ["--pto-frontier-analysis"]).stdout
         physical = opt(optimizer, path, ["--pto-frontier-analysis", "--pto-frontier-allocate=eligible-ids=1,3"]).stdout
-        assert physical.count("pto.set_flag") < logical.count("pto.logical_set"), "no static reduction"
+        plan = recognized(tool, path)['logical_endpoints']
+        pairs = sum(recipe['kind'] == 'set' for recipe in plan['recipes'])
+        assert logical.count("pto.logical_set") < pairs, "family structure lost before insertion"
+        assert physical.count("pto.set_flag") == logical.count("pto.logical_set"), "allocation changed family sites"
         assert "pto.endpoint_cut" not in physical
         assert physical.count("<PIPE_ALL>") == 1
         for name in ["scf.for", "pto.tload", "pto.textract"]:
             assert physical.count(name) == source.count(name)
-    print(f"endpoint compaction: {checked} identical command traces, compact sites, terminal completion")
+    print(f"endpoint compaction: {checked} independent ordering checks, family sites, terminal completion")
 
 
 if __name__ == "__main__":
