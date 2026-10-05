@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_explicit_analysis.py pto-sync-input-test %s
+!tile = !pto.tile_buf<vec, 4x8xf32>
+!view = !pto.tile_buf<vec, 2x8xf32>
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+!right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+!ha = !pto.tile_buf<left, 32x16xf16, slayout=row_major>
+!hb = !pto.tile_buf<right, 16x80xf16, slayout=col_major>
+!hc = !pto.tile_buf<acc, 32x80xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a3"} {
+  func.func @empty() { return }
+  func.func @physical_reuse() {
+    %base = arith.constant 1024 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    %b = pto.alloc_tile addr = %base : !tile
+    pto.tsetval ins(%zero, %one : index, f32) outs(%a : !tile)
+    %x = pto.tgetval ins(%b, %zero : !tile, index) outs : f32
+    pto.tsetval ins(%zero, %one : index, f32) outs(%b : !tile)
+    return
+  }
+  func.func @disjoint() {
+    %base = arith.constant 1024 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %value = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    pto.tsetval ins(%zero, %value : index, f32) outs(%a : !tile)
+    %x = pto.tgetval ins(%a, %one : !tile, index) outs : f32
+    return
+  }
+  func.func @view_reuse() {
+    %base = arith.constant 1024 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %eight = arith.constant 8 : index
+    %value = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    %v = pto.subview %a[%one, %zero] sizes [2, 8] : !tile -> !view
+    pto.tsetval ins(%eight, %value : index, f32) outs(%a : !tile)
+    %x = pto.tgetval ins(%v, %zero : !view, index) outs : f32
+    return
+  }
+  func.func @matrix_chain() {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %am = pto.alloc_tile addr = %base : !mat
+    %a = pto.alloc_tile addr = %base : !left
+    %b = pto.alloc_tile addr = %base : !right
+    %c = pto.alloc_tile addr = %base : !acc
+    pto.textract ins(%am, %zero, %zero : !mat, index, index) outs(%a : !left)
+    pto.textract ins(%am, %zero, %zero : !mat, index, index) outs(%b : !right)
+    pto.tmatmul ins(%a, %b : !left, !right) outs(%c : !acc)
+    pto.tmatmul.acc ins(%c, %a, %b : !acc, !left, !right) outs(%c : !acc)
+    pto.textract ins(%am, %zero, %zero : !mat, index, index) outs(%a : !left)
+    return
+  }
+  func.func @accumulation() {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %a = pto.alloc_tile addr = %base : !ha
+    %b = pto.alloc_tile addr = %base : !hb
+    %c = pto.alloc_tile addr = %base : !hc
+      pto.tmatmul ins(%a, %b : !ha, !hb) outs(%c : !hc)
+      pto.tmatmul.acc ins(%c, %a, %b : !hc, !ha, !hb) outs(%c : !hc)
+      pto.tmatmul ins(%a, %b : !ha, !hb) outs(%c : !hc)
+      pto.tmatmul.acc ins(%c, %a, %b : !hc, !ha, !hb) outs(%c : !hc)
+    return
+  }
+  func.func @reject_nonadjacent() {
+    %base = arith.constant 1024 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %value = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    pto.tsetval ins(%zero, %value : index, f32) outs(%a : !tile)
+    pto.tsetval ins(%one, %value : index, f32) outs(%a : !tile)
+    %x = pto.tgetval ins(%a, %zero : !tile, index) outs : f32
+    return
+  }
+  func.func @reject_symbolic(%offset: index) {
+    %base = arith.constant 1024 : i64
+    %a = pto.alloc_tile addr = %base : !tile
+    %x = pto.tgetval ins(%a, %offset : !tile, index) outs : f32
+    return
+  }
+  func.func @reject_gm(%p: !pto.ptr<f32, gm>) {
+    %zero = arith.constant 0 : index
+    %x = pto.load %p[%zero] : !pto.ptr<f32, gm> -> f32
+    return
+  }
+}
