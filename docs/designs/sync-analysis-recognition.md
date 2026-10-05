@@ -31,7 +31,7 @@ arithmetic candidate without changing the periodic result or adding a compiler
 mode. Arithmetic and guarded recognizers remain tested library functionality;
 they do not yet provide an alternative production insertion backend.
 
-## Next implementation milestones
+## Implementation milestones
 
 These milestones concern exact demand analysis in current Section 5; Section 4
 supplies direct insertion. Both extend the existing production pass. Recognition
@@ -84,7 +84,8 @@ The pure scan/reducer supports supplied forward prerequisites; the current MLIR
 adapter rejects additional value prerequisites that it does not model and supplies
 only storage generators. It preserves starts and completions as distinct events.
 Boundary identities and rank rows are retained for reuse, but regional composition
-and an all-event query adapter are not implemented by this milestone.
+and an all-event query adapter were not implemented by this milestone.
+Milestone 3 below adds both for supported sequences.
 
 **Validation.** The independent reducer oracle covers 402 valid and five invalid
 inputs. The MLIR integration checks physical reuse across SSA roots, subviews,
@@ -214,6 +215,150 @@ ordering. No compiler fallback is invoked by the diagnostic.
 As with the precision layer, completeness of the shared effect producer is an
 input contract. Unrepresented side-effecting operations are reported, but this
 does not audit every registered operation for missing implicit effects.
+
+## Milestones 3 and 4: regional composition and guarded analysis
+
+**Status: Milestone 3 implemented and accepted by architecture, correctness
+and performance reviewers; Milestone 4 is next.** Each milestone requires all
+three reviews before its commit. The target is exact demands and logical
+insertion; newly combined plans must not concatenate child allocation
+certificates. The existing complete GEMM route remains available.
+
+### Milestone 3: exact sequence composition
+
+Accept sequences of fused explicit runs and supported numerical-template or
+direct-rotating loops, including empty children. Analyze each child independently
+of its predecessor and preserve original occurrence identities. Do not repeatedly
+instantiate a summarized body inside an enclosing loop.
+
+A regional result must export internal minimum demands, structured endpoint
+recipes, exact reflexive all-event queries, per-cell first/last writers and
+prefix/suffix readers per pipe, native first/last payloads, presence predicates,
+constructed-interface flags and a cost ledger. Start-origin queries are required;
+completion-origin ranks alone are not the interface. Periodic selectors use trip
+counts and modular access structure without unfolding runtime iterations.
+
+Use one physical-cell partition across children, preserving aliases across SSA
+roots. Any slot/cell enumeration is charged. A regional numerical template must
+prove its discharged GM accesses have no conflicts with outside accesses; a
+whole-function discharge cannot silently be reused for a child.
+
+Fold storage and native summaries to produce all crossing records, including
+links spanning empty children and supported additional prerequisites. Reduce
+crossings across every cell together through one shared boundary-event graph,
+using exact child queries. Coalesce equal actual identities before the cover
+test. Internal child minimum demands remain unchanged. The parent query circuit
+shares the boundary closure rather than recursively duplicating child queries.
+
+Prepare child and crossing endpoints together, remap logical identities, and
+insert only after complete preflight. Keep independent SET/WAIT grouping and
+root-only invocation completion. Unsupported placement, nonadjacent local
+covers or incomplete external effects return an unmet obligation without IR
+mutation. Hardware protection must have the same certified scope as in the
+original analysis; do not infer new protection at boundaries.
+
+Acceptance compares actual emitted order and matching against independent finite
+unfoldings: explicit/loop/explicit, two loops, aliasing roots, partial ranges,
+cross-buffer redundancy, RMW, read-only children, zero/one/many trips, coincident
+ports, absent native endpoints and transactional rejection. Large trip counts
+must not enlarge the representation. For finite port lists report
+`O(L + P²(Q+d+1) + P³ + rP)` construction, with selector, effect normalization and
+crossing-generation costs separately. Here P is the number of endpoint slots,
+r the crossing records, Q the child query circuit size, d identity size and L
+total supplied descriptions.
+
+#### Sequence implementation and costs
+
+`RegionalAnalysis` is the common export: an owned shared expression arena,
+original occurrence anchors, guarded storage/native selectors, exact all-event
+query callbacks, a detached internal-plan factory, capability flags and a cost
+ledger. `composeRegionalSequence` accepts these exports; `sequenceRegionalResult`
+exports its result through the same interface. Query results remain usable when
+endpoint preparation fails. The normal pass reaches this route after the
+existing whole-function numerical and rotating routes.
+
+The concrete adapters cover root-level explicit runs, direct rotating loops and
+regional numerical templates. They preserve the existing recognizers' effect
+and control restrictions. Unknown external GM conflicts are rejected. This is
+sequence composition, not repetition of a summarized inner region.
+
+The shared graph uses already-closed child query blocks. Crossings advance the
+child index, so two matrix-vector stages propagate reachability through each
+populated block; empty children do not add a factor to this graph computation.
+Equal actual endpoint pairs are coalesced by Boolean matrix products before
+cover reduction. Graph construction/reduction costs `O(P³+rP)` after selectors
+and child queries are supplied, with `O(P²)` graph matrices. Arithmetic and
+interning counts are separate from integer bit costs.
+
+Additional work is charged explicitly:
+
+- Rotating adapters enumerate each access's `slots/gcd(stride, slots)` residues;
+  numerical templates retain their existing charged inner expansion.
+- For `A` physical fragments, `C` partition cells, `H` children and `I_hc`
+  incidences in one child/cell, range endpoints need `O(A log A)` sorting.
+  Selector construction includes `O(CA+HC+sum I_hc²)` comparisons. Importing
+  supplied child partitions adds their range/cell incidence work.
+- The ledger counts physical fragments, rotating residues, numerical visits,
+  selector comparisons, candidate crossings, implication checks and final DAG
+  nodes. Crossing generation includes its candidate loops and
+  `sum_j O(A_j G_j)` Boolean implication work, where `A_j` is the number of
+  conjunct obligations and `G_j` the current DAG size. This is additional to the
+  graph bound above.
+- A query between exported port events is `O(1)`. A query between arbitrary
+  supplied occurrences makes linear-many child queries and at most `O(P²)`
+  combinations against the shared closure.
+- Preparation shares expressions at each cut. It emits `O(sum_cut G_cut)`
+  operations, sorts newly visited DAG nodes, and charges same-pipe adjacency
+  implication checks separately. Guard code inside a loop executes at that cut;
+  compact static size alone is not a device-time guarantee.
+
+The independent checker executes inserted IR and compares its entire payload
+order with physical-conflict unfoldings. It includes zero trips, two loops,
+RMW, reader-only regions, partial physical ranges, overlapping allocation roots,
+and export/recomposition after destroying the original result wrapper. A late
+unavailable endpoint predicate must reject insertion without destroying exact
+queries. Actual constant bounds of 101 and 1,000,000,101 must produce equal
+port/cell counts and bounded expression/emission sizes. Existing GEMM gates
+remain unchanged: identical physical traces, 24/28 SET/WAIT sites and
+13,700/17,182 generated C++ bytes.
+
+### Milestone 4: finite guarded analysis
+
+Implement the existing finite-guarded recognizer's backend for loop-free nested
+if/else with exact effects and forward requirements. Reuse its predicate DAG;
+keep parent-path conditions and branch exclusivity. Derive exact storage
+conflicts from shared cell incidences. Include every ordered same-pipe start pair
+and completion pair under endpoint presence, so skipped payloads retain native
+order. Unmodeled prerequisites remain an explicit rejection.
+
+Build shared Boolean Warshall closure and cover-selection circuits. No branch
+valuation enumeration, formula expansion or satisfiability solver is required.
+Export guarded demands, all-event queries, and conditional storage/native
+selectors through the regional interface from Milestone 3.
+
+For insertion, use dominating values or safely recomputable expressions at the
+actual cuts, preserving parent-path evaluation. SET and WAIT must execute under
+matching conditions with the same identity. An unavailable future condition may
+leave exact analysis successful but insertion unsupported; do not publish
+unconditionally or move a command to a cut that strengthens order.
+
+Use these results in sequence composition. Guard-select complete arm results
+when the common guard is available, never connecting mutually exclusive arms.
+Otherwise run finite guarded analysis on the enclosing loop-free region.
+Guarded rotating circuits and arithmetic reduction remain later milestones.
+
+Acceptance includes conditional producers/consumers, empty arms, nested and
+arm-local guards, post-conditional reuse, selected same-pipe adjacency,
+recomputable predicates, unavailable future guards, and guarded children between
+explicit/periodic siblings. Enumerate feasible valuations only in the independent
+checker and compare required closure, covers and actual command matching. The
+analysis circuit bound is O(N³) in potential events; charge effect recovery and
+emitted guard duplication separately.
+
+Both milestones must preserve the current GEMM dynamic traces and IDs, at most
+24/28 static SET/WAIT sites and 13,700/17,182 C++ bytes for the frozen PyPTO/TileLang
+inputs. Record compilation-time and representation-size changes. Physical
+allocation for the new result classes is a separate interface obligation.
 
 ## Explicit regions
 

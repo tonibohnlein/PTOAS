@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --sequence-analysis %s | FileCheck %s
+// CHECK: "function":"read_only"
+// CHECK-SAME: "prepared":true
+// CHECK: "function":"outside_write"
+// CHECK-SAME: "prepared":false
+!tile = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+module attributes {pto.target_arch = "a3"} {
+  func.func @read_only(%p: !pto.ptr<f16, gm>, %n: index) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %sixteen = arith.constant 16 : index
+    %view = pto.make_tensor_view %p, shape = [%sixteen, %sixteen], strides = [%sixteen, %one] {layout = #pto.layout<nd>}
+      : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%zero, %zero], sizes = [%sixteen, %sixteen]
+      : !pto.tensor_view<?x?xf16>
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %zero to %n step %one {
+      pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%tile : !tile)
+    }
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%tile : !tile)
+    return
+  }
+  func.func @outside_write(%p: !pto.ptr<f16, gm>, %n: index) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %sixteen = arith.constant 16 : index
+    %view = pto.make_tensor_view %p, shape = [%sixteen, %sixteen], strides = [%sixteen, %one] {layout = #pto.layout<nd>}
+      : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%zero, %zero], sizes = [%sixteen, %sixteen]
+      : !pto.tensor_view<?x?xf16>
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %zero to %n step %one {
+      pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%tile : !tile)
+    }
+    pto.tstore ins(%tile : !tile) outs(%part : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+}

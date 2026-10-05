@@ -15,4 +15,6 @@ llvm::json::Object traceLogicalInsertion(mlir::func::FuncOp function,
 mlir::LogicalResult runLogicalInsertionChecks(mlir::func::FuncOp function, mlir::pto::GMAliasPolicy policy,
                                              bool physical = false);
 mlir::LogicalResult runPreparedInsertionChecks(mlir::func::FuncOp function);
+mlir::LogicalResult runStructuredInsertionChecks(mlir::func::FuncOp function, mlir::pto::GMAliasPolicy policy);
+mlir::LogicalResult runSequenceAnalysisChecks(mlir::func::FuncOp function, mlir::pto::GMAliasPolicy policy);
 #endif

@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Threshold and finite-prefix queries for completion-origin reachability.
+// Exact all-event threshold/prefix queries from completion-origin frontiers.
 #include "PeriodicAnalysisInternal.h"
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -35,26 +35,49 @@ PeriodicThreshold PeriodicAnalysis::completionThreshold(uint32_t source, Periodi
     }
     return {PeriodicQueryError::None, periodic::threshold(*distance, localRanks[source], row.count)};
 }
-PeriodicPredicate PeriodicAnalysis::completionPrecedes(uint32_t source, uint64_t sourcePeriod,
-                                                      PeriodicEvent target, uint64_t targetPeriod,
-                                                      uint64_t payloadPrefixLength, bool strict) const
+PeriodicThreshold PeriodicAnalysis::eventThreshold(PeriodicEvent source, PeriodicEvent target) const
 {
-    const bool endpointsPresent = present(payloads.size(), source, sourcePeriod, payloadPrefixLength) &&
+    if (!validKind(source.kind)) {
+        return {PeriodicQueryError::InvalidInput, std::nullopt};
+    }
+    auto result = completionThreshold(source.type, target);
+    if (result.error != PeriodicQueryError::None || source.kind == PeriodicEventKind::Completion) {
+        return result;
+    }
+    if (target.kind == PeriodicEventKind::Start && payloads[source.type].pipe == payloads[target.type].pipe) {
+        const uint64_t native = source.type <= target.type ? 0 : 1;
+        if (!result.displacement || native < *result.displacement) {
+            result.displacement = native;
+        }
+    }
+    return result;
+}
+PeriodicPredicate PeriodicAnalysis::eventPrecedes(PeriodicEvent source, uint64_t sourcePeriod,
+                                                 PeriodicEvent target, uint64_t targetPeriod,
+                                                 uint64_t payloadPrefixLength, bool strict) const
+{
+    const bool endpointsPresent = present(payloads.size(), source.type, sourcePeriod, payloadPrefixLength) &&
         present(payloads.size(), target.type, targetPeriod, payloadPrefixLength);
     if (!endpointsPresent) {
         return {PeriodicQueryError::InvalidInput, false};
     }
-    const auto threshold = completionThreshold(source, target);
+    const auto threshold = eventThreshold(source, target);
     if (threshold.error != PeriodicQueryError::None) {
         return {threshold.error, false};
     }
-    const bool identity = source == target.type && sourcePeriod == targetPeriod &&
-        target.kind == PeriodicEventKind::Completion;
+    const bool identity = source.type == target.type && sourcePeriod == targetPeriod && source.kind == target.kind;
     if (targetPeriod < sourcePeriod || (strict && identity)) {
         return {};
     }
     return {PeriodicQueryError::None,
             threshold.displacement && targetPeriod - sourcePeriod >= *threshold.displacement};
+}
+PeriodicPredicate PeriodicAnalysis::completionPrecedes(uint32_t source, uint64_t sourcePeriod,
+                                                      PeriodicEvent target, uint64_t targetPeriod,
+                                                      uint64_t payloadPrefixLength, bool strict) const
+{
+    return eventPrecedes({source, PeriodicEventKind::Completion}, sourcePeriod,
+                         target, targetPeriod, payloadPrefixLength, strict);
 }
 PeriodicRank PeriodicAnalysis::completionRank(uint32_t pipe, PeriodicEvent target, uint64_t targetPeriod,
                                              uint64_t payloadPrefixLength) const
