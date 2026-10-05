@@ -136,6 +136,21 @@ bool RegionExpressions::refutesNegation(Id premise, Id consequence) const
                    (node.kind == Kind::Or && required == Truth::False)) {
             pending.push_back({node.a, required});
             pending.push_back({node.b, required});
+        } else if (node.kind == Kind::Select) {
+            // A Boolean select whose opposite arm cannot produce the required
+            // truth value forces its condition and selected arm. Keep the
+            // select in emitted code: replacing it by AND/OR would lose poison
+            // masking for predicates replayed from inactive branches.
+            const auto yes = constantValue(node.b), no = constantValue(node.c);
+            const bool truth = required == Truth::True;
+            if (no && (*no != 0) != truth) {
+                pending.push_back({node.a, Truth::True});
+                pending.push_back({node.b, required});
+            }
+            if (yes && (*yes != 0) != truth) {
+                pending.push_back({node.a, Truth::False});
+                pending.push_back({node.c, required});
+            }
         }
     }
     SmallVector<Truth> values(count, Truth::Unknown);

@@ -59,6 +59,11 @@ bool checkAlgebra(Value index, Value predicate)
     valid &= !expressions.implies(q, r); // Arithmetic correlation is deliberately not inferred.
     valid &= expressions.implies(expressions.boolean(false), q);
     valid &= expressions.implies(p, expressions.boolean(true));
+    auto masked = expressions.select(p, q, expressions.boolean(false));
+    valid &= expressions.implies(masked, p) && expressions.implies(masked, q);
+    auto maskedFalse = expressions.select(p, expressions.boolean(true), q);
+    valid &= expressions.implies(expressions.lnot(maskedFalse), expressions.lnot(p));
+    valid &= expressions.implies(expressions.lnot(maskedFalse), expressions.lnot(q));
     // A retained cover and an active intermediate event cannot coexist when
     // that intermediate supplies an alternative native-chain path.
     auto endpoints = expressions.land(p, q);
@@ -93,6 +98,10 @@ bool checkImplicationTruthTables(Value index, Value predicate)
             auto [b, bv] = formulas[j];
             formulas.push_back({expressions.land(a, b), av & bv});
             formulas.push_back({expressions.lor(a, b), av | bv});
+            formulas.push_back({expressions.select(a, b, expressions.boolean(false)), av & bv});
+            formulas.push_back({expressions.select(a, expressions.boolean(true), b), av | bv});
+            formulas.push_back({expressions.select(a, expressions.boolean(false), b), (~av) & bv & 255});
+            formulas.push_back({expressions.select(a, b, expressions.boolean(true)), (av & bv) | ((~av) & 255)});
             formulas.push_back({expressions.select(a, b, r), (av & bv) | ((~av) & 0xf0)});
             auto covered = expressions.land(expressions.land(a, b),
                 expressions.lnot(expressions.land(expressions.land(a, b), r)));
