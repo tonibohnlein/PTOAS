@@ -153,7 +153,6 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/HardwareProtection.cpp
   FrontierSynch/AllocationCertificate.cpp
   FrontierSynch/PhysicalAllocation.cpp
-  FrontierSynch/AllocationCompaction.cpp
   FrontierSynch/RotatingAnalysis.cpp
   FrontierSynch/RotatingExtraction.cpp
   FrontierSynch/ExplicitAnalysis.cpp
@@ -165,6 +164,8 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/NumericTemplateAnalysis.cpp
   FrontierSynch/LogicalEndpoints.cpp
   FrontierSynch/EndpointFamilies.cpp
+  FrontierSynch/FamilyExpressions.cpp
+  FrontierSynch/FamilyInsertion.cpp
   FrontierSynch/LogicalInsertion.cpp
   FrontierSynch/NumericTemplateInsertion.cpp
   FrontierSynch/NumericTemplateEndpoints.cpp

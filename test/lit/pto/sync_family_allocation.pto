@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_family_allocation.py pto-test-opt %s
+// Saved logical-family IR exercises allocation consumption only. It is not a
+// storage-effect analysis certificate or a new source-program recognizer.
+module {
+  func.func @irregular(%ordinal: index, %member: index) attributes {
+    pto.cyclic_allocation = {version = 1 : i64, plan = 0 : i64, directions = [
+      {source = 4 : i64, target = 3 : i64, budget = 4 : i64, records = array<i64: 10, 12, 11, 13, 20>}]},
+    pto.endpoint_families = {version = 2 : i64, plan = 0 : i64, families = [
+      {id = 10 : i64, local = false, source_pipe = 4 : i64, target_pipe = 3 : i64,
+       displacement = 0 : i64, source_cut = 0 : i64, target_cut = 1 : i64,
+       source_order = 0 : i64, target_order = 0 : i64, members = [
+         {record = 10 : i64, source = [], target = []}, {record = 11 : i64, source = [], target = []},
+         {record = 12 : i64, source = [], target = []}, {record = 13 : i64, source = [], target = []}]},
+      {id = 20 : i64, local = false, source_pipe = 4 : i64, target_pipe = 3 : i64,
+       displacement = 0 : i64, source_cut = 0 : i64, target_cut = 1 : i64,
+       source_order = 1 : i64, target_order = 1 : i64,
+       members = [{record = 20 : i64, source = [], target = []}]}]}
+  } {
+    %four = arith.constant 4 : index
+    %present = arith.cmpi ult, %member, %four : index
+    scf.if %present {
+      pto.logical_set [<PIPE_MTE2>, <PIPE_MTE1>] plan 0 record 10 ordinal %ordinal members(%member)
+    } {pto.endpoint_cut = 0 : i64}
+    scf.if %present {
+      pto.logical_set [<PIPE_MTE2>, <PIPE_MTE1>] plan 0 record 20 ordinal %ordinal
+    } {pto.endpoint_cut = 0 : i64}
+    scf.if %present {
+      pto.logical_wait [<PIPE_MTE2>, <PIPE_MTE1>] plan 0 record 10 ordinal %ordinal members(%member)
+    } {pto.endpoint_cut = 1 : i64}
+    scf.if %present {
+      pto.logical_wait [<PIPE_MTE2>, <PIPE_MTE1>] plan 0 record 20 ordinal %ordinal
+    } {pto.endpoint_cut = 1 : i64}
+    return
+  }
+}

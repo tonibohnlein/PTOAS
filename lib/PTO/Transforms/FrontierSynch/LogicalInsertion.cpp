@@ -137,8 +137,12 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
             }
         }
     }
+    if (plan.groupedFamilies && plan.families.empty() && !plan.endpoints.empty()) {
+        return function.emitError("grouped logical endpoints require family provenance");
+    }
     if (!plan.families.empty()) {
         std::map<int64_t, const EndpointFamily*> owners;
+        std::set<uint32_t> originalRecords;
         std::set<uint32_t> familyIds;
         for (const auto& family : plan.families) {
             if (family.members.empty() || !familyIds.insert(family.id).second ||
@@ -148,9 +152,15 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
                 family.local != (family.sourcePipe == family.targetPipe)) {
                 return function.emitError("invalid endpoint-family cuts or identity");
             }
+            if (plan.groupedFamilies) {
+                owners.emplace(family.id, &family);
+            }
             for (const auto& member : family.members) {
-                if (!owners.emplace(member.record, &family).second) {
+                if (!originalRecords.insert(member.record).second) {
                     return function.emitError("duplicate endpoint-family member");
+                }
+                if (!plan.groupedFamilies) {
+                    owners.emplace(member.record, &family);
                 }
                 for (auto side : {false, true}) {
                     const auto& tuple = side ? member.targetCoordinates : member.sourceCoordinates;
@@ -176,7 +186,9 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
             if ((kinds[endpoint.record] & kind) || endpoint.sourcePipe != family.sourcePipe ||
                 endpoint.targetPipe != family.targetPipe ||
                 endpoint.before != (source ? family.sourceCut.before : family.targetCut.before) ||
-                family.local != (endpoint.kind == LogicalCommandKind::Barrier)) {
+                family.local != (endpoint.kind == LogicalCommandKind::Barrier) ||
+                endpoint.memberCoordinates.size() !=
+                    (plan.groupedFamilies && !family.local && family.members.size() > 1 ? 1U : 0U)) {
                 return function.emitError("endpoint-family member does not match its endpoint");
             }
             kinds[endpoint.record] |= kind;
@@ -238,7 +250,7 @@ void serializeFamilies(func::FuncOp function, const PreparedLogicalPlan& plan,
             builder.getNamedAttr("members", builder.getArrayAttr(members))}));
     }
     function->setAttr("pto.endpoint_families", builder.getDictionaryAttr({
-        builder.getNamedAttr("version", builder.getI64IntegerAttr(1)),
+        builder.getNamedAttr("version", builder.getI64IntegerAttr(plan.groupedFamilies ? 2 : 1)),
         builder.getNamedAttr("plan", builder.getI64IntegerAttr(plan.planId)),
         builder.getNamedAttr("families", builder.getArrayAttr(families))}));
 }

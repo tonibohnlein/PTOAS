@@ -19,7 +19,7 @@ The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
 | Exact generators and reduction | `NumericTemplateAnalysis.cpp`, `LifetimeScan.cpp`, `PeriodicDemandGraph.cpp`, `PeriodicFrontier.cpp` |
 | Endpoint preparation and insertion | `NumericTemplateEndpoints.cpp`, `NumericTemplateInsertion.cpp`, `LogicalInsertion.cpp` |
 | Reuse certificate and physical IDs | `PeriodicAllocation.cpp`, `AllocationCertificate.cpp`, `PhysicalAllocation.cpp` |
-| Compact endpoint emission | `AllocationCompaction.cpp` |
+| Compact endpoint emission | `FamilyExpressions.cpp`, `FamilyInsertion.cpp` and `PhysicalAllocation.cpp` |
 
 Arithmetic recognition builds its relation bundle only when a caller requests
 `FrontierAnalysis::recognizeArithmetic()`. Same-policy requests reuse the result;
@@ -763,30 +763,21 @@ target model, and scarcity repair remain separate work. Allocation failure does
 not establish infeasibility under those other strategies. Statically empty
 examples require no IDs.
 
-With `N` IR operations, allocation preflight and literal emission cost
-`O(N + records + endpoints)` for the six eligible numeric IDs. No dynamic loop
-is unrolled. Compaction first performs whole-function common-subexpression
-elimination; its cost is separate from the per-cut bound below.
-After preflight, endpoint compaction combines enumerated coordinates at a common
-cut. It retains residual guards and source ordinals, fits a modular ID formula,
-and verifies that formula against every original coordinate point. Exact unions
-of adjacent boxes describe the guard; missing points are never filled in.
-A precedence graph preserves the order of commands whose guards can overlap.
-A failed fit, overlapping copies of the same command, an intervening unrepresented
-command, or cyclic precedence leaves that cut in literal form. Compaction changes
-neither the demands nor handoff grouping. Consecutive physical ID lists use direct
-arithmetic instead of a select chain.
+Allocation consumes family membership prepared by analysis. For N IR operations,
+R represented member records and F families, preflight uses O(N log(F+1) + R)
+work apart from certificate decoding and hash-table costs. Lowering uses O(R)
+work and at most O(R) arithmetic for the fixed six-ID interface. It does not
+unroll runtime loops or reconstruct coordinates from guards. Exact irregular
+maps remain decision expressions; regular maps use verified modular arithmetic.
+The endpoint-family interface and its preparation bounds are described below.
 
-For a cut with `r` records, at most `d >= 1` coordinate axes and capacity `E <= 6`, this
-optional code-generation step uses `O(E*d*d*r*r + d*r*log(r))` arithmetic/comparison
-operations and `O(r*r + d*r)` storage. It does not change demand-analysis complexity.
-The finite test oracle compares compact and literal emission command for command,
-including actual numeric IDs. Device speed is assessed separately; smaller code
-and preserved ordering alone do not establish a latency improvement.
-The test oracle executes both plans, checks unchanged cuts and payloads, matches
-each physical notification to its original logical identity, and requires every
-reuse to have a causal WAIT-before-SET path in the original logical command graph.
-It also checks failure atomicity, malformed certificates and insufficient pools.
+Tests execute the emitted commands, check their closure against an independent
+all-conflict graph, and check physical phases against the original analysis
+record order. They match notifications by complete logical identity and require
+every reuse to have a causal WAIT-before-SET path. Saved version-one IR has
+separate compatibility tests; malformed certificates and insufficient pools must
+fail without changing IR. Device speed is assessed separately: preserved
+ordering and command traces alone do not establish unchanged latency.
 
 ## Hardware-protected storage conflicts
 
@@ -850,9 +841,28 @@ as versioned `pto.endpoint_families` metadata with plan-local loop and cut IDs;
 borrowed compiler pointers do not cross the IR boundary. This is producer-owned
 provenance, not a verification proof for arbitrary hand-edited annotations.
 
-Migration milestone 1 preserves this information for explicit, rotating and
-numerical-template producers. It does not yet group their emitted operations or
-change the allocation certificate. Milestone 2 prepares family sites directly;
-milestone 3 consumes retained member-to-allocation mappings and removes optional
-post-insertion reconstruction and the alternate emission path. The resource
-policy, demand relation and supported allocation routes remain unchanged.
+Explicit producers emit singleton families. Rotating and numerical-template
+producers prepare one logical command per family side directly from their paired
+coordinate maps. The presence guard is an exact union of coordinate boxes;
+the member selector is a verified affine expression or an exact decision
+expression. Holes, nonunit steps and different source/target coordinates remain
+represented. For N members and D coordinates, expression preparation uses
+O(N D² log(N+1)) work and O(ND) emitted arithmetic in the worst case. Family
+partitioning and preparation are additional costs, separate from demand reduction.
+
+Allocation reads the retained member-to-original-record map and the existing
+cyclic certificate. It checks their partition, pipe assignments and endpoint
+presence before mutation. It then lowers each family command in place, using
+a verified modular affine member-to-phase function or an exact selection
+expression. It never reconstructs coordinates from emitted guards. Phase preparation
+and output are linear in the represented membership/phase tables after decoding;
+a regular family can use a constant-size expression. This changes neither the
+certified resource policy nor the demand relation. Arbitrary irregular families
+may require expressions proportional to their member count.
+
+Version 2 provenance accompanies grouped commands. Saved version 1 logical IR,
+or old IR without provenance, is accepted as singleton families under its
+original allocation certificate. There is one production emission path. The
+compatibility adapter preserves existing saved commands; it does not introduce
+an alternate mode for newly analyzed programs. Allocation removes consumed
+provenance and certificates. A failed preflight leaves the input unchanged.

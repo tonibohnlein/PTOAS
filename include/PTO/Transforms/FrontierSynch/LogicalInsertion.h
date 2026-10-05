@@ -22,7 +22,7 @@ struct PreparedLogicalEndpoint {
     LogicalCommandKind kind = LogicalCommandKind::Set;
     uint32_t sourcePipe = 0;
     uint32_t targetPipe = 0;
-    int64_t record = 0;
+    int64_t record = 0; // Family ID for grouped plans; original record ID for legacy plans.
     Value guard; // i1, evaluated at the cut before the command.
     Value identity; // Index source-occurrence identity; absent for a barrier.
     SmallVector<Value> memberCoordinates; // Canonical source member tuple, identical at SET and WAIT.
@@ -41,6 +41,7 @@ struct PreparedLogicalPlan {
     Block& addPreparation(Operation* before);
     int64_t planId;
     bool completeInvocation = false; // Drain whole-function work before return.
+    bool groupedFamilies = false; // One endpoint per family side; member operand selects its record.
     // Optional producer certificate for the immediately following allocation
     // pass. It owns no borrowed analysis state; changing the plan invalidates it.
     DictionaryAttr allocationCertificate;

@@ -7,9 +7,9 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Validate numerical templates and prepare their guards and source identities.
 #include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
+#include "PTO/Transforms/FrontierSynch/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 #include "PTO/IR/PTO.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
@@ -175,108 +175,6 @@ LogicalResult preflight(func::FuncOp function, const ProgramRecognition& program
     }
     return success();
 }
-class EndpointPreparer {
-public:
-    EndpointPreparer(const NumericTemplateEndpoints& plan, PreparedLogicalPlan& prepared)
-        : plan(plan), prepared(prepared), builder(plan.outer->getContext()) {}
-    void run()
-    {
-        if (plan.logical.recipes.empty()) {
-            return;
-        }
-        initializeOrdinals();
-        for (const auto& group : plan.groups) {
-            prepareCut(group);
-        }
-    }
-private:
-    const NumericTemplateEndpoints& plan;
-    PreparedLogicalPlan& prepared;
-    OpBuilder builder;
-    Value trips;
-    Value ordinal;
-    Value zero;
-    Value one;
-    Value number(uint64_t value, Location location)
-    {
-        auto type = builder.getIndexType();
-        return builder.create<arith::ConstantOp>(location, type, IntegerAttr::get(type, APInt(64, value)));
-    }
-    Value compare(arith::CmpIPredicate predicate, Value a, Value b, Location location)
-    {
-        return builder.create<arith::CmpIOp>(location, predicate, a, b);
-    }
-    void initializeOrdinals()
-    {
-        auto loop = plan.outer;
-        auto location = loop.getLoc();
-        builder.setInsertionPointToEnd(&prepared.addPreparation(loop));
-        zero = number(0, location);
-        one = number(1, location);
-        auto positive = compare(arith::CmpIPredicate::sgt, loop.getUpperBound(), loop.getLowerBound(), location);
-        auto difference = builder.create<arith::SubIOp>(location, loop.getUpperBound(), loop.getLowerBound());
-        auto span = builder.create<arith::SelectOp>(location, positive, difference, zero);
-        auto quotient = builder.create<arith::DivUIOp>(location, span, loop.getStep());
-        auto remainder = builder.create<arith::RemUIOp>(location, span, loop.getStep());
-        auto partial = compare(arith::CmpIPredicate::ne, remainder, zero, location);
-        auto extra = builder.create<arith::SelectOp>(location, partial, one, zero);
-        trips = builder.create<arith::AddIOp>(location, quotient, extra);
-        builder.setInsertionPointToEnd(&prepared.addPreparation(&loop.getBody()->front()));
-        auto offset = builder.create<arith::SubIOp>(location, loop.getInductionVar(), loop.getLowerBound());
-        ordinal = builder.create<arith::DivUIOp>(location, offset, loop.getStep());
-    }
-    Value predicate(const EndpointRecipe& recipe, Location location)
-    {
-        // The command's cut is inside an executed outer iteration. Its ordinal
-        // is already in range; only the partner's presence needs a test.
-        Value selected = builder.create<arith::ConstantIntOp>(location, 1, 1);
-        if (recipe.displacement) {
-            auto delay = number(recipe.displacement, location);
-            if (recipe.kind == EndpointKind::Set) {
-                auto remaining = builder.create<arith::SubIOp>(location, trips, delay);
-                auto hasTarget = compare(arith::CmpIPredicate::ult, delay, trips, location);
-                auto beforeEnd = compare(arith::CmpIPredicate::ult, ordinal, remaining, location);
-                selected = builder.create<arith::AndIOp>(location, hasTarget, beforeEnd);
-            } else {
-                selected = compare(arith::CmpIPredicate::uge, ordinal, delay, location);
-            }
-        }
-        const auto type = recipe.kind == EndpointKind::Set ? recipe.source : recipe.target;
-        for (auto coordinate : plan.anchors[type].coordinates) {
-            auto induction = coordinate.loop.getInductionVar();
-            auto expected = builder.create<arith::ConstantOp>(location, induction.getType(),
-                builder.getIntegerAttr(induction.getType(), coordinate.induction));
-            auto equal = compare(arith::CmpIPredicate::eq, induction, expected, location);
-            selected = builder.create<arith::AndIOp>(location, selected, equal);
-        }
-        return selected;
-    }
-    void prepareCut(const TemplateEndpointGroup& group)
-    {
-        builder.setInsertionPointToEnd(&prepared.addPreparation(group.cut.before));
-        auto location = group.cut.before->getLoc();
-        for (auto index : group.recipes) {
-            const auto& recipe = plan.logical.recipes[index];
-            auto guard = predicate(recipe, location);
-            Value identity;
-            auto kind = LogicalCommandKind::Barrier;
-            if (recipe.kind == EndpointKind::Set) {
-                kind = LogicalCommandKind::Set;
-                identity = ordinal;
-            } else if (recipe.kind == EndpointKind::Wait) {
-                kind = LogicalCommandKind::Wait;
-                identity = ordinal;
-                if (recipe.displacement) {
-                    identity = builder.create<arith::SubIOp>(location, ordinal, number(recipe.displacement, location));
-                }
-            }
-            prepared.endpoints.push_back({group.cut.before, kind,
-                static_cast<uint32_t>(plan.anchors[recipe.source].phase->kPipeValue),
-                static_cast<uint32_t>(plan.anchors[recipe.target].phase->kPipeValue),
-                recipe.record, guard, identity});
-        }
-    }
-};
 } // namespace
 LogicalResult prepareCountedEndpointCode(func::FuncOp function, const NumericTemplateEndpoints& endpoints,
                                          PreparedLogicalPlan& prepared)
@@ -297,8 +195,7 @@ LogicalResult prepareCountedEndpointCode(func::FuncOp function, const NumericTem
         return function.emitError(families.error);
     }
     prepared.families = std::move(families.families);
-    EndpointPreparer(endpoints, prepared).run();
-    return success();
+    return prepareFamilyEndpointCode(endpoints, prepared);
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplateInsertion(
     func::FuncOp function, const ProgramRecognition& program, int64_t planId)
@@ -317,7 +214,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplateInsertion(
         return function.emitError(families.error), failure();
     }
     prepared->families = std::move(families.families);
-    EndpointPreparer(*node->logicalEndpoints, *prepared).run();
+    if (failed(prepareFamilyEndpointCode(*node->logicalEndpoints, *prepared))) {
+        return failure();
+    }
     if (node->periodicAllocation && node->periodicAllocation->error.empty()) {
         prepared->allocationCertificate = encodeCyclicAllocation(*node->periodicAllocation, planId,
                                                                  function.getContext());
