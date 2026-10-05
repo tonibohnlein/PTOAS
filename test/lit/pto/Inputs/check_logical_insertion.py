@@ -201,8 +201,13 @@ def main():
         empty_trace = json.loads(invoke(tool, "--insertion-trace", path))
         assert empty_trace["outer_trips"] == 0 and not empty_trace["events"]
         validate(empty_template, empty_trace)
-        # An unknown inner trip count cannot silently produce a partial plan.
+        # Parameterized nests now use the exact arithmetic route.
         path.write_text(original.replace("%k = %one to %five", "%k = %one to %n"))
+        accepted = invoke(tool, "--insert-logical", path)
+        assert accepted.count("scf.for") == original.count("scf.for")
+        # An unsupported nonlinear bound still cannot publish a partial plan.
+        nonlinear = original.replace("    scf.for %t", "    %unknown = arith.muli %n, %n : index\n    scf.for %t")
+        path.write_text(nonlinear.replace("%k = %one to %five", "%k = %one to %unknown"))
         rejected = subprocess.run([tool, "--insert-logical", str(path)], capture_output=True, text=True,
                                   check=False, timeout=90)
         assert rejected.returncode != 0
