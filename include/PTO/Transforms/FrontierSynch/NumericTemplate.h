@@ -49,9 +49,11 @@ struct NumericTemplate {
     RecognitionResult result;
     scf::ForOp outer;
     // Original upper bound is outer.getUpperBound(); original IV = lower +
-    // step*ordinal. Retain the body schema also when the outer trip count is 0.
+    // step*ordinal. A proven empty invocation needs no body effect schema.
     int64_t lower = 0;
     int64_t step = 1;
+    // Valid only for the retained constant outer bounds, not a changed trip count.
+    bool emptyInvocation = false;
     NumericTemplateLimits limits;
     uint64_t countedVisits = 0; // Preflight upper bound before allocating visits.
     uint64_t countedPayloads = 0; // Includes both arms before guard specialization.

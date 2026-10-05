@@ -176,6 +176,17 @@ def main():
         typed_trace = json.loads(invoke(tool, "--insertion-trace", path))
         assert typed_trace["outer_trips"] == 4
         summaries.append(validate(typed_template, typed_trace))
+        # A compile-time empty invocation needs no schema for unreachable visits.
+        empty = original.replace("%t = %lower to %n", "%t = %lower to %one")
+        empty = empty.replace("%k = %one to %five", "%k = %one to %n")
+        path.write_text(empty)
+        empty_template = recognized(tool, path)
+        assert empty_template["empty_invocation"] and not empty_template["payloads"]
+        assert not empty_template["counted_visits"]
+        assert invoke(tool, "--insert-logical", path) == invoke(tool, "--roundtrip", path)
+        empty_trace = json.loads(invoke(tool, "--insertion-trace", path))
+        assert empty_trace["outer_trips"] == 0 and not empty_trace["events"]
+        validate(empty_template, empty_trace)
         # An unknown inner trip count cannot silently produce a partial plan.
         path.write_text(original.replace("%k = %one to %five", "%k = %one to %n"))
         rejected = subprocess.run([tool, "--insert-logical", str(path)], capture_output=True, text=True,

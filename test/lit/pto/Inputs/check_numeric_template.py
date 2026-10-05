@@ -83,7 +83,7 @@ def check_common(document, template):
 
 
 def check_examples(documents, policy):
-    counts = {"nested_recurrence": 6, "nested_coordinates": 4, "zero_outer": 3,
+    counts = {"nested_recurrence": 6, "nested_coordinates": 4, "zero_outer": 0, "inner_then_outer": 3,
               "zero_inner": 1, "branch_selection": 5, "readonly_global": 2,
               "streaming_global": 1, "negative_stream": 1, "local_reuse": 2}
     if policy == "may-not-alias":
@@ -106,8 +106,11 @@ def check_examples(documents, policy):
     assert recurrence_anchors[0]["before_cut"] == recurrence_anchors[2]["before_cut"]
     assert recurrence_anchors[0]["coordinates"] != recurrence_anchors[2]["coordinates"]
     # The inner loop's end and the following outer-body operation are distinct cuts.
-    zero_anchors = candidate(documents["zero_outer"])["logical_endpoints"]["anchors"]
-    assert zero_anchors[1]["after_cut"] != zero_anchors[2]["before_cut"]
+    boundary_anchors = candidate(documents["inner_then_outer"])["logical_endpoints"]["anchors"]
+    assert boundary_anchors[1]["after_cut"] != boundary_anchors[2]["before_cut"]
+    empty = candidate(documents["zero_outer"])
+    assert empty["empty_invocation"] and not empty["payloads"] and not empty["atoms"]
+    assert not empty["counted_visits"] and not empty["logical_endpoints"]["recipes"]
     nested = candidate(documents["nested_coordinates"])
     assert nested["lower"] == 1 and nested["step"] == 2
     assert [coordinates(p) for p in nested["payloads"]] == [(i, j) for i in (1, 3) for j in (0, 1)]
@@ -151,7 +154,7 @@ def main():
                              check=True, capture_output=True, text=True, timeout=60)
         documents = {d["function"]: d for line in run.stdout.splitlines() if line.startswith("{")
                      for d in [json.loads(line)]}
-        assert len(documents) == 20
+        assert len(documents) == 21
         check_examples(documents, policy)
         rejected = [attempt for node in documents["multiple_outer_loops"]["nodes"]
                     for attempt in node["attempts"] if attempt["route"] == "numeric-template"]

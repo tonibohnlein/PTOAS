@@ -81,6 +81,7 @@ llvm::json::Object dumpNumericTemplate(const fs::NumericTemplate& result, AsmSta
     auto outer = result.outer;
     return llvm::json::Object{{"route", "numeric-template"}, {"state", fs::recognitionName(result.result.state)},
         {"issues", std::move(issues)}, {"lower", result.lower}, {"step", result.step},
+        {"empty_invocation", result.emptyInvocation},
         {"upper", name(outer.getUpperBound(), state)}, {"counted_visits", result.countedVisits},
         {"counted_payloads", result.countedPayloads}, {"fragments", result.fragments},
         {"period", result.period}, {"refresh", result.refresh}, {"scope", "whole-function"},
