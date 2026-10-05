@@ -19,7 +19,7 @@ std::optional<int64_t> constant(Value value)
     }
     return number.getSExtValue();
 }
-bool scope(NumericTemplate& output, const PhaseIndex& index, const SyncInput& input)
+bool scope(NumericTemplate& output, const PhaseIndex& index, const SyncInput& input, bool regional)
 {
     auto outer = output.outer;
     auto function = dyn_cast<func::FuncOp>(outer->getParentOp());
@@ -28,13 +28,13 @@ bool scope(NumericTemplate& output, const PhaseIndex& index, const SyncInput& in
         return false;
     }
     for (const auto* phase : input.instructions()) {
-        if (!outer->isProperAncestor(phase->elementOp)) {
+        if (!regional && !outer->isProperAncestor(phase->elementOp)) {
             output.result.note(RecognitionIssue::TemplateContext, phase->elementOp);
             return false;
         }
     }
     function.walk([&](Operation* op) {
-        if (op == function.getOperation()) {
+        if (op == function.getOperation() || (regional && op != outer && !outer->isProperAncestor(op))) {
             return;
         }
         if (index.needsValuePrerequisite(op)) {
@@ -60,9 +60,8 @@ void clear(NumericTemplate& output)
     output.period = 0;
     output.refresh = 0;
 }
-} // namespace
-NumericTemplate recognizeNumericTemplate(scf::ForOp outer, const PhaseIndex& index,
-                                         const SyncInput& input, NumericTemplateLimits limits)
+NumericTemplate recognizeTemplate(scf::ForOp outer, const PhaseIndex& index,
+                                  const SyncInput& input, NumericTemplateLimits limits, bool regional)
 {
     NumericTemplate output;
     output.outer = outer;
@@ -78,7 +77,7 @@ NumericTemplate recognizeNumericTemplate(scf::ForOp outer, const PhaseIndex& ind
     }
     output.lower = *lower;
     output.step = *step;
-    if (!scope(output, index, input)) {
+    if (!scope(output, index, input, regional)) {
         return output;
     }
     auto upper = constant(outer.getUpperBound());
@@ -111,8 +110,37 @@ NumericTemplate recognizeNumericTemplate(scf::ForOp outer, const PhaseIndex& ind
         clear(output);
         return output;
     }
+    if (regional) {
+        const auto effects = input.accesses().effects();
+        for (const auto& payload : output.payloads) {
+            for (const auto& effect : payload.effects) {
+                if (effect.discharge == TemplateDischarge::None) {
+                    continue;
+                }
+                for (std::size_t external = 0; external < effects.size(); ++external) {
+                    if (!outer->isProperAncestor(effects[external].phase->elementOp) &&
+                        input.accesses().mayConflict(effect.sourceEffect, external)) {
+                        output.result.note(RecognitionIssue::TemplateContext, effects[external].phase->elementOp);
+                        clear(output);
+                        return output;
+                    }
+                }
+            }
+        }
+    }
     output.period = 1;
     output.refresh = 1;
     return output;
+}
+} // namespace
+NumericTemplate recognizeNumericTemplate(scf::ForOp outer, const PhaseIndex& index,
+                                         const SyncInput& input, NumericTemplateLimits limits)
+{
+    return recognizeTemplate(outer, index, input, limits, false);
+}
+NumericTemplate recognizeRegionalNumericTemplate(scf::ForOp outer, const PhaseIndex& index,
+                                                 const SyncInput& input, NumericTemplateLimits limits)
+{
+    return recognizeTemplate(outer, index, input, limits, true);
 }
 } // namespace mlir::pto::frontiersynch

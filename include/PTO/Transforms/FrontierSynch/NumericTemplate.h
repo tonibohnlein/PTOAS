@@ -63,11 +63,16 @@ struct NumericTemplate {
     uint64_t period = 0; // 1 only after complete contract verification.
     uint64_t refresh = 0; // 1 for every written local atom; read-only atoms need none.
     // No selectors, reachability, allocation or synchronization are exported.
-    // GM discharge is valid only for a whole-function outer-loop candidate;
-    // all other payloads and prerequisites must be accounted for or rejected.
+    // Regional candidates additionally prove discharged GM effects cannot conflict
+    // with external accesses. Other storage crossings require composition.
 };
 NumericTemplate recognizeNumericTemplate(scf::ForOp outer, const PhaseIndex& index,
                                          const SyncInput& input,
                                          NumericTemplateLimits limits = {});
+// Same effect-word contract for a direct function child. All discharged GM
+// accesses must be nonconflicting with every payload outside this loop.
+NumericTemplate recognizeRegionalNumericTemplate(scf::ForOp outer, const PhaseIndex& index,
+                                                 const SyncInput& input,
+                                                 NumericTemplateLimits limits = {});
 } // namespace mlir::pto::frontiersynch
 #endif

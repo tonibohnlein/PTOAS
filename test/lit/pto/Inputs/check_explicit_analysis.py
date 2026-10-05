@@ -20,6 +20,12 @@ def check_graph(document):
                    for i, item in enumerate(document["occurrences"])]
     edges = conflicts(occurrences)
     reachable = closure(occurrences, edges)
+    for source, row in enumerate(document["event_reachable"]):
+        expected = [source == target or target in reachable[source] for target in range(2 * len(occurrences))]
+        require(row == expected, (document["function"], source, row, expected))
+    require(document["invalid_event_rejected"], document)
+    require(not document["span_error"] and document["span_retained"] == document["retained"], document)
+    require(document.get("gap_rejected", True) and document.get("reverse_rejected", True), document)
     covers = {(a, b) for a, b in edges
               if not any(2*b in reachable[z] for z in reachable[2*a+1])}
     require(covers == set(map(tuple, document["retained"])), document)

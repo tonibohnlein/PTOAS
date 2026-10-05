@@ -11,6 +11,44 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
+namespace {
+void queryChecks(const fs::ExplicitAnalysis& analysis, llvm::json::Object& output)
+{
+    llvm::json::Array rows;
+    for (uint32_t a = 0; a < 2 * analysis.occurrences.size(); ++a) {
+        llvm::json::Array row;
+        for (uint32_t b = 0; b < 2 * analysis.occurrences.size(); ++b) {
+            const auto value = fs::explicitEventPrecedes(analysis,
+                {a / 2, static_cast<fs::PeriodicEventKind>(a % 2)},
+                {b / 2, static_cast<fs::PeriodicEventKind>(b % 2)});
+            row.push_back(value ? llvm::json::Value(*value) : llvm::json::Value(nullptr));
+        }
+        rows.push_back(std::move(row));
+    }
+    output["event_reachable"] = std::move(rows);
+    output["invalid_event_rejected"] = !fs::explicitEventPrecedes(analysis,
+        {static_cast<uint32_t>(analysis.occurrences.size())}, {0}).has_value();
+}
+void spanChecks(const fs::ExplicitAnalysis& analysis, const fs::PhaseIndex& index,
+                const pto::SyncInput& input, llvm::json::Object& output)
+{
+    const auto span = fs::analyzeExplicit(analysis.phases, index, input);
+    llvm::json::Array retained;
+    for (const auto& edge : span.reduction.retained) {
+        retained.push_back(llvm::json::Array{edge.source, edge.target});
+    }
+    output["span_error"] = span.error;
+    output["span_retained"] = std::move(retained);
+    if (analysis.phases.size() >= 3) {
+        SmallVector<const pto::CompoundInstanceElement*> gap{analysis.phases.front(), analysis.phases.back()};
+        output["gap_rejected"] = !fs::analyzeExplicit(gap, index, input).error.empty();
+    }
+    if (analysis.phases.size() >= 2) {
+        SmallVector<const pto::CompoundInstanceElement*> reversed{analysis.phases.back(), analysis.phases.front()};
+        output["reverse_rejected"] = !fs::analyzeExplicit(reversed, index, input).error.empty();
+    }
+}
+} // namespace
 LogicalResult dumpExplicitAnalysis(func::FuncOp function, const pto::SyncInput& input)
 {
     fs::PhaseIndex index;
@@ -62,6 +100,10 @@ LogicalResult dumpExplicitAnalysis(func::FuncOp function, const pto::SyncInput& 
     output["start_ranks"] = std::move(rows);
     output["cells"] = std::move(cells);
     output["boundary"] = std::move(boundary);
+    if (result.error.empty()) {
+        queryChecks(result, output);
+        spanChecks(result, index, input, output);
+    }
     llvm::outs() << llvm::json::Value(std::move(output)) << "\n";
     return success();
 }

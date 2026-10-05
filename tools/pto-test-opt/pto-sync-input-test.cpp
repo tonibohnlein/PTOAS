@@ -285,6 +285,7 @@ std::string render(Operation *op) {
   return text;
 }
 }
+LogicalResult runRegionExpressionChecks(func::FuncOp function);
 LogicalResult runRotatingAnalysisChecks(func::FuncOp function, const pto::SyncInput& input);
 LogicalResult dumpExplicitAnalysis(func::FuncOp function, const pto::SyncInput& input);
 int main(int argc, char **argv) {
@@ -323,16 +324,21 @@ int main(int argc, char **argv) {
   const bool insertLogical = argc == 3 && StringRef(argv[1]) == "--insert-logical";
   const bool preparedInsertion = argc == 3 && StringRef(argv[1]) == "--prepared-insertion-checks";
   const bool insertionTrace = argc == 3 && StringRef(argv[1]) == "--insertion-trace";
+  const bool expressionChecks = argc == 3 && StringRef(argv[1]) == "--region-expression-checks";
+  const bool sequenceAnalysis = argc == 3 && StringRef(argv[1]) == "--sequence-analysis";
+  const bool structuredTrace = argc == 3 && StringRef(argv[1]) == "--structured-trace";
   const bool physicalTrace = argc == 3 && StringRef(argv[1]) == "--physical-trace";
   if (argc != 2 && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !recognition && !insertLogical &&
-      !insertionTrace && !physicalTrace && !preparedInsertion &&
+      !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis &&
+      !expressionChecks && !preparedInsertion &&
       !expectFailure && !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip &&
       !regionChecks && !phaseCopies && !step0 && !existing) {
     llvm::errs() << "usage: pto-sync-input-test "
                  << "[--gm-alias=may-alias|may-not-alias] "
                  << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
                  "--recognize|--insert-logical|--prepared-insertion-checks|--insertion-trace|"
-                 "--physical-trace|--arithmetic|--explicit-analysis|--rotating-analysis|--roundtrip|"
+                 "--region-expression-checks|--sequence-analysis|--structured-trace|--physical-trace|"
+                 "--arithmetic|--explicit-analysis|--rotating-analysis|--roundtrip|"
                  "--region-contract-checks|"
                  "--step0-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
     return 1;
@@ -343,12 +349,35 @@ int main(int argc, char **argv) {
   context.disableMultithreading();
   const bool hasOption = rotatingAnalysis || explicitAnalysis || expectFailure || capabilities || phaseIndex ||
                          storageEffects || recognition || insertLogical || insertionTrace || physicalTrace ||
+                         structuredTrace || sequenceAnalysis || expressionChecks ||
                          preparedInsertion || arithmetic ||
                          aliasChecks || roundtrip || regionChecks || phaseCopies || step0 || existing;
   const auto filename = argv[hasOption ? 2 : 1];
   auto module = parseSourceFile<ModuleOp>(filename, &context);
   if (!module || failed(verify(*module))) {
     return 1;
+  }
+  if (expressionChecks) {
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (failed(runRegionExpressionChecks(function))) {
+        return 1;
+      }
+    }
+    return 0;
+  }
+  if (sequenceAnalysis) {
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (failed(runSequenceAnalysisChecks(function, policy))) { return 1; }
+    }
+    return 0;
+  }
+  if (structuredTrace) {
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (failed(runStructuredInsertionChecks(function, policy))) {
+        return 1;
+      }
+    }
+    return 0;
   }
   if (existing) {
     PassManager manager(&context);
