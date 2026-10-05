@@ -17,12 +17,25 @@ namespace mlir::pto {
 enum class SyncAccessMode { Read, Write };
 enum class SyncAccessPrecision { Exact, UpperBound, Unknown };
 
-// Half-open physical byte interval. Space is part of identity; SSA roots are not.
+// Half-open physical byte interval. Local addresses are absolute (base is null).
+// GM intervals may be relative to a canonical entry pointer. Local allocation
+// SSA roots never distinguish physical reuse; a GM base is part of identity.
 struct SyncStorageCell {
     AddressSpace space;
     uint64_t begin = 0;
     uint64_t end = 0;
+    Value base = {};
 };
+
+inline bool sameStorageDomain(const SyncStorageCell& a, const SyncStorageCell& b)
+{
+    return a.space == b.space && a.base == b.base;
+}
+
+// One canonical GM base is comparable under either policy. Different bases
+// require MayNotAlias; absolute/based GM mixtures have unknown displacement.
+// This checks identity comparability, not access precision or byte overlap.
+bool storageBasesAreComparable(ArrayRef<SyncStorageCell> ranges, GMAliasPolicy policy);
 
 struct SyncSlotSelection {
     Value family;
@@ -71,6 +84,9 @@ public:
     // All supplied effects have exact byte sets; this is not a control/alias
     // certificate for effects omitted by the input producer.
     bool allAccessesExact() const;
+    // Every selected effect must have an exact finite byte set with complete
+    // base relationships. Omitted effects need a separate discharge proof.
+    bool hasExactCellPartition(ArrayRef<std::size_t> effectIds) const;
     // Reuse InsertSync's buffer-range/alias checks, then refine with supplied
     // access regions. Unknown local addresses remain conservative. GM uses the
     // shared root-alias policy, without needing absolute addresses.
@@ -78,6 +94,12 @@ public:
     bool mayOverlap(std::size_t first, std::size_t second) const;
     // Read/read pairs need no ordering. Pipe and space come from shared phases.
     bool mayConflict(std::size_t first, std::size_t second) const;
+    // A GM effect has no possible conflict with another static phase in this
+    // unchanged input. Same-phase accesses are excluded; callers must establish
+    // that they do not need ordering between repeated occurrences of that phase.
+    // Invalid/non-GM IDs return false. Each queried GM effect scans the effects
+    // at most once per build; rebuilding invalidates the lazy result cache.
+    bool independentOfOtherPhases(std::size_t effect) const;
     // Preserve legacy buffer identities for insertion/allocation. The optional
     // filter selects one operand of the second phase (broadcast hazards).
     bool dependencies(const CompoundInstanceElement* first, SyncAccessMode firstMode,
@@ -91,6 +113,7 @@ private:
     // Translator indices are unique within this input and survive the copies
     // used by InsertSync's loop-backedge scan, including multi-phase operations.
     DenseMap<unsigned, SmallVector<std::size_t>> phaseEffects;
+    mutable DenseMap<std::size_t, bool> independentEffects;
     void partitionRanges();
 };
 } // namespace mlir::pto

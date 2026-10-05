@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Typed explicit/periodic adapters to the shared regional composition contract.
 #include "SequenceAnalysisInternal.h"
+#include "llvm/ADT/MapVector.h"
 namespace mlir::pto::frontiersynch {
 void SequenceAnalysisState::bindAdapters()
 {
@@ -19,6 +20,7 @@ void SequenceAnalysisState::bindAdapters()
         out.anchors = child.anchors;
         out.occurrenceLoops.assign(child.anchors.size(), child.loop);
         out.capabilities = {true, true, true, true};
+        out.gmAliasPolicy = input->memory().gmPolicy();
         out.cost = child.costs;
         out.cost.children = 1;
         out.cost.physicalFragments = child.patterns.size();
@@ -92,7 +94,9 @@ void SequenceAnalysisState::bindAdapters()
 }
 bool SequenceAnalysisState::importSummaries()
 {
-    std::map<AddressSpace, std::set<uint64_t>> points;
+    std::map<AddressSpace, llvm::MapVector<Value, std::set<uint64_t>>> points;
+    SmallVector<SyncStorageCell> identities;
+    std::optional<GMAliasPolicy> gmPolicy;
     for (const auto& child : children) {
         const auto& out = child.regional;
         if (out.expressions != arena || !out.capabilities.exactEffects || !out.capabilities.exactQueries ||
@@ -102,22 +106,35 @@ bool SequenceAnalysisState::importSummaries()
         }
         for (const auto& cell : out.storageBoundary) {
             if (cell.cell.begin > cell.cell.end) { return fail("regional storage boundary has an invalid range"); }
-            points[cell.cell.space].insert(cell.cell.begin);
-            points[cell.cell.space].insert(cell.cell.end);
+            if (cell.cell.begin == cell.cell.end) { continue; }
+            identities.push_back(cell.cell);
+            if (cell.cell.space == AddressSpace::GM) {
+                if (gmPolicy && *gmPolicy != out.gmAliasPolicy) {
+                    return fail("regional GM alias assumptions disagree");
+                }
+                gmPolicy = out.gmAliasPolicy;
+            }
+            points[cell.cell.space][cell.cell.base].insert(cell.cell.begin);
+            points[cell.cell.space][cell.cell.base].insert(cell.cell.end);
         }
     }
+    if (!storageBasesAreComparable(identities, gmPolicy.value_or(GMAliasPolicy::MayAlias))) {
+        return fail("regional storage bases have unresolved alias relationships");
+    }
     cells.clear(); ports.clear(); portIds.clear(); boundaries.clear();
-    for (const auto& [space, endpoints] : points) {
-        for (auto it = endpoints.begin(); it != endpoints.end() && std::next(it) != endpoints.end(); ++it) {
-            SyncStorageCell cell{space, *it, *std::next(it)};
-            bool covered = false;
-            for (const auto& child : children) {
-                for (const auto& local : child.regional.storageBoundary) {
-                    covered |= local.cell.space == space && local.cell.begin <= cell.begin &&
-                               local.cell.end >= cell.end;
+    for (const auto& [space, bases] : points) {
+        for (const auto& [base, endpoints] : bases) {
+            for (auto it = endpoints.begin(); it != endpoints.end() && std::next(it) != endpoints.end(); ++it) {
+                SyncStorageCell cell{space, *it, *std::next(it), base};
+                bool covered = false;
+                for (const auto& child : children) {
+                    for (const auto& local : child.regional.storageBoundary) {
+                        covered |= sameStorageDomain(local.cell, cell) && local.cell.begin <= cell.begin &&
+                                   local.cell.end >= cell.end;
+                    }
                 }
+                if (covered) { cells.push_back(cell); }
             }
-            if (covered) { cells.push_back(cell); }
         }
     }
     boundaries.resize(children.size(), std::vector<CellBoundary>(cells.size()));
@@ -134,7 +151,7 @@ bool SequenceAnalysisState::importSummaries()
         for (std::size_t cell = 0; cell < cells.size(); ++cell) {
             auto& out = boundaries[id][cell];
             for (const auto& local : child.regional.storageBoundary) {
-                if (local.cell.space != cells[cell].space || local.cell.begin > cells[cell].begin ||
+                if (!sameStorageDomain(local.cell, cells[cell]) || local.cell.begin > cells[cell].begin ||
                     local.cell.end < cells[cell].end) { continue; }
                 for (auto selected : local.firstWriters) { convert(selected, out.firstWriters); }
                 for (auto selected : local.lastWriters) { convert(selected, out.lastWriters); }
@@ -187,6 +204,11 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
     };
     for (const auto& child : analysis.state->children) {
         out.capabilities.contextualGuards |= child.regional.capabilities.contextualGuards;
+        if (llvm::any_of(child.regional.storageBoundary, [](const auto& boundary) {
+                return boundary.cell.space == AddressSpace::GM && boundary.cell.begin != boundary.cell.end;
+            })) {
+            out.gmAliasPolicy = child.regional.gmAliasPolicy;
+        }
     }
     out.prepare = [owned]() -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
         auto result = prepareSequenceInsertion(*owned);

@@ -10,20 +10,10 @@
 #include <limits>
 namespace mlir::pto::frontiersynch {
 namespace {
-bool independentGlobal(std::size_t id, const SyncInput& input)
-{
-    const auto& effect = input.accesses().effects()[id];
-    if (!effect.memory || effect.memory->scope != AddressSpace::GM) { return false; }
-    for (std::size_t other = 0; other < input.accesses().effects().size(); ++other) {
-        if (input.accesses().effects()[other].phase != effect.phase && input.accesses().mayConflict(id, other)) {
-            return false;
-        }
-    }
-    return true;
-}
 bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recognized, const SyncInput& input)
 {
     HardwareProtectionBuilder protection;
+    SmallVector<std::size_t> retainedEffects;
     std::optional<std::size_t> previousGuard;
     Operation* previous = nullptr;
     for (const auto& guarded : recognized.phases) {
@@ -44,9 +34,9 @@ bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recogni
         std::map<uint32_t, CellAccess> modes;
         for (auto id : input.accesses().effectsFor(phase)) {
             const auto& effect = input.accesses().effects()[id];
-            if (independentGlobal(id, input)) { continue; }
-            if (effect.precision != SyncAccessPrecision::Exact || !effect.exactRanges ||
-                (effect.memory && effect.memory->scope == AddressSpace::GM)) { return false; }
+            if (input.accesses().independentOfOtherPhases(id)) { continue; }
+            if (effect.precision != SyncAccessPrecision::Exact || !effect.exactRanges) { return false; }
+            retainedEffects.push_back(id);
             state.cost.physicalFragments += effect.ranges.size();
             for (auto cell : effect.cells) {
                 if (cell >= input.accesses().cells().size() || cell > UINT32_MAX) { return false; }
@@ -64,7 +54,7 @@ bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recogni
         protection.observe(phase->elementOp, occurrence, accumulator);
         state.effects.push_back(std::move(occurrence));
     }
-    return true;
+    return input.accesses().hasExactCellPartition(retainedEffects);
 }
 bool validRoots(func::FuncOp function, ArrayRef<Operation*> roots)
 {
@@ -103,6 +93,7 @@ FiniteGuardedAnalysis analyzeFiniteGuarded(func::FuncOp function, ArrayRef<Opera
     }
     auto state = std::make_shared<FiniteGuardedState>();
     state->function = function;
+    state->gmAliasPolicy = input.memory().gmPolicy();
     state->arena = expressions ? std::move(expressions) : std::make_shared<RegionExpressions>();
     std::vector<RegionExpressions::Id> guards;
     for (const auto& guard : recognized.guards) {
@@ -150,6 +141,7 @@ RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analys
     out.storageBoundary = state->storageBoundary;
     out.firstPayloads = state->firstPayloads; out.lastPayloads = state->lastPayloads;
     out.cost = state->cost;
+    out.gmAliasPolicy = state->gmAliasPolicy;
     out.capabilities = {true, true, true, true, true};
     auto valid = [state](RegionalEvent event) {
         return event.type < state->anchors.size() && event.ordinal < state->arena->size() &&

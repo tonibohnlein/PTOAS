@@ -46,5 +46,7 @@ std::optional<SyncAccessRegion> resolveSelectedRegion(const SyncInput& input, Va
                                                      Operation* at, DictionaryAttr contract);
 // Equal symbolic terms cancel before comparison. Unknown is not disjoint.
 bool regionsProvablyDisjoint(const SyncAccessRegion& a, const SyncAccessRegion& b);
+// Only function-entry GM pointers establish invariant relative coordinates.
+bool isCanonicalGMBase(Value base);
 } // namespace mlir::pto
 #endif
