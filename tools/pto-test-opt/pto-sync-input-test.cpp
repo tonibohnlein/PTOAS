@@ -14,6 +14,7 @@
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/GuardedRotatingInsertion.h"
 #include "PTO/IR/PTO.h"
 #include "SyncPhaseCopyChecks.h"
 #include "SyncLogicalInsertionChecks.h"
@@ -33,6 +34,7 @@ LogicalResult verifyProgramStructure(func::FuncOp, const pto::SyncInput &,
 void dumpArithmeticJSON(func::FuncOp function, const pto::frontiersynch::ArithmeticProgram& program);
 int runSyncRegionContractChecks(func::FuncOp function, const pto::SyncInput &input);
 int runPeriodicDemandChecks(llvm::StringRef path);
+int runGuardedPeriodicChecks(llvm::StringRef path);
 int runSyncAliasChecks(func::FuncOp function, const pto::SyncInput &input);
 LogicalResult auditSyncStep0(func::FuncOp function, const pto::SyncInput &input);
 namespace {
@@ -241,6 +243,16 @@ LogicalResult recognize(func::FuncOp function, const pto::SyncInput &input, bool
         if (hasLoopResult) {
           dumpRecognition("rotating", *node.rotatingResult);
           dumpGuarded("guarded-rotating", *node.guardedRotatingResult);
+          if (node.rotatingResult->state != pto::frontiersynch::RecognitionState::Applicable &&
+              node.guardedRotatingResult->result.state == pto::frontiersynch::RecognitionState::Applicable) {
+            auto guarded = pto::frontiersynch::analyzeGuardedRotating(loop, input, *node.guardedRotatingResult);
+            std::string error = guarded.error;
+            if (error.empty()) {
+              auto endpoints = pto::frontiersynch::prepareGuardedRotatingEndpoints(function, guarded, error);
+              (void)endpoints;
+            }
+            llvm::outs() << "  guarded-backend=" << (error.empty() ? "ready" : error) << "\n";
+          }
           break;
         }
       }
@@ -321,6 +333,9 @@ LogicalResult runRotatingAnalysisChecks(func::FuncOp function, const pto::SyncIn
 LogicalResult dumpExplicitAnalysis(func::FuncOp function, const pto::SyncInput& input);
 int main(int argc, char **argv) {
   // Test-only numerical graph input; the production pass still consumes MLIR.
+  if (argc == 3 && StringRef(argv[1]) == "--guarded-periodic-checks") {
+    return runGuardedPeriodicChecks(argv[2]);
+  }
   if (argc == 3 && StringRef(argv[1]) == "--periodic-checks") {
     return runPeriodicDemandChecks(argv[2]);
   }

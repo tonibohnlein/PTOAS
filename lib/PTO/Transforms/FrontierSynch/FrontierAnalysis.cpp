@@ -10,6 +10,7 @@
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/GuardedRotatingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 namespace mlir::pto::frontiersynch {
@@ -112,6 +113,10 @@ public:
             }
             if (failed(prepared) && numerical) {
                 prepared = frontiersynch::prepareNumericTemplateInsertion(function, *analysis.result());
+            }
+            if (failed(prepared)) {
+                prepared = frontiersynch::prepareGuardedRotatingInsertion(
+                    function, *analysis.input(), *analysis.result());
             }
             if (failed(prepared)) {
                 std::string sequenceError;

@@ -3,8 +3,8 @@
 ## Active implementation
 
 The executable routes are explicit analysis, numerical-template periodic
-analysis, direct rotating-footprint analysis, exact sequence composition, and
-finite guarded analysis. They use common logical insertion. Physical allocation
+analysis, direct and immutable guarded rotating-footprint analysis, exact
+sequence composition, and finite guarded analysis. They use common logical insertion. Physical allocation
 remains available for certified numerical templates; the other routes require
 an allocation export before they can complete physical compilation.
 The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
@@ -15,6 +15,7 @@ The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
 | Structure and route checks | `FrontierAnalysis::initialize`, `ProgramRecognition.cpp`, `PhaseIndex.cpp` |
 | Numerical effect template | `NumericTemplate.cpp`, `NumericTemplateControl.cpp`, `NumericTemplateEffects.cpp`, `NumericTemplateStorage.cpp` |
 | Direct rotating generators and quotient | `RotatingExtraction.cpp`, `RotatingAnalysis.cpp` |
+| Guarded rotating generators and parameterized quotient | `GuardedRotatingAnalysis.cpp`, `GuardedPeriodicQuotient.cpp`, `GuardedRotatingInsertion.cpp` |
 | Explicit scan, ranks and boundaries | `ExplicitAnalysis.cpp`, `ExplicitReduction.cpp`, `LifetimeScan.cpp` |
 | Sequence composition and boundary reduction | `SequenceAnalysis.cpp`, `SequenceStorage.cpp`, `SequenceQueries.cpp`, `SequenceAdapters.cpp` |
 | Finite guarded closure and insertion | `FiniteGuardedAnalysis.cpp`, `FiniteGuardedQueries.cpp`, `FiniteGuardedInsertion.cpp` |
@@ -30,9 +31,9 @@ IR-changing pass. Direct callers must keep the borrowed IR unchanged for the
 analysis lifetime. The full `--recognize` diagnostic requests it; the
 numerical insertion path does not. This avoids constructing an unused
 arithmetic candidate without changing the periodic result or adding a compiler
-mode. Arithmetic and immutable guarded rotating recognizers remain tested
-library functionality; they do not yet provide production insertion backends.
-Finite guarded regions do have an analysis and insertion backend.
+mode. Arithmetic recognition still has no production reduction/insertion
+backend. Immutable guarded rotating loops and finite guarded regions now have
+analysis and logical insertion backends.
 
 ## Next route-completion milestones
 
@@ -44,7 +45,7 @@ Physical allocation and scarcity repair are separate.
 | Milestone | Deliverable | Status |
 |---|---|---|
 | M5 | Shared ordinary-access contracts, based GM cells, and common explicit/guarded effect acceptance | Implemented; three reviews accepted |
-| M6 | Immutable guarded rotating extraction, parameterized quotient circuits, and executable logical endpoints | Pending |
+| M6 | Immutable guarded rotating extraction, parameterized quotient circuits, and executable logical endpoints | Implemented; three reviews accepted |
 | M7 | Difference-bound reduction, endpoint selectors, and route integration | Pending |
 | M8 | Integer octagon and bounded-coefficient reduction and selectors | Pending |
 | M9 | Mixed regional composition and finite overlays using the implemented exports | Pending |
@@ -102,6 +103,63 @@ Range partitioning costs `O(R log R + I)` plus shared geometry recovery; checkin
 an exact common partition is linear in the selected ranges. Current valid-shape
 resolution can still require quadratic metadata work in long blocks. These
 costs precede the explicit scan/reduction bound, rather than being hidden in it.
+
+### M6 implemented guarded rotating route
+
+A fixed potential loop body can have immutable conditional participation and
+parameter-dependent slot offsets. The extractor normalizes conditional aliases
+and read-modify-write accesses, selects strict previous/next writers with modular
+arithmetic, and constructs guarded generator records. Slot counts and strides
+remain compile-time constants; neither slots nor trip counts are enumerated.
+Signed offset arithmetic uses Euclidean residues with checked intermediate bounds.
+
+The weighted quotient preserves native start/completion order between present
+payloads, including self-wraps when a pipe has only one active site. It deduplicates
+conditional endpoint records and constructs shared shortest-distance and retention
+circuits. All-event threshold queries distinguish unreachable from distance zero.
+The pure interface requires immutable, defined guards and certified forward
+integer distances; the rotating extractor establishes those conditions.
+
+One lifetime optimization omits a self-refresh WAW when a distinct read-only
+payload accesses the same rotation orbit. Under the self-predecessor guard there
+is no intervening writer, and the reader's RAW/WAR edges replace that WAW.
+Only self records are omitted, so their distinct-site replacement edges remain.
+The witness is conditional and does not enumerate branch valuations.
+
+Logical insertion evaluates invariant circuits once before the loop. Endpoints
+retain original cuts and guards and match by record and source iteration ordinal.
+The source checks `distance < trips - ordinal`; the target checks
+`distance <= ordinal`. Zero trips and partial final lifetimes therefore leave no
+unmatched notifications. Inactive branch predicates/offsets are masked with
+`select`, preserving safety when invariant scalar code is replayed at loop entry.
+Local barriers require a proof of executed-payload adjacency; a failed proof
+leaves the original program unchanged.
+
+This production adapter currently accepts one whole-function loop. It exports
+exact generators, retention circuits and all-event query circuits, but no regional
+storage selectors or physical allocation certificate. Conditional accumulator
+protection not represented by this backend is an explicit unsupported case;
+the shared hardware rule detects potential protected writer pairs. Ordinary
+unprotected ACC accesses are supported. The numerical protected route remains
+first, and both frozen device GEMMs retain identical plans and C++ output.
+
+With `A` fragments and `m` potential payloads, extraction and quotient construction
+use expected `O(A² + m³)` circuit operations under fixed 64-bit arithmetic.
+Modular multiplication costs `O(log B)` gates when modulus bit lengths are counted.
+There is no expansion in the numerical dependence distance. The insertion cost
+also includes contextual scalar replay and sound Boolean implication checks:
+for `g_local` local candidates and `G` DAG nodes the sufficient adjacency checks
+cost at most `O(g_local * m * G)`. These checks are not included in the core
+quotient bound. Only demanded circuit roots are emitted, sharing invariant work
+at entry and arithmetic at each cut.
+
+Validation passed 104 regression commands, including 166 concrete guarded-loop
+traces compared with independent physical-conflict graphs, 104 quotient
+valuations with all-event reachability checks, and transactional rejection cases.
+The quotient tests cover singleton wraps, absent intermediate sites, equal
+records, billion-sized distance bounds and arithmetic overflow rejection.
+Architecture, correctness and performance reviews accepted the milestone.
+Local build and validation artifacts are under `.local/route-completion-m6/`.
 
 ### Milestone 1: complete the explicit straight-line route
 
