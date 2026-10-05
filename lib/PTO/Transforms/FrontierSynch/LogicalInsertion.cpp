@@ -16,6 +16,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include <map>
+#include <set>
 namespace mlir::pto::frontiersynch {
 PreparedLogicalPlan::~PreparedLogicalPlan()
 {
@@ -91,6 +92,9 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
     if (collision) {
         return function.emitError("logical insertion namespace is already in use");
     }
+    if (function->hasAttr("pto.endpoint_families")) {
+        return function.emitError("logical insertion cannot replace existing endpoint-family provenance");
+    }
     Availability available(function);
     for (const auto& stage : plan.preparation) {
         if (!available.cut(stage.before) || !stage.code || stage.code->getParent() || stage.code->getNumArguments()) {
@@ -125,7 +129,118 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
             return function.emitError("invalid or unavailable prepared logical endpoint");
         }
     }
+    for (const auto& endpoint : plan.endpoints) {
+        for (auto member : endpoint.memberCoordinates) {
+            if (endpoint.kind == LogicalCommandKind::Barrier || !member || !member.getType().isIndex() ||
+                !available.value(member, endpoint.before)) {
+                return function.emitError("invalid or unavailable endpoint family member");
+            }
+        }
+    }
+    if (!plan.families.empty()) {
+        std::map<int64_t, const EndpointFamily*> owners;
+        std::set<uint32_t> familyIds;
+        for (const auto& family : plan.families) {
+            if (family.members.empty() || !familyIds.insert(family.id).second ||
+                !available.cut(family.sourceCut.before) || !available.cut(family.targetCut.before) ||
+                family.sourceCut.block != family.sourceCut.before->getBlock() ||
+                family.targetCut.block != family.targetCut.before->getBlock() ||
+                family.local != (family.sourcePipe == family.targetPipe)) {
+                return function.emitError("invalid endpoint-family cuts or identity");
+            }
+            for (const auto& member : family.members) {
+                if (!owners.emplace(member.record, &family).second) {
+                    return function.emitError("duplicate endpoint-family member");
+                }
+                for (auto side : {false, true}) {
+                    const auto& tuple = side ? member.targetCoordinates : member.sourceCoordinates;
+                    auto* before = side ? family.targetCut.before : family.sourceCut.before;
+                    for (auto coordinate : tuple) {
+                        if (!coordinate.loop || !coordinate.loop->isProperAncestor(before) ||
+                            !available.value(coordinate.loop.getInductionVar(), before)) {
+                            return function.emitError("unavailable endpoint-family coordinate");
+                        }
+                    }
+                }
+            }
+        }
+        std::map<int64_t, unsigned> kinds;
+        for (const auto& endpoint : plan.endpoints) {
+            auto found = owners.find(endpoint.record);
+            if (found == owners.end()) {
+                return function.emitError("logical endpoint has no family member");
+            }
+            const auto& family = *found->second;
+            const bool source = endpoint.kind == LogicalCommandKind::Set;
+            unsigned kind = 1U << static_cast<unsigned>(endpoint.kind);
+            if ((kinds[endpoint.record] & kind) || endpoint.sourcePipe != family.sourcePipe ||
+                endpoint.targetPipe != family.targetPipe ||
+                endpoint.before != (source ? family.sourceCut.before : family.targetCut.before) ||
+                family.local != (endpoint.kind == LogicalCommandKind::Barrier)) {
+                return function.emitError("endpoint-family member does not match its endpoint");
+            }
+            kinds[endpoint.record] |= kind;
+        }
+        for (const auto& [record, family] : owners) {
+            if (kinds[record] != (family->local ? 2U : 5U)) {
+                return function.emitError("endpoint-family member is missing an endpoint");
+            }
+        }
+    }
     return success();
+}
+// Persist coordinate provenance before materializing guards. Stable loop and cut
+// numbers are local to this plan; allocation never needs compiler pointer values.
+void serializeFamilies(func::FuncOp function, const PreparedLogicalPlan& plan,
+                       const llvm::MapVector<Operation*, SmallVector<const PreparedLogicalEndpoint*>>& cuts)
+{
+    if (plan.families.empty()) {
+        return;
+    }
+    Builder builder(function.getContext());
+    llvm::DenseMap<Operation*, int64_t> loopIds, cutIds;
+    int64_t nextCut = 0;
+    for (const auto& entry : cuts) {
+        cutIds[entry.first] = nextCut++;
+    }
+    auto coordinates = [&](ArrayRef<TemplateCoordinate> tuple) {
+        SmallVector<Attribute> values;
+        for (auto coordinate : tuple) {
+            auto* loop = coordinate.loop.getOperation();
+            auto [entry, added] = loopIds.try_emplace(loop, loopIds.size());
+            if (added) {
+                loop->setAttr("pto.family_loop", builder.getI64IntegerAttr(entry->second));
+            }
+            values.push_back(builder.getDenseI64ArrayAttr({entry->second, coordinate.induction}));
+        }
+        return builder.getArrayAttr(values);
+    };
+    SmallVector<Attribute> families;
+    for (const auto& family : plan.families) {
+        SmallVector<Attribute> members;
+        for (const auto& member : family.members) {
+            members.push_back(builder.getDictionaryAttr({
+                builder.getNamedAttr("record", builder.getI64IntegerAttr(member.record)),
+                builder.getNamedAttr("source", coordinates(member.sourceCoordinates)),
+                builder.getNamedAttr("target", coordinates(member.targetCoordinates))}));
+        }
+        families.push_back(builder.getDictionaryAttr({
+            builder.getNamedAttr("id", builder.getI64IntegerAttr(family.id)),
+            builder.getNamedAttr("local", builder.getBoolAttr(family.local)),
+            builder.getNamedAttr("source_pipe", builder.getI64IntegerAttr(family.sourcePipe)),
+            builder.getNamedAttr("target_pipe", builder.getI64IntegerAttr(family.targetPipe)),
+            builder.getNamedAttr("displacement", builder.getI64IntegerAttr(family.displacement)),
+            builder.getNamedAttr("source_order", builder.getI64IntegerAttr(family.sourceOrder)),
+            builder.getNamedAttr("target_order", builder.getI64IntegerAttr(family.targetOrder)),
+            builder.getNamedAttr("source_cut", builder.getI64IntegerAttr(
+                family.local ? -1 : cutIds.lookup(family.sourceCut.before))),
+            builder.getNamedAttr("target_cut", builder.getI64IntegerAttr(cutIds.lookup(family.targetCut.before))),
+            builder.getNamedAttr("members", builder.getArrayAttr(members))}));
+    }
+    function->setAttr("pto.endpoint_families", builder.getDictionaryAttr({
+        builder.getNamedAttr("version", builder.getI64IntegerAttr(1)),
+        builder.getNamedAttr("plan", builder.getI64IntegerAttr(plan.planId)),
+        builder.getNamedAttr("families", builder.getArrayAttr(families))}));
 }
 void command(OpBuilder& builder, const PreparedLogicalEndpoint& endpoint, int64_t planId, uint64_t cutId)
 {
@@ -136,6 +251,7 @@ void command(OpBuilder& builder, const PreparedLogicalEndpoint& endpoint, int64_
     builder.setInsertionPointToStart(branch.thenBlock());
     OperationState state(location, endpoint.kind == LogicalCommandKind::Set ? "pto.logical_set" : "pto.logical_wait");
     state.addOperands(endpoint.identity);
+    state.addOperands(endpoint.memberCoordinates);
     state.addAttribute("src_pipe", PipeAttr::get(builder.getContext(), static_cast<PIPE>(endpoint.sourcePipe)));
     state.addAttribute("dst_pipe", PipeAttr::get(builder.getContext(), static_cast<PIPE>(endpoint.targetPipe)));
     state.addAttribute("plan_id", builder.getI64IntegerAttr(planId));
@@ -162,6 +278,7 @@ void emitCut(OpBuilder& builder, ArrayRef<const PreparedLogicalEndpoint*> endpoi
     }
     for (auto [pipe, guard] : barriers) {
         auto branch = builder.create<scf::IfOp>(location, guard, false);
+        branch->setAttr("pto.endpoint_cut", builder.getI64IntegerAttr(cutId));
         OpBuilder::InsertionGuard restore(builder);
         builder.setInsertionPointToStart(branch.thenBlock());
         builder.create<BarrierOp>(location, PipeAttr::get(builder.getContext(), static_cast<PIPE>(pipe)));
@@ -195,6 +312,7 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
     for (const auto& endpoint : plan.endpoints) {
         cuts[endpoint.before].push_back(&endpoint);
     }
+    serializeFamilies(function, plan, cuts);
     OpBuilder builder(function.getContext());
     uint64_t cutId = 0;
     for (const auto& cut : cuts) {

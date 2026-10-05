@@ -145,7 +145,11 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
             endpoint.operation->erase();
         }
     }
-    function.walk([](Operation* op) { op->removeAttr("pto.endpoint_cut"); });
+    function.walk([](Operation* op) {
+        op->removeAttr("pto.endpoint_cut");
+        op->removeAttr("pto.family_loop");
+    });
+    function->removeAttr("pto.endpoint_families");
     function->removeAttr(CyclicAllocationAttr);
     return success();
 }

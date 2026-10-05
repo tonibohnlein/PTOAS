@@ -203,17 +203,29 @@ bool Interpreter::command(Operation& op)
         return true;
     }
     const auto plan = op.getAttrOfType<IntegerAttr>("plan_id"), record = op.getAttrOfType<IntegerAttr>("record_id");
-    const auto ordinal = op.getNumOperands() == 1 ?
+    const auto ordinal = op.getNumOperands() >= 1 ?
         dyn_cast_or_null<IntegerAttr>(lookup(op.getOperand(0))) : IntegerAttr();
     if (!source || !target || !plan || !record || !ordinal || ordinal.getValue().getActiveBits() > 64) {
         return fail("trace logical command has an unknown identity");
     }
+    llvm::json::Array members;
+    for (auto operand : op.getOperands().drop_front()) {
+        auto member = dyn_cast_or_null<IntegerAttr>(lookup(operand));
+        if (!member || member.getValue().getActiveBits() > 64) {
+            return fail("trace logical command has an unknown family member");
+        }
+        members.push_back(member.getValue().getZExtValue());
+    }
     const bool publish = name == "pto.logical_set";
-    events.push_back(llvm::json::Object{{"kind", publish ? "set" : "wait"}, {"gap", payloads},
+    llvm::json::Object event(llvm::json::Object{{"kind", publish ? "set" : "wait"}, {"gap", payloads},
         {"pipe", static_cast<unsigned>((publish ? source : target).getPipe())},
         {"source_pipe", static_cast<unsigned>(source.getPipe())},
         {"target_pipe", static_cast<unsigned>(target.getPipe())},
         {"plan", plan.getInt()}, {"record", record.getInt()}, {"source_ordinal", ordinal.getValue().getZExtValue()}});
+    if (!members.empty()) {
+        event["members"] = std::move(members);
+    }
+    events.push_back(std::move(event));
     return true;
 }
 void Interpreter::folded(Operation& op)

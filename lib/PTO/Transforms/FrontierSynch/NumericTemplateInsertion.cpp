@@ -292,6 +292,11 @@ LogicalResult prepareCountedEndpointCode(func::FuncOp function, const NumericTem
         bits.isScalable() || bits.getFixedValue() != 64 || !validCuts(endpoints, dominance)) {
         return failure();
     }
+    auto families = buildEndpointFamilies(endpoints);
+    if (!families.error.empty()) {
+        return function.emitError(families.error);
+    }
+    prepared.families = std::move(families.families);
     EndpointPreparer(endpoints, prepared).run();
     return success();
 }
@@ -307,6 +312,11 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplateInsertion(
     }
     auto prepared = std::make_unique<PreparedLogicalPlan>(planId);
     prepared->completeInvocation = !node->numericTemplate->emptyInvocation;
+    auto families = buildEndpointFamilies(*node->logicalEndpoints);
+    if (!families.error.empty()) {
+        return function.emitError(families.error), failure();
+    }
+    prepared->families = std::move(families.families);
     EndpointPreparer(*node->logicalEndpoints, *prepared).run();
     if (node->periodicAllocation && node->periodicAllocation->error.empty()) {
         prepared->allocationCertificate = encodeCyclicAllocation(*node->periodicAllocation, planId,
