@@ -81,6 +81,16 @@ NumericTemplate recognizeNumericTemplate(scf::ForOp outer, const PhaseIndex& ind
     if (!scope(output, index, input)) {
         return output;
     }
+    auto upper = constant(outer.getUpperBound());
+    if (upper && *upper <= output.lower) {
+        // Scope and the positive step are established. No body occurrence can
+        // execute, so no effect substitution or inner-visit expansion is needed.
+        // This certificate is tied to these bounds, not a periodic body schema.
+        output.emptyInvocation = true;
+        output.period = 1;
+        output.refresh = 1;
+        return output;
+    }
     detail::TemplateBuilder builder{output, index, input, DenseMap<Value, int64_t>(), {}};
     for (auto state : outer.getRegionIterArgs()) {
         if (!builder.scalar(state)) {

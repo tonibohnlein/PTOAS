@@ -159,6 +159,12 @@ LogicalResult preflight(func::FuncOp function, const ProgramRecognition& program
     auto lower = constant(outer.getLowerBound()), step = constant(outer.getStep());
     const bool bounds = lower && step && *lower == input.lower && *step == input.step && *step > 0 &&
         outer.getInductionVar().getType().isIndex();
+    if (input.emptyInvocation) {
+        auto upper = constant(outer.getUpperBound());
+        if (!upper || *upper > input.lower || !input.payloads.empty() || !input.atoms.empty()) {
+            return function.emitError("empty-invocation certificate no longer matches the loop bounds");
+        }
+    }
     auto expected = buildNumericTemplateEndpoints(input, *node->periodicAnalysis);
     DominanceInfo dominance(function);
     const bool registered = RegisteredOperationName::lookup("pto.logical_set", function.getContext()) &&

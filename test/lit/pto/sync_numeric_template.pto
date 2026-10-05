@@ -69,6 +69,24 @@ module attributes {pto.target_arch = "a3"} {
     }
     return
   }
+  func.func @inner_then_outer(%n: index) {
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i3 = arith.constant 3 : index
+    %i4 = arith.constant 4 : index
+    %i5 = arith.constant 5 : index
+    %one = arith.constant 1.0 : f32
+    %zero = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %t = %i0 to %n step %i1 {
+      scf.for %i = %i0 to %i2 step %i1 {
+        pto.tsetval ins(%i0, %one : index, f32) outs(%tile : !tile)
+      }
+      %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
+    }
+    return
+  }
   func.func @zero_inner(%n: index) {
     %i0 = arith.constant 0 : index
     %i1 = arith.constant 1 : index
