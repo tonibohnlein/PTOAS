@@ -23,7 +23,7 @@ namespace {
 using Tuple = SmallVector<int64_t>;
 struct Axis { Value induction; int64_t lower = 0; int64_t step = 1; bool normalized = true; };
 struct Box { Tuple low, high; };
-struct Domain { SmallVector<Axis> axes; SmallVector<Tuple> points; };
+struct Domain { SmallVector<Axis> axes; SmallVector<Tuple> points; SmallVector<int64_t> labels; };
 std::optional<int64_t> constant(Value value)
 {
     APInt number;
@@ -128,12 +128,12 @@ bool fit(const Domain& domain, Tuple& coefficients, int64_t& intercept)
             Tuple key = domain.points[member];
             const auto position = key[axis];
             key.erase(key.begin() + axis);
-            auto [entry, inserted] = representatives.try_emplace(key, position, static_cast<int64_t>(member));
+            auto [entry, inserted] = representatives.try_emplace(key, position, domain.labels[member]);
             if (inserted) {
                 continue;
             }
             auto delta = wide(position) - wide(entry->second.first);
-            auto value = wide(static_cast<int64_t>(member)) - wide(entry->second.second);
+            auto value = wide(domain.labels[member]) - wide(entry->second.second);
             if (delta.isZero() || !value.srem(delta).isZero() || !value.sdiv(delta).isSignedIntN(64)) {
                 return false;
             }
@@ -145,7 +145,7 @@ bool fit(const Domain& domain, Tuple& coefficients, int64_t& intercept)
         }
         coefficients[axis] = coefficient.value_or(0);
     }
-    APInt base = wide(0);
+    APInt base = wide(domain.labels.front());
     for (std::size_t axis = 0; axis < coefficients.size(); ++axis) {
         // Products fit in signed 128 bits; refuse an overflowing accumulated offset.
         bool overflow = false;
@@ -168,7 +168,57 @@ bool fit(const Domain& domain, Tuple& coefficients, int64_t& intercept)
                 return false;
             }
         }
-        if (value != wide(static_cast<int64_t>(member))) {
+        if (value != wide(domain.labels[member])) {
+            return false;
+        }
+    }
+    return true;
+}
+int64_t residue(int64_t value, uint64_t modulus)
+{
+    const auto divisor = static_cast<int64_t>(modulus);
+    const auto remainder = value % divisor;
+    return remainder < 0 ? remainder + divisor : remainder;
+}
+bool fitModular(const Domain& domain, uint64_t modulus, Tuple& coefficients, int64_t& intercept)
+{
+    coefficients.assign(domain.axes.size(), 0);
+    for (std::size_t axis = 0; axis < domain.axes.size(); ++axis) {
+        SmallVector<bool> valid(modulus, true);
+        std::map<Tuple, std::pair<int64_t, int64_t>> representatives;
+        for (std::size_t member = 0; member < domain.points.size(); ++member) {
+            Tuple key = domain.points[member];
+            const auto position = residue(key[axis], modulus);
+            key.erase(key.begin() + axis);
+            auto [entry, inserted] = representatives.try_emplace(key, position, domain.labels[member]);
+            if (inserted) {
+                continue;
+            }
+            const auto delta = residue(position - entry->second.first, modulus);
+            for (uint64_t coefficient = 0; coefficient < modulus; ++coefficient) {
+                const auto predicted = residue(entry->second.second +
+                    delta * static_cast<int64_t>(coefficient), modulus);
+                valid[coefficient] = valid[coefficient] && predicted == domain.labels[member];
+            }
+        }
+        const auto found = std::find(valid.begin(), valid.end(), true);
+        if (found == valid.end()) {
+            return false;
+        }
+        coefficients[axis] = static_cast<int64_t>(found - valid.begin());
+    }
+    intercept = domain.labels.front();
+    for (std::size_t axis = 0; axis < coefficients.size(); ++axis) {
+        intercept = residue(intercept - residue(domain.points.front()[axis], modulus) * coefficients[axis], modulus);
+    }
+    // Separately fitting axis differences can leave unconstrained directions;
+    // accept only after checking the resulting expression at every exact point.
+    for (std::size_t member = 0; member < domain.points.size(); ++member) {
+        auto value = intercept;
+        for (std::size_t axis = 0; axis < coefficients.size(); ++axis) {
+            value = residue(value + residue(domain.points[member][axis], modulus) * coefficients[axis], modulus);
+        }
+        if (value != domain.labels[member]) {
             return false;
         }
     }
@@ -189,6 +239,7 @@ public:
     void normalize(ArrayRef<Axis> axes)
     {
         for (const auto& axis : axes) {
+            unsignedAxes.push_back(axis.normalized);
             Value induction = axis.induction;
             if (!induction.getType().isIndex()) {
                 induction = builder.create<arith::IndexCastOp>(location, builder.getIndexType(), induction);
@@ -250,12 +301,38 @@ public:
         }
         return result;
     }
-    Value decision(ArrayRef<Tuple> points)
+    Value modular(ArrayRef<int64_t> coefficients, int64_t intercept, uint64_t modulus)
     {
-        Value result = number(0);
+        Value divisor = number(static_cast<int64_t>(modulus));
+        Value result = number(intercept);
+        for (std::size_t axis = 0; axis < indices.size(); ++axis) {
+            if (!coefficients[axis]) {
+                continue;
+            }
+            Value reduced;
+            if (unsignedAxes[axis]) {
+                reduced = builder.create<arith::RemUIOp>(location, indices[axis], divisor);
+            } else {
+                Value remainder = builder.create<arith::RemSIOp>(location, indices[axis], divisor);
+                Value negative = builder.create<arith::CmpIOp>(location,
+                    arith::CmpIPredicate::slt, remainder, number(0));
+                Value positive = builder.create<arith::AddIOp>(location, remainder, divisor);
+                reduced = builder.create<arith::SelectOp>(location, negative, positive, remainder);
+            }
+            // Reduce coordinates before multiplying. With modulus at most six,
+            // every product and partial sum is bounded independently of indices.
+            Value term = builder.create<arith::MulIOp>(location, reduced, number(coefficients[axis]));
+            Value sum = builder.create<arith::AddIOp>(location, result, term);
+            result = builder.create<arith::RemUIOp>(location, sum, divisor);
+        }
+        return result;
+    }
+    Value decision(ArrayRef<Tuple> points, ArrayRef<int64_t> labels)
+    {
+        Value result = number(labels.empty() ? 0 : labels.front());
         for (std::size_t member = 1; member < points.size(); ++member) {
             result = builder.create<arith::SelectOp>(location, guard({points[member], points[member]}),
-                number(static_cast<int64_t>(member)), result);
+                number(labels[member]), result);
         }
         return result;
     }
@@ -276,26 +353,41 @@ private:
     OpBuilder& builder;
     Location location;
     SmallVector<Value> indices;
+    SmallVector<bool> unsignedAxes;
     std::map<int64_t, Value> numbers;
     std::map<std::pair<Tuple, Tuple>, Value> guards;
     std::map<std::tuple<std::size_t, arith::CmpIPredicate, int64_t>, Value> comparisons;
 };
 } // namespace
 FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location,
-    ArrayRef<SmallVector<TemplateCoordinate>> members)
+    ArrayRef<SmallVector<TemplateCoordinate>> members, ArrayRef<int64_t> labels, uint64_t modulus)
 {
+    constexpr uint64_t maximumModulus = 6;
+    if (modulus > maximumModulus) {
+        return {"family modular labels require a modulus of at most six", {}, {}};
+    }
+    if (!labels.empty() && labels.size() != members.size()) {
+        return {"family member and label counts differ", {}, {}};
+    }
     Domain domain;
     if (auto error = validate(members, domain); !error.empty()) {
         return {std::move(error), {}, {}};
     }
+    for (std::size_t member = 0; member < members.size(); ++member) {
+        const auto label = labels.empty() ? static_cast<int64_t>(member) : labels[member];
+        domain.labels.push_back(modulus ? residue(label, modulus) : label);
+    }
     Tuple coefficients;
     int64_t intercept = 0;
-    const bool affine = !domain.points.empty() && fit(domain, coefficients, intercept);
+    const bool affine = !domain.points.empty() && (modulus ? fitModular(domain, modulus, coefficients, intercept) :
+                                                            fit(domain, coefficients, intercept));
     auto regions = boxes(domain);
     Emitter emitter(builder, location);
     emitter.normalize(domain.axes);
     Value present = emitter.presence(regions);
-    Value member = affine ? emitter.affine(coefficients, intercept) : emitter.decision(domain.points);
+    Value member = affine ? (modulus ? emitter.modular(coefficients, intercept, modulus) :
+                                     emitter.affine(coefficients, intercept)) :
+                            emitter.decision(domain.points, domain.labels);
     return {{}, present, member};
 }
 } // namespace mlir::pto::frontiersynch

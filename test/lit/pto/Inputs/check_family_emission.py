@@ -67,7 +67,7 @@ def check_phase_mapping(template, report, eligible):
         if logical['kind'] not in ('set', 'wait'):
             continue
         member = logical.get('members', [0])[0]
-        record = owners[logical['record'], member]
+        record = member if logical.get('record_label') else owners[logical['record'], member]
         phase, stride, budget = phases[record]
         expected = eligible[(logical['source_ordinal'] * stride + phase) % budget]
         assert physical['physical_id'] == expected, (logical, physical, expected)
@@ -130,6 +130,27 @@ def main():
             check_physical(template, report, {1, 3})
             check_phase_mapping(template, report, [1, 3])
             checked += 1
+        # One source cut reaches two distinct consumer cuts. Its SET emission
+        # must be shared independently of those WAIT locations.
+        asymmetric = source.replace(
+            '        pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%tile1 : !tile)\n', '')
+        asymmetric = asymmetric.replace(
+            '        pto.textract ins(%tile1, %zero, %zero : !tile, index, index) outs(%left1 : !left)\n', '')
+        consumer = '        pto.textract ins(%tile0, %zero, %zero : !tile, index, index) outs(%left0 : !left)'
+        asymmetric = asymmetric.replace(consumer,
+            '        %first = arith.cmpi eq, %k, %one : index\n        scf.if %first {\n' +
+            consumer + '\n        } else {\n' + consumer + '\n        }')
+        path.write_text(asymmetric)
+        template = recognized(tool, path)
+        report = json.loads(invoke(tool, "--physical-trace", path))
+        check_physical(template, report, {1, 3})
+        check_phase_mapping(template, report, [1, 3])
+        logical = opt(optimizer, path, ["--pto-frontier-analysis"]).stdout
+        # The common producer cut contributes one readiness SET, while each
+        # mutually exclusive consumer arm has its own readiness WAIT.
+        assert logical.count('pto.logical_set[<PIPE_MTE2>, <PIPE_MTE1>]') == 1
+        assert logical.count('pto.logical_wait[<PIPE_MTE2>, <PIPE_MTE1>]') == 2
+        checked += 1
         compatibility_checks(optimizer, path)
         path.write_text(source)
         logical = opt(optimizer, path, ["--pto-frontier-analysis"]).stdout

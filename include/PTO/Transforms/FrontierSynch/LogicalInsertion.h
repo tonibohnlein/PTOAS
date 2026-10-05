@@ -26,6 +26,8 @@ struct PreparedLogicalEndpoint {
     Value guard; // i1, evaluated at the cut before the command.
     Value identity; // Index source-occurrence identity; absent for a barrier.
     SmallVector<Value> memberCoordinates; // Canonical source member tuple, identical at SET and WAIT.
+    SmallVector<uint32_t> records; // Original records covered by this independently grouped side.
+    int64_t piece = -1; // Plan-local emission piece ID for version-three provenance.
 };
 // A producer builds ordinary arith operations in detached blocks. Inputs may
 // refer to original SSA values or results of earlier preparation blocks.
@@ -41,6 +43,7 @@ struct PreparedLogicalPlan {
     Block& addPreparation(Operation* before);
     int64_t planId;
     bool completeInvocation = false; // Drain whole-function work before return.
+    bool independentPieces = false; // Match records across independently grouped endpoint sides.
     bool groupedFamilies = false; // One endpoint per family side; member operand selects its record.
     // Optional producer certificate for the immediately following allocation
     // pass. It owns no borrowed analysis state; changing the plan invalidates it.

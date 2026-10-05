@@ -222,6 +222,9 @@ bool Interpreter::command(Operation& op)
         {"source_pipe", static_cast<unsigned>(source.getPipe())},
         {"target_pipe", static_cast<unsigned>(target.getPipe())},
         {"plan", plan.getInt()}, {"record", record.getInt()}, {"source_ordinal", ordinal.getValue().getZExtValue()}});
+    if (op.hasAttr("pto.endpoint_piece")) {
+        event["record_label"] = true;
+    }
     if (!members.empty()) {
         event["members"] = std::move(members);
     }

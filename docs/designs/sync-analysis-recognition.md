@@ -763,13 +763,17 @@ target model, and scarcity repair remain separate work. Allocation failure does
 not establish infeasibility under those other strategies. Statically empty
 examples require no IDs.
 
-Allocation consumes family membership prepared by analysis. For N IR operations,
-R represented member records and F families, preflight uses O(N log(F+1) + R)
-work apart from certificate decoding and hash-table costs. Lowering uses O(R)
-work and at most O(R) arithmetic for the fixed six-ID interface. It does not
+Allocation consumes membership and coordinates prepared by analysis. For N IR
+operations, R represented records and F provenance families, membership preflight
+uses O(N log(F+1) + R) work apart from certificate decoding and hash-table costs.
+Coordinate-to-phase preparation additionally costs
+O(sum_p [r_p D_p² log(r_p+1) + E r_p D_p]) for endpoint pieces with r_p members
+and D_p coordinates, where E is at most six. It emits at most
+O(sum_p r_p D_p) arithmetic operations. Whole-function dominance analysis and CSE have separate
+additional costs; CSE runs after lowering. Allocation does not
 unroll runtime loops or reconstruct coordinates from guards. Exact irregular
 maps remain decision expressions; regular maps use verified modular arithmetic.
-The endpoint-family interface and its preparation bounds are described below.
+The endpoint interface and its preparation bounds are described below.
 
 Tests execute the emitted commands, check their closure against an independent
 all-conflict graph, and check physical phases against the original analysis
@@ -828,41 +832,54 @@ grouping are separate concerns and are not enabled by this rule.
 
 The endpoint interface preserves exact source/target coordinate maps and original
 record identities before logical commands are materialized. `EndpointFamilies`
-groups compatible finite members, separates overlapping source or target tuples,
-and assigns an order to pieces at each cut. Cyclic proposed group orders are
-split before emission. This finite planner costs O(R²(1 + D² + log(R+1))) time and
-O(R² + RD) space for R retained records and coordinate rank D; it never expands
-the runtime trip count.
+retains paired coordinate provenance. `EndpointPieces` groups SET and WAIT sides
+independently by their own cut and coordinate domain. Matching namespaces group
+records with the same pipes and displacement; a member label identifies the
+original record within that namespace. Grouping one side does not require the
+other side to share a cut. Overlapping coordinate tuples retain their
+multiplicity, and cyclic proposed command orders are split before emission.
+The finite planners cost O(R²(1 + D² + log(R+1))) time and O(R² + RD) space for
+R retained records and coordinate rank D; they never expand the runtime trip
+count.
 
 Logical SET/WAIT accept optional index member-coordinate operands. Their identity
-is (plan, static family/record ID, source ordinal, member tuple); old operations
+is (plan, static namespace/record ID, source ordinal, member tuple); old operations
 have an empty member tuple and remain valid. Coordinate provenance is serialized
 as versioned `pto.endpoint_families` metadata with plan-local loop and cut IDs;
 borrowed compiler pointers do not cross the IR boundary. This is producer-owned
 provenance, not a verification proof for arbitrary hand-edited annotations.
+Version 3 adds executable pieces, each naming its endpoint side, cut and original
+records. The logical command identifies its piece and evaluates the original
+record label, so independently grouped SET and WAIT sides still match exactly.
 
 Explicit producers emit singleton families. Rotating and numerical-template
-producers prepare one logical command per family side directly from their paired
+producers emit one logical command per endpoint piece directly from retained
 coordinate maps. The presence guard is an exact union of coordinate boxes;
 the member selector is a verified affine expression or an exact decision
 expression. Holes, nonunit steps and different source/target coordinates remain
 represented. For N members and D coordinates, expression preparation uses
-O(N D² log(N+1)) work and O(ND) emitted arithmetic in the worst case. Family
+O(N D² log(N+1)) work and O(ND) emitted arithmetic in the worst case. Piece
 partitioning and preparation are additional costs, separate from demand reduction.
 
-Allocation reads the retained member-to-original-record map and the existing
-cyclic certificate. It checks their partition, pipe assignments and endpoint
-presence before mutation. It then lowers each family command in place, using
-a verified modular affine member-to-phase function or an exact selection
-expression. It never reconstructs coordinates from emitted guards. Phase preparation
-and output are linear in the represented membership/phase tables after decoding;
-a regular family can use a constant-size expression. This changes neither the
-certified resource policy nor the demand relation. Arbitrary irregular families
-may require expressions proportional to their member count.
+Allocation reads the retained original-record map and the existing cyclic
+certificate. It checks the partition, pipe assignments, cuts and endpoint
+presence before mutation. For each endpoint piece, it composes the retained
+coordinates directly with the certified physical phases. Modular affine fits
+are checked at every represented tuple; an unsuccessful fit uses exact selection.
+This avoids retaining a large logical label expression merely to decode it back
+into a physical phase. It never reconstructs coordinates from emitted guards.
+Expressions are prepared in detached blocks, with induction-value availability
+checked before insertion. Dominance permits hoisting total phase arithmetic;
+SET/WAIT commands keep their original guards. CSE removes dead logical selectors
+and shares arithmetic after lowering. The costs are stated in the allocation
+section above. Arbitrary irregular pieces may still require expressions
+proportional to their member count.
 
-Version 2 provenance accompanies grouped commands. Saved version 1 logical IR,
-or old IR without provenance, is accepted as singleton families under its
-original allocation certificate. There is one production emission path. The
-compatibility adapter preserves existing saved commands; it does not introduce
-an alternate mode for newly analyzed programs. Allocation removes consumed
-provenance and certificates. A failed preflight leaves the input unchanged.
+Version 3 accompanies independently grouped commands. Saved version 2 paired
+families and version 1 singleton provenance remain supported; old IR without
+provenance is accepted as singleton families under its original allocation
+certificate. There is one production emission path. Compatibility adapters
+preserve existing saved commands; they do not introduce alternate modes for
+newly analyzed programs. Allocation removes consumed provenance and certificates.
+A failed preflight leaves the input unchanged. This changes neither the certified
+resource policy nor the demand relation.
