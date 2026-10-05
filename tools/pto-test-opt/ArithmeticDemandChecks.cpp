@@ -205,7 +205,32 @@ private:
         }
     }
 };
-bool member(const fs::ArithmeticRelation& relation, uint64_t period, unsigned source, int64_t x, unsigned ea,
+bool containsPoint(const fs::DifferenceBoundSystem& piece, llvm::ArrayRef<fs::BoundInteger> coordinates)
+{
+    if (piece.isEmpty()) { return false; }
+    for (const auto& row : piece.constraints()) {
+        if (coordinates[row.lhs] - coordinates[row.rhs] > row.bound) { return false; }
+    }
+    return true;
+}
+bool containsPoint(const fs::IntegerSystem& piece, llvm::ArrayRef<fs::BoundInteger> coordinates)
+{
+    auto dot = [&](llvm::ArrayRef<fs::BoundInteger> coefficients) {
+        fs::BoundInteger sum(0);
+        for (auto [i, coefficient] : llvm::enumerate(coefficients)) { sum += coefficient * coordinates[i + 1]; }
+        return sum;
+    };
+    for (const auto& row : piece.constraints()) {
+        if (dot(row.coefficients) > row.bound) { return false; }
+    }
+    for (const auto& row : piece.congruences()) {
+        if (mod(dot(row.coefficients) - row.residue, row.modulus) != fs::BoundInteger(0)) { return false; }
+    }
+    return true;
+}
+template<class System>
+bool member(const fs::TypedArithmeticRelation<System>& relation,
+            uint64_t period, unsigned source, int64_t x, unsigned ea,
             unsigned target, int64_t y, unsigned eb, int64_t n, int64_t g)
 {
     const auto p = static_cast<int64_t>(period);
@@ -219,15 +244,11 @@ bool member(const fs::ArithmeticRelation& relation, uint64_t period, unsigned so
     const std::vector<fs::BoundInteger> coordinates{
         fs::BoundInteger(0), fs::BoundInteger(x / p), fs::BoundInteger(y / p),
         fs::BoundInteger(n / p), fs::BoundInteger(g / p)};
-    return llvm::any_of(found->second, [&](const auto& piece) {
-        if (piece.isEmpty()) { return false; }
-        for (const auto& row : piece.constraints()) {
-            if (coordinates[row.lhs] - coordinates[row.rhs] > row.bound) { return false; }
-        }
-        return true;
-    });
+    return llvm::any_of(found->second, [&](const auto& piece) { return containsPoint(piece, coordinates); });
 }
-bool checkCase(const fs::ArithmeticDemandAnalysis& analysis, unsigned scene, int64_t n, int64_t g,
+template<class System>
+bool checkCase(const fs::TypedArithmeticDemandAnalysis<System>& analysis,
+               unsigned scene, int64_t n, int64_t g,
                bool& adjacent)
 {
     auto occurrences = execution(scene, n, g);
@@ -271,8 +292,8 @@ bool checkCase(const fs::ArithmeticDemandAnalysis& analysis, unsigned scene, int
     }
     return true;
 }
-} // namespace
-int runArithmeticDemandChecks()
+template<class Analyze>
+int runChecks(Analyze analyze, llvm::StringRef name)
 {
     MLIRContext context;
     context.disableMultithreading();
@@ -280,7 +301,7 @@ int runArithmeticDemandChecks()
     for (unsigned scene = 0; scene < 3; ++scene) {
         for (uint64_t period : {1, 2}) {
             Bundle bundle(context, scene, period);
-            auto analysis = fs::analyzeArithmeticDemands(bundle.program);
+            auto analysis = analyze(bundle.program);
             if (!analysis.error.empty() || !analysis.exactMinimum) {
                 llvm::errs() << "arithmetic demand construction failed: " << analysis.error << "\n";
                 return 1;
@@ -302,6 +323,15 @@ int runArithmeticDemandChecks()
             }
         }
     }
-    llvm::outs() << "arithmetic demand physical-conflict oracle passed " << checked << " parameter valuations\n";
+    llvm::outs() << name << " physical-conflict oracle passed " << checked << " parameter valuations\n";
     return 0;
+}
+} // namespace
+int runArithmeticDemandChecks()
+{
+    return runChecks(fs::analyzeArithmeticDemands, "arithmetic demand");
+}
+int runGeneralArithmeticDemandChecks()
+{
+    return runChecks(fs::analyzeGeneralArithmeticDemands, "general arithmetic demand");
 }

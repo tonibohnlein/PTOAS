@@ -24,14 +24,14 @@ bool ArithmeticRelationKey::operator<(const ArithmeticRelationKey& other) const
            std::tie(other.source, other.target, other.parameterResidues);
 }
 namespace {
-using System = DifferenceBoundSystem;
-using Union = std::vector<System>;
+template<class System>
 struct ImportedPiece {
     const PrimitiveRelation* schema;
     std::vector<uint64_t> residues; // Original dimension order, then canonical parameter order.
     System system;
 };
-void append(Union& pieces, System piece)
+template<class System>
+void append(std::vector<System>& pieces, System piece)
 {
     if (piece.isEmpty()) { return; }
     for (const auto& existing : pieces) {
@@ -41,11 +41,13 @@ void append(Union& pieces, System piece)
                                [&](const System& old) { return old.isSubsetOf(piece); }), pieces.end());
     pieces.push_back(std::move(piece));
 }
-void append(ArithmeticRelation& relation, const ArithmeticRelationKey& key, System piece)
+template<class System>
+void append(TypedArithmeticRelation<System>& relation, const ArithmeticRelationKey& key, System piece)
 {
     if (!piece.isEmpty()) { append(relation[key], std::move(piece)); }
 }
-void unite(ArithmeticRelation& target, const ArithmeticRelation& source)
+template<class System>
+void unite(TypedArithmeticRelation<System>& target, const TypedArithmeticRelation<System>& source)
 {
     for (const auto& [key, pieces] : source) {
         for (const auto& piece : pieces) { append(target, key, piece); }
@@ -55,7 +57,79 @@ unsigned dimensions(const ArithmeticRelationKey& key)
 {
     return key.source.residues.size() + key.target.residues.size() + key.parameterResidues.size();
 }
+struct DifferencePolicy {
+    using System = DifferenceBoundSystem;
+    static bool accepts(ArithmeticClass kind) { return kind == ArithmeticClass::Differences; }
+    static FailureOr<System> create(unsigned dimensions, ArrayRef<LinearRow> rows)
+    {
+        std::vector<DifferenceBoundConstraint> constraints;
+        for (const auto& row : rows) {
+            if (row.coefficients.size() != dimensions) { return failure(); }
+            unsigned positive = 0, negative = 0;
+            for (unsigned i = 0; i < dimensions; ++i) {
+                auto coefficient = row.coefficients[i];
+                if (!coefficient) { continue; }
+                if ((coefficient != 1 && coefficient != -1) ||
+                    (coefficient == 1 ? positive != 0 : negative != 0)) { return failure(); }
+                (coefficient == 1 ? positive : negative) = i + 1;
+            }
+            BoundInteger bound(row.constant);
+            constraints.push_back({negative, positive, bound});
+            if (row.equality) { constraints.push_back({positive, negative, -bound}); }
+        }
+        return System::create(dimensions, constraints);
+    }
+    static FailureOr<std::vector<System>> project(const System& system, ArrayRef<unsigned> keep)
+    {
+        auto projected = system.project(keep);
+        if (failed(projected)) { return failure(); }
+        return std::vector<System>{std::move(*projected)};
+    }
+    static FailureOr<std::vector<System>> subtract(unsigned dimensions, ArrayRef<System> a, ArrayRef<System> b)
+    {
+        return subtractDifferenceBoundUnions(dimensions, a, b);
+    }
+};
+struct IntegerPolicy {
+    using System = IntegerSystem;
+    static bool accepts(ArithmeticClass kind)
+    {
+        return kind == ArithmeticClass::Differences || kind == ArithmeticClass::Octagons ||
+               kind == ArithmeticClass::BoundedCoefficients;
+    }
+    static FailureOr<System> create(unsigned dimensions, ArrayRef<LinearRow> rows)
+    {
+        std::vector<IntegerConstraint> constraints;
+        for (const auto& row : rows) {
+            if (row.coefficients.size() != dimensions) { return failure(); }
+            IntegerConstraint forward;
+            forward.bound = BoundInteger(row.constant);
+            for (auto coefficient : row.coefficients) {
+                forward.coefficients.push_back(-BoundInteger(coefficient));
+            }
+            constraints.push_back(forward);
+            if (row.equality) {
+                for (auto& coefficient : forward.coefficients) { coefficient = -coefficient; }
+                forward.bound = -forward.bound;
+                constraints.push_back(std::move(forward));
+            }
+        }
+        return System::create(dimensions, constraints, {});
+    }
+    static FailureOr<std::vector<System>> project(const System& system, ArrayRef<unsigned> keep)
+    {
+        return system.project(keep);
+    }
+    static FailureOr<std::vector<System>> subtract(unsigned dimensions, ArrayRef<System> a, ArrayRef<System> b)
+    {
+        return subtractIntegerUnions(dimensions, a, b);
+    }
+};
+template<class Policy>
 class Analysis {
+    using System = typename Policy::System;
+    using Relation = TypedArithmeticRelation<System>;
+    using Piece = ImportedPiece<System>;
 public:
     explicit Analysis(const ArithmeticProgram& program) : program(program)
     {
@@ -63,13 +137,13 @@ public:
         result.parameterCount = program.primitives.parameters.size();
         result.pipeCount = program.primitives.pipeCount;
     }
-    ArithmeticDemandAnalysis result;
+    TypedArithmeticDemandAnalysis<System> result;
     void run()
     {
         if (program.extraction.state != RecognitionState::Applicable ||
             program.recognition.state != RecognitionState::Applicable ||
-            program.recognition.arithmeticClass != ArithmeticClass::Differences || !result.period) {
-            fail("exact difference-bound primitives are required"); return;
+            !Policy::accepts(program.recognition.arithmeticClass) || !result.period) {
+            fail("exact supported arithmetic primitives are required"); return;
         }
         if (!import() || !buildRelations() || !buildConflicts()) { return; }
         auto step = compose(result.generators, result.nativeOrder);
@@ -89,7 +163,7 @@ public:
         // producer supplied the reflexive native closure.
         auto strictPipeOrder = subtract(samePipeOrder, identity);
         auto nonadjacent = compose(strictPipeOrder, strictPipeOrder);
-        ArithmeticRelation localIntervals;
+        Relation localIntervals;
         for (const auto& [key, pieces] : nonadjacent) {
             auto endpoints = key;
             endpoints.source.event = ArithmeticEvent::Completion;
@@ -107,10 +181,10 @@ public:
     }
 private:
     const ArithmeticProgram& program;
-    std::vector<ImportedPiece> pieces;
-    ArithmeticRelation identity, order, samePipeOrder;
+    std::vector<Piece> pieces;
+    Relation identity, order, samePipeOrder;
     void fail(const char* message) { if (result.error.empty()) { result.error = message; } }
-    std::vector<uint64_t> parameterResidues(const ImportedPiece& piece) const
+    std::vector<uint64_t> parameterResidues(const Piece& piece) const
     {
         return {piece.residues.end() - result.parameterCount, piece.residues.end()};
     }
@@ -144,7 +218,7 @@ private:
     }
     bool import()
     {
-        std::vector<ImportedPiece> raw;
+        std::vector<Piece> raw;
         for (const auto& normalized : program.recognition.pieces) {
             if (normalized.empty) { continue; }
             if (normalized.relation >= program.primitives.relations.size()) {
@@ -156,29 +230,14 @@ private:
             }
             std::vector<unsigned> keep;
             if (!canonicalOrder(schema, keep)) { return false; }
-            std::vector<DifferenceBoundConstraint> constraints;
-            for (const auto& row : normalized.rows) {
-                if (row.coefficients.size() != keep.size()) {
-                    fail("normalized arithmetic row has inconsistent dimensions"); return false;
-                }
-                unsigned positive = 0, negative = 0;
-                for (unsigned i = 0; i < row.coefficients.size(); ++i) {
-                    auto coefficient = row.coefficients[i];
-                    if (!coefficient) { continue; }
-                    if ((coefficient != 1 && coefficient != -1) ||
-                        (coefficient == 1 ? positive != 0 : negative != 0)) {
-                        fail("arithmetic row is outside the difference-bound fragment"); return false;
-                    }
-                    (coefficient == 1 ? positive : negative) = i + 1;
-                }
-                BoundInteger bound(row.constant);
-                constraints.push_back({negative, positive, bound});
-                if (row.equality) { constraints.push_back({positive, negative, -bound}); }
-            }
-            auto dbm = System::create(keep.size(), constraints);
-            if (failed(dbm)) { fail("difference-bound primitive construction failed"); return false; }
-            auto canonical = dbm->project(keep);
-            if (failed(canonical)) { fail("difference-bound parameter reorder failed"); return false; }
+            auto primitive = Policy::create(keep.size(), normalized.rows);
+            if (failed(primitive)) { fail("arithmetic primitive construction failed"); return false; }
+            // This is a permutation, not existential elimination. Preserve a
+            // conjunction and its congruences while canonicalizing parameters.
+            std::vector<unsigned> permutation(keep.size());
+            for (unsigned i = 0; i < keep.size(); ++i) { permutation[keep[i]] = i; }
+            auto canonical = primitive->remap(keep.size(), permutation);
+            if (failed(canonical)) { fail("arithmetic parameter reorder failed"); return false; }
             ++result.cost.primitivePieces;
             if (canonical->isEmpty()) { continue; }
             std::vector<uint64_t> residues;
@@ -188,7 +247,7 @@ private:
         // Restrict every primitive to the same admitted parameter context.
         // Distinct residue cases are incompatible executions, never independent
         // existential choices at either endpoint of a join.
-        std::vector<const ImportedPiece*> contexts;
+        std::vector<const Piece*> contexts;
         for (const auto& piece : raw) {
             if (piece.schema->kind == PrimitiveKind::Context) { contexts.push_back(&piece); }
         }
@@ -210,7 +269,7 @@ private:
         }
         return true;
     }
-    ArithmeticRelationKey endpoints(const ImportedPiece& piece) const
+    ArithmeticRelationKey endpoints(const Piece& piece) const
     {
         const auto& schema = *piece.schema;
         auto begin = piece.residues.begin();
@@ -232,12 +291,16 @@ private:
                 std::iota(map.begin(), map.begin() + d, 0);
                 std::iota(map.begin() + d, map.end(), 2 * d);
                 auto lifted = piece.system.remap(2 * d + result.parameterCount, map);
-                std::vector<DifferenceBoundConstraint> equalities;
+                SmallVector<LinearRow> equalities;
                 for (unsigned i = 0; i < d; ++i) {
-                    equalities.push_back({i + 1, d + i + 1, BoundInteger(0)});
-                    equalities.push_back({d + i + 1, i + 1, BoundInteger(0)});
+                    LinearRow row;
+                    row.coefficients.resize(2 * d + result.parameterCount, 0);
+                    row.coefficients[i] = 1;
+                    row.coefficients[d + i] = -1;
+                    row.equality = true;
+                    equalities.push_back(std::move(row));
                 }
-                auto diagonal = System::create(2 * d + result.parameterCount, equalities);
+                auto diagonal = Policy::create(2 * d + result.parameterCount, equalities);
                 if (failed(lifted) || failed(diagonal)) { fail("event identity construction failed"); return false; }
                 auto value = lifted->intersect(*diagonal);
                 ++result.cost.pieceJoins;
@@ -281,8 +344,8 @@ private:
     }
     bool buildConflicts()
     {
-        ArithmeticRelation conflicts;
-        std::vector<const ImportedPiece*> accesses;
+        Relation conflicts;
+        std::vector<const Piece*> accesses;
         for (const auto& piece : pieces) {
             if (piece.schema->kind == PrimitiveKind::Reads || piece.schema->kind == PrimitiveKind::Writes) {
                 accesses.push_back(&piece);
@@ -318,14 +381,14 @@ private:
                 std::vector<unsigned> keep(x + y + result.parameterCount);
                 std::iota(keep.begin(), keep.begin() + x + y, 0);
                 std::iota(keep.begin() + x + y, keep.end(), x + y + 1);
-                auto projected = joined->project(keep);
+                auto projected = Policy::project(*joined, keep);
                 ++result.cost.projections;
                 if (failed(projected)) { fail("physical-byte witness projection failed"); return false; }
                 ArithmeticRelationKey key{
                     {*a.schema->sourceSite, ArithmeticEvent::Payload, {a.residues.begin(), a.residues.begin() + x}},
                     {*b.schema->sourceSite, ArithmeticEvent::Payload, {b.residues.begin(), b.residues.begin() + y}},
                     parameterResidues(a)};
-                append(conflicts, key, std::move(*projected));
+                for (auto& value : *projected) { append(conflicts, key, std::move(value)); }
             }
         }
         auto forward = intersect(conflicts, order);
@@ -337,9 +400,9 @@ private:
         }
         return result.error.empty();
     }
-    ArithmeticRelation intersect(const ArithmeticRelation& a, const ArithmeticRelation& b)
+    Relation intersect(const Relation& a, const Relation& b)
     {
-        ArithmeticRelation output;
+        Relation output;
         for (const auto& [key, left] : a) {
             auto right = b.find(key);
             if (right == b.end()) { continue; }
@@ -354,12 +417,12 @@ private:
         }
         return output;
     }
-    ArithmeticRelation compose(const ArithmeticRelation& a, const ArithmeticRelation& b)
+    Relation compose(const Relation& a, const Relation& b)
     {
         ++result.cost.relationCompositions;
-        ArithmeticRelation output;
+        Relation output;
         using Match = std::pair<ArithmeticEventKey, std::vector<uint64_t>>;
-        using Entry = ArithmeticRelation::value_type;
+        using Entry = typename Relation::value_type;
         std::map<Match, std::vector<const Entry*>> bySource;
         for (const auto& entry : b) { bySource[{entry.first.source, entry.first.parameterResidues}].push_back(&entry); }
         for (const auto& [ak, av] : a) {
@@ -387,34 +450,34 @@ private:
                         auto joined = expandedLeft->intersect(*expandedRight);
                         ++result.cost.pieceJoins;
                         if (failed(joined)) { fail("arithmetic composition intersection failed"); return {}; }
-                        auto value = joined->project(keep);
+                        auto value = Policy::project(*joined, keep);
                         ++result.cost.projections;
                         if (failed(value)) { fail("arithmetic composition projection failed"); return {}; }
-                        append(output, key, std::move(*value));
+                        for (auto& piece : *value) { append(output, key, std::move(piece)); }
                     }
                 }
             }
         }
         return output;
     }
-    ArithmeticRelation subtract(const ArithmeticRelation& a, const ArithmeticRelation& b)
+    Relation subtract(const Relation& a, const Relation& b)
     {
         ++result.cost.differences;
-        ArithmeticRelation output;
+        Relation output;
         for (const auto& [key, pieces] : a) {
             auto found = b.find(key);
             if (found == b.end()) { output.emplace(key, pieces); continue; }
-            auto difference = subtractDifferenceBoundUnions(dimensions(key), pieces, found->second);
+            auto difference = Policy::subtract(dimensions(key), pieces, found->second);
             if (failed(difference)) { fail("exact arithmetic relation difference failed"); return {}; }
             for (auto& piece : *difference) { append(output, key, std::move(piece)); }
         }
         return output;
     }
 };
-} // namespace
-ArithmeticDemandAnalysis analyzeArithmeticDemands(const ArithmeticProgram& program)
+template<class Policy>
+auto analyze(const ArithmeticProgram& program)
 {
-    Analysis analysis(program);
+    Analysis<Policy> analysis(program);
     analysis.run();
     if (!analysis.result.error.empty()) {
         analysis.result.generators.clear();
@@ -425,5 +488,14 @@ ArithmeticDemandAnalysis analyzeArithmeticDemands(const ArithmeticProgram& progr
         analysis.result.adjacentLocalDemands = false;
     }
     return std::move(analysis.result);
+}
+} // namespace
+ArithmeticDemandAnalysis analyzeArithmeticDemands(const ArithmeticProgram& program)
+{
+    return analyze<DifferencePolicy>(program);
+}
+GeneralArithmeticDemandAnalysis analyzeGeneralArithmeticDemands(const ArithmeticProgram& program)
+{
+    return analyze<IntegerPolicy>(program);
 }
 } // namespace mlir::pto::frontiersynch

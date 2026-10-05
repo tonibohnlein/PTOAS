@@ -9,7 +9,7 @@
 // recognition consumes the same exact symbolic maps.
 // RUN: pto-sync-input-test --recognize %s | FileCheck %s
 // CHECK-LABEL: recognition nested_arms
-// CHECK: recognize finite-guarded: applicable backend=unavailable
+// CHECK: recognize finite-guarded: applicable backend=available
 // CHECK: guarded phases=3 guards=4 entry-guards=available
 // CHECK-NEXT: guard 0 parent=true arm=then
 // CHECK-NEXT: guard 1 parent=true arm=else
@@ -20,7 +20,7 @@
 // CHECK-NEXT: guarded-phase pto.tsetval guard=1
 // CHECK-LABEL: recognition invariant_loop
 // CHECK: recognize finite-guarded: not-applicable
-// CHECK: recognize guarded-rotating: applicable backend=unavailable
+// CHECK: recognize guarded-rotating: applicable backend=available
 // CHECK: rotation {{.*}} guard=0
 // CHECK: rotation {{.*}} guard=1
 // CHECK: guarded phases=2 guards=2 entry-guards=available
@@ -31,7 +31,7 @@
 // CHECK: issue guard-invariance
 // CHECK: guarded phases=1 guards=2 entry-guards=late
 // CHECK-LABEL: recognition late_finite
-// CHECK: recognize finite-guarded: missing-premise backend=unavailable
+// CHECK: recognize finite-guarded: missing-premise backend=available
 // CHECK: issue additional-prerequisite
 // CHECK: guarded phases=2 guards=2 entry-guards=late
 // CHECK: source-unchanged; synchronization-insertion-not-run
