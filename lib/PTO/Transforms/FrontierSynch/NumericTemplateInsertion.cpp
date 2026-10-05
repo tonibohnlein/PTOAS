@@ -278,6 +278,23 @@ private:
     }
 };
 } // namespace
+LogicalResult prepareCountedEndpointCode(func::FuncOp function, const NumericTemplateEndpoints& endpoints,
+                                         PreparedLogicalPlan& prepared)
+{
+    if (!endpoints.outer || !endpoints.logical.error.empty()) {
+        return failure();
+    }
+    auto loop = endpoints.outer;
+    auto lower = constant(loop.getLowerBound()), step = constant(loop.getStep());
+    const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
+    DominanceInfo dominance(function);
+    if (!lower || *lower < 0 || !step || *step <= 0 || !loop.getInductionVar().getType().isIndex() ||
+        bits.isScalable() || bits.getFixedValue() != 64 || !validCuts(endpoints, dominance)) {
+        return failure();
+    }
+    EndpointPreparer(endpoints, prepared).run();
+    return success();
+}
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplateInsertion(
     func::FuncOp function, const ProgramRecognition& program, int64_t planId)
 {

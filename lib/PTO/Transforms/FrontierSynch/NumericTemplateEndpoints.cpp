@@ -18,10 +18,6 @@ NumericTemplateEndpoints buildNumericTemplateEndpoints(const NumericTemplate& in
         result.logical.error = "numeric endpoint template mismatch";
         return result;
     }
-    result.logical = buildLogicalEndpoints(analysis);
-    if (!result.logical.error.empty()) {
-        return result;
-    }
     for (std::size_t i = 0; i < input.payloads.size(); ++i) {
         const auto& payload = input.payloads[i];
         if (!payload.phase || static_cast<uint32_t>(payload.phase->kPipeValue) != analysis.payloads[i].pipe) {
@@ -38,6 +34,27 @@ NumericTemplateEndpoints buildNumericTemplateEndpoints(const NumericTemplate& in
         result.anchors.push_back({payload.phase, payload.coordinates,
             {operation->getBlock(), operation}, {operation->getBlock(), operation->getNextNode()}});
     }
+    return bindPeriodicEndpoints(input.outer, result.anchors, analysis);
+}
+NumericTemplateEndpoints bindPeriodicEndpoints(scf::ForOp outer,
+    ArrayRef<TemplateEndpointAnchor> anchors, const PeriodicAnalysis& analysis)
+{
+    NumericTemplateEndpoints result;
+    if (!outer || anchors.size() != analysis.payloads.size()) {
+        result.logical.error = "periodic endpoint anchor count mismatch";
+        return result;
+    }
+    result.logical = buildLogicalEndpoints(analysis);
+    if (!result.logical.error.empty()) {
+        return result;
+    }
+    for (auto [i, anchor] : llvm::enumerate(anchors)) {
+        if (!anchor.phase || static_cast<uint32_t>(anchor.phase->kPipeValue) != analysis.payloads[i].pipe) {
+            result.logical.error = "periodic endpoint pipe mismatch";
+            return result;
+        }
+        result.anchors.push_back(anchor);
+    }
     DenseMap<std::pair<Block*, Operation*>, uint32_t> cuts;
     for (uint32_t i = 0; i < result.logical.recipes.size(); ++i) {
         const auto& recipe = result.logical.recipes[i];
@@ -49,7 +66,7 @@ NumericTemplateEndpoints buildNumericTemplateEndpoints(const NumericTemplate& in
         }
         result.groups[entry->second].recipes.push_back(i);
     }
-    result.outer = input.outer;
+    result.outer = outer;
     return result;
 }
 } // namespace mlir::pto::frontiersynch

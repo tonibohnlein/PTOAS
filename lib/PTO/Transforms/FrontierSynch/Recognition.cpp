@@ -8,6 +8,7 @@
 // Inspect original region structure and supplied effects without expanding loops.
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 #include "RotationPattern.h"
+#include "PTO/IR/PTOMultiBuffer.h"
 #include "RecognitionInternal.h"
 #include "../InsertSync/SyncEffectRanges.h"
 #include "mlir/IR/Matchers.h"
@@ -61,14 +62,45 @@ std::optional<int64_t> constant(Value value)
 struct Family {
     std::optional<uint64_t> stride;
     SmallVector<SyncStorageCell> slots;
+    std::optional<SyncStorageCell> contiguous;
+    uint64_t bytes = 0;
+    uint64_t count = 0;
 };
+Family geometry(const SyncInput& input, const BaseMemInfo& memory, uint64_t count)
+{
+    Family family;
+    family.count = count;
+    auto root = input.buffers().find(memory.rootBuffer);
+    if (root == input.buffers().end() || root->second.size() != 1) {
+        return family;
+    }
+    const auto& storage = *root->second.front();
+    family.bytes = storage.allocateSize;
+    // A constant-base alloc_multi_tile lays out contiguous equal-sized slots.
+    // Its syntax is a certificate; do not reconstruct and sort every slot here.
+    auto alloc = memory.rootBuffer.getDefiningOp<AllocMultiTileOp>();
+    const auto base = alloc && alloc.getAddr() ? constant(alloc.getAddr()) : std::nullopt;
+    if (alloc && !alloc->hasAttr(kPtoMultiBufferAddrsAttrName) && base && *base >= 0 &&
+        storage.hasKnownPhysicalAddresses && family.bytes &&
+        count <= (UINT64_MAX - static_cast<uint64_t>(*base)) / family.bytes) {
+        family.contiguous = SyncStorageCell{storage.scope, static_cast<uint64_t>(*base),
+            static_cast<uint64_t>(*base) + count * family.bytes};
+    } else {
+        family.slots = mlir::pto::detail::physicalSlotRanges(input, memory);
+    }
+    return family;
+}
 using Families = DenseMap<Value, Family>;
 
 void checkDisjoint(const Families& families, RecognitionResult& result, Operation* anchor)
 {
     SmallVector<SyncStorageCell> intervals;
     for (const auto& entry : families) {
-        llvm::append_range(intervals, entry.second.slots);
+        if (entry.second.contiguous) {
+            intervals.push_back(*entry.second.contiguous);
+        } else {
+            llvm::append_range(intervals, entry.second.slots);
+        }
     }
     llvm::sort(intervals, [](const auto& a, const auto& b) {
         return std::tie(a.space, a.begin, a.end) < std::tie(b.space, b.begin, b.end);
@@ -123,8 +155,7 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
     }
     auto found = families.find(memory.rootBuffer);
     if (found == families.end()) {
-        auto slots = mlir::pto::detail::physicalSlotRanges(input, memory);
-        found = families.try_emplace(memory.rootBuffer, Family{std::nullopt, std::move(slots)}).first;
+        found = families.try_emplace(memory.rootBuffer, geometry(input, memory, count)).first;
     }
     auto& family = found->second;
     // Distinguish an observed normalized form from proven machine arithmetic.
@@ -136,10 +167,10 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
     }
     family.stride = pattern->stride;
     std::optional<detail::SlotRanges> atoms;
-    if (family.slots.size() != count || memory.aliasesUnknownRange) {
+    if ((!family.contiguous && family.slots.size() != count) || memory.aliasesUnknownRange) {
         result.note(RecognitionIssue::UnknownGeometry, anchor);
     } else {
-        const auto bytes = family.slots.front().end - family.slots.front().begin;
+        const auto bytes = family.bytes;
         atoms = detail::withinSlotRanges(effect, input, bytes);
         if (!atoms) {
             result.note(effect.precision == SyncAccessPrecision::Exact ?

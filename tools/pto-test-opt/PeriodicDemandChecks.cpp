@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/ExplicitReduction.h"
 #include "PTO/Transforms/FrontierSynch/LifetimeScan.h"
 #include "PTO/Transforms/FrontierSynch/PeriodicAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/RotatingExtraction.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
@@ -255,6 +256,48 @@ bool rankQueries(const llvm::json::Object& input, const fs::PeriodicAnalysis& an
     output["rank_answers"] = std::move(answers);
     return true;
 }
+bool rotatingFragments(const llvm::json::Array& array, std::vector<fs::RotatingFragment>& fragments)
+{
+    if (array.size() > 4096) {
+        return false;
+    }
+    for (const auto& value : array) {
+        const auto* item = value.getAsObject();
+        if (!item) {
+            return false;
+        }
+        auto payload = number(*item, "payload"), family = number(*item, "family"), atom = number(*item, "atom");
+        auto slots = number(*item, "slots"), stride = number(*item, "stride"), offset = number(*item, "offset");
+        auto read = item->getBoolean("read"), write = item->getBoolean("write");
+        auto group = number(*item, "protection_group");
+        if (!payload || *payload > UINT32_MAX || !family || *family > UINT32_MAX || !atom || *atom > UINT32_MAX ||
+            !slots || !stride || !offset || !read || !write || (item->get("protection_group") && !group)) {
+            return false;
+        }
+        fragments.push_back({static_cast<uint32_t>(*payload), static_cast<uint32_t>(*family),
+            static_cast<uint32_t>(*atom), *slots, *stride, *offset, *read, *write, group.value_or(0)});
+    }
+    return true;
+}
+bool extractRotating(const llvm::json::Array& input, llvm::ArrayRef<fs::PeriodicPayload> payloads,
+                     std::vector<fs::PeriodicRecord>& generators, llvm::json::Object& output)
+{
+    std::vector<fs::RotatingFragment> fragments;
+    if (!rotatingFragments(input, fragments)) {
+        return false;
+    }
+    const auto extracted = fs::extractRotatingGenerators(payloads, fragments);
+    output["extraction_error"] = extracted.error;
+    output["refresh"] = extracted.refreshBound;
+    output["protected_hazards"] = extracted.protectedHazards;
+    llvm::json::Array records;
+    for (const auto& record : extracted.generators) {
+        records.push_back(llvm::json::Array{record.source, record.target, record.displacement});
+    }
+    output["extracted"] = std::move(records);
+    generators.insert(generators.end(), extracted.generators.begin(), extracted.generators.end());
+    return true;
+}
 bool graphCase(const llvm::json::Object& input, llvm::json::Object& output)
 {
     const auto* pipes = input.getArray("pipes");
@@ -270,6 +313,14 @@ bool graphCase(const llvm::json::Object& input, llvm::json::Object& output)
         payloads.push_back({static_cast<uint32_t>(*pipe)});
     }
     std::vector<fs::PeriodicRecord> generators;
+    if (const auto* rotating = input.getArray("rotating")) {
+        if (!extractRotating(*rotating, payloads, generators, output)) {
+            return false;
+        }
+        if (!output.getString("extraction_error")->empty()) {
+            return true;
+        }
+    }
     if (const auto* word = input.getArray("word")) {
         if (word->size() != payloads.size()) {
             return false;

@@ -37,6 +37,9 @@ struct NumericTemplateEndpoints {
     // Original IR and SyncInput must remain alive and unchanged. The shared
     // logical identity is (record, source outer ordinal), never an EventAttr.
 };
+// Bind a certified periodic relation to supplied original occurrence anchors.
+NumericTemplateEndpoints bindPeriodicEndpoints(scf::ForOp outer,
+    ArrayRef<TemplateEndpointAnchor> anchors, const PeriodicAnalysis& analysis);
 NumericTemplateEndpoints buildNumericTemplateEndpoints(const NumericTemplate& input,
                                                        const PeriodicAnalysis& analysis);
 } // namespace mlir::pto::frontiersynch
