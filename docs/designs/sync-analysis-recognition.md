@@ -514,3 +514,47 @@ input receives a diagnostic instead of a partial synchronization plan.
 The independent insertion checker executes the generated integer predicates
 and original structured control, observes actual command occurrences, and
 compares their payload order with an all-conflict graph.
+
+## Hardware-protected storage conflicts
+
+`HardwareProtectionBuilder` records hardware protection on physical-cell
+accesses before the lifetime scan generates demands. The numerical-template
+adapter supplies the already resolved accumulator cells and original operations;
+the same builder can serve other occurrence producers. Recognition, periodic
+reduction and logical insertion contain no matrix-specific exemption.
+
+The first rule implements the A2/A3 [Mmad accumulation contract](https://asc.gitcode.com/api/SIMD-API/basic_api/cube_compute_ISASI/mmad_compute/Mmad.html):
+consecutive accumulation into the same accumulator does not require a local
+barrier when `(m / 16) * (n / 16) >= 10`. Dimensions are the valid dimensions
+used by the native lowering. The implementation requires known compatible
+dimensions, an initializing matrix operation, subsequent in-place accumulations,
+the same accumulator type and physical cells, and `PIPE_M`. Another initializer,
+an incompatible matrix operation, or an intervening access to those accumulator
+cells ends the group. Separate template visits get separate group identities.
+Unknown dimensions and other targets receive no exemption. This source was
+checked against the A2/A3-compatible documentation preview built from
+`5c07153f668d` on 2026-09-30; it does not grant all M-pipe conflicts protection.
+
+A group certifies access protection for every ordered pair of its writers on
+each grouped cell. It does not assert completion-before-start. The scan retains
+every physical read and write and updates the lifetime state normally, but skips
+the protected RAW/WAW witnesses. Other cells' witnesses and supplied prerequisites
+remain. Filtering after reduction would be wrong: a protected accumulator edge
+could already have hidden an indispensable conflict on another cell. Group IDs
+are local to a builder; independently constructed inputs must remap IDs before
+combination. Repeating a scope must create fresh groups.
+
+The sparse scan remains sufficient for the remaining software requirements.
+Along the lifetime-scan witness path for a conflict on one cell, protected links
+before a retained software edge can be replaced by native completion order;
+protected links after it by native start order. If all links are protected, all
+endpoints belong to the same protected
+writer group. Protection annotation adds expected linear work in the access
+records and does not change the scan or quotient asymptotic bounds.
+
+Tests separately check target and shape eligibility, accumulator resets and
+intervening readers. An independent all-pairs conflict oracle removes only
+certified protected witnesses, then checks the sparse generators and actual
+inserted commands against the resulting required order. Cross-pipe event pairs
+are still selected by reduction. UnitFlag, physical ID allocation and command
+grouping are separate concerns and are not enabled by this rule.

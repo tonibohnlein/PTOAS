@@ -7,13 +7,19 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Linear lifetime scan; completion chains compress readers on the same pipe.
 #include "PTO/Transforms/FrontierSynch/LifetimeScan.h"
+#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include <limits>
 #include <optional>
 #include <unordered_map>
 namespace mlir::pto::frontiersynch {
 namespace {
+struct Writer {
+    uint32_t payload;
+    uint32_t pipe;
+    uint64_t protectionGroup;
+};
 struct CellState {
-    std::optional<uint32_t> writer;
+    std::optional<Writer> writer;
     std::unordered_map<uint32_t, uint32_t> readers;
 };
 class Scanner {
@@ -32,11 +38,21 @@ public:
                     output.error = "empty access mode";
                     return false;
                 }
-                auto& mode = modes[access.atom];
+                auto inserted = modes.emplace(access.atom, access);
+                auto& mode = inserted.first->second;
+                if (mode.protectionGroup != access.protectionGroup) {
+                    output.error = "inconsistent access protection";
+                    return false;
+                }
                 mode.read |= access.read;
                 mode.write |= access.write;
             }
             for (const auto& [atom, access] : modes) {
+                if (access.protectionGroup != 0 &&
+                    (!access.write || !validGroup(access.protectionGroup, occurrence.pipe))) {
+                    output.error = "protection requires writers on one pipe";
+                    return false;
+                }
                 if (!visit(occurrence, atom, access)) {
                     return false;
                 }
@@ -58,6 +74,11 @@ private:
     std::unordered_map<uint32_t, std::size_t> positions;
     std::unordered_map<uint32_t, CellState> cells;
     std::unordered_map<uint64_t, uint32_t> emitted;
+    std::unordered_map<uint64_t, uint32_t> groupPipes;
+    bool validGroup(uint64_t group, uint32_t pipe)
+    {
+        return groupPipes.emplace(group, pipe).first->second == pipe;
+    }
     bool emit(uint32_t source, uint32_t target, uint32_t atom, StorageHazard hazard)
     {
         const uint64_t key = (uint64_t(source) << 32) | target;
@@ -77,11 +98,18 @@ private:
     bool visit(const ExplicitEffects& occurrence, uint32_t atom, const CellAccess& access)
     {
         auto& state = cells[atom];
-        if (state.writer) {
-            if (access.read && !emit(*state.writer, occurrence.payload, atom, StorageHazard::RAW)) {
+        // A protected same-pipe writer chain uses native C/C order before a
+        // retained software edge and I/I order after it. An entirely protected
+        // chain has protected endpoints by group membership. Thus the sparse
+        // scan remains complete without adding fictitious C/I hardware edges.
+        if (state.writer && hardwareProtectsConflict(state.writer->pipe, state.writer->protectionGroup,
+                                                    occurrence.pipe, access.protectionGroup)) {
+            output.protectedHazards += unsigned(access.read) + unsigned(access.write);
+        } else if (state.writer) {
+            if (access.read && !emit(state.writer->payload, occurrence.payload, atom, StorageHazard::RAW)) {
                 return false;
             }
-            if (access.write && !emit(*state.writer, occurrence.payload, atom, StorageHazard::WAW)) {
+            if (access.write && !emit(state.writer->payload, occurrence.payload, atom, StorageHazard::WAW)) {
                 return false;
             }
         }
@@ -94,7 +122,7 @@ private:
             // Discard bucket capacity too: a past wide lifetime must not make
             // every subsequent overwrite clear its historical pipe count.
             std::unordered_map<uint32_t, uint32_t>().swap(state.readers);
-            state.writer = occurrence.payload;
+            state.writer = Writer{occurrence.payload, occurrence.pipe, access.protectionGroup};
         } else {
             state.readers[occurrence.pipe] = occurrence.payload;
         }

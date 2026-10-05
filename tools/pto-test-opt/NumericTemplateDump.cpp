@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Preserve original occurrence identity in late-expansion diagnostic output.
-#include "PTO/Transforms/FrontierSynch/NumericTemplate.h"
+#include "PTO/Transforms/FrontierSynch/NumericTemplateAnalysis.h"
 #include "mlir/IR/AsmState.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
@@ -40,6 +40,8 @@ llvm::json::Object dumpNumericTemplate(const fs::NumericTemplate& result, AsmSta
         issues.push_back(llvm::json::Object{{"issue", fs::recognitionName(diagnostic.issue)},
             {"operation", diagnostic.anchor ? diagnostic.anchor->getName().getStringRef() : StringRef()}});
     }
+    auto occurrences = fs::numericTemplateOccurrences(result);
+    std::size_t payloadIndex = 0;
     for (const auto& payload : result.payloads) {
         llvm::json::Array coordinates, effects;
         for (auto coordinate : payload.coordinates) {
@@ -70,7 +72,17 @@ llvm::json::Object dumpNumericTemplate(const fs::NumericTemplate& result, AsmSta
                 {"maps", std::move(maps)}, {"ranges", std::move(ranges)}, {"atoms", std::move(ids)},
                 {"discharge", static_cast<unsigned>(effect.discharge)}, {"outer_stride", effect.outerStride}});
         }
-        payloads.push_back(llvm::json::Object{{"phase", payload.phase->GetIndex()},
+        llvm::json::Array protection;
+        if (succeeded(occurrences)) {
+            for (const auto& access : (*occurrences)[payloadIndex].accesses) {
+                if (access.write && access.protectionGroup != 0) {
+                    protection.push_back(llvm::json::Array{access.atom, access.protectionGroup});
+                }
+            }
+        }
+        ++payloadIndex;
+        payloads.push_back(llvm::json::Object{{"hardware_protection", std::move(protection)},
+            {"phase", payload.phase->GetIndex()},
             {"operation", payload.phase->elementOp->getName().getStringRef()},
             {"pipe", static_cast<unsigned>(payload.phase->kPipeValue)}, {"coordinates", std::move(coordinates)},
             {"effects", std::move(effects)}});
