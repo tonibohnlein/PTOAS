@@ -15,6 +15,15 @@ module {
       %hidden = arith.addi %late, %index {test.hidden} : index
     }
     %end = arith.addi %late, %index {test.cut} : index
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %three = arith.constant 3 : index
+    %four = arith.constant 4 : index
+    scf.for %i = %zero to %three step %one {
+      scf.for %j = %zero to %four step %one {
+        %nested = arith.addi %i, %j {test.nested} : index
+      }
+    }
     return
   }
 }

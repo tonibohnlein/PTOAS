@@ -158,14 +158,18 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
     children.push_back(std::move(child));
     return true;
 }
-bool SequenceAnalysisState::collect()
+bool SequenceAnalysisState::collect(std::size_t rootNode)
 {
     if (failed(index.build(function, *input)) || program->nodes.empty()) {
         return fail("sequence structure unavailable");
     }
-    const auto& root = program->nodes.front();
-    if (root.kind != StructureKind::Sequence || root.region != &function.getBody()) {
-        return fail("sequence route requires the function's structured sequence");
+    if (rootNode >= program->nodes.size()) { return fail("regional sequence node is invalid"); }
+    const auto& root = program->nodes[rootNode];
+    if (root.kind == StructureKind::ExplicitRun) { return explicitChild(root); }
+    if (root.kind == StructureKind::Loop) { return loopChild(root); }
+    if (root.kind != StructureKind::Sequence || !root.region ||
+        (root.region->getParentOp() != function && !function->isProperAncestor(root.region->getParentOp()))) {
+        return fail("regional sequence must belong to the original function");
     }
     for (std::size_t position = 0; position < root.children.size();) {
         const auto& node = program->nodes[root.children[position]];

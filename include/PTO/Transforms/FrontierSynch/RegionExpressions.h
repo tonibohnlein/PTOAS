@@ -27,6 +27,20 @@ public:
     Id constant(uint64_t value);
     Id boolean(bool value);
     Id input(Value value);
+    // Simultaneous, typed DAG substitution. Bindings are immutable; the memo
+    // belongs to this context and one arena. Replacement expressions are not
+    // themselves substituted, so coordinate shifts never recursively expand.
+    class Substitution {
+    public:
+        explicit Substitution(llvm::ArrayRef<std::pair<Id, Id>> bindings)
+            : bindings(bindings.begin(), bindings.end()) {}
+    private:
+        friend class RegionExpressions;
+        std::vector<std::pair<Id, Id>> bindings;
+        llvm::DenseMap<Id, Id> memo;
+        const RegionExpressions* owner = nullptr;
+    };
+    Id substitute(Id expression, Substitution& context);
     Id add(Id a, Id b);
     Id sub(Id a, Id b);
     Id div(Id a, Id b);

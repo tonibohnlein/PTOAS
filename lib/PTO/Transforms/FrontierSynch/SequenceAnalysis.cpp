@@ -34,7 +34,7 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
     for (const auto& port : composer.ports) {
         const auto& child = composer.children[port.child];
         result.occurrences.push_back({port.child, port.type, child.anchors[port.type],
-                                      child.regional.occurrenceLoops[port.type], port.ordinal});
+                                      child.regional.occurrenceLoops[port.type], port.ordinal, port.visits});
     }
     // Parent selectors are guarded folds. They preserve original occurrence
     // identities and remain reusable independently of incoming storage state.
@@ -87,7 +87,7 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
             for (auto previous : result.firstPayloads[pipe]) { seen = composer.either(seen, previous.present); }
             for (auto selected : values) {
                 nonempty = composer.either(nonempty, selected.present);
-                auto event = composer.port(childId, selected.event.type, selected.event.ordinal);
+                auto event = composer.port(childId, selected.event);
                 result.firstPayloads[pipe].push_back({event,
                     composer.both(selected.present, composer.negate(seen))});
             }
@@ -95,8 +95,7 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
             auto found = child.lastPayloads.find(pipe);
             if (found != child.lastPayloads.end()) {
                 for (auto selected : found->second) {
-                    result.lastPayloads[pipe].push_back({composer.port(childId, selected.event.type,
-                        selected.event.ordinal), selected.present});
+                    result.lastPayloads[pipe].push_back({composer.port(childId, selected.event), selected.present});
                 }
             }
         }
@@ -114,16 +113,26 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
 } // namespace
 SequenceAnalysis analyzeSequence(func::FuncOp function, const SyncInput& input, const ProgramRecognition& program)
 {
+    return analyzeSequenceRegion(function, input, program, 0, std::make_shared<RegionExpressions>());
+}
+SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& input,
+    const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions)
+{
     SequenceAnalysis result;
-    if (!function || function.isDeclaration() || !function.getBody().hasOneBlock()) {
+    if (!function || function.isDeclaration() || !function.getBody().hasOneBlock() || !expressions ||
+        !expressions->constructionError().empty()) {
         result.error = "sequence route requires a single structured function body"; return result;
     }
     const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
     if (bits.isScalable() || bits.getFixedValue() != 64) {
         result.error = "sequence endpoint arithmetic requires a 64-bit index representation"; return result;
     }
-    auto state = std::make_shared<SequenceAnalysisState>(function, input, program);
-    if (!state->collect() || !state->partition()) { result.error = state->error; return result; }
+    auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions));
+    state->input = &input;
+    state->program = &program;
+    state->completeInvocation = node == 0;
+    state->requiresOuterBinding = node < program.nodes.size() && !program.nodes[node].loops.empty();
+    if (!state->collect(node) || !state->partition()) { result.error = state->error; return result; }
     state->summarize();
     state->bindAdapters();
     return finishSequence(std::move(state));
@@ -184,20 +193,20 @@ std::optional<RegionExpressions::Id> sequenceEventReachability(SequenceAnalysis&
     if (!analysis.state || !analysis.error.empty()) { return std::nullopt; }
     auto& state = *analysis.state;
     auto valid = [&](const SequenceEvent& event) {
-        return event.child < state.children.size() && event.type < state.children[event.child].anchors.size() &&
-               event.ordinal < state.expressions.size() && !state.expressions.isBoolean(event.ordinal) &&
-               (event.kind == PeriodicEventKind::Start || event.kind == PeriodicEventKind::Completion);
+        return event.child < state.children.size() && validRegionalEvent(state.children[event.child].regional,
+                   {event.type, event.ordinal, event.kind, event.visits});
     };
     if (!valid(source) || !valid(target)) { return std::nullopt; }
-    auto sourcePort = state.portIds.find({source.child, source.type, source.ordinal});
-    auto targetPort = state.portIds.find({target.child, target.type, target.ordinal});
+    auto sourcePort = state.portIds.find({source.child, source.type, source.ordinal, source.visits});
+    auto targetPort = state.portIds.find({target.child, target.type, target.ordinal, target.visits});
     if (sourcePort != state.portIds.end() && targetPort != state.portIds.end()) {
         return state.graph[2*sourcePort->second + (source.kind == PeriodicEventKind::Completion)]
                           [2*targetPort->second + (target.kind == PeriodicEventKind::Completion)];
     }
     auto local = [&](SequenceEvent a, SequenceEvent b) -> std::optional<Expr> {
         if (a.child != b.child) { return state.no(); }
-        return state.children[a.child].regional.reachability({a.type, a.ordinal, a.kind}, {b.type, b.ordinal, b.kind});
+        return regionalReachability(state.children[a.child].regional,
+            {a.type, a.ordinal, a.kind, a.visits}, {b.type, b.ordinal, b.kind, b.visits});
     };
     if (source.child == target.child) { return local(source, target); }
     if (source.child > target.child) { return state.no(); }
@@ -209,11 +218,11 @@ std::optional<RegionExpressions::Id> sequenceEventReachability(SequenceAnalysis&
         for (unsigned completion = 0; completion < 2; ++completion) {
             auto kind = completion ? PeriodicEventKind::Completion : PeriodicEventKind::Start;
             if (port.child == source.child) {
-                auto answer = local(source, {port.child, port.type, port.ordinal, kind});
+                auto answer = local(source, {port.child, port.type, port.ordinal, kind, port.visits});
                 if (!answer) { return std::nullopt; } firsts[id][completion] = *answer;
             }
             if (port.child == target.child) {
-                auto answer = local({port.child, port.type, port.ordinal, kind}, target);
+                auto answer = local({port.child, port.type, port.ordinal, kind, port.visits}, target);
                 if (!answer) { return std::nullopt; } lasts[id][completion] = *answer;
             }
         }

@@ -77,7 +77,7 @@ void SequenceAnalysisState::bindAdapters()
         };
         auto convert = [&](Selected selected) {
             const auto& port = ports[selected.port];
-            return RegionalSelector{{port.type, port.ordinal, PeriodicEventKind::Start}, selected.present};
+            return RegionalSelector{{port.type, port.ordinal, PeriodicEventKind::Start, port.visits}, selected.present};
         };
         for (std::size_t cell = 0; cell < cells.size(); ++cell) {
             const auto& local = boundaries[id][cell];
@@ -116,8 +116,23 @@ bool SequenceAnalysisState::importSummaries()
         const auto& out = child.regional;
         if (out.expressions != arena || !out.capabilities.completeStorageModel || !out.capabilities.exactQueries ||
             !out.capabilities.exactSelectors || !out.capabilities.endpointRecipes || !out.presence ||
-            !out.reachability || !out.prepare || out.anchors.size() != out.occurrenceLoops.size()) {
+            !out.reachability || !out.prepare || out.anchors.size() != out.occurrenceLoops.size() ||
+            (!out.outerLoops.empty() && out.outerLoops.size() != out.anchors.size())) {
             return fail("sequence child lacks a constructed exact regional interface");
+        }
+        for (std::size_t type = 0; type < out.outerLoops.size(); ++type) {
+            Operation* parent = nullptr;
+            for (auto loop : out.outerLoops[type]) {
+                if (!loop || (parent && !parent->isProperAncestor(loop))) {
+                    return fail("regional outer coordinates must name nested original loops");
+                }
+                parent = loop;
+            }
+            auto* payload = out.anchors[type].phase ? out.anchors[type].phase->elementOp : nullptr;
+            if (parent && (!payload || !parent->isProperAncestor(payload) ||
+                (out.occurrenceLoops[type] && !parent->isProperAncestor(out.occurrenceLoops[type])))) {
+                return fail("regional outer coordinates do not enclose the payload and leaf loop");
+            }
         }
         for (const auto& cell : out.storageBoundary) {
             if (cell.cell.begin > cell.cell.end) { return fail("regional storage boundary has an invalid range"); }
@@ -178,14 +193,14 @@ bool SequenceAnalysisState::importSummaries()
             return fail("regional first ordinal must be an integer expression in the common arena");
         }
         auto validSelector = [&](RegionalSelector selector) {
-            return selector.event.type < child.anchors.size() && selector.event.ordinal < expressions.size() &&
-                !expressions.isBoolean(selector.event.ordinal) && expressions.isBoolean(selector.present);
+            return selector.event.type < child.anchors.size() &&
+                   validRegionalEvent(child.regional, selector.event) && expressions.isBoolean(selector.present);
         };
         auto convert = [&](RegionalSelector selector, std::vector<Selected>& destination) {
             if (!validSelector(selector)) {
                 fail("regional selector has an invalid occurrence or predicate"); return;
             }
-            destination.push_back({port(id, selector.event.type, selector.event.ordinal), selector.present});
+            destination.push_back({port(id, selector.event), selector.present});
         };
         for (std::size_t cell = 0; cell < cells.size(); ++cell) {
             auto& out = boundaries[id][cell];
@@ -239,6 +254,7 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
             coordinates->push_back({child, type});
             out.anchors.push_back(region.anchors[type]);
             out.occurrenceLoops.push_back(region.occurrenceLoops[type]);
+            out.outerLoops.push_back(region.outerLoops.empty() ? std::vector<scf::ForOp>{} : region.outerLoops[type]);
         }
     }
     for (uint32_t child = 0; child < state->children.size(); ++child) {
@@ -253,12 +269,20 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
     out.presence = [state, coordinates](RegionalEvent event) -> std::optional<Expr> {
         if (event.type >= coordinates->size()) { return std::nullopt; }
         auto [child, type] = (*coordinates)[event.type];
-        return state->children[child].regional.presence({type, event.ordinal, event.kind});
+        return regionalPresence(state->children[child].regional, {type, event.ordinal, event.kind, event.visits});
     };
     out.reachability = [owned, coordinates](RegionalEvent a, RegionalEvent b) -> std::optional<Expr> {
         if (a.type >= coordinates->size() || b.type >= coordinates->size()) { return std::nullopt; }
         auto [ac, at] = (*coordinates)[a.type]; auto [bc, bt] = (*coordinates)[b.type];
-        return sequenceEventReachability(*owned, {ac, at, a.ordinal, a.kind}, {bc, bt, b.ordinal, b.kind});
+        return sequenceEventReachability(*owned,
+            {ac, at, a.ordinal, a.kind, a.visits}, {bc, bt, b.ordinal, b.kind, b.visits});
+    };
+    out.referenceBefore = [state, coordinates](RegionalEvent a, RegionalEvent b) -> std::optional<Expr> {
+        if (a.type >= coordinates->size() || b.type >= coordinates->size()) { return std::nullopt; }
+        auto [ac, at] = (*coordinates)[a.type]; auto [bc, bt] = (*coordinates)[b.type];
+        if (ac != bc) { return state->expressions.boolean(ac < bc); }
+        return regionalReferenceBefore(state->children[ac].regional,
+            {at, a.ordinal, a.kind, a.visits}, {bt, b.ordinal, b.kind, b.visits});
     };
     for (const auto& child : analysis.state->children) {
         out.capabilities.contextualGuards |= child.regional.capabilities.contextualGuards;
@@ -276,7 +300,7 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
     auto convert = [&](SequenceSelectedEvent selected) {
         const auto& occurrence = analysis.occurrences[selected.port];
         return RegionalSelector{{starts[occurrence.child] + occurrence.type,
-            occurrence.ordinal, PeriodicEventKind::Start}, selected.present};
+            occurrence.ordinal, PeriodicEventKind::Start, occurrence.visits}, selected.present};
     };
     for (const auto& cell : analysis.storageBoundary) {
         RegionalStorageBoundary target; target.cell = cell.cell;

@@ -41,14 +41,15 @@ void SequenceAnalysisState::bridges()
                         bool conflict = model.uniformConflict(x.effect, y.effect);
                         if (!conflict && (!x.representedByCells || !y.representedByCells) &&
                             model.residualConflict(x.effect, y.effect)) {
-                            if (left.occurrenceLoops[x.last.event.type] || right.occurrenceLoops[y.first.event.type]) {
+                            if (left.occurrenceLoops[x.last.event.type] || right.occurrenceLoops[y.first.event.type] ||
+                                !x.last.event.visits.empty() || !y.first.event.visits.empty()) {
                                 fail("crossing symbolic access predicate needs an occurrence adapter"); return;
                             }
                             conflict = true;
                         }
                         if (conflict) {
-                            crossing({port(a, x.last.event.type, x.last.event.ordinal), x.last.present},
-                                     {port(b, y.first.event.type, y.first.event.ordinal), y.first.present});
+                            crossing({port(a, x.last.event), x.last.present},
+                                     {port(b, y.first.event), y.first.present});
                         }
                     }
                 }
@@ -141,6 +142,12 @@ bool SequenceAnalysisState::valueBridges()
                 for (uint32_t a = 0; a < b; ++a) {
                     for (uint32_t source = 0; source < children[a].anchors.size(); ++source) {
                         if (children[a].anchors[source].phase != edge.producer) { continue; }
+                        const auto& left = children[a].regional;
+                        const auto& right = children[b].regional;
+                        if ((!left.outerLoops.empty() && !left.outerLoops[source].empty()) ||
+                            (!right.outerLoops.empty() && !right.outerLoops[target].empty())) {
+                            return fail("nested crossing value prerequisite requires a coordinate map");
+                        }
                         auto sourceLoop = children[a].regional.occurrenceLoops[source];
                         auto targetLoop = children[b].regional.occurrenceLoops[target];
                         // Slices of one original loop have disjoint ordinals.
@@ -181,8 +188,8 @@ bool SequenceAnalysisState::closure()
                 for (unsigned bc = 0; bc < 2; ++bc) {
                     PeriodicEvent source{x.type, ac ? PeriodicEventKind::Completion : PeriodicEventKind::Start};
                     PeriodicEvent target{y.type, bc ? PeriodicEventKind::Completion : PeriodicEventKind::Start};
-                    auto answer = children[x.child].regional.reachability(
-                        {x.type, x.ordinal, source.kind}, {y.type, y.ordinal, target.kind});
+                    auto answer = regionalReachability(children[x.child].regional,
+                        x.event(source.kind), y.event(target.kind));
                     if (!answer) { return fail("child all-event query unavailable"); }
                     Expr reachable = *answer;
                     add(2*a+ac, 2*b+bc, both(exists, reachable));
@@ -198,7 +205,7 @@ bool SequenceAnalysisState::closure()
             auto nonempty = no();
             for (auto selected : firsts) {
                 nonempty = either(nonempty, selected.present);
-                auto first = port(childId, selected.event.type, selected.event.ordinal);
+                auto first = port(childId, selected.event);
                 if (2*static_cast<std::size_t>(first) >= size) { return fail("missing native boundary port"); }
                 for (auto old : preceding[p]) {
                     auto guard = both(old.present, selected.present);
@@ -210,7 +217,7 @@ bool SequenceAnalysisState::closure()
             auto found = regional.lastPayloads.find(p);
             if (found != regional.lastPayloads.end()) {
                 for (auto selected : found->second) {
-                    auto event = port(childId, selected.event.type, selected.event.ordinal);
+                    auto event = port(childId, selected.event);
                     preceding[p].push_back({event, selected.present});
                 }
             }

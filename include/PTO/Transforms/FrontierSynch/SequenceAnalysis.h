@@ -26,12 +26,14 @@ struct SequenceEvent {
     uint32_t child = 0, type = 0;
     RegionExpressions::Id ordinal = 0;
     PeriodicEventKind kind = PeriodicEventKind::Start;
+    std::vector<RegionExpressions::Id> visits;
 };
 struct SequenceOccurrence {
     uint32_t child = 0, type = 0;
     TemplateEndpointAnchor anchor;
     scf::ForOp loop;
     RegionExpressions::Id ordinal = 0;
+    std::vector<RegionExpressions::Id> visits;
 };
 struct SequenceAnalysisState;
 struct SequenceAnalysis {
@@ -49,6 +51,10 @@ SequenceAnalysis analyzeSequence(func::FuncOp function, const SyncInput& input,
                                  const ProgramRecognition& program);
 SequenceAnalysis composeRegionalSequence(func::FuncOp function,
     std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children);
+// Analyze original children of a selected sequence, or one explicit/loop node.
+// The caller supplies a common arena; original cuts and access records remain borrowed.
+SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& input,
+    const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions);
 RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis);
 RegionExpressions* sequenceExpressions(SequenceAnalysis& analysis);
 std::optional<RegionExpressions::Id> sequenceEventReachability(const SequenceAnalysis& analysis,
