@@ -74,7 +74,10 @@ public:
                     bool conflict = false;
                     for (auto x : input.accesses().effectsFor(result.phases[a])) {
                         for (auto y : input.accesses().effectsFor(result.phases[b])) {
-                            conflict |= input.accesses().uniformConflict(x, y);
+                            if (!llvm::is_contained(result.dischargedEffects, x) &&
+                                !llvm::is_contained(result.dischargedEffects, y)) {
+                                conflict |= input.accesses().uniformConflict(x, y);
+                            }
                         }
                     }
                     if (conflict) {
@@ -85,7 +88,21 @@ public:
             }
         }
         if (!dag().constructionError().empty()) { fail(dag().constructionError()); return; }
-        result.periodic = analyzeGuardedPeriodicQuotient(result.expressions, result.payloads, result.generators);
+        PhaseIndex index;
+        if (failed(index.build(result.loop->getParentOfType<func::FuncOp>(), input))) {
+            fail("guarded scalar prerequisite index unavailable"); return;
+        }
+        const auto prerequisites = index.mapPrerequisites(result.phases);
+        if (!prerequisites.error.empty()) { fail(prerequisites.error); return; }
+        std::vector<GuardedPeriodicRecord> native;
+        for (const auto& edge : prerequisites.native) {
+            native.push_back({edge.source, edge.target, c(0), yes(), 0});
+        }
+        for (const auto& edge : prerequisites.demands) {
+            result.generators.push_back({edge.source, edge.target, c(0), yes(), 0});
+        }
+        result.periodic = analyzeGuardedPeriodicQuotient(
+            result.expressions, result.payloads, result.generators, native);
         if (!result.periodic.error.empty()) { fail(result.periodic.error); }
     }
 private:
@@ -196,6 +213,7 @@ private:
     }
     bool prepareFragments()
     {
+        result.dischargedEffects = recognized.result.dischargedEffects;
         DenseMap<const CompoundInstanceElement*, uint32_t> positions;
         DenseMap<Value, uint32_t> families;
         struct Family { uint64_t slots, stride, divisor, refresh, inverseStride; };
@@ -229,6 +247,8 @@ private:
             Fragment fragment;
             fragment.effect = access.effect;
             fragment.slotAtom = *access.atom;
+            fragment.firstPhysicalSlot = access.firstPhysicalSlot;
+            fragment.physicalSlotStride = access.physicalSlotStride;
             fragment.payload = position->second; fragment.family = family; fragment.atom = atom;
             fragment.slots = access.slots; fragment.divisor = description->second.divisor;
             fragment.refresh = description->second.refresh;

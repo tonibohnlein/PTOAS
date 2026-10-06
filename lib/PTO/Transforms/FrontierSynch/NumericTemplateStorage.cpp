@@ -54,39 +54,13 @@ std::optional<int64_t> translation(const TemplateRegion& map, SyncAccessRegion& 
             return std::nullopt;
         }
     }
-    auto* context = map.byteOffset.getContext();
-    SmallVector<AffineExpr> dimensions;
-    for (unsigned i = 0; i < map.extents.size(); ++i) {
-        dimensions.push_back(getAffineDimExpr(i, context));
-    }
-    auto at = [&](int64_t ordinal) {
-        SmallVector<AffineExpr> symbols{getAffineConstantExpr(ordinal, context)};
-        for (unsigned i = 0; i < map.invariantSymbols.size(); ++i) {
-            symbols.push_back(getAffineSymbolExpr(i + 1, context));
-        }
-        return mlir::pto::detail::substitute(map.byteOffset, dimensions, symbols);
-    };
-    auto zero = at(0), one = at(1);
-    auto negative = getAffineConstantExpr(-1, context);
-    auto difference = mlir::pto::detail::checkedAdd(one, mlir::pto::detail::checkedMul(zero, negative));
-    const unsigned symbolCount = 1 + map.invariantSymbols.size();
-    auto stride = difference ? dyn_cast<AffineConstantExpr>(
-        simplifyAffineExpr(difference, dimensions.size(), symbolCount)) : AffineConstantExpr{};
-    if (!stride) {
-        return std::nullopt;
-    }
-    auto rebuilt = mlir::pto::detail::checkedAdd(zero, mlir::pto::detail::checkedMul(
-        getAffineSymbolExpr(0, context), stride));
-    auto delta = mlir::pto::detail::checkedAdd(map.byteOffset, mlir::pto::detail::checkedMul(rebuilt, negative));
-    auto exact = delta ? dyn_cast<AffineConstantExpr>(
-        simplifyAffineExpr(delta, dimensions.size(), symbolCount)) : AffineConstantExpr{};
-    if (!exact || exact.getValue() != 0) {
-        return std::nullopt;
-    }
-    fixed.byteOffset = zero;
+    auto parts = mlir::pto::detail::splitTranslation(map.byteOffset, map.extents.size(),
+                                                    1 + map.invariantSymbols.size(), 0);
+    if (!parts) { return std::nullopt; }
+    fixed.byteOffset = parts->first;
     fixed.extents = map.extents;
     fixed.elementBytes = map.elementBytes;
-    return stride.getValue();
+    return parts->second;
 }
 // Translation tests may cancel an unknown address origin only when every
 // footprint of the writing payload has that same loop-invariant origin.

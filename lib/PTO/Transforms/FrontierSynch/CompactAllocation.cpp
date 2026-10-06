@@ -141,7 +141,15 @@ DictionaryAttr guardedAllocationCertificate(const GuardedRotatingAnalysis& analy
                 generators.push_back({mapping[candidate.source], mapping[candidate.target], *d});
             }
         }
-        auto witness = analyzePeriodicDemands(payloads, generators);
+        std::vector<PeriodicRecord> native;
+        for (const auto& candidate : analysis.periodic.nativePrerequisites) {
+            auto d = arena.constantUnder(retained, candidate.displacement);
+            if (d && mapping[candidate.source] != UINT32_MAX && mapping[candidate.target] != UINT32_MAX &&
+                arena.implies(retained, candidate.active)) {
+                native.push_back({mapping[candidate.source], mapping[candidate.target], *d});
+            }
+        }
+        auto witness = analyzePeriodicDemands(payloads, generators, native);
         if (!witness.error.empty()) { return {}; }
         auto reuse = witness.eventThreshold({mapping[edge.target], PeriodicEventKind::Completion},
                                              {mapping[edge.source], PeriodicEventKind::Start});

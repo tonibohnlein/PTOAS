@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_boundary_rotation.py pto-sync-input-test %s
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @boundary_rotation(%n: index, %gm: !pto.ptr<f32, gm>) attributes {test.trace_arguments = array<i64: 5>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %bytes = arith.constant 64 : index
+    %base = arith.constant 1024 : index
+    %sixteen = arith.constant 16 : index
+    %capacity = arith.constant 2147483647 : index
+    %output = pto.make_tensor_view %gm, shape = [%capacity, %sixteen], strides = [%sixteen, %one] : !pto.tensor_view<2147483647x16xf32>
+    %base64 = arith.constant 1024 : i64
+    %value = arith.constant 1.0 : f32
+    %initial = pto.alloc_tile addr = %base64 : !tile
+    pto.texpands ins(%value : f32) outs(%initial : !tile)
+    scf.for %i = %zero to %n step %one {
+      %next = arith.addi %i, %one : index
+      %more = arith.cmpi ult, %next, %n : index
+      scf.if %more {
+        %bank = arith.remui %next, %two : index
+        %offset = arith.muli %bank, %bytes : index
+        %address = arith.addi %base, %offset : index
+        %addr = arith.index_cast %address : index to i64
+        %writer = pto.alloc_tile addr = %addr : !tile
+        pto.texpands ins(%value : f32) outs(%writer : !tile)
+      }
+      %slot = arith.remui %i, %two : index
+      %roffset = arith.muli %slot, %bytes : index
+      %raddress = arith.addi %base, %roffset : index
+      %raddr = arith.index_cast %raddress : index to i64
+      %reader = pto.alloc_tile addr = %raddr : !tile
+      %destination = pto.partition_view %output, offsets = [%i, %zero], sizes = [%one, %sixteen] : !pto.tensor_view<2147483647x16xf32> -> !pto.partition_tensor_view<1x16xf32>
+      pto.tstore ins(%reader : !tile) outs(%destination : !pto.partition_tensor_view<1x16xf32>)
+    }
+    return
+  }
+}

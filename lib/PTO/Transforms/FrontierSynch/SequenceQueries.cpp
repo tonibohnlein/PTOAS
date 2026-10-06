@@ -120,6 +120,35 @@ void SequenceAnalysisState::canonicalizeCrossings()
         edge.guard = both(edge.guard, negate(earlier));
     }
 }
+bool SequenceAnalysisState::valueBridges()
+{
+    for (uint32_t b = 0; b < children.size(); ++b) {
+        for (uint32_t target = 0; target < children[b].anchors.size(); ++target) {
+            for (const auto& edge : index.prerequisitesFor(children[b].anchors[target].phase->elementOp)) {
+                for (uint32_t a = 0; a < b; ++a) {
+                    for (uint32_t source = 0; source < children[a].anchors.size(); ++source) {
+                        if (children[a].anchors[source].phase != edge.producer) { continue; }
+                        auto sourceLoop = children[a].regional.occurrenceLoops[source];
+                        auto targetLoop = children[b].regional.occurrenceLoops[target];
+                        // Slices of one original loop have disjoint ordinals.
+                        // SSA edges within its body connect the same iteration,
+                        // and have already been handled by each local analysis.
+                        if (sourceLoop && sourceLoop == targetLoop) { continue; }
+                        if (sourceLoop) {
+                            return fail("crossing value producer requires a last-occurrence selector");
+                        }
+                        const auto x = port(a, source, c(0));
+                        const auto y = port(b, target, children[b].regional.firstOrdinal.value_or(c(0)));
+                        const auto guard = both(present(x), present(y));
+                        if (edge.native) { nativeValueCrossings.push_back({x, y, guard}); }
+                        else { crossing({x, present(x)}, {y, present(y)}); }
+                    }
+                }
+            }
+        }
+    }
+    return error.empty();
+}
 bool SequenceAnalysisState::closure()
 {
     const std::size_t size = 2 * ports.size();
@@ -174,7 +203,16 @@ bool SequenceAnalysisState::closure()
             }
         }
     }
-    for (const auto& edge : crossings) { add(2*edge.source+1, 2*edge.target, edge.guard); }
+    for (const auto& edge : nativeValueCrossings) { add(2*edge.source+1, 2*edge.target, edge.guard); }
+    for (auto& edge : crossings) {
+        auto native = no();
+        for (const auto& fixed : nativeValueCrossings) {
+            auto identical = both(same(fixed.source, edge.source), same(fixed.target, edge.target));
+            native = either(native, both(fixed.guard, identical));
+        }
+        add(2*edge.source+1, 2*edge.target, edge.guard);
+        edge.guard = both(edge.guard, negate(native));
+    }
     // Each child query block is already closed. Every crossing advances the
     // child index, so propagate through the block DAG rather than repeatedly
     // closing symbolic reflexive aliases inside a child.

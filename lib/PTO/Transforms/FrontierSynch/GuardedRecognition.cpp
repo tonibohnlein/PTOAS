@@ -13,7 +13,7 @@
 namespace mlir::pto::frontiersynch {
 namespace {
 void collect(ArrayRef<Operation*> roots, Operation* entry, const PhaseIndex& index, GuardedRecognition& output,
-             bool requireInvariant)
+             bool requireInvariant, const DenseMap<Value, bool>& choices = DenseMap<Value, bool>())
 {
     // An explicit stack avoids host recursion on deeply nested if/else trees.
     struct Work {
@@ -40,6 +40,11 @@ void collect(ArrayRef<Operation*> roots, Operation* entry, const PhaseIndex& ind
         if (auto branch = dyn_cast<scf::IfOp>(op)) {
             if (index.needsValuePrerequisite(&op)) {
                 output.result.note(RecognitionIssue::AdditionalPrerequisite, &op);
+            }
+            auto choice = choices.find(branch.getCondition());
+            if (choice != choices.end()) {
+                append(choice->second ? branch.getThenRegion() : branch.getElseRegion(), work.guard);
+                continue;
             }
             const bool available = entry && index.valueAvailable(branch.getCondition(), entry, Boundary::Before);
             output.entryGuardsAvailable &= available;
@@ -97,9 +102,10 @@ GuardedRecognition recognizeFiniteGuarded(ArrayRef<Operation*> roots, const Phas
     return output;
 }
 
-GuardedRecognition recognizeGuardedRotating(scf::ForOp loop, const PhaseIndex& index,
-                                            const SyncInput& input, const SyncStorageEffects& effects)
+GuardedRecognition detail::recognizeRotatingSlice(scf::ForOp loop, const PhaseIndex& index,
+    const SyncInput& input, const DenseMap<Value, bool>& choices)
 {
+    const auto& effects = input.accesses();
     GuardedRecognition output;
     if (!detail::checkRotatingDomain(loop, output.result)) {
         return output;
@@ -109,7 +115,7 @@ GuardedRecognition recognizeGuardedRotating(scf::ForOp loop, const PhaseIndex& i
     }
     SmallVector<Operation*> roots;
     for (Operation& op : loop.getBody()->getOperations()) { roots.push_back(&op); }
-    collect(roots, loop, index, output, true);
+    collect(roots, loop, index, output, true, choices);
     SmallVector<const CompoundInstanceElement*> phases;
     DenseMap<const CompoundInstanceElement*, std::optional<std::size_t>> guards;
     for (const auto& item : output.phases) {
@@ -126,5 +132,10 @@ GuardedRecognition recognizeGuardedRotating(scf::ForOp loop, const PhaseIndex& i
         access.guard = guards.lookup(effects.effects()[access.effect].phase);
     }
     return output;
+}
+GuardedRecognition recognizeGuardedRotating(scf::ForOp loop, const PhaseIndex& index,
+                                            const SyncInput& input, const SyncStorageEffects& effects)
+{
+    return detail::recognizeRotatingSlice(loop, index, input, DenseMap<Value, bool>());
 }
 } // namespace mlir::pto::frontiersynch

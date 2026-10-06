@@ -9,6 +9,7 @@
 // No instruction-specific footprint rules or sampled loop iterations are used.
 #include "RotationPattern.h"
 #include "../InsertSync/SyncEffectRanges.h"
+#include "../InsertSync/SyncRegionArithmetic.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "llvm/ADT/STLExtras.h"
 
@@ -39,6 +40,16 @@ std::optional<SyncAccessRegion> slotOrigin(const SyncStorageEffect& effect, cons
         }
         operand = view.getViewSource();
     }
+    // A normal allocation may have a rotating absolute address, without an
+    // alloc_multi_tile wrapper. Preserve its root map through arbitrary views.
+    auto root = resolveBufferRegion(input, effect.memory->rootBuffer, effect.phase->elementOp);
+    if (root && !root->base) {
+        SmallVector<AffineExpr> zero(root->extents.size(),
+            getAffineConstantExpr(0, effect.phase->elementOp->getContext()));
+        root->byteOffset = root->byteOffset.replaceDims(zero);
+        root->extents.clear();
+        return root;
+    }
     auto slots = mlir::pto::detail::physicalSlotRanges(input, *effect.memory);
     const bool fixedBase = slots.size() == 1 && slots.front().begin <= INT64_MAX;
     if (!fixedBase) {
@@ -68,8 +79,15 @@ bool relativeRanges(const SyncAccessRegion& region, const SyncAccessRegion& orig
     }
     SyncAccessRegion relative = region;
     relative.base = {};
-    relative.byteOffset = simplifyAffineExpr(
-        region.byteOffset - origin.byteOffset.replaceSymbols(replacements), region.extents.size(), symbols.size());
+    SmallVector<AffineExpr> dimensions;
+    for (unsigned i = 0; i < region.extents.size(); ++i) {
+        dimensions.push_back(getAffineDimExpr(i, context));
+    }
+    auto mappedOrigin = mlir::pto::detail::substitute(origin.byteOffset, dimensions, replacements);
+    auto difference = mlir::pto::detail::checkedAdd(region.byteOffset, mlir::pto::detail::checkedMul(
+        mappedOrigin, getAffineConstantExpr(-1, context)));
+    if (!difference) { return false; }
+    relative.byteOffset = simplifyAffineExpr(difference, region.extents.size(), symbols.size());
     // A fixed footprint must be independent of every loop/parameter symbol.
     for (unsigned i = 0; i < symbols.size(); ++i) {
         if (relative.byteOffset.isFunctionOfSymbol(i)) {
@@ -85,6 +103,57 @@ bool relativeRanges(const SyncAccessRegion& region, const SyncAccessRegion& orig
     return mlir::pto::detail::materializeRegion(relative, space, ranges);
 }
 } // namespace
+
+std::optional<PhysicalRotation> physicalRotation(const SyncStorageEffect& effect, const SyncInput& input,
+    scf::ForOp loop, const PhaseIndex& index, bool allowParameters)
+{
+    if (!effect.memory || effect.memory->scope == AddressSpace::GM || effect.selection) {
+        return std::nullopt;
+    }
+    auto origin = slotOrigin(effect, input);
+    auto found = input.buffers().find(effect.memory->rootBuffer);
+    if (!origin || origin->base || found == input.buffers().end() || found->second.size() != 1) {
+        return std::nullopt;
+    }
+    const uint64_t bytes = found->second.front()->allocateSize;
+    int64_t base = 0, stride = 1;
+    AffineBinaryOpExpr modulo(nullptr);
+    SmallVector<AffineExpr> terms{origin->byteOffset};
+    while (!terms.empty()) {
+        auto expression = terms.pop_back_val();
+        if (auto number = dyn_cast<AffineConstantExpr>(expression)) {
+            if (llvm::AddOverflow(base, number.getValue(), base)) { return std::nullopt; }
+            continue;
+        }
+        auto binary = dyn_cast<AffineBinaryOpExpr>(expression);
+        if (binary && binary.getKind() == AffineExprKind::Add) {
+            terms.push_back(binary.getLHS());
+            terms.push_back(binary.getRHS());
+            continue;
+        }
+        if (modulo) { return std::nullopt; }
+        if (binary && binary.getKind() == AffineExprKind::Mul) {
+            auto factor = dyn_cast<AffineConstantExpr>(binary.getRHS());
+            if (!factor || factor.getValue() <= 0) { return std::nullopt; }
+            stride = factor.getValue();
+            binary = dyn_cast<AffineBinaryOpExpr>(binary.getLHS());
+        }
+        if (!binary || binary.getKind() != AffineExprKind::Mod) { return std::nullopt; }
+        modulo = binary;
+    }
+    auto modulus = modulo ? dyn_cast<AffineConstantExpr>(modulo.getRHS()) : AffineConstantExpr{};
+    if (!modulus || modulus.getValue() <= 0 || base < 0 || !bytes || bytes > static_cast<uint64_t>(stride)) {
+        return std::nullopt;
+    }
+    const uint64_t count = modulus.getValue();
+    if (count > (static_cast<uint64_t>(INT64_MAX) - base) / static_cast<uint64_t>(stride)) {
+        return std::nullopt;
+    }
+    auto pattern = matchRotatingNumerator(modulo.getLHS(), origin->symbols, loop, count, index, allowParameters);
+    if (!pattern) { return std::nullopt; }
+    return PhysicalRotation{*pattern, count, static_cast<uint64_t>(stride),
+        {effect.memory->scope, static_cast<uint64_t>(base), static_cast<uint64_t>(base) + bytes}};
+}
 
 std::optional<SlotRanges> withinSlotRanges(const SyncStorageEffect& effect,
                                                            const SyncInput& input, uint64_t bytes)

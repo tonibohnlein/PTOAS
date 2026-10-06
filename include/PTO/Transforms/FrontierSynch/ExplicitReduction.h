@@ -26,9 +26,12 @@ struct ExplicitReduction {
 // Only payload IDs and pipe labels are consumed from occurrences. IDs must be
 // unique and generators must point forward in occurrence order. Duplicate edges
 // are allowed. Failure returns only an error, never a partial reduction.
-// Expected O(n + g + nk + k|F*|) time and O(nk + n + g) storage. Pipe labels
+// Native prerequisites are fixed C->I edges and are never emitted as demands.
+// With h such edges, expected time is O(n + g + nk + k(h + |F*|)) and storage
+// is O(nk + n + g + h). Pipe labels
 // are compacted; their numerical values do not determine allocation sizes.
 ExplicitReduction reduceExplicitDemands(llvm::ArrayRef<ExplicitEffects> occurrences,
-                                        llvm::ArrayRef<StorageGenerator> generators);
+                                        llvm::ArrayRef<StorageGenerator> generators,
+                                        llvm::ArrayRef<StorageGenerator> nativePrerequisites = {});
 } // namespace mlir::pto::frontiersynch
 #endif

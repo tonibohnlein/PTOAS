@@ -161,7 +161,16 @@ bool scanCase(const llvm::json::Object& input, llvm::json::Object& output)
                 generators.push_back({record.source, record.target});
             }
         }
-        output["reduction"] = dumpReduction(fs::reduceExplicitDemands(effects, generators));
+        std::vector<fs::StorageGenerator> native;
+        if (const auto* entries = input.getArray("native_prerequisites")) {
+            std::vector<fs::PeriodicRecord> parsed;
+            if (!records(*entries, parsed)) { return false; }
+            for (const auto& record : parsed) {
+                if (record.displacement) { return false; }
+                native.push_back({record.source, record.target});
+            }
+        }
+        output["reduction"] = dumpReduction(fs::reduceExplicitDemands(effects, generators, native));
     }
     return true;
 }
@@ -395,7 +404,11 @@ bool graphCase(const llvm::json::Object& input, llvm::json::Object& output)
             return false;
         }
     }
-    const auto analysis = fs::analyzePeriodicDemands(payloads, generators);
+    std::vector<fs::PeriodicRecord> native;
+    if (const auto* entries = input.getArray("native_prerequisites")) {
+        if (!records(*entries, native)) { return false; }
+    }
+    const auto analysis = fs::analyzePeriodicDemands(payloads, generators, native);
     auto summary = dumpPeriodicAnalysis(analysis);
     for (auto& entry : summary) {
         output[entry.first] = std::move(entry.second);

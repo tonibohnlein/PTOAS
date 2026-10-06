@@ -39,6 +39,7 @@ struct Child {
     Expr trips = 0;
     std::vector<TemplateEndpointAnchor> anchors;
     std::vector<Pattern> patterns;
+    SmallVector<std::size_t> dischargedEffects;
     ExplicitAnalysis explicitAnalysis;
     PeriodicAnalysis periodic;
     NumericTemplateEndpoints endpoints;
@@ -69,6 +70,7 @@ struct SequenceAnalysisState {
     std::vector<Port> ports;
     std::map<std::tuple<uint32_t, uint32_t, Expr>, uint32_t> portIds;
     std::vector<Crossing> crossings;
+    std::vector<Crossing> nativeValueCrossings;
     std::map<std::pair<uint32_t, uint32_t>, uint32_t> crossingIds;
     std::vector<std::vector<Expr>> graph;
     std::vector<std::vector<CellBoundary>> boundaries;
@@ -124,6 +126,7 @@ struct SequenceAnalysisState {
     bool collect();
     bool explicitChild(const StructureNode& node);
     bool loopChild(const StructureNode& node);
+    bool boundaryLoop(scf::ForOp loop);
     bool rotatingPatterns(Child& child, const RotatingAnalysis& analysis, const RecognitionResult& recognized);
     bool numericPatterns(Child& child, const NumericTemplate& numeric);
     bool partition();
@@ -131,6 +134,7 @@ struct SequenceAnalysisState {
     void bindAdapters();
     bool importSummaries();
     void bridges();
+    bool valueBridges();
     void canonicalizeCrossings();
     bool closure();
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare();

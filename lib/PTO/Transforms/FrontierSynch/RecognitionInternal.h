@@ -9,6 +9,10 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_RECOGNITIONINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 namespace mlir::pto::frontiersynch::detail {
+// Caller proves these branch choices on a contiguous interval of whole loop
+// iterations. The result must only be queried/emitted on that interval.
+GuardedRecognition recognizeRotatingSlice(scf::ForOp loop, const PhaseIndex& index,
+    const SyncInput& input, const DenseMap<Value, bool>& choices);
 bool entryExpression(Value value, Operation* entry, const PhaseIndex& index,
                      SmallVectorImpl<Operation*>& recipe);
 void normalizeFragments(RecognitionResult& result, const SyncStorageEffects& effects);

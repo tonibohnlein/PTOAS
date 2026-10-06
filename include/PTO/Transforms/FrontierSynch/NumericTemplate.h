@@ -65,6 +65,7 @@ struct NumericTemplate {
     SmallVector<TemplatePayload, 0> payloads;
     SmallVector<SyncStorageCell> atoms;
     SmallVector<std::pair<uint32_t, uint32_t>> uniformConflicts;
+    SmallVector<std::pair<uint32_t, uint32_t>> nativePrerequisites, valueDemands;
     uint64_t period = 0; // 1 only after complete contract verification.
     uint64_t refresh = 0; // 1 for every written local atom; read-only atoms need none.
     // No selectors, reachability, allocation or synchronization are exported.

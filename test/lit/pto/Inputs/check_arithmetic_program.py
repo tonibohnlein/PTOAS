@@ -23,7 +23,8 @@ documents = [json.loads(line.removeprefix("arithmetic-json ")) for line in resul
              if line.startswith("arithmetic-json ")]
 if len(documents) != 7:
     raise RuntimeError("expected all seven arithmetic fixtures")
-accepted = {"nested_reset": (3, 2), "triangular": (2, 1), "siblings": (4, 2), "empty_minimum": (1, 0)}
+accepted = {"nested_reset": (3, 2), "triangular": (2, 1), "siblings": (4, 2), "empty_minimum": (1, 0),
+            "ssa_prerequisite": (2, 0)}
 for document in documents:
     name = document["function"]
     if name in accepted:
@@ -46,6 +47,8 @@ def explicit_trace(name, bounds):
     if name == "siblings":
         return [(0, ())] + [(1, (i,)) for i in range(bounds[0])] + [
             (2, (i,)) for i in range(bounds[1])] + [(3, ())]
+    if name == "ssa_prerequisite":
+        return [(0, ()), (1, ())]
     return []  # empty_minimum has a negative upper bound.
 
 
@@ -69,7 +72,7 @@ for document in documents:
             assert actual == (a in ranks), (name, "occurrence", a, bounds)
             checks += 1
             base = 1024 * (coords[-1] % 2) if name == "nested_reset" and site < 2 else 0
-            writes = site == 0 or (name == "siblings" and site == 2)
+            writes = site == 1 if name == "ssa_prerequisite" else (site == 0 or (name == "siblings" and site == 2))
             for kind in (4, 5):
                 for byte in (-1, 0, 1, 3, 4, 1023, 1024, 1025, 1027, 1028):
                     expected = a in ranks and (kind == 5) == writes and base <= byte < base + 4
@@ -85,7 +88,9 @@ for document in documents:
                 for source, target in itertools.product((1, 2), repeat=2):
                     expected = same_pipe and ((before and (source, target) != (2, 1)) or
                                              (a == b and a in ranks and (source, target) == (1, 2)))
+                    if name == "ssa_prerequisite" and a == (0, ()) and b == (1, ()) and (source, target) == (2, 1):
+                        expected = True
                     actual = contains((3, site, b[0], source, target), values)
                     assert actual == expected, (name, "native", a, b, bounds, source, target)
                     checks += 1
-print("arithmetic exports: 4 accepted, 3 rejected; finite semantic checks:", checks)
+print("arithmetic exports: 5 accepted, 2 rejected; finite semantic checks:", checks)

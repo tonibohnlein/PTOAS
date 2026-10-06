@@ -7,21 +7,29 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/STLExtras.h"
 #include <algorithm>
 
 namespace mlir::pto::frontiersynch {
 LogicalResult PhaseIndex::build(func::FuncOp source, const SyncInput& input)
 {
+    return build(source, input.instructions());
+}
+
+LogicalResult PhaseIndex::build(func::FuncOp source, ArrayRef<const CompoundInstanceElement*> phases)
+{
     anchorPhases.clear();
     valuePrerequisites.clear();
+    prerequisites.clear();
     dominance.invalidate();
     function = {};
     if (!source) {
         return failure();
     }
     DenseMap<Operation*, SmallVector<const CompoundInstanceElement*>> pending;
-    for (const auto* phase : input.instructions()) {
+    for (const auto* phase : phases) {
         Operation* anchor = phase->elementOp;
         if (!anchor || !anchor->getBlock() || !source->isProperAncestor(anchor)) {
             return source.emitError("shared synchronization phase has no anchor in this function");
@@ -30,35 +38,111 @@ LogicalResult PhaseIndex::build(func::FuncOp source, const SyncInput& input)
     }
     anchorPhases = std::move(pending);
     function = source;
-    // Follow SSA use chains once, including values yielded by nested regions.
-    SmallVector<Value> work;
-    DenseSet<Value> seen;
-    auto append = [&](ValueRange values) {
-        for (Value value : values) {
-            if (seen.insert(value).second) {
-                work.push_back(value);
-            }
-        }
-    };
     for (const auto& entry : anchorPhases) {
-        append(entry.first->getResults());
-    }
-    while (!work.empty()) {
-        Value value = work.pop_back_val();
-        for (Operation* user : value.getUsers()) {
-            const bool terminator = user->hasTrait<OpTrait::IsTerminator>();
-            const bool consumesCompletion = !phasesFor(user).empty() || user->getNumRegions() || terminator;
-            if (consumesCompletion) {
-                valuePrerequisites.insert(user);
-            }
-            append(user->getResults());
-            const bool yieldsToRegion = terminator && user->getParentOp() != source.getOperation();
-            if (yieldsToRegion) {
-                append(user->getParentOp()->getResults());
-            }
+        if (entry.second.size() != 1) {
+            continue;
+        }
+        for (Value value : entry.first->getResults()) {
+            traceResult(entry.second.front(), value);
         }
     }
     return success();
+}
+
+void PhaseIndex::traceResult(const CompoundInstanceElement* producer, Value result)
+{
+    const auto availability = resultAvailability(*producer, result);
+    if (availability == SyncResultAvailability::NonScalar) {
+        return;
+    }
+    const bool native = availability == SyncResultAvailability::SynchronousScalar;
+    SmallVector<Value> work{result};
+    DenseSet<Value> seen;
+    auto record = [&](Operation* consumer) {
+        auto& entries = prerequisites[consumer];
+        if (llvm::none_of(entries, [producer](const auto& entry) { return entry.producer == producer; })) {
+            entries.push_back({producer, consumer, native});
+        }
+    };
+    while (!work.empty()) {
+        Value value = work.pop_back_val();
+        if (!seen.insert(value).second) {
+            continue;
+        }
+        for (OpOperand& use : value.getUses()) {
+            Operation* user = use.getOwner();
+            if (!phasesFor(user).empty()) {
+                record(user);
+            } else if (auto branch = dyn_cast<scf::IfOp>(user)) {
+                if (!native) {
+                    valuePrerequisites.insert(user);
+                }
+                record(user);
+                branch.walk([&](Operation* nested) {
+                    if (!phasesFor(nested).empty()) {
+                        record(nested);
+                    }
+                });
+            } else if (isa<scf::YieldOp>(user) && isa<scf::IfOp>(user->getParentOp())) {
+                work.push_back(user->getParentOp()->getResult(use.getOperandNumber()));
+            } else if (auto loop = dyn_cast<scf::ForOp>(user); loop && use.getOperandNumber() < 3 && native) {
+                // Native scalar bounds are available before loop execution.
+                // They order body users without becoming storage demands.
+                record(user);
+                loop.walk([&](Operation* nested) {
+                    if (!phasesFor(nested).empty()) { record(nested); }
+                });
+            } else if (user->getNumRegions() || isa<scf::YieldOp>(user)) {
+                // A carried value needs an occurrence map, not a static SSA edge.
+                valuePrerequisites.insert(user->getNumRegions() ? user : user->getParentOp());
+            } else if (isa<func::ReturnOp>(user)) {
+                if (!native) {
+                    valuePrerequisites.insert(user);
+                }
+            } else if (isMemoryEffectFree(user)) {
+                llvm::append_range(work, user->getResults());
+            } else {
+                valuePrerequisites.insert(user);
+            }
+        }
+    }
+}
+
+ArrayRef<ValuePrerequisite> PhaseIndex::prerequisitesFor(Operation* operation) const
+{
+    auto found = prerequisites.find(operation);
+    return found == prerequisites.end() ? ArrayRef<ValuePrerequisite>{} : found->second;
+}
+
+PhasePrerequisiteEdges PhaseIndex::mapPrerequisites(ArrayRef<const CompoundInstanceElement*> phases) const
+{
+    PhasePrerequisiteEdges output;
+    DenseMap<const CompoundInstanceElement*, uint32_t> positions;
+    if (phases.size() > UINT32_MAX) {
+        output.error = "value prerequisite identity overflow";
+        return output;
+    }
+    for (uint32_t i = 0; i < phases.size(); ++i) {
+        if (!positions.try_emplace(phases[i], i).second) {
+            output.error = "repeated scalar producer needs an occurrence mapping";
+            return output;
+        }
+    }
+    for (uint32_t target = 0; target < phases.size(); ++target) {
+        for (const auto& requirement : prerequisitesFor(phases[target]->elementOp)) {
+            auto source = positions.find(requirement.producer);
+            if (source == positions.end()) {
+                continue;
+            }
+            if (source->second >= target) {
+                output.error = "value prerequisite needs a forward occurrence mapping";
+                return output;
+            }
+            auto& edges = requirement.native ? output.native : output.demands;
+            edges.push_back({source->second, target});
+        }
+    }
+    return output;
 }
 
 bool PhaseIndex::needsValuePrerequisite(Operation* operation) const

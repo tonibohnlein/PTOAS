@@ -13,6 +13,7 @@
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Pass/PassManager.h"
@@ -456,6 +457,49 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
     return success(valid && succeeded(verify(function)));
 }
 
+namespace {
+// Exercise the public composition API, rather than boundaryLoop's private path.
+bool checkSlicePrerequisite(func::FuncOp function, const pto::SyncInput& input)
+{
+    auto bounds = function->getAttrOfType<DenseI64ArrayAttr>("test.slice_bounds");
+    if (!bounds) { return true; }
+    if (bounds.size() != 2 || bounds[0] < 0 || bounds[1] < bounds[0]) { return false; }
+    fs::PhaseIndex index;
+    if (failed(index.build(function, input))) { return false; }
+    SmallVector<Operation*> prefix;
+    scf::ForOp loop;
+    for (auto& op : function.front()) {
+        if (auto candidate = dyn_cast<scf::ForOp>(op)) { loop = candidate; break; }
+        prefix.push_back(&op);
+    }
+    if (!loop) { return false; }
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto finite = fs::analyzeFiniteGuarded(function, prefix, index, input, arena);
+    auto first = fs::finiteGuardedRegionalResult(finite);
+    auto recognized = fs::recognizeGuardedRotating(loop, index, input, input.accesses());
+    auto periodic = fs::analyzeGuardedRotating(loop, input, recognized, arena);
+    if (!finite.error.empty() || !periodic.error.empty()) { return false; }
+    const auto zero = arena->constant(0), begin = arena->constant(bounds[0]), end = arena->constant(bounds[1]);
+    std::string error;
+    auto second = fs::guardedRotatingRegionalResult(function, input, periodic, error, fs::PeriodicSlice{begin, end});
+    if (failed(second) || first.anchors.size() != 1 || second->anchors.size() != 1) { return false; }
+    auto compose = [&](fs::RegionalAnalysis slice) {
+        return fs::composeRegionalSequence(function, arena, {first, std::move(slice)});
+    };
+    auto composed = compose(*second);
+    if (!composed.error.empty()) { return false; }
+    auto required = fs::sequenceEventReachability(composed,
+        {0, 0, zero, fs::PeriodicEventKind::Completion}, {1, 0, begin, fs::PeriodicEventKind::Start});
+    if (!required || arena->constantValue(*required) != 1) { return false; }
+    auto absent = fs::sequenceEventReachability(composed,
+        {0, 0, zero, fs::PeriodicEventKind::Completion}, {1, 0, zero, fs::PeriodicEventKind::Start});
+    if (!absent || arena->constantValue(*absent) != 0) { return false; }
+    second->firstOrdinal = arena->boolean(true);
+    if (compose(*second).error.empty()) { return false; }
+    second->firstOrdinal = fs::RegionExpressions::invalid;
+    return !compose(*second).error.empty();
+}
+} // namespace
 LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolicy policy)
 {
     pto::SyncInput input(policy);
@@ -489,6 +533,7 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         {"insertion_error", analysis.insertionError},
         {"prepared", succeeded(prepared)},
         {"queries_available", validQueries}, {"unchanged", before == after},
+        {"slice_prerequisite", checkSlicePrerequisite(function, input)},
         {"children", analysis.cost.children}, {"cells", analysis.cost.cells},
         {"ports", analysis.cost.ports}, {"crossings", analysis.cost.crossings},
         {"physical_fragments", analysis.cost.physicalFragments},

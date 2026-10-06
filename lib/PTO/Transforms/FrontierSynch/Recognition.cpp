@@ -11,6 +11,7 @@
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "RecognitionInternal.h"
 #include "../InsertSync/SyncEffectRanges.h"
+#include "../InsertSync/SyncRegionArithmetic.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/STLExtras.h"
@@ -65,6 +66,8 @@ struct Family {
     std::optional<SyncStorageCell> contiguous;
     uint64_t bytes = 0;
     uint64_t count = 0;
+    std::optional<SyncStorageCell> firstPhysicalSlot;
+    uint64_t physicalSlotStride = 0;
 };
 Family geometry(const SyncInput& input, const BaseMemInfo& memory, uint64_t count)
 {
@@ -113,6 +116,78 @@ void checkDisjoint(const Families& families, RecognitionResult& result, Operatio
     }
 }
 
+bool dischargeGlobal(std::size_t id, scf::ForOp loop, const SyncInput& input, const PhaseIndex& index)
+{
+    const auto& effects = input.accesses();
+    const auto& effect = effects.effects()[id];
+    if (effect.memory->scope != AddressSpace::GM || !effects.independentOfOtherPhases(id)) {
+        return false;
+    }
+    const bool phaseWritesGM = llvm::any_of(effects.effectsFor(effect.phase), [&](std::size_t other) {
+        const auto& candidate = effects.effects()[other];
+        return candidate.memory->scope == AddressSpace::GM && candidate.mode == SyncAccessMode::Write;
+    });
+    if (!phaseWritesGM) { return true; }
+    // A repeated writer must also have disjoint visits. Check every GM piece
+    // of this phase together, so separate output operands cannot hide reuse.
+    std::optional<int64_t> translation;
+    uint64_t begin = UINT64_MAX, end = 0;
+    Value base;
+    AffineExpr commonOrigin;
+    SmallVector<Value> commonSymbols;
+    for (auto other : effects.effectsFor(effect.phase)) {
+        const auto& candidate = effects.effects()[other];
+        if (candidate.memory->scope != AddressSpace::GM) { continue; }
+        if (!effects.independentOfOtherPhases(other) || candidate.regions.empty()) { return false; }
+        for (const auto& region : candidate.regions) {
+            auto iv = llvm::find(region.symbols, loop.getInductionVar());
+            if (iv == region.symbols.end() || (base && base != region.base)) { return false; }
+            base = region.base;
+            const auto position = iv - region.symbols.begin();
+            auto* context = loop.getContext();
+            SmallVector<Operation*> recipe;
+            for (unsigned i = 0; i < region.symbols.size(); ++i) {
+                if (i != position && !detail::entryExpression(region.symbols[i], loop, index, recipe)) {
+                    return false;
+                }
+            }
+            for (auto extent : region.extents) {
+                if (extent.isFunctionOfSymbol(position)) { return false; }
+            }
+            const auto dims = region.extents.size(), syms = region.symbols.size();
+            auto parts = mlir::pto::detail::splitTranslation(region.byteOffset, dims, syms, position);
+            if (!parts || (translation && *translation != parts->second)) { return false; }
+            translation = parts->second;
+            auto zero = parts->first;
+            SmallVector<AffineExpr> zeros(dims, getAffineConstantExpr(0, context));
+            auto origin = simplifyAffineExpr(zero.replaceDims(zeros), 0, syms);
+            if (commonOrigin && (commonOrigin != origin || commonSymbols != region.symbols)) { return false; }
+            commonOrigin = origin;
+            commonSymbols = region.symbols;
+            auto fixed = region;
+            fixed.base = {};
+            auto relative = mlir::pto::detail::checkedAdd(zero, mlir::pto::detail::checkedMul(
+                origin, getAffineConstantExpr(-1, context)));
+            if (!relative) { return false; }
+            fixed.byteOffset = simplifyAffineExpr(relative, dims, syms);
+            for (unsigned i = 0; i < syms; ++i) {
+                if (fixed.byteOffset.isFunctionOfSymbol(i) || llvm::any_of(fixed.extents, [i](AffineExpr extent) {
+                        return extent.isFunctionOfSymbol(i);
+                    })) { return false; }
+            }
+            fixed.symbols.clear();
+            SmallVector<SyncStorageCell> ranges;
+            if (!mlir::pto::detail::materializeRegion(fixed, AddressSpace::GM, ranges)) { return false; }
+            for (auto range : ranges) { begin = std::min(begin, range.begin); end = std::max(end, range.end); }
+        }
+    }
+    auto step = constant(loop.getStep());
+    if (!translation || !step || *step <= 0) { return false; }
+    auto displacement = APInt(128, *translation, true) * APInt(128, *step);
+    if (displacement.isNegative()) { displacement = -displacement; }
+    return begin == UINT64_MAX || displacement.uge(APInt(128, end - begin));
+}
+
 void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
                    const SyncStorageEffects& effects, Families& families, RecognitionResult& result,
                    const PhaseIndex& index, bool allowParameters)
@@ -120,6 +195,10 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
     const auto& effect = effects.effects()[id];
     const auto& memory = *effect.memory;
     Operation* anchor = effect.phase->elementOp;
+    if (dischargeGlobal(id, loop, input, index)) {
+        result.dischargedEffects.push_back(id);
+        return;
+    }
     // An unresolved address has an occurrence-independent alias predicate.
     // Its obligations are added beside the rotating geometric generators.
     if (!effect.rangesMaterialized && effect.regions.empty()) { return; }
@@ -129,9 +208,12 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
         return;
     }
     auto multi = dyn_cast<MultiTileBufType>(memory.rootBuffer.getType());
-    const uint64_t count = multi ? multi.getCount() : 1;
+    const auto physical = detail::physicalRotation(effect, input, loop, index, allowParameters);
+    const uint64_t count = physical ? physical->count : (multi ? multi.getCount() : 1);
     std::optional<detail::SlotPattern> pattern;
-    if (effect.selection && effect.selection->family == memory.rootBuffer) {
+    if (physical) {
+        pattern = physical->pattern;
+    } else if (effect.selection && effect.selection->family == memory.rootBuffer) {
         pattern = detail::matchRotatingSlot(effect.selection->selector, loop, count, index, allowParameters);
     } else if (!effect.selection && count == 1) {
         pattern = detail::SlotPattern{};
@@ -156,9 +238,31 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
         }
         pattern->stride = (stride * APInt(128, *step)).urem(modulus).getZExtValue();
     }
-    auto found = families.find(memory.rootBuffer);
+    Value familyValue = memory.rootBuffer;
+    if (physical) {
+        for (const auto& entry : families) {
+            const auto& candidate = entry.second;
+            if (candidate.firstPhysicalSlot && candidate.count == count &&
+                candidate.physicalSlotStride == physical->strideBytes &&
+                sameStorageDomain(*candidate.firstPhysicalSlot, physical->firstSlot) &&
+                candidate.firstPhysicalSlot->begin == physical->firstSlot.begin &&
+                candidate.firstPhysicalSlot->end == physical->firstSlot.end) {
+                familyValue = entry.first;
+                break;
+            }
+        }
+    }
+    auto found = families.find(familyValue);
     if (found == families.end()) {
-        found = families.try_emplace(memory.rootBuffer, geometry(input, memory, count)).first;
+        auto description = geometry(input, memory, count);
+        if (physical) {
+            description.firstPhysicalSlot = physical->firstSlot;
+            description.physicalSlotStride = physical->strideBytes;
+            description.bytes = physical->firstSlot.end - physical->firstSlot.begin;
+            description.contiguous = SyncStorageCell{physical->firstSlot.space, physical->firstSlot.begin,
+                physical->firstSlot.begin + (count - 1) * physical->strideBytes + description.bytes};
+        }
+        found = families.try_emplace(familyValue, std::move(description)).first;
     }
     auto& family = found->second;
     // Distinguish an observed normalized form from proven machine arithmetic.
@@ -170,7 +274,7 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
     }
     family.stride = pattern->stride;
     std::optional<detail::SlotRanges> atoms;
-    if ((!family.contiguous && family.slots.size() != count) || memory.aliasesUnknownRange) {
+    if ((!family.contiguous && family.slots.size() != count) || (memory.aliasesUnknownRange && !physical)) {
         result.note(RecognitionIssue::UnknownGeometry, anchor);
     } else {
         const auto bytes = family.bytes;
@@ -179,8 +283,10 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
             result.note(RecognitionIssue::WithinSlotFootprint, anchor);
         }
     }
-    RotatingAccess access{id, memory.rootBuffer, count, pattern->stride, pattern->offset,
+    RotatingAccess access{id, familyValue, count, pattern->stride, pattern->offset,
                            count / std::gcd(count, pattern->stride), std::nullopt};
+    access.firstPhysicalSlot = family.firstPhysicalSlot;
+    access.physicalSlotStride = family.physicalSlotStride;
     access.parameterOffset = pattern->parameterOffset;
     access.parameters = pattern->parameters;
     access.effects.push_back(id);
