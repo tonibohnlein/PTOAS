@@ -18,9 +18,8 @@ static bool fullMatrixAccessTile(Value value, pto::AddressSpace space,
         return false;
     }
     auto shape = type.getShape();
-    auto valid = type.getValidShape();
     return shape[0] > 0 && shape[0] % 16 == 0 && shape[1] > 0 && shape[1] % 16 == 0 &&
-        (valid.empty() || valid == shape) && type.getPadValueI32() == 0 &&
+        type.getPadValueI32() == 0 &&
         type.getCompactModeI32() == static_cast<int>(pto::CompactMode::Null) &&
         type.getBLayoutValueI32() == static_cast<int>(block) &&
         type.getSLayoutValueI32() == static_cast<int>(inner) && type.getSFractalSizeI32() == fractal;
@@ -59,10 +58,23 @@ static bool matrixAccessNdView(Value value, ArrayRef<int64_t> expectedShape, Typ
     return type && type.getElementType() == element && rows && *rows > 0 && *rows <= 65535 && cols && *cols == 1;
 }
 
-static void addFullMatrixAccess(PTOEffectList& effects, OpOperand& operand, MemoryEffects::Effect* mode)
+// Geometry and instruction modes are checked above. Current valid extents are
+// checked by the shared consumer at this instruction, including descriptor
+// updates and constant extents carried behind dynamically typed operands.
+static SmallVector<int64_t> fullMatrixConditions(ArrayRef<OpOperand*> operands)
+{
+    SmallVector<int64_t> conditions;
+    for (auto* operand : operands) {
+        auto shape = cast<pto::TileBufType>(operand->get().getType()).getShape();
+        conditions.append({static_cast<int64_t>(operand->getOperandNumber()), shape[0], shape[1]});
+    }
+    return conditions;
+}
+static void addFullMatrixAccess(PTOEffectList& effects, OpOperand& operand, MemoryEffects::Effect* mode,
+                                ArrayRef<int64_t> conditions)
 {
     auto identity = mlir::AffineMap::getMultiDimIdentityMap(2, operand.getOwner()->getContext());
-    pto::addAccessRegion(effects, operand, mode, pto::makeAccessRegion(operand, true, identity));
+    pto::addAccessRegion(effects, operand, mode, pto::makeCheckedAccessRegion(operand, identity, conditions));
 }
 
 // Native ND->NZ DMA reads the source rectangle and writes complete NZ blocks.
@@ -70,7 +82,8 @@ static void addFullMatrixAccess(PTOEffectList& effects, OpOperand& operand, Memo
 static bool addMatrixLoadAccessEffects(pto::TLoadOp op, PTOEffectList& effects)
 {
     auto tile = dyn_cast<pto::TileBufType>(op.getDst().getType());
-    if (!tile || !tile.getElementType().isF16() || op.getPadModeAttr() || op.getPadValue() ||
+    if (!tile || (!tile.getElementType().isF16() && !tile.getElementType().isF32()) ||
+        op.getPadModeAttr() || op.getPadValue() ||
         op.getLeftPaddingNum() || op.getRightPaddingNum() || op.getInitOutBuffer() || op.getInitCondition() ||
         op.getOffset() ||
         (op.getCachePolicyAttr() && op.getCachePolicyAttr().getValue() == pto::LoadCachePolicy::L2Bypass) ||
@@ -83,9 +96,10 @@ static bool addMatrixLoadAccessEffects(pto::TLoadOp op, PTOEffectList& effects)
         return false;
     }
     auto identity = mlir::AffineMap::getMultiDimIdentityMap(2, op.getContext());
+    auto conditions = fullMatrixConditions({&op.getDstMutable()});
     pto::addAccessRegion(effects, op.getSrcMutable(), MemoryEffects::Read::get(),
-                        pto::makeAccessRegion(op.getDstMutable(), true, identity));
-    addFullMatrixAccess(effects, op.getDstMutable(), MemoryEffects::Write::get());
+                        pto::makeCheckedAccessRegion(op.getDstMutable(), identity, conditions));
+    addFullMatrixAccess(effects, op.getDstMutable(), MemoryEffects::Write::get(), conditions);
     return true;
 }
 
@@ -107,10 +121,11 @@ static bool addMatrixStoreAccessEffects(pto::TStoreOp op, PTOEffectList& effects
         !matrixAccessNdView(op.getDst(), shape, element)) {
         return false;
     }
-    addFullMatrixAccess(effects, op.getSrcMutable(), MemoryEffects::Read::get());
+    auto conditions = fullMatrixConditions({&op.getSrcMutable()});
+    addFullMatrixAccess(effects, op.getSrcMutable(), MemoryEffects::Read::get(), conditions);
     auto identity = mlir::AffineMap::getMultiDimIdentityMap(2, op.getContext());
     pto::addAccessRegion(effects, op.getDstMutable(), MemoryEffects::Write::get(),
-                        pto::makeAccessRegion(op.getSrcMutable(), true, identity));
+                        pto::makeCheckedAccessRegion(op.getSrcMutable(), identity, conditions));
     return true;
 }
 
@@ -135,15 +150,17 @@ static bool addMatrixMultiplyAccessEffects(PTOEffectList& effects, OpOperand& lh
     auto a = left.getShape();
     auto b = right.getShape();
     auto c = result.getShape();
-    if (!left.getElementType().isF16() || right.getElementType() != left.getElementType() ||
+    if ((!left.getElementType().isF16() && !left.getElementType().isF32()) ||
+        right.getElementType() != left.getElementType() ||
         a[0] > 4095 || a[1] > 4095 || b[1] > 4095 || a[1] != b[0] || c[0] != a[0] || c[1] != b[1]) {
         return false;
     }
+    auto conditions = fullMatrixConditions({&lhs, &rhs, &dst});
     if (accumulator) {
-        addFullMatrixAccess(effects, *accumulator, MemoryEffects::Read::get());
+        addFullMatrixAccess(effects, *accumulator, MemoryEffects::Read::get(), conditions);
     }
-    addFullMatrixAccess(effects, lhs, MemoryEffects::Read::get());
-    addFullMatrixAccess(effects, rhs, MemoryEffects::Read::get());
-    addFullMatrixAccess(effects, dst, MemoryEffects::Write::get());
+    addFullMatrixAccess(effects, lhs, MemoryEffects::Read::get(), conditions);
+    addFullMatrixAccess(effects, rhs, MemoryEffects::Read::get(), conditions);
+    addFullMatrixAccess(effects, dst, MemoryEffects::Write::get(), conditions);
     return true;
 }

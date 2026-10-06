@@ -8,6 +8,7 @@
 // RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
 // RUN: pto-sync-input-test --gm-alias=may-alias --storage-effects %s | FileCheck %s --check-prefix=MAY
 // RUN: pto-sync-input-test --step0-json %s | FileCheck %s --check-prefix=AUDIT
+// RUN: %python %S/Inputs/check_matrix_access_routes.py pto-sync-input-test %s
 // All payload accesses in this full aligned GEMM use shared exact declarations.
 // Conversion to f16 changes the destination byte width, not its rectangle.
 // CHECK-LABEL: storage full_gemm:

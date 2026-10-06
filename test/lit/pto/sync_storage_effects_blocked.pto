@@ -9,13 +9,13 @@
 // CHECK-LABEL: storage blocked: cells=4 all-exact=0
 // CHECK: effect 0 pto.tmov read upper definite-write=0 cells=
 // CHECK: effect 1 pto.tmov write upper definite-write=0 cells=
-// CHECK: effect 2 pto.tmatmul read upper definite-write=0 cells=
-// CHECK: effect 3 pto.tmatmul read upper definite-write=0 cells=
-// CHECK: effect 4 pto.tmatmul write upper definite-write=0 cells=
-// CHECK: effect 5 pto.tmatmul.acc read upper definite-write=0 cells=
-// CHECK: effect 6 pto.tmatmul.acc read upper definite-write=0 cells=
-// CHECK: effect 7 pto.tmatmul.acc read upper definite-write=0 cells=
-// CHECK: effect 8 pto.tmatmul.acc write upper definite-write=0 cells=
+// CHECK: effect 2 pto.tmatmul read exact definite-write=0 cells=
+// CHECK: effect 3 pto.tmatmul read exact definite-write=0 cells=
+// CHECK: effect 4 pto.tmatmul write exact definite-write=1 cells=
+// CHECK: effect 5 pto.tmatmul.acc read exact definite-write=0 cells=
+// CHECK: effect 6 pto.tmatmul.acc read exact definite-write=0 cells=
+// CHECK: effect 7 pto.tmatmul.acc read exact definite-write=0 cells=
+// CHECK: effect 8 pto.tmatmul.acc write exact definite-write=1 cells=
 // CHECK: overlap 0,1=0
 // CHECK: overlap 1,2=1
 // CHECK: conflict 1,2=1

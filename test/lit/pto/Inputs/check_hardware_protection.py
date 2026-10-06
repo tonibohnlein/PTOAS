@@ -106,13 +106,20 @@ def ir_checks(tool, source):
         assert groups[0] and not groups[1] and not groups[2]
         assert groups[3] and groups[3] == groups[4] and groups[0] != groups[3]
         validate(template, json.loads(invoke(tool, '--insertion-trace', path)))
-        # Dynamic valid dimensions currently lack an exact template footprint;
-        # they must not reach insertion with guessed accumulation protection.
+        # Dynamic types with known extents now have exact shared footprints;
+        # footprint precision alone must not infer accumulation protection.
         text = original.replace('32x16xf16, slayout=', '32x16xf16, valid=?x16, slayout=')
         text = text.replace('%a = pto.alloc_tile addr = %base : !a',
                             '%m = arith.constant 32 : index\n'
                             '    %a = pto.alloc_tile addr = %base valid_row = %m : !a')
         path.write_text(text)
+        template = recognized(tool, path)
+        assert not any(p['hardware_protection'] for p in template['payloads'])
+        validate(template, json.loads(invoke(tool, '--insertion-trace', path)))
+        # A genuinely unknown row extent remains unsupported.
+        unknown = text.replace('@accumulation()', '@accumulation(%m: index)')
+        unknown = unknown.replace('    %m = arith.constant 32 : index\n', '')
+        path.write_text(unknown)
         docs = [json.loads(line) for line in invoke(tool, '--recognize', path).splitlines()
                 if line.startswith('{')]
         attempts = [a for d in docs for n in d['nodes'] for a in n['attempts']
