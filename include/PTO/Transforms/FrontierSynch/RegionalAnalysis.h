@@ -19,6 +19,7 @@ namespace mlir::pto::frontiersynch {
 // The periodic quotient itself does not require slot enumeration.
 inline constexpr uint64_t maxRegionalSlotVisits = 256;
 struct RegionalCost {
+    uint64_t repeatedRegions = 0, phaseDescriptions = 0;
     uint64_t children = 0;
     uint64_t cells = 0;
     uint64_t ports = 0;
@@ -58,13 +59,25 @@ struct RegionalAnalysis {
     // Empty vector is the legacy flat interface. Otherwise one frame per type,
     // matching RegionalEvent::visits. Original loops also identify endpoint cuts.
     std::vector<std::vector<scf::ForOp>> outerLoops;
+    // Parallel coordinate divisors. Empty means original ordinal in every frame.
+    std::vector<std::vector<uint64_t>> outerDivisors;
     // Strict payload reference order, including nested coordinates. Event kind
     // does not change occurrence order. Flat producers may use the default.
+    // Exact query producers include intrinsic start->completion and native
+    // per-pipe start/start and completion/completion order. Every other edge
+    // between distinct occurrences advances this reference order. A type and
+    // its full coordinate tuple identify an occurrence, even when phase views
+    // share the same original payload anchor.
+    // Thus S->S, C->C and S->C on one pipe are decided by this order and presence.
     std::function<std::optional<RegionExpressions::Id>(RegionalEvent, RegionalEvent)> referenceBefore;
     // Uniform first ordinal of a contiguous periodic slice. Absent for ordinary
     // explicit/whole-loop exports, whose occurrence numbering starts at zero.
     // Applies to every present payload type; expression belongs to expressions.
     std::optional<RegionExpressions::Id> firstOrdinal;
+    // Optional phase-view binding at original cuts. Site guard identifies this
+    // phase; invocation guard also tests a counterpart in a partial period.
+    std::optional<RegionExpressions::Id> endpointSiteGuard, endpointInvocationGuard;
+    std::function<std::optional<RegionExpressions::Id>(RegionalEvent)> endpointEventGuard;
     std::vector<RegionalStorageBoundary> storageBoundary;
     const SyncStorageEffects* accessModel = nullptr; // Borrows the unchanged shared input.
     std::vector<RegionalAccessBoundary> accessBoundary;

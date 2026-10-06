@@ -150,6 +150,9 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/RepeatedRegionExports.cpp
   FrontierSynch/RepeatedRegionInsertion.cpp
   FrontierSynch/RepeatedRecognition.cpp
+  FrontierSynch/RepeatedPhases.cpp
+  FrontierSynch/PhaseNormalization.cpp
+  FrontierSynch/PhasedRecognition.cpp
   FrontierSynch/RegionSubstitution.cpp
   FrontierSynch/RegionExpressions.cpp
   FrontierSynch/RegionExpressionContext.cpp

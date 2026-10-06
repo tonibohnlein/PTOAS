@@ -24,6 +24,7 @@ using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 namespace {
 constexpr uint64_t MaxVisits = 2000000;
+constexpr uint64_t MaxRequestedVisits = 20000000;
 constexpr uint64_t MaxEvents = 100000;
 constexpr unsigned MaxDepth = 64;
 class Interpreter {
@@ -63,6 +64,7 @@ private:
     llvm::json::Array events;
     std::string error;
     uint64_t visits = 0;
+    uint64_t visitLimit = MaxVisits;
     uint64_t payloads = 0;
     uint64_t outerTrips = 0;
 };
@@ -90,7 +92,7 @@ bool Interpreter::block(Block& body, SmallVectorImpl<Attribute>& yielded, unsign
         return fail("trace control depth exceeded");
     }
     for (auto& op : body) {
-        if (++visits > MaxVisits || events.size() >= MaxEvents) {
+        if (++visits > visitLimit || events.size() >= MaxEvents) {
             return fail("trace visit or event limit exceeded");
         }
         if (isa<scf::YieldOp, func::ReturnOp>(op)) {
@@ -322,6 +324,17 @@ bool Interpreter::operation(Operation& op, unsigned depth)
 }
 llvm::json::Object Interpreter::run(func::FuncOp function)
 {
+    // This is an explicit test-only ceiling for scalar interpretation. Event
+    // and depth limits remain fixed; production analysis does not consult it.
+    if (auto requested = function->getAttr("test.trace_visit_limit")) {
+        auto integer = dyn_cast<IntegerAttr>(requested);
+        if (!integer || !integer.getValue().isSignedIntN(64) || integer.getInt() <= 0 ||
+            static_cast<uint64_t>(integer.getInt()) > MaxRequestedVisits) {
+            return llvm::json::Object{{"function", function.getSymName()},
+                {"error", "test.trace_visit_limit must be in [1, 20000000]"}};
+        }
+        visitLimit = static_cast<uint64_t>(integer.getInt());
+    }
     auto supplied = function->getAttrOfType<DenseI64ArrayAttr>("test.trace_arguments");
     std::size_t index = 0;
     for (auto argument : function.getArguments()) {
@@ -336,7 +349,8 @@ llvm::json::Object Interpreter::run(func::FuncOp function)
         error = "trace requires a single-block defined function";
     }
     return llvm::json::Object{{"function", function.getSymName()}, {"error", error},
-        {"payloads", payloads}, {"outer_trips", outerTrips}, {"visits", visits}, {"events", std::move(events)}};
+        {"payloads", payloads}, {"outer_trips", outerTrips}, {"visits", visits},
+        {"visit_limit", visitLimit}, {"events", std::move(events)}};
 }
 } // namespace
 llvm::json::Object traceStructuredLogicalInsertion(func::FuncOp function,
@@ -543,12 +557,17 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         {"function", function.getSymName()}, {"error", analysis.error},
         {"insertion_error", analysis.insertionError},
         {"prepared", succeeded(prepared)},
+        {"nested_matching", succeeded(prepared) && (**prepared).nestedIdentities},
+        {"allocation_interface", failed(prepared) ? "no-logical-plan" :
+            ((**prepared).nestedIdentities ? "nested-not-implemented" :
+             ((**prepared).regionalAllocation || (**prepared).allocationCertificate ? "constructed" : "unavailable"))},
         {"queries_available", validQueries}, {"unchanged", before == after},
         {"slice_prerequisite", checkSlicePrerequisite(function, input)}, {"region_scope", regionScope},
         {"children", analysis.cost.children}, {"cells", analysis.cost.cells},
         {"ports", analysis.cost.ports}, {"crossings", analysis.cost.crossings},
         {"physical_fragments", analysis.cost.physicalFragments},
         {"rotating_residues", analysis.cost.rotatingResidues}, {"numeric_visits", analysis.cost.numericVisits},
+        {"repeated_regions", analysis.cost.repeatedRegions}, {"phase_descriptions", analysis.cost.phaseDescriptions},
         {"selector_comparisons", analysis.cost.selectorComparisons},
         {"crossing_candidates", analysis.cost.crossingCandidates},
         {"implication_checks", analysis.cost.implicationChecks},

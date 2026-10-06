@@ -264,6 +264,20 @@ RegionExpressions::Id RegionExpressions::binary(Kind kind, Id a, Id b)
         if (kind == Kind::Sub) { return constant(0); }
         if (logic) { return a; }
     }
+    // These are unsigned identities. Signed loop-bound comparisons retain
+    // their separate semantics, including for negative source indices.
+    if (kind == Kind::Le && (av == 0 || bv == UINT64_MAX)) { return boolean(true); }
+    if (kind == Kind::Lt && (bv == 0 || av == UINT64_MAX)) { return boolean(false); }
+    if (kind == Kind::Le && av && *av != 0) { return lt(constant(*av - 1), b); }
+    if ((kind == Kind::Lt || kind == Kind::Le) && nodes[a].kind == Kind::Sub && nodes[a].a == b) {
+        auto amount = constantValue(nodes[a].b);
+        // For a positive unsigned c, x-c wraps precisely when x<c.
+        if (amount && *amount != 0) { return le(nodes[a].b, b); }
+    }
+    if (kind == Kind::Eq) {
+        if (bv == 0 && nodes[a].kind == Kind::Sub) { return eq(nodes[a].a, nodes[a].b); }
+        if (av == 0 && nodes[b].kind == Kind::Sub) { return eq(nodes[b].a, nodes[b].b); }
+    }
     if (logic && ((nodes[a].kind == Kind::Not && nodes[a].a == b) ||
                   (nodes[b].kind == Kind::Not && nodes[b].a == a))) {
         return boolean(kind == Kind::Or);

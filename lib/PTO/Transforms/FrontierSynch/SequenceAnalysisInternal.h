@@ -67,11 +67,14 @@ struct SequenceAnalysisState {
     PhaseIndex& index;
     bool indexReady = false;
     bool completeInvocation = true;
+    bool reconstructPrerequisites = true;
+    bool requireEndpoints = true;
     SmallVector<scf::ForOp> requiredOuterLoops;
     std::shared_ptr<RegionExpressions> arena;
     RegionExpressions& expressions;
     SequenceCost costs;
     std::string error;
+    std::string repeatedAttempt;
     std::vector<Child> children;
     std::vector<SyncStorageCell> cells;
     std::vector<Port> ports;
@@ -150,6 +153,7 @@ struct SequenceAnalysisState {
     bool explicitChild(const StructureNode& node);
     bool loopChild(const StructureNode& node);
     bool repeatedChild(const StructureNode& node, Expr trips);
+    bool phasedChild(const StructureNode& node, Expr trips);
     bool boundaryLoop(scf::ForOp loop);
     bool rotatingPatterns(Child& child, const RotatingAnalysis& analysis, const RecognitionResult& recognized);
     bool numericPatterns(Child& child, const NumericTemplate& numeric);

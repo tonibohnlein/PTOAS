@@ -16,9 +16,12 @@ bool validRegionalEvent(const RegionalAnalysis& region, const RegionalEvent& eve
     const auto& e = *region.expressions;
     auto integer = [&](RegionExpressions::Id id) { return id < e.size() && !e.isBoolean(id); };
     if (!integer(event.ordinal)) { return false; }
-    if (region.outerLoops.empty()) { return event.visits.empty(); }
+    if (region.outerLoops.empty()) { return region.outerDivisors.empty() && event.visits.empty(); }
     if (region.outerLoops.size() != region.anchors.size() ||
         region.outerLoops[event.type].size() != event.visits.size()) { return false; }
+    if (!region.outerDivisors.empty() && (region.outerDivisors.size() != region.anchors.size() ||
+        region.outerDivisors[event.type].size() != event.visits.size() ||
+        llvm::any_of(region.outerDivisors[event.type], [](uint64_t value) { return value == 0; }))) { return false; }
     return llvm::all_of(event.visits, integer);
 }
 std::optional<RegionExpressions::Id> regionalPresence(const RegionalAnalysis& region, RegionalEvent event)
@@ -31,6 +34,27 @@ std::optional<RegionExpressions::Id> regionalReachability(
 {
     if (!validRegionalEvent(region, source) || !validRegionalEvent(region, target) || !region.reachability) {
         return std::nullopt;
+    }
+    // Ordered starts/completions and forward-only modeled demands already
+    // decide these native event-kind pairs. C->S still needs the full query.
+    if (region.capabilities.exactQueries && source.type < region.anchors.size() &&
+        target.type < region.anchors.size() &&
+        region.anchors[source.type].phase && region.anchors[target.type].phase &&
+        region.anchors[source.type].phase->kPipeValue == region.anchors[target.type].phase->kPipeValue &&
+        !(source.kind == PeriodicEventKind::Completion && target.kind == PeriodicEventKind::Start)) {
+        auto before = regionalReferenceBefore(region, source, target);
+        auto ps = regionalPresence(region, source), pt = regionalPresence(region, target);
+        if (before && ps && pt) {
+            auto& e = *region.expressions;
+            auto identical = e.boolean(source.type == target.type && source.visits.size() == target.visits.size());
+            identical = e.land(identical, e.eq(source.ordinal, target.ordinal));
+            if (source.visits.size() == target.visits.size()) {
+                for (std::size_t coordinate = 0; coordinate < source.visits.size(); ++coordinate) {
+                    identical = e.land(identical, e.eq(source.visits[coordinate], target.visits[coordinate]));
+                }
+            }
+            return e.land(e.land(*ps, *pt), e.lor(*before, identical));
+        }
     }
     return region.reachability(std::move(source), std::move(target));
 }

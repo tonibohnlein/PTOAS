@@ -50,7 +50,8 @@ struct SequenceAnalysis {
 SequenceAnalysis analyzeSequence(func::FuncOp function, const SyncInput& input,
                                  const ProgramRecognition& program);
 SequenceAnalysis composeRegionalSequence(func::FuncOp function,
-    std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children);
+    std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
+    bool reconstructPrerequisites = true, bool requireEndpoints = true);
 // Analyze original children of a selected sequence, or one explicit/loop node.
 // The caller supplies a common arena; original cuts and access records remain borrowed.
 SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& input,
