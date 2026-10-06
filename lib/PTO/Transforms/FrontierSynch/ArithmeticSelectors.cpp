@@ -114,6 +114,108 @@ const char* construct(const ArithmeticDemandAnalysis& analysis, llvm::ArrayRef<u
     }
     return nullptr;
 }
+// Prove that one affine term equals the selected maximum on a piece.
+bool equalsMaximum(const ArithmeticSelectorTerm& term, const ArithmeticSelectorOutput& output,
+                   const DifferenceBoundSystem& domain)
+{
+    bool attained = false;
+    for (const auto& other : output.lowerBounds) {
+        auto upper = domain.bound(other.input, term.input);
+        if (!upper || *upper + other.offset > term.offset) { return false; }
+        auto lower = domain.bound(term.input, other.input);
+        attained |= lower && *lower + term.offset <= other.offset;
+    }
+    return attained;
+}
+// The DBM hull is exact iff no point violates an atom of each operand.
+// Check pairs of complemented atoms using integer b+1, without distributing a
+// general union complement or enumerating values of parameters/iterations.
+std::optional<DifferenceBoundSystem> exactHull(const DifferenceBoundSystem& a,
+                                               const DifferenceBoundSystem& b)
+{
+    if (a.isSubsetOf(b)) { return b; }
+    if (b.isSubsetOf(a)) { return a; }
+    auto atoms = a.constraints();
+    const auto otherAtoms = b.constraints();
+    std::vector<DifferenceBoundConstraint> common;
+    for (const auto& atom : atoms) {
+        if (auto bound = b.bound(atom.lhs, atom.rhs)) {
+            common.push_back({atom.lhs, atom.rhs, std::max(atom.bound, *bound)});
+        }
+    }
+    auto hull = DifferenceBoundSystem::create(a.dimensions(), common);
+    if (failed(hull)) { return std::nullopt; }
+    for (const auto& x : atoms) {
+        auto hx = hull->bound(x.lhs, x.rhs);
+        if (hx && *hx <= x.bound) { continue; }
+        for (const auto& y : otherAtoms) {
+            auto hy = hull->bound(y.lhs, y.rhs);
+            if (hy && *hy <= y.bound) { continue; }
+            auto trial = common;
+            trial.push_back({x.rhs, x.lhs, -x.bound - BoundInteger(1)});
+            trial.push_back({y.rhs, y.lhs, -y.bound - BoundInteger(1)});
+            auto outside = DifferenceBoundSystem::create(a.dimensions(), trial);
+            if (failed(outside) || !outside->isEmpty()) { return std::nullopt; }
+        }
+    }
+    return *hull;
+}
+bool mergePieces(ArithmeticSelectorPiece& a, const ArithmeticSelectorPiece& b)
+{
+    if (a.outputSite != b.outputSite || a.inputResidues != b.inputResidues ||
+        a.parameterResidues != b.parameterResidues || a.outputs.size() != b.outputs.size()) { return false; }
+    std::vector<ArithmeticSelectorOutput> outputs;
+    for (unsigned i = 0; i < a.outputs.size(); ++i) {
+        if (a.outputs[i].residue != b.outputs[i].residue) { return false; }
+        auto candidates = a.outputs[i].lowerBounds;
+        llvm::append_range(candidates, b.outputs[i].lowerBounds);
+        auto found = llvm::find_if(candidates, [&](const auto& term) {
+            return equalsMaximum(term, a.outputs[i], a.domain) && equalsMaximum(term, b.outputs[i], b.domain);
+        });
+        if (found == candidates.end()) { return false; }
+        outputs.push_back({{*found}, a.outputs[i].residue});
+    }
+    auto hull = exactHull(a.domain, b.domain);
+    if (!hull) { return false; }
+    a.domain = std::move(*hull);
+    a.outputs = std::move(outputs);
+    return true;
+}
+void simplify(ArithmeticEndpointSelector& selector)
+{
+    // One greedy sweep bounds the number of pair trials quadratically. A
+    // rejected pair need not be retried: maximal coalescing is not required.
+    // Only equivalent tagged maps merge, preserving first-match semantics.
+    for (std::size_t i = 0; i < selector.pieces.size(); ++i) {
+        for (std::size_t j = i + 1; j < selector.pieces.size();) {
+            if (mergePieces(selector.pieces[i], selector.pieces[j])) {
+                selector.pieces.erase(selector.pieces.begin() + j);
+            } else { ++j; }
+        }
+    }
+    for (auto& piece : selector.pieces) {
+        for (auto& selected : piece.outputs) {
+            // Remove a max term only when another remaining term dominates it
+            // everywhere on this exact domain. Sequential removal retains a witness
+            // even for equal terms; prefer nonconstant coordinates on ties.
+            for (std::size_t i = 0; i < selected.lowerBounds.size();) {
+                bool redundant = false;
+                const auto& term = selected.lowerBounds[i];
+                for (std::size_t j = 0; j < selected.lowerBounds.size(); ++j) {
+                    if (i == j) { continue; }
+                    const auto& other = selected.lowerBounds[j];
+                    auto bound = piece.domain.bound(term.input, other.input);
+                    if (bound && *bound + term.offset <= other.offset) {
+                        redundant = true;
+                        break;
+                    }
+                }
+                if (redundant) { selected.lowerBounds.erase(selected.lowerBounds.begin() + i); }
+                else { ++i; }
+            }
+        }
+    }
+}
 bool matchesResidues(llvm::ArrayRef<BoundInteger> values, llvm::ArrayRef<uint64_t> residues,
                      const BoundInteger& period)
 {
@@ -144,6 +246,10 @@ ArithmeticSelectors buildArithmeticSelectors(const ArithmeticDemandAnalysis& ana
         result.error = error;
         result.forward.clear();
         result.inverse.clear();
+    }
+    if (result.error.empty()) {
+        for (auto& selector : result.forward) { simplify(selector); }
+        for (auto& selector : result.inverse) { simplify(selector); }
     }
     return result;
 }

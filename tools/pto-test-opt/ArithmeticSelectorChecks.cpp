@@ -143,7 +143,7 @@ bool signedResiduesAndTags()
     analysis.minimumDemands[key(2)] = {*second};
     auto selectors = fs::buildArithmeticSelectors(analysis, {0, 1, 1});
     if (!selectors.error.empty() || selectors.forward.size() != 1 || selectors.inverse.size() != 2 ||
-        selectors.forward.front().pieces.size() != 3) { return false; }
+        selectors.forward.front().pieces.size() != 2) { return false; }
     for (int64_t p = -7; p <= 7; ++p) {
         for (int64_t x = -9; x <= 15; ++x) {
             std::optional<std::pair<std::size_t, int64_t>> expected;
@@ -206,6 +206,35 @@ bool selectorLargeConstants()
     value = fs::evaluateArithmeticSelector(selectors.forward.front(), analysis.period, {Integer(-1)}, {Integer(-1)});
     return succeeded(value) && value->has_value() && (**value).coordinates.front() == Integer(0);
 }
+bool exactCoalescing()
+{
+    for (int64_t gap : {1, 2}) {
+        auto a = System::create(3, {atom(2, 1, 1), atom(1, 2, -1), atom(0, 1, 2),
+            atom(1, 0, 0), atom(0, 3, 1), atom(3, 0, 1)});
+        auto b = System::create(3, {atom(2, 1, 1), atom(1, 2, -1), atom(0, 1, -gap),
+            atom(1, 0, 3), atom(0, 3, 1), atom(3, 0, 1)});
+        if (failed(a) || failed(b)) { return false; }
+        auto analysis = certified();
+        analysis.period = 1;
+        analysis.minimumDemands[key(1, 1)] = {*a, *b};
+        auto selectors = fs::buildArithmeticSelectors(analysis, {0, 1});
+        if (!selectors.error.empty() || selectors.forward.size() != 1 ||
+            selectors.forward.front().pieces.size() != static_cast<std::size_t>(gap)) { return false; }
+        for (int64_t x = -4; x <= 5; ++x) {
+            for (int64_t p = -3; p <= 3; ++p) {
+                bool present = p >= -1 && p <= 1 && ((x >= -2 && x <= 0) || (x >= gap && x <= 3));
+                auto value = fs::evaluateArithmeticSelector(selectors.forward.front(), 1, {Integer(x)}, {Integer(p)});
+                if (failed(value) || value->has_value() != present ||
+                    (present && (**value).coordinates != std::vector<Integer>{Integer(x + 1)})) { return false; }
+                auto inverse = fs::evaluateArithmeticSelector(selectors.inverse.front(), 1,
+                    {Integer(x + 1)}, {Integer(p)});
+                if (failed(inverse) || inverse->has_value() != present ||
+                    (present && (**inverse).coordinates != std::vector<Integer>{Integer(x)})) { return false; }
+            }
+        }
+    }
+    return true;
+}
 bool zeroCoordinates()
 {
     auto truth = System::create(0, {});
@@ -228,7 +257,8 @@ int runArithmeticSelectorChecks()
         llvm::errs() << "exact difference-bound primitive checks failed\n";
         return 1;
     }
-    if (!signedResiduesAndTags() || !selectorValidation() || !selectorLargeConstants() || !zeroCoordinates()) {
+    if (!signedResiduesAndTags() || !selectorValidation() || !selectorLargeConstants() ||
+        !exactCoalescing() || !zeroCoordinates()) {
         llvm::errs() << "arithmetic endpoint selector checks failed\n";
         return 1;
     }

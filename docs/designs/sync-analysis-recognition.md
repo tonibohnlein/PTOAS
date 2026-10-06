@@ -81,7 +81,7 @@ shared access interface; no kernel-specific recognizers or new emission modes.
 |---|---|---|---|
 | M10 | Finite allocation exports, explicit interval allocation and guarded compatibility | Existing straight-line logical successes compile; independent reuse/closure checks | Implemented; review gates accepted |
 | M11 | Shared matrix valid extents, views and justified element/layout contracts | Independently checked exact ranges; affected corpus and existing mode checked | Implemented; review gates accepted |
-| M12 | Shared, domain-simplified arithmetic endpoint formulas | Nested corpus example has at most 207 arithmetic operations, unchanged demands | Planned |
+| M12 | Shared, domain-simplified arithmetic endpoint formulas | Nested corpus example has at most 207 arithmetic operations, unchanged demands | Implemented; review gates accepted |
 | M13 | Uniform allocation for supported compact results using existing queries | Nested arithmetic and representative rotating/guarded cases compile in IDs 0–5 | Planned |
 
 Allocation preserves endpoints and order, reports unsupported proof separately
@@ -1437,3 +1437,26 @@ and restoration, unknown extents and existing-mode smoke checks passed.
 The 256 affected or previously successful corpus cases retain all prior C++
 successes and add three: pypto-lib matmul, PyPTO DDR full-K, and staged matmul.
 Detailed results: `.local/route-completion-m11/corpus/results.json`.
+
+### M12 arithmetic endpoint simplification
+
+DBM selectors coalesce two pieces only when their hull equals their exact union
+and one tagged affine endpoint map agrees on both domains. The integer proof
+checks each pair of complemented inequalities; a gap in the union prevents
+merging. Max terms dominated throughout a piece's domain are then removed.
+Boolean constants and repeated operands are folded before endpoint recipes
+retain their SSA handles. General integer selectors keep their existing exact
+emission path; this optimization specializes DBM selectors.
+
+One greedy sweep performs at most quadratic piece-pair trials. A conservative
+bound is O(K^2 D^7) arbitrary-precision arithmetic operations, with separate bit
+costs and O(K D^2) output. This need not find the smallest selector representation.
+There is no trip-count, distance or parameter-value expansion.
+
+The nested corpus example emits 133 arithmetic operations instead of 414
+(target: at most 207). Five serial samples per version measured median analysis
+at 0.116 s before and 0.115 s after, while the regression job used the second
+worker; these are local smoke timings, not an isolated benchmark. Independent
+expanded conflict graphs cover zero, singleton and repeated visits; selector
+unit checks cover integer-adjacent unions, holes, parameters, signed residues
+and inverse endpoint maps. Artifacts: `.local/route-completion-m12/`.
