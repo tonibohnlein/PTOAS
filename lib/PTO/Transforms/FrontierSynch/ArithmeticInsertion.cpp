@@ -8,6 +8,7 @@
 #include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
+#include "mlir/IR/Matchers.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
@@ -98,8 +99,22 @@ private:
     }
     Value number(int64_t value, Cut& cut, Location loc) { return number(BoundInteger(value), cut, loc); }
     Value truth(bool value, Location loc) { return emit<arith::ConstantIntOp>(loc, value, 1); }
-    Value both(Value a, Value b, Location loc) { return emit<arith::AndIOp>(loc, a, b); }
-    Value either(Value a, Value b, Location loc) { return emit<arith::OrIOp>(loc, a, b); }
+    Value both(Value a, Value b, Location loc)
+    {
+        if (a == b) { return a; }
+        APInt constant;
+        if (matchPattern(a, m_ConstantInt(&constant))) { return constant.isZero() ? a : b; }
+        if (matchPattern(b, m_ConstantInt(&constant))) { return constant.isZero() ? b : a; }
+        return emit<arith::AndIOp>(loc, a, b);
+    }
+    Value either(Value a, Value b, Location loc)
+    {
+        if (a == b) { return a; }
+        APInt constant;
+        if (matchPattern(a, m_ConstantInt(&constant))) { return constant.isZero() ? b : a; }
+        if (matchPattern(b, m_ConstantInt(&constant))) { return constant.isZero() ? a : b; }
+        return emit<arith::OrIOp>(loc, a, b);
+    }
     Value negate(Value a, Location loc) { return emit<arith::XOrIOp>(loc, a, truth(true, loc)); }
     Value compare(arith::CmpIPredicate predicate, Value a, Value b, Location loc)
     {
