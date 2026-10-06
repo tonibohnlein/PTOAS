@@ -53,10 +53,47 @@ void dumpArithmeticJSON(func::FuncOp function, const fs::ArithmeticProgram& prog
                                          {"pipe", static_cast<unsigned>(site.phase->kPipeValue)}});
     }
     for (auto parameter : program.parameters) {
-        parameters.push_back(cast<BlockArgument>(parameter).getArgNumber());
+        auto argument = dyn_cast<BlockArgument>(parameter);
+        parameters.push_back(argument ? static_cast<int64_t>(argument.getArgNumber()) : -1);
     }
     llvm::json::Object document{{"function", function.getSymName()}, {"period", program.primitives.period},
                                 {"sites", std::move(sites)}, {"parameters", std::move(parameters)},
                                 {"relations", std::move(relations)}};
+    if (program.context.root && program.context.root != function.getOperation()) {
+        auto label = program.context.root->getAttrOfType<StringAttr>("frontier.test_arithmetic_region");
+        document["region"] = label ? label.getValue() : StringRef("anonymous");
+        document["incoming_prerequisites"] = program.incomingPrerequisites.size();
+        llvm::json::Array issues;
+        for (const auto& diagnostic : program.extraction.diagnostics) {
+            issues.push_back(fs::recognitionName(diagnostic.issue));
+        }
+        for (const auto& diagnostic : program.recognition.diagnostics) {
+            issues.push_back(fs::recognitionName(diagnostic.issue));
+        }
+        document["issues"] = std::move(issues);
+        llvm::json::Array bindings;
+        for (Value parameter : program.parameters) {
+            auto argument = dyn_cast<BlockArgument>(parameter);
+            StringRef kind = argument ? (argument.getOwner() == &function.front() ? "function" : "enclosing") :
+                                        "entry-value";
+            bindings.push_back(kind);
+        }
+        document["parameter_kinds"] = std::move(bindings);
+    }
     llvm::outs() << "arithmetic-json " << llvm::json::Value(std::move(document)) << "\n";
+}
+
+// Exercise the regional API only on explicit test annotations. Production
+// dispatch does not claim this extraction supplies a composable plan.
+void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
+                            const pto::SyncInput& input)
+{
+    function.walk([&](Operation* root) {
+        if (!root->hasAttr("frontier.test_arithmetic_region")) {
+            return;
+        }
+        auto program = fs::recognizeArithmeticProgram({function, root}, index, input,
+                                                      input.accesses(), {8, 8, 2, 8});
+        dumpArithmeticJSON(function, program);
+    });
 }

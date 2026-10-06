@@ -182,7 +182,7 @@ execution.
 | gated_delta_rule | Whole-kernel tractable-class membership remains unestablished |
 
 Allocation failure is not a proof that six IDs are insufficient. No scarcity
-repair was added. M1's regional arithmetic context, M3's affine selectors and
+repair was added. M1's regional arithmetic query adapter, M3's affine selectors and
 crossing families, M4's composed phases and economical general boundary guards,
 and M5's supported allocation extensions remain unfinished. M2 is complete.
 Do not present the current branch as completing all five milestones.
@@ -203,3 +203,34 @@ This regression subset is not a new coverage census of the full corpus.
 The changed-code prefilter reports two brace-rule matches in guarded recognition
 and guard-binding validation. Both statements have braced bodies; the regex
 stops at an inner closing parenthesis. They are inspected false positives.
+
+## Regional arithmetic input context
+
+The arithmetic extractor now accepts an original subtree root. Its occurrence
+coordinates contain only loops inside that subtree (including a loop root).
+Enclosing indices and values available at entry share one SSA parameter tuple
+between both endpoints. Proved affine definitions are normalized first;
+otherwise an available index/i1 value retains its original SSA binding.
+Unsupported values produced inside the region remain unsupported. Enclosing
+branch choices belong to the parent; a conditional root retains its own guards.
+
+The result includes incoming scalar prerequisites with their original producer,
+consumer and native-order classification. The parent must discharge them. This
+contract describes one visit at its actual entry bindings; repeating a summary
+still requires substitution/certification, and independent parameter assignments
+need not all correspond to realizable executions.
+
+This completes the extraction portion of M1, not a composable arithmetic route.
+No production dispatcher returns Ready on the strength of this API. Per-byte
+first/last selectors, finite crossing families and an exact signed-arithmetic
+adapter to regional expressions remain necessary. The first consumer should
+analyze a whole scalar nest and compose it with adjacent bulk transfers.
+
+Architecture, correctness and performance reviewers accepted this input layer.
+The serial rebuild passed. Its independent test passed 28,038 checks covering
+four accepted regional fixtures and two unsupported local-expression fixtures.
+Existing tests passed 457,242 basic, 280,500 guarded and 43,008 extended arithmetic
+checks, plus 12 arithmetic insertion traces. The brace-rule prefilter also
+flags two already-braced compound conditions in ArithmeticResidues.cpp; these
+are inspected regex false positives. No device behavior or additional benchmark
+acceptance is claimed by this change.
