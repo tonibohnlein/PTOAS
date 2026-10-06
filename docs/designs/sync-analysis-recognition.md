@@ -80,7 +80,7 @@ shared access interface; no kernel-specific recognizers or new emission modes.
 | Milestone | Deliverable | Acceptance | Status |
 |---|---|---|---|
 | M10 | Finite allocation exports, explicit interval allocation and guarded compatibility | Existing straight-line logical successes compile; independent reuse/closure checks | Implemented; review gates accepted |
-| M11 | Shared matrix valid extents, views and justified element/layout contracts | Independently checked exact ranges; affected corpus and existing mode checked | Planned |
+| M11 | Shared matrix valid extents, views and justified element/layout contracts | Independently checked exact ranges; affected corpus and existing mode checked | Implemented; review gates accepted |
 | M12 | Shared, domain-simplified arithmetic endpoint formulas | Nested corpus example has at most 207 arithmetic operations, unchanged demands | Planned |
 | M13 | Uniform allocation for supported compact results using existing queries | Nested arithmetic and representative rotating/guarded cases compile in IDs 0–5 | Planned |
 
@@ -1413,3 +1413,27 @@ preserve existing saved commands; they do not introduce alternate modes for
 newly analyzed programs. Allocation removes consumed provenance and certificates.
 A failed preflight leaves the input unchanged. This changes neither the certified
 resource policy nor the demand relation.
+
+### M11 shared matrix access precision
+
+Full, 16-aligned F16 and F32 matrix operands use shared checked access regions.
+The accessing operation resolves current valid extents, including constant
+allocation operands behind dynamic types and intervening `set_validshape`.
+All matmul effects require compatible full extents; unresolved/partial extents,
+padding and unsupported layouts retain conservative ranges. ACC accumulation
+requires the existing same-destination read-modify-write contract. TEXTRACT
+continues to retain its smaller selected physical range.
+
+Both InsertSync and frontier consume these declarations. Native justification:
+PTO-ISA `tload_common.hpp::TLoadGm2L1Nd2nz`, `TMatmul.hpp::TMATMUL_IMPL`
+and `tstore_common.hpp::TStoreAccNz2nd`. F32 changes element width, not the
+full-rectangle contract; 16 alignment avoids native K padding differences.
+There is no iteration expansion. Metadata lookup retains the shared resolver's
+block-prefix scan, so repeated dynamic descriptors can cost quadratic time in
+block length; this change makes no linear recovery claim.
+
+Validation: full F16/F32 byte spans, dynamic full extents, metadata shortening
+and restoration, unknown extents and existing-mode smoke checks passed.
+The 256 affected or previously successful corpus cases retain all prior C++
+successes and add three: pypto-lib matmul, PyPTO DDR full-K, and staged matmul.
+Detailed results: `.local/route-completion-m11/corpus/results.json`.
