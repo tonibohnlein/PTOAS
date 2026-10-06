@@ -45,6 +45,8 @@ class RepeatedPreparation
             state.error = "repeated endpoints require a positive constant index step";
             return failure();
         }
+        originalVisit = *current;
+        current = e().div(*current, e().constant(state.phaseCount));
         if (failed(prefixInternal()) || failed(addCrossings()))
         {
             return failure();
@@ -61,6 +63,7 @@ class RepeatedPreparation
     Id trips;
     std::unique_ptr<PreparedLogicalPlan> plan;
     std::optional<Id> current;
+    Id originalVisit = RegionExpressions::invalid;
     uint64_t nextRecord = 0;
     std::map<Operation *, Block *> blocks;
     std::map<Operation *, RegionExpressions::CutEmission> memos;
@@ -98,6 +101,15 @@ class RepeatedPreparation
         {
             return std::nullopt;
         }
+        if (!state.typePhases.empty()) {
+            guard = e().land(guard, e().eq(e().rem(originalVisit, e().constant(state.phaseCount)),
+                e().constant(state.typePhases[event.type])));
+        }
+        if (body.endpointEventGuard) {
+            auto value = body.endpointEventGuard(event);
+            if (!value) { return std::nullopt; }
+            guard = e().land(guard, *value);
+        }
         auto leaf = body.occurrenceLoops[event.type];
         if (leaf)
         {
@@ -117,6 +129,9 @@ class RepeatedPreparation
                 if (!value)
                 {
                     return std::nullopt;
+                }
+                if (!body.outerDivisors.empty()) {
+                    value = e().div(*value, e().constant(body.outerDivisors[event.type][i]));
                 }
                 guard = e().land(guard, e().eq(*value, event.visits[i]));
             }
@@ -218,6 +233,16 @@ class RepeatedPreparation
                 auto cut = publish ? a.after.before : b.before.before;
                 auto boundary =
                     publish ? e().lt(*current, e().sub(trips, e().constant(1))) : e().lt(e().constant(0), *current);
+                if (!state.typePhases.empty()) {
+                    auto other = publish ? e().add(*current, e().constant(1)) :
+                                           e().sub(*current, e().constant(1));
+                    auto type = publish ? crossing.target.type : crossing.source.type;
+                    auto full = e().div(state.originalTrips, e().constant(state.phaseCount));
+                    auto tail = e().rem(state.originalTrips, e().constant(state.phaseCount));
+                    auto exists = e().lor(e().lt(other, full), e().land(e().eq(other, full),
+                        e().lt(e().constant(state.typePhases[type]), tail)));
+                    boundary = e().land(boundary, exists);
+                }
                 auto guard = at(event, e().land(crossing.guard, boundary));
                 if (!guard)
                 {

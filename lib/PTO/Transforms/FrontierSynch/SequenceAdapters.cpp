@@ -116,12 +116,19 @@ bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
         const auto& out = child.regional;
         if (out.expressions != arena || !out.capabilities.completeStorageModel || !out.capabilities.exactQueries ||
             !out.capabilities.exactSelectors || !out.presence ||
-            (requireEndpoints && (!out.capabilities.endpointRecipes || !out.prepare)) ||
+            (requireEndpoints && (!out.capabilities.endpointRecipes || (!out.prepare && !out.prepareWithVisits))) ||
             !out.reachability || out.anchors.size() != out.occurrenceLoops.size() ||
-            (!out.outerLoops.empty() && out.outerLoops.size() != out.anchors.size())) {
+            (!out.outerLoops.empty() && out.outerLoops.size() != out.anchors.size()) ||
+            (!out.outerDivisors.empty() && (out.outerLoops.empty() ||
+                out.outerDivisors.size() != out.anchors.size()))) {
             return fail("sequence child lacks a constructed exact regional interface");
         }
         for (std::size_t type = 0; type < out.outerLoops.size(); ++type) {
+            if (!out.outerDivisors.empty() && (out.outerDivisors.size() != out.anchors.size() ||
+                out.outerDivisors[type].size() != out.outerLoops[type].size() ||
+                llvm::any_of(out.outerDivisors[type], [](uint64_t value) { return value == 0; }))) {
+                return fail("regional coordinate divisors must be positive and match their frames");
+            }
             Operation* parent = nullptr;
             for (auto loop : out.outerLoops[type]) {
                 if (!loop || (parent && !parent->isProperAncestor(loop))) {
@@ -197,6 +204,25 @@ bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
             return selector.event.type < child.anchors.size() &&
                    validRegionalEvent(child.regional, selector.event) && expressions.isBoolean(selector.present);
         };
+        auto prune = [&](std::vector<RegionalSelector>& values) {
+            if (llvm::any_of(values, [&](const auto& value) { return !validSelector(value); })) {
+                return fail("regional selector has an invalid occurrence or predicate");
+            }
+            llvm::erase_if(values, [&](const auto& value) {
+                return expressions.constantValue(value.present) == 0;
+            });
+            return true;
+        };
+        // Validate dead selectors too, then discard their interface entries.
+        // They must not create ports in later native/query matrix assembly.
+        for (auto& cell : child.regional.storageBoundary) {
+            if (!prune(cell.firstWriters) || !prune(cell.lastWriters)) { return false; }
+            for (auto& [pipe, values] : cell.firstReaders) { if (!prune(values)) { return false; } }
+            for (auto& [pipe, values] : cell.lastReaders) { if (!prune(values)) { return false; } }
+        }
+        for (auto* side : {&child.regional.firstPayloads, &child.regional.lastPayloads}) {
+            for (auto& [pipe, values] : *side) { if (!prune(values)) { return false; } }
+        }
         auto convert = [&](RegionalSelector selector, std::vector<Selected>& destination) {
             if (!validSelector(selector)) {
                 fail("regional selector has an invalid occurrence or predicate"); return;
@@ -256,6 +282,8 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
             out.anchors.push_back(region.anchors[type]);
             out.occurrenceLoops.push_back(region.occurrenceLoops[type]);
             out.outerLoops.push_back(region.outerLoops.empty() ? std::vector<scf::ForOp>{} : region.outerLoops[type]);
+            out.outerDivisors.push_back(region.outerDivisors.empty() ?
+                std::vector<uint64_t>(out.outerLoops.back().size(), 1) : region.outerDivisors[type]);
         }
     }
     for (uint32_t child = 0; child < state->children.size(); ++child) {
@@ -272,6 +300,17 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
         auto [child, type] = (*coordinates)[event.type];
         return regionalPresence(state->children[child].regional, {type, event.ordinal, event.kind, event.visits});
     };
+    out.endpointEventGuard = [state, coordinates](RegionalEvent event) -> std::optional<Expr> {
+        if (event.type >= coordinates->size()) { return std::nullopt; }
+        auto [child, type] = (*coordinates)[event.type];
+        const auto& region = state->children[child].regional;
+        event.type = type;
+        auto result = region.endpointEventGuard ? region.endpointEventGuard(event) :
+                      std::optional<Expr>(state->expressions.boolean(true));
+        if (!result) { return std::nullopt; }
+        if (region.endpointSiteGuard) { result = state->expressions.land(*result, *region.endpointSiteGuard); }
+        return result;
+    };
     out.reachability = [owned, coordinates](RegionalEvent a, RegionalEvent b) -> std::optional<Expr> {
         if (a.type >= coordinates->size() || b.type >= coordinates->size()) { return std::nullopt; }
         auto [ac, at] = (*coordinates)[a.type]; auto [bc, bt] = (*coordinates)[b.type];
@@ -286,6 +325,8 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
             {at, a.ordinal, a.kind, a.visits}, {bt, b.ordinal, b.kind, b.visits});
     };
     for (const auto& child : analysis.state->children) {
+        out.capabilities.endpointRecipes &= child.regional.capabilities.endpointRecipes &&
+            (bool(child.regional.prepare) || bool(child.regional.prepareWithVisits));
         out.capabilities.contextualGuards |= child.regional.capabilities.contextualGuards;
         if (llvm::any_of(child.regional.storageBoundary, [](const auto& boundary) {
                 return boundary.cell.space == AddressSpace::GM && boundary.cell.begin != boundary.cell.end;
@@ -293,14 +334,16 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
             out.gmAliasPolicy = child.regional.gmAliasPolicy;
         }
     }
-    out.prepare = [owned]() -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
-        auto result = prepareSequenceInsertion(*owned);
-        if (succeeded(result)) { (*result)->completeInvocation = false; }
-        return result;
-    };
-    out.prepareWithVisits = [owned](ArrayRef<scf::ForOp> enclosing) {
-        return owned->state->prepare(enclosing);
-    };
+    if (out.capabilities.endpointRecipes) {
+        out.prepare = [owned]() -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
+            auto result = prepareSequenceInsertion(*owned);
+            if (succeeded(result)) { (*result)->completeInvocation = false; }
+            return result;
+        };
+        out.prepareWithVisits = [owned](ArrayRef<scf::ForOp> enclosing) {
+            return owned->state->prepare(enclosing);
+        };
+    }
     auto convert = [&](SequenceSelectedEvent selected) {
         const auto& occurrence = analysis.occurrences[selected.port];
         return RegionalSelector{{starts[occurrence.child] + occurrence.type,

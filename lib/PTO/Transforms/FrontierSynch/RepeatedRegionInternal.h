@@ -12,13 +12,21 @@
 #include <map>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
+void liftRepeatedSelectors(RegionalAnalysis& out, RegionExpressions::Id trips);
 struct RepeatedRegionState {
     using Id = RegionExpressions::Id;
     func::FuncOp function;
     scf::ForOp loop;
     RegionalAnalysis body;
     Id trips;
+    // q>1 uses the original loop's quotient coordinate; originalTrips bounds
+    // the partial final period. Empty typePhases denotes invariant q=1.
+    uint64_t phaseCount = 1;
+    Id originalTrips = RegionExpressions::invalid;
+    std::vector<uint32_t> typePhases;
     std::vector<RepeatedCrossing> crossings;
+    // Raw bridge generators define Q; reduced guards are only endpoint recipes.
+    std::vector<RepeatedCrossing> queryCrossings;
     std::vector<RegionalEvent> slots;
     std::vector<Id> distances;
     uint64_t infinity = 0;

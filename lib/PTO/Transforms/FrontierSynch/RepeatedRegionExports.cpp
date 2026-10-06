@@ -8,37 +8,9 @@
 // Common exact regional contract. All expressions belong to the supplied arena.
 #include "RepeatedRegionInternal.h"
 namespace mlir::pto::frontiersynch {
-RepeatedRegionAnalysis repeatInvariantRegion(func::FuncOp function, scf::ForOp loop,
-    RegionalAnalysis body, RegionExpressions::Id trips)
+void liftRepeatedSelectors(RegionalAnalysis& out, RegionExpressions::Id trips)
 {
-    RepeatedRegionAnalysis result;
-    if (!function || !loop || loop->getParentOfType<func::FuncOp>() != function || !body.expressions ||
-        trips >= body.expressions->size() || body.expressions->isBoolean(trips)) {
-        result.error = "repetition requires original loop and integer trip expression"; return result;
-    }
-    auto state = std::make_shared<RepeatedRegionState>();
-    state->function = function; state->loop = loop; state->body = std::move(body); state->trips = trips;
-    if (!state->buildBoundary() || !state->closePorts()) {
-        result.error = state->error.empty() ? state->e().constructionError() : state->error;
-        return result;
-    }
-    auto& out = result.regional;
-    out = state->body;
-    out.prepare = {}; out.prepareFiltered = {}; out.prepareWithVisits = {};
-    out.capabilities.endpointRecipes = false;
-    out.firstOrdinal.reset();
-    if (out.outerLoops.empty()) { out.outerLoops.resize(out.anchors.size()); }
-    for (std::size_t type = 0; type < out.anchors.size(); ++type) {
-        auto& frame = out.outerLoops[type];
-        auto* payload = out.anchors[type].phase ? out.anchors[type].phase->elementOp : nullptr;
-        if (!payload || !loop->isProperAncestor(payload) ||
-            (!frame.empty() && !loop->isProperAncestor(frame.front())) ||
-            (out.occurrenceLoops[type] && !loop->isProperAncestor(out.occurrenceLoops[type]))) {
-            result.error = "repeated body coordinates must lie inside its original loop"; return result;
-        }
-        frame.insert(frame.begin(), loop);
-    }
-    auto& e = state->e();
+    auto& e = *out.expressions;
     auto nonempty = e.lt(e.constant(0), trips), last = e.sub(trips, e.constant(1));
     auto lift = [&](RegionalSelector& selector, bool final) {
         selector.event.visits.insert(selector.event.visits.begin(), final ? last : e.constant(0));
@@ -53,7 +25,65 @@ RepeatedRegionAnalysis repeatInvariantRegion(func::FuncOp function, scf::ForOp l
     for (auto& access : out.accessBoundary) { lift(access.first, false); lift(access.last, true); }
     for (auto& [pipe, values] : out.firstPayloads) { for (auto& value : values) { lift(value, false); } }
     for (auto& [pipe, values] : out.lastPayloads) { for (auto& value : values) { lift(value, true); } }
+}
+RepeatedRegionAnalysis repeatInvariantRegion(func::FuncOp function, scf::ForOp loop,
+    RegionalAnalysis body, RegionExpressions::Id trips)
+{
+    RepeatedRegionAnalysis result;
+    if (!function || !loop || loop->getParentOfType<func::FuncOp>() != function || !body.expressions ||
+        trips >= body.expressions->size() || body.expressions->isBoolean(trips)) {
+        result.error = "repetition requires original loop and integer trip expression"; return result;
+    }
+    if ((!body.outerLoops.empty() && body.outerLoops.size() != body.anchors.size()) ||
+        (!body.outerDivisors.empty() && (body.outerLoops.empty() ||
+            body.outerDivisors.size() != body.anchors.size()))) {
+        result.error = "repeated coordinate frames and divisors must match payload types"; return result;
+    }
+    for (std::size_t type = 0; type < body.outerDivisors.size(); ++type) {
+        if (body.outerDivisors[type].size() != body.outerLoops[type].size() ||
+            llvm::any_of(body.outerDivisors[type], [](uint64_t value) { return value == 0; })) {
+            result.error = "repeated coordinate divisors must be positive and match their frames"; return result;
+        }
+    }
+    auto state = std::make_shared<RepeatedRegionState>();
+    state->function = function; state->loop = loop; state->body = std::move(body); state->trips = trips;
+    if (!state->buildBoundary() || !state->closePorts()) {
+        result.error = state->error.empty() ? state->e().constructionError() : state->error;
+        return result;
+    }
+    auto& out = result.regional;
+    out = state->body;
+    out.prepare = {}; out.prepareFiltered = {}; out.prepareWithVisits = {};
+    out.capabilities.endpointRecipes = false;
+    out.firstOrdinal.reset();
+    if (out.outerLoops.empty()) { out.outerLoops.resize(out.anchors.size()); }
+    if (out.outerDivisors.empty()) {
+        out.outerDivisors.resize(out.anchors.size());
+        for (std::size_t type = 0; type < out.anchors.size(); ++type) {
+            out.outerDivisors[type].assign(out.outerLoops[type].size(), 1);
+        }
+    }
+    for (std::size_t type = 0; type < out.anchors.size(); ++type) {
+        auto& frame = out.outerLoops[type];
+        auto* payload = out.anchors[type].phase ? out.anchors[type].phase->elementOp : nullptr;
+        if (!payload || !loop->isProperAncestor(payload) ||
+            (!frame.empty() && !loop->isProperAncestor(frame.front())) ||
+            (out.occurrenceLoops[type] && !loop->isProperAncestor(out.occurrenceLoops[type]))) {
+            result.error = "repeated body coordinates must lie inside its original loop"; return result;
+        }
+        frame.insert(frame.begin(), loop);
+        out.outerDivisors[type].insert(out.outerDivisors[type].begin(), 1);
+    }
+    auto& e = state->e();
+    liftRepeatedSelectors(out, trips);
     out.presence = [state](RegionalEvent event) { return state->present(std::move(event)); };
+    if (state->body.endpointEventGuard) {
+        out.endpointEventGuard = [state](RegionalEvent event) -> std::optional<RegionExpressions::Id> {
+            if (event.visits.empty()) { return std::nullopt; }
+            event.visits.erase(event.visits.begin());
+            return state->body.endpointEventGuard(std::move(event));
+        };
+    }
     out.reachability = [state](RegionalEvent a, RegionalEvent b) { return state->query(std::move(a), std::move(b)); };
     out.referenceBefore = [state](RegionalEvent a, RegionalEvent b) -> std::optional<RegionExpressions::Id> {
         if (a.visits.empty() || b.visits.empty()) { return std::nullopt; }
@@ -65,6 +95,7 @@ RepeatedRegionAnalysis repeatInvariantRegion(func::FuncOp function, scf::ForOp l
         return e.lor(e.lt(i, j), e.land(e.eq(i, j), *inner));
     };
     out.cost.ports += state->slots.size();
+    ++out.cost.repeatedRegions;
     out.cost.crossings += state->crossings.size();
     out.cost.expressionNodes = e.size();
     if (state->body.capabilities.endpointRecipes && (state->body.prepare || state->body.prepareWithVisits)) {
