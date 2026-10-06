@@ -116,6 +116,27 @@ void checkDisjoint(const Families& families, RecognitionResult& result, Operatio
     }
 }
 
+// Prove disjoint translates of the actual interval union over a finite domain.
+// Test possible displacement multiples, never enumerate iteration pairs. The
+// caller has proved a common affine origin and translation for every piece.
+bool disjointTranslations(ArrayRef<SyncStorageCell> ranges, const APInt& stride, uint64_t trips)
+{
+    if (trips <= 1) { return true; }
+    if (stride.isZero()) { return ranges.empty(); }
+    const APInt one(128, 1), last(128, trips - 1);
+    for (const auto& a : ranges) {
+        for (const auto& b : ranges) {
+            auto low = APInt(128, a.begin) - APInt(128, b.end) + one;
+            auto high = APInt(128, a.end) - APInt(128, b.begin) - one;
+            if (high.slt(stride)) { continue; }
+            auto first = low.sle(stride) ? one : (low + stride - one).udiv(stride);
+            auto final = high.udiv(stride);
+            if (first.ule(final) && first.ule(last)) { return false; }
+        }
+    }
+    return true;
+}
+
 bool dischargeGlobal(std::size_t id, scf::ForOp loop, const SyncInput& input, const PhaseIndex& index)
 {
     const auto& effects = input.accesses();
@@ -132,6 +153,7 @@ bool dischargeGlobal(std::size_t id, scf::ForOp loop, const SyncInput& input, co
     // of this phase together, so separate output operands cannot hide reuse.
     std::optional<int64_t> translation;
     uint64_t begin = UINT64_MAX, end = 0;
+    SmallVector<SyncStorageCell> pieces;
     Value base;
     AffineExpr commonOrigin;
     SmallVector<Value> commonSymbols;
@@ -179,13 +201,21 @@ bool dischargeGlobal(std::size_t id, scf::ForOp loop, const SyncInput& input, co
             SmallVector<SyncStorageCell> ranges;
             if (!mlir::pto::detail::materializeRegion(fixed, AddressSpace::GM, ranges)) { return false; }
             for (auto range : ranges) { begin = std::min(begin, range.begin); end = std::max(end, range.end); }
+            llvm::append_range(pieces, ranges);
         }
     }
     auto step = constant(loop.getStep());
     if (!translation || !step || *step <= 0) { return false; }
     auto displacement = APInt(128, *translation, true) * APInt(128, *step);
     if (displacement.isNegative()) { displacement = -displacement; }
-    return begin == UINT64_MAX || displacement.uge(APInt(128, end - begin));
+    if (begin == UINT64_MAX || displacement.uge(APInt(128, end - begin))) { return true; }
+    auto lower = constant(loop.getLowerBound()), upper = constant(loop.getUpperBound());
+    if (!lower || !upper || *lower < 0) { return false; }
+    const auto span = *upper > *lower ? static_cast<uint64_t>(*upper - *lower) : 0;
+    const auto trips = span / *step + (span % *step != 0);
+    // Reversing a translation exchanges the ordered pair of pieces; testing
+    // all such pairs lets the same positive-magnitude test handle both signs.
+    return disjointTranslations(pieces, displacement, trips);
 }
 
 void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
