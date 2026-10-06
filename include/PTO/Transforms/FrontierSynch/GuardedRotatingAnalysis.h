@@ -41,10 +41,13 @@ struct GuardedRotatingAnalysis {
 // cost O(A^2) circuit operations, excluding encoded arithmetic bit costs.
 // Queries/retention are supplied by the shared parameterized quotient. Insertion
 // must separately establish legal matching cuts. Local barriers precede their consumers.
+// guardBindings replace only predicates certified invariant on the analyzed
+// slice, in the supplied expression arena; their original cuts are unchanged.
 // Potential target-protected accumulator writer pairs are unsupported here;
 // use the numerical protected route until conditional protection is represented
 // in the required graph. Ordinary unprotected ACC effects are supported.
 GuardedRotatingAnalysis analyzeGuardedRotating(scf::ForOp loop, const SyncInput& input,
-    const GuardedRecognition& recognition, std::shared_ptr<RegionExpressions> expressions = {});
+    const GuardedRecognition& recognition, std::shared_ptr<RegionExpressions> expressions = {},
+    const DenseMap<Value, RegionExpressions::Id>& guardBindings = DenseMap<Value, RegionExpressions::Id>());
 } // namespace mlir::pto::frontiersynch
 #endif

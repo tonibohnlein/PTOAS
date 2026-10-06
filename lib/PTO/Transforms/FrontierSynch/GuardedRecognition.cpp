@@ -13,7 +13,8 @@
 namespace mlir::pto::frontiersynch {
 namespace {
 void collect(ArrayRef<Operation*> roots, Operation* entry, const PhaseIndex& index, GuardedRecognition& output,
-             bool requireInvariant, const DenseMap<Value, bool>& choices = DenseMap<Value, bool>())
+             bool requireInvariant, const DenseMap<Value, bool>& choices = DenseMap<Value, bool>(),
+             ArrayRef<Value> sliceGuards = {})
 {
     // An explicit stack avoids host recursion on deeply nested if/else trees.
     struct Work {
@@ -48,7 +49,7 @@ void collect(ArrayRef<Operation*> roots, Operation* entry, const PhaseIndex& ind
             }
             const bool available = entry && index.valueAvailable(branch.getCondition(), entry, Boundary::Before);
             output.entryGuardsAvailable &= available;
-            if (requireInvariant && !available &&
+            if (requireInvariant && !available && !llvm::is_contained(sliceGuards, branch.getCondition()) &&
                 !detail::entryExpression(branch.getCondition(), entry, index, output.entryExpressions)) {
                 output.result.note(RecognitionIssue::GuardInvariance, &op);
             }
@@ -103,7 +104,7 @@ GuardedRecognition recognizeFiniteGuarded(ArrayRef<Operation*> roots, const Phas
 }
 
 GuardedRecognition detail::recognizeRotatingSlice(scf::ForOp loop, const PhaseIndex& index,
-    const SyncInput& input, const DenseMap<Value, bool>& choices)
+    const SyncInput& input, const DenseMap<Value, bool>& choices, ArrayRef<Value> sliceGuards)
 {
     const auto& effects = input.accesses();
     GuardedRecognition output;
@@ -115,7 +116,7 @@ GuardedRecognition detail::recognizeRotatingSlice(scf::ForOp loop, const PhaseIn
     }
     SmallVector<Operation*> roots;
     for (Operation& op : loop.getBody()->getOperations()) { roots.push_back(&op); }
-    collect(roots, loop, index, output, true, choices);
+    collect(roots, loop, index, output, true, choices, sliceGuards);
     SmallVector<const CompoundInstanceElement*> phases;
     DenseMap<const CompoundInstanceElement*, std::optional<std::size_t>> guards;
     for (const auto& item : output.phases) {

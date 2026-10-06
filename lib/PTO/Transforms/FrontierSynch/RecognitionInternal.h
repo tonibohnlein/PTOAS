@@ -11,8 +11,10 @@
 namespace mlir::pto::frontiersynch::detail {
 // Caller proves these branch choices on a contiguous interval of whole loop
 // iterations. The result must only be queried/emitted on that interval.
+// sliceGuards stay in the potential skeleton but require immutable expression
+// replacements in analyzeGuardedRotating, proved for the same interval.
 GuardedRecognition recognizeRotatingSlice(scf::ForOp loop, const PhaseIndex& index,
-    const SyncInput& input, const DenseMap<Value, bool>& choices);
+    const SyncInput& input, const DenseMap<Value, bool>& choices, ArrayRef<Value> sliceGuards = {});
 bool entryExpression(Value value, Operation* entry, const PhaseIndex& index,
                      SmallVectorImpl<Operation*>& recipe);
 void normalizeFragments(RecognitionResult& result, const SyncStorageEffects& effects);
