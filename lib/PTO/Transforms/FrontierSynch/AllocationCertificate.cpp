@@ -125,6 +125,11 @@ FailureOr<PhysicalAllocationPlan> decodeCyclicAllocation(func::FuncOp function, 
         }
         const auto budget = static_cast<uint64_t>(d.budget);
         if (budget > eligibleIds.size()) {
+            if (auto strategy = certificate.getAs<StringAttr>("strategy")) {
+                return function.emitError("sufficient compact assignment does not fit supplied capacity: ")
+                    << strategy.getValue() << " direction " << d.source << " -> " << d.target
+                    << " uses " << budget << "; no minimum-capacity claim or repair applied", failure();
+            }
             return function.emitError("directed event-ID allocation does not fit: direction ")
                 << d.source << " -> " << d.target << " needs " << budget << ", only "
                 << eligibleIds.size() << " eligible IDs are available per direction; no repair applied", failure();

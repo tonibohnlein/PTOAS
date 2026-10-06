@@ -72,6 +72,14 @@ bool checkAlgebra(Value index, Value predicate)
     valid &= expressions.implies(cover, expressions.lnot(r));
     valid &= !expressions.implies(endpoints, expressions.lnot(r));
     valid &= !expressions.implies(expressions.lor(p, q), p);
+    auto choice = expressions.select(p, expressions.constant(2), expressions.constant(5));
+    valid &= expressions.constantUnder(p, choice) == 2;
+    valid &= expressions.constantUnder(expressions.lnot(p), choice) == 5;
+    valid &= !expressions.constantUnder(expressions.boolean(true), choice);
+    auto nested = expressions.add(choice, expressions.select(q, expressions.constant(7), expressions.constant(9)));
+    valid &= expressions.constantUnder(expressions.land(p, q), nested) == 9;
+    valid &= expressions.constantUnder(expressions.land(expressions.lnot(p), expressions.lnot(q)), nested) == 14;
+    valid &= !expressions.constantUnder(p, expressions.add(choice, x));
     fs::RegionExpressions bad;
     valid &= bad.div(bad.input(index), bad.constant(0)) == fs::RegionExpressions::invalid;
     fs::RegionExpressions dynamic;

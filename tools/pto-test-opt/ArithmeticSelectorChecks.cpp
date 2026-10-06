@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Small independent integer-point checks for DBM primitives and selectors.
 #include "PTO/Transforms/FrontierSynch/ArithmeticSelectors.h"
+#include "PTO/Transforms/FrontierSynch/CompactAllocation.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <limits>
@@ -235,6 +236,29 @@ bool exactCoalescing()
     }
     return true;
 }
+bool uniformAllocationQueries()
+{
+    mlir::MLIRContext context;
+    auto analysis = certified();
+    analysis.period = 1;
+    // One handoff a_i -> b_i, with 0<=i<N. Native pipe chains do not
+    // themselves order b_i completion before the next a start.
+    auto handoff = System::create(3, {atom(2, 1, 0), atom(1, 2, 0), atom(0, 1, 0), atom(1, 3, -1)});
+    if (failed(handoff)) { return false; }
+    analysis.minimumDemands[key(1, 1)] = {*handoff};
+    const std::map<std::pair<std::size_t, std::size_t>, int64_t> records{{{0, 1}, 0}};
+    if (fs::arithmeticAllocationCertificate(analysis, {0, 1}, records, 0, &context)) { return false; }
+    fs::ArithmeticRelationKey reuse{{1, fs::ArithmeticEvent::Completion, {0}},
+                                   {0, fs::ArithmeticEvent::Start, {0}}, {0}};
+    for (int64_t gap : {1, 2}) {
+        auto order = System::create(3, {atom(1, 2, -gap), atom(0, 1, 0), atom(2, 3, -1)});
+        if (failed(order)) { return false; }
+        analysis.requiredOrder[reuse] = {*order};
+        auto proof = fs::arithmeticAllocationCertificate(analysis, {0, 1}, records, 0, &context);
+        if (static_cast<bool>(proof) != (gap == 1)) { return false; }
+    }
+    return true;
+}
 bool zeroCoordinates()
 {
     auto truth = System::create(0, {});
@@ -258,7 +282,7 @@ int runArithmeticSelectorChecks()
         return 1;
     }
     if (!signedResiduesAndTags() || !selectorValidation() || !selectorLargeConstants() ||
-        !exactCoalescing() || !zeroCoordinates()) {
+        !exactCoalescing() || !uniformAllocationQueries() || !zeroCoordinates()) {
         llvm::errs() << "arithmetic endpoint selector checks failed\n";
         return 1;
     }

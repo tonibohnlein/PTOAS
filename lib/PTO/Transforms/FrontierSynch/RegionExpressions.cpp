@@ -86,6 +86,28 @@ std::optional<uint64_t> RegionExpressions::constantValue(Id expression) const
     }
     return nodes[expression].literal;
 }
+std::optional<uint64_t> RegionExpressions::constantUnder(Id premise, Id expression)
+{
+    if (!isBoolean(premise) || !valid(expression)) { return std::nullopt; }
+    std::vector<std::optional<uint64_t>> values(static_cast<std::size_t>(expression) + 1);
+    for (Id i = 0; i <= expression; ++i) {
+        const auto node = nodes[i]; // Boolean negations below may grow nodes.
+        auto& value = values[i];
+        if (node.kind == Kind::Constant) { value = node.literal; }
+        else if (node.kind == Kind::Select) {
+            if (values[node.a]) { value = *values[node.a] ? values[node.b] : values[node.c]; }
+            else if (values[node.b] && values[node.b] == values[node.c]) { value = values[node.b]; }
+        } else if (node.kind == Kind::Not && values[node.a]) { value = !*values[node.a]; }
+        else if (node.a != invalid && node.b != invalid && values[node.a] && values[node.b]) {
+            value = fold(node.kind, *values[node.a], *values[node.b]);
+        }
+        if (!value && node.boolean) {
+            if (refutesNegation(premise, i)) { value = 1; }
+            else if (refutesNegation(premise, lnot(i))) { value = 0; }
+        }
+    }
+    return values[expression];
+}
 bool RegionExpressions::isBoolean(Id expression) const
 {
     return valid(expression) && nodes[expression].boolean;

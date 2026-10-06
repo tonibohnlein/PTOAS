@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingInsertion.h"
+#include "PTO/Transforms/FrontierSynch/CompactAllocation.h"
 #include "RecognitionInternal.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
@@ -63,12 +64,7 @@ public:
         tripValue = *count;
         for (std::size_t i = 0; i < analysis.generators.size(); ++i) {
             auto retained = analysis.periodic.retained[i];
-            if (arena.constantValue(retained) == 0) { continue; }
-            const auto& edge = analysis.generators[i];
-            if (analysis.payloads[edge.source].pipe == analysis.payloads[edge.target].pipe &&
-                arena.implies(retained, arena.boolean(false))) {
-                continue;
-            }
+            if (arena.implies(retained, arena.boolean(false))) { continue; }
             if (!adjacent(analysis, i)) {
                 error = "guarded rotating local record " + std::to_string(i) + " lacks an adjacency proof";
                 return failure();
@@ -180,6 +176,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGuardedRotatingEndpoints(
             error = "guarded rotating endpoint invariants or bounds unavailable: " + analysis.expressions->error();
         }
         return failure();
+    }
+    if (!filter) {
+        plan->allocationCertificate = guardedAllocationCertificate(analysis, plan->planId, function.getContext());
     }
     return plan;
 }

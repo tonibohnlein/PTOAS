@@ -46,6 +46,10 @@ public:
     std::size_t size() const { return nodes.size(); }
     std::optional<uint64_t> constantValue(Id expression) const;
     bool isBoolean(Id expression) const;
+    // Sound constant specialization under an immutable Boolean premise.
+    // Unknown means unsupported, not nonconstant. Uses O(G^2) Boolean proof
+    // work in the worst case; no valuation search or arithmetic solver.
+    std::optional<uint64_t> constantUnder(Id premise, Id expression);
     // Sound sufficient implication by forced Boolean facts, without arithmetic
     // reasoning, Boolean search or SAT. A conjunction of A distinct obligations costs O(A*G)
     // for G DAG nodes; one obligation costs O(G). Does not grow the DAG.

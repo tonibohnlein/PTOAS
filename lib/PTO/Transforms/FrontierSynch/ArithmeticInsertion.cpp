@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
+#include "PTO/Transforms/FrontierSynch/CompactAllocation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/IR/Matchers.h"
@@ -36,6 +37,7 @@ public:
         }
         return success();
     }
+    const std::map<Pair, int64_t>& recordMap() const { return records; }
 private:
     struct Cut {
         Block* code = nullptr;
@@ -349,10 +351,13 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticInsertion(
     if (!selectors.error.empty()) { error = selectors.error; return failure(); }
     auto plan = std::make_unique<PreparedLogicalPlan>(0);
     plan->completeInvocation = !program.sites.empty();
-    if (failed(Preparer<ArithmeticSelectors>(function, program, selectors, *plan, error).run())) {
+    Preparer<ArithmeticSelectors> preparer(function, program, selectors, *plan, error);
+    if (failed(preparer.run())) {
         if (error.empty()) { error = "arithmetic selector cannot be emitted at its original cut"; }
         return failure();
     }
+    plan->allocationCertificate = arithmeticAllocationCertificate(analysis, pipes, preparer.recordMap(),
+                                                                  plan->planId, function.getContext());
     return plan;
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneralArithmeticInsertion(
