@@ -10,11 +10,38 @@
 #include "RecognitionInternal.h"
 #include "../InsertSync/SyncScalarEvolution.h"
 namespace mlir::pto::frontiersynch::detail {
-AffineExpr TemplateBuilder::scalar(Value value) const
+namespace {
+// Pure integer arithmetic over values defined outside the retained loop has
+// the same value on every visit, even when its computation sits in the body.
+// Iteration arguments, loads and region-producing operations are not lifted.
+bool invariantScalar(Value value, scf::ForOp loop, DenseMap<Value, bool>& cache, unsigned depth = 0)
+{
+    if (!value || !value.getType().isIntOrIndex() || depth >= 64) {
+        return false;
+    }
+    if (loop.isDefinedOutsideOfLoop(value)) {
+        return true;
+    }
+    auto found = cache.find(value);
+    if (found != cache.end()) {
+        return found->second;
+    }
+    auto* op = value.getDefiningOp();
+    const bool invariant = op && !op->getNumRegions() &&
+        op->getName().getDialectNamespace() == "arith" && isMemoryEffectFree(op) &&
+        llvm::all_of(op->getOperands(), [&](Value operand) {
+            return invariantScalar(operand, loop, cache, depth + 1);
+        });
+    cache.try_emplace(value, invariant);
+    return invariant;
+}
+} // namespace
+AffineExpr TemplateBuilder::scalar(Value value, SmallVectorImpl<Value>* invariants) const
 {
     // ScalarEvolution caches by Value: a fresh instance is required for each
     // coordinate environment, rather than carrying the first visit's constants.
     mlir::pto::detail::ScalarEvolution evolution(context());
+    DenseMap<Value, bool> invariantCache;
     auto expression = evolution.value(value, [&](Value symbol) -> AffineExpr {
         if (symbol == output.outer.getInductionVar()) {
             return mlir::pto::detail::checkedAdd(getAffineConstantExpr(output.lower, context()),
@@ -22,9 +49,20 @@ AffineExpr TemplateBuilder::scalar(Value value) const
                                              getAffineConstantExpr(output.step, context())));
         }
         auto found = coordinates.find(symbol);
-        return found == coordinates.end() ? AffineExpr{} : getAffineConstantExpr(found->second, context());
+        if (found != coordinates.end()) {
+            return getAffineConstantExpr(found->second, context());
+        }
+        if (!invariants || !invariantScalar(symbol, output.outer, invariantCache)) {
+            return {};
+        }
+        auto position = llvm::find(*invariants, symbol);
+        if (position == invariants->end()) {
+            invariants->push_back(symbol);
+            position = std::prev(invariants->end());
+        }
+        return getAffineSymbolExpr(1 + (position - invariants->begin()), context());
     });
-    return expression ? simplifyAffineExpr(expression, 0, 1) : AffineExpr{};
+    return expression ? simplifyAffineExpr(expression, 0, 1 + (invariants ? invariants->size() : 0)) : AffineExpr{};
 }
 std::optional<int64_t> TemplateBuilder::integer(Value value) const
 {

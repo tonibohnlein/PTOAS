@@ -20,20 +20,24 @@ struct TemplateCoordinate {
     scf::ForOp loop;
     int64_t induction = 0;
 };
-// Dimensions are local footprint coordinates; sole symbol s0 is the OUTER
-// ITERATION ORDINAL. It is not an SSA value or a numeric pointer base.
+// Dimensions are local footprint coordinates. Symbol s0 is the outer iteration
+// ordinal; s1 onward name invariant SSA values listed in invariantSymbols.
+// Only GM maps may retain these values; local storage must remain concrete.
 struct TemplateRegion {
     Value base;
     AffineExpr byteOffset;
     SmallVector<AffineExpr> extents;
     unsigned elementBytes = 0;
+    SmallVector<Value> invariantSymbols;
 };
 enum class TemplateDischarge { None, ReadOnlyBase, IterationPrivateBase };
 struct TemplateEffect {
     std::size_t sourceEffect = 0;
     SyncAccessMode mode = SyncAccessMode::Read;
     SmallVector<TemplateRegion> regions;
-    SmallVector<SyncStorageCell> ranges; // Local absolute bytes, or GM at ordinal 0.
+    // Local absolute bytes, or GM at ordinal zero relative to its certified
+    // common invariant origin. GM ranges are used only for the discharge proof.
+    SmallVector<SyncStorageCell> ranges;
     SmallVector<std::size_t> atoms; // Indices into the template-wide physical partition.
     TemplateDischarge discharge = TemplateDischarge::None;
     int64_t outerStride = 0; // Certified translation for iteration-private GM.
