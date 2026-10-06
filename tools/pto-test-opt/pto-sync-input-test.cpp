@@ -338,6 +338,7 @@ int runArithmeticSelectorChecks();
 int runArithmeticDemandChecks();
 int runIntegerRelationChecks();
 int runGeneralArithmeticSelectorChecks();
+int runArithmeticStorageSelectorChecks();
 int runGeneralArithmeticDemandChecks();
 int runFiniteOverlayChecks();
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
@@ -350,6 +351,9 @@ int main(int argc, char **argv) {
   }
   if (argc == 2 && StringRef(argv[1]) == "--integer-relations") {
     return runIntegerRelationChecks();
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--arithmetic-storage-selector-checks") {
+    return runArithmeticStorageSelectorChecks();
   }
   if (argc == 2 && StringRef(argv[1]) == "--general-arithmetic-selector-checks") {
     return runGeneralArithmeticSelectorChecks();

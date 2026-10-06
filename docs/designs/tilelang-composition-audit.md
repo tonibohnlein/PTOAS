@@ -249,3 +249,58 @@ Remaining milestones must each pass all three reviews as a complete milestone
 and be committed before proceeding to the next. Successful extraction alone is
 not M3 acceptance, finite slices alone are not M4 acceptance, and a sufficient
 allocation failure is neither a capacity impossibility proof nor M5 completion.
+
+## M3 implementation and review evidence
+
+The arithmetic regional adapter now constructs exact per-byte first/last writer
+and reader selectors, occurrence selectors, and all-event queries from the
+shared physical access relations. Enclosing coordinates remain shared entry
+bindings. Bounded physical support is partitioned into access-equivalent atoms
+when unit byte coefficients certify common cut residues; otherwise the adapter
+retains individual bytes. This cost depends on physical support, not dynamic
+trip count. Unbounded support still needs a symbolic boundary adapter.
+
+The signed integer recipe adapter retains exact projection and constant-division
+quotient locals. It does not enumerate a joint modulus just to represent a
+constant division. Original cuts and matched endpoint identities are preserved.
+Crossings are consolidated to guarded extrema and reduced through memoized
+last-crossing queries. Preparation is shared only at an original dominating cut
+where all required values are available; unavailable sharing leaves the ordinary
+endpoint preparation intact.
+
+Independent tests now compare twenty emitted command closures with authored
+byte conflicts, including overlapping f32 reads and upper-half f16 writes,
+zero/negative bounds, persistent cells, recurrence and owned suffixes. A
+billion-trip parameter does not change emitted code. Existing integer relation,
+arithmetic demand/selector, expression, first-site prerequisite, 32 sequence,
+101 mixed, 15 conditional and ten arithmetic-insertion checks pass.
+
+The parameterized recurrence and prefix fixtures now require 1,496 and 1,417
+preparation operations (initially 42,429 and 104,919); persistent and overlapping
+width fixtures require 192 and 258. These are preparation counts, not hardware
+synchronization counts. GDN produces a logical plan in 8.02 seconds at 121 MB
+peak RSS; mHC takes 0.15 seconds at 112 MB. The arithmetic route is still slower
+than simple structural routes; these measurements establish no near-linear
+complexity claim. Allocation of these new plans belongs to M5.
+
+An allocation-interface regression was fixed by retaining the detached sequence
+plan while trying the existing whole-function difference route, and replacing it
+only when that route supplies an allocation certificate. Plans already exporting
+regional allocation skip this retry. The regression subset again has 52 logical
+successes and 51 allocation successes, matching its baseline.
+
+Lossless block cast now passes sequence analysis and endpoint preparation through
+six arithmetic regions: 38,923 represented bytes, 8,521 cells, 8,723 ports and 98
+preparation operations. Analysis takes 122.18 seconds and peaks at 168 MB. The
+later scalar GM access reuses the existing global-independence and disjoint-visit
+proof, with deferred access selectors retained for enclosing re-entry. Six
+focused fixtures pass under both alias policies, including overlapping peers,
+repeated writes, read-only effects and original index-cast bindings.
+
+Architecture, correctness and performance reviewers accepted the full original
+M3 contract. Physical allocation remains M5; arbitrary unbounded symbolic storage
+interfaces are not claimed. The changed-code checker reports brace-rule false
+positives for already-braced compound conditions; actual width findings were
+fixed. Serial builds, source review and independent tests pass. Production
+logical insertion also succeeds for lossless block cast; all three M3 target
+ports now produce logical plans. The milestone is accepted for commit.

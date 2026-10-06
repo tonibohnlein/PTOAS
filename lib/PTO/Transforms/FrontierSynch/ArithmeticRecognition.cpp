@@ -65,7 +65,7 @@ bool validPiece(const ResiduePiece& piece, const PrimitiveRelation& relation, ui
 {
     auto system = piece.system;
     return system && system.getNumDims() == relation.dimensions &&
-           system.getNumInputs() == relation.coordinates.size() &&
+           system.getNumInputs() >= relation.coordinates.size() &&
            piece.residues.size() == relation.coordinates.size() &&
            llvm::all_of(piece.residues, [&](uint64_t residue) { return residue < period; });
 }
@@ -148,6 +148,17 @@ ArithmeticRecognition recognizeArithmetic(const ArithmeticPrimitives& input, con
             if (!validPiece(piece, relation, input.period)) {
                 reject(output, ArithmeticIssue::InvalidResidue, id, pieceId);
                 continue;
+            }
+            if (piece.system.getNumInputs() > limits.dimensions) {
+                reject(output, ArithmeticIssue::DimensionLimit, id, pieceId);
+                continue;
+            }
+            output.observedDimensions = std::max(output.observedDimensions, piece.system.getNumInputs());
+            // General integer projection retains congruences introduced by
+            // quotient elimination. Do not hand these lifted pieces to a
+            // cheaper backend whose import assumes no existential locals.
+            if (piece.system.getNumInputs() > relation.coordinates.size()) {
+                output.arithmeticClass = ArithmeticClass::BoundedCoefficients;
             }
             NormalizedPiece normalized{id, pieceId, false, {}};
             inspectPiece(piece, limits, normalized, output);

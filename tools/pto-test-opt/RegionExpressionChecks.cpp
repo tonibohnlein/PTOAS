@@ -132,6 +132,193 @@ bool checkSubstitution(Value index, Value predicate)
     fs::RegionExpressions::Substitution conflict({{v, duplicate.constant(1)}, {v, duplicate.constant(2)}});
     return duplicate.substitute(v, conflict) == fs::RegionExpressions::invalid && a.error().empty();
 }
+bool checkIntegerAdapters(Value index, Value predicate)
+{
+    fs::RegionExpressions expressions;
+    const auto x = expressions.input(index), p = expressions.input(predicate);
+    auto system = fs::IntegerSystem::create(1, {{{fs::BoundInteger(1)}, fs::BoundInteger(2)}},
+        {{{fs::BoundInteger(1)}, fs::BoundInteger(1), fs::BoundInteger(3)}});
+    if (failed(system)) { return false; }
+    fs::IntegerAffine numerator{{fs::BoundInteger(3)}, fs::BoundInteger(-2)};
+    for (int64_t period = 1; period <= 3; ++period) {
+        for (int64_t residue = 0; residue < period; ++residue) {
+            const auto condition = expressions.integerPredicate(*system, {x}, period, {static_cast<uint64_t>(residue)});
+            const auto witness = expressions.integerWitness(numerator, fs::BoundInteger(2), {x}, period,
+                {static_cast<uint64_t>(residue)}, 0);
+            const auto size = expressions.size();
+            if (condition != expressions.integerPredicate(*system, {x}, period, {static_cast<uint64_t>(residue)}) ||
+                expressions.size() != size) { return false; }
+            for (int64_t value = -9; value <= 9; ++value) {
+                // C++ division truncates, so implement floor independently.
+                const int64_t quotient = value / period - (value % period < 0);
+                const int64_t remainder = value - quotient * period;
+                const bool expected = remainder == residue && quotient <= 2 && (quotient % 3 + 3) % 3 == 1;
+                const int64_t n = 3 * quotient - 2;
+                const int64_t output = (n / 2 - (n % 2 < 0)) * period;
+                fs::RegionExpressions::Substitution bind({{x, expressions.constant(static_cast<uint64_t>(value))}});
+                if (expressions.constantValue(expressions.substitute(condition, bind)) !=
+                        static_cast<uint64_t>(expected) ||
+                    expressions.constantValue(expressions.substitute(witness, bind)) != static_cast<uint64_t>(output)) {
+                    return false;
+                }
+            }
+        }
+    }
+    auto trueSystem = fs::IntegerSystem::create(1, {});
+    if (failed(trueSystem)) { return false; }
+    auto boolAsInteger = expressions.integerWitness({{fs::BoundInteger(1)}, fs::BoundInteger(0)},
+        fs::BoundInteger(1), {p}, 1, {0}, 0);
+    fs::RegionExpressions::Substitution trueBinding({{p, expressions.boolean(true)}});
+    if (expressions.constantValue(expressions.substitute(boolAsInteger, trueBinding)) != 1) { return false; }
+    // Coefficients may fit i128 while their products with signed64 inputs do not.
+    fs::BoundInteger large(1);
+    for (unsigned i = 0; i < 70; ++i) { large *= 2; }
+    fs::RegionExpressions rejected;
+    if (rejected.integerWitness({{large}, fs::BoundInteger(0)}, fs::BoundInteger(1),
+        {rejected.input(index)}, 1, {0}, 0) != fs::RegionExpressions::invalid) { return false; }
+    fs::RegionExpressions badDivisor;
+    return badDivisor.integerWitness({{fs::BoundInteger(1)}, fs::BoundInteger(0)}, fs::BoundInteger(0),
+        {badDivisor.input(index)}, 1, {0}, 0) == fs::RegionExpressions::invalid && expressions.error().empty();
+}
+bool checkPartialIntegerAdapters(Value index, Value predicate)
+{
+    fs::RegionExpressions expressions;
+    const auto x = expressions.input(index), unused = expressions.input(predicate);
+    auto pair = fs::IntegerSystem::create(2, {{{fs::BoundInteger(1), fs::BoundInteger(4)}, fs::BoundInteger(11)}});
+    auto single = fs::IntegerSystem::create(1, {{{fs::BoundInteger(1)}, fs::BoundInteger(2)}});
+    if (failed(pair) || failed(single)) { return false; }
+    const auto expected = expressions.integerPredicate(*single, {x}, 1, {0});
+    for (uint64_t byte = 0; byte < 4; ++byte) {
+        if (expressions.integerPredicate(*pair, {expressions.constant(byte), x}, 1, {0,0}) != expected ||
+            expressions.integerWitness({{fs::BoundInteger(1), fs::BoundInteger(4)}, fs::BoundInteger(0)},
+                fs::BoundInteger(4), {expressions.constant(byte), x}, 1, {0,0}, 0) != x) { return false; }
+    }
+    auto sparse = fs::IntegerSystem::create(2, {{{fs::BoundInteger(0), fs::BoundInteger(1)}, fs::BoundInteger(2)}});
+    if (failed(sparse) || expressions.integerPredicate(*sparse, {unused, x}, 1, {0,0}) != expected) { return false; }
+    auto congruence = fs::IntegerSystem::create(2, {},
+        {{{fs::BoundInteger(2), fs::BoundInteger(3)}, fs::BoundInteger(1), fs::BoundInteger(5)}});
+    auto reduced = fs::IntegerSystem::create(1, {},
+        {{{fs::BoundInteger(3)}, fs::BoundInteger(2), fs::BoundInteger(5)}});
+    if (failed(congruence) || failed(reduced)) { return false; }
+    const auto negative = expressions.constant(static_cast<uint64_t>(-5));
+    if (expressions.integerPredicate(*congruence, {negative,x}, 2, {1,1}) !=
+        expressions.integerPredicate(*reduced, {x}, 2, {1})) { return false; }
+    if (expressions.integerPredicate(*congruence, {negative,x}, 2, {0,1}) != expressions.boolean(false)) {
+        return false;
+    }
+    auto residueOnly = fs::IntegerSystem::create(1, {});
+    if (failed(residueOnly) || expressions.constantValue(expressions.integerPredicate(*residueOnly, {x}, 2, {1}))) {
+        return false;
+    }
+    auto interval = fs::IntegerSystem::create(1, {
+        {{fs::BoundInteger(1)}, fs::BoundInteger(2)},
+        {{fs::BoundInteger(-1)}, fs::BoundInteger(3)}});
+    if (failed(interval) || expressions.integerPredicate(*interval, {x}, 1, {0}) !=
+        expressions.land(expressions.sle(x, expressions.constant(2)),
+                         expressions.sle(expressions.constant(static_cast<uint64_t>(-3)), x))) { return false; }
+    // Mathematical bounds beyond signed64 fold without wrapping the bound.
+    for (int sign : {-1, 1}) {
+        auto all = fs::IntegerSystem::create(1, {{{fs::BoundInteger(sign)},
+            fs::BoundInteger(INT64_MAX) + fs::BoundInteger(1)}});
+        auto none = fs::IntegerSystem::create(1, {{{fs::BoundInteger(sign)},
+            fs::BoundInteger(INT64_MIN) - fs::BoundInteger(1)}});
+        if (failed(all) || failed(none) ||
+            expressions.integerPredicate(*all, {x}, 1, {0}) != expressions.boolean(true) ||
+            expressions.integerPredicate(*none, {x}, 1, {0}) != expressions.boolean(false)) { return false; }
+    }
+    auto sameCoordinate = fs::IntegerSystem::create(2,
+        {{{fs::BoundInteger(1), fs::BoundInteger(-1)}, fs::BoundInteger(0)}});
+    auto strictCoordinate = fs::IntegerSystem::create(2,
+        {{{fs::BoundInteger(1), fs::BoundInteger(-1)}, fs::BoundInteger(-1)}});
+    if (failed(sameCoordinate) || failed(strictCoordinate) ||
+        expressions.integerPredicate(*sameCoordinate, {x,x}, 1, {0,0}) != expressions.boolean(true) ||
+        expressions.integerPredicate(*strictCoordinate, {x,x}, 1, {0,0}) != expressions.boolean(false) ||
+        expressions.integerPredicate(*sameCoordinate, {x,x}, 2, {0,1}) != expressions.boolean(false)) { return false; }
+    // Partial substitution through an existing DAG must run the same adapter.
+    const auto dynamic = expressions.integerPredicate(*pair, {x,unused}, 1, {0,0});
+    fs::RegionExpressions::Substitution binding({{x, expressions.constant(3)}});
+    return expressions.substitute(dynamic, binding) == expressions.integerPredicate(*single, {unused}, 1, {0}) &&
+        expressions.error().empty();
+}
+bool evaluateIntegerCode(Block& code, Value input, int64_t coordinate, Value guard, Value witness)
+{
+    llvm::DenseMap<Value, APInt> values;
+    values[input] = APInt(64, static_cast<uint64_t>(coordinate));
+    for (auto& operation : code) {
+        SmallVector<APInt> operands;
+        for (Value value : operation.getOperands()) {
+            auto found = values.find(value);
+            if (found == values.end()) { return false; }
+            operands.push_back(found->second);
+        }
+        APInt result;
+        if (auto constant = dyn_cast<arith::ConstantOp>(operation)) {
+            result = cast<IntegerAttr>(constant.getValue()).getValue();
+        } else if (isa<arith::IndexCastOp>(operation)) {
+            Type type = operation.getResult(0).getType();
+            result = operands[0].sextOrTrunc(type.isIndex() ? 64 : cast<IntegerType>(type).getWidth());
+        } else if (auto extend = dyn_cast<arith::ExtUIOp>(operation)) {
+            result = operands[0].zext(cast<IntegerType>(extend.getType()).getWidth());
+        } else if (isa<arith::FloorDivSIOp>(operation)) {
+            result = operands[0].sdiv(operands[1]);
+            if (operands[0].isNegative() && !operands[0].srem(operands[1]).isZero()) { --result; }
+        } else if (isa<arith::MulIOp>(operation)) {
+            result = operands[0] * operands[1];
+        } else if (isa<arith::AddIOp>(operation)) {
+            result = operands[0] + operands[1];
+        } else if (isa<arith::SubIOp>(operation)) {
+            result = operands[0] - operands[1];
+        } else if (isa<arith::AndIOp>(operation)) {
+            result = operands[0] & operands[1];
+        } else if (auto comparison = dyn_cast<arith::CmpIOp>(operation)) {
+            bool truth;
+            if (comparison.getPredicate() == arith::CmpIPredicate::eq) { truth = operands[0] == operands[1]; }
+            else if (comparison.getPredicate() == arith::CmpIPredicate::sle) { truth = operands[0].sle(operands[1]); }
+            else { return false; }
+            result = APInt(1, truth);
+        } else { return false; }
+        values[operation.getResult(0)] = result;
+    }
+    const int64_t q = coordinate / 2 - (coordinate % 2 < 0);
+    const bool expectedGuard = coordinate - q * 2 == 1 && 2 * q <= 7;
+    const int64_t numerator = 3 * q - 2;
+    const int64_t expectedWitness = (numerator / 2 - (numerator % 2 < 0)) * 2 + 1;
+    return values.lookup(guard).getZExtValue() == expectedGuard &&
+        values.lookup(witness).getSExtValue() == expectedWitness;
+}
+bool checkIntegerEmission(func::FuncOp function, ArrayRef<Operation*> cuts, Value hidden)
+{
+    fs::RegionExpressions expressions;
+    auto x = expressions.input(function.getArgument(0));
+    auto relation = fs::IntegerSystem::create(1, {{{fs::BoundInteger(2)}, fs::BoundInteger(7)}});
+    if (failed(relation)) { return false; }
+    auto query = expressions.integerPredicate(*relation, {x}, 2, {1});
+    auto witness = expressions.integerWitness({{fs::BoundInteger(3)}, fs::BoundInteger(-2)},
+        fs::BoundInteger(2), {x}, 2, {1}, 1);
+    fs::PreparedLogicalPlan plan(0);
+    auto& code = plan.addPreparation(cuts[0]);
+    OpBuilder builder(function.getContext());
+    builder.setInsertionPointToEnd(&code);
+    fs::RegionExpressions::CutEmission context;
+    auto emittedQuery = expressions.emitContextual(query, builder, cuts[0], context);
+    auto emittedWitness = expressions.emitContextual(witness, builder, cuts[0], context);
+    if (failed(emittedQuery) || failed(emittedWitness)) { return false; }
+    for (int64_t value = -9; value <= 9; ++value) {
+        if (!evaluateIntegerCode(code, function.getArgument(0), value, *emittedQuery, *emittedWitness)) {
+            return false;
+        }
+    }
+    bool hasWide = false;
+    for (auto& operation : code) {
+        if (failed(verify(&operation))) { return false; }
+        for (auto type : operation.getResultTypes()) { hasWide |= type.isInteger(128); }
+    }
+    auto unavailable = expressions.integerPredicate(*relation, {expressions.input(hidden)}, 2, {1});
+    auto& absent = plan.addPreparation(cuts[1]);
+    builder.setInsertionPointToEnd(&absent);
+    llvm::DenseMap<fs::RegionExpressions::Id, Value> memo;
+    return hasWide && failed(expressions.emit(unavailable, builder, cuts[1], memo)) && absent.empty() && memo.empty();
+}
 bool checkImplicationTruthTables(Value index, Value predicate)
 {
     fs::RegionExpressions expressions;
@@ -243,6 +430,9 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
     const auto before = render(function);
     if (!checkAlgebra(function.getArgument(0), function.getArgument(1)) || !checkEmission(function, cuts) ||
         !checkImplicationTruthTables(function.getArgument(0), function.getArgument(1)) ||
+        !checkIntegerAdapters(function.getArgument(0), function.getArgument(1)) ||
+        !checkPartialIntegerAdapters(function.getArgument(0), function.getArgument(1)) ||
+        !checkIntegerEmission(function, cuts, hidden) ||
         !checkPlacementRetry(function, cuts) || !checkSubstitution(function.getArgument(0), function.getArgument(1)) ||
         !runNestedRegionalChecks(function) || !runRepeatedRegionChecks(function) ||
         !runRepeatedStorageChecks(function.getContext()) || !runRepeatedPhaseChecks(function) ||

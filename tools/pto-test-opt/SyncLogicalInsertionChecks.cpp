@@ -14,6 +14,7 @@
 #include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Pass/PassManager.h"
@@ -472,6 +473,50 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
 }
 
 namespace {
+// Incoming scalar ordering must target the first executed site occurrence,
+// including a guarded nonzero prefix inside a nested arithmetic child.
+bool checkArithmeticEntryPrerequisite(func::FuncOp function, const pto::SyncInput& input)
+{
+    auto expected = function->getAttrOfType<BoolAttr>("test.arithmetic_entry_prerequisite");
+    if (!expected) { return true; }
+    fs::PhaseIndex index;
+    if (failed(index.build(function, input))) { return false; }
+    SmallVector<Operation*> prefix;
+    scf::ForOp loop;
+    for (auto& op : function.front()) {
+        if (auto candidate = dyn_cast<scf::ForOp>(op)) { loop = candidate; break; }
+        prefix.push_back(&op);
+    }
+    if (!loop) { return false; }
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto finite = fs::analyzeFiniteGuarded(function, prefix, index, input, arena);
+    auto first = fs::finiteGuardedRegionalResult(finite);
+    std::string error;
+    auto second = fs::analyzeArithmeticRegion({function, loop}, index, input, arena, error);
+    if (!finite.error.empty() || failed(second) || first.anchors.size() != 1 || second->anchors.size() != 1) {
+        return false;
+    }
+    if (!second->firstSitePayloads.count(0)) { return false; }
+    const auto zero = arena->constant(0);
+    const fs::SequenceEvent source{0, 0, zero, fs::PeriodicEventKind::Completion};
+    auto check = [&](fs::RegionalAnalysis child) {
+        auto composed = fs::composeRegionalSequence(function, arena, {first, std::move(child)}, true, false);
+        if (!composed.error.empty()) { return false; }
+        for (uint64_t row = 0; row < 2; ++row) {
+            for (uint64_t column = 0; column < 4; ++column) {
+                auto reaches = fs::sequenceEventReachability(composed, source,
+                    {1, 0, arena->constant(column), fs::PeriodicEventKind::Start, {arena->constant(row)}});
+                const bool required = expected.getValue() && column >= 2;
+                if (!reaches || arena->constantValue(*reaches) != static_cast<uint64_t>(required)) { return false; }
+            }
+        }
+        return true;
+    };
+    if (!check(*second)) { return false; }
+    auto wrapper = fs::composeRegionalSequence(function, arena, {*second}, false, false);
+    if (!wrapper.error.empty()) { return false; }
+    return check(fs::sequenceRegionalResult(wrapper));
+}
 // Exercise the public composition API, rather than boundaryLoop's private path.
 bool checkSlicePrerequisite(func::FuncOp function, const pto::SyncInput& input)
 {
@@ -566,9 +611,13 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
              ((**prepared).regionalAllocation || (**prepared).allocationCertificate ? "constructed" : "unavailable"))},
         {"queries_available", validQueries}, {"unchanged", before == after},
         {"slice_prerequisite", checkSlicePrerequisite(function, input)}, {"region_scope", regionScope},
+        {"arithmetic_entry_prerequisite", checkArithmeticEntryPrerequisite(function, input)},
         {"children", analysis.cost.children}, {"cells", analysis.cost.cells},
         {"ports", analysis.cost.ports}, {"crossings", analysis.cost.crossings},
         {"physical_fragments", analysis.cost.physicalFragments},
+        {"arithmetic_regions", analysis.cost.arithmeticRegions}, {"boundary_bytes", analysis.cost.boundaryBytes},
+        {"child_preparation", fs::sequencePreparationCounts(analysis).first},
+        {"crossing_preparation", fs::sequencePreparationCounts(analysis).second},
         {"rotating_residues", analysis.cost.rotatingResidues}, {"numeric_visits", analysis.cost.numericVisits},
         {"repeated_regions", analysis.cost.repeatedRegions}, {"phase_descriptions", analysis.cost.phaseDescriptions},
         {"selector_comparisons", analysis.cost.selectorComparisons},

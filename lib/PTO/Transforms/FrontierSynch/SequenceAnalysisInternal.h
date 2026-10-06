@@ -82,8 +82,12 @@ struct SequenceAnalysisState {
     std::vector<Crossing> crossings;
     std::vector<Crossing> nativeValueCrossings;
     std::map<std::pair<uint32_t, uint32_t>, uint32_t> crossingIds;
-    std::vector<std::vector<Expr>> graph;
+    struct EntryLink { std::size_t source = 0, target = 0; Expr guard = 0; };
+    std::map<uint32_t, std::vector<EntryLink>> incoming;
+    using EventKey = std::tuple<uint32_t, uint32_t, Expr, PeriodicEventKind, std::vector<Expr>>;
+    std::map<std::pair<EventKey, EventKey>, Expr> reachabilityCache;
     std::vector<std::vector<CellBoundary>> boundaries;
+    uint64_t childPreparationOperations = 0, crossingPreparationOperations = 0;
     explicit SequenceAnalysisState(func::FuncOp f, const SyncInput& i, const ProgramRecognition& p)
         : function(f), input(&i), program(&p), indexOwner(std::make_shared<PhaseIndex>()), index(*indexOwner),
           arena(std::make_shared<RegionExpressions>()), expressions(*arena) {}
@@ -165,6 +169,11 @@ struct SequenceAnalysisState {
     void bridges();
     bool valueBridges();
     void canonicalizeCrossings();
+    void foldCrossingEndpoints(bool incomingSources);
+    void consolidateCrossings(bool incomingSources);
+    SequenceEvent event(std::size_t id) const;
+    std::optional<Expr> eventReachability(SequenceEvent source, SequenceEvent target);
+    std::optional<Expr> eventReachability(std::size_t source, std::size_t target);
     bool closure();
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare(ArrayRef<scf::ForOp> enclosing = {});
 };

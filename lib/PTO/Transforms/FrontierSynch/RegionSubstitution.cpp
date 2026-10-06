@@ -32,15 +32,15 @@ RegionExpressions::Id RegionExpressions::substitute(Id expression, Substitution&
         const Id next = pending.pop_back_val();
         if (context.memo.count(next) || !seen.insert(next).second) { continue; }
         order.push_back(next);
-        for (Id operand : {nodes[next].a, nodes[next].b, nodes[next].c}) {
-            if (operand != invalid) { pending.push_back(operand); }
-        }
+        appendOperands(nodes[next], pending);
     }
     llvm::sort(order);
     for (Id id : order) {
         const auto node = nodes[id]; // Rebuilding can grow the arena.
         Id result = id;
-        if (node.kind == Kind::Select) {
+        if (node.kind == Kind::Integer) {
+            result = rebuildInteger(node, context.memo);
+        } else if (node.kind == Kind::Select) {
             result = select(context.memo.lookup(node.a), context.memo.lookup(node.b), context.memo.lookup(node.c));
         } else if (node.kind == Kind::Not) {
             result = lnot(context.memo.lookup(node.a));

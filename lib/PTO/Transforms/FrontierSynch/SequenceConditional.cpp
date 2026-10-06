@@ -60,6 +60,7 @@ RegionalAnalysis guardedArm(RegionalAnalysis body, Expr guard)
     }
     for (auto& [pipe, values] : out.firstPayloads) { mask(values); }
     for (auto& [pipe, values] : out.lastPayloads) { mask(values); }
+    for (auto& [type, values] : out.firstSitePayloads) { mask(values); }
     out.presence = [owner, arena, guard](RegionalEvent event) -> std::optional<Expr> {
         auto present = regionalPresence(*owner, event);
         return present ? std::optional<Expr>(arena->select(guard, *present, arena->boolean(false))) : std::nullopt;

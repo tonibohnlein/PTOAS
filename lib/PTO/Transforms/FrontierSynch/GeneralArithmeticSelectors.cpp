@@ -13,10 +13,7 @@ namespace mlir::pto::frontiersynch {
 namespace {
 using GroupKey = std::pair<std::size_t, uint32_t>;
 using GroupIndex = std::map<GroupKey, std::size_t>;
-struct Tuple {
-    IntegerSystem domain;
-    std::vector<GeneralArithmeticSelectorOutput> outputs;
-};
+using Tuple = IntegerTupleWitness;
 BoundInteger natural(uint64_t value)
 {
     return BoundInteger(static_cast<int64_t>(value >> 1)) * BoundInteger(2) +
@@ -192,6 +189,11 @@ bool matchesResidues(llvm::ArrayRef<BoundInteger> values, llvm::ArrayRef<uint64_
     return true;
 }
 } // namespace
+FailureOr<std::vector<IntegerTupleWitness>> buildIntegerTupleWitnesses(
+    const IntegerSystem& system, unsigned inputs, llvm::ArrayRef<uint64_t> outputResidues)
+{
+    return eliminateOutputs(system, inputs, outputResidues);
+}
 GeneralArithmeticSelectors buildGeneralArithmeticSelectors(
     const GeneralArithmeticDemandAnalysis& analysis, llvm::ArrayRef<uint32_t> sitePipes)
 {

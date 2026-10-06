@@ -80,6 +80,30 @@ namespace mlir::pto {
 #define GEN_PASS_DEF_PTOFRONTIERANALYSIS
 #include "PTO/Transforms/Passes.h.inc"
 namespace {
+FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareWholeFunctionArithmetic(
+    func::FuncOp function, frontiersynch::FrontierAnalysis& analysis, std::string& error,
+    bool requireAllocationCertificate)
+{
+    if (failed(analysis.recognizeArithmetic()) || !analysis.result()->arithmetic) { return failure(); }
+    const auto& arithmetic = *analysis.result()->arithmetic;
+    SmallVector<const CompoundInstanceElement*> phases;
+    for (const auto& site : arithmetic.sites) { phases.push_back(site.phase); }
+    if (frontiersynch::mayHaveHardwareProtectedPair(*analysis.input(), phases)) { return failure(); }
+    if (arithmetic.recognition.arithmeticClass == frontiersynch::ArithmeticClass::Differences) {
+        auto demands = frontiersynch::analyzeArithmeticDemands(arithmetic);
+        if (!demands.error.empty()) { error += "; arithmetic: " + demands.error; return failure(); }
+        auto prepared = frontiersynch::prepareArithmeticInsertion(function, arithmetic, demands, error);
+        if (succeeded(prepared) && requireAllocationCertificate && !(*prepared)->allocationCertificate) {
+            return failure();
+        }
+        return prepared;
+    }
+    // The existing general arithmetic producer has no allocation export.
+    if (requireAllocationCertificate) { return failure(); }
+    auto demands = frontiersynch::analyzeGeneralArithmeticDemands(arithmetic);
+    if (!demands.error.empty()) { error += "; arithmetic: " + demands.error; return failure(); }
+    return frontiersynch::prepareGeneralArithmeticInsertion(function, arithmetic, demands, error);
+}
 class PTOFrontierAnalysisPass : public impl::PTOFrontierAnalysisBase<PTOFrontierAnalysisPass> {
 public:
     using Base = impl::PTOFrontierAnalysisBase<PTOFrontierAnalysisPass>;
@@ -100,6 +124,7 @@ public:
         FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepared = failure();
         auto function = getOperation();
         std::string routeError;
+        bool sequencePrepared = false;
         const bool straight = !function.isDeclaration() && llvm::hasSingleElement(function.getBody()) &&
             llvm::all_of(function.front(), [](Operation& op) { return op.getNumRegions() == 0; });
         if (straight) {
@@ -131,26 +156,21 @@ public:
             if (failed(prepared)) {
                 prepared = frontiersynch::prepareSequenceInsertion(function, *analysis.input(),
                                                                    *analysis.result(), routeError);
+                sequencePrepared = succeeded(prepared);
             }
         }
-        if (failed(prepared) && succeeded(analysis.recognizeArithmetic()) && analysis.result()->arithmetic) {
-            const auto& arithmetic = *analysis.result()->arithmetic;
-            SmallVector<const CompoundInstanceElement*> phases;
-            for (const auto& site : arithmetic.sites) { phases.push_back(site.phase); }
-            if (!frontiersynch::mayHaveHardwareProtectedPair(*analysis.input(), phases)) {
-                if (arithmetic.recognition.arithmeticClass == frontiersynch::ArithmeticClass::Differences) {
-                    auto demands = frontiersynch::analyzeArithmeticDemands(arithmetic);
-                    if (demands.error.empty()) {
-                        prepared = frontiersynch::prepareArithmeticInsertion(function, arithmetic, demands, routeError);
-                    } else { routeError += "; arithmetic: " + demands.error; }
-                } else {
-                    auto demands = frontiersynch::analyzeGeneralArithmeticDemands(arithmetic);
-                    if (demands.error.empty()) {
-                        prepared = frontiersynch::prepareGeneralArithmeticInsertion(
-                            function, arithmetic, demands, routeError);
-                    } else { routeError += "; arithmetic: " + demands.error; }
-                }
-            }
+        if (failed(prepared)) {
+            prepared = prepareWholeFunctionArithmetic(function, analysis, routeError, false);
+        } else if (sequencePrepared && !(*prepared)->allocationCertificate && !(*prepared)->regionalAllocation &&
+                   llvm::any_of((*prepared)->endpoints, [](const auto& endpoint) {
+                       return endpoint.kind != frontiersynch::LogicalCommandKind::Barrier;
+                   })) {
+            // Keep the accepted logical plan unless another exact route also
+            // supplies the existing allocation interface. Both preparations
+            // remain detached; this neither assigns IDs nor repairs scarcity.
+            std::string allocationRouteError;
+            auto alternative = prepareWholeFunctionArithmetic(function, analysis, allocationRouteError, true);
+            if (succeeded(alternative)) { prepared = std::move(alternative); }
         }
         if (failed(prepared)) { function.emitError(routeError); }
         if (failed(prepared) || failed(frontiersynch::insertLogicalSynchronization(getOperation(), **prepared))) {

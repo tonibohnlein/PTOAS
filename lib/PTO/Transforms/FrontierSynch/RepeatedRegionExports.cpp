@@ -26,6 +26,7 @@ void liftRepeatedSelectors(RegionalAnalysis& out, RegionExpressions::Id trips)
     for (auto& access : out.deferredAccessBoundary) { lift(access.first, false); lift(access.last, true); }
     for (auto& [pipe, values] : out.firstPayloads) { for (auto& value : values) { lift(value, false); } }
     for (auto& [pipe, values] : out.lastPayloads) { for (auto& value : values) { lift(value, true); } }
+    for (auto& [type, values] : out.firstSitePayloads) { for (auto& value : values) { lift(value, false); } }
 }
 RepeatedRegionAnalysis repeatInvariantRegion(func::FuncOp function, scf::ForOp loop,
     RegionalAnalysis body, RegionExpressions::Id trips)

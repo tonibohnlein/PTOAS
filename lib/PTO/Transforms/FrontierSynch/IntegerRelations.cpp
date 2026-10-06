@@ -90,6 +90,17 @@ FailureOr<IntegerSystem> IntegerSystem::create(unsigned dimensions,
         auto found = residues.emplace(std::make_pair(atom.coefficients, atom.modulus), atom.residue);
         if (!found.second && found.first->second != atom.residue) { result.contradiction = true; }
     }
+    // Opposite affine bounds can contradict before any variable elimination.
+    // Coefficients and constants are arbitrary-precision mathematical integers.
+    for (const auto& [coefficients, bound] : bounds) {
+        auto opposite = coefficients;
+        for (auto& coefficient : opposite) { coefficient = -coefficient; }
+        auto found = bounds.find(opposite);
+        if (found != bounds.end() && bound + found->second < 0) {
+            result.contradiction = true;
+            break;
+        }
+    }
     if (result.contradiction) {
         result.inequalities.push_back({Coefficients(dimensions), BoundInteger(-1)});
         result.emptyCache = true;
@@ -187,21 +198,41 @@ IntegerSystem substitute(const IntegerSystem& system, unsigned coordinate,
     return validSystem(dimensions, rows, congruences);
 }
 }
-FailureOr<std::vector<IntegerEliminationWitness>> IntegerSystem::eliminateWithWitness(unsigned coordinate) const
+namespace {
+// Projection collects every candidate. Feasibility can stop at its first
+// satisfying candidate without allocating the rest of the residue family.
+template<class Visitor>
+bool visitEliminationCandidates(const IntegerSystem& system, unsigned coordinate, Visitor&& visit)
 {
-    if (coordinate >= dimensionCount) { return failure(); }
-    std::vector<IntegerEliminationWitness> result;
-    if (contradiction) { return result; }
-    const auto bounds = endpointBounds(inequalities, coordinate);
+    // Opposite tight bounds define an equality. Solve it once, retaining the
+    // divisibility condition in substitute(), instead of enumerating residues
+    // that this equality already fixes. create() sorts normalized coefficients.
+    const auto& rows = system.constraints();
+    for (const auto& row : rows) {
+        const auto coefficient = row.coefficients[coordinate];
+        if (coefficient == 0) { continue; }
+        auto opposite = row.coefficients;
+        for (auto& value : opposite) { value = -value; }
+        auto found = std::lower_bound(rows.begin(), rows.end(), opposite,
+            [](const IntegerConstraint& atom, const Coefficients& key) { return atom.coefficients < key; });
+        if (found == rows.end() || found->coefficients != opposite || row.bound + found->bound != 0) { continue; }
+        const BoundInteger sign(coefficient > 0 ? 1 : -1);
+        IntegerAffine numerator{without(row.coefficients, coordinate), sign * row.bound};
+        for (auto& value : numerator.coefficients) { value *= -sign; }
+        const auto denominator = magnitude(coefficient);
+        auto domain = substitute(system, coordinate, numerator, denominator);
+        return visit(std::move(domain), std::move(numerator), denominator);
+    }
+    const auto bounds = endpointBounds(system.constraints(), coordinate);
     BoundInteger period = bounds.scale;
-    for (const auto& atom : divisibilities) {
+    for (const auto& atom : system.congruences()) {
         const auto modulus = bounds.scale * atom.modulus;
         const auto localPeriod = modulus / gcd(magnitude(atom.coefficients[coordinate]), modulus);
         period = commonMultiple(period, localPeriod);
     }
     const bool fromLower = !bounds.lower.empty();
     auto endpoints = fromLower ? bounds.lower : bounds.upper;
-    if (endpoints.empty()) { endpoints.push_back({Coefficients(dimensionCount - 1), BoundInteger(0)}); }
+    if (endpoints.empty()) { endpoints.push_back({Coefficients(system.dimensions() - 1), BoundInteger(0)}); }
     // Put t=scale*y. All inequalities on t have unit coefficients, and all
     // divisibilities are periodic in t with this period. Any nonempty bounded
     // interval has a satisfying t within one period above its maximal lower
@@ -211,10 +242,25 @@ FailureOr<std::vector<IntegerEliminationWitness>> IntegerSystem::eliminateWithWi
         for (BoundInteger offset(0); offset < period; ++offset) {
             auto numerator = endpoint;
             numerator.constant += fromLower ? offset : -offset;
-            auto domain = substitute(*this, coordinate, numerator, bounds.scale);
-            if (!domain.contradiction) { result.push_back({std::move(domain), std::move(numerator), bounds.scale}); }
+            auto domain = substitute(system, coordinate, numerator, bounds.scale);
+            if (!visit(std::move(domain), std::move(numerator), bounds.scale)) { return false; }
         }
     }
+    return true;
+}
+} // namespace
+FailureOr<std::vector<IntegerEliminationWitness>> IntegerSystem::eliminateWithWitness(unsigned coordinate) const
+{
+    if (coordinate >= dimensionCount) { return failure(); }
+    std::vector<IntegerEliminationWitness> result;
+    if (contradiction) { return result; }
+    visitEliminationCandidates(*this, coordinate,
+        [&](IntegerSystem domain, IntegerAffine numerator, const BoundInteger& denominator) {
+            if (!domain.contradiction) {
+                result.push_back({std::move(domain), std::move(numerator), denominator});
+            }
+            return true;
+        });
     return result;
 }
 FailureOr<std::vector<IntegerSystem>> IntegerSystem::eliminate(unsigned coordinate) const
@@ -256,11 +302,43 @@ bool IntegerSystem::isEmpty() const
     if (!dimensionCount) { return contradiction; }
     // Every recursive call removes one coordinate. Unlike project(), this
     // search returns at the first witness and never builds the full union.
-    auto children = eliminate(0);
+    // Existential feasibility is independent of elimination order. Prefer a
+    // coordinate with fewer endpoint/residue candidates; eliminating an outer
+    // affine row index first can otherwise enumerate its large physical stride.
+    unsigned selected = 0;
+    std::optional<BoundInteger> leastCost;
+    for (unsigned coordinate = 0; coordinate < dimensionCount; ++coordinate) {
+        BoundInteger scale(1);
+        unsigned lower = 0, upper = 0;
+        for (const auto& atom : inequalities) {
+            const auto& coefficient = atom.coefficients[coordinate];
+            if (coefficient == 0) { continue; }
+            scale = commonMultiple(scale, magnitude(coefficient));
+            if (coefficient < 0) { ++lower; } else { ++upper; }
+        }
+        BoundInteger period = scale;
+        for (const auto& atom : divisibilities) {
+            const auto modulus = scale * atom.modulus;
+            period = commonMultiple(period,
+                modulus / gcd(magnitude(atom.coefficients[coordinate]), modulus));
+        }
+        const auto count = std::max(1U, lower ? lower : upper);
+        const auto cost = period * BoundInteger(static_cast<int64_t>(count));
+        if (!leastCost || cost < *leastCost) { leastCost = cost; selected = coordinate; }
+    }
+    if (!isOctagonal()) {
+        emptyCache = visitEliminationCandidates(*this, selected,
+            [](const IntegerSystem& domain, const IntegerAffine&, const BoundInteger&) {
+                return domain.isEmpty();
+            });
+        return *emptyCache;
+    }
+    auto children = eliminate(selected);
     // The zero-dimensional case was handled above; this cannot be an invalid
     // caller-supplied coordinate. An internal error must not become an answer.
     if (failed(children)) {
-        llvm::report_fatal_error("integer relation invariant: nonconstant schema cannot eliminate coordinate zero");
+        llvm::report_fatal_error(
+            "integer relation invariant: nonconstant schema cannot eliminate the selected coordinate");
     }
     emptyCache = std::all_of(children->begin(), children->end(), [](const auto& child) { return child.isEmpty(); });
     return *emptyCache;
@@ -395,19 +473,20 @@ IntegerSystem thresholdSlice(unsigned dimensions, const Axis& axis, std::size_t 
     return validSystem(dimensions, rows);
 }
 std::vector<IntegerSystem> arrange(unsigned dimensions, llvm::ArrayRef<IntegerSystem> lhs,
-                                  llvm::ArrayRef<IntegerSystem> rhs, llvm::ArrayRef<Axis> axes)
+                                  llvm::ArrayRef<IntegerSystem> rhs, llvm::ArrayRef<Axis> axes,
+                                  const IntegerSystem* seed = nullptr)
 {
     struct Frame {
         IntegerSystem region;
         std::size_t axis = 0, interval = 0;
         BoundInteger residue{0};
     };
-    std::vector<Frame> stack{{validSystem(dimensions, {}), 0, 0, BoundInteger(0)}};
+    std::vector<Frame> stack{{seed ? *seed : validSystem(dimensions, {}), 0, 0, BoundInteger(0)}};
     std::vector<IntegerSystem> result;
     while (!stack.empty()) {
         auto& current = stack.back();
         if (current.axis == axes.size()) {
-            if (contained(current.region, lhs) && !contained(current.region, rhs)) {
+            if ((seed || contained(current.region, lhs)) && !contained(current.region, rhs)) {
                 result.push_back(std::move(current.region));
             }
             stack.pop_back();
@@ -427,7 +506,7 @@ std::vector<IntegerSystem> arrange(unsigned dimensions, llvm::ArrayRef<IntegerSy
         if (failed(next)) {
             llvm::report_fatal_error("integer relation invariant: validated arrangement slice has an invalid schema");
         }
-        if (!next->isEmpty() && useful(*next, lhs, rhs)) {
+        if (!next->isEmpty() && (seed ? !contained(*next, rhs) : useful(*next, lhs, rhs))) {
             stack.push_back({std::move(*next), current.axis + 1, 0, BoundInteger(0)});
         }
     }
@@ -452,6 +531,13 @@ FailureOr<std::vector<IntegerSystem>> subtractIntegerUnions(unsigned dimensions,
     }
     if (std::all_of(lhs.begin(), lhs.end(), [&](const auto& piece) { return contained(piece, rhs); })) {
         return std::vector<IntegerSystem>{};
+    }
+    if (lhs.size() == 1) {
+        // Every descendant already belongs to this conjunction. Partition only
+        // right-hand membership, retaining exact integer emptiness checks.
+        // This avoids exploring the universe outside a selector's domain.
+        const auto axes = arrangementAxes({}, rhs);
+        return arrange(dimensions, lhs, rhs, axes, &lhs.front());
     }
     const auto axes = arrangementAxes(lhs, rhs);
     return arrange(dimensions, lhs, rhs, axes);

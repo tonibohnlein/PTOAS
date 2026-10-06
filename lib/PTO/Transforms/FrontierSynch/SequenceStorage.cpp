@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "llvm/ADT/MapVector.h"
@@ -179,6 +180,19 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         if (!cachedNumeric) { cachedNumeric = recognizeRegionalNumericTemplate(child.loop, index, *input); }
         auto numeric = std::move(*cachedNumeric);
         if (numeric.result.state != RecognitionState::Applicable) {
+            std::string arithmeticError;
+            auto regional = analyzeArithmeticRegion({function, child.loop}, index, *input, arena, arithmeticError);
+            if (succeeded(regional)) {
+                child.regional = std::move(*regional);
+                child.anchors = child.regional.anchors;
+                children.push_back(std::move(child));
+                error.clear();
+                return true;
+            }
+            if (!arithmeticError.empty()) {
+                if (!repeatedAttempt.empty()) { repeatedAttempt += "; "; }
+                repeatedAttempt += "regional arithmetic: " + arithmeticError;
+            }
             if (!repeatedAttempt.empty()) { repeatedAttempt += "; "; }
             repeatedAttempt += "numeric repeat recognition: exact regional template unavailable";
             for (const auto& diagnostic : numeric.result.diagnostics) {

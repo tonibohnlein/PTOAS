@@ -8,6 +8,7 @@
 // Shared, typed expression DAG for exact regional queries and endpoint recipes.
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_REGIONEXPRESSIONS_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_REGIONEXPRESSIONS_H
+#include "PTO/Transforms/FrontierSynch/IntegerRelations.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseMap.h"
@@ -54,6 +55,18 @@ public:
     Id lor(Id a, Id b);
     Id lnot(Id a);
     Id select(Id condition, Id yes, Id no);
+    // Integer relations use floor(original/period) coordinates, and require the
+    // supplied residues. Original index bits are interpreted as signed i64;
+    // Boolean coordinates are 0/1. Affine intermediates are proved to fit i128
+    // over the entire input range before a node is accepted.
+    Id integerPredicate(const IntegerSystem& system, llvm::ArrayRef<Id> inputs,
+                        uint64_t period, llvm::ArrayRef<uint64_t> residues);
+    // On the caller's domain numerator/denominator is an integral occurrence
+    // coordinate. Off-domain floor division and final index truncation are
+    // total; no unavailable value, division by zero or signed overflow occurs.
+    Id integerWitness(const IntegerAffine& numerator, const BoundInteger& denominator,
+                      llvm::ArrayRef<Id> inputs, uint64_t period,
+                      llvm::ArrayRef<uint64_t> residues, uint64_t outputResidue);
     const std::string& error() const { return constructionMessage.empty() ? emissionMessage : constructionMessage; }
     const std::string& constructionError() const { return constructionMessage; }
     const std::string& lastEmissionError() const { return emissionMessage; }
@@ -69,7 +82,8 @@ public:
     // for G DAG nodes; one obligation costs O(G). Does not grow the DAG.
     bool implies(Id premise, Id consequence) const;
 
-    // Arithmetic has unsigned 64-bit modular semantics. The producer establishes
+    // Base arithmetic has unsigned 64-bit modular semantics; integerPredicate
+    // and integerWitness use the signed, checked contract above. The producer establishes
     // a 64-bit index layout and guards against wrap where natural-number results
     // are required. Div/rem require a positive constant denominator, so every
     // expression is total even when its endpoint presence guard is false.
@@ -98,13 +112,15 @@ public:
     FailureOr<Value> emitContextual(Id expression, OpBuilder& builder, Operation* cut, CutEmission& context);
 
 private:
-    enum class Kind { Constant, Input, Add, Sub, Div, Rem, Lt, Le, Eq, SLt, SLe, And, Or, Not, Select };
+    enum class Kind { Constant, Input, Add, Sub, Div, Rem, Lt, Le, Eq, SLt, SLe, And, Or, Not, Select, Integer };
+    struct IntegerRecipe;
     struct Node {
         Kind kind = Kind::Constant;
         bool boolean = false;
         Id a = invalid, b = invalid, c = invalid;
         uint64_t literal = 0;
         Value value;
+        std::shared_ptr<const IntegerRecipe> integer;
         bool operator==(const Node& other) const;
     };
     struct Hash { std::size_t operator()(const Node& node) const; };
@@ -112,6 +128,14 @@ private:
     Truth evaluateBoolean(const Node& node, ArrayRef<Truth> values) const;
     bool refutesNegation(Id premise, Id consequence) const;
     Id intern(Node node);
+    void appendOperands(const Node& node, SmallVectorImpl<Id>& operands) const;
+    static bool equalInteger(const Node& a, const Node& b);
+    static std::size_t hashInteger(const Node& node);
+    Id rebuildInteger(const Node& node, const llvm::DenseMap<Id, Id>& bindings);
+    Id internInteger(std::shared_ptr<IntegerRecipe> recipe);
+    std::optional<uint64_t> foldInteger(const IntegerRecipe& recipe) const;
+    Value emitInteger(const Node& node, OpBuilder& builder, Location location,
+                      const llvm::DenseMap<Id, Value>& memo) const;
     Id reject(const char* message);
     bool valid(Id id) const { return id < nodes.size(); }
     Id binary(Kind kind, Id a, Id b);

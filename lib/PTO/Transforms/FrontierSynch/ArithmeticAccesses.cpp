@@ -10,8 +10,117 @@
 #include "ArithmeticProgramInternal.h"
 #include "../InsertSync/SyncEffectRanges.h"
 #include "../InsertSync/SyncRegionArithmetic.h"
+#include "mlir/IR/Matchers.h"
+#include <algorithm>
 namespace mlir::pto::frontiersynch::detail {
 namespace {
+using Interval = std::pair<int64_t, int64_t>;
+struct BoundedExpression {
+    AffineExpr expression;
+    std::optional<Interval> interval;
+};
+std::optional<Interval> symbolInterval(Value value)
+{
+    APInt constant;
+    if (matchPattern(value, m_ConstantInt(&constant)) && constant.isSignedIntN(64)) {
+        return Interval{constant.getSExtValue(), constant.getSExtValue()};
+    }
+    auto argument = dyn_cast<BlockArgument>(value);
+    auto loop = argument ? dyn_cast<scf::ForOp>(argument.getOwner()->getParentOp()) : scf::ForOp{};
+    APInt lower, upper, step;
+    if (!loop || argument != loop.getInductionVar() ||
+        !matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) ||
+        !matchPattern(loop.getUpperBound(), m_ConstantInt(&upper)) ||
+        !matchPattern(loop.getStep(), m_ConstantInt(&step)) ||
+        !lower.isSignedIntN(64) || !upper.isSignedIntN(64) || !step.isSignedIntN(64) ||
+        step.getSExtValue() <= 0 || lower.getSExtValue() >= upper.getSExtValue()) {
+        return std::nullopt;
+    }
+    return Interval{lower.getSExtValue(), upper.getSExtValue() - 1};
+}
+int64_t floorQuotient(int64_t numerator, int64_t positiveDenominator)
+{
+    const auto quotient = numerator / positiveDenominator;
+    return numerator % positiveDenominator < 0 ? quotient - 1 : quotient;
+}
+// Prove simplifications from the actual SSA loop domains, before replacing
+// their IVs with arithmetic coordinates. In particular, a uint32_t truncation
+// becomes an identity only on a proved [0, 2^32) range. Negative values and
+// intervals crossing a wrap point retain their exact modular semantics.
+BoundedExpression boundedOrigin(AffineExpr expression, ArrayRef<Value> symbols,
+                                DenseMap<AffineExpr, BoundedExpression>& cache)
+{
+    auto found = cache.find(expression);
+    if (found != cache.end()) { return found->second; }
+    BoundedExpression result{expression, std::nullopt};
+    if (auto constant = dyn_cast<AffineConstantExpr>(expression)) {
+        result.interval = Interval{constant.getValue(), constant.getValue()};
+    } else if (auto symbol = dyn_cast<AffineSymbolExpr>(expression)) {
+        if (symbol.getPosition() < symbols.size()) {
+            result.interval = symbolInterval(symbols[symbol.getPosition()]);
+        }
+    } else if (auto binary = dyn_cast<AffineBinaryOpExpr>(expression)) {
+        auto left = boundedOrigin(binary.getLHS(), symbols, cache);
+        auto right = boundedOrigin(binary.getRHS(), symbols, cache);
+        const auto kind = binary.getKind();
+        if (kind == AffineExprKind::Add || kind == AffineExprKind::Mul) {
+            result.expression = kind == AffineExprKind::Add ?
+                mlir::pto::detail::checkedAdd(left.expression, right.expression) :
+                mlir::pto::detail::checkedMul(left.expression, right.expression);
+            if (left.interval && right.interval) {
+                int64_t low, high;
+                if (kind == AffineExprKind::Add) {
+                    if (!llvm::AddOverflow(left.interval->first, right.interval->first, low) &&
+                        !llvm::AddOverflow(left.interval->second, right.interval->second, high)) {
+                        result.interval = Interval{low, high};
+                    }
+                } else {
+                    int64_t products[4];
+                    if (!llvm::MulOverflow(left.interval->first, right.interval->first, products[0]) &&
+                        !llvm::MulOverflow(left.interval->first, right.interval->second, products[1]) &&
+                        !llvm::MulOverflow(left.interval->second, right.interval->first, products[2]) &&
+                        !llvm::MulOverflow(left.interval->second, right.interval->second, products[3])) {
+                        auto bounds = std::minmax_element(products, products + 4);
+                        result.interval = Interval{*bounds.first, *bounds.second};
+                    }
+                }
+            }
+        } else if (auto divisor = dyn_cast<AffineConstantExpr>(right.expression);
+                   divisor && divisor.getValue() > 0 &&
+                   (kind == AffineExprKind::Mod || kind == AffineExprKind::FloorDiv)) {
+            const int64_t denominator = divisor.getValue();
+            result.expression = kind == AffineExprKind::Mod ? left.expression % denominator :
+                left.expression.floorDiv(denominator);
+            if (kind == AffineExprKind::Mod) { result.interval = Interval{0, denominator - 1}; }
+            if (left.interval) {
+                const auto low = floorQuotient(left.interval->first, denominator);
+                const auto high = floorQuotient(left.interval->second, denominator);
+                if (kind == AffineExprKind::FloorDiv) { result.interval = Interval{low, high}; }
+                if (low == high) {
+                    if (kind == AffineExprKind::FloorDiv) {
+                        result.expression = getAffineConstantExpr(low, expression.getContext());
+                    } else {
+                        int64_t offset, negative;
+                        if (!llvm::MulOverflow(low, denominator, offset) &&
+                            !llvm::SubOverflow(int64_t{0}, offset, negative)) {
+                            result.expression = mlir::pto::detail::checkedAdd(left.expression,
+                                getAffineConstantExpr(negative, expression.getContext()));
+                            int64_t begin, end;
+                            if (!llvm::SubOverflow(left.interval->first, offset, begin) &&
+                                !llvm::SubOverflow(left.interval->second, offset, end)) {
+                                result.interval = Interval{begin, end};
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Failed checked reconstruction cannot justify replacing the map.
+        if (!result.expression) { result = {expression, std::nullopt}; }
+    }
+    cache.try_emplace(expression, result);
+    return result;
+}
 AffineExpr add(AffineExpr a, AffineExpr b)
 {
     return mlir::pto::detail::checkedAdd(a, b);
@@ -64,7 +173,9 @@ bool symbolicRegion(ProgramBuilder& builder, std::size_t siteId, const SyncStora
         occurrenceSymbols.push_back(value);
     }
     auto localOrigin = mlir::pto::detail::substitute(region.byteOffset, zeros, symbols);
-    auto origin = mlir::pto::detail::substitute(region.byteOffset, zeros, occurrenceSymbols);
+    DenseMap<AffineExpr, BoundedExpression> cache;
+    auto bounded = localOrigin ? boundedOrigin(localOrigin, region.symbols, cache).expression : AffineExpr{};
+    auto origin = mlir::pto::detail::substitute(bounded, {}, occurrenceSymbols);
     auto offset = add(region.byteOffset, negate(localOrigin));
     if (!origin || !offset) {
         return false;
@@ -118,6 +229,7 @@ void extractAccesses(ProgramBuilder& builder, const SyncInput& input, const Sync
             continue;
         }
         for (auto id : effects.effectsFor(site.phase)) {
+            if (llvm::is_contained(builder.output.extraction.dischargedEffects, id)) { continue; }
             const auto& effect = effects.effects()[id];
             if (effect.rangesMaterialized) {
                 for (const auto& range : effect.ranges) {

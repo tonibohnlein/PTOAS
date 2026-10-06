@@ -106,33 +106,185 @@ void SequenceAnalysisState::bridges()
 }
 void SequenceAnalysisState::canonicalizeCrossings()
 {
-    const auto size = ports.size();
-    std::vector<std::vector<Expr>> original(size, std::vector<Expr>(size, no()));
-    std::vector<std::vector<Expr>> equal(size, std::vector<Expr>(size, no()));
-    std::vector<std::vector<Expr>> targetEquivalent(size, std::vector<Expr>(size, no()));
-    for (const auto& edge : crossings) { original[edge.source][edge.target] = edge.guard; }
-    for (uint32_t a = 0; a < size; ++a) {
-        for (uint32_t b = 0; b < size; ++b) { equal[a][b] = same(a, b); }
+    // Only records with matching child and site identities can denote the
+    // same actual pair. Avoid materializing an all-storage-port matrix.
+    using Identity = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>;
+    std::map<Identity, std::vector<Crossing>> prior;
+    for (auto& edge : crossings) {
+        if (expressions.constantValue(edge.guard) == 0) { continue; }
+        const auto& source = ports[edge.source];
+        const auto& target = ports[edge.target];
+        auto& candidates = prior[{source.child, source.type, target.child, target.type}];
+        Expr earlier = no();
+        for (const auto& previous : candidates) {
+            auto identical = both(same(edge.source, previous.source), same(edge.target, previous.target));
+            earlier = either(earlier, expressions.select(previous.guard, identical, no()));
+        }
+        candidates.push_back(edge);
+        edge.guard = expressions.select(edge.guard, negate(earlier), no());
     }
-    // Boolean matrix products identify earlier records for the same actual
-    // endpoint pair in O(P^3), without pairwise comparison of all r records.
-    for (uint32_t s = 0; s < size; ++s) {
-        for (uint32_t t = 0; t < size; ++t) {
-            for (uint32_t v = 0; v < size; ++v) {
-                targetEquivalent[s][t] = either(targetEquivalent[s][t], both(original[s][v], equal[t][v]));
+}
+void SequenceAnalysisState::foldCrossingEndpoints(bool incomingSources)
+{
+    // A fixed opposite endpoint needs only the latest active completion on
+    // one source site, or the earliest active start on one consumer site.
+    // Keep the original links for reachability. This folds the candidate
+    // description into one selected occurrence, without enumerating guard
+    // valuations or building one exclusion predicate per physical byte.
+    using Group = std::tuple<uint32_t, uint32_t, uint32_t, std::size_t>;
+    std::map<Group, std::size_t> groups;
+    std::vector<Crossing> folded;
+    for (const auto& edge : crossings) {
+        if (expressions.constantValue(edge.guard) == 0) { continue; }
+        auto selected = incomingSources ? edge.source : edge.target;
+        const auto candidate = ports[selected];
+        auto fixed = incomingSources ? edge.target : edge.source;
+        auto [found, added] = groups.emplace(
+            Group{fixed, candidate.child, candidate.type, candidate.visits.size()}, folded.size());
+        if (added) { folded.push_back(edge); continue; }
+        auto& accumulated = folded[found->second];
+        auto prior = incomingSources ? accumulated.source : accumulated.target;
+        const auto previous = ports[prior];
+        auto stronger = incomingSources ? before(prior, selected) : before(selected, prior);
+        // The candidate/prior coordinates may use values evaluated only
+        // when their respective occurrence guards hold. Preserve lazy masking
+        // through selection instead of evaluating an inactive comparison.
+        auto choose = expressions.select(edge.guard,
+            expressions.select(accumulated.guard, stronger, yes()), no());
+        auto ordinal = expressions.select(choose, candidate.ordinal, previous.ordinal);
+        std::vector<Expr> visits;
+        for (std::size_t i = 0; i < candidate.visits.size(); ++i) {
+            visits.push_back(expressions.select(choose, candidate.visits[i], previous.visits[i]));
+        }
+        auto combined = port(candidate.child, candidate.type, ordinal, visits);
+        if (incomingSources) { accumulated.source = combined; }
+        else { accumulated.target = combined; }
+        accumulated.guard = either(accumulated.guard, edge.guard);
+    }
+    crossings = std::move(folded);
+}
+void SequenceAnalysisState::consolidateCrossings(bool incomingSources)
+{
+    // Incoming records keep the latest active source on each pipe. Dually,
+    // outgoing records keep the earliest active consumer on each pipe. Native
+    // completion/start chains imply the eliminated records. Original crossing
+    // links stay immutable so later queries retain the full required order.
+    auto selectedPort = [&](const Crossing& edge) {
+        return incomingSources ? edge.source : edge.target;
+    };
+    std::map<std::pair<uint32_t, uint32_t>, std::vector<std::size_t>> groups;
+    for (std::size_t id = 0; id < crossings.size(); ++id) {
+        const auto& edge = crossings[id];
+        groups[{incomingSources ? edge.target : edge.source, pipe(selectedPort(edge))}].push_back(id);
+    }
+    for (auto& [key, ids] : groups) {
+        using Order = std::tuple<uint32_t, std::vector<uint64_t>, uint32_t>;
+        std::vector<std::pair<Order, std::size_t>> ordered;
+        for (auto id : ids) {
+            const auto& source = ports[selectedPort(crossings[id])];
+            std::vector<uint64_t> coordinates;
+            auto values = source.visits;
+            values.push_back(source.ordinal);
+            bool constant = true;
+            for (auto value : values) {
+                auto number = expressions.constantValue(value);
+                if (!number) { constant = false; break; }
+                coordinates.push_back(*number);
+            }
+            if (!constant) { break; }
+            ordered.push_back({{source.child, std::move(coordinates), source.type}, id});
+        }
+        bool chain = ordered.size() == ids.size();
+        if (chain) {
+            llvm::sort(ordered);
+            for (std::size_t i = 1; i < ordered.size(); ++i) {
+                chain &= expressions.constantValue(before(selectedPort(crossings[ordered[i-1].second]),
+                    selectedPort(crossings[ordered[i].second]))) == 1;
             }
         }
-    }
-    for (auto& edge : crossings) {
-        Expr earlier = no();
-        for (uint32_t u = 0; u < edge.source; ++u) {
-            earlier = either(earlier, both(equal[edge.source][u], targetEquivalent[u][edge.target]));
+        if (chain) {
+            // A verified ordering supports a suffix union for sources and a
+            // prefix union for consumers, including differing presence guards.
+            if (incomingSources) { std::reverse(ordered.begin(), ordered.end()); }
+            auto stronger = no();
+            for (const auto& entry : ordered) {
+                auto& edge = crossings[entry.second];
+                auto original = edge.guard;
+                edge.guard = both(original, negate(stronger));
+                stronger = either(stronger, original);
+            }
+            continue;
         }
-        for (uint32_t v = 0; v < edge.target; ++v) {
-            earlier = either(earlier, both(original[edge.source][v], equal[edge.target][v]));
+        std::vector<Crossing> original;
+        for (auto id : ids) { original.push_back(crossings[id]); }
+        for (auto id : ids) {
+            auto& edge = crossings[id];
+            auto covered = no();
+            for (const auto& other : original) {
+                if (selectedPort(other) == selectedPort(edge)) { continue; }
+                auto order = incomingSources ? before(edge.source, other.source) : before(other.target, edge.target);
+                covered = either(covered, expressions.select(other.guard, order, no()));
+            }
+            edge.guard = expressions.select(edge.guard, negate(covered), no());
         }
-        edge.guard = both(edge.guard, negate(earlier));
     }
+}
+SequenceEvent SequenceAnalysisState::event(std::size_t id) const
+{
+    const auto& selected = ports[id / 2];
+    return {selected.child, selected.type, selected.ordinal,
+        id % 2 ? PeriodicEventKind::Completion : PeriodicEventKind::Start, selected.visits};
+}
+std::optional<Expr> SequenceAnalysisState::eventReachability(std::size_t source, std::size_t target)
+{
+    if (source / 2 >= ports.size() || target / 2 >= ports.size()) { return std::nullopt; }
+    return eventReachability(event(source), event(target));
+}
+std::optional<Expr> SequenceAnalysisState::eventReachability(SequenceEvent source, SequenceEvent target)
+{
+    auto key = [](const SequenceEvent& value) -> EventKey {
+        return {value.child, value.type, value.ordinal, value.kind, value.visits};
+    };
+    auto pair = std::make_pair(key(source), key(target));
+    auto cached = reachabilityCache.find(pair);
+    if (cached != reachabilityCache.end()) { return cached->second; }
+    if (source.child >= children.size() || target.child >= children.size()) { return std::nullopt; }
+    if (source.child > target.child) { return no(); }
+    auto local = [&](SequenceEvent a, SequenceEvent b) {
+        const auto& region = children[a.child].regional;
+        RegionalEvent left{a.type, a.ordinal, a.kind, a.visits};
+        RegionalEvent right{b.type, b.ordinal, b.kind, b.visits};
+        auto reach = regionalReachability(region, left, right);
+        auto leftPresent = regionalPresence(region, left), rightPresent = regionalPresence(region, right);
+        if (!reach || !leftPresent || !rightPresent) { return std::optional<Expr>{}; }
+        return std::optional<Expr>{both(*reach, both(*leftPresent, *rightPresent))};
+    };
+    if (source.child == target.child) {
+        auto answer = local(source, target);
+        if (answer) { reachabilityCache.emplace(std::move(pair), *answer); }
+        return answer;
+    }
+    // Every path has a last cross-child link. Its prefix ends in an earlier
+    // child, so this memoized recurrence is acyclic. Only queried pairs are
+    // materialized; an exported storage selector need not be a graph vertex.
+    auto answer = no();
+    auto found = incoming.find(target.child);
+    if (found != incoming.end()) {
+        for (const auto& link : found->second) {
+            if (ports[link.source / 2].child < source.child || expressions.constantValue(link.guard) == 0) {
+                continue;
+            }
+            auto suffix = local(event(link.target), target);
+            if (!suffix) { return std::nullopt; }
+            auto tail = expressions.select(link.guard, *suffix, no());
+            if (expressions.constantValue(tail) == 0) { continue; }
+            auto prefix = eventReachability(source, event(link.source));
+            if (!prefix) { return std::nullopt; }
+            answer = either(answer, expressions.select(tail, *prefix, no()));
+        }
+    }
+    reachabilityCache.emplace(std::move(pair), answer);
+    return answer;
 }
 bool SequenceAnalysisState::valueBridges()
 {
@@ -144,8 +296,10 @@ bool SequenceAnalysisState::valueBridges()
                         if (children[a].anchors[source].phase != edge.producer) { continue; }
                         const auto& left = children[a].regional;
                         const auto& right = children[b].regional;
+                        const auto targetFirsts = right.firstSitePayloads.find(target);
                         if ((!left.outerLoops.empty() && !left.outerLoops[source].empty()) ||
-                            (!right.outerLoops.empty() && !right.outerLoops[target].empty())) {
+                            (targetFirsts == right.firstSitePayloads.end() &&
+                             !right.outerLoops.empty() && !right.outerLoops[target].empty())) {
                             return fail("nested crossing value prerequisite requires a coordinate map");
                         }
                         auto sourceLoop = children[a].regional.occurrenceLoops[source];
@@ -158,10 +312,22 @@ bool SequenceAnalysisState::valueBridges()
                             return fail("crossing value producer requires a last-occurrence selector");
                         }
                         const auto x = port(a, source, c(0));
-                        const auto y = port(b, target, children[b].regional.firstOrdinal.value_or(c(0)));
-                        const auto guard = both(present(x), present(y));
-                        if (edge.native) { nativeValueCrossings.push_back({x, y, guard}); }
-                        else { crossing({x, present(x)}, {y, present(y)}); }
+                        auto connect = [&](RegionalSelector first) {
+                            const auto y = port(b, first.event);
+                            const auto active = both(first.present, present(y));
+                            const auto guard = both(present(x), active);
+                            if (edge.native) { nativeValueCrossings.push_back({x, y, guard}); }
+                            else { crossing({x, present(x)}, {y, active}); }
+                        };
+                        if (targetFirsts != right.firstSitePayloads.end()) {
+                            // The first executed occurrence need not have ordinal
+                            // zero: a guard may skip an arbitrary initial prefix.
+                            // Native start order carries this prerequisite to
+                            // every later occurrence of the same payload site.
+                            for (auto first : targetFirsts->second) { connect(first); }
+                        } else {
+                            connect({{target, right.firstOrdinal.value_or(c(0)), PeriodicEventKind::Start}, yes()});
+                        }
                     }
                 }
             }
@@ -171,32 +337,14 @@ bool SequenceAnalysisState::valueBridges()
 }
 bool SequenceAnalysisState::closure()
 {
-    const std::size_t size = 2 * ports.size();
-    if (!error.empty() || (size && size > SIZE_MAX / size / sizeof(Expr))) {
-        return fail("sequence boundary query matrix size overflow");
-    }
-    graph.assign(size, std::vector<Expr>(size, no()));
-    auto add = [&](std::size_t a, std::size_t b, Expr guard) { graph[a][b] = either(graph[a][b], guard); };
-    for (uint32_t a = 0; a < ports.size(); ++a) {
-        for (uint32_t b = 0; b < ports.size(); ++b) {
-            const auto& x = ports[a];
-            const auto& y = ports[b];
-            if (x.child != y.child) { continue; }
-            auto exists = both(present(a), present(b));
-            for (unsigned ac = 0; ac < 2; ++ac) {
-                for (unsigned bc = 0; bc < 2; ++bc) {
-                    PeriodicEvent source{x.type, ac ? PeriodicEventKind::Completion : PeriodicEventKind::Start};
-                    PeriodicEvent target{y.type, bc ? PeriodicEventKind::Completion : PeriodicEventKind::Start};
-                    auto answer = regionalReachability(children[x.child].regional,
-                        x.event(source.kind), y.event(target.kind));
-                    if (!answer) { return fail("child all-event query unavailable"); }
-                    Expr reachable = *answer;
-                    add(2*a+ac, 2*b+bc, both(exists, reachable));
-                }
-            }
+    if (!error.empty()) { return false; }
+    incoming.clear();
+    reachabilityCache.clear();
+    auto add = [&](std::size_t source, std::size_t target, Expr guard) {
+        if (expressions.constantValue(guard) != 0) {
+            incoming[ports[target / 2].child].push_back({source, target, guard});
         }
-    }
-    const auto local = graph;
+    };
     std::map<uint32_t, std::vector<Selected>> preceding;
     for (uint32_t childId = 0; childId < children.size(); ++childId) {
         const auto& regional = children[childId].regional;
@@ -205,7 +353,6 @@ bool SequenceAnalysisState::closure()
             for (auto selected : firsts) {
                 nonempty = either(nonempty, selected.present);
                 auto first = port(childId, selected.event);
-                if (2*static_cast<std::size_t>(first) >= size) { return fail("missing native boundary port"); }
                 for (auto old : preceding[p]) {
                     auto guard = both(old.present, selected.present);
                     add(2*old.port, 2*first, guard);
@@ -216,13 +363,13 @@ bool SequenceAnalysisState::closure()
             auto found = regional.lastPayloads.find(p);
             if (found != regional.lastPayloads.end()) {
                 for (auto selected : found->second) {
-                    auto event = port(childId, selected.event);
-                    preceding[p].push_back({event, selected.present});
+                    preceding[p].push_back({port(childId, selected.event), selected.present});
                 }
             }
         }
     }
     for (const auto& edge : nativeValueCrossings) { add(2*edge.source+1, 2*edge.target, edge.guard); }
+    auto reductionLinks = incoming;
     for (auto& edge : crossings) {
         auto native = no();
         for (const auto& fixed : nativeValueCrossings) {
@@ -232,68 +379,44 @@ bool SequenceAnalysisState::closure()
         add(2*edge.source+1, 2*edge.target, edge.guard);
         edge.guard = both(edge.guard, negate(native));
     }
-    // Each child query block is already closed. Every crossing advances the
-    // child index, so propagate through the block DAG rather than repeatedly
-    // closing symbolic reflexive aliases inside a child.
-    auto links = std::move(graph);
-    graph = local;
-    std::map<uint32_t, std::vector<std::size_t>> childEvents;
-    for (std::size_t event = 0; event < size; ++event) {
-        childEvents[ports[event / 2].child].push_back(event);
-    }
-    for (std::size_t source = 0; source < size; ++source) {
-        // Empty children have no ports. Visiting only populated blocks avoids
-        // an extra H*P^2 factor when a caller supplies many empty regions.
-        for (const auto& [child, events] : childEvents) {
-            if (child <= ports[source / 2].child) { continue; }
-            std::vector<Expr> entry(size, no());
-            for (auto target : events) {
-                for (std::size_t previous = 0; previous < size; ++previous) {
-                    if (ports[previous / 2].child < child) {
-                        entry[target] = either(entry[target], both(graph[source][previous], links[previous][target]));
-                    }
-                }
-            }
-            for (auto target : events) {
-                for (auto first : events) {
-                    graph[source][target] = either(graph[source][target], both(entry[first], local[first][target]));
-                }
-            }
+    foldCrossingEndpoints(true);
+    consolidateCrossings(true);
+    foldCrossingEndpoints(false);
+    consolidateCrossings(false);
+    // Native order and the consolidated generators have the same closure as
+    // the original links. Snapshot every candidate before testing deletion;
+    // deleting candidates in place must not change another candidate's test.
+    // Exported queries retain the original graph, while last-entry tests use
+    // this smaller, closure-equivalent generating set.
+    for (const auto& edge : crossings) {
+        if (expressions.constantValue(edge.guard) != 0) {
+            reductionLinks[ports[edge.target].child].push_back({2*edge.source+1, 2*edge.target, edge.guard});
         }
     }
     // An alternative path has one last link entering the consumer's child.
-    // Its prefix ends in an earlier child and its suffix is wholly local, so
-    // neither can use the tested edge. Keep native links and exclude only
-    // completion-to-start links for the same actual endpoint pair (aliases
-    // included). This avoids building an alternative from every interior event.
-    struct EntryLink { std::size_t source, target; Expr guard; };
-    std::map<uint32_t, std::vector<EntryLink>> incoming;
-    for (std::size_t source = 0; source < size; ++source) {
-        for (std::size_t target = 0; target < size; ++target) {
-            if (ports[source / 2].child < ports[target / 2].child &&
-                expressions.constantValue(links[source][target]) != 0) {
-                incoming[ports[target / 2].child].push_back({source, target, links[source][target]});
-            }
-        }
-    }
+    // Its prefix ends earlier and cannot use the tested edge. The suffix is
+    // local. Exclude every alias of the tested completion-to-start pair.
     for (auto& edge : crossings) {
+        if (expressions.constantValue(edge.guard) == 0) { continue; }
         Expr alternate = no();
-        for (const auto& entry : incoming[ports[edge.target].child]) {
+        for (const auto& entry : reductionLinks[ports[edge.target].child]) {
             auto distinct = yes();
             if (entry.source % 2 == 1 && entry.target % 2 == 0) {
                 distinct = negate(both(same(entry.source / 2, edge.source), same(entry.target / 2, edge.target)));
             }
-            auto prefix = graph[2*edge.source+1][entry.source];
-            auto suffix = local[entry.target][2*edge.target];
-            alternate = either(alternate, both(distinct, both(entry.guard, both(prefix, suffix))));
+            if (expressions.constantValue(distinct) == 0) { continue; }
+            auto suffix = eventReachability(entry.target, 2*edge.target);
+            if (!suffix) { return fail("child all-event query unavailable"); }
+            auto tail = expressions.select(entry.guard, both(distinct, *suffix), no());
+            if (expressions.constantValue(tail) == 0) { continue; }
+            auto prefix = eventReachability(2*edge.source+1, entry.source);
+            if (!prefix) { return fail("child all-event query unavailable"); }
+            alternate = either(alternate, expressions.select(tail, *prefix, no()));
         }
-        edge.guard = both(edge.guard, negate(alternate));
+        edge.guard = expressions.select(edge.guard, negate(alternate), no());
     }
-    // Equal endpoint records denote the same edge in closure. The last-entry
-    // test excludes all such copies together, so deduplicate only the retained
-    // records instead of carrying exclusivity predicates through every path.
     canonicalizeCrossings();
-    return true;
+    return error.empty();
 }
 
 } // namespace mlir::pto::frontiersynch

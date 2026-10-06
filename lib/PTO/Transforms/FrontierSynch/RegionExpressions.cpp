@@ -19,12 +19,12 @@ namespace mlir::pto::frontiersynch {
 bool RegionExpressions::Node::operator==(const Node& other) const
 {
     return kind == other.kind && boolean == other.boolean && a == other.a && b == other.b &&
-        c == other.c && literal == other.literal && value == other.value;
+        c == other.c && literal == other.literal && value == other.value && equalInteger(*this, other);
 }
 std::size_t RegionExpressions::Hash::operator()(const Node& node) const
 {
     return llvm::hash_combine(static_cast<unsigned>(node.kind), node.boolean, node.a, node.b,
-                              node.c, node.literal, node.value.getAsOpaquePointer());
+                              node.c, node.literal, node.value.getAsOpaquePointer(), hashInteger(node));
 }
 RegionExpressions::Id RegionExpressions::reject(const char* message)
 {
@@ -373,9 +373,7 @@ bool RegionExpressions::prepareEmission(Id expression, OpBuilder& builder, Opera
                 return false;
             }
         }
-        for (Id operand : {node.a, node.b, node.c}) {
-            if (operand != invalid) { pending.push_back(operand); }
-        }
+        appendOperands(node, pending);
         order.push_back(id);
     }
     // Interned parents always follow their operands; sorting avoids recursive
@@ -391,6 +389,7 @@ Value RegionExpressions::emitNode(const Node& node, OpBuilder& builder, Location
     Value b = node.b == invalid ? Value() : memo.lookup(node.b);
     Value c = node.c == invalid ? Value() : memo.lookup(node.c);
     switch (node.kind) {
+        case Kind::Integer: return emitInteger(node, builder, location, memo);
         case Kind::Constant:
             if (node.boolean) { return builder.create<arith::ConstantIntOp>(location, node.literal, 1); }
             return builder.create<arith::ConstantOp>(location, builder.getIndexType(),

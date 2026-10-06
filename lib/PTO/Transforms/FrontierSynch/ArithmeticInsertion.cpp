@@ -38,6 +38,48 @@ public:
         return success();
     }
     const std::map<Pair, int64_t>& recordMap() const { return records; }
+    LogicalResult exportRegion()
+    {
+        std::map<std::pair<uint32_t, uint32_t>, uint32_t> namespaces;
+        if (records.size() > UINT32_MAX) {
+            error = "arithmetic regional record count exceeds representation";
+            return failure();
+        }
+        for (const auto& [pair, record] : records) {
+            const auto& source = program.sites[pair.first];
+            const auto& target = program.sites[pair.second];
+            Operation* from = source.phase->elementOp->getNextNode();
+            Operation* to = target.phase->elementOp;
+            if (!from || !to) { error = "arithmetic regional endpoint has no original legal cut"; return failure(); }
+            const auto p = static_cast<uint32_t>(source.phase->kPipeValue);
+            const auto q = static_cast<uint32_t>(target.phase->kPipeValue);
+            EndpointFamily family;
+            family.id = static_cast<uint32_t>(record);
+            family.sourcePipe = p; family.targetPipe = q; family.local = p == q;
+            family.sourceCut = {from->getBlock(), from}; family.targetCut = {to->getBlock(), to};
+            family.members.push_back({family.id, static_cast<uint32_t>(pair.first),
+                                      static_cast<uint32_t>(pair.second), {}, {}});
+            plan.families.push_back(std::move(family));
+            auto [entry, added] = namespaces.emplace(std::make_pair(p,q), static_cast<uint32_t>(record));
+            entry->second = std::min(entry->second, static_cast<uint32_t>(record));
+        }
+        for (auto& endpoint : plan.endpoints) {
+            const auto record = static_cast<uint32_t>(endpoint.record);
+            endpoint.records = {record};
+            endpoint.piece = &endpoint - plan.endpoints.data();
+            if (endpoint.kind != LogicalCommandKind::Barrier) {
+                auto& cut = cuts.at(endpoint.before);
+                builder.setInsertionPointToEnd(cut.code); activeCut = &cut;
+                Value member = emit<arith::ConstantIndexOp>(endpoint.before->getLoc(), record);
+                endpoint.memberCoordinates.insert(endpoint.memberCoordinates.begin(), member);
+                plan.nestedIdentities |= endpoint.memberCoordinates.size() > 1;
+            }
+            endpoint.record = namespaces.at({endpoint.sourcePipe, endpoint.targetPipe});
+        }
+        plan.groupedFamilies = true; plan.independentPieces = true;
+        plan.completeInvocation = false;
+        return success();
+    }
 private:
     struct Cut {
         Block* code = nullptr;
@@ -117,7 +159,6 @@ private:
         if (matchPattern(b, m_ConstantInt(&constant))) { return constant.isZero() ? a : b; }
         return emit<arith::OrIOp>(loc, a, b);
     }
-    Value negate(Value a, Location loc) { return emit<arith::XOrIOp>(loc, a, truth(true, loc)); }
     Value compare(arith::CmpIPredicate predicate, Value a, Value b, Location loc)
     {
         return emit<arith::CmpIOp>(loc, predicate, a, b);
@@ -287,13 +328,14 @@ private:
             quotients.push_back(cut.quotients.lookup(input));
         }
         std::map<std::size_t, Partner> partners;
-        Value seen = truth(false, loc);
         for (const auto& piece : selector.pieces) {
             if (piece.outputSite >= program.sites.size()) { return failure(); }
             auto present = domain(piece, original, quotients, cut, loc);
             if (failed(present)) { return failure(); }
-            auto selected = both(*present, negate(seen, loc), loc);
-            seen = either(seen, *present, loc);
+            // Exact minimum demands have one partner per pipe. Overlapping
+            // pieces therefore select the same tagged tuple, and need no
+            // first-match exclusion circuit.
+            auto selected = *present;
             auto& partner = partners[piece.outputSite];
             if (!partner.guard) { partner.guard = truth(false, loc); }
             partner.guard = either(partner.guard, selected, loc);
@@ -360,9 +402,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticInsertion(
                                                                   plan->planId, function.getContext());
     return plan;
 }
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneralArithmeticInsertion(
+namespace {
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneral(
     func::FuncOp function, const ArithmeticProgram& program,
-    const GeneralArithmeticDemandAnalysis& analysis, std::string& error)
+    const GeneralArithmeticDemandAnalysis& analysis, std::string& error, bool regional)
 {
     const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
     if (!analysis.error.empty() || !analysis.exactMinimum ||
@@ -380,10 +423,24 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneralArithmeticInsertio
     if (!selectors.error.empty()) { error = selectors.error; return failure(); }
     auto plan = std::make_unique<PreparedLogicalPlan>(0);
     plan->completeInvocation = !program.sites.empty();
-    if (failed(Preparer<GeneralArithmeticSelectors>(function, program, selectors, *plan, error).run())) {
+    Preparer<GeneralArithmeticSelectors> preparer(function, program, selectors, *plan, error);
+    if (failed(preparer.run()) || (regional && failed(preparer.exportRegion()))) {
         if (error.empty()) { error = "arithmetic selector cannot be emitted at its original cut"; }
         return failure();
     }
     return plan;
+}
+} // namespace
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneralArithmeticInsertion(
+    func::FuncOp function, const ArithmeticProgram& program,
+    const GeneralArithmeticDemandAnalysis& analysis, std::string& error)
+{
+    return prepareGeneral(function, program, analysis, error, false);
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneralArithmeticRegionalInsertion(
+    func::FuncOp function, const ArithmeticProgram& program,
+    const GeneralArithmeticDemandAnalysis& analysis, std::string& error)
+{
+    return prepareGeneral(function, program, analysis, error, true);
 }
 } // namespace mlir::pto::frontiersynch

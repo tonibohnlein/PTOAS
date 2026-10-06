@@ -25,6 +25,8 @@ struct RegionalCost {
     uint64_t ports = 0;
     uint64_t crossings = 0;
     uint64_t physicalFragments = 0, rotatingResidues = 0, numericVisits = 0;
+    uint64_t arithmeticRegions = 0;
+    uint64_t boundaryBytes = 0; // Physical bytes represented by the certified boundary atoms.
     uint64_t selectorComparisons = 0, crossingCandidates = 0, expressionNodes = 0;
     uint64_t implicationChecks = 0; // Crossing-generation proofs; O(A*G) per check.
 };
@@ -97,6 +99,11 @@ struct RegionalAnalysis {
     std::function<std::optional<RegionalStorageSelectors>(RegionalByteAddress)> storageSelectors;
     std::vector<std::size_t> symbolicStorageEffects;
     std::map<uint32_t, std::vector<RegionalSelector>> firstPayloads, lastPayloads;
+    // Optional first executed occurrence of each payload type. A present key
+    // with an empty vector proves absence; a missing key means unavailable.
+    // Unlike firstPayloads, these extrema are per site, not per pipe. Consumers
+    // also apply regionalPresence, preserving any enclosing conditional mask.
+    std::map<uint32_t, std::vector<RegionalSelector>> firstSitePayloads;
     RegionalCapabilities capabilities;
     RegionalCost cost;
     // Exports, including discharged effects, belong to one unchanged invocation

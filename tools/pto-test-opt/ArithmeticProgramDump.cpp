@@ -63,6 +63,7 @@ void dumpArithmeticJSON(func::FuncOp function, const fs::ArithmeticProgram& prog
         auto label = program.context.root->getAttrOfType<StringAttr>("frontier.test_arithmetic_region");
         document["region"] = label ? label.getValue() : StringRef("anonymous");
         document["incoming_prerequisites"] = program.incomingPrerequisites.size();
+        document["discharged_effects"] = program.extraction.dischargedEffects.size();
         llvm::json::Array issues;
         for (const auto& diagnostic : program.extraction.diagnostics) {
             issues.push_back(fs::recognitionName(diagnostic.issue));
