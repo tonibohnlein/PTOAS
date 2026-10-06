@@ -16,6 +16,7 @@
 #include <memory>
 #include <vector>
 namespace mlir::pto::frontiersynch {
+struct RegionalAllocationSummary;
 enum class LogicalCommandKind { Set, Barrier, Wait };
 struct PreparedLogicalEndpoint {
     Operation* before = nullptr;
@@ -48,6 +49,9 @@ struct PreparedLogicalPlan {
     // Optional producer certificate for the immediately following allocation
     // pass. It owns no borrowed analysis state; changing the plan invalidates it.
     DictionaryAttr allocationCertificate;
+    // Optional typed lifetime interface for parent composition; invalidated with
+    // the regional expression arena and original IR. Never reconstructed from guards.
+    std::shared_ptr<RegionalAllocationSummary> regionalAllocation;
     std::vector<LogicalPreparation> preparation;
     std::vector<PreparedLogicalEndpoint> endpoints;
     std::vector<EndpointFamily> families; // Exact source/target coordinate provenance.

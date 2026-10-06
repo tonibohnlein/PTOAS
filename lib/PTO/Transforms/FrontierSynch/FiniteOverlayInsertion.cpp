@@ -34,6 +34,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(
     if (failed(supplied)) { error = "finite overlay base endpoint refinement failed"; return failure(); }
     auto plan = std::move(*supplied);
     plan->allocationCertificate = {};
+    plan->regionalAllocation.reset(); // Added overlay records need their own reuse proof.
     auto& arena = *base.expressions;
     using Expr = RegionExpressions::Id;
     std::map<Operation*, Block*> blocks;
