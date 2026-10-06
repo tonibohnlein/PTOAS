@@ -58,7 +58,7 @@ std::optional<RegionExpressions::Id> sequenceEventReachability(SequenceAnalysis&
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceInsertion(SequenceAnalysis& analysis);
 // Analyze children independently, reconcile their physical ranges, then reduce
 // crossings in one shared all-event port graph. Child internals stay intact.
-// Preparation is detached; allocation certificates are deliberately not joined.
+// Preparation is detached; allocation lifetimes are composed through the same reachability interface.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceInsertion(
     func::FuncOp function, const SyncInput& input, const ProgramRecognition& program,
     std::string& error, SequenceCost* cost = nullptr);

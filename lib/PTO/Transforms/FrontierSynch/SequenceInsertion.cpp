@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
+#include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare()
 {
@@ -13,9 +14,14 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare()
     result->completeInvocation = llvm::any_of(children, [](const Child& child) { return !child.anchors.empty(); });
     result->groupedFamilies = true;
     result->independentPieces = true;
+    result->regionalAllocation = std::make_shared<RegionalAllocationSummary>();
+    bool allocationAvailable = true;
+    std::vector<uint32_t> typeOffsets;
+    uint32_t nextType = 0;
     uint32_t nextRecord = 0;
     int64_t nextPiece = 0;
     for (auto& child : children) {
+        typeOffsets.push_back(nextType);
         for (auto loop : child.regional.occurrenceLoops) {
             if (!loop) { continue; }
             auto step = sequenceInteger(loop.getStep());
@@ -27,6 +33,29 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare()
         auto supplied = child.regional.prepare();
         if (failed(supplied)) { fail("regional child endpoint preparation failed"); return failure(); }
         auto prepared = std::move(*supplied);
+        if (!prepared->regionalAllocation) {
+            prepared->regionalAllocation = finiteRegionalAllocation(child.regional, *prepared);
+        }
+        if (!prepared->regionalAllocation) { allocationAvailable = false; }
+        else {
+            for (auto group : prepared->regionalAllocation->groups) {
+                for (auto& member : group.members) {
+                    if (member.record > UINT32_MAX - nextRecord ||
+                        member.firstSource.type > UINT32_MAX - nextType ||
+                        member.lastTarget.type > UINT32_MAX - nextType) {
+                        fail("regional allocation identity overflow"); return failure();
+                    }
+                    member.record += nextRecord;
+                    member.firstSource.type += nextType;
+                    member.lastTarget.type += nextType;
+                }
+                result->regionalAllocation->groups.push_back(std::move(group));
+            }
+        }
+        if (child.anchors.size() > UINT32_MAX - nextType) {
+            fail("regional allocation type overflow"); return failure();
+        }
+        nextType += child.anchors.size();
         uint32_t maximum = 0;
         bool any = false;
         for (const auto& family : prepared->families) {
@@ -128,6 +157,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare()
             result->endpoints.push_back(std::move(endpoint));
             return true;
         }
+        result->regionalAllocation->groups.push_back({p, q, 1, {{record, 0, 0,
+            {typeOffsets[a.child] + a.type, a.ordinal, PeriodicEventKind::Start},
+            {typeOffsets[b.child] + b.type, b.ordinal, PeriodicEventKind::Completion}, retained}}});
         auto sourceGuard = emit(endpointGuard(a, retained), aa.after.before);
         auto sourceIdentity = emit(c(0), aa.after.before);
         auto targetIdentity = emit(c(0), ab.before.before);
@@ -164,6 +196,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare()
         endpoint.record = namespaces.at(recordNamespace.at(endpoint.records.front()));
     }
     if (!expressions.error().empty()) { fail(expressions.error()); return failure(); }
+    if (!allocationAvailable) { result->regionalAllocation.reset(); }
     return result;
 }
 } // namespace mlir::pto::frontiersynch
