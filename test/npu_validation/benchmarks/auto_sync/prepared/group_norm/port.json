@@ -1,0 +1,42 @@
+{
+  "source_commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+  "source_files": [
+    {
+      "path": "examples/cann-bench/group_norm/example_group_norm.py",
+      "snapshot": "sources/tilelang-ascend/examples/cann-bench/group_norm/example_group_norm.py.txt",
+      "sha256": "bc18b91ed9041890e980e70e16cde602b3cfad2bb7569bb4a36c248c27b09b39",
+      "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/cann-bench/group_norm/example_group_norm.py"
+    }
+  ],
+  "configuration": {
+    "factory": "group_norm_kernel_serial",
+    "shape": [
+      4,
+      64,
+      16,
+      16
+    ],
+    "groups": 4,
+    "cpg": 16,
+    "cpg_padded": 16,
+    "S_orig": 256,
+    "S_padded": 256,
+    "block_S": 64,
+    "s_num": 4,
+    "dtype": "float32",
+    "eps": 1e-05,
+    "launch_blocks": 16,
+    "threads": 2,
+    "scope": "Serial factory, no padding specialization; channel-pipeline factory not ported."
+  },
+  "adaptations": [
+    "Serial no-padding FP32 factory only, not channel pipeline; compact column aliases for reductions."
+  ],
+  "baseline": "ported authored protocol; native upstream timing is a separate baseline",
+  "invocation": "Terminal ALL completion added; input removes all replaceable local synchronization.",
+  "gm_alias": "may-not-alias; pointer arguments denote disjoint allocations, except repeated uses of one argument",
+  "device_qualified": false,
+  "launch_wrapper": "not yet provided",
+  "comparison_gate": "Validate expert, existing and frontier against the independent reference before timing.",
+  "source_reference": "golden_group_norm and main test_cases"
+}

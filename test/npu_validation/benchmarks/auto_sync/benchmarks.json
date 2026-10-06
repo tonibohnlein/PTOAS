@@ -1,0 +1,599 @@
+{
+  "schema_version": 1,
+  "scope": "Intra-core synchronization comparison with identical payload/control/storage per case",
+  "variants": [
+    "expert",
+    "frontier",
+    "existing"
+  ],
+  "sources_license": {
+    "path": "sources/tilelang-ascend/LICENSE",
+    "sha256": "bfd7d57808112905dce724b04e7b3bebb823d3e74737d5d83e9194464015017b"
+  },
+  "benchmarks": [
+    {
+      "id": "tilelang_gemm",
+      "title": "tilelang GEMM",
+      "group": "manual",
+      "status": "prepared_pto",
+      "repository": "https://github.com/tile-ai/tilelang-ascend",
+      "commit": "1986dd76569f321c821bb8ce85d5b5b397010d71",
+      "sources": [
+        {
+          "path": "examples/gemm/example_gemm_intrinsic.py",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/1986dd76569f321c821bb8ce85d5b5b397010d71/examples/gemm/example_gemm_intrinsic.py",
+          "sha256": "bae550b41deaa7a6ee1aea14436a819b894a2397f8d2bf7a41ae4dc50e5ef1f0"
+        }
+      ],
+      "entrypoints": [
+        "tilelang_gemm"
+      ],
+      "reference": "FP32 accumulation matmul; cast output to FP16 for tilelang",
+      "notes": [
+        "Specialized existing device comparison: M=256,K=4096,N=256, one cube block; excludes upstream multi-core scheduling.",
+        "All variants share the corrected NZ L1 layout. TileLang expert includes a terminal ALL barrier for the common return contract.",
+        "Historical device success applies to the earlier pinned bundle; regenerate and revalidate new compiler outputs."
+      ],
+      "prepared": {
+        "input.pto": {
+          "path": "prepared/tilelang/input.pto",
+          "sha256": "33e218f48e65a05c0b115771393e6c28bdf62c22ee361fd2ca7d895d42cb9a41"
+        },
+        "expert.pto": {
+          "path": "prepared/tilelang/expert.pto",
+          "sha256": "3272d9f705d5887515e6fd3bd6d8572eaec1451b15b68b05f52712a2b2f3fa06"
+        }
+      }
+    },
+    {
+      "id": "pypto_gemm",
+      "title": "pypto GEMM",
+      "group": "manual",
+      "status": "prepared_pto",
+      "repository": "https://github.com/Shenggan/pypto-gemm",
+      "commit": "4b7fe5558996f8468f0c55189fc44092222c5085",
+      "sources": [
+        {
+          "path": "hpgemm_step4_manual_pipeline.py",
+          "url": "https://github.com/Shenggan/pypto-gemm/blob/4b7fe5558996f8468f0c55189fc44092222c5085/hpgemm_step4_manual_pipeline.py",
+          "sha256": "5d505f9146d21e66dc0d959b00e115fe038c0c82f18a3b525c7d38412681d022"
+        }
+      ],
+      "entrypoints": [
+        "pypto_gemm"
+      ],
+      "reference": "FP32 accumulation matmul; cast output to FP16 for tilelang",
+      "notes": [
+        "Specialized existing device comparison: M=256,K=4096,N=256, one cube block; excludes upstream multi-core scheduling.",
+        "All variants share the corrected NZ L1 layout. TileLang expert includes a terminal ALL barrier for the common return contract.",
+        "Historical device success applies to the earlier pinned bundle; regenerate and revalidate new compiler outputs."
+      ],
+      "prepared": {
+        "input.pto": {
+          "path": "prepared/pypto/input.pto",
+          "sha256": "b89e787a23c72ba96a0669e96653faea7a4601c07b11d297f0114cc23689a33b"
+        },
+        "expert.pto": {
+          "path": "prepared/pypto/expert.pto",
+          "sha256": "7f604f5257296b8ad5e9210aa52e8872749176a4af2dfff9684f865aade04dba"
+        }
+      }
+    },
+    {
+      "id": "persistent_gemm",
+      "title": "Persistent GEMM",
+      "group": "manual",
+      "status": "prepared_pto",
+      "repository": "https://github.com/tile-ai/tilelang-ascend",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sources": [
+        {
+          "path": "examples/gemm/example_gemm_intrinsic_persistent.py",
+          "snapshot": "sources/tilelang-ascend/examples/gemm/example_gemm_intrinsic_persistent.py.txt",
+          "sha256": "27d51b6f9bac8431ffddb880410425f609b7beea5cba8a4dad56102a782a4852",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/gemm/example_gemm_intrinsic_persistent.py"
+        }
+      ],
+      "entrypoints": [
+        "matmul"
+      ],
+      "reference": "torch.matmul in source",
+      "notes": [
+        "Keep K_L1/block_K=4: the authored release condition is kk==3.",
+        "Upstream defaults: M=8192, N=1024, K=8192; blocks 128x256x64, K_L1=256, two stages.",
+        "Manual flag calls present; explicitly disable extra upstream autosync when preparing the expert variant."
+      ],
+      "prepared": {
+        "input.pto": {
+          "path": "prepared/persistent_gemm/input.pto",
+          "sha256": "cc890b426ae89da77223b93a5ba4ad0b6f03d418f22f9bde65aea05fcde6324e"
+        },
+        "expert.pto": {
+          "path": "prepared/persistent_gemm/expert.pto",
+          "sha256": "890fd747b61bc97b7763493796a7a43c75aa7730134def03f2af19af7468ea4f"
+        }
+      },
+      "port_metadata": {
+        "path": "prepared/persistent_gemm/port.json",
+        "sha256": "02b109b4d90060862239c5b40b17b8427b8d712701bf015199c9d89ee8074729"
+      },
+      "device_qualified": false
+    },
+    {
+      "id": "group_norm",
+      "title": "GroupNorm",
+      "group": "manual",
+      "status": "prepared_pto",
+      "repository": "https://github.com/tile-ai/tilelang-ascend",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sources": [
+        {
+          "path": "examples/cann-bench/group_norm/example_group_norm.py",
+          "snapshot": "sources/tilelang-ascend/examples/cann-bench/group_norm/example_group_norm.py.txt",
+          "sha256": "bc18b91ed9041890e980e70e16cde602b3cfad2bb7569bb4a36c248c27b09b39",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/cann-bench/group_norm/example_group_norm.py"
+        }
+      ],
+      "entrypoints": [
+        "group_norm_kernel_serial",
+        "group_norm_kernel_cpipeline",
+        "group_norm"
+      ],
+      "reference": "golden_group_norm and main test_cases",
+      "notes": [
+        "AUTO_SYNC=False; register serial and channel-pipeline configurations separately in results.",
+        "Use the supplied shape/dtype/group sweep; preserve dispatcher choice and padding in all variants."
+      ],
+      "prepared": {
+        "input.pto": {
+          "path": "prepared/group_norm/input.pto",
+          "sha256": "11f09d6fbbc109851266cd73a77ec321a445bff98311fee33acfb6bfb71ddfbb"
+        },
+        "expert.pto": {
+          "path": "prepared/group_norm/expert.pto",
+          "sha256": "0990e280b3fb6a4bc3ede9733e30524c7bccf434dbab8725c7ffe05876f7bc4f"
+        }
+      },
+      "port_metadata": {
+        "path": "prepared/group_norm/port.json",
+        "sha256": "9358c00e4fad7245c9fdc669bb4d50a1c73d0347d3336ccf58859aac3effe098"
+      },
+      "device_qualified": false
+    },
+    {
+      "id": "causal_conv1d_prefill",
+      "title": "Causal convolution prefill",
+      "group": "manual",
+      "status": "prepared_pto",
+      "repository": "https://github.com/tile-ai/tilelang-ascend",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sources": [
+        {
+          "path": "examples/causal_conv1d/causal_conv1d_pto.py",
+          "snapshot": "sources/tilelang-ascend/examples/causal_conv1d/causal_conv1d_pto.py.txt",
+          "sha256": "72ababa5fbddd034ee5986a8b3e7d255682b02c144126204d4c2f1003ba0011f",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/causal_conv1d/causal_conv1d_pto.py"
+        },
+        {
+          "path": "examples/causal_conv1d/causal_conv1d.py",
+          "snapshot": "sources/tilelang-ascend/examples/causal_conv1d/causal_conv1d.py.txt",
+          "sha256": "e440d68c24a70077042147a0f7151cb8aaabe3977013b73cd105303a5e456f4c",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/causal_conv1d/causal_conv1d.py"
+        }
+      ],
+      "entrypoints": [
+        "causal_conv1d_fn_pipeline_v15"
+      ],
+      "reference": "causal_conv1d_fn_ref and _run_test",
+      "notes": [
+        "AUTO_SYNC=False; two-stage vector pipeline.",
+        "AscendC and PTO sources are backend variants of the same workload, not independent kernels.",
+        "Validate both output and mutated convolution state; reset state outside timing."
+      ],
+      "prepared": {
+        "input.pto": {
+          "path": "prepared/causal_conv1d_prefill/input.pto",
+          "sha256": "4a2da46ad42fbded8d15dd4b64cdabc93ae0df9570ea6d5d165712361ce16831"
+        },
+        "expert.pto": {
+          "path": "prepared/causal_conv1d_prefill/expert.pto",
+          "sha256": "4a1dfc5f2be1b47a11c816cb1eb3cfaf68830233df73951f6370064bb2905b0d"
+        }
+      },
+      "port_metadata": {
+        "path": "prepared/causal_conv1d_prefill/port.json",
+        "sha256": "6afde760b5dbe0f24aa37c513de1918cbf477843110e6aba8061f58325ad84e7"
+      },
+      "device_qualified": false
+    },
+    {
+      "id": "causal_conv1d_decode",
+      "title": "Causal convolution decode",
+      "group": "manual",
+      "status": "prepared_pto",
+      "repository": "https://github.com/tile-ai/tilelang-ascend",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sources": [
+        {
+          "path": "examples/causal_conv1d/causal_conv1d_decode.py",
+          "snapshot": "sources/tilelang-ascend/examples/causal_conv1d/causal_conv1d_decode.py.txt",
+          "sha256": "9c77625c815179121e0a18d8de1df3277b8fc9e9d69806ad5203f73bffd7b420",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/causal_conv1d/causal_conv1d_decode.py"
+        }
+      ],
+      "entrypoints": [
+        "causal_conv1d_decode"
+      ],
+      "reference": "_torch_causal_conv1d_decode_ref and _run_ref_suite",
+      "notes": [
+        "AUTO_SYNC=False; use width=4 as in the supplied tests.",
+        "Mutates convolution state; reset it for every trial.",
+        "Authored protocol uses ID 6. Qualify its upstream API/resource mapping before comparing against the current eligible IDs 0..5; do not silently renumber it."
+      ],
+      "prepared": {
+        "input.pto": {
+          "path": "prepared/causal_conv1d_decode/input.pto",
+          "sha256": "62eb4645ba3457dea9770c16f0aad959afe0db28325dcde353351f1ee95fa48e"
+        },
+        "expert.pto": {
+          "path": "prepared/causal_conv1d_decode/expert.pto",
+          "sha256": "6b76e30d9bfd258dd07d4673cb7a85d5e60e10fde7fb629483463ec76e016528"
+        }
+      },
+      "port_metadata": {
+        "path": "prepared/causal_conv1d_decode/port.json",
+        "sha256": "6b625a73ac3154392088e645568db0c0738219bfc85bb91aafed5293205397f5"
+      },
+      "device_qualified": false
+    },
+    {
+      "id": "gdn_chunk_cumsum",
+      "title": "GDN chunk cumulative sum",
+      "group": "manual",
+      "status": "prepared_pto",
+      "repository": "https://github.com/tile-ai/tilelang-ascend",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sources": [
+        {
+          "path": "examples/linear_attention_and_rnn/opt_gdn/opt_gdn_chunk_cumsum.py",
+          "snapshot": "sources/tilelang-ascend/examples/linear_attention_and_rnn/opt_gdn/opt_gdn_chunk_cumsum.py.txt",
+          "sha256": "07ae472116502ce8ea365a3251a32627fc2029a94374d39b33c240f14df57a9d",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/linear_attention_and_rnn/opt_gdn/opt_gdn_chunk_cumsum.py"
+        }
+      ],
+      "entrypoints": [
+        "chunk_cumsum"
+      ],
+      "reference": "ref_chunk_cumsum",
+      "notes": [
+        "AUTO_SYNC=False; includes V-to-S handoffs and scalar accesses.",
+        "Initial configuration B=2,H=16,L=16384,C=128,CC=8; preserve alignment/divisibility assumptions."
+      ],
+      "prepared": {
+        "input.pto": {
+          "path": "prepared/gdn_chunk_cumsum/input.pto",
+          "sha256": "8080a5290a21244f734ad8c40497e04e382632a8b52ce4e7cf90cca63dd6082f"
+        },
+        "expert.pto": {
+          "path": "prepared/gdn_chunk_cumsum/expert.pto",
+          "sha256": "81cb190bc8c3fb2da2d8a4840532b1076f56e9c9993832494d1d894005f37dfa"
+        }
+      },
+      "port_metadata": {
+        "path": "prepared/gdn_chunk_cumsum/port.json",
+        "sha256": "116b8f67ff76b55e148d68c2d63aac259135f44abaaf13e80218b603375d670b"
+      },
+      "device_qualified": false
+    },
+    {
+      "id": "mhc_head_mix",
+      "title": "mHC head mixing",
+      "group": "manual",
+      "status": "prepared_pto",
+      "repository": "https://github.com/tile-ai/tilelang-ascend",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sources": [
+        {
+          "path": "examples/tile_kernels/mhc/head_compute_mix_kernel.py",
+          "snapshot": "sources/tilelang-ascend/examples/tile_kernels/mhc/head_compute_mix_kernel.py.txt",
+          "sha256": "1510de6bdc9f89b8ca872a1bc1639f2d4771621de975d49d51d3c4e18c2c1dac",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/tile_kernels/mhc/head_compute_mix_kernel.py"
+        }
+      ],
+      "entrypoints": [
+        "_mhc_head_compute_mix_fwd",
+        "_mhc_head_compute_mix_bwd"
+      ],
+      "reference": "mhc_head_compute_mix_ref, test_fwd and test_bwd",
+      "notes": [
+        "AUTO_SYNC=False in both entrypoints; report forward/backward separately.",
+        "Start with upstream n=8192, mhc_mult=4, reshape_factor=4.",
+        "Backward emits per-core partial gradients; compare the complete output contract including host aggregation."
+      ],
+      "prepared": {
+        "input.pto": {
+          "path": "prepared/mhc_head_mix/input.pto",
+          "sha256": "86bc2900da82f40a7842b63b75ca47fa5b2bcee9cbcadebfda6b189a35409f8c"
+        },
+        "expert.pto": {
+          "path": "prepared/mhc_head_mix/expert.pto",
+          "sha256": "dc9c383f096a602f849c2233a9f083f4e93be5eeff50301b28bf056b35feafcd"
+        }
+      },
+      "port_metadata": {
+        "path": "prepared/mhc_head_mix/port.json",
+        "sha256": "370fa0329b811dd915fee1d106a627d5e7e64f58852008d52a8e7841012e1f77"
+      },
+      "device_qualified": false
+    },
+    {
+      "id": "elementwise_pipeline",
+      "title": "Pipelined vector add",
+      "group": "manual",
+      "status": "prepared_pto",
+      "repository": "https://github.com/tile-ai/tilelang-ascend",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sources": [
+        {
+          "path": "examples/elementwise/elementwise_add_pipeline.py",
+          "snapshot": "sources/tilelang-ascend/examples/elementwise/elementwise_add_pipeline.py.txt",
+          "sha256": "8ced2c672a3e09fb75203f31b1284b4b70d0e6531e7f2eb549b52c91269da809",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/elementwise/elementwise_add_pipeline.py"
+        }
+      ],
+      "entrypoints": [
+        "vec_add_pipeline"
+      ],
+      "reference": "a+b and assert_close in source",
+      "notes": [
+        "Small diagnostic benchmark rather than evidence of HPC speed.",
+        "Upstream M=N=1024, tiles128x128, sub_M=32; retain the two-stage buffers.",
+        "Manual flag calls present; explicitly disable extra upstream autosync for the expert variant."
+      ],
+      "prepared": {
+        "input.pto": {
+          "path": "prepared/elementwise_pipeline/input.pto",
+          "sha256": "b51ac3ff4fb604eb133285347b7abc6c9866581a946e24e8250d4a2e3e57dfeb"
+        },
+        "expert.pto": {
+          "path": "prepared/elementwise_pipeline/expert.pto",
+          "sha256": "6aefbeecdfb76cf48d67f373f12fa71c0c48b1e3db4c869be303f3a4202af0b9"
+        }
+      },
+      "port_metadata": {
+        "path": "prepared/elementwise_pipeline/port.json",
+        "sha256": "24f87841ae286b8066c3e28b18f620fda86fe469a3e74af699318ed80ff57da3"
+      },
+      "device_qualified": false
+    },
+    {
+      "id": "gated_delta_rule",
+      "title": "Fused sigmoid gating and delta rule",
+      "group": "manual",
+      "status": "prepared_pto",
+      "repository": "https://github.com/tile-ai/tilelang-ascend",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sources": [
+        {
+          "path": "examples/fused_sigmoid_gating_delta_rule/fused_sigmoid_gating_delta_rule_varlen.py",
+          "snapshot": "sources/tilelang-ascend/examples/fused_sigmoid_gating_delta_rule/fused_sigmoid_gating_delta_rule_varlen.py.txt",
+          "sha256": "d3a5c1482281bba1f10060d740ec38039482e876e2c79d4266f7b45a599191c6",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/fused_sigmoid_gating_delta_rule/fused_sigmoid_gating_delta_rule_varlen.py"
+        }
+      ],
+      "entrypoints": [
+        "kernel"
+      ],
+      "reference": "golden",
+      "notes": [
+        "Variable-length recurrence and ping-pong Q/K/V buffers.",
+        "Manual flags present, but AUTO_SYNC not explicitly disabled: check lowered expert code.",
+        "Authored protocol uses ID 6; resource mapping requires qualification as for causal decode."
+      ],
+      "prepared": {
+        "input.pto": {
+          "path": "prepared/gated_delta_rule/input.pto",
+          "sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e"
+        },
+        "expert.pto": {
+          "path": "prepared/gated_delta_rule/expert.pto",
+          "sha256": "16c6441c4a8100666896e819f0c9221b3c57dc44f5dfdfa7642061665911fea6"
+        }
+      },
+      "port_metadata": {
+        "path": "prepared/gated_delta_rule/port.json",
+        "sha256": "8b42a4d3280651a6e3970a516dcc793b1370073f24b85fc62fc1ee5b4d7e4a02"
+      },
+      "device_qualified": false
+    },
+    {
+      "id": "lossless_block_cast",
+      "title": "Per-block lossless cast",
+      "group": "manual",
+      "status": "prepared_pto",
+      "repository": "https://github.com/tile-ai/tilelang-ascend",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sources": [
+        {
+          "path": "examples/tile_kernels/quant/per_block_cast_lossless_kernel.py",
+          "snapshot": "sources/tilelang-ascend/examples/tile_kernels/quant/per_block_cast_lossless_kernel.py.txt",
+          "sha256": "3b08143a6855a11f9dfc71c90be45547dadbb0e079b46b302ff8c7033d730821",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/tile_kernels/quant/per_block_cast_lossless_kernel.py"
+        },
+        {
+          "path": "examples/tile_kernels/quant/utils.py",
+          "snapshot": "sources/tilelang-ascend/examples/tile_kernels/quant/utils.py.txt",
+          "sha256": "f693d1148f2d0563548771b4f6e0a91305259d1c8ecedf25e1d4ae08563fa127",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/tile_kernels/quant/utils.py"
+        }
+      ],
+      "entrypoints": [
+        "get_per_block_cast_lossless_kernel",
+        "per_block_cast_lossless"
+      ],
+      "reference": "compute_reference_out and test_per_block_cast_lossless",
+      "notes": [
+        "AUTO_SYNC=False; test supported layout branches and scale-factor packing.",
+        "Full pinned checkout supplies utility imports; snapshots are for auditing, not standalone execution."
+      ],
+      "prepared": {
+        "input.pto": {
+          "path": "prepared/lossless_block_cast/input.pto",
+          "sha256": "e24109f640f04054da0c493eb5e994e4fb6fbc263cf0da13924f08cadb824c13"
+        },
+        "expert.pto": {
+          "path": "prepared/lossless_block_cast/expert.pto",
+          "sha256": "40d4c8974750ed558b1162356fde9902f7f1e56205ebd27363e73d598804d856"
+        }
+      },
+      "port_metadata": {
+        "path": "prepared/lossless_block_cast/port.json",
+        "sha256": "5e2fc239f01543865a5786d4e947540e337e3f127d950402edfb1fe52c887ed1"
+      },
+      "device_qualified": false
+    },
+    {
+      "id": "rms_norm",
+      "title": "RMSNorm",
+      "group": "automatic",
+      "status": "needs_pto_export",
+      "repository": "https://github.com/tile-ai/tilelang-ascend",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sources": [
+        {
+          "path": "examples/normalization/rms_norm.py",
+          "snapshot": "sources/tilelang-ascend/examples/normalization/rms_norm.py.txt",
+          "sha256": "3c7829e3942e93623f01813324516af8621d0c672c67d5ea60b6dd0ebd08b714",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/normalization/rms_norm.py"
+        }
+      ],
+      "entrypoints": [
+        "_rms_norm",
+        "_rms_norm_grad"
+      ],
+      "reference": "source forward/backward reference checks",
+      "notes": [
+        "AUTO_SYNC=True: upstream automatic baseline, not hand-authored synchronization."
+      ]
+    },
+    {
+      "id": "online_softmax",
+      "title": "Online softmax",
+      "group": "automatic",
+      "status": "needs_pto_export",
+      "repository": "https://github.com/tile-ai/tilelang-ascend",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sources": [
+        {
+          "path": "examples/softmax/example_online_softmax.py",
+          "snapshot": "sources/tilelang-ascend/examples/softmax/example_online_softmax.py.txt",
+          "sha256": "f16aae7a4b859ad5032305072ee978ea7ee4baaf38113dbf3018f6b5a5a14d53",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/softmax/example_online_softmax.py"
+        }
+      ],
+      "entrypoints": [
+        "online_softmax"
+      ],
+      "reference": "torch.softmax and source assert_close",
+      "notes": [
+        "AUTO_SYNC=True: upstream automatic baseline, not hand-authored synchronization."
+      ]
+    },
+    {
+      "id": "expert_flash_attention",
+      "title": "Expert FlashAttention",
+      "group": "deferred",
+      "status": "deferred_cross_core",
+      "repository": "https://github.com/tile-ai/tilelang-ascend",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sources": [
+        {
+          "path": "examples/flash_attention/fa_opt/flash_attn_bhsd_expert_h16_d128.py",
+          "snapshot": "sources/tilelang-ascend/examples/flash_attention/fa_opt/flash_attn_bhsd_expert_h16_d128.py.txt",
+          "sha256": "6704e1e70c4d9e6f4772468fe3f74d0ba4df49669e68c96a373d679a8bd1ee42",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/flash_attention/fa_opt/flash_attn_bhsd_expert_h16_d128.py"
+        },
+        {
+          "path": "examples/flash_attention/fa_opt/bench_mark.md",
+          "snapshot": "sources/tilelang-ascend/examples/flash_attention/fa_opt/bench_mark.md.txt",
+          "sha256": "b0b0f95f909456a192e127408abe18b49fc154f0d2395aa3529dc8b8a83082a7",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/flash_attention/fa_opt/bench_mark.md"
+        }
+      ],
+      "entrypoints": [],
+      "reference": "upstream example validation",
+      "notes": [
+        "Uses explicit cross-core flags; outside the current intra-core comparison.",
+        "Upstream performance claims are not measurements of this compiler."
+      ]
+    },
+    {
+      "id": "sparse_flash_attention",
+      "title": "Sparse FlashAttention",
+      "group": "deferred",
+      "status": "deferred_cross_core",
+      "repository": "https://github.com/tile-ai/tilelang-ascend",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sources": [
+        {
+          "path": "examples/sparse_flash_attention/bench_sfa/sparse_flash_attn_pa.py",
+          "snapshot": "sources/tilelang-ascend/examples/sparse_flash_attention/bench_sfa/sparse_flash_attn_pa.py.txt",
+          "sha256": "4d1abddff0293286bd61321b0f4fad2cd85eda298e49a57c0dc68fc127fb9256",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/sparse_flash_attention/bench_sfa/sparse_flash_attn_pa.py"
+        }
+      ],
+      "entrypoints": [],
+      "reference": "upstream example validation",
+      "notes": [
+        "AUTO_CV_SYNC=True and shared cube/vector workspaces: manual pipe flags do not make this an intra-core-only benchmark."
+      ]
+    },
+    {
+      "id": "moe_token_permute",
+      "title": "MoE token permutation",
+      "group": "deferred",
+      "status": "deferred_cross_core",
+      "repository": "https://github.com/tile-ai/tilelang-ascend",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sources": [
+        {
+          "path": "examples/moe_token_permute/moe_token_permute.py",
+          "snapshot": "sources/tilelang-ascend/examples/moe_token_permute/moe_token_permute.py.txt",
+          "sha256": "439d18e006e9dcb525e50a729ff6af3bc24af12ac7f4d25134c15cc60e2daa88",
+          "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/moe_token_permute/moe_token_permute.py"
+        }
+      ],
+      "entrypoints": [],
+      "reference": "upstream example validation",
+      "notes": [
+        "Contains T.sync_all around shared histogram workspace; deferred for cross-core synchronization."
+      ]
+    }
+  ],
+  "lowering_sources": [
+    {
+      "path": "sources/tilelang-ascend/src/tl_templates/pto/common.h.txt",
+      "upstream_path": "src/tl_templates/pto/common.h",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sha256": "55003aa8b5fdea344138962c6d8d86f83e84c1a4f3484ac32a691224a99535fc"
+    },
+    {
+      "path": "sources/tilelang-ascend/src/target/codegen_ascend_pto.cc.txt",
+      "upstream_path": "src/target/codegen_ascend_pto.cc",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sha256": "544ce36b1ea4a2ab240a0dd24069321d195bbf3c67c01fd5e76ab8f11c0bc290"
+    },
+    {
+      "path": "sources/tilelang-ascend/tilelang/language/persistent.py.txt",
+      "upstream_path": "tilelang/language/persistent.py",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sha256": "48e60060a270ff2bd0c8a78a91a61529e95425b58038304894d3a2c9198401d5"
+    },
+    {
+      "path": "sources/tilelang-ascend/tilelang/engine/lower.py.txt",
+      "upstream_path": "tilelang/engine/lower.py",
+      "commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+      "sha256": "830b984440279d2512962035f586dbe1fa172e7c541a97ab65f62023a078b73c"
+    }
+  ]
+}

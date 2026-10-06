@@ -1,0 +1,36 @@
+{
+  "source_commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+  "source_files": [
+    {
+      "path": "examples/tile_kernels/mhc/head_compute_mix_kernel.py",
+      "snapshot": "sources/tilelang-ascend/examples/tile_kernels/mhc/head_compute_mix_kernel.py.txt",
+      "sha256": "1510de6bdc9f89b8ca872a1bc1639f2d4771621de975d49d51d3c4e18c2c1dac",
+      "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/tile_kernels/mhc/head_compute_mix_kernel.py"
+    }
+  ],
+  "configuration": {
+    "direction": "forward",
+    "num_original_tokens": 8192,
+    "mhc_mult": 4,
+    "reshape_factor": 4,
+    "view_shape": [
+      2048,
+      16
+    ],
+    "launch_blocks": 16,
+    "vector_lanes": 2,
+    "dtype": "float32",
+    "epsilon": 0.01,
+    "scope": "Source test_fwd configuration; PTO sigmoid expansion and its A3 V barriers included."
+  },
+  "adaptations": [
+    "Forward only; PTO TSIGMOID mutates its source and has three V barriers."
+  ],
+  "baseline": "ported authored protocol; native upstream timing is a separate baseline",
+  "invocation": "Terminal ALL completion added; input removes all replaceable local synchronization.",
+  "gm_alias": "may-not-alias; pointer arguments denote disjoint allocations, except repeated uses of one argument",
+  "device_qualified": false,
+  "launch_wrapper": "not yet provided",
+  "comparison_gate": "Validate expert, existing and frontier against the independent reference before timing.",
+  "source_reference": "mhc_head_compute_mix_ref, test_fwd and test_bwd"
+}
