@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -216,6 +217,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareExplicitInsertion(
     }
     auto plan = std::make_unique<PreparedLogicalPlan>(0);
     plan->completeInvocation = !analysis.phases.empty();
+    plan->allocationCertificate = explicitAllocationCertificate(analysis, plan->planId, function.getContext());
     if (analysis.reduction.retained.empty()) {
         return plan;
     }

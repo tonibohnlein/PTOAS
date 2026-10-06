@@ -8,6 +8,7 @@
 // Preflight logical families, preserve certified member-to-phase maps, and lower
 // commands in place. Allocation does not inspect or reconstruct endpoint guards.
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/FamilyExpressions.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/IR/PTO.h"
@@ -593,7 +594,7 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
     if (!function) {
         return failure();
     }
-    auto plan = decodeCyclicAllocation(function, eligibleIds);
+    auto plan = decodePhysicalAllocation(function, eligibleIds);
     if (failed(plan)) {
         return failure();
     }
@@ -646,6 +647,7 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
     });
     function->removeAttr("pto.endpoint_families");
     function->removeAttr(CyclicAllocationAttr);
+    function->removeAttr(FiniteAllocationAttr);
     IRRewriter rewriter(function.getContext());
     eliminateCommonSubExpressions(rewriter, dominance, function);
     return success();

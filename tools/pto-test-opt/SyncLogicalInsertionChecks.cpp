@@ -441,9 +441,18 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
     }
     auto trace = accepted ? Interpreter(input.instructions()).run(function) : llvm::json::Object{};
     const bool valid = !accepted || trace.getString("error").value_or("missing trace status").empty();
-    llvm::outs() << llvm::json::Value(llvm::json::Object{{"function", function.getSymName()},
-        {"accepted", accepted}, {"unchanged_on_failure", accepted || before == render()},
-        {"trace", std::move(trace)}}) << "\n";
+    llvm::json::Object report{{"function", function.getSymName()},
+        {"accepted", accepted}, {"unchanged_on_failure", accepted || before == render()}};
+    auto ids = function->getAttrOfType<DenseI64ArrayAttr>("test.eligible_ids");
+    if (accepted && ids) {
+        auto logicalIR = render();
+        bool allocated = succeeded(fs::allocatePhysicalEventIds(function,ids.asArrayRef()));
+        report["allocated"] = allocated;
+        report["allocation_unchanged_on_failure"] = allocated || logicalIR == render();
+        if (allocated) { report["physical"] = Interpreter(input.instructions()).run(function); }
+    }
+    report["trace"] = std::move(trace);
+    llvm::outs() << llvm::json::Value(std::move(report)) << "\n";
     return success(valid && succeeded(verify(function)));
 }
 

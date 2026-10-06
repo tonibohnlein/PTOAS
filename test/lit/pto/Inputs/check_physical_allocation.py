@@ -119,7 +119,7 @@ def run_checks(tool, optimizer, source):
             assert expected in result.stderr, result.stderr
         path.write_text(original)
         result = opt(optimizer, path, [allocate], success=False)
-        assert 'requires a cyclic allocation certificate' in result.stderr
+        assert 'requires a supported finite or uniform allocation export' in result.stderr
         # A statically empty invocation consumes no IDs and needs no commands.
         path.write_text(original.replace('to %n step', 'to %one step'))
         physical = opt(optimizer, path, ['--pto-frontier-analysis', '--pto-frontier-allocate']).stdout

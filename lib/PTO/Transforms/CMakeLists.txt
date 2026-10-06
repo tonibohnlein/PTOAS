@@ -161,6 +161,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/NumericTemplateEffects.cpp
   FrontierSynch/NumericTemplateStorage.cpp
   FrontierSynch/HardwareProtection.cpp
+  FrontierSynch/FiniteAllocation.cpp
   FrontierSynch/AllocationCertificate.cpp
   FrontierSynch/PhysicalAllocation.cpp
   FrontierSynch/GuardedPeriodicQuotient.cpp

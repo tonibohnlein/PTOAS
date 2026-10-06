@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "FiniteGuardedInternal.h"
+#include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include <limits>
 namespace mlir::pto::frontiersynch {
@@ -167,6 +168,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedInsertion(Fi
 {
     if (!analysis.error.empty() || !analysis.state) { return failure(); }
     auto result = analysis.state->prepare();
+    if (succeeded(result)) {
+        (*result)->allocationCertificate =
+            finiteRegionalAllocationCertificate(finiteGuardedRegionalResult(analysis), **result);
+    }
     analysis.insertionError = analysis.state->insertionError;
     return result;
 }

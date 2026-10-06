@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Validate prepared endpoints, then insert logical commands at actual cuts.
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -387,7 +388,8 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
     if (failed(preflight(function, plan))) {
         return failure();
     }
-    if (plan.allocationCertificate && function->hasAttr(CyclicAllocationAttr)) {
+    if (plan.allocationCertificate &&
+        (function->hasAttr(CyclicAllocationAttr) || function->hasAttr(FiniteAllocationAttr))) {
         return function.emitError("logical insertion cannot replace an existing allocation certificate");
     }
     for (auto& stage : plan.preparation) {
@@ -411,7 +413,9 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
         });
     }
     if (plan.allocationCertificate) {
-        function->setAttr(CyclicAllocationAttr, plan.allocationCertificate);
+        auto kind = plan.allocationCertificate.getAs<StringAttr>("kind");
+        function->setAttr(kind && kind.getValue() == "finite" ? FiniteAllocationAttr : CyclicAllocationAttr,
+                          plan.allocationCertificate);
     }
     return success();
 }

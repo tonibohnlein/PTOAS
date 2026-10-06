@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
+#include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
@@ -220,6 +221,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceInsertion(Sequenc
     analysis.insertionError.clear();
     auto result = analysis.state->prepare();
     if (failed(result)) { analysis.insertionError = analysis.state->error; }
+    else {
+        (*result)->allocationCertificate =
+            finiteRegionalAllocationCertificate(sequenceRegionalResult(analysis), **result);
+    }
     return result;
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceInsertion(
