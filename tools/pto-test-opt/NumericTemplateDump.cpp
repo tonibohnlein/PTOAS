@@ -51,7 +51,10 @@ llvm::json::Object dumpNumericTemplate(const fs::NumericTemplate& result, AsmSta
         for (const auto& effect : payload.effects) {
             llvm::json::Array maps, ranges, ids;
             for (const auto& map : effect.regions) {
-                llvm::json::Array extents;
+                llvm::json::Array extents, invariantSymbols;
+                for (Value symbol : map.invariantSymbols) {
+                    invariantSymbols.push_back(name(symbol, state));
+                }
                 for (auto extent : map.extents) {
                     extents.push_back(expression(extent));
                 }
@@ -59,6 +62,7 @@ llvm::json::Object dumpNumericTemplate(const fs::NumericTemplate& result, AsmSta
                 maps.push_back(llvm::json::Object{
                     {"base_argument", argument ? static_cast<int64_t>(argument.getArgNumber()) : -1},
                     {"offset", expression(map.byteOffset)}, {"extents", std::move(extents)},
+                    {"invariant_symbols", std::move(invariantSymbols)},
                     {"element_bytes", map.elementBytes}});
             }
             for (const auto& item : effect.ranges) {

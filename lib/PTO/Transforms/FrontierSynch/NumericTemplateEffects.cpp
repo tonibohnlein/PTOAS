@@ -14,11 +14,12 @@ namespace {
 std::optional<TemplateRegion> substitute(TemplateBuilder& builder, const SyncAccessRegion& source)
 {
     SmallVector<AffineExpr> dimensions, symbols;
+    SmallVector<Value> invariants;
     for (unsigned i = 0; i < source.extents.size(); ++i) {
         dimensions.push_back(getAffineDimExpr(i, builder.context()));
     }
     for (auto value : source.symbols) {
-        auto expression = builder.scalar(value);
+        auto expression = builder.scalar(value, source.base ? &invariants : nullptr);
         if (!expression) {
             return std::nullopt;
         }
@@ -26,9 +27,9 @@ std::optional<TemplateRegion> substitute(TemplateBuilder& builder, const SyncAcc
     }
     auto replace = [&](AffineExpr expression) {
         auto result = mlir::pto::detail::substitute(expression, dimensions, symbols);
-        return result ? simplifyAffineExpr(result, dimensions.size(), 1) : AffineExpr{};
+        return result ? simplifyAffineExpr(result, dimensions.size(), 1 + invariants.size()) : AffineExpr{};
     };
-    TemplateRegion result{source.base, replace(source.byteOffset), {}, source.elementBytes};
+    TemplateRegion result{source.base, replace(source.byteOffset), {}, source.elementBytes, invariants};
     if (!result.byteOffset) {
         return std::nullopt;
     }

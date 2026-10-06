@@ -17,6 +17,8 @@
 // CHECK: scalar-evolution unsafe: 3 passed
 // CHECK: scalar-evolution conditional_update: 1 passed
 // CHECK: scalar-evolution zero_trip_result: 1 passed
+// CHECK: scalar-evolution bounded_clamps: 4 passed
+// CHECK: scalar-evolution unsafe_clamps: 2 passed
 module {
   func.func @carried_reset(%n: index) attributes {test.no_region} {
     %c0 = arith.constant 0 : index
@@ -92,6 +94,34 @@ module {
       %next = arith.remui %inc, %c2 : index
       scf.yield %next : index
     } {test.scalar_opaque}
+    return
+  }
+  func.func @bounded_clamps() attributes {test.no_region} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %twenty = arith.constant 20 : index
+    %ten = arith.constant 10 : index
+    %scale = arith.constant 256 : index
+    %limit = arith.constant 8192 : index
+    scf.for %i = %zero to %twenty step %one {
+      %offset = arith.muli %i, %scale : index
+      %low = arith.maxsi %offset, %zero {test.scalar_samples = array<i64: 0,0, 1,256, 19,4864>} : index
+      %high = arith.minsi %limit, %offset {test.scalar_samples = array<i64: 0,0, 19,4864>} : index
+      %floor = arith.maxsi %zero, %offset {test.scalar_samples = array<i64: 0,0, 19,4864>} : index
+      %shift = arith.subi %i, %ten : index
+      %crossing = arith.maxsi %shift, %zero {test.scalar_opaque} : index
+    }
+    return
+  }
+  func.func @unsafe_clamps(%n: index, %p: index) attributes {test.no_region} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %scale = arith.constant 256 : index
+    scf.for %i = %zero to %n step %one {
+      %overflow = arith.muli %i, %scale : index
+      %clamped = arith.maxsi %overflow, %zero {test.scalar_opaque} : index
+      %unknown = arith.minsi %p, %zero {test.scalar_opaque} : index
+    }
     return
   }
   func.func @carried_geometry(%n: index) {

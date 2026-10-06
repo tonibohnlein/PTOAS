@@ -230,6 +230,18 @@ inline ScalarEvolution::Result ScalarEvolution::operation(Value v, Symbol symbol
     if (!a.expression || !b.expression) {
         return {};
     }
+    // A signed min/max can select one affine operand when its entire range
+    // lies on the appropriate side of the other. Overlapping ranges remain
+    // opaque; in particular an overflowing multiply cannot justify a clamp.
+    if ((isa<arith::MaxSIOp>(op) || isa<arith::MinSIOp>(op)) && a.range && b.range) {
+        const bool maximum = isa<arith::MaxSIOp>(op);
+        if (a.range->lower >= b.range->upper) {
+            return maximum ? a : b;
+        }
+        if (b.range->lower >= a.range->upper) {
+            return maximum ? b : a;
+        }
+    }
     if (isa<arith::AndIOp>(op)) {
         auto mask = constant(op->getOperand(1));
         auto input = a.expression;

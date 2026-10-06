@@ -1522,3 +1522,36 @@ four logical commands. These timings measure logical analysis preparation,
 not full compilation or device execution. Architecture, correctness and
 performance reviewers accepted all four milestones. Final artifacts and tool
 hashes: `.local/route-completion-m13/REPORT.md` and `metadata.json`.
+
+
+### Periodic GM accesses with invariant origins
+
+The numerical template producer now retains loop-invariant integer SSA values
+in GM access maps, including pure arithmetic computed inside the retained loop.
+The map's first symbol is the iteration ordinal; subsequent symbols name these
+invariant values. Local storage still requires concrete geometry. Shared scalar
+normalization removes signed min/max clamps only when proven ranges select the
+same operand throughout the loop; it preserves unknown or overflowing cases.
+
+For a GM base written by one payload type, the existing translation test may
+cancel a common invariant origin. All maps must agree on that origin and its SSA
+symbols, their relative offsets/extents must be concrete, and translated spans
+must be disjoint. Read-only bases retain their existing discharge. Distinct GM
+bases still require the supplied non-alias policy. This yields the same exact
+periodic generators, quotient reduction, endpoint recipes and allocation path;
+no demand approximation or kernel-specific pattern is introduced.
+
+The pypto-lib prefill kernels `save_prefill_last_token_group` and
+`save_prefill_last_token_single` now generate C++ through this path. Each retains
+one loop with two payload types and period one. Their demands are load-to-store
+readiness and store-to-next-load UB release. The emitted code has two SET and
+two WAIT sites and uses EVENT_ID0 for both directions; tests check causal
+consumption across directions as well. The existing invocation-completion
+barrier remains. No device validation is claimed.
+
+Validation covers ten independently checked traces, overlap/clamp/alias
+rejections, six scalar range checks and 120 regression RUN checks. Five full-CLI
+checks were skipped. All 49 pypto-lib modules and all prior C++ successes were
+rerun: four pypto-lib modules now generate C++ (two new), and all prior successes
+remain. Artifacts and remaining class-specific blockers are recorded in
+`.local/pypto-lib-tractable/REPORT.md`.
