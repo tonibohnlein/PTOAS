@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 from check_repeated_region import check
+from check_logical_insertion import closure_with_commands
 
 
 def run(tool, mode, path):
@@ -68,6 +69,32 @@ def main():
             check(run(tool, "--structured-trace", path), [2, 3])
             print("conditional depth", depth, "expressions", report["expressions"], "emitted", report["emitted"])
             tested += 1
+        # Explicit runs inside a selected arm retain their original block cuts,
+        # including a nonempty internal cross-pipe demand before a compact child.
+        prefix = """    pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%first : !left)
+    pto.tmatmul ins(%first, %right : !left, !right) outs(%acc : !acc)
+"""
+        for guard in (0, 1):
+            candidate = source.replace("scf.if %g {", "scf.if %g {\n" + prefix, 1)
+            path.write_text(candidate.replace("array<i64: 1, 2, 3>", f"array<i64: {guard}, 2, 3>"))
+            report = run(tool, "--structured-trace", path)
+            assert report["accepted"] and not report["trace"]["error"], report
+            payloads = [event for event in report["trace"]["events"] if event["kind"] == "payload"]
+            assert len(payloads) == (16 if guard else 2), payloads
+            commands = []
+            for event in report["trace"]["events"]:
+                if event["kind"] == "payload" or (event["kind"] == "barrier" and event["pipe"] == 6):
+                    continue
+                command = dict(event)
+                if event["kind"] != "barrier":
+                    command["identity"] = (event["plan"], event["record"], event["source_ordinal"],
+                                           tuple(event.get("members", [])))
+                commands.append(command)
+            actual = closure_with_commands([event["pipe"] for event in payloads], commands)
+            if guard:
+                # Payloads 1 and 2 are the inserted TEXTRACT and TMATMUL:
+                # the latter reads the tile written by the former.
+                assert actual[3] & (1 << 4), "missing explicit prefix readiness"
         unavailable = source.replace("%g: i1,", "%flags: !pto.ptr<i1, gm>, %g: i1,")
         unavailable = unavailable.replace("    scf.if %g {",
             "    %predicate = pto.load %flags[%zero] : !pto.ptr<i1, gm> -> i1\n    scf.if %predicate {", 1)
