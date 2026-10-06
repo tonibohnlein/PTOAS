@@ -1,0 +1,120 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_arithmetic_composition.py pto-sync-input-test %s
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!cell = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=1, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!halfcell = !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=1, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!half = !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module attributes {pto.target_arch = "a3"} {
+  func.func @recurrence(%n: index) attributes {test.trace_arguments = array<i64: 3>} {
+    %base = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %c4 = arith.constant 4 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    pto.tadds ins(%tile, %one : !tile, f32) outs(%tile : !tile) {test.label = "bulk-in"}
+    scf.for %r = %c0 to %c2 step %c1 {
+      %row = arith.muli %r, %c4 overflow<nsw> : index
+      %head = pto.subview %tile[%c0, %row] sizes [1, 1] : !tile -> !cell
+      pto.tsetval ins(%c0, %one : index, f32) outs(%head : !cell) {test.label = "init"}
+      scf.for %j = %c1 to %n step %c1 {
+        %inside = arith.cmpi slt, %j, %c4 : index
+        scf.if %inside {
+          %offset = arith.addi %row, %j overflow<nsw> : index
+          %previous = arith.subi %offset, %c1 overflow<nsw> : index
+          %read = pto.subview %tile[%c0, %previous] sizes [1, 1] : !tile -> !cell
+          %write = pto.subview %tile[%c0, %offset] sizes [1, 1] : !tile -> !cell
+          %value = pto.tgetval ins(%read, %c0 : !cell, index) outs : f32 {test.label = "read"}
+          pto.tsetval ins(%c0, %one : index, f32) outs(%write : !cell) {test.label = "write"}
+        }
+      }
+    }
+    pto.tadds ins(%tile, %one : !tile, f32) outs(%tile : !tile) {test.label = "bulk-out"}
+    return
+  }
+  func.func @prefix_owned(%n: index) attributes {test.trace_arguments = array<i64: 3>} {
+    %base = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %c4 = arith.constant 4 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    pto.tadds ins(%tile, %one : !tile, f32) outs(%tile : !tile) {test.label = "bulk-in"}
+    scf.for %r = %c1 to %c3 step %c1 {
+      %row = arith.muli %r, %c4 overflow<nsw> : index
+      scf.for %j = %c0 to %n step %c1 {
+        %inside = arith.cmpi slt, %j, %c4 : index
+        scf.if %inside {
+          %offset = arith.addi %row, %j overflow<nsw> : index
+          %read = pto.subview %tile[%c0, %j] sizes [1, 1] : !tile -> !cell
+          %write = pto.subview %tile[%c0, %offset] sizes [1, 1] : !tile -> !cell
+          %value = pto.tgetval ins(%read, %c0 : !cell, index) outs : f32 {test.label = "read"}
+          pto.tsetval ins(%c0, %one : index, f32) outs(%write : !cell) {test.label = "write"}
+        }
+      }
+    }
+    pto.tadds ins(%tile, %one : !tile, f32) outs(%tile : !tile) {test.label = "bulk-out"}
+    return
+  }
+  func.func @persistent(%n: index) attributes {test.trace_arguments = array<i64: 3>} {
+    %base = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %c4 = arith.constant 4 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    pto.tadds ins(%tile, %one : !tile, f32) outs(%tile : !tile) {test.label = "bulk-in"}
+    scf.for %r = %c0 to %c2 step %c1 {
+      scf.for %j = %c0 to %n step %c1 {
+        %inside = arith.cmpi slt, %j, %c2 : index
+        scf.if %inside {
+          %cell = pto.subview %tile[%c0, %j] sizes [1, 1] : !tile -> !cell
+          %value = pto.tgetval ins(%cell, %c0 : !cell, index) outs : f32 {test.label = "read"}
+          pto.tsetval ins(%c0, %one : index, f32) outs(%cell : !cell) {test.label = "write"}
+        }
+      }
+    }
+    pto.tadds ins(%tile, %one : !tile, f32) outs(%tile : !tile) {test.label = "bulk-out"}
+    return
+  }
+  // A two-byte write aliases only the upper half of each four-byte read.
+  // Arithmetic boundary atoms must retain the interior cut at byte 4*j+2.
+  func.func @overlapping_widths(%n: index) attributes {test.trace_arguments = array<i64: 3>} {
+    %base = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %half_one = arith.constant 1.0 : f16
+    %tile = pto.alloc_tile addr = %base : !tile
+    %halves = pto.alloc_tile addr = %base : !half
+    pto.tadds ins(%tile, %one : !tile, f32) outs(%tile : !tile) {test.label = "bulk-in"}
+    scf.for %r = %c0 to %c2 step %c1 {
+      scf.for %j = %c0 to %n step %c1 {
+        %inside = arith.cmpi slt, %j, %c2 : index
+        scf.if %inside {
+          %double = arith.muli %j, %c2 overflow<nsw> : index
+          %upper_half = arith.addi %double, %c1 overflow<nsw> : index
+          %read = pto.subview %tile[%c0, %j] sizes [1, 1] : !tile -> !cell
+          %write = pto.subview %halves[%c0, %upper_half] sizes [1, 1] : !half -> !halfcell
+          %value = pto.tgetval ins(%read, %c0 : !cell, index) outs : f32 {test.label = "read"}
+          pto.tsetval ins(%c0, %half_one : index, f16) outs(%write : !halfcell) {test.label = "write"}
+        }
+      }
+    }
+    pto.tadds ins(%tile, %one : !tile, f32) outs(%tile : !tile) {test.label = "bulk-out"}
+    return
+  }
+}

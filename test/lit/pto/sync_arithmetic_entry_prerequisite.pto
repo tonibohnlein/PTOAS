@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --sequence-analysis %s | FileCheck %s
+// CHECK: "arithmetic_entry_prerequisite":true
+// CHECK: "arithmetic_entry_prerequisite":true
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!cell = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=1, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module attributes {pto.target_arch = "a3"} {
+  func.func @guarded_first_site() attributes {test.arithmetic_entry_prerequisite = true} {
+    %base = arith.constant 0 : i64
+    %output = arith.constant 64 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %source = pto.alloc_tile addr = %base : !tile
+    %target = pto.alloc_tile addr = %output : !tile
+    %value = pto.tgetval ins(%source, %c0 : !tile, index) outs : f32
+    scf.for %r = %c0 to %c2 step %c1 {
+      %row = arith.muli %r, %c4 overflow<nsw> : index
+      scf.for %j = %c0 to %c4 step %c1 {
+        %present = arith.cmpi sge, %j, %c2 : index
+        scf.if %present {
+          %offset = arith.addi %row, %j overflow<nsw> : index
+          %view = pto.subview %target[%c0, %offset] sizes [1, 1] : !tile -> !cell
+          pto.tsetval ins(%c0, %value : index, f32) outs(%view : !cell)
+        }
+      }
+    }
+    return
+  }
+  func.func @empty_first_site() attributes {test.arithmetic_entry_prerequisite = false} {
+    %base = arith.constant 0 : i64
+    %output = arith.constant 64 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %source = pto.alloc_tile addr = %base : !tile
+    %target = pto.alloc_tile addr = %output : !tile
+    %value = pto.tgetval ins(%source, %c0 : !tile, index) outs : f32
+    scf.for %r = %c0 to %c0 step %c1 {
+      %row = arith.muli %r, %c4 overflow<nsw> : index
+      scf.for %j = %c0 to %c4 step %c1 {
+        %present = arith.cmpi sge, %j, %c2 : index
+        scf.if %present {
+          %offset = arith.addi %row, %j overflow<nsw> : index
+          %view = pto.subview %target[%c0, %offset] sizes [1, 1] : !tile -> !cell
+          pto.tsetval ins(%c0, %value : index, f32) outs(%view : !cell)
+        }
+      }
+    }
+    return
+  }
+}

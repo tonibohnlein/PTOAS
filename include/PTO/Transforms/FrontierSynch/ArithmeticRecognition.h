@@ -22,9 +22,13 @@ struct ArithmeticCoordinate {
     CoordinateKind kind = CoordinateKind::Occurrence;
 };
 struct ResiduePiece {
+    // Dimensions and leading symbols follow the declared coordinate schema.
+    // Additional trailing symbols are existential quotient locals, never
+    // occurrence coordinates or independent parameters. Importers project
+    // them with exact integer elimination before exposing a relation.
     IntegerSet system;
     // system variables are quotient coordinates q, in dimensions-then-symbols
-    // order; the original coordinate is period*q + residue.
+    // order; the original coordinate is period*q + residue. Locals have no residue.
     SmallVector<uint64_t> residues;
 };
 enum class ArithmeticEvent { Payload, Start, Completion };

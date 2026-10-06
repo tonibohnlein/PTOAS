@@ -229,6 +229,14 @@ bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
         for (auto* side : {&child.regional.firstPayloads, &child.regional.lastPayloads}) {
             for (auto& [pipe, values] : *side) { if (!prune(values)) { return false; } }
         }
+        for (auto& [type, values] : child.regional.firstSitePayloads) {
+            if (type >= child.anchors.size() || llvm::any_of(values, [site = type](const auto& value) {
+                    return value.event.type != site;
+                })) {
+                return fail("regional first-site selector has an inconsistent payload type");
+            }
+            if (!prune(values)) { return false; }
+        }
         auto convert = [&](RegionalSelector selector, std::vector<Selected>& destination) {
             if (!validSelector(selector)) {
                 fail("regional selector has an invalid occurrence or predicate"); return;
@@ -294,6 +302,13 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
     }
     for (uint32_t child = 0; child < state->children.size(); ++child) {
         const auto& regional = state->children[child].regional;
+        for (const auto& [type, firsts] : regional.firstSitePayloads) {
+            auto& exported = out.firstSitePayloads[type + starts[child]];
+            for (auto first : firsts) {
+                first.event.type += starts[child];
+                exported.push_back(std::move(first));
+            }
+        }
         if (regional.accessModel) {
             out.accessModel = regional.accessModel;
             out.gmAliasPolicy = regional.gmAliasPolicy;

@@ -53,7 +53,10 @@ struct ArithmeticProgram {
 // their exact finite unions are charged to the output size. Metadata follows
 // the shared leaf contract. Classified internal scalar prerequisites are retained;
 // existing synchronization and unclassified prerequisites remain unsupported.
-// The shared producer must supply all payload effects. Output borrows input/IR.
+// The shared producer must supply all payload effects. A root-loop producer
+// may omit globally independent GM effects only with the shared disjoint-visit
+// certificate; extraction.dischargedEffects records them. Regional consumers
+// must retain these effects for enclosing re-entry. Output borrows input/IR.
 // Failure clears primitive/site/parameter exports; diagnostics remain available.
 // Region extraction preserves original SSA bindings. Only index/i1 values
 // available before root can become extra parameters; local unsupported values

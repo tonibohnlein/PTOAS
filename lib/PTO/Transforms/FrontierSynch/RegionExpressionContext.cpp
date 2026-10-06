@@ -30,16 +30,16 @@ RegionExpressions::Id RegionExpressions::cofactorAtCut(Id expression, Operation*
         Id next = pending.pop_back_val();
         if (memo.count(next) || !seen.insert(next).second) { continue; }
         order.push_back(next);
-        for (Id operand : {nodes[next].a, nodes[next].b, nodes[next].c}) {
-            if (operand != invalid) { pending.push_back(operand); }
-        }
+        appendOperands(nodes[next], pending);
     }
     llvm::sort(order);
     for (Id id : order) {
         // Interning may reallocate nodes, so keep a value copy.
         const Node node = nodes[id];
         Id result = id;
-        if (node.kind == Kind::Input && node.boolean && assumptions.count(node.value)) {
+        if (node.kind == Kind::Integer) {
+            result = rebuildInteger(node, memo);
+        } else if (node.kind == Kind::Input && node.boolean && assumptions.count(node.value)) {
             result = boolean(assumptions.lookup(node.value));
         } else if (node.kind == Kind::Not) {
             result = lnot(memo.lookup(node.a));
@@ -74,9 +74,7 @@ FailureOr<Value> RegionExpressions::emitContextual(Id expression, OpBuilder& bui
         if (context.values.count(next) || !seen.insert(next).second) { continue; }
         const Node& node = nodes[next];
         if (node.kind == Kind::Input) { inputNodes.push_back(next); }
-        for (Id operand : {node.a, node.b, node.c}) {
-            if (operand != invalid) { pending.push_back(operand); }
-        }
+        appendOperands(node, pending);
     }
     // Preflight the complete SSA operand DAG before creating any cloned code.
     SmallVector<std::pair<Value, bool>> work;

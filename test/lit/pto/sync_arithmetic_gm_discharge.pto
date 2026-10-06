@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_arithmetic_gm_discharge.py pto-sync-input-test %s
+module attributes {pto.target_arch = "a3"} {
+  func.func @stream(%out: !pto.ptr<f32, gm>, %other: !pto.ptr<f32, gm>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %block = pto.get_block_idx
+    %index = arith.index_cast %block : i64 to index
+    scf.for %i = %c0 to %c2 step %c1 {
+      %offset = arith.addi %index, %i overflow<nsw> : index
+      pto.store %one, %out[%offset] : !pto.ptr<f32, gm>, f32
+    } {frontier.test_arithmetic_region = "stream"}
+    return
+  }
+  func.func @same_address(%out: !pto.ptr<f32, gm>, %other: !pto.ptr<f32, gm>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %block = pto.get_block_idx
+    %index = arith.index_cast %block : i64 to index
+    scf.for %i = %c0 to %c2 step %c1 {
+      pto.store %one, %out[%index] : !pto.ptr<f32, gm>, f32
+    } {frontier.test_arithmetic_region = "same_address"}
+    return
+  }
+  func.func @same_base_peer(%out: !pto.ptr<f32, gm>, %other: !pto.ptr<f32, gm>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %block = pto.get_block_idx
+    %index = arith.index_cast %block : i64 to index
+    pto.store %one, %out[%c0] : !pto.ptr<f32, gm>, f32
+    scf.for %i = %c0 to %c2 step %c1 {
+      %offset = arith.addi %index, %i overflow<nsw> : index
+      pto.store %one, %out[%offset] : !pto.ptr<f32, gm>, f32
+    } {frontier.test_arithmetic_region = "same_base_peer"}
+    return
+  }
+  func.func @different_base_peer(%out: !pto.ptr<f32, gm>, %other: !pto.ptr<f32, gm>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %block = pto.get_block_idx
+    %index = arith.index_cast %block : i64 to index
+    pto.store %one, %other[%c0] : !pto.ptr<f32, gm>, f32
+    scf.for %i = %c0 to %c2 step %c1 {
+      %offset = arith.addi %index, %i overflow<nsw> : index
+      pto.store %one, %out[%offset] : !pto.ptr<f32, gm>, f32
+    } {frontier.test_arithmetic_region = "different_base_peer"}
+    return
+  }
+  // The source i64 cannot be equated with this potentially narrowing cast.
+  // Its existing index result remains a valid independent entry binding.
+  func.func @cast_binding(%out: !pto.ptr<f32, gm>, %raw: i64) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %index = arith.index_cast %raw : i64 to index
+    scf.for %i = %c0 to %c2 step %c1 {
+      pto.store %one, %out[%index] : !pto.ptr<f32, gm>, f32
+    } {frontier.test_arithmetic_region = "cast_binding"}
+    return
+  }
+  func.func @read_only(%input: !pto.ptr<f32, gm>, %offset: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    scf.for %i = %c0 to %c2 step %c1 {
+      %value = pto.load %input[%offset] : !pto.ptr<f32, gm> -> f32
+    } {frontier.test_arithmetic_region = "read_only"}
+    return
+  }
+}

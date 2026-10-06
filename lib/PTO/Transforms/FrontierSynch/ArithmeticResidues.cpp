@@ -26,6 +26,99 @@ PrimitiveRelation ProgramBuilder::relation(PrimitiveKind kind, unsigned dimensio
     return result;
 }
 namespace {
+// Lift constant floor divisions into existential quotient symbols. Original
+// coordinate residues remain unchanged; these symbols are projected exactly
+// by the relation importer instead of enumerating a joint residue period.
+class LocalQuotients {
+public:
+    LocalQuotients(unsigned dimensions, unsigned symbols, unsigned limit)
+        : dimensions(dimensions), symbols(symbols), limit(limit) {}
+    SmallVector<AffineExpr> definitions;
+    unsigned localCount = 0;
+    bool dimensionExceeded = false;
+    AffineExpr linearize(AffineExpr expression)
+    {
+        if (!expression) { return {}; }
+        auto found = cache.find(expression);
+        if (found != cache.end()) { return found->second; }
+        auto binary = dyn_cast<AffineBinaryOpExpr>(expression);
+        if (!binary) { return expression; }
+        auto left = linearize(binary.getLHS()), right = linearize(binary.getRHS());
+        if (!left || !right) { return {}; }
+        AffineExpr result;
+        const auto kind = binary.getKind();
+        if (kind == AffineExprKind::Add) {
+            result = mlir::pto::detail::checkedAdd(left, right);
+        } else if (kind == AffineExprKind::Mul) {
+            if (!isa<AffineConstantExpr>(left) && !isa<AffineConstantExpr>(right)) { return {}; }
+            result = mlir::pto::detail::checkedMul(left, right);
+        } else {
+            auto divisor = dyn_cast<AffineConstantExpr>(right);
+            if (!divisor || divisor.getValue() <= 0) { return {}; }
+            const auto denominator = divisor.getValue();
+            auto* context = expression.getContext();
+            const auto negative = getAffineConstantExpr(-1, context);
+            if (kind == AffineExprKind::CeilDiv) {
+                auto negated = mlir::pto::detail::checkedMul(left, negative);
+                auto quotient = negated ? linearize(negated.floorDiv(denominator)) : AffineExpr{};
+                result = mlir::pto::detail::checkedMul(quotient, negative);
+            } else if (kind == AffineExprKind::FloorDiv || kind == AffineExprKind::Mod) {
+                auto quotientForm = left.floorDiv(denominator);
+                auto stored = quotients.find(quotientForm);
+                AffineExpr quotient;
+                if (stored != quotients.end()) {
+                    quotient = stored->second;
+                } else {
+                    if (dimensions + symbols + localCount >= limit) {
+                        dimensionExceeded = true;
+                        return {};
+                    }
+                    quotient = getAffineSymbolExpr(symbols + localCount++, context);
+                    auto multiple = mlir::pto::detail::checkedMul(quotient, divisor);
+                    auto lower = mlir::pto::detail::checkedAdd(left,
+                        mlir::pto::detail::checkedMul(multiple, negative));
+                    auto upper = mlir::pto::detail::checkedAdd(
+                        mlir::pto::detail::checkedMul(lower, negative),
+                        getAffineConstantExpr(denominator - 1, context));
+                    if (!lower || !upper) { return {}; }
+                    definitions.push_back(lower);
+                    definitions.push_back(upper);
+                    quotients.try_emplace(quotientForm, quotient);
+                }
+                result = kind == AffineExprKind::FloorDiv ? quotient :
+                    mlir::pto::detail::checkedAdd(left, mlir::pto::detail::checkedMul(
+                        mlir::pto::detail::checkedMul(quotient, divisor), negative));
+            }
+        }
+        if (result) { cache.try_emplace(expression, result); }
+        return result;
+    }
+private:
+    unsigned dimensions, symbols, limit;
+    DenseMap<AffineExpr, AffineExpr> cache, quotients;
+};
+// Shared address normalization may retain an integer SSA value underneath a
+// value-preserving index cast. Reuse that existing entry binding rather than
+// inventing a new parameter or treating an integer as a pointer identity.
+Value indexParameter(const ProgramBuilder& builder, Value input)
+{
+    if (builder.entryParameter(input)) { return input; }
+    if (!isa<IntegerType>(input.getType())) { return {}; }
+    for (auto* user : input.getUsers()) {
+        auto cast = dyn_cast<arith::IndexCastOp>(user);
+        if (!cast || cast.getIn() != input || !cast.getOut().getType().isIndex() ||
+            !builder.entryParameter(cast.getOut())) { continue; }
+        const auto variable = getAffineSymbolExpr(0, builder.context);
+        mlir::pto::detail::ScalarEvolution evolution(builder.context, user);
+        auto expression = evolution.value(cast.getOut(), [&](Value value) -> AffineExpr {
+            return value == input ? variable : AffineExpr{};
+        });
+        // ScalarEvolution preserves this expression through the cast only
+        // after proving its original signed range fits the index width.
+        if (expression == variable) { return cast.getOut(); }
+    }
+    return {};
+}
 AffineExpr normalizeValue(Value input, const ArithmeticSite& site, unsigned offset,
                           MLIRContext* context, llvm::function_ref<AffineExpr(Value)> parameter)
 {
@@ -66,14 +159,16 @@ AffineExpr ProgramBuilder::registerParameter(Value value)
 bool ProgramBuilder::prepareValue(Value input, const ArithmeticSite& site)
 {
     auto expression = normalizeValue(input, site, 0, context, [&](Value value) -> AffineExpr {
-        return entryParameter(value) ? registerParameter(value) : AffineExpr{};
+        auto binding = indexParameter(*this, value);
+        return binding ? registerParameter(binding) : AffineExpr{};
     });
     return static_cast<bool>(expression);
 }
 AffineExpr ProgramBuilder::value(Value input, const ArithmeticSite& site, unsigned offset) const
 {
     return normalizeValue(input, site, offset, context, [&](Value input) -> AffineExpr {
-        auto parameter = parameterIds.find(input);
+        auto binding = indexParameter(*this, input);
+        auto parameter = parameterIds.find(binding);
         return parameter == parameterIds.end() ? AffineExpr{} : getAffineSymbolExpr(parameter->second, context);
     });
 }
@@ -160,23 +255,30 @@ void ProgramBuilder::emit(PrimitiveRelation& target, ArrayRef<AffineExpr> rows,
                     getAffineConstantExpr(residue, context));
                 (id < target.dimensions ? dimensions : symbols).push_back(replacement);
             }
+            LocalQuotients locals(target.dimensions, count - target.dimensions, limits.dimensions);
             for (auto row : constrainedRows) {
                 auto expression = mlir::pto::detail::substitute(row, dimensions, symbols);
                 if (expression) {
                     expression = simplifyAffineExpr(expression, target.dimensions, count - target.dimensions);
                 }
+                expression = locals.linearize(expression);
                 LinearRow checked;
-                if (!expression || collectRow(expression, target.dimensions, count - target.dimensions, checked)) {
-                    output.extraction.note(RecognitionIssue::IndexArithmetic, nullptr);
+                if (!expression || collectRow(expression, target.dimensions,
+                    count - target.dimensions + locals.localCount, checked)) {
+                    Operation* anchor = target.sourceSite && *target.sourceSite < output.sites.size() ?
+                        output.sites[*target.sourceSite].phase->elementOp : nullptr;
+                    output.extraction.note(locals.dimensionExceeded ? RecognitionIssue::ArithmeticDimension :
+                        RecognitionIssue::IndexArithmetic, anchor);
                     return;
                 }
                 constraints.push_back(expression);
             }
+            constraints.append(locals.definitions.begin(), locals.definitions.end());
             if (constraints.empty()) {
                 constraints.push_back(getAffineConstantExpr(0, context));
             }
             SmallVector<bool> equalities(constraints.size(), false);
-            target.pieces.push_back({IntegerSet::get(target.dimensions, count - target.dimensions,
+            target.pieces.push_back({IntegerSet::get(target.dimensions, count - target.dimensions + locals.localCount,
                                                     constraints, equalities), residues});
         }
         more = false;

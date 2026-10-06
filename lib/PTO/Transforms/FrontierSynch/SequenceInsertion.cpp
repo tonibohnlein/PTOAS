@@ -7,9 +7,12 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
+#include "mlir/IR/Dominance.h"
 namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(ArrayRef<scf::ForOp> enclosing)
 {
+    childPreparationOperations = 0;
+    crossingPreparationOperations = 0;
     if (ArrayRef<scf::ForOp>(requiredOuterLoops) != enclosing) {
         fail("subregion endpoint binding requires its enclosing repeat coordinates"); return failure();
     }
@@ -63,6 +66,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
                 if (failed(predicate)) { fail("phase site predicate unavailable at original cut"); return failure(); }
                 endpoint.guard = builder.create<arith::AndIOp>(endpoint.before->getLoc(), endpoint.guard, *predicate);
             }
+        }
+        for (const auto& stage : prepared->preparation) {
+            childPreparationOperations += stage.code->getOperations().size();
         }
         result->nestedIdentities |= prepared->nestedIdentities;
         if (!prepared->regionalAllocation) {
@@ -150,18 +156,20 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
     };
     auto endpointGuard = [&](const Port& point, Expr guard) {
         const auto& child = children[point.child];
-        if (child.regional.endpointSiteGuard) { guard = both(guard, *child.regional.endpointSiteGuard); }
+        if (child.regional.endpointSiteGuard) {
+            guard = expressions.select(guard, *child.regional.endpointSiteGuard, no());
+        }
         if (child.regional.endpointEventGuard) {
             auto value = child.regional.endpointEventGuard(point.event());
             if (!value) { fail("regional phase endpoint predicate unavailable"); return no(); }
-            guard = both(guard, *value);
+            guard = expressions.select(guard, *value, no());
         }
         const auto& anchor = child.anchors[point.type];
         auto loop = child.regional.occurrenceLoops[point.type];
         if (loop) {
             auto ordinal = expressions.div(expressions.sub(expressions.input(loop.getInductionVar()),
                 expressions.input(loop.getLowerBound())), c(*sequenceInteger(loop.getStep())));
-            guard = both(guard, expressions.eq(ordinal, point.ordinal));
+            guard = expressions.select(guard, expressions.eq(ordinal, point.ordinal), no());
         }
         if (!child.regional.outerLoops.empty()) {
             const auto& loops = child.regional.outerLoops[point.type];
@@ -174,16 +182,96 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
                 if (!child.regional.outerDivisors.empty()) {
                     ordinal = expressions.div(ordinal, c(child.regional.outerDivisors[point.type][i]));
                 }
-                guard = both(guard, expressions.eq(ordinal, point.visits[i]));
+                guard = expressions.select(guard, expressions.eq(ordinal, point.visits[i]), no());
             }
         }
         for (auto coordinate : anchor.coordinates) {
-            guard = both(guard, expressions.eq(expressions.input(coordinate.loop.getInductionVar()),
-                                               c(coordinate.induction)));
+            guard = expressions.select(guard, expressions.eq(expressions.input(coordinate.loop.getInductionVar()),
+                                               c(coordinate.induction)), no());
         }
         return guard;
     };
-    std::set<Operation*> hoistedEntries;
+    struct SharedPreparation {
+        Block* block = nullptr;
+        DenseMap<Expr, Value> values;
+        RegionExpressions::CutEmission context;
+    };
+    std::map<Operation*, SharedPreparation> shared;
+    DominanceInfo dominance(function);
+    auto shareAt = [&](Expr expression, Operation* cut) -> FailureOr<Value> {
+        auto found = shared.find(cut);
+        DenseMap<Expr, Value> values;
+        RegionExpressions::CutEmission context;
+        if (found != shared.end()) {
+            values = found->second.values;
+            context = found->second.context;
+        }
+        // Availability can fail at an ancestor cut even when endpoint-local
+        // emission succeeds. Work transactionally: failed attempts leave no
+        // operations or memo values in the accepted detached preparation.
+        Block scratch;
+        OpBuilder builder(function.getContext());
+        builder.setInsertionPointToEnd(&scratch);
+        auto value = contextual ? expressions.emitContextual(expression, builder, cut, context) :
+                                  expressions.emit(expression, builder, cut, values);
+        if (failed(value)) { return failure(); }
+        auto& stage = shared[cut];
+        if (!stage.block) {
+            stage.block = &result->addPreparation(cut);
+            // Shared stages use original SSA values and their own preceding
+            // operations only. They never borrow an endpoint's detached code,
+            // so placing them before endpoint stages preserves SSA availability.
+            std::rotate(result->preparation.begin(), std::prev(result->preparation.end()),
+                        result->preparation.end());
+        }
+        stage.block->getOperations().splice(stage.block->end(), scratch.getOperations());
+        stage.values = std::move(values);
+        stage.context = std::move(context);
+        stage.values[expression] = *value;
+        return *value;
+    };
+    auto shareEndpointValues = [&](Expr retained, const Port& source, const Port& target,
+                                   Operation* sourceCut, Operation* targetCut) {
+        SmallVector<Expr> roots{retained, source.ordinal, target.ordinal};
+        llvm::append_range(roots, source.visits);
+        llvm::append_range(roots, target.visits);
+        // Reference-forward siblings need not have the same leaf loop. Their
+        // common original dominator can still compute immutable boundary maps
+        // once, including bulk-to-loop and loop-to-bulk handoffs.
+        SmallVector<Operation*> candidates;
+        for (auto* candidate = sourceCut; candidate && candidate != function.getOperation();
+             candidate = candidate->getParentOp()) { candidates.push_back(candidate); }
+        // Prefer the outermost available cut, so an invariant does not move
+        // from one loop-body endpoint to another and still execute every trip.
+        for (auto* candidate : llvm::reverse(candidates)) {
+            auto dominates = [&](Operation* endpoint) {
+                return candidate == endpoint || dominance.properlyDominates(candidate, endpoint);
+            };
+            if (!dominates(sourceCut) || !dominates(targetCut)) { continue; }
+            if (failed(shareAt(retained, candidate))) { continue; }
+            for (auto root : roots) { (void)shareAt(root, candidate); }
+            const auto& stage = shared.at(candidate);
+            for (auto* cut : {sourceCut, targetCut}) {
+                auto& memo = memos[cut];
+                if (!memo) {
+                    memo = std::make_unique<DenseMap<Expr, Value>>();
+                    stages[cut] = &result->addPreparation(cut);
+                }
+                auto seed = [&](const auto& values) {
+                    for (const auto& item : values) {
+                        (*memo)[item.first] = item.second;
+                        contexts[cut].values[item.first] = item.second;
+                        contexts[cut].cofactors[item.first] = item.first;
+                    }
+                };
+                seed(stage.values);
+                seed(stage.context.values);
+            }
+            break;
+        }
+        // Ordinary endpoint emission below clears failed optional-attempt
+        // diagnostics and remains authoritative for guard availability.
+    };
     auto addDemand = [&](const Port& a, const Port& b, Expr retained) -> bool {
         if (expressions.constantValue(retained) == 0) { return true; }
         const auto& ca = children[a.child];
@@ -195,36 +283,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
         auto p = static_cast<uint32_t>(aa.phase->kPipeValue);
         auto q = static_cast<uint32_t>(ab.phase->kPipeValue);
 
-        auto sourceLoop = ca.regional.occurrenceLoops[a.type];
-        auto targetLoop = cb.regional.occurrenceLoops[b.type];
-        if (sourceLoop && sourceLoop == targetLoop) {
-            // Crossing retention depends on boundary selectors, often only on
-            // entry parameters. Emit it once when availability at the common
-            // loop entry is proved by the ordinary contextual preflight.
-            // Failure only forgoes this optimization; endpoint checks remain.
-            auto invariant = emit(retained, sourceLoop);
-            if (succeeded(invariant)) {
-                if (hoistedEntries.insert(sourceLoop).second) {
-                    auto stage = llvm::find_if(result->preparation, [&](const auto& preparation) {
-                        return preparation.code.get() == stages[sourceLoop];
-                    });
-                    // This entry block uses original inputs or its own earlier
-                    // results, never another detached stage. Put it before the
-                    // body stages that now borrow its values for preflight.
-                    std::rotate(result->preparation.begin(), stage, std::next(stage));
-                }
-                for (auto* cut : {aa.after.before, ab.before.before}) {
-                    auto& memo = memos[cut];
-                    if (!memo) {
-                        memo = std::make_unique<DenseMap<Expr, Value>>();
-                        stages[cut] = &result->addPreparation(cut);
-                    }
-                    (*memo)[retained] = *invariant;
-                    contexts[cut].values[retained] = *invariant;
-                    contexts[cut].cofactors[retained] = retained;
-                }
-            }
-        }
+        shareEndpointValues(retained, a, b, aa.after.before, ab.before.before);
 
         if (nextRecord == UINT32_MAX) { return fail("sequence endpoint identity overflow"); }
         const auto record = nextRecord++;
@@ -283,6 +342,13 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
     }
     if (!expressions.error().empty()) { fail(expressions.error()); return failure(); }
     if (!allocationAvailable || result->nestedIdentities) { result->regionalAllocation.reset(); }
+    uint64_t preparationOperations = 0;
+    for (const auto& stage : result->preparation) {
+        preparationOperations += stage.code->getOperations().size();
+    }
+    // Includes the small identity/namespace adapters added while importing the
+    // children, as well as the preparation for newly selected crossing edges.
+    crossingPreparationOperations = preparationOperations - childPreparationOperations;
     return result;
 }
 } // namespace mlir::pto::frontiersynch

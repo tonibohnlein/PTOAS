@@ -15,6 +15,11 @@ namespace mlir::pto::frontiersynch::detail {
 // replacements in analyzeGuardedRotating, proved for the same interval.
 GuardedRecognition recognizeRotatingSlice(scf::ForOp loop, const PhaseIndex& index,
     const SyncInput& input, const DenseMap<Value, bool>& choices, ArrayRef<Value> sliceGuards = {});
+// Globally independent GM effects with disjoint writer visits in this loop.
+// The proof is relative to this loop execution. Repeated regional owners must
+// retain the discharged effect for re-entry; global independence alone does
+// not establish disjoint visits of the same static phase.
+bool dischargeGlobalEffect(std::size_t effect, scf::ForOp loop, const SyncInput& input, const PhaseIndex& index);
 bool entryExpression(Value value, Operation* entry, const PhaseIndex& index,
                      SmallVectorImpl<Operation*>& recipe);
 void normalizeFragments(RecognitionResult& result, const SyncStorageEffects& effects);
