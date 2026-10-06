@@ -116,7 +116,8 @@ SequenceAnalysis analyzeSequence(func::FuncOp function, const SyncInput& input, 
     return analyzeSequenceRegion(function, input, program, 0, std::make_shared<RegionExpressions>());
 }
 SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& input,
-    const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions)
+    const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions,
+    std::shared_ptr<PhaseIndex> sharedIndex)
 {
     SequenceAnalysis result;
     if (!function || function.isDeclaration() || !function.getBody().hasOneBlock() || !expressions ||
@@ -127,11 +128,11 @@ SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& i
     if (bits.isScalable() || bits.getFixedValue() != 64) {
         result.error = "sequence endpoint arithmetic requires a 64-bit index representation"; return result;
     }
-    auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions));
+    auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions), std::move(sharedIndex));
     state->input = &input;
     state->program = &program;
     state->completeInvocation = node == 0;
-    state->requiresOuterBinding = node < program.nodes.size() && !program.nodes[node].loops.empty();
+    if (node < program.nodes.size()) { state->requiredOuterLoops = program.nodes[node].loops; }
     if (!state->collect(node) || !state->partition()) { result.error = state->error; return result; }
     state->summarize();
     state->bindAdapters();
