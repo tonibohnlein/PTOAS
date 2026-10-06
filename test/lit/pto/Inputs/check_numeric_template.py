@@ -128,10 +128,14 @@ def check_examples(documents, policy):
         assert effect["maps"][0]["base_argument"] == 0
     for payload in candidate(documents["readonly_global"])["payloads"]:
         assert payload["effects"][0]["discharge"] == 1
+    # TGETVAL/TSETVAL scalar ordering is native (the shared prerequisite
+    # implementation predates this test update), not an admission failure.
+    scalar = candidate(documents["extra_prerequisite"])
+    assert scalar["state"] == "applicable" and not scalar["analysis"]["retained"]
     rejected = {"parametric_inner": "loop-domain", "outer_guard": "unsupported-control",
                 "external_payload": "template-context", "global_reader_writer": "gm-discharge",
                 "expanded_stores": "gm-discharge", "unknown_state": "loop-carried-state",
-                "expansion_limit": "template-expansion-limit", "extra_prerequisite": "additional-prerequisite",
+                "expansion_limit": "template-expansion-limit",
                 "unknown_nsw_bound": "loop-domain"}
     assert candidate(documents["distinct_globals"])["state"] == "applicable"
     for name, issue in rejected.items():

@@ -47,11 +47,16 @@ std::optional<MatrixFacts> facts(Operation* operation)
     if (!a || !b || !c) {
         return std::nullopt;
     }
-    auto av = a.hasValidShape() ? a.getValidShape() : a.getShape();
-    auto bv = b.hasValidShape() ? b.getValidShape() : b.getShape();
-    auto cv = c.hasValidShape() ? c.getValidShape() : c.getShape();
-    if (av.size() != 2 || bv.size() != 2 || cv.size() != 2 ||
-        av[0] <= 0 || av[0] > 4095 || av[1] <= 0 || av[1] > 4095 ||
+    auto aShape = resolveConstantTileValidShape(lhs, operation);
+    auto bShape = resolveConstantTileValidShape(rhs, operation);
+    auto cShape = resolveConstantTileValidShape(dst, operation);
+    if (!aShape || !bShape || !cShape) {
+        return std::nullopt;
+    }
+    const auto& av = *aShape;
+    const auto& bv = *bShape;
+    const auto& cv = *cShape;
+    if (av[0] <= 0 || av[0] > 4095 || av[1] <= 0 || av[1] > 4095 ||
         bv[1] <= 0 || bv[1] > 4095 || av[1] != bv[0] || av[0] != cv[0] || bv[1] != cv[1]) {
         return std::nullopt;
     }
