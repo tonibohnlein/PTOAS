@@ -57,7 +57,6 @@ private:
     AffineExpr tileBase(Value operand);
     TileBufType boxedPhysicalType(Value operand);
     bool boxedPointerStrides(TileBufType type, int64_t& row, int64_t& col);
-    bool currentShape(Value operand, Value& row, Value& col);
     bool selectionDomain(DictionaryAttr contract, int64_t version, ArrayRef<AffineExpr> symbols);
     bool validShapes(DictionaryAttr contract);
     AffineExpr physicalBase(Value operand);
@@ -71,7 +70,7 @@ unsigned bytes(Type type)
     return type.getIntOrFloatBitWidth() / 8;
 }
 
-bool RegionBuilder::currentShape(Value operand, Value& row, Value& col)
+bool currentShape(Value operand, Operation* access, Value& row, Value& col)
 {
     // Metadata is attached to the descriptor, not to its physical allocation.
     // Resolve updates in the access's block in execution order. A relevant
@@ -122,36 +121,52 @@ bool RegionBuilder::currentShape(Value operand, Value& row, Value& col)
     return true;
 }
 
-bool RegionBuilder::extents(Value operand)
+// The same reaching descriptor dimensions serve physical geometry and hardware
+// rules. In particular, allocation capacity is never substituted for unknown
+// valid dimensions, and mutable descriptors use their state at the access.
+std::optional<SmallVector<AffineExpr, 2>> tileValidShape(
+    Value operand, Operation* access, llvm::function_ref<AffineExpr(Value)> value)
 {
-    if (auto type = dyn_cast<TileBufType>(operand.getType())) {
-        auto shape = type.getValidShape();
-        if (shape.size() != 2) {
-            return false;
-        }
-        Value row, col;
-        if (auto alloc = operand.getDefiningOp<AllocTileOp>()) {
+    auto type = dyn_cast<TileBufType>(operand.getType());
+    if (!type || type.getValidShape().size() != 2) {
+        return std::nullopt;
+    }
+    Value row, col;
+    if (auto alloc = operand.getDefiningOp<AllocTileOp>()) {
+        row = alloc.getValidRow();
+        col = alloc.getValidCol();
+    } else if (auto view = operand.getDefiningOp<SubViewOp>()) {
+        row = view.getValidRow();
+        col = view.getValidCol();
+    } else if (auto get = operand.getDefiningOp<MultiTileGetOp>()) {
+        if (auto alloc = get.getSource().getDefiningOp<AllocMultiTileOp>()) {
             row = alloc.getValidRow();
             col = alloc.getValidCol();
-        } else if (auto view = operand.getDefiningOp<SubViewOp>()) {
-            row = view.getValidRow();
-            col = view.getValidCol();
-        } else if (auto get = operand.getDefiningOp<MultiTileGetOp>()) {
-            if (auto alloc = get.getSource().getDefiningOp<AllocMultiTileOp>()) {
-                row = alloc.getValidRow();
-                col = alloc.getValidCol();
-            }
         }
-        if (type.hasDynamicValid() && !currentShape(operand, row, col)) {
+    }
+    if (type.hasDynamicValid() && !currentShape(operand, access, row, col)) {
+        return std::nullopt;
+    }
+    SmallVector<AffineExpr, 2> result;
+    for (unsigned i = 0; i < 2; ++i) {
+        auto size = type.getValidShape()[i];
+        auto extent = size >= 0 ? getAffineConstantExpr(size, access->getContext()) : value(i == 0 ? row : col);
+        if (!extent) {
+            return std::nullopt;
+        }
+        result.push_back(extent);
+    }
+    return result;
+}
+
+bool RegionBuilder::extents(Value operand)
+{
+    if (isa<TileBufType>(operand.getType())) {
+        auto shape = tileValidShape(operand, access, [&](Value v) { return value(v); });
+        if (!shape) {
             return false;
         }
-        for (unsigned i = 0; i < 2; ++i) {
-            auto extent = shape[i] >= 0 ? number(shape[i]) : value(i == 0 ? row : col);
-            if (!extent) {
-                return false;
-            }
-            region.extents.push_back(extent);
-        }
+        region.extents.append(shape->begin(), shape->end());
         return true;
     }
     ValueRange sizes;
@@ -644,6 +659,33 @@ std::optional<SyncAccessRegion> resolveSelectedRegion(const SyncInput& input, Va
     }
     compactSymbols(builder.region);
     return std::move(builder.region);
+}
+
+std::optional<std::array<int64_t, 2>> resolveConstantTileValidShape(Value operand, Operation* at)
+{
+    if (!operand || !at) {
+        return std::nullopt;
+    }
+    detail::ScalarEvolution scalars(at->getContext(), at);
+    DenseMap<Value, unsigned> symbols;
+    auto shape = tileValidShape(operand, at, [&](Value v) {
+        return scalars.value(v, [&](Value symbol) {
+            auto entry = symbols.try_emplace(symbol, symbols.size());
+            return getAffineSymbolExpr(entry.first->second, at->getContext());
+        });
+    });
+    if (!shape) {
+        return std::nullopt;
+    }
+    std::array<int64_t, 2> result;
+    for (unsigned i = 0; i < 2; ++i) {
+        auto constant = dyn_cast<AffineConstantExpr>((*shape)[i]);
+        if (!constant) {
+            return std::nullopt;
+        }
+        result[i] = constant.getValue();
+    }
+    return result;
 }
 
 std::optional<SyncAccessRegion> resolveBufferRegion(const SyncInput& input, Value operand, Operation* at)

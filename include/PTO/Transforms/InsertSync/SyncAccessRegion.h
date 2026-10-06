@@ -12,6 +12,7 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/SmallVector.h"
+#include <array>
 #include <optional>
 #include <string>
 namespace mlir::pto {
@@ -37,6 +38,9 @@ struct SyncAccessRegion {
 };
 struct SyncStorageEffect;
 class SyncInput;
+// Constant effective tile dimensions at this access, using the same descriptor
+// recovery as physical regions. Unresolved or varying dimensions return none.
+std::optional<std::array<int64_t, 2>> resolveConstantTileValidShape(Value operand, Operation* at);
 // Describe the operand's valid buffer region at a program point. This says
 // where descriptor coordinates map, not which bytes an instruction accesses.
 std::optional<SyncAccessRegion> resolveBufferRegion(const SyncInput& input, Value operand, Operation* at);

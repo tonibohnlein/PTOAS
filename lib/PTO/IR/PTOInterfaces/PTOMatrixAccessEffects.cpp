@@ -79,10 +79,12 @@ static void addFullMatrixAccess(PTOEffectList& effects, OpOperand& operand, Memo
 
 // Native ND->NZ DMA reads the source rectangle and writes complete NZ blocks.
 // Full 16-aligned shapes remove padding/fringe differences on A2/A3 and A5.
+// BF16 uses the same 16-bit transfer geometry as F16.
 static bool addMatrixLoadAccessEffects(pto::TLoadOp op, PTOEffectList& effects)
 {
     auto tile = dyn_cast<pto::TileBufType>(op.getDst().getType());
-    if (!tile || (!tile.getElementType().isF16() && !tile.getElementType().isF32()) ||
+    if (!tile ||
+        (!tile.getElementType().isF16() && !tile.getElementType().isBF16() && !tile.getElementType().isF32()) ||
         op.getPadModeAttr() || op.getPadValue() ||
         op.getLeftPaddingNum() || op.getRightPaddingNum() || op.getInitOutBuffer() || op.getInitCondition() ||
         op.getOffset() ||
@@ -103,7 +105,7 @@ static bool addMatrixLoadAccessEffects(pto::TLoadOp op, PTOEffectList& effects)
     return true;
 }
 
-// TStoreAccNz2nd consumes valid rows/columns and performs the optional f32->f16
+// TStoreAccNz2nd consumes valid rows/columns and performs the optional f32->f16/bf16
 // conversion without changing the logical rectangle. The source layout is NZ
 // with 16x16 f32 blocks; destination byte widths come from its own view map.
 static bool addMatrixStoreAccessEffects(pto::TStoreOp op, PTOEffectList& effects)
@@ -117,7 +119,7 @@ static bool addMatrixStoreAccessEffects(pto::TStoreOp op, PTOEffectList& effects
     auto tensor = dyn_cast<pto::TensorViewType>(op.getDst().getType());
     Type element = view ? view.getElementType() : (tensor ? tensor.getElementType() : Type{});
     auto shape = tile.getShape();
-    if (!element || (!element.isF16() && !element.isF32()) || shape[0] > 8192 || shape[1] > 4095 ||
+    if (!element || (!element.isF16() && !element.isBF16() && !element.isF32()) || shape[0] > 8192 || shape[1] > 4095 ||
         !matrixAccessNdView(op.getDst(), shape, element)) {
         return false;
     }
@@ -150,7 +152,7 @@ static bool addMatrixMultiplyAccessEffects(PTOEffectList& effects, OpOperand& lh
     auto a = left.getShape();
     auto b = right.getShape();
     auto c = result.getShape();
-    if ((!left.getElementType().isF16() && !left.getElementType().isF32()) ||
+    if ((!left.getElementType().isF16() && !left.getElementType().isBF16() && !left.getElementType().isF32()) ||
         right.getElementType() != left.getElementType() ||
         a[0] > 4095 || a[1] > 4095 || b[1] > 4095 || a[1] != b[0] || c[0] != a[0] || c[1] != b[1]) {
         return false;
