@@ -17,6 +17,13 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
     composer.costs = {};
     for (const auto& child : composer.children) {
         const auto& cost = child.regional.cost;
+        if (cost.arithmeticRegions > UINT64_MAX - composer.costs.arithmeticRegions ||
+            cost.boundaryBytes > UINT64_MAX - composer.costs.boundaryBytes) {
+            result.error = "regional arithmetic cost count exceeds representation";
+            return result;
+        }
+        composer.costs.arithmeticRegions += cost.arithmeticRegions;
+        composer.costs.boundaryBytes += cost.boundaryBytes;
         composer.costs.physicalFragments += cost.physicalFragments;
         composer.costs.rotatingResidues += cost.rotatingResidues;
         composer.costs.numericVisits += cost.numericVisits;
@@ -179,6 +186,11 @@ RegionExpressions* sequenceExpressions(SequenceAnalysis& analysis)
 {
     return analysis.state ? &analysis.state->expressions : nullptr;
 }
+std::pair<uint64_t, uint64_t> sequencePreparationCounts(const SequenceAnalysis& analysis)
+{
+    if (!analysis.state) { return {0, 0}; }
+    return {analysis.state->childPreparationOperations, analysis.state->crossingPreparationOperations};
+}
 std::optional<RegionExpressions::Id> sequenceEventReachability(const SequenceAnalysis& analysis,
     uint32_t sourcePort, PeriodicEventKind sourceKind, uint32_t targetPort, PeriodicEventKind targetKind)
 {
@@ -191,7 +203,7 @@ std::optional<RegionExpressions::Id> sequenceEventReachability(const SequenceAna
     }
     auto source = 2*sourcePort + (sourceKind == PeriodicEventKind::Completion);
     auto target = 2*targetPort + (targetKind == PeriodicEventKind::Completion);
-    return analysis.state->graph[source][target];
+    return analysis.state->eventReachability(source, target);
 }
 std::optional<RegionExpressions::Id> sequenceEventReachability(SequenceAnalysis& analysis,
     SequenceEvent source, SequenceEvent target)
@@ -203,47 +215,7 @@ std::optional<RegionExpressions::Id> sequenceEventReachability(SequenceAnalysis&
                    {event.type, event.ordinal, event.kind, event.visits});
     };
     if (!valid(source) || !valid(target)) { return std::nullopt; }
-    auto sourcePort = state.portIds.find({source.child, source.type, source.ordinal, source.visits});
-    auto targetPort = state.portIds.find({target.child, target.type, target.ordinal, target.visits});
-    if (sourcePort != state.portIds.end() && targetPort != state.portIds.end()) {
-        return state.graph[2*sourcePort->second + (source.kind == PeriodicEventKind::Completion)]
-                          [2*targetPort->second + (target.kind == PeriodicEventKind::Completion)];
-    }
-    auto local = [&](SequenceEvent a, SequenceEvent b) -> std::optional<Expr> {
-        if (a.child != b.child) { return state.no(); }
-        return regionalReachability(state.children[a.child].regional,
-            {a.type, a.ordinal, a.kind, a.visits}, {b.type, b.ordinal, b.kind, b.visits});
-    };
-    if (source.child == target.child) { return local(source, target); }
-    if (source.child > target.child) { return state.no(); }
-    Expr result = state.no();
-    std::vector<std::array<Expr, 2>> firsts(analysis.occurrences.size(), {state.no(), state.no()});
-    std::vector<std::array<Expr, 2>> lasts(analysis.occurrences.size(), {state.no(), state.no()});
-    for (uint32_t id = 0; id < analysis.occurrences.size(); ++id) {
-        const auto& port = state.ports[id];
-        for (unsigned completion = 0; completion < 2; ++completion) {
-            auto kind = completion ? PeriodicEventKind::Completion : PeriodicEventKind::Start;
-            if (port.child == source.child) {
-                auto answer = local(source, {port.child, port.type, port.ordinal, kind, port.visits});
-                if (!answer) { return std::nullopt; } firsts[id][completion] = *answer;
-            }
-            if (port.child == target.child) {
-                auto answer = local({port.child, port.type, port.ordinal, kind, port.visits}, target);
-                if (!answer) { return std::nullopt; } lasts[id][completion] = *answer;
-            }
-        }
-    }
-    for (uint32_t a = 0; a < analysis.occurrences.size(); ++a) {
-        for (uint32_t b = 0; b < analysis.occurrences.size(); ++b) {
-            for (unsigned ac = 0; ac < 2; ++ac) {
-                for (unsigned bc = 0; bc < 2; ++bc) {
-                    result = state.either(result, state.both(firsts[a][ac],
-                        state.both(state.graph[2*a+ac][2*b+bc], lasts[b][bc])));
-                }
-            }
-        }
-    }
-    return result;
+    return state.eventReachability(std::move(source), std::move(target));
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceInsertion(SequenceAnalysis& analysis)
 {

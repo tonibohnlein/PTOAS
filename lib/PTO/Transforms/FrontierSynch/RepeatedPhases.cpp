@@ -143,6 +143,10 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
     auto full = body;
     liftRepeatedSelectors(full, periods);
     auto& out = result.regional;
+    // A phase-dependent first site also needs partial-period selection. Until
+    // exported explicitly, do not retain the invariant body's selector tuple.
+    // Incoming prerequisites to these nested types then report a missing map.
+    out.firstSitePayloads.clear();
     for (auto& divisors : out.outerDivisors) { divisors.front() = q; }
     auto oldSite = out.endpointEventGuard;
     out.endpointEventGuard = [oldSite, arena, phaseValue, typePhases](RegionalEvent event) -> std::optional<Id> {

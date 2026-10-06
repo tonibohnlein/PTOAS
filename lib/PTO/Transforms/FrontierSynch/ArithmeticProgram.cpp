@@ -200,6 +200,7 @@ void clearExports(ArithmeticProgram& output)
     output.parameters.clear();
     output.uniformConflicts.clear();
     output.incomingPrerequisites.clear();
+    output.extraction.dischargedEffects.clear();
 }
 } // namespace
 ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, const PhaseIndex& index,
@@ -237,6 +238,20 @@ ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, con
         clearExports(output);
         return output;
     }
+    // Reuse the same whole-input GM discharge as rotating extraction. Only
+    // a single visit of the root loop is covered here: nested writer loops
+    // require a separate repeated-visit certificate. Retain these effect IDs
+    // so the regional adapter can export them for an enclosing owner.
+    if (auto loop = dyn_cast<scf::ForOp>(region.root)) {
+        for (const auto& site : output.sites) {
+            if (site.loops.size() != 1 || site.loops.front() != loop) { continue; }
+            for (auto id : effects.effectsFor(site.phase)) {
+                if (detail::dischargeGlobalEffect(id, loop, input, index)) {
+                    output.extraction.dischargedEffects.push_back(id);
+                }
+            }
+        }
+    }
     // Register symbolic footprint inputs before fixing each relation's shared
     // parameter tuple. Geometry remains Step 0's authoritative access map.
     for (const auto& site : output.sites) {
@@ -244,6 +259,7 @@ ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, con
             continue;
         }
         for (auto id : effects.effectsFor(site.phase)) {
+            if (llvm::is_contained(output.extraction.dischargedEffects, id)) { continue; }
             for (const auto& region : effects.effects()[id].regions) {
                 for (auto symbol : region.symbols) {
                     if (!builder.prepareValue(symbol, site)) {

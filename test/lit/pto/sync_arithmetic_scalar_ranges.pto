@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_arithmetic_scalar_ranges.py pto-sync-input-test %s
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @bounded() {
+    %base = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %upper = arith.constant 8 : index
+    %shift = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %c0 to %upper step %c1 {
+      %offset = arith.addi %i, %shift : index
+      pto.tsetval ins(%offset, %one : index, f32) outs(%tile : !tile)
+    }
+    return
+  }
+  func.func @negative_quotient() {
+    %base = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %upper = arith.constant 8 : index
+    %shift = arith.constant -8 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %c0 to %upper step %c1 {
+      %offset = arith.addi %i, %shift : index
+      pto.tsetval ins(%offset, %one : index, f32) outs(%tile : !tile)
+    }
+    return
+  }
+  func.func @crosses_wrap() {
+    %base = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %upper = arith.constant 8 : index
+    %shift = arith.constant -4 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %c0 to %upper step %c1 {
+      %offset = arith.addi %i, %shift : index
+      pto.tsetval ins(%offset, %one : index, f32) outs(%tile : !tile)
+    }
+    return
+  }
+  func.func @empty() {
+    %base = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %upper = arith.constant 0 : index
+    %shift = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %c0 to %upper step %c1 {
+      %offset = arith.addi %i, %shift : index
+      pto.tsetval ins(%offset, %one : index, f32) outs(%tile : !tile)
+    }
+    return
+  }
+  func.func @quotient() {
+    %base = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c7 = arith.constant 7 : index
+    %c21 = arith.constant 21 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %c0 to %c21 step %c1 {
+      %offset = arith.divui %i, %c7 : index
+      pto.tsetval ins(%offset, %one : index, f32) outs(%tile : !tile)
+    }
+    return
+  }
+}

@@ -332,6 +332,11 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
     }
 }
 } // namespace
+bool detail::dischargeGlobalEffect(std::size_t effect, scf::ForOp loop,
+                                   const SyncInput& input, const PhaseIndex& index)
+{
+    return dischargeGlobal(effect, loop, input, index);
+}
 
 RecognitionResult recognizeExplicit(Block& block, const PhaseIndex& index, const SyncStorageEffects& effects)
 {

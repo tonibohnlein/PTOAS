@@ -169,7 +169,9 @@ public:
         }
         if (!result.error.empty()) { return; }
         result.requiredOrder = subtract(reach, identity);
-        auto covered = compose(result.requiredOrder, result.requiredOrder);
+        // Only generator endpoint keys can contribute to this subtraction.
+        // Required-order exports remain complete for later regional queries.
+        auto covered = compose(result.requiredOrder, result.requiredOrder, &result.generators);
         unite(covered, result.nativeOrder);
         result.minimumDemands = subtract(result.generators, covered);
         if (!result.error.empty()) { return; }
@@ -245,19 +247,31 @@ private:
             }
             std::vector<unsigned> keep;
             if (!canonicalOrder(schema, keep)) { return false; }
-            auto primitive = Policy::create(keep.size(), normalized.rows);
+            const auto liftedDimensions = schema.pieces[normalized.piece].system.getNumInputs();
+            auto primitive = Policy::create(liftedDimensions, normalized.rows);
             if (failed(primitive)) { fail("arithmetic primitive construction failed"); return false; }
-            // This is a permutation, not existential elimination. Preserve a
-            // conjunction and its congruences while canonicalizing parameters.
-            std::vector<unsigned> permutation(keep.size());
-            for (unsigned i = 0; i < keep.size(); ++i) { permutation[keep[i]] = i; }
-            auto canonical = primitive->remap(keep.size(), permutation);
-            if (failed(canonical)) { fail("arithmetic parameter reorder failed"); return false; }
-            ++result.cost.primitivePieces;
-            if (canonical->isEmpty()) { continue; }
             std::vector<uint64_t> residues;
             for (auto column : keep) { residues.push_back(schema.pieces[normalized.piece].residues[column]); }
-            raw.push_back({&schema, std::move(residues), std::move(*canonical)});
+            if (liftedDimensions == keep.size()) {
+                // Parameter canonicalization is a permutation. Keep the cheap
+                // conjunction path when there are no existential quotients.
+                std::vector<unsigned> permutation(keep.size());
+                for (unsigned i = 0; i < keep.size(); ++i) { permutation[keep[i]] = i; }
+                auto canonical = primitive->remap(keep.size(), permutation);
+                if (failed(canonical)) { fail("arithmetic parameter reorder failed"); return false; }
+                ++result.cost.primitivePieces;
+                if (!canonical->isEmpty()) { raw.push_back({&schema, std::move(residues), std::move(*canonical)}); }
+            } else {
+                // Exact projection can split and introduce congruences; retain
+                // every resulting conjunction with the original endpoint tags.
+                auto projected = Policy::project(*primitive, keep);
+                if (failed(projected)) { fail("arithmetic quotient projection failed"); return false; }
+                ++result.cost.projections;
+                for (auto& canonical : *projected) {
+                    ++result.cost.primitivePieces;
+                    if (!canonical.isEmpty()) { raw.push_back({&schema, residues, std::move(canonical)}); }
+                }
+            }
         }
         // Restrict every primitive to the same admitted parameter context.
         // Distinct residue cases are incompatible executions, never independent
@@ -440,7 +454,7 @@ private:
         }
         return output;
     }
-    Relation compose(const Relation& a, const Relation& b)
+    Relation compose(const Relation& a, const Relation& b, const Relation* outputKeys = nullptr)
     {
         ++result.cost.relationCompositions;
         Relation output;
@@ -453,6 +467,8 @@ private:
             if (found == bySource.end()) { continue; }
             for (const auto* entry : found->second) {
                 const auto& [bk, bv] = *entry;
+                ArithmeticRelationKey key{ak.source, bk.target, ak.parameterResidues};
+                if (outputKeys && !outputKeys->count(key)) { continue; }
                 const unsigned x = ak.source.residues.size(), z = ak.target.residues.size();
                 const unsigned y = bk.target.residues.size(), p = result.parameterCount;
                 const unsigned joinedDimensions = x + z + y + p;
@@ -463,7 +479,6 @@ private:
                 std::iota(bm.begin() + z + y, bm.end(), x + z + y);
                 std::iota(keep.begin(), keep.begin() + x, 0);
                 std::iota(keep.begin() + x, keep.end(), x + z);
-                ArithmeticRelationKey key{ak.source, bk.target, ak.parameterResidues};
                 for (const auto& left : av) {
                     auto expandedLeft = left.remap(joinedDimensions, am);
                     if (failed(expandedLeft)) { fail("left composition remapping failed"); return {}; }

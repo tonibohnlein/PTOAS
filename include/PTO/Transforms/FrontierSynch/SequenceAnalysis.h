@@ -59,6 +59,9 @@ SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& i
     std::shared_ptr<PhaseIndex> index = {});
 RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis);
 RegionExpressions* sequenceExpressions(SequenceAnalysis& analysis);
+// Counts from the latest preparation, before shared emission CSE: imported
+// child code and newly prepared crossings (including identity adapters).
+std::pair<uint64_t, uint64_t> sequencePreparationCounts(const SequenceAnalysis& analysis);
 std::optional<RegionExpressions::Id> sequenceEventReachability(const SequenceAnalysis& analysis,
     uint32_t sourcePort, PeriodicEventKind sourceKind, uint32_t targetPort, PeriodicEventKind targetKind);
 std::optional<RegionExpressions::Id> sequenceEventReachability(SequenceAnalysis& analysis,

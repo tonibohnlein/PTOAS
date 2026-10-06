@@ -19,5 +19,11 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticInsertion(
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneralArithmeticInsertion(
     func::FuncOp function, const ArithmeticProgram& program,
     const GeneralArithmeticDemandAnalysis& analysis, std::string& error);
+// Same emission with composable family provenance and source matching tuples.
+// Preparation preserves every original cut and leaves invocation draining to
+// the parent. Enclosing repeat adapters prefix their own visit coordinates.
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneralArithmeticRegionalInsertion(
+    func::FuncOp function, const ArithmeticProgram& program,
+    const GeneralArithmeticDemandAnalysis& analysis, std::string& error);
 } // namespace mlir::pto::frontiersynch
 #endif

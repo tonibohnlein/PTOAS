@@ -160,6 +160,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/PhasedRecognition.cpp
   FrontierSynch/RegionSubstitution.cpp
   FrontierSynch/RegionExpressions.cpp
+  FrontierSynch/RegionIntegerExpressions.cpp
   FrontierSynch/RegionExpressionContext.cpp
   FrontierSynch/FiniteGuardedAnalysis.cpp
   FrontierSynch/FiniteGuardedQueries.cpp
@@ -186,6 +187,8 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/GuardedPeriodicQuotient.cpp
   FrontierSynch/IntegerRelations.cpp
   FrontierSynch/GeneralArithmeticSelectors.cpp
+  FrontierSynch/ArithmeticStorageSelectors.cpp
+  FrontierSynch/ArithmeticRegional.cpp
   FrontierSynch/DifferenceBoundRelations.cpp
   FrontierSynch/ArithmeticDemandAnalysis.cpp
   FrontierSynch/ArithmeticSelectors.cpp

@@ -17,6 +17,15 @@ struct GeneralArithmeticSelectorOutput {
     BoundInteger denominator;
     uint64_t residue = 0;
 };
+struct IntegerTupleWitness {
+    IntegerSystem domain;
+    std::vector<GeneralArithmeticSelectorOutput> outputs;
+};
+// Columns are inputs followed by outputs. Produces a satisfying complete tuple
+// on each exact projected domain. This does not certify functionality: callers
+// selecting a unique endpoint must establish it independently.
+FailureOr<std::vector<IntegerTupleWitness>> buildIntegerTupleWitnesses(
+    const IntegerSystem& system, unsigned inputs, llvm::ArrayRef<uint64_t> outputResidues);
 struct GeneralArithmeticSelectorPiece {
     IntegerSystem domain; // Input endpoint quotients followed by parameters.
     std::vector<uint64_t> inputResidues, parameterResidues;
@@ -27,7 +36,9 @@ struct GeneralArithmeticEndpointSelector {
     std::size_t inputSite = 0;
     uint32_t outputPipe = 0;
     unsigned inputDimensions = 0, parameterCount = 0;
-    // Stable first match returns this piece's entire tagged output tuple.
+    // Evaluation uses stable first match for an arbitrary piece list. For
+    // exact-F* and extremum selectors, overlapping pieces agree on the entire
+    // tagged tuple, so emission may union guards without priority masking.
     std::vector<GeneralArithmeticSelectorPiece> pieces;
 };
 struct GeneralArithmeticSelectors {
