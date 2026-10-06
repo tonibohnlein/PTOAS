@@ -1670,3 +1670,25 @@ Validation of this increment (2026-10-06):
 
 These are host analysis, emitted-order and C++ generation checks. They do not
 constitute device execution or performance measurements.
+
+## Nested regional identities (foundation)
+
+Regional events retain an outer-to-inner visit tuple and a separate leaf
+ordinal. Sequence composition and finite-overlay queries preserve the complete
+identity in selectors, equality tests and query caches. A child supplies its
+strict reference-order query; static payload numbers alone do not order nested
+visits. Empty tuples retain the existing flat representation.
+
+`analyzeSequenceRegion` analyzes a selected original region in a supplied
+expression arena. Subtree plans never request an invocation drain. Preparation
+under enclosing loops remains unavailable until the repeated-region producer
+supplies outer-coordinate bindings; query construction does not imply executable
+endpoint support. Existing finite allocation certificates also decline nested
+frames rather than treating different visits as one occurrence.
+
+The arena supports simultaneous typed substitution with a memo per immutable
+binding context. Replacement expressions are not recursively substituted. This
+is the foundation for phase descriptions without cloning or changing source IR.
+Repeated-region recognition, deferred phase binding, bridge generation and
+nested logical insertion are subsequent work; this foundation does not yet
+claim the repeated-region theorem as an executable route.

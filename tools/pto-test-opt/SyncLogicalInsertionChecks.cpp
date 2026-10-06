@@ -509,6 +509,17 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
     std::string before;
     llvm::raw_string_ostream original(before);
     function.print(original);
+    bool regionScope = true;
+    for (std::size_t node = 1; node < program->nodes.size(); ++node) {
+        const auto& entry = program->nodes[node];
+        if (entry.kind != fs::StructureKind::ExplicitRun && entry.kind != fs::StructureKind::Loop) { continue; }
+        auto child = fs::analyzeSequenceRegion(function, input, *program, node,
+            std::make_shared<fs::RegionExpressions>());
+        if (!child.error.empty()) { continue; }
+        auto childPlan = fs::prepareSequenceInsertion(child);
+        if (!entry.loops.empty()) { regionScope &= failed(childPlan); }
+        else if (succeeded(childPlan)) { regionScope &= !(**childPlan).completeInvocation; }
+    }
     auto analysis = fs::analyzeSequence(function, input, *program);
     auto prepared = fs::prepareSequenceInsertion(analysis);
     auto* expressions = fs::sequenceExpressions(analysis);
@@ -533,7 +544,7 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         {"insertion_error", analysis.insertionError},
         {"prepared", succeeded(prepared)},
         {"queries_available", validQueries}, {"unchanged", before == after},
-        {"slice_prerequisite", checkSlicePrerequisite(function, input)},
+        {"slice_prerequisite", checkSlicePrerequisite(function, input)}, {"region_scope", regionScope},
         {"children", analysis.cost.children}, {"cells", analysis.cost.cells},
         {"ports", analysis.cost.ports}, {"crossings", analysis.cost.crossings},
         {"physical_fragments", analysis.cost.physicalFragments},
@@ -542,7 +553,7 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         {"crossing_candidates", analysis.cost.crossingCandidates},
         {"implication_checks", analysis.cost.implicationChecks},
         {"expressions", expressions ? expressions->size() : 0}, {"emitted", emitted}}) << "\n";
-    return success(before == after);
+    return success(before == after && regionScope);
 }
 
 LogicalResult runFiniteGuardedAnalysisChecks(func::FuncOp function, pto::GMAliasPolicy policy)

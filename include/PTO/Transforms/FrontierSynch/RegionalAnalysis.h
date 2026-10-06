@@ -31,6 +31,9 @@ struct RegionalEvent {
     uint32_t type = 0;
     RegionExpressions::Id ordinal = 0;
     PeriodicEventKind kind = PeriodicEventKind::Start;
+    // Enclosing repeat ordinals, outermost first. The leaf ordinal remains
+    // separate; explicit leaves use zero. Never flatten coordinates by trips.
+    std::vector<RegionExpressions::Id> visits;
 };
 using RegionalDemandFilter = std::function<std::optional<RegionExpressions::Id>(RegionalEvent, RegionalEvent)>;
 struct RegionalSelector { RegionalEvent event; RegionExpressions::Id present = 0; };
@@ -52,6 +55,12 @@ struct RegionalAnalysis {
     std::shared_ptr<RegionExpressions> expressions;
     std::vector<TemplateEndpointAnchor> anchors;
     std::vector<scf::ForOp> occurrenceLoops; // Empty loop: ordinal must be zero.
+    // Empty vector is the legacy flat interface. Otherwise one frame per type,
+    // matching RegionalEvent::visits. Original loops also identify endpoint cuts.
+    std::vector<std::vector<scf::ForOp>> outerLoops;
+    // Strict payload reference order, including nested coordinates. Event kind
+    // does not change occurrence order. Flat producers may use the default.
+    std::function<std::optional<RegionExpressions::Id>(RegionalEvent, RegionalEvent)> referenceBefore;
     // Uniform first ordinal of a contiguous periodic slice. Absent for ordinary
     // explicit/whole-loop exports, whose occurrence numbering starts at zero.
     // Applies to every present payload type; expression belongs to expressions.
@@ -79,5 +88,14 @@ struct RegionalAnalysis {
     // the inverse endpoint map at WAIT. Failure leaves original IR unchanged.
     std::function<FailureOr<std::unique_ptr<PreparedLogicalPlan>>(const RegionalDemandFilter&)> prepareFiltered;
 };
+// Validate coordinate shape before forwarding to a backend that might only
+// understand flat events. Query-only flat producers may omit anchors and validate
+// type IDs themselves. False presence is distinct from a malformed identity.
+bool validRegionalEvent(const RegionalAnalysis& region, const RegionalEvent& event);
+std::optional<RegionExpressions::Id> regionalPresence(const RegionalAnalysis& region, RegionalEvent event);
+std::optional<RegionExpressions::Id> regionalReachability(
+    const RegionalAnalysis& region, RegionalEvent source, RegionalEvent target);
+std::optional<RegionExpressions::Id> regionalReferenceBefore(
+    const RegionalAnalysis& region, RegionalEvent source, RegionalEvent target);
 } // namespace mlir::pto::frontiersynch
 #endif

@@ -16,18 +16,18 @@ struct FiniteOverlayState {
     std::vector<RegionalEvent> ports;
     std::vector<OverlayExpr> presence, active;
     std::vector<std::vector<OverlayExpr>> closure;
-    using EventKey = std::tuple<uint32_t, OverlayExpr, PeriodicEventKind>;
+    using EventKey = std::tuple<uint32_t, OverlayExpr, PeriodicEventKind, std::vector<OverlayExpr>>;
     std::map<std::pair<EventKey, EventKey>, OverlayExpr> baseCache;
     RegionExpressions& arena() { return *base.expressions; }
     OverlayExpr no() { return arena().boolean(false); }
     OverlayExpr both(OverlayExpr a, OverlayExpr b) { return arena().land(a, b); }
     OverlayExpr either(OverlayExpr a, OverlayExpr b) { return arena().lor(a, b); }
-    EventKey key(RegionalEvent event) const { return {event.type, event.ordinal, event.kind}; }
+    EventKey key(RegionalEvent event) const { return {event.type, event.ordinal, event.kind, event.visits}; }
     std::optional<OverlayExpr> baseQuery(RegionalEvent source, RegionalEvent target)
     {
         const auto pair = std::make_pair(key(source), key(target));
         if (auto found = baseCache.find(pair); found != baseCache.end()) { return found->second; }
-        auto value = base.reachability(source, target);
+        auto value = regionalReachability(base, source, target);
         if (!value || !arena().isBoolean(*value)) { return std::nullopt; }
         ++cost->baseQueries;
         baseCache.emplace(pair, *value);
@@ -36,7 +36,12 @@ struct FiniteOverlayState {
     OverlayExpr equal(RegionalEvent a, RegionalEvent b)
     {
         ++cost->identityTests;
-        return a.type == b.type && a.kind == b.kind ? arena().eq(a.ordinal, b.ordinal) : no();
+        if (a.type != b.type || a.kind != b.kind || a.visits.size() != b.visits.size()) { return no(); }
+        auto result = arena().eq(a.ordinal, b.ordinal);
+        for (std::size_t i = 0; i < a.visits.size(); ++i) {
+            result = both(result, arena().eq(a.visits[i], b.visits[i]));
+        }
+        return result;
     }
     struct EndpointQueries {
         OverlayExpr direct;
@@ -112,7 +117,8 @@ FiniteOverlayAnalysis analyzeFiniteOverlay(RegionalAnalysis base,
             !arena.isBoolean(demand.guard)) {
             fail("finite overlay requires guarded completion-to-start demands"); return result;
         }
-        auto source = state->base.presence(demand.source), target = state->base.presence(demand.target);
+        auto source = regionalPresence(state->base, demand.source);
+        auto target = regionalPresence(state->base, demand.target);
         auto order = referenceBefore(demand.source, demand.target);
         if (!source || !target || !order || !arena.isBoolean(*source) || !arena.isBoolean(*target) ||
             !arena.isBoolean(*order)) {
