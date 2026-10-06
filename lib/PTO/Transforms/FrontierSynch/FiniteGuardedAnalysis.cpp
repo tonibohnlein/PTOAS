@@ -92,8 +92,11 @@ bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recogni
 bool validRoots(func::FuncOp function, ArrayRef<Operation*> roots)
 {
     Operation* previous = nullptr;
+    Block* block = roots.empty() || !roots.front() ? nullptr : roots.front()->getBlock();
     for (auto* root : roots) {
-        if (!root || root->getBlock() != &function.front() || (previous && previous->getNextNode() != root)) {
+        if (!root || !block || root->getBlock() != block) { return false; }
+        const bool originalFunction = root->getParentOfType<func::FuncOp>() == function;
+        if (!originalFunction || (previous && previous->getNextNode() != root)) {
             return false;
         }
         previous = root;
@@ -106,7 +109,8 @@ FiniteGuardedAnalysis analyzeFiniteGuarded(func::FuncOp function, ArrayRef<Opera
 {
     FiniteGuardedAnalysis result;
     if (!function || function.isDeclaration() || !function.getBody().hasOneBlock() || !validRoots(function, roots)) {
-        result.error = "finite guarded analysis requires consecutive function-body roots"; return result;
+        result.error = "finite guarded analysis requires consecutive roots in one original function block";
+        return result;
     }
     const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
     if (bits.isScalable() || bits.getFixedValue() != 64) {
@@ -114,7 +118,11 @@ FiniteGuardedAnalysis analyzeFiniteGuarded(func::FuncOp function, ArrayRef<Opera
     }
     auto recognized = recognizeFiniteGuarded(roots, index, input.accesses());
     if (recognized.result.state != RecognitionState::Applicable) {
-        result.error = "finite guarded analysis has unsupported control or additional prerequisites"; return result;
+        result.error = "finite guarded analysis cannot export this region";
+        for (const auto& diagnostic : recognized.result.diagnostics) {
+            result.error += " / " + recognitionName(diagnostic.issue).str();
+        }
+        return result;
     }
     if (recognized.phases.size() > UINT32_MAX / 2 ||
         recognized.phases.size() > std::numeric_limits<std::size_t>::max() / 2) {
