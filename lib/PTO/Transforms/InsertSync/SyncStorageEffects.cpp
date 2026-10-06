@@ -221,12 +221,18 @@ bool SyncStorageEffects::mayOverlap(std::size_t first, std::size_t second) const
     if (empty(a) || empty(b)) {
         return false;
     }
-    // Symbolic access maps retain pointer provenance even when their offsets
-    // depend on an IV. Apply the existing distinct-argument GM policy to those
-    // resolved bases; carried/select-produced pointers are not canonical bases.
-    if (a.memory->scope == AddressSpace::GM && !a.regions.empty() && !b.regions.empty() &&
-        llvm::all_of(a.regions, [&](const auto& left) {
-            return llvm::all_of(b.regions, [&](const auto& right) {
+    // Canonical pointer provenance survives unresolved access extents. A
+    // descriptor proves the operand backing storage, not the accessed shape.
+    // Prefer selected maps when present; otherwise retain only that base fact.
+    auto baseRegions = [](const SyncStorageEffect& effect) -> ArrayRef<SyncAccessRegion> {
+        if (!effect.regions.empty()) { return effect.regions; }
+        if (effect.descriptorRegion) { return ArrayRef<SyncAccessRegion>(*effect.descriptorRegion); }
+        return {};
+    };
+    auto leftBases = baseRegions(a), rightBases = baseRegions(b);
+    if (a.memory->scope == AddressSpace::GM && !leftBases.empty() && !rightBases.empty() &&
+        llvm::all_of(leftBases, [&](const auto& left) {
+            return llvm::all_of(rightBases, [&](const auto& right) {
                 if (!left.base || !right.base || left.base == right.base) { return false; }
                 SmallVector<SyncStorageCell> domains{{AddressSpace::GM, 0, 1, left.base},
                                                     {AddressSpace::GM, 0, 1, right.base}};
