@@ -104,7 +104,10 @@ public:
             RegionalSelector first{{type, begin, PeriodicEventKind::Start}, present};
             RegionalSelector last{{type, dag.sub(trips, c(1)), PeriodicEventKind::Start}, present};
             for (auto effect : input.accesses().effectsFor(analysis->phases[type])) {
-                if (llvm::is_contained(analysis->dischargedEffects, effect)) { continue; }
+                if (llvm::is_contained(analysis->dischargedEffects, effect)) {
+                    result.deferredAccessBoundary.push_back({effect, first, last, false});
+                    continue;
+                }
                 result.accessBoundary.push_back({effect, first, last,
                     !input.accesses().effects()[effect].regions.empty()});
             }

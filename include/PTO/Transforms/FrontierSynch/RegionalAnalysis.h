@@ -48,6 +48,15 @@ struct RegionalAccessBoundary {
     RegionalSelector first, last;
     bool representedByCells = false;
 };
+struct RegionalByteAddress {
+    AddressSpace space;
+    Value base;
+    RegionExpressions::Id offset = RegionExpressions::invalid;
+};
+struct RegionalStorageSelectors {
+    std::vector<RegionalSelector> firstWriters, lastWriters;
+    std::map<uint32_t, std::vector<RegionalSelector>> firstReaders, lastReaders;
+};
 struct RegionalCapabilities {
     bool completeStorageModel = false, exactQueries = false, exactSelectors = false, endpointRecipes = false;
     bool contextualGuards = false; // Endpoint circuits may contain branch-local predicates.
@@ -81,6 +90,12 @@ struct RegionalAnalysis {
     std::vector<RegionalStorageBoundary> storageBoundary;
     const SyncStorageEffects* accessModel = nullptr; // Borrows the unchanged shared input.
     std::vector<RegionalAccessBoundary> accessBoundary;
+    // Discharged within this region, but retained for a later owner adapter.
+    // Ordinary finite composition must not reinterpret these as uniform edges.
+    std::vector<RegionalAccessBoundary> deferredAccessBoundary;
+    // nullopt is unavailable; an empty selector set proves absence.
+    std::function<std::optional<RegionalStorageSelectors>(RegionalByteAddress)> storageSelectors;
+    std::vector<std::size_t> symbolicStorageEffects;
     std::map<uint32_t, std::vector<RegionalSelector>> firstPayloads, lastPayloads;
     RegionalCapabilities capabilities;
     RegionalCost cost;

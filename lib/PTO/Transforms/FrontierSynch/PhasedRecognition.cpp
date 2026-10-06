@@ -50,7 +50,11 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
 {
     auto outer = dyn_cast<scf::ForOp>(node.anchor);
     if (!outer || outer.getNumRegionIterArgs() || node.children.size() != 1) { return false; }
-    auto unavailable = [&](const std::string& reason) { repeatedAttempt = "q-phase repeat: " + reason; return false; };
+    auto unavailable = [&](const std::string& reason) {
+        if (!repeatedAttempt.empty()) { repeatedAttempt += "; "; }
+        repeatedAttempt += "q-phase repeat: " + reason;
+        return false;
+    };
     const auto& sequence = program->nodes[node.children.front()];
     const StructureNode* innerNode = nullptr;
     for (auto id : sequence.children) {

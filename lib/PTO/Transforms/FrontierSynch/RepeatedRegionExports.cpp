@@ -23,6 +23,7 @@ void liftRepeatedSelectors(RegionalAnalysis& out, RegionExpressions::Id trips)
         for (auto& [pipe, values] : cell.lastReaders) { for (auto& value : values) { lift(value, true); } }
     }
     for (auto& access : out.accessBoundary) { lift(access.first, false); lift(access.last, true); }
+    for (auto& access : out.deferredAccessBoundary) { lift(access.first, false); lift(access.last, true); }
     for (auto& [pipe, values] : out.firstPayloads) { for (auto& value : values) { lift(value, false); } }
     for (auto& [pipe, values] : out.lastPayloads) { for (auto& value : values) { lift(value, true); } }
 }
@@ -30,6 +31,10 @@ RepeatedRegionAnalysis repeatInvariantRegion(func::FuncOp function, scf::ForOp l
     RegionalAnalysis body, RegionExpressions::Id trips)
 {
     RepeatedRegionAnalysis result;
+    if (body.storageSelectors || !body.symbolicStorageEffects.empty()) {
+        result.error = "nested symbolic storage requires an ownership-lifting adapter";
+        return result;
+    }
     if (!function || !loop || loop->getParentOfType<func::FuncOp>() != function || !body.expressions ||
         trips >= body.expressions->size() || body.expressions->isBoolean(trips)) {
         result.error = "repetition requires original loop and integer trip expression"; return result;

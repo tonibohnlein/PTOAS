@@ -8,7 +8,7 @@
 // Common exact regional contract. All expressions belong to the supplied arena.
 // q=1 syntax check over shared effects. No instruction-specific footprint rules.
 #include "SequenceAnalysisInternal.h"
-#include "PTO/Transforms/FrontierSynch/RepeatedRegion.h"
+#include "PTO/Transforms/FrontierSynch/RepeatedStorage.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -94,14 +94,32 @@ bool SequenceAnalysisState::repeatedChild(const StructureNode& node, Expr trips)
         }
     });
     if (!nested || !uniform) { return false; }
+    bool evolving = false;
     for (const auto& effect : input->accesses().effects()) {
         if (!effect.phase || !loop->isProperAncestor(effect.phase->elementOp)) { continue; }
         if (effect.selection && !invariant.value(effect.selection->selector)) { return false; }
-        for (const auto& region : effect.regions) { if (!invariant.region(region)) { return false; } }
+        for (const auto& region : effect.regions) { evolving |= !invariant.region(region); }
     }
     auto analyzed = analyzeSequenceRegion(function, *input, *program, node.children.front(), arena, indexOwner);
-    if (!analyzed.error.empty()) { return false; }
+    if (!analyzed.error.empty()) { repeatedAttempt = "q1 body interface: " + analyzed.error; return false; }
     auto body = sequenceRegionalResult(analyzed);
+    if (evolving || !body.deferredAccessBoundary.empty()) {
+        auto exported = body;
+        exported.accessBoundary.insert(exported.accessBoundary.end(), exported.deferredAccessBoundary.begin(),
+                                       exported.deferredAccessBoundary.end());
+        exported.deferredAccessBoundary.clear();
+        auto storage = recognizeRepeatedStorage(exported, loop, trips);
+        if (storage.storage) {
+            auto repeated = repeatEvolvingRegion(function, std::move(storage.storage));
+            if (!repeated.error.empty()) { repeatedAttempt = "evolving interface: " + repeated.error; return false; }
+            Child child;
+            child.regional = std::move(repeated.regional);
+            child.anchors = child.regional.anchors;
+            children.push_back(std::move(child));
+            return true;
+        }
+        if (evolving) { repeatedAttempt = "evolving repeat: " + storage.error; return false; }
+    }
     // A child may discharge a streaming effect within one visit. A write can
     // still conflict with itself after re-entry; it needs actual storage selectors.
     DenseSet<std::size_t> exported;

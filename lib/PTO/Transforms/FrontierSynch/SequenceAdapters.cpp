@@ -28,7 +28,10 @@ void SequenceAnalysisState::bindAdapters()
             RegionalSelector first{{type, c(0), PeriodicEventKind::Start}, present};
             RegionalSelector last{{type, expressions.sub(child.trips, c(1)), PeriodicEventKind::Start}, present};
             for (auto effect : input->accesses().effectsFor(child.anchors[type].phase)) {
-                if (llvm::is_contained(child.dischargedEffects, effect)) { continue; }
+                if (llvm::is_contained(child.dischargedEffects, effect)) {
+                    out.deferredAccessBoundary.push_back({effect, first, last, false});
+                    continue;
+                }
                 const auto& access = input->accesses().effects()[effect];
                 out.accessBoundary.push_back({effect, first, last,
                     child.loop ? !access.regions.empty() : access.rangesMaterialized});
@@ -114,6 +117,9 @@ bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
     std::optional<GMAliasPolicy> gmPolicy;
     for (const auto& child : children) {
         const auto& out = child.regional;
+        if (!out.symbolicStorageEffects.empty() && children.size() != 1) {
+            return fail("symbolic storage crossing requires a finite boundary adapter");
+        }
         if (out.expressions != arena || !out.capabilities.completeStorageModel || !out.capabilities.exactQueries ||
             !out.capabilities.exactSelectors || !out.presence ||
             (requireEndpoints && (!out.capabilities.endpointRecipes || (!out.prepare && !out.prepareWithVisits))) ||
@@ -288,7 +294,15 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
     }
     for (uint32_t child = 0; child < state->children.size(); ++child) {
         const auto& regional = state->children[child].regional;
-        if (regional.accessModel) { out.accessModel = regional.accessModel; }
+        if (regional.accessModel) {
+            out.accessModel = regional.accessModel;
+            out.gmAliasPolicy = regional.gmAliasPolicy;
+        }
+        for (auto access : regional.deferredAccessBoundary) {
+            access.first.event.type += starts[child];
+            access.last.event.type += starts[child];
+            out.deferredAccessBoundary.push_back(std::move(access));
+        }
         for (auto access : regional.accessBoundary) {
             access.first.event.type += starts[child];
             access.last.event.type += starts[child];
@@ -366,6 +380,10 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
     }
     for (const auto& [pipe, values] : analysis.lastPayloads) {
         for (auto value : values) { out.lastPayloads[pipe].push_back(convert(value)); }
+    }
+    if (state->children.size() == 1) {
+        out.storageSelectors = state->children.front().regional.storageSelectors;
+        out.symbolicStorageEffects = state->children.front().regional.symbolicStorageEffects;
     }
     return out;
 }
