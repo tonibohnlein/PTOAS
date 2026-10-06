@@ -31,6 +31,7 @@ struct GuardedPeriodicQuotient {
     std::string error;
     std::vector<GuardedPeriodicPayload> payloads;
     std::vector<GuardedPeriodicRecord> records;
+    std::vector<GuardedPeriodicRecord> nativePrerequisites;
     // Parallel to original records. Coincident enabled records choose the first
     // minimum-distance representative; guards select exactly the lifted covers.
     std::vector<RegionExpressions::Id> retained;
@@ -49,11 +50,13 @@ struct GuardedPeriodicQuotient {
 // presence and checks constant violations, but does not prove symbolic premises.
 // All arithmetic uses checked static bounds for uint64_t circuit intermediates.
 // No iterations, slots, distance values or guard valuations are enumerated.
-// Construction is O(g + m^3), beyond the supplied expression DAG. No IR mutation.
+// Construction is O(g + h + m^3), with h fixed native prerequisites, beyond
+// the supplied expression DAG. Native prerequisites are not removable demands. No IR mutation.
 // Threshold queries are reflexive on present types; finite-prefix clients also
 // check both occurrence domains and compare targetIteration-sourceIteration.
 GuardedPeriodicQuotient analyzeGuardedPeriodicQuotient(
     std::shared_ptr<RegionExpressions> expressions,
-    llvm::ArrayRef<GuardedPeriodicPayload> payloads, llvm::ArrayRef<GuardedPeriodicRecord> records);
+    llvm::ArrayRef<GuardedPeriodicPayload> payloads, llvm::ArrayRef<GuardedPeriodicRecord> records,
+    llvm::ArrayRef<GuardedPeriodicRecord> nativePrerequisites = {});
 } // namespace mlir::pto::frontiersynch
 #endif

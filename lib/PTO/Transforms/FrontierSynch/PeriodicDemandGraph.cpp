@@ -59,12 +59,14 @@ void buildNative(periodic::Graph& graph, PeriodicAnalysis& output)
 }
 } // namespace
 PeriodicAnalysis analyzePeriodicDemands(llvm::ArrayRef<PeriodicPayload> payloads,
-                                       llvm::ArrayRef<PeriodicRecord> records)
+                                       llvm::ArrayRef<PeriodicRecord> records,
+                                       llvm::ArrayRef<PeriodicRecord> nativePrerequisites)
 {
     const uint64_t maxID = std::numeric_limits<uint32_t>::max();
     // Exactly 3*m native/payload edges and at most records.size() demand edges.
     const bool invalidSize = payloads.size() > maxID / 3 || records.size() > maxID ||
-        3 * uint64_t(payloads.size()) + records.size() > maxID;
+        nativePrerequisites.size() > maxID ||
+        3 * uint64_t(payloads.size()) + records.size() + nativePrerequisites.size() > maxID;
     if (invalidSize) {
         return reject("quotient identity overflow");
     }
@@ -77,6 +79,7 @@ PeriodicAnalysis analyzePeriodicDemands(llvm::ArrayRef<PeriodicPayload> payloads
     }
     PeriodicAnalysis output;
     output.payloads.assign(payloads.begin(), payloads.end());
+    output.nativePrerequisites.assign(nativePrerequisites.begin(), nativePrerequisites.end());
     output.generators.assign(records.begin(), records.end());
     std::sort(output.generators.begin(), output.generators.end(), before);
     output.generators.erase(std::unique(output.generators.begin(), output.generators.end(), same),
@@ -84,6 +87,13 @@ PeriodicAnalysis analyzePeriodicDemands(llvm::ArrayRef<PeriodicPayload> payloads
     periodic::Graph graph;
     graph.outgoing.resize(2 * payloads.size());
     buildNative(graph, output);
+    for (const auto& record : nativePrerequisites) {
+        if (record.source >= payloads.size() || record.target >= payloads.size() ||
+            (record.displacement == 0 && record.source >= record.target)) {
+            return reject("nonforward or absent native periodic endpoint");
+        }
+        addEdge(graph, 2 * record.source + 1, 2 * record.target, record.displacement);
+    }
     for (const auto& record : output.generators) {
         graph.recordEdges.push_back(static_cast<uint32_t>(graph.edges.size()));
         addEdge(graph, 2 * record.source + 1, 2 * record.target, record.displacement);

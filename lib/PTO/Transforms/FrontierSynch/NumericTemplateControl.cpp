@@ -40,7 +40,7 @@ AffineExpr TemplateBuilder::scalar(Value value, SmallVectorImpl<Value>* invarian
 {
     // ScalarEvolution caches by Value: a fresh instance is required for each
     // coordinate environment, rather than carrying the first visit's constants.
-    mlir::pto::detail::ScalarEvolution evolution(context());
+    mlir::pto::detail::ScalarEvolution evolution(context(), output.outer);
     DenseMap<Value, bool> invariantCache;
     auto expression = evolution.value(value, [&](Value symbol) -> AffineExpr {
         if (symbol == output.outer.getInductionVar()) {

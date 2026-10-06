@@ -26,6 +26,7 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
     }
     if (!composer.importSummaries()) { result.error = composer.error; return result; }
     composer.bridges();
+    if (!composer.valueBridges()) { result.error = composer.error; return result; }
     if (!composer.closure()) { result.error = composer.error; return result; }
     if (!composer.expressions.constructionError().empty()) {
         result.error = composer.expressions.constructionError(); return result;
@@ -140,6 +141,19 @@ SequenceAnalysis composeRegionalSequence(func::FuncOp function,
         result.error = "sequence endpoint arithmetic requires a 64-bit index representation"; return result;
     }
     auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions));
+    SmallVector<const CompoundInstanceElement*> phases;
+    DenseSet<const CompoundInstanceElement*> seen;
+    for (const auto& regional : children) {
+        for (const auto& anchor : regional.anchors) {
+            if (anchor.phase && seen.insert(anchor.phase).second) {
+                phases.push_back(anchor.phase);
+            }
+        }
+    }
+    if (failed(state->index.build(function, phases))) {
+        result.error = "cannot reconstruct regional value prerequisites";
+        return result;
+    }
     for (auto& regional : children) {
         Child child; child.regional = std::move(regional);
         state->children.push_back(std::move(child));

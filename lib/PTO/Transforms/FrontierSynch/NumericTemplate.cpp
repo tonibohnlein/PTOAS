@@ -58,6 +58,8 @@ void clear(NumericTemplate& output)
     output.payloads.clear();
     output.atoms.clear();
     output.uniformConflicts.clear();
+    output.nativePrerequisites.clear();
+    output.valueDemands.clear();
     output.fragments = 0;
     output.period = 0;
     output.refresh = 0;
@@ -111,6 +113,22 @@ NumericTemplate recognizeTemplate(scf::ForOp outer, const PhaseIndex& index,
     if (!builder.block(*outer.getBody(), true, 0) || !detail::prepareTemplateEffects(builder)) {
         clear(output);
         return output;
+    }
+    DenseMap<const CompoundInstanceElement*, uint32_t> preceding;
+    for (uint32_t target = 0; target < output.payloads.size(); ++target) {
+        const auto* phase = output.payloads[target].phase;
+        for (const auto& edge : index.prerequisitesFor(phase->elementOp)) {
+            auto source = preceding.find(edge.producer);
+            if (source != preceding.end()) {
+                auto& edges = edge.native ? output.nativePrerequisites : output.valueDemands;
+                edges.push_back({source->second, target});
+            } else if (outer->isProperAncestor(edge.producer->elementOp)) {
+                output.result.note(RecognitionIssue::AdditionalPrerequisite, phase->elementOp);
+                clear(output);
+                return output;
+            }
+        }
+        preceding[phase] = target;
     }
     if (regional) {
         const auto effects = input.accesses().effects();

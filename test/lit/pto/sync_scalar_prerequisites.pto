@@ -1,0 +1,24 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_scalar_prerequisites.py pto-sync-input-test %s
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @scalar_chain() {
+    %base = arith.constant 0 : i64
+    %other = arith.constant 2048 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    %b = pto.alloc_tile addr = %other : !tile
+    pto.tadd ins(%b, %b : !tile, !tile) outs(%a : !tile)
+    %v = pto.tgetval ins(%a, %zero : !tile, index) outs : f32
+    %w = arith.addf %v, %one : f32
+    pto.tsetval ins(%zero, %w : index, f32) outs(%b : !tile)
+    return
+  }
+}

@@ -19,6 +19,17 @@ struct SlotPattern {
 std::optional<SlotPattern> matchSlot(Value slot, Value induction, uint64_t count);
 std::optional<SlotPattern> matchRotatingSlot(Value slot, scf::ForOp loop, uint64_t count,
                                             const PhaseIndex& index, bool allowParameters);
+// Numerator of an already normalized Euclidean modulo expression. Machine
+// arithmetic has been justified by the shared access-map producer.
+std::optional<SlotPattern> matchRotatingNumerator(AffineExpr numerator, ArrayRef<Value> symbols,
+    scf::ForOp loop, uint64_t count, const PhaseIndex& index, bool allowParameters);
+struct PhysicalRotation {
+    SlotPattern pattern;
+    uint64_t count = 0, strideBytes = 0;
+    SyncStorageCell firstSlot;
+};
+std::optional<PhysicalRotation> physicalRotation(const SyncStorageEffect& effect, const SyncInput& input,
+    scf::ForOp loop, const PhaseIndex& index, bool allowParameters);
 using SlotRanges = SmallVector<std::pair<uint64_t, uint64_t>>;
 std::optional<SlotRanges> withinSlotRanges(const SyncStorageEffect& effect,
                                          const SyncInput& input, uint64_t bytes);

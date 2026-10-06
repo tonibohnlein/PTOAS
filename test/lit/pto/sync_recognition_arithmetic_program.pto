@@ -19,9 +19,8 @@
 // CHECK-LABEL: recognition empty_minimum
 // CHECK: recognize arithmetic: applicable
 // CHECK-LABEL: recognition ssa_prerequisite
-// CHECK: recognize arithmetic: missing-premise
-// CHECK: issue additional-prerequisite
-// CHECK: arithmetic sites=0 parameters=0 primitives=0
+// CHECK: recognize arithmetic: applicable
+// CHECK: arithmetic sites=2 parameters=0
 // CHECK-LABEL: recognition existing_sync
 // CHECK: recognize arithmetic: missing-premise
 // CHECK: issue additional-prerequisite

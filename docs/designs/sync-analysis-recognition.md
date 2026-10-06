@@ -1576,3 +1576,70 @@ checks were skipped. All 49 pypto-lib modules and all prior C++ successes were
 rerun: four pypto-lib modules now generate C++ (two new), and all prior successes
 remain. Artifacts and remaining class-specific blockers are recorded in
 `.local/pypto-lib-tractable/REPORT.md`.
+
+
+### Scalar prerequisites and contiguous periodic intervals
+
+Scalar SSA dependencies are classified using the shared phase pipe and result
+kind. A synchronous scalar phase supplies native completion-to-start edges;
+other scalar-producing phases require explicit completion demands. Both kinds
+follow pure value expressions and conditional results to their payload users.
+Loop-carried values still need an occurrence map. Storage conflicts remain
+independent: a vector writer must finish before a scalar read of that storage.
+The explicit, periodic, finite-guarded and arithmetic reducers retain these
+native edges when testing demand redundancy.
+
+Rotating recognition also accepts physical address maps of the form
+`base + bank_bytes * ((stride * i + offset) mod banks)` from the shared access
+representation. Equal physical families are unified across allocation SSA
+roots, and views keep their exact within-slot byte ranges. This uses no
+instruction-specific or kernel-specific recognition. MLIR integer-range
+interfaces and the index data layout establish nonwrapping arithmetic; values
+without a proof remain symbolic.
+
+The sequence route can partition a zero-based, unit-step loop at one invariant
+comparison threshold. Supported predicates compare a proved `i + c` (`c >= 0`)
+with an entry-available bound, using signed or unsigned `<`, `<=`, `>=` or `>`.
+All varying branch predicates must describe the same split. Invariant branches
+can remain guarded inside either interval. More general changing predicates
+and nested loop bodies keep their existing route obligations.
+
+Each half-open interval is analyzed with its fixed branch choices and exported
+through the existing periodic storage selectors and all-event queries. Endpoint
+recipes filter **both** endpoints to the interval. Original occurrence ordinals,
+branch cuts and loops are retained. The sequence composer generates and reduces
+all crossing edges, including those to explicit prologue/epilogue payloads.
+Clamping the split handles zero trips, empty intervals and partial final bank
+cycles without expanding the runtime trip count. Numerical interval summaries
+also preserve cyclic allocation witnesses and their lifetime envelopes;
+unsupported allocation proofs or insufficient capacity remain explicit failures.
+
+This is an application of contiguous-region composition and periodic interval
+locality, not a rule for repeating arbitrary compact nested regions. The cost is
+that of at most two periodic analyses, finite slot-boundary export and the
+existing crossing reducer. Runtime trip count does not control analysis size.
+The materializing regional adapters preflight a cumulative limit of 256 slot
+visits per child before constructing selectors. Larger compact bank families
+need a compact selector representation; they remain eligible for standalone
+quotient analysis. Exported intervals carry their first original ordinal so
+public composition preserves incoming scalar prerequisites as well.
+
+Validation of this increment (2026-10-06):
+
+- The unchanged audited `elementwise_pipeline` input completes logical analysis,
+  allocation with eligible IDs `0..5`, and PTO C++ emission. Its original loop is
+  retained; the interval split does not expand its payload body.
+- `causal_conv1d_decode` completes logical analysis. Its current allocation
+  certificate does not fit the supplied six-ID capacity. This is an allocation
+  limitation, not a proof that every valid plan needs more than six IDs; scarcity
+  repair is still unimplemented.
+- Existing InsertSync also generates C++ for both unchanged inputs.
+- Regression checks cover 56 boundary-guard executions and their physical-ID
+  reuse, six physical-bank alias executions, scalar prerequisites, and the
+  existing explicit/periodic/guarded/arithmetic/sequence oracle suites. The
+  shared-interface checks exercise both GM alias policies with loop-dependent
+  offsets: canonical pointer provenance survives those offsets, while unknown
+  pointer provenance remains conservative.
+
+These are host analysis, emitted-order and C++ generation checks. They do not
+constitute device execution or performance measurements.

@@ -23,10 +23,20 @@ void join(RankRow& destination, const RankRow& source)
 class Reducer {
 public:
     ExplicitReduction output;
-    bool run(llvm::ArrayRef<ExplicitEffects> occurrences, llvm::ArrayRef<StorageGenerator> generators)
+    bool run(llvm::ArrayRef<ExplicitEffects> occurrences, llvm::ArrayRef<StorageGenerator> generators,
+             llvm::ArrayRef<StorageGenerator> nativePrerequisites)
     {
         if (!index(occurrences) || !bucket(generators)) {
             return false;
+        }
+        nativeIncoming.resize(occurrences.size());
+        for (const auto& edge : nativePrerequisites) {
+            auto source = positions.find(edge.source), target = positions.find(edge.target);
+            if (source == positions.end() || target == positions.end() || source->second >= target->second) {
+                output.error = "nonforward or absent native prerequisite endpoint";
+                return false;
+            }
+            nativeIncoming[target->second].push_back(source->second);
         }
         const auto count = occurrences.size(), pipes = output.pipeLabels.size();
         // Each occurrence stores two rank rows. Check the total byte product
@@ -47,6 +57,7 @@ public:
 private:
     std::unordered_map<uint32_t, std::size_t> positions;
     std::vector<std::vector<std::size_t>> incoming;
+    std::vector<std::vector<std::size_t>> nativeIncoming;
     bool index(llvm::ArrayRef<ExplicitEffects> occurrences)
     {
         if (occurrences.size() > std::numeric_limits<uint32_t>::max()) {
@@ -99,6 +110,9 @@ private:
             // its completion row would incorrectly serialize overlapping work.
             starts = output.startRanks[*previous];
         }
+        for (const auto source : nativeIncoming[target]) {
+            join(starts, output.completionRanks[source]);
+        }
         for (const auto source : incoming[target]) {
             if (starts[output.pipeColumns[source]] >= output.localRanks[source]) {
                 continue;
@@ -116,10 +130,11 @@ private:
 };
 } // namespace
 ExplicitReduction reduceExplicitDemands(llvm::ArrayRef<ExplicitEffects> occurrences,
-                                        llvm::ArrayRef<StorageGenerator> generators)
+                                        llvm::ArrayRef<StorageGenerator> generators,
+                                        llvm::ArrayRef<StorageGenerator> nativePrerequisites)
 {
     Reducer reducer;
-    if (!reducer.run(occurrences, generators)) {
+    if (!reducer.run(occurrences, generators, nativePrerequisites)) {
         ExplicitReduction failure;
         failure.error = reducer.output.error;
         return failure;

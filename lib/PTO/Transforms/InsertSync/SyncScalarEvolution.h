@@ -15,6 +15,8 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/Interfaces/InferIntRangeInterface.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include <algorithm>
@@ -28,6 +30,7 @@ class ScalarEvolution {
     };
     using Symbol = llvm::function_ref<AffineExpr(Value)>;
     MLIRContext* context;
+    unsigned indexBits = 32;
     DenseMap<Value, Result> cache;
 
     AffineExpr number(int64_t n) { return getAffineConstantExpr(n, context); }
@@ -39,14 +42,13 @@ class ScalarEvolution {
         }
         return std::nullopt;
     }
-    // Index width is target-dependent. Prove unflagged arithmetic for both
-    // supported widths by requiring a signed 32-bit result. Integer types use
-    // their declared width; wider-than-64 values stay opaque.
-    static unsigned width(Type type)
+    // Use the supplied IR data layout. Standalone clients without an anchor
+    // retain the portable 32-bit proof; wider-than-64 values stay opaque.
+    unsigned width(Type type) const
     {
-        return type.isIndex() ? 32 : (isa<IntegerType>(type) ? cast<IntegerType>(type).getWidth() : 0);
+        return type.isIndex() ? indexBits : (isa<IntegerType>(type) ? cast<IntegerType>(type).getWidth() : 0);
     }
-    static bool fits(Range r, Type type)
+    bool fits(Range r, Type type) const
     {
         unsigned bits = width(type);
         return bits && bits <= 64 && APInt(64, r.lower, true).isSignedIntN(bits) &&
@@ -100,11 +102,44 @@ class ScalarEvolution {
         if (!result.expression) {
             result.expression = symbol(v);
         }
+        // Range inference is shared operation semantics, not an address-op
+        // whitelist. Keep unsupported expressions symbolic while using their
+        // declared result bounds to prove subsequent arithmetic cannot wrap.
+        if (!result.range && v.getDefiningOp() && isa<IntegerType>(v.getType()) && width(v.getType()) <= 64) {
+            if (auto infer = dyn_cast<InferIntRangeInterface>(v.getDefiningOp())) {
+                SmallVector<ConstantIntRanges> operands;
+                bool supported = true;
+                for (Value operand : v.getDefiningOp()->getOperands()) {
+                    unsigned bits = isa<IntegerType>(operand.getType()) ? width(operand.getType()) : 0;
+                    if (!bits || bits > 64) {
+                        supported = false;
+                        break;
+                    }
+                    auto known = resolve(operand, symbol, depth + 1).range;
+                    operands.push_back(known ? ConstantIntRanges::fromSigned(
+                        APInt(bits, known->lower, true), APInt(bits, known->upper, true)) :
+                        ConstantIntRanges::maxRange(bits));
+                }
+                if (supported) {
+                    infer.inferResultRanges(operands, [&](Value value, const ConstantIntRanges& range) {
+                        if (value == v && range.smin().isSignedIntN(64) && range.smax().isSignedIntN(64)) {
+                            result.range = Range{range.smin().getSExtValue(), range.smax().getSExtValue()};
+                        }
+                    });
+                }
+            }
+        }
         cache[v] = result;
         return result;
     }
 public:
-    explicit ScalarEvolution(MLIRContext* context) : context(context) {}
+    explicit ScalarEvolution(MLIRContext* context, Operation* anchor = nullptr) : context(context)
+    {
+        if (anchor) {
+            auto bits = DataLayout::closest(anchor).getTypeSizeInBits(IndexType::get(context));
+            indexBits = !bits.isScalable() && bits.getFixedValue() <= 64 ? bits.getFixedValue() : 0;
+        }
+    }
     AffineExpr value(Value v, Symbol symbol)
     {
         return v ? resolve(v, symbol, 0).expression : AffineExpr{};
@@ -126,8 +161,12 @@ inline ScalarEvolution::Result ScalarEvolution::argument(BlockArgument arg, Symb
         return {};
     }
     // scf.for uses signed bounds. For a symbolic upper bound, this range
-    // supplies nonnegativity but cannot justify unflagged index arithmetic.
-    return {symbol(arg), Range{*lower, upper ? *upper - 1 : INT64_MAX}};
+    // is capped below the signed maximum: a visited iv is strictly below ub.
+    // This proves iv+1 cannot wrap, but not arbitrary larger increments.
+    const unsigned bits = width(arg.getType());
+    if (!bits || bits > 64) { return {}; }
+    const int64_t maximum = APInt::getSignedMaxValue(bits).getSExtValue();
+    return {symbol(arg), Range{*lower, upper ? *upper - 1 : maximum - 1}};
 }
 
 inline ScalarEvolution::Result ScalarEvolution::recurrence(BlockArgument arg, scf::ForOp loop, Symbol symbol)

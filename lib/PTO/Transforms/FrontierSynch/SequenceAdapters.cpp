@@ -28,6 +28,7 @@ void SequenceAnalysisState::bindAdapters()
             RegionalSelector first{{type, c(0), PeriodicEventKind::Start}, present};
             RegionalSelector last{{type, expressions.sub(child.trips, c(1)), PeriodicEventKind::Start}, present};
             for (auto effect : input->accesses().effectsFor(child.anchors[type].phase)) {
+                if (llvm::is_contained(child.dischargedEffects, effect)) { continue; }
                 const auto& access = input->accesses().effects()[effect];
                 out.accessBoundary.push_back({effect, first, last,
                     child.loop ? !access.regions.empty() : access.rangesMaterialized});
@@ -172,6 +173,10 @@ bool SequenceAnalysisState::importSummaries()
     for (uint32_t id = 0; id < children.size(); ++id) {
         auto& child = children[id];
         child.anchors = child.regional.anchors;
+        if (auto first = child.regional.firstOrdinal;
+            first && (*first >= expressions.size() || expressions.isBoolean(*first))) {
+            return fail("regional first ordinal must be an integer expression in the common arena");
+        }
         auto validSelector = [&](RegionalSelector selector) {
             return selector.event.type < child.anchors.size() && selector.event.ordinal < expressions.size() &&
                 !expressions.isBoolean(selector.event.ordinal) && expressions.isBoolean(selector.present);

@@ -9,6 +9,7 @@
 // interior. Slot-table expansion is explicit; runtime trips/offsets are circuits.
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingInsertion.h"
+#include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 #include "../InsertSync/SyncEffectRanges.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/MapVector.h"
@@ -28,12 +29,61 @@ struct Visit {
     uint32_t type = 0;
     Expr first = 0, last = 0, read = 0, write = 0;
 };
+// A numerical skeleton retains the existing cyclic allocation proof after
+// interval restriction. Map its canonical record IDs back to the guarded
+// producer's recipes; do not infer a budget from a finite sampled execution.
+std::shared_ptr<RegionalAllocationSummary> sliceAllocation(const GuardedRotatingAnalysis& analysis,
+    RegionExpressions::Id begin, RegionExpressions::Id end)
+{
+    auto& dag = *analysis.expressions;
+    std::vector<PeriodicPayload> payloads;
+    std::vector<PeriodicRecord> records, native;
+    for (const auto& payload : analysis.payloads) {
+        if (dag.constantValue(payload.presence) != 1) { return {}; }
+        payloads.push_back({payload.pipe});
+    }
+    for (const auto& edge : analysis.periodic.nativePrerequisites) {
+        auto enabled = dag.constantValue(edge.active), distance = dag.constantValue(edge.displacement);
+        if (!enabled || !distance) { return {}; }
+        if (*enabled) { native.push_back({edge.source, edge.target, *distance}); }
+    }
+    std::map<std::tuple<uint32_t, uint32_t, uint64_t>, uint32_t> original;
+    for (uint32_t i = 0; i < analysis.generators.size(); ++i) {
+        const auto& edge = analysis.generators[i];
+        auto retained = dag.constantValue(analysis.periodic.retained[i]);
+        if (!retained) { return {}; }
+        if (!*retained) { continue; }
+        auto distance = dag.constantValue(edge.displacement);
+        if (!distance) { return {}; }
+        records.push_back({edge.source, edge.target, *distance});
+        if (!original.emplace(std::make_tuple(edge.source, edge.target, *distance), i).second) { return {}; }
+    }
+    auto numerical = analyzePeriodicDemands(payloads, records, native);
+    auto allocation = buildPeriodicAllocation(numerical);
+    if (!numerical.error.empty() || !allocation.error.empty()) { return {}; }
+    auto out = std::make_shared<RegionalAllocationSummary>();
+    for (const auto& direction : allocation.directions) {
+        if (!direction.uniformBudget || !*direction.uniformBudget) { return {}; }
+        RegionalAllocationGroup group{direction.sourcePipe, direction.targetPipe, *direction.uniformBudget, {}};
+        for (auto [phase, handoff] : llvm::enumerate(direction.handoffs)) {
+            auto source = RegionalEvent{handoff.source, begin, PeriodicEventKind::Start};
+            auto target = RegionalEvent{handoff.target, dag.sub(end, dag.constant(1)), PeriodicEventKind::Completion};
+            auto active = dag.land(dag.lt(begin, end),
+                dag.lt(dag.constant(handoff.displacement), dag.sub(end, begin)));
+            auto record = original.find(std::make_tuple(handoff.source, handoff.target, handoff.displacement));
+            if (record == original.end()) { return {}; }
+            group.members.push_back({record->second, direction.handoffs.size(), phase, source, target, active});
+        }
+        out->groups.push_back(std::move(group));
+    }
+    return out;
+}
 class Exporter {
 public:
     Exporter(func::FuncOp function, const SyncInput& input, std::shared_ptr<GuardedRotatingAnalysis> analysis,
-             std::string& error)
+             std::string& error, std::optional<PeriodicSlice> slice)
         : function(function), input(input), analysis(std::move(analysis)),
-          dag(*this->analysis->expressions), error(error) {}
+          dag(*this->analysis->expressions), error(error), slice(slice) {}
     RegionalAnalysis result;
     bool run()
     {
@@ -46,13 +96,15 @@ public:
         result.cost.physicalFragments = patterns.size();
         result.cost.expressionNodes = dag.size();
         result.expressions = analysis->expressions;
+        result.firstOrdinal = begin;
         result.gmAliasPolicy = input.memory().gmPolicy();
         result.accessModel = &input.accesses();
         for (uint32_t type = 0; type < analysis->phases.size(); ++type) {
-            auto present = dag.land(dag.lt(c(0), trips), analysis->payloads[type].presence);
-            RegionalSelector first{{type, c(0), PeriodicEventKind::Start}, present};
+            auto present = dag.land(dag.lt(begin, trips), analysis->payloads[type].presence);
+            RegionalSelector first{{type, begin, PeriodicEventKind::Start}, present};
             RegionalSelector last{{type, dag.sub(trips, c(1)), PeriodicEventKind::Start}, present};
             for (auto effect : input.accesses().effectsFor(analysis->phases[type])) {
+                if (llvm::is_contained(analysis->dischargedEffects, effect)) { continue; }
                 result.accessBoundary.push_back({effect, first, last,
                     !input.accesses().effects()[effect].regions.empty()});
             }
@@ -67,7 +119,8 @@ private:
     std::shared_ptr<GuardedRotatingAnalysis> analysis;
     RegionExpressions& dag;
     std::string& error;
-    Expr trips = RegionExpressions::invalid;
+    Expr trips = RegionExpressions::invalid, begin = RegionExpressions::invalid;
+    std::optional<PeriodicSlice> slice;
     std::vector<Visit> patterns;
     Expr c(uint64_t value) { return dag.constant(value); }
     bool fail(const std::string& message) { error = message; return false; }
@@ -82,6 +135,15 @@ private:
         const auto upper = dag.input(loop.getUpperBound());
         const auto span = dag.select(dag.slt(c(*lower), upper), dag.sub(upper, c(*lower)), c(0));
         trips = dag.add(dag.div(span, c(*step)), dag.select(dag.eq(dag.rem(span, c(*step)), c(0)), c(0), c(1)));
+        begin = c(0);
+        if (slice) {
+            if (slice->begin >= dag.size() || slice->end >= dag.size() ||
+                dag.isBoolean(slice->begin) || dag.isBoolean(slice->end)) {
+                return fail("periodic slice requires integer endpoints in its expression arena");
+            }
+            begin = slice->begin;
+            trips = slice->end;
+        }
         for (const auto* phase : analysis->phases) {
             if (!phase || !phase->elementOp || !loop->isProperAncestor(phase->elementOp)) {
                 return fail("guarded regional anchor is outside its original loop");
@@ -106,6 +168,13 @@ private:
     }
     bool visits()
     {
+        uint64_t slotVisits = 0;
+        for (const auto& fragment : analysis->fragments) {
+            if (fragment.slots > maxRegionalSlotVisits - slotVisits) {
+                return fail("regional physical slot expansion exceeds the supported visit limit");
+            }
+            slotVisits += fragment.slots;
+        }
         for (const auto& fragment : analysis->fragments) {
             if (fragment.effect >= input.accesses().effects().size() || fragment.payload >= analysis->payloads.size() ||
                 !fragment.slots || fragment.slots > INT64_MAX || !fragment.divisor || !fragment.refresh ||
@@ -119,7 +188,19 @@ private:
             if (!effect.memory || effect.phase != analysis->phases[fragment.payload]) {
                 return fail("guarded regional fragment does not belong to its original effect");
             }
-            const auto slots = mlir::pto::detail::physicalSlotRanges(input, *effect.memory);
+            auto slots = mlir::pto::detail::physicalSlotRanges(input, *effect.memory);
+            if (fragment.firstPhysicalSlot) {
+                const auto first = *fragment.firstPhysicalSlot;
+                if (!fragment.physicalSlotStride || first.end < first.begin ||
+                    fragment.slots - 1 > (UINT64_MAX - first.end) / fragment.physicalSlotStride) {
+                    return fail("normalized physical slot family overflows its address space");
+                }
+                slots.clear();
+                for (uint64_t slot = 0; slot < fragment.slots; ++slot) {
+                    const auto offset = slot * fragment.physicalSlotStride;
+                    slots.push_back({first.space, first.begin + offset, first.end + offset, first.base});
+                }
+            }
             if (slots.size() != fragment.slots ||
                 (effect.selection && effect.selection->addresses.size() != fragment.slots)) {
                 return fail("guarded regional export requires a finite encoded physical slot table");
@@ -139,6 +220,9 @@ private:
                 auto compatible = dag.eq(dag.rem(difference, c(fragment.divisor)), c(0));
                 auto first = multiplyModulo(dag.div(difference, c(fragment.divisor)),
                                             fragment.inverseStride, fragment.refresh);
+                const auto residue = dag.rem(begin, c(fragment.refresh));
+                first = dag.add(begin, dag.rem(dag.sub(dag.add(first, c(fragment.refresh)), residue),
+                                               c(fragment.refresh)));
                 auto exists = dag.land(compatible, dag.lt(first, trips));
                 const auto final = dag.sub(trips, c(1));
                 auto last = dag.sub(final, dag.rem(dag.sub(final, first), c(fragment.refresh)));
@@ -227,12 +311,12 @@ private:
     void native()
     {
         std::map<uint32_t, std::vector<RegionalSelector>> firsts, lasts;
-        const auto nonempty = dag.lt(c(0), trips);
+        const auto nonempty = dag.lt(begin, trips);
         const auto last = dag.select(nonempty, dag.sub(trips, c(1)), c(0));
         for (uint32_t type = 0; type < analysis->payloads.size(); ++type) {
             const auto& payload = analysis->payloads[type];
             auto present = dag.land(nonempty, payload.presence);
-            firsts[payload.pipe].push_back({{type, c(0), PeriodicEventKind::Start}, present});
+            firsts[payload.pipe].push_back({{type, begin, PeriodicEventKind::Start}, present});
             lasts[payload.pipe].push_back({{type, last, PeriodicEventKind::Start}, present});
         }
         for (const auto& [pipe, selectors] : firsts) { result.firstPayloads[pipe] = extrema(selectors, true); }
@@ -241,13 +325,14 @@ private:
     void queries()
     {
         auto owned = analysis;
-        const auto count = trips;
-        result.presence = [owned, count](RegionalEvent event) -> std::optional<Expr> {
+        const auto count = trips, firstOrdinal = begin;
+        result.presence = [owned, count, firstOrdinal](RegionalEvent event) -> std::optional<Expr> {
             auto& expressions = *owned->expressions;
             if (event.type >= owned->payloads.size() || event.ordinal >= expressions.size() ||
                 expressions.isBoolean(event.ordinal) || (event.kind != PeriodicEventKind::Start &&
                 event.kind != PeriodicEventKind::Completion)) { return std::nullopt; }
-            return expressions.land(owned->payloads[event.type].presence, expressions.lt(event.ordinal, count));
+            return expressions.land(owned->payloads[event.type].presence,
+                expressions.land(expressions.le(firstOrdinal, event.ordinal), expressions.lt(event.ordinal, count)));
         };
         auto presence = result.presence;
         result.reachability = [owned, presence](RegionalEvent a, RegionalEvent b) -> std::optional<Expr> {
@@ -261,16 +346,37 @@ private:
                     expressions.le(threshold->distance, expressions.sub(b.ordinal, a.ordinal)))));
         };
         const auto parent = function;
-        result.prepare = [owned, parent]() -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
-            std::string error;
-            auto prepared = prepareGuardedRotatingEndpoints(parent, *owned, error);
-            if (succeeded(prepared)) { (*prepared)->completeInvocation = false; }
-            return prepared;
-        };
-        result.prepareFiltered = [owned, parent](const RegionalDemandFilter& filter)
+        const auto allocation = sliceAllocation(*owned, begin, trips);
+        RegionalDemandFilter domainFilter;
+        if (slice) {
+            domainFilter = [presence, owned](RegionalEvent a, RegionalEvent b) -> std::optional<Expr> {
+                auto first = presence(a), second = presence(b);
+                if (!first || !second) { return std::nullopt; }
+                return owned->expressions->land(*first, *second);
+            };
+        }
+        result.prepare = [owned, parent, domainFilter, allocation]()
             -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
             std::string error;
-            auto prepared = prepareGuardedRotatingEndpoints(parent, *owned, error, filter);
+            auto prepared = prepareGuardedRotatingEndpoints(parent, *owned, error, domainFilter);
+            if (succeeded(prepared)) {
+                (*prepared)->completeInvocation = false;
+                (*prepared)->regionalAllocation = allocation;
+            }
+            return prepared;
+        };
+        result.prepareFiltered = [owned, parent, domainFilter](const RegionalDemandFilter& filter)
+            -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
+            std::string error;
+            RegionalDemandFilter combined = [owned, domainFilter, filter](RegionalEvent a, RegionalEvent b)
+                -> std::optional<Expr> {
+                auto first = domainFilter ? domainFilter(a, b) :
+                    std::optional<Expr>(owned->expressions->boolean(true));
+                auto second = filter ? filter(a, b) : std::optional<Expr>(owned->expressions->boolean(true));
+                if (!first || !second) { return std::nullopt; }
+                return owned->expressions->land(*first, *second);
+            };
+            auto prepared = prepareGuardedRotatingEndpoints(parent, *owned, error, combined);
             if (succeeded(prepared)) { (*prepared)->completeInvocation = false; }
             return prepared;
         };
@@ -278,7 +384,7 @@ private:
 };
 }
 FailureOr<RegionalAnalysis> guardedRotatingRegionalResult(func::FuncOp function, const SyncInput& input,
-    const GuardedRotatingAnalysis& analysis, std::string& error)
+    const GuardedRotatingAnalysis& analysis, std::string& error, std::optional<PeriodicSlice> slice)
 {
     if (!function || !analysis.error.empty() || !analysis.loop || !analysis.expressions ||
         !analysis.periodic.error.empty() || analysis.phases.size() != analysis.payloads.size() ||
@@ -286,7 +392,7 @@ FailureOr<RegionalAnalysis> guardedRotatingRegionalResult(func::FuncOp function,
         error = "guarded rotating analysis lacks an exact regional contract";
         return failure();
     }
-    Exporter exporter(function, input, std::make_shared<GuardedRotatingAnalysis>(analysis), error);
+    Exporter exporter(function, input, std::make_shared<GuardedRotatingAnalysis>(analysis), error, slice);
     if (!exporter.run()) { return failure(); }
     return std::move(exporter.result);
 }

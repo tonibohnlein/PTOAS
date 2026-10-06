@@ -11,12 +11,22 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_PHASEINDEX_H
 
 #include "PTO/Transforms/InsertSync/SyncInput.h"
+#include "PTO/Transforms/FrontierSynch/LifetimeScan.h"
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 
 namespace mlir::pto::frontiersynch {
 enum class Boundary { Before, After };
+struct ValuePrerequisite {
+    const CompoundInstanceElement* producer = nullptr;
+    Operation* consumer = nullptr;
+    bool native = false;
+};
+struct PhasePrerequisiteEdges {
+    std::vector<StorageGenerator> native, demands;
+    std::string error;
+};
 
 class PhaseIndex {
 public:
@@ -26,6 +36,7 @@ public:
     // information whenever operations or their SSA uses change.
     // Build validates every anchor and publishes no partial index on failure.
     LogicalResult build(func::FuncOp source, const SyncInput& input);
+    LogicalResult build(func::FuncOp source, ArrayRef<const CompoundInstanceElement*> phases);
     ArrayRef<const CompoundInstanceElement*> phasesFor(Operation* anchor) const;
 
     // Outer-to-inner region choices for one invocation of each enclosing
@@ -40,6 +51,9 @@ public:
     // A payload result flows into a payload/control/interface operation. These
     // routes must account for its completion prerequisite, beyond storage.
     bool needsValuePrerequisite(Operation* operation) const;
+    ArrayRef<ValuePrerequisite> prerequisitesFor(Operation* operation) const;
+    // One occurrence per phase. External producers belong to composition.
+    PhasePrerequisiteEdges mapPrerequisites(ArrayRef<const CompoundInstanceElement*> phases) const;
 
     // SSA availability at an operation boundary. This says nothing about a
     // legal internal macro cut, pipe completion or synchronization visibility.
@@ -51,6 +65,8 @@ private:
     DominanceInfo dominance;
     DenseMap<Operation*, SmallVector<const CompoundInstanceElement*>> anchorPhases;
     DenseSet<Operation*> valuePrerequisites;
+    DenseMap<Operation*, SmallVector<ValuePrerequisite>> prerequisites;
+    void traceResult(const CompoundInstanceElement* producer, Value result);
 };
 } // namespace mlir::pto::frontiersynch
 #endif

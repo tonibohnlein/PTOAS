@@ -29,6 +29,7 @@ bool SequenceAnalysisState::explicitChild(const StructureNode& node)
     child.trips = c(1);
     child.explicitAnalysis = analyzeExplicit(phases, index, *input, true);
     if (!child.explicitAnalysis.error.empty()) { return fail(child.explicitAnalysis.error); }
+    child.dischargedEffects = child.explicitAnalysis.dischargedEffects;
     for (uint32_t type = 0; type < phases.size(); ++type) {
         auto* phase = phases[type];
         auto* op = phase->elementOp;
@@ -65,6 +66,14 @@ bool SequenceAnalysisState::numericPatterns(Child& child, const NumericTemplate&
 bool SequenceAnalysisState::rotatingPatterns(Child& child, const RotatingAnalysis& analysis,
                                 const RecognitionResult& recognized)
 {
+    uint64_t slotVisits = 0;
+    for (const auto& access : recognized.accesses) {
+        if (access.slots > maxRegionalSlotVisits - slotVisits) {
+            return fail("regional physical slot expansion exceeds the supported visit limit");
+        }
+        slotVisits += access.slots;
+    }
+    child.dischargedEffects = recognized.dischargedEffects;
     DenseMap<const CompoundInstanceElement*, uint32_t> types;
     for (uint32_t type = 0; type < analysis.phases.size(); ++type) { types[analysis.phases[type]] = type; }
     for (const auto& access : recognized.accesses) {
@@ -74,7 +83,11 @@ bool SequenceAnalysisState::rotatingPatterns(Child& child, const RotatingAnalysi
         const auto& effect = input->accesses().effects()[access.effect];
         auto ranges = mlir::pto::detail::physicalSlotRanges(*input, *effect.memory);
         SmallVector<uint64_t> origins;
-        if (effect.selection) { origins = effect.selection->addresses; }
+        if (access.firstPhysicalSlot) {
+            for (uint64_t slot = 0; slot < access.slots; ++slot) {
+                origins.push_back(access.firstPhysicalSlot->begin + slot * access.physicalSlotStride);
+            }
+        } else if (effect.selection) { origins = effect.selection->addresses; }
         else { for (const auto& range : ranges) { origins.push_back(range.begin); } }
         if (origins.size() != access.slots) { return fail("rotating slot addresses are not enumerable"); }
         auto period = access.slots / std::gcd(access.stride, access.slots);
@@ -128,6 +141,7 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         children.push_back(std::move(child));
         return true;
     } else {
+        if (boundaryLoop(child.loop)) { return true; }
         auto numeric = recognizeRegionalNumericTemplate(child.loop, index, *input);
         if (numeric.result.state != RecognitionState::Applicable) {
             return fail("sequence loop has no exact regional rotating or numerical template");

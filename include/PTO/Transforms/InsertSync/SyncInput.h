@@ -13,6 +13,10 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 namespace mlir::pto {
 using SyncMemoryEffect = SideEffects::EffectInstance<MemoryEffects::Effect>;
+// Scalar-pipe value operations return an ordinary value only after the scalar
+// access completes. This does not establish readiness of the accessed memory.
+enum class SyncResultAvailability { NonScalar, SynchronousScalar, RequiresCompletion };
+SyncResultAvailability resultAvailability(const CompoundInstanceElement& phase, Value result);
 
 class SyncStorageEffects;
 

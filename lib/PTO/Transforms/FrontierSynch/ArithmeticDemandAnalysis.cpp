@@ -146,6 +146,21 @@ public:
             fail("exact supported arithmetic primitives are required"); return;
         }
         if (!import() || !buildRelations() || !buildConflicts()) { return; }
+        Relation nativeCompletions;
+        for (const auto& [key, pieces] : result.nativeOrder) {
+            if (key.source.event == ArithmeticEvent::Completion && key.target.event == ArithmeticEvent::Start) {
+                nativeCompletions.emplace(key, pieces);
+            }
+        }
+        if (!nativeCompletions.empty()) {
+            // The core native closure is supplied. Any added C->I edges obey
+            // the same chain-shortcut bound as storage generators.
+            auto nativeStep = compose(nativeCompletions, result.nativeOrder);
+            for (unsigned round = 0; round < result.pipeCount && result.error.empty(); ++round) {
+                auto next = compose(result.nativeOrder, nativeStep);
+                unite(result.nativeOrder, next);
+            }
+        }
         auto step = compose(result.generators, result.nativeOrder);
         auto reach = result.nativeOrder;
         for (unsigned round = 0; round < result.pipeCount && result.error.empty(); ++round) {

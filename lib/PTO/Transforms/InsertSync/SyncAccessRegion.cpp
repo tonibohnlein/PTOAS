@@ -24,7 +24,7 @@ namespace {
 class RegionBuilder {
 public:
     RegionBuilder(const SyncInput& input, Operation* access)
-        : input(input), context(access->getContext()), access(access), scalars(context) {}
+        : input(input), context(access->getContext()), access(access), scalars(context, access) {}
     SyncAccessRegion region;
     AffineExpr number(int64_t value) { return getAffineConstantExpr(value, context); }
     AffineExpr value(Value v)

@@ -25,6 +25,13 @@
 // NO: independent-gm 1=1
 // MAY-LABEL: storage isolated_write
 // MAY: independent-gm 1=1
+// NO-LABEL: storage symbolic_offsets
+// NO: independent-gm 0=1
+// NO: independent-gm 3=1
+// MAY-LABEL: storage symbolic_offsets
+// MAY: independent-gm 0=0
+// MAY: independent-gm 3=0
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 module attributes {pto.target_arch = "a3"} {
   func.func @alias_policy(%a: !pto.ptr<f32, gm>, %b: !pto.ptr<f32, gm>, %offset: index)
       attributes {test.independent_gm = array<i64: 0, 1, 2, 4, 6>} {
@@ -54,6 +61,25 @@ module attributes {pto.target_arch = "a3"} {
     %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
     %src = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf32>
     pto.tstore ins(%src : !pto.tile_buf<vec, 16x16xf32>) outs(%part : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+  // Loop-dependent offsets do not erase canonical pointer provenance.
+  func.func @symbolic_offsets(%a: !pto.ptr<f32, gm>, %b: !pto.ptr<f32, gm>, %n: index)
+      attributes {test.independent_gm = array<i64: 0, 3>} {
+    %base = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c1024 = arith.constant 1024 : index
+    %va = pto.make_tensor_view %a, shape = [%c1024, %c16], strides = [%c16, %c1] : !pto.tensor_view<1024x16xf32>
+    %vb = pto.make_tensor_view %b, shape = [%c1024, %c16], strides = [%c16, %c1] : !pto.tensor_view<1024x16xf32>
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %c0 to %n step %c1 {
+      %pa = pto.partition_view %va, offsets = [%i, %c0], sizes = [%c16, %c16] : !pto.tensor_view<1024x16xf32> -> !pto.partition_tensor_view<16x16xf32>
+      %pb = pto.partition_view %vb, offsets = [%i, %c0], sizes = [%c16, %c16] : !pto.tensor_view<1024x16xf32> -> !pto.partition_tensor_view<16x16xf32>
+      pto.tload ins(%pa : !pto.partition_tensor_view<16x16xf32>) outs(%tile : !tile)
+      pto.tstore ins(%tile : !tile) outs(%pb : !pto.partition_tensor_view<16x16xf32>)
+    }
     return
   }
 }

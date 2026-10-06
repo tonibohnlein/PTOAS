@@ -32,6 +32,7 @@ public:
         auto low = constant(loop.getLowerBound()), step = constant(loop.getStep());
         const auto bits = DataLayout::closest(function).getTypeSizeInBits(builder.getIndexType());
         if (!low || *low < 0 || !step || *step <= 0 || bits.isScalable() || bits.getFixedValue() != 64) {
+            error = "guarded endpoint domain requires a nonnegative start, positive step and 64-bit index";
             return failure();
         }
         auto zero = arena.constant(0), one = arena.constant(1);

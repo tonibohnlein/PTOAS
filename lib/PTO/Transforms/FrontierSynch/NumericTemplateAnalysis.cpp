@@ -118,6 +118,9 @@ PeriodicAnalysis analyzeNumericTemplate(const NumericTemplate& input)
     // Every written atom has the same writer one visit later. Two visits
     // therefore contain every source-zero lifetime generator. Read-only atoms
     // yield none. Endpoint truncation handles all finite trip counts, including 0.
-    return analyzePeriodicDemands(payloads, records);
+    std::vector<PeriodicRecord> native;
+    for (const auto& edge : input.nativePrerequisites) { native.push_back({edge.first, edge.second, 0}); }
+    for (const auto& edge : input.valueDemands) { records.push_back({edge.first, edge.second, 0}); }
+    return analyzePeriodicDemands(payloads, records, native);
 }
 } // namespace mlir::pto::frontiersynch

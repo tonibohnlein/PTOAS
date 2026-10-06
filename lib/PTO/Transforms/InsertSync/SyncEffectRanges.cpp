@@ -116,6 +116,34 @@ void retainBufferBound(const SyncInput& input, SyncStorageEffect& effect)
             }
         }
     }
+    // Preserve the same enclosing allocation bound when its base is symbolic.
+    // Verify the operand's view chain reaches that allocation directly; a
+    // cached root of a carried pointer is not a proof of its current address.
+    if (!effect.rangesMaterialized && !effect.selection) {
+        Value root = effect.memory->baseBuffer;
+        while (auto* op = root.getDefiningOp()) {
+            auto view = dyn_cast<ViewLikeOpInterface>(op);
+            if (!view || view.getViewSource() == root) { break; }
+            root = view.getViewSource();
+        }
+        auto allocation = root.getDefiningOp<AllocTileOp>();
+        auto found = input.buffers().find(root);
+        if (allocation && root == effect.memory->rootBuffer && found != input.buffers().end() &&
+            found->second.size() == 1 && found->second.front()->allocateSize <= INT64_MAX) {
+            auto origin = resolveBufferRegion(input, root, effect.phase->elementOp);
+            if (origin) {
+                auto* context = allocation.getContext();
+                SmallVector<AffineExpr> zeros(origin->extents.size(), getAffineConstantExpr(0, context));
+                origin->byteOffset = origin->byteOffset.replaceDims(zeros) + getAffineDimExpr(0, context);
+                origin->extents = {getAffineConstantExpr(found->second.front()->allocateSize, context)};
+                origin->elementBytes = 1;
+                effect.regions.push_back(*origin);
+                effect.region = *origin;
+                effect.rangesMaterialized = materializeRegion(*origin, effect.memory->scope, effect.ranges);
+                return;
+            }
+        }
+    }
     // An enclosing allocation interval is the supplied access model when no
     // narrower selection is available. It is not an instruction admission test.
     auto* context = effect.phase->elementOp->getContext();

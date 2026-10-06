@@ -29,7 +29,8 @@ namespace {
 AffineExpr normalizeValue(Value input, const ArithmeticSite& site, unsigned offset,
                           MLIRContext* context, llvm::function_ref<AffineExpr(Value)> parameter)
 {
-    mlir::pto::detail::ScalarEvolution evolution(context);
+    mlir::pto::detail::ScalarEvolution evolution(context, input.getDefiningOp() ? input.getDefiningOp() :
+        input.getParentRegion()->getParentOp());
     return evolution.value(input, [&](Value value) -> AffineExpr {
         for (auto [id, storedLoop] : llvm::enumerate(site.loops)) {
             auto loop = storedLoop;

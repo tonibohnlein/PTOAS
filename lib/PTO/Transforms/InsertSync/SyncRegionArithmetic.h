@@ -11,6 +11,7 @@
 #define PTO_TRANSFORMS_INSERTSYNC_SYNCREGIONARITHMETIC_H
 #include "mlir/IR/AffineExpr.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/MathExtras.h"
 #include <optional>
 namespace mlir::pto::detail {
@@ -96,6 +97,32 @@ inline AffineExpr substitute(AffineExpr expression, ArrayRef<AffineExpr> dimensi
     case AffineExprKind::CeilDiv: return a.ceilDiv(divisor.getValue());
     default: return {};
     }
+}
+// Prove a map is origin + stride*s_varying by exact reconstruction, not by
+// sampling. The returned origin retains all dimensions and invariant symbols.
+inline std::optional<std::pair<AffineExpr, int64_t>> splitTranslation(
+    AffineExpr map, unsigned dimensionCount, unsigned symbolCount, unsigned varying)
+{
+    if (!map || varying >= symbolCount) { return std::nullopt; }
+    auto* context = map.getContext();
+    SmallVector<AffineExpr> dimensions, symbols;
+    for (unsigned i = 0; i < dimensionCount; ++i) { dimensions.push_back(getAffineDimExpr(i, context)); }
+    for (unsigned i = 0; i < symbolCount; ++i) { symbols.push_back(getAffineSymbolExpr(i, context)); }
+    symbols[varying] = getAffineConstantExpr(0, context);
+    auto zero = substitute(map, dimensions, symbols);
+    symbols[varying] = getAffineConstantExpr(1, context);
+    auto one = substitute(map, dimensions, symbols);
+    auto negative = getAffineConstantExpr(-1, context);
+    auto difference = checkedAdd(one, checkedMul(zero, negative));
+    auto stride = difference ? dyn_cast<AffineConstantExpr>(
+        simplifyAffineExpr(difference, dimensionCount, symbolCount)) : AffineConstantExpr{};
+    if (!stride) { return std::nullopt; }
+    auto rebuilt = checkedAdd(zero, checkedMul(getAffineSymbolExpr(varying, context), stride));
+    auto delta = checkedAdd(map, checkedMul(rebuilt, negative));
+    auto exact = delta ? dyn_cast<AffineConstantExpr>(
+        simplifyAffineExpr(delta, dimensionCount, symbolCount)) : AffineConstantExpr{};
+    if (!exact || exact.getValue()) { return std::nullopt; }
+    return std::make_pair(zero, stride.getValue());
 }
 } // namespace mlir::pto::detail
 #endif

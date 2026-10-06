@@ -42,6 +42,11 @@ void FiniteGuardedState::closeAndReduce()
     for (uint32_t i = 0; i < count; ++i) {
         for (uint32_t j = i+1; j < count; ++j) { graph[2*i+1][2*j] = demands[i][j]; }
     }
+    for (const auto& edge : nativePrerequisites) {
+        auto native = both(presence[edge.source], presence[edge.target]);
+        graph[2*edge.source+1][2*edge.target] = either(graph[2*edge.source+1][2*edge.target], native);
+        demands[edge.source][edge.target] = both(demands[edge.source][edge.target], negate(native));
+    }
     // Reflexive diagonals are presence-gated. Every nontrivial edge points
     // forward in this potential-event order; mutually exclusive arms never join.
     for (std::size_t k = 0; k < graph.size(); ++k) {

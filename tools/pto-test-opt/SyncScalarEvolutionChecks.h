@@ -15,10 +15,19 @@ bool checkScalarSamples(mlir::Operation* op, mlir::DenseI64ArrayAttr samples)
 {
     using namespace mlir;
     auto loop = op->getParentOfType<scf::ForOp>();
-    if (!loop || op->getNumResults() != 1 || samples.size() % 2 != 0) {
+    Value input = loop ? loop.getInductionVar() : Value{};
+    if (op->hasAttr("test.scalar_external_input")) {
+        auto function = op->getParentOfType<func::FuncOp>();
+        function.walk([&](Operation* candidate) {
+            if (candidate->hasAttr("test.scalar_input") && candidate->getNumResults() == 1) {
+                input = candidate->getResult(0);
+            }
+        });
+    }
+    if (!input || op->getNumResults() != 1 || samples.size() % 2 != 0) {
         return false;
     }
-    pto::detail::ScalarEvolution scalars(op->getContext());
+    pto::detail::ScalarEvolution scalars(op->getContext(), op);
     SmallVector<Value> symbols;
     auto expression = scalars.value(op->getResult(0), [&](Value v) {
         auto it = llvm::find(symbols, v);
@@ -28,9 +37,11 @@ bool checkScalarSamples(mlir::Operation* op, mlir::DenseI64ArrayAttr samples)
         }
         return getAffineSymbolExpr(it - symbols.begin(), op->getContext());
     });
-    // Every remaining symbol must be this loop's IV, not an opaque update or
-    // iter_arg. The expected values exercise the closed form, including resets.
-    if (!expression || llvm::any_of(symbols, [&](Value v) { return v != loop.getInductionVar(); })) {
+    // Every remaining symbol must be the selected input, not an opaque update
+    // or iter_arg. Samples independently exercise the normalized closed form.
+    if (!expression || llvm::any_of(symbols, [&](Value v) { return v != input; })) {
+        op->emitError("scalar normalization retained an unexpected SSA symbol");
+        if (expression) { llvm::errs() << "normalized: " << expression << "\n"; }
         return false;
     }
     auto map = AffineMap::get(0, symbols.size(), expression);
@@ -40,6 +51,8 @@ bool checkScalarSamples(mlir::Operation* op, mlir::DenseI64ArrayAttr samples)
         SmallVector<Attribute> values;
         if (failed(map.constantFold(operands, values)) || values.size() != 1 ||
             cast<IntegerAttr>(values[0]).getInt() != samples[i + 1]) {
+            op->emitError("normalized scalar differs from the independently specified sample");
+            llvm::errs() << "normalized: " << expression << ", input=" << samples[i] << "\n";
             return false;
         }
     }
@@ -51,14 +64,20 @@ bool checkOpaqueScalar(mlir::Operation* op)
     if (op->getNumResults() != 1) {
         return false;
     }
-    pto::detail::ScalarEvolution scalars(op->getContext());
+    pto::detail::ScalarEvolution scalars(op->getContext(), op);
     SmallVector<Value> symbols;
     auto expression = scalars.value(op->getResult(0), [&](Value v) {
         symbols.push_back(v);
         return getAffineSymbolExpr(symbols.size() - 1, op->getContext());
     });
     auto symbol = dyn_cast<AffineSymbolExpr>(expression);
-    return symbol && symbol.getPosition() < symbols.size() && symbols[symbol.getPosition()] == op->getResult(0);
+    const bool opaque = symbol && symbol.getPosition() < symbols.size() &&
+                        symbols[symbol.getPosition()] == op->getResult(0);
+    if (!opaque) {
+        op->emitError("expected an opaque scalar expression");
+        if (expression) { llvm::errs() << "normalized: " << expression << "\n"; }
+    }
+    return opaque;
 }
 bool checkScalarEvolution(mlir::func::FuncOp function)
 {

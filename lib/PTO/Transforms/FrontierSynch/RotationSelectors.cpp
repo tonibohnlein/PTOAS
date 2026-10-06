@@ -139,6 +139,15 @@ std::optional<Form> wrappingForm(Value root, scf::ForOp loop, uint64_t count,
 }
 } // namespace
 
+std::optional<SlotPattern> matchRotatingNumerator(AffineExpr numerator, ArrayRef<Value> symbols,
+    scf::ForOp loop, uint64_t count, const PhaseIndex& index, bool allowParameters)
+{
+    if (!count || count > static_cast<uint64_t>(INT64_MAX)) {
+        return std::nullopt;
+    }
+    return fromExpression(numerator, symbols, loop, count, index, allowParameters);
+}
+
 std::optional<SlotPattern> matchRotatingSlot(Value slot, scf::ForOp loop, uint64_t count,
                                             const PhaseIndex& index, bool allowParameters)
 {
@@ -146,7 +155,7 @@ std::optional<SlotPattern> matchRotatingSlot(Value slot, scf::ForOp loop, uint64
         return std::nullopt;
     }
     SmallVector<Value> symbols;
-    mlir::pto::detail::ScalarEvolution evolution(loop.getContext());
+    mlir::pto::detail::ScalarEvolution evolution(loop.getContext(), loop);
     auto symbol = [&](Value v) {
         auto found = llvm::find(symbols, v);
         unsigned position = std::distance(symbols.begin(), found);

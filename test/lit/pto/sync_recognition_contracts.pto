@@ -26,12 +26,9 @@
 // CHECK: recognize rotating: applicable
 // CHECK: rotation family=0 slots=2 stride=0 offset=1 refresh=1 atom=[0,4)
 // CHECK-LABEL: recognition scalar_dependency
-// CHECK: recognize arithmetic: missing-premise
-// CHECK: issue additional-prerequisite
-// CHECK: recognize explicit: missing-premise
-// CHECK: issue additional-prerequisite
-// CHECK: recognize finite-guarded: missing-premise
-// CHECK: issue additional-prerequisite
+// CHECK: recognize arithmetic: applicable
+// CHECK: recognize explicit: applicable
+// CHECK: recognize finite-guarded: applicable
 // CHECK-LABEL: recognition existing_barrier
 // CHECK: recognize explicit: missing-premise
 // CHECK: issue additional-prerequisite

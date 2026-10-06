@@ -27,7 +27,7 @@ void normalizeFragments(RecognitionResult& result, const SyncStorageEffects& eff
         llvm::sort(entry.second);
         entry.second.erase(std::unique(entry.second.begin(), entry.second.end()), entry.second.end());
     }
-    SmallVector<RotatingAccess> normalized;
+    SmallVector<RotatingAccess, 0> normalized;
     DenseMap<Value, std::size_t> valueIds;
     DenseMap<AffineExpr, std::size_t> expressionIds;
     DenseMap<const CompoundInstanceElement*, std::size_t> phaseIds;

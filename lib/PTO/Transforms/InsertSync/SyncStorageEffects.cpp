@@ -221,6 +221,20 @@ bool SyncStorageEffects::mayOverlap(std::size_t first, std::size_t second) const
     if (empty(a) || empty(b)) {
         return false;
     }
+    // Symbolic access maps retain pointer provenance even when their offsets
+    // depend on an IV. Apply the existing distinct-argument GM policy to those
+    // resolved bases; carried/select-produced pointers are not canonical bases.
+    if (a.memory->scope == AddressSpace::GM && !a.regions.empty() && !b.regions.empty() &&
+        llvm::all_of(a.regions, [&](const auto& left) {
+            return llvm::all_of(b.regions, [&](const auto& right) {
+                if (!left.base || !right.base || left.base == right.base) { return false; }
+                SmallVector<SyncStorageCell> domains{{AddressSpace::GM, 0, 1, left.base},
+                                                    {AddressSpace::GM, 0, 1, right.base}};
+                return storageBasesAreComparable(domains, memory.gmPolicy());
+            });
+        })) {
+        return false;
+    }
     // Distinct GM roots follow the user's alias policy even with exact maps.
     // Never apply the legacy same-root range test to an instruction selection.
     if (a.memory->scope == AddressSpace::GM && a.memory->rootBuffer != b.memory->rootBuffer &&

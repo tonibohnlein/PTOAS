@@ -9,6 +9,14 @@
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 namespace mlir::pto {
+SyncResultAvailability resultAvailability(const CompoundInstanceElement& phase, Value result) {
+  if (!result || result.getDefiningOp() != phase.elementOp ||
+      !isa<IntegerType, IndexType, FloatType>(result.getType())) {
+    return SyncResultAvailability::NonScalar;
+  }
+  return phase.macroOpInstanceId < 0 && phase.kPipeValue == PipelineType::PIPE_S
+      ? SyncResultAvailability::SynchronousScalar : SyncResultAvailability::RequiresCompletion;
+}
 SyncInput::SyncInput(GMAliasPolicy policy)
     : analyzer(policy), resolvedAccesses(std::make_unique<SyncStorageEffects>()) {}
 SyncInput::~SyncInput() = default;

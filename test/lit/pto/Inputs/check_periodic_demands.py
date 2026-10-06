@@ -86,7 +86,14 @@ def unfolded(case, count):
             destination = occurrence // types * types + distance * types + target
             if destination < count:
                 edges.add((2 * occurrence + 1, 2 * destination))
-    return closure(2 * count, edges)
+    fixed = set()
+    for source, target, distance in case.get("native_prerequisites", []):
+        for occurrence in range(source, count, types):
+            destination = occurrence // types * types + distance * types + target
+            if destination < count:
+                fixed.add((2 * occurrence + 1, 2 * destination))
+    reach, covers = closure(2 * count, edges | fixed)
+    return reach, covers - fixed
 
 
 def retained_instances(result, count):
@@ -222,6 +229,13 @@ def requests():
                                 for atom in range(5) if (mode := rng.randrange(4))]}
                   for i in range(size)]
         cases.append({"scan": values, "prerequisites": [[ids[0], ids[-1], 0]] if size > 1 else []})
+    for _ in range(80):
+        size = rng.randrange(2, 7)
+        records = [[a, b, rng.randrange(1 if a >= b else 0, 4)]
+                   for a in range(size) for b in range(size) if rng.randrange(3) == 0]
+        fixed = [[a, b, 0] for a in range(size) for b in range(a + 1, size) if rng.randrange(3) == 0]
+        cases.append({"pipes": [rng.randrange(3) for _ in range(size)], "records": records,
+                      "native_prerequisites": fixed, "prefix": size * 4})
     return cases
 
 

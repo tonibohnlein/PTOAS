@@ -20,6 +20,8 @@ struct GuardedRotatingFragment {
     uint64_t slots = 0, divisor = 0, refresh = 0, inverseStride = 0;
     RegionExpressions::Id offset = RegionExpressions::invalid;
     RegionExpressions::Id read = RegionExpressions::invalid, write = RegionExpressions::invalid;
+    std::optional<SyncStorageCell> firstPhysicalSlot;
+    uint64_t physicalSlotStride = 0;
 };
 struct GuardedRotatingAnalysis {
     std::string error;
@@ -29,6 +31,7 @@ struct GuardedRotatingAnalysis {
     std::vector<GuardedPeriodicPayload> payloads;
     std::vector<GuardedPeriodicRecord> generators;
     std::vector<GuardedRotatingFragment> fragments;
+    SmallVector<std::size_t> dischargedEffects;
     GuardedPeriodicQuotient periodic;
     uint64_t refreshBound = 0;
 };

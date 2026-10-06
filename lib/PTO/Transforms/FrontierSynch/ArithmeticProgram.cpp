@@ -157,6 +157,33 @@ void order(detail::ProgramBuilder& builder, std::size_t a, std::size_t b)
         builder.output.primitives.relations.push_back(std::move(relation));
     }
 }
+void prerequisites(detail::ProgramBuilder& builder, const PhaseIndex& index)
+{
+    for (std::size_t b = 0; b < builder.output.sites.size(); ++b) {
+        const auto& target = builder.output.sites[b];
+        for (const auto& edge : index.prerequisitesFor(target.phase->elementOp)) {
+            for (std::size_t a = 0; a < b; ++a) {
+                const auto& source = builder.output.sites[a];
+                if (source.phase != edge.producer) { continue; }
+                const unsigned left = source.loops.size(), right = target.loops.size();
+                auto relation = builder.relation(edge.native ? PrimitiveKind::Native : PrimitiveKind::Prerequisites,
+                                                  left + right);
+                relation.sourceSite = a; relation.targetSite = b;
+                relation.sourceDimensions = left; relation.targetDimensions = right;
+                relation.sourceEvent = ArithmeticEvent::Completion;
+                relation.targetEvent = ArithmeticEvent::Start;
+                auto rows = builder.domain(source, 0);
+                llvm::append_range(rows, builder.domain(target, left));
+                for (unsigned i = 0; i < std::min(left, right) && source.loops[i] == target.loops[i]; ++i) {
+                    auto equal = getAffineDimExpr(i, builder.context) - getAffineDimExpr(left+i, builder.context);
+                    rows.push_back(equal); rows.push_back(-equal);
+                }
+                builder.emitForSites(relation, rows, {{&source, 0}, {&target, left}});
+                builder.output.primitives.relations.push_back(std::move(relation));
+            }
+        }
+    }
+}
 void clearExports(ArithmeticProgram& output)
 {
     output.primitives = {};
@@ -254,6 +281,7 @@ ArithmeticProgram recognizeArithmeticProgram(func::FuncOp function, const PhaseI
             order(builder, a, b);
         }
     }
+    prerequisites(builder, index);
     detail::extractAccesses(builder, input, effects);
     if (output.extraction.state != RecognitionState::Applicable) {
         clearExports(output);
