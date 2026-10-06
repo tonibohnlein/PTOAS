@@ -60,6 +60,7 @@ ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, co
     result.dischargedEffects.assign(discharged.begin(), discharged.end());
     llvm::DenseSet<std::size_t> omitted(discharged.begin(), discharged.end());
     HardwareProtectionBuilder protection;
+    const auto invocation = invocationProtectionGroups(input.accesses());
     for (const auto* phase : result.phases) {
         ExplicitEffects occurrence;
         occurrence.payload = static_cast<uint32_t>(result.occurrences.size());
@@ -80,6 +81,13 @@ ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, co
             }
         }
         protection.observe(phase->elementOp, occurrence, accumulatorAtoms);
+        if (auto group = invocation.lookup(phase)) {
+            for (auto& access : occurrence.accesses) {
+                if (input.accesses().cells()[access.atom].space == AddressSpace::ACC) {
+                    access.protectionGroup = group;
+                }
+            }
+        }
         result.occurrences.push_back(std::move(occurrence));
     }
     const auto modeledProtection = modeledProtectionGroups(input, phases);

@@ -15,7 +15,8 @@ namespace mlir::pto::frontiersynch {
 namespace {
 void protection(RotatingAnalysis& result, const SyncInput& input, const RecognitionResult& recognized)
 {
-    // A group is confined to this body visit. Only stationary accumulator
+    // Local groups are confined to this body visit; certified invocation
+    // groups are applied below to extend protection across visits. Only stationary accumulator
     // fragments can share a physical identity across sites here; rotating
     // accumulators retain ordinary software demands.
     HardwareProtectionBuilder builder;
@@ -50,6 +51,7 @@ void protection(RotatingAnalysis& result, const SyncInput& input, const Recognit
         }
     }
     std::vector<std::map<uint32_t, uint64_t>> groups(word.size());
+    const auto invocation = invocationProtectionGroups(input.accesses());
     for (const auto& occurrence : word) {
         for (const auto& access : occurrence.accesses) {
             groups[occurrence.payload][access.atom] = access.protectionGroup;
@@ -58,6 +60,10 @@ void protection(RotatingAnalysis& result, const SyncInput& input, const Recognit
     for (std::size_t i = 0; i < result.fragments.size(); ++i) {
         auto& fragment = result.fragments[i];
         fragment.protectionGroup = groups[fragment.payload][atoms[i]];
+        const auto& effect = input.accesses().effects()[recognized.accesses[i].effect];
+        if (effect.memory->scope == AddressSpace::ACC && invocation.lookup(effect.phase)) {
+            fragment.protectionGroup = invocation.lookup(effect.phase);
+        }
     }
 }
 } // namespace

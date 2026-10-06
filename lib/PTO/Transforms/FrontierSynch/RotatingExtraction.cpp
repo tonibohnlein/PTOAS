@@ -186,7 +186,9 @@ private:
     void emit(const Access& source, const Access& target)
     {
         const auto advance = distance(source, target);
-        if (advance == 0 && source.fragment.write && target.fragment.write &&
+        // Local groups protect one visit; invocation proofs also cover wraps.
+        const bool sameScope = advance == 0 || (source.fragment.protectionGroup & invocationProtectionBit);
+        if (sameScope && source.fragment.write && target.fragment.write &&
             hardwareProtectsConflict(payloads[source.fragment.payload].pipe, source.fragment.protectionGroup,
                                       payloads[target.fragment.payload].pipe, target.fragment.protectionGroup)) {
             ++output.protectedHazards;

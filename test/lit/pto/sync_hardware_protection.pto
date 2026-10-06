@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: %python %S/Inputs/check_hardware_protection.py pto-sync-input-test %s
+// RUN: %python %S/Inputs/check_cross_region_protection.py pto-sync-input-test %s
 // Two same-shape accumulation chains, separated by an initializer reset.
 !a = !pto.tile_buf<left, 32x16xf16, slayout=row_major>
 !b = !pto.tile_buf<right, 16x80xf16, slayout=col_major>

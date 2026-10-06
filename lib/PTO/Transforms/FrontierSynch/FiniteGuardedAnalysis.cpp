@@ -15,6 +15,7 @@ namespace {
 bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recognized, const SyncInput& input)
 {
     HardwareProtectionBuilder protection;
+    const auto invocation = invocationProtectionGroups(input.accesses());
     std::optional<std::size_t> previousGuard;
     Operation* previous = nullptr;
     std::vector<SmallVector<const CompoundInstanceElement*>> scopes;
@@ -56,6 +57,13 @@ bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recogni
             if (input.accesses().cells()[id].space == AddressSpace::ACC) { accumulator.push_back(id); }
         }
         protection.observe(phase->elementOp, occurrence, accumulator);
+        if (auto group = invocation.lookup(phase)) {
+            for (auto& access : occurrence.accesses) {
+                if (input.accesses().cells()[access.atom].space == AddressSpace::ACC) {
+                    access.protectionGroup = group;
+                }
+            }
+        }
         state.effects.push_back(std::move(occurrence));
     }
     std::vector<uint64_t> modeledGroups(input.accesses().effects().size(), 0);
