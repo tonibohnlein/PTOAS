@@ -115,7 +115,7 @@ void HardwareProtectionBuilder::observe(Operation* operation, ExplicitEffects& o
     std::unordered_set<uint32_t> atoms(accumulatorAtoms.begin(), accumulatorAtoms.end());
     if (matrix->initializes || matrix->accumulator != accumulatorType || atoms != activeAtoms) {
         endScope();
-        if (!matrix->initializes || nextGroup == std::numeric_limits<uint64_t>::max()) {
+        if (!matrix->initializes || nextGroup == invocationProtectionBit - 1) {
             return;
         }
         activeGroup = ++nextGroup;

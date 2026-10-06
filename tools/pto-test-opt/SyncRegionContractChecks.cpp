@@ -8,6 +8,7 @@
 // Test the generic consumer with synthetic MLIR effect declarations. These
 // declarations do not assert native coverage for the fixture's PTO operations.
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
+#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "PTO/IR/PTOAccessRegion.h"
 #include "../../lib/PTO/Transforms/InsertSync/SyncEffectRanges.h"
 #include "llvm/Support/raw_ostream.h"
@@ -48,6 +49,21 @@ int runSyncRegionContractChecks(func::FuncOp function, const SyncInput& input)
     });
     if (dimensions.wasInterrupted()) {
         return 1;
+    }
+    const auto groups = frontiersynch::invocationProtectionGroups(input.accesses());
+    DenseMap<int64_t, uint64_t> expectedGroups;
+    DenseMap<uint64_t, int64_t> actualGroups;
+    for (auto* phase : input.instructions()) {
+        auto expected = phase->elementOp->getAttrOfType<IntegerAttr>("test.protection_group");
+        if (!expected) { continue; }
+        const auto label = expected.getInt();
+        const auto group = groups.lookup(phase);
+        if (label < 0 || bool(label) != bool(group) ||
+            expectedGroups.try_emplace(label, group).first->second != group ||
+            actualGroups.try_emplace(group, label).first->second != label) {
+            phase->elementOp->emitError("unexpected invocation protection group");
+            return 1;
+        }
     }
     const auto& storage = input.accesses();
     unsigned checked = 0;

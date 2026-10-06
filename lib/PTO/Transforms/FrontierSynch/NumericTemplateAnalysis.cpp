@@ -79,6 +79,11 @@ FailureOr<std::vector<ExplicitEffects>> numericTemplateOccurrences(const Numeric
                 }
             }
             protection.observe(input.payloads[i].phase->elementOp, occurrence, accumulatorAtoms);
+            if (auto group = input.payloads[i].invocationProtection) {
+                for (auto& access : occurrence.accesses) {
+                    if (input.atoms[access.atom].space == AddressSpace::ACC) { access.protectionGroup = group; }
+                }
+            }
             output.push_back(std::move(occurrence));
         }
     }
