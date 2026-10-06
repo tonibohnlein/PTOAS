@@ -60,11 +60,13 @@ def expected_payloads(g, h, n, m, offset, partial):
     return result
 
 
-def validate(document, arguments, partial=False):
+def validate(document, arguments, partial=False, late_barriers=False):
     assert document["accepted"], (arguments, document)
     trace = document["trace"]
     assert not trace["error"], trace
     expected = expected_payloads(*arguments, partial)
+    if late_barriers:
+        expected = [entry for entry in expected if entry[0] not in ("I", "U")]
     payloads = [event for event in trace["events"] if event["kind"] == "payload"]
     assert [(event["label"], event["coordinates"]) for event in payloads] == [item[:2] for item in expected]
     pipes = [event["pipe"] for event in payloads]
@@ -74,6 +76,12 @@ def validate(document, arguments, partial=False):
             later_reads, later_writes = expected[b][2:]
             if writes & (later_reads | later_writes) or reads & later_writes:
                 edges.add((2 * a + 1, 2 * b))
+    if late_barriers:
+        _, covers = closure(2 * len(payloads), edges)
+        for a, b in covers:
+            if a % 2 == 1 and b % 2 == 0 and pipes[a // 2] == pipes[b // 2]:
+                edges.update((2 * previous + 1, b) for previous in range(b // 2)
+                             if pipes[previous] == pipes[b // 2])
     required = closure(2 * len(payloads), edges)[0]
     commands = []
     gap = 0
@@ -164,22 +172,19 @@ def main():
             metrics.append(tuple(report[key] for key in ("ports", "cells", "expressions", "emitted")) +
                            (len(emitted.splitlines()), emitted.count("pto.logical_")))
         assert metrics[0] == metrics[1], metrics
-        # Without the boundary readers, and with different read/write banks,
-        # the regional placement gate cannot prove every local crossing adjacent.
-        # Keep this unsupported placement transactional instead of inserting an
-        # over-ordering local barrier. The positive fixture above supplies the
-        # cross-pipe reader paths explicitly.
-        unsupported = "\n".join(line for line in source.splitlines()
-                                if 'test.label = "I"' not in line and 'test.label = "U"' not in line)
-        unsupported = unsupported.replace("%slot = arith.remui %sum, %banks",
-                                          "%slot = arith.remui %i, %banks", 1)
-        position = unsupported.index("    scf.for %j")
-        unsupported = unsupported[:position] + unsupported[position:].replace(
+        # Without boundary readers, local covers can skip same-pipe payloads.
+        # The supported policy inserts the barrier immediately before its consumer.
+        late = "\n".join(line for line in source.splitlines()
+                         if 'test.label = "I"' not in line and 'test.label = "U"' not in line)
+        late = late.replace("%slot = arith.remui %sum, %banks", "%slot = arith.remui %i, %banks", 1)
+        position = late.index("    scf.for %j")
+        late = late[:position] + late[position:].replace(
             "%readslot = arith.remui %sum, %banks", "%readslot = arith.remui %j, %banks", 1)
-        path.write_text(unsupported)
-        rejected = invoke(tool, path)
-        assert not rejected["accepted"] and rejected["unchanged_on_failure"], rejected
-    print(f"mixed regional: {count} physical-conflict closures, trip-independent sizes and placement rejection passed")
+        path.write_text(late)
+        validate(invoke(tool, path), (1, 1, 3, 2, 0), late_barriers=True)
+        count += 1
+    print(f"mixed regional: {count} physical-conflict closures, "
+          "trip-independent sizes and consumer-barrier placement passed")
 
 
 if __name__ == "__main__":

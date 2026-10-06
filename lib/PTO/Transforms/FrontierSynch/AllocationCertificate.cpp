@@ -8,6 +8,7 @@
 // Serialize the analysis certificate; allocate IDs within each directed event domain.
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
+#include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/IR/Builders.h"
 #include "llvm/ADT/DenseSet.h"
@@ -128,11 +129,13 @@ FailureOr<PhysicalAllocationPlan> decodeCyclicAllocation(func::FuncOp function, 
             if (auto strategy = certificate.getAs<StringAttr>("strategy")) {
                 return function.emitError("sufficient compact assignment does not fit supplied capacity: ")
                     << strategy.getValue() << " direction " << d.source << " -> " << d.target
-                    << " uses " << budget << "; no minimum-capacity claim or repair applied", failure();
+                    << " uses " << budget
+                    << "; no minimum-capacity claim; scarcity repair not implemented yet", failure();
             }
             return function.emitError("directed event-ID allocation does not fit: direction ")
-                << d.source << " -> " << d.target << " needs " << budget << ", only "
-                << eligibleIds.size() << " eligible IDs are available per direction; no repair applied", failure();
+                << d.source << " -> " << d.target << " certified cyclic strategy needs " << budget << ", only "
+                << eligibleIds.size() << " eligible IDs are available per direction; "
+                << "scarcity repair not implemented yet", failure();
         }
         // The hardware event is identified by (source, destination, numeric ID).
         // Equal numbers in different directions are distinct events, so budgets
@@ -164,7 +167,8 @@ FailureOr<PhysicalAllocationPlan> decodePhysicalAllocation(func::FuncOp function
         bool notifications = false;
         function.walk([&](Operation* op) { notifications |= isa<LogicalSetOp,LogicalWaitOp>(op); });
         if (notifications || function->hasAttr(FiniteAllocationAttr) || !function->hasAttr("pto.endpoint_families")) {
-            return function.emitError("physical allocation requires a supported finite or uniform allocation export"),
+            return function.emitError("physical allocation requires a supported finite or uniform allocation export; "
+                                      "allocation adapter not implemented yet"),
                 failure();
         }
         PhysicalAllocationPlan empty;
@@ -176,6 +180,7 @@ FailureOr<PhysicalAllocationPlan> decodePhysicalAllocation(func::FuncOp function
         }
         return empty;
     }
+    if (certificate.get("groups")) { return decodeRegionalAllocation(function, certificate, eligibleIds); }
     auto version = number(certificate,"version"), id = number(certificate,"plan");
     auto directions = certificate.getAs<ArrayAttr>("directions");
     if (!version || *version != 1 || !id || *id < 0 || !directions) {
@@ -242,9 +247,11 @@ FailureOr<PhysicalAllocationPlan> decodePhysicalAllocation(func::FuncOp function
                 budget = std::max(budget,color+1);
             }
             if (budget > eligibleIds.size()) {
-                return function.emitError(intervals ? "proven finite event-ID capacity exhaustion: direction " :
+                return function.emitError(intervals ?
+                    "finite interval assignment exceeds supplied capacity: direction " :
                     "finite guarded assignment not certified within supplied capacity: direction ")
-                    << *p << " -> " << *q << "; no repair applied", failure();
+                    << *p << " -> " << *q
+                    << "; no minimum-capacity claim; scarcity repair not implemented yet", failure();
             }
         }
         auto ids = eligibleIds.take_front(budget);

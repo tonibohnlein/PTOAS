@@ -6,11 +6,13 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "FiniteGuardedInternal.h"
+#include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(const RegionalDemandFilter& filter)
 {
     insertionError.clear();
     auto plan = std::make_unique<PreparedLogicalPlan>(0);
+    plan->regionalAllocation = std::make_shared<RegionalAllocationSummary>();
     plan->groupedFamilies = true;
     plan->independentPieces = true;
     std::map<Operation*, RegionExpressions::CutEmission> contexts;
@@ -55,6 +57,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
             plan->endpoints.push_back(std::move(barrier));
             continue;
         }
+        auto zero = arena->constant(0);
+        plan->regionalAllocation->groups.push_back({p, q, 1, {{record, 0, 0,
+            {demand.source, zero, PeriodicEventKind::Start},
+            {demand.target, zero, PeriodicEventKind::Completion}, demand.guard}}});
         auto sourceGuard = emit(demand.guard,a.after.before);
         auto sourceIdentity = emit(arena->constant(0),a.after.before);
         auto targetIdentity = emit(arena->constant(0),b.before.before);

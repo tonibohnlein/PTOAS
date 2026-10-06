@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Typed explicit/periodic adapters to the shared regional composition contract.
 #include "SequenceAnalysisInternal.h"
+#include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 #include "llvm/ADT/MapVector.h"
 namespace mlir::pto::frontiersynch {
 void SequenceAnalysisState::bindAdapters()
@@ -69,6 +70,8 @@ void SequenceAnalysisState::bindAdapters()
             }
             auto prepared = std::make_unique<PreparedLogicalPlan>(0);
             if (failed(prepareCountedEndpointCode(function, current.endpoints, *prepared))) { return failure(); }
+            prepared->regionalAllocation =
+                periodicRegionalAllocation(current.regional, current.periodic, current.trips);
             return prepared;
         };
         auto convert = [&](Selected selected) {

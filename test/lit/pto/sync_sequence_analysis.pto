@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: %python %S/Inputs/check_sequence_analysis.py pto-sync-input-test %s
+// RUN: %python %S/Inputs/check_regional_allocation.py pto-sync-input-test pto-test-opt %s
 !mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
 !left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
 !right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
