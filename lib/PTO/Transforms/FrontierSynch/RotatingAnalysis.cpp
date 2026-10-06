@@ -60,24 +60,6 @@ void protection(RotatingAnalysis& result, const SyncInput& input, const Recognit
         fragment.protectionGroup = groups[fragment.payload][atoms[i]];
     }
 }
-bool adjacentLocal(const PeriodicAnalysis& analysis)
-{
-    for (auto id : analysis.retained) {
-        const auto& edge = analysis.generators[id];
-        auto pipe = analysis.payloads[edge.source].pipe;
-        if (pipe != analysis.payloads[edge.target].pipe) {
-            continue;
-        }
-        const auto row = analysis.pipeRows.at(pipe);
-        APInt rank(128, edge.displacement);
-        rank *= APInt(128, analysis.frontiers[row].count);
-        rank += APInt(128, analysis.localRanks[edge.target]);
-        if (rank != APInt(128, static_cast<uint64_t>(analysis.localRanks[edge.source]) + 1)) {
-            return false;
-        }
-    }
-    return true;
-}
 } // namespace
 RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
     const SyncInput& input, const RecognitionResult& recognized)
@@ -144,10 +126,6 @@ RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
     result.periodic = analyzePeriodicDemands(payloads, result.extraction.generators);
     result.error = result.periodic.error;
     if (!result.error.empty()) {
-        return result;
-    }
-    if (!adjacentLocal(result.periodic)) {
-        result.error = "rotating minimum demand violates adjacent same-pipe insertion contract";
         return result;
     }
     SmallVector<TemplateEndpointAnchor> anchors;

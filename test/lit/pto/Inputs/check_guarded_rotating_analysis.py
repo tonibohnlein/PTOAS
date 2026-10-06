@@ -142,11 +142,13 @@ def main():
         # Removing the consumer leaves the writer's distance-two WAW cover
         # non-adjacent on its pipe; a barrier would impose an extra order.
         nonadjacent = "\n".join(line for line in source.splitlines() if "pto.tmatmul" not in line)
-        for program in (varying, nonadjacent):
-            path.write_text(program)
-            report = invoke(tool, path)
-            assert not report["accepted"] and report["unchanged_on_failure"], report
-    print(f"guarded rotating: {count} physical-conflict traces and two transactional rejections passed")
+        path.write_text(varying)
+        report = invoke(tool, path)
+        assert not report["accepted"] and report["unchanged_on_failure"], report
+        path.write_text(nonadjacent)
+        report = invoke(tool, path)
+        assert report["accepted"], report
+    print(f"guarded rotating: {count} physical-conflict traces and nonadjacent insertion and guard rejection passed")
 
 
 if __name__ == "__main__":

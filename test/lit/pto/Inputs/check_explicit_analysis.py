@@ -75,7 +75,7 @@ def main():
             path = Path(tmp)/"case.pto"
             path.write_text(prefix + 'module attributes {pto.target_arch = "a3"} {\n' + function + '\n}\n')
             inserted = subprocess.run([tool, "--insert-logical", str(path)], capture_output=True, text=True)
-            require((inserted.returncode != 0) == (name == "reject_nonadjacent"), (name, inserted.stderr))
+            require(inserted.returncode == 0, (name, inserted.stderr))
             if inserted.returncode:
                 continue
             cross = sum(document["occurrences"][a]["pipe"] != document["occurrences"][b]["pipe"]

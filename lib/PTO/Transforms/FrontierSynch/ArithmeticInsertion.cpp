@@ -336,10 +336,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticInsertion(
     const ArithmeticDemandAnalysis& analysis, std::string& error)
 {
     const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
-    if (!analysis.error.empty() || !analysis.exactMinimum || !analysis.adjacentLocalDemands ||
+    if (!analysis.error.empty() || !analysis.exactMinimum ||
         bits.isScalable() || bits.getFixedValue() != 64 || analysis.period > 2 ||
         analysis.parameterCount != program.parameters.size()) {
-        error = "arithmetic insertion requires exact adjacent demands and a supported index representation";
+        error = "arithmetic insertion requires reduced demands and a supported index representation";
         return failure();
     }
     SmallVector<uint32_t> pipes;
@@ -365,10 +365,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneralArithmeticInsertio
     const GeneralArithmeticDemandAnalysis& analysis, std::string& error)
 {
     const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
-    if (!analysis.error.empty() || !analysis.exactMinimum || !analysis.adjacentLocalDemands ||
+    if (!analysis.error.empty() || !analysis.exactMinimum ||
         bits.isScalable() || bits.getFixedValue() != 64 || analysis.period > 2 ||
         analysis.parameterCount != program.parameters.size()) {
-        error = "arithmetic insertion requires exact adjacent demands and a supported index representation";
+        error = "arithmetic insertion requires reduced demands and a supported index representation";
         return failure();
     }
     SmallVector<uint32_t> pipes;

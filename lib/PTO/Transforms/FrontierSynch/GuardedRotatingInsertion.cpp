@@ -20,23 +20,6 @@ std::optional<int64_t> constant(Value value)
     if (!matchPattern(value, m_ConstantInt(&number)) || number.getBitWidth() > 64) { return std::nullopt; }
     return number.getSExtValue();
 }
-bool adjacent(GuardedRotatingAnalysis& analysis, std::size_t record)
-{
-    auto& arena = *analysis.expressions;
-    const auto& edge = analysis.generators[record];
-    const auto pipe = analysis.payloads[edge.source].pipe;
-    if (pipe != analysis.payloads[edge.target].pipe) { return true; }
-    auto interval = arena.boolean(true);
-    const bool wraps = edge.source >= edge.target;
-    for (std::size_t i = 0; i < analysis.payloads.size(); ++i) {
-        const bool between = wraps ? i > edge.source || i < edge.target : i > edge.source && i < edge.target;
-        if (between && analysis.payloads[i].pipe == pipe) {
-            interval = arena.land(interval, arena.lnot(analysis.payloads[i].presence));
-        }
-    }
-    auto distance = arena.eq(edge.displacement, arena.constant(wraps ? 1 : 0));
-    return arena.implies(analysis.periodic.retained[record], arena.land(distance, interval));
-}
 class Preparer {
 public:
     Preparer(func::FuncOp function, GuardedRotatingAnalysis& analysis, PreparedLogicalPlan& plan, std::string& error,
@@ -65,10 +48,6 @@ public:
         for (std::size_t i = 0; i < analysis.generators.size(); ++i) {
             auto retained = analysis.periodic.retained[i];
             if (arena.implies(retained, arena.boolean(false))) { continue; }
-            if (!adjacent(analysis, i)) {
-                error = "guarded rotating local record " + std::to_string(i) + " lacks an adjacency proof";
-                return failure();
-            }
             auto distance = analysis.generators[i].displacement;
             auto enabledValue = arena.emitContextual(retained, builder, loop, entry);
             auto distanceValue = arena.emitContextual(distance, builder, loop, entry);

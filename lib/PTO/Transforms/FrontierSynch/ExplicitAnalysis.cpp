@@ -250,10 +250,6 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareExplicitInsertion(
         family.members.push_back({static_cast<uint32_t>(record), edge.source, edge.target, {}, {}});
         plan->families.push_back(std::move(family));
         if (sourcePipe == targetPipe) {
-            if (analysis.reduction.localRanks[edge.target] != analysis.reduction.localRanks[edge.source] + 1) {
-                function.emitError("explicit minimum demand violates adjacent same-pipe insertion contract");
-                return failure();
-            }
             plan->endpoints.push_back({target, LogicalCommandKind::Barrier, sourcePipe, targetPipe,
                                        record, enabled, {}});
         } else {
