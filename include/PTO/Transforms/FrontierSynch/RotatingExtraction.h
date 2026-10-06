@@ -31,8 +31,9 @@ struct RotatingExtraction {
 // denote disjoint exact storage. In iteration i a fragment accesses atom in
 // slot (stride*i + offset) mod slots. A family has a common slots/stride pair.
 // Modes at identical payload/family/atom/offset are merged before extraction.
-// Nonzero protection groups certify all writer pairs on one pipe WITHIN ONE
-// iteration only. They never suppress an edge crossing iteration boundaries.
+// Nonzero protection groups certify writer pairs on one pipe within a visit.
+// Groups with HardwareProtection.h's invocationProtectionBit additionally
+// certify pairs across visits; their producer must prove that stronger scope.
 // Returns a period-one generating relation; filter both endpoints to finite
 // trips. O(A log A) arithmetic/comparison work and O(A) records, plus GCD and
 // modular inverse work per family; integer costs depend on encoded bit lengths.

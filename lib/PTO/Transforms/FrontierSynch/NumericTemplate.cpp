@@ -8,6 +8,7 @@
 // Late, charged expansion into a periodic body; no demands or IR insertion.
 #include "NumericTemplateInternal.h"
 #include "RecognitionInternal.h"
+#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseSet.h"
 namespace mlir::pto::frontiersynch {
@@ -153,6 +154,10 @@ NumericTemplate recognizeTemplate(scf::ForOp outer, const PhaseIndex& index,
     }
     output.period = 1;
     output.refresh = 1;
+    const auto protection = invocationProtectionGroups(input.accesses());
+    for (auto& payload : output.payloads) {
+        payload.invocationProtection = protection.lookup(payload.phase);
+    }
     return output;
 }
 } // namespace

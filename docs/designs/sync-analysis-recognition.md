@@ -1350,7 +1350,7 @@ used by the native lowering. The implementation requires known compatible
 dimensions, an initializing matrix operation, subsequent in-place accumulations,
 the same accumulator type and physical cells, and `PIPE_M`. Another initializer,
 an incompatible matrix operation, or an intervening access to those accumulator
-cells ends the group. Separate template visits get separate group identities.
+cells ends the group. Local template groups have separate identities per visit.
 Unknown dimensions and other targets receive no exemption. This source was
 checked against the A2/A3-compatible documentation preview built from
 `5c07153f668d` on 2026-09-30; it does not grant all M-pipe conflicts protection.
@@ -1362,7 +1362,34 @@ the protected RAW/WAW witnesses. Other cells' witnesses and supplied prerequisit
 remain. Filtering after reduction would be wrong: a protected accumulator edge
 could already have hidden an indispensable conflict on another cell. Group IDs
 are local to a builder; independently constructed inputs must remap IDs before
-combination. Repeating a scope must create fresh groups.
+combination. Repeating a scope must create fresh local groups.
+
+`invocationProtectionGroups` additionally proves fixed accumulator chains across
+region boundaries in the unchanged function. A function-body initializer starts
+the chain. A counted loop or conditional preserves it only when every body and
+arm preserves the incoming group, including nested structured children. This
+identity transfer covers zero trips and arbitrary repetitions without unfolding.
+Initializers inside repeated control do not establish invocation-wide groups.
+Functions containing descriptor rebinding (`tassign`) receive no invocation
+protection facts: later uses of the original SSA descriptor need not retain its
+recovered address, including after another initializer.
+Unknown effects, mutable descriptors, incompatible operations, and accesses that
+may interfere with the accumulator stop propagation. The proof requires fixed
+materialized ACC maps; a union of possible banks is insufficient.
+
+Explicit, numeric-periodic, rotating and finite-guarded producers consume these
+facts before reduction. Sequence composition also checks them when generating
+ACC crossing demands, while retaining other storage and scalar prerequisites.
+Invocation groups occupy a separate identity namespace and remain tied to the
+original function and shared access model. They cannot be reused after moving a
+child or modifying its surroundings. Allocation runs on the resulting reduced
+order; no emitted barrier is erased after event IDs have been assigned.
+
+The structured proof visits static operations, with no trip-count expansion.
+Descriptor/shape recovery and copies of the active cell set add their own costs;
+the current adapters may request the proof more than once per function. This
+does not extend guarded rotating or arithmetic backends' existing protection
+interfaces automatically.
 
 The sparse scan remains sufficient for the remaining software requirements.
 Along the lifetime-scan witness path for a conflict on one cell, protected links

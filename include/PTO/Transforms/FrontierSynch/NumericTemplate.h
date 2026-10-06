@@ -44,6 +44,8 @@ struct TemplateEffect {
 };
 struct TemplatePayload {
     const CompoundInstanceElement* phase = nullptr;
+    // Shared invocation proof for fixed ACC accesses, valid across visits.
+    uint64_t invocationProtection = 0;
     // Together these identify an expanded occurrence. Original phase anchor
     // supplies its before/after cuts; no IR operation is cloned or moved.
     SmallVector<TemplateCoordinate> coordinates;

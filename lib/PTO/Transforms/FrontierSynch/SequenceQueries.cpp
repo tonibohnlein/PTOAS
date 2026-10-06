@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
+#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 namespace mlir::pto::frontiersynch {
 void SequenceAnalysisState::bridges()
 {
@@ -18,6 +19,16 @@ void SequenceAnalysisState::bridges()
         for (const auto& access : child.regional.accessBoundary) { residual |= !access.representedByCells; }
     }
     residual |= model && model->hasUniformRelationships(phases);
+    const auto protection = model ? invocationProtectionGroups(*model) : InvocationProtection{};
+    auto storageCrossing = [&](uint32_t cell, Selected source, Selected target) {
+        const auto& a = ports[source.port];
+        const auto& b = ports[target.port];
+        auto x = children[a.child].anchors[a.type].phase;
+        auto y = children[b.child].anchors[b.type].phase;
+        if (cells[cell].space == AddressSpace::ACC && hardwareProtectsConflict(
+                pipe(source.port), protection.lookup(x), pipe(target.port), protection.lookup(y))) { return; }
+        crossing(source, target);
+    };
     if (residual) {
         for (uint32_t a = 0; a < children.size(); ++a) {
             for (uint32_t b = a + 1; b < children.size(); ++b) {
@@ -66,15 +77,17 @@ void SequenceAnalysisState::bridges()
                     }
                     if (!suppliedByReader) {
                         old.present = both(old.present, negate(anyReader));
-                        crossing(old, first);
+                        storageCrossing(cell, old, first);
                     }
                 }
                 for (const auto& [p, oldReaders] : readers) {
-                    for (auto old : oldReaders) { crossing(old, first); }
+                    for (auto old : oldReaders) { storageCrossing(cell, old, first); }
                 }
             }
             for (const auto& [p, firstReaders] : summary.firstReaders) {
-                for (auto first : firstReaders) { for (auto old : writers) { crossing(old, first); } }
+                for (auto first : firstReaders) {
+                    for (auto old : writers) { storageCrossing(cell, old, first); }
+                }
             }
             for (auto& old : writers) { old.present = both(old.present, negate(overwritten)); }
             llvm::append_range(writers, summary.lastWriters);

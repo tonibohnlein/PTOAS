@@ -10,13 +10,16 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_HARDWAREPROTECTION_H
 #include "PTO/Transforms/FrontierSynch/LifetimeScan.h"
 #include "mlir/IR/Types.h"
+#include "llvm/ADT/DenseMap.h"
 #include <unordered_set>
 namespace mlir {
 class Operation;
 namespace pto {
 class SyncInput;
+class SyncStorageEffects;
 class CompoundInstanceElement;
 namespace frontiersynch {
+inline constexpr uint64_t invocationProtectionBit = uint64_t{1} << 63;
 // A group certifies protection between every ordered pair of its WRITERS to
 // one resource, on one pipe. It is not a completion-before-start edge. Group
 // identities include dynamic scope; zero means ordinary software ordering.
@@ -34,12 +37,20 @@ public:
     void observe(Operation* operation, ExplicitEffects& occurrence,
                  llvm::ArrayRef<uint32_t> accumulatorAtoms);
     void endScope();
+    uint64_t currentGroup() const { return activeGroup; }
 private:
     uint64_t nextGroup = 0;
     uint64_t activeGroup = 0;
     Type accumulatorType;
     std::unordered_set<uint32_t> activeAtoms;
 };
+// Invocation-wide groups start only in the function body. A structured child
+// preserves a group only when every path and repeated visit preserves the same
+// fixed physical accumulator. Facts borrow the unchanged input and cannot be
+// reused after moving a region or changing its surrounding accesses.
+// The high bit distinguishes these identities from local builder identities.
+using InvocationProtection = llvm::DenseMap<const CompoundInstanceElement*, uint64_t>;
+InvocationProtection invocationProtectionGroups(const SyncStorageEffects& storage);
 // Protection for residual effect pairs with identical buffer operands. This
 // preserves the same target rule when physical addresses are symbolic. Results
 // are indexed by shared effect ID; zero requires ordinary software ordering.
