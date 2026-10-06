@@ -175,7 +175,6 @@ bool SequenceAnalysisState::closure()
     if (!error.empty() || (size && size > SIZE_MAX / size / sizeof(Expr))) {
         return fail("sequence boundary query matrix size overflow");
     }
-    canonicalizeCrossings();
     graph.assign(size, std::vector<Expr>(size, no()));
     auto add = [&](std::size_t a, std::size_t b, Expr guard) { graph[a][b] = either(graph[a][b], guard); };
     for (uint32_t a = 0; a < ports.size(); ++a) {
@@ -262,17 +261,38 @@ bool SequenceAnalysisState::closure()
             }
         }
     }
+    // An alternative path has one last link entering the consumer's child.
+    // Its prefix ends in an earlier child and its suffix is wholly local, so
+    // neither can use the tested edge. Keep native links and exclude only
+    // completion-to-start links for the same actual endpoint pair (aliases
+    // included). This avoids building an alternative from every interior event.
+    struct EntryLink { std::size_t source, target; Expr guard; };
+    std::map<uint32_t, std::vector<EntryLink>> incoming;
+    for (std::size_t source = 0; source < size; ++source) {
+        for (std::size_t target = 0; target < size; ++target) {
+            if (ports[source / 2].child < ports[target / 2].child &&
+                expressions.constantValue(links[source][target]) != 0) {
+                incoming[ports[target / 2].child].push_back({source, target, links[source][target]});
+            }
+        }
+    }
     for (auto& edge : crossings) {
         Expr alternate = no();
-        for (uint32_t z = 0; z < ports.size(); ++z) {
-            for (unsigned completion = 0; completion < 2; ++completion) {
-                auto distinct = negate(same(z, completion ? edge.source : edge.target));
-                alternate = either(alternate, both(distinct,
-                    both(graph[2*edge.source+1][2*z+completion], graph[2*z+completion][2*edge.target])));
+        for (const auto& entry : incoming[ports[edge.target].child]) {
+            auto distinct = yes();
+            if (entry.source % 2 == 1 && entry.target % 2 == 0) {
+                distinct = negate(both(same(entry.source / 2, edge.source), same(entry.target / 2, edge.target)));
             }
+            auto prefix = graph[2*edge.source+1][entry.source];
+            auto suffix = local[entry.target][2*edge.target];
+            alternate = either(alternate, both(distinct, both(entry.guard, both(prefix, suffix))));
         }
         edge.guard = both(edge.guard, negate(alternate));
     }
+    // Equal endpoint records denote the same edge in closure. The last-entry
+    // test excludes all such copies together, so deduplicate only the retained
+    // records instead of carrying exclusivity predicates through every path.
+    canonicalizeCrossings();
     return true;
 }
 

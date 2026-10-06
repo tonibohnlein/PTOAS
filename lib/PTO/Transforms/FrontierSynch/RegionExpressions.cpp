@@ -331,6 +331,11 @@ RegionExpressions::Id RegionExpressions::select(Id condition, Id yes, Id no)
     }
     if (yes == no) { return yes; }
     if (auto value = constantValue(condition)) { return *value ? yes : no; }
+    // Selecting the same condition twice cannot visit the opposite inner arm.
+    // Preserve the outer select so inactive poison remains masked.
+    if (nodes[yes].kind == Kind::Select && nodes[yes].a == condition) { yes = nodes[yes].b; }
+    if (nodes[no].kind == Kind::Select && nodes[no].a == condition) { no = nodes[no].c; }
+    if (yes == no) { return yes; }
     Node node;
     node.kind = Kind::Select;
     node.boolean = isBoolean(yes);

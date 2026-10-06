@@ -14,6 +14,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include <map>
@@ -35,6 +36,43 @@ Block& PreparedLogicalPlan::addPreparation(Operation* before)
     return *preparation.back().code;
 }
 namespace {
+// Called only after preflight. Independent producers can prepare the same
+// arithmetic at one original cut. Reuse the first identical operation there;
+// neither original payloads nor arithmetic at other cuts is changed.
+void deduplicatePreparation(PreparedLogicalPlan& plan)
+{
+    using Buckets = DenseMap<std::size_t, SmallVector<Operation*>>;
+    DenseMap<Operation*, Buckets> cuts;
+    DenseMap<Value, Value> replacements;
+    for (auto& stage : plan.preparation) {
+        auto& buckets = cuts[stage.before];
+        for (auto& operation : llvm::make_early_inc_range(*stage.code)) {
+            if (!isMemoryEffectFree(&operation)) { continue; }
+            auto hash = static_cast<std::size_t>(OperationEquivalence::computeHash(&operation,
+                OperationEquivalence::directHashValue, OperationEquivalence::ignoreHashValue,
+                OperationEquivalence::IgnoreLocations));
+            auto& candidates = buckets[hash];
+            auto found = llvm::find_if(candidates, [&](Operation* candidate) {
+                return OperationEquivalence::isEquivalentTo(candidate, &operation,
+                    OperationEquivalence::IgnoreLocations);
+            });
+            if (found == candidates.end()) { candidates.push_back(&operation); continue; }
+            for (auto [old, shared] : llvm::zip(operation.getResults(), (*found)->getResults())) {
+                replacements[old] = shared;
+                old.replaceAllUsesWith(shared);
+            }
+            operation.erase();
+        }
+    }
+    auto remap = [&](Value& value) {
+        if (auto found = replacements.find(value); found != replacements.end()) { value = found->second; }
+    };
+    // Endpoints hold Values directly, outside the SSA use lists.
+    for (auto& endpoint : plan.endpoints) {
+        remap(endpoint.guard); remap(endpoint.identity);
+        for (auto& member : endpoint.memberCoordinates) { remap(member); }
+    }
+}
 bool concretePipe(uint32_t pipe)
 {
     return pipe <= static_cast<uint32_t>(PIPE::PIPE_FIX) && pipe != static_cast<uint32_t>(PIPE::PIPE_ALL);
@@ -402,6 +440,7 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
         (function->hasAttr(CyclicAllocationAttr) || function->hasAttr(FiniteAllocationAttr))) {
         return function.emitError("logical insertion cannot replace an existing allocation certificate");
     }
+    deduplicatePreparation(plan);
     for (auto& stage : plan.preparation) {
         auto* target = stage.before->getBlock();
         target->getOperations().splice(stage.before->getIterator(), stage.code->getOperations());

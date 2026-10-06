@@ -229,8 +229,9 @@ private:
                 auto exists = dag.land(compatible, dag.lt(first, trips));
                 const auto final = dag.sub(trips, c(1));
                 auto last = dag.sub(final, dag.rem(dag.sub(final, first), c(fragment.refresh)));
-                first = dag.select(exists, first, c(0));
-                last = dag.select(exists, last, c(0));
+                // Coordinates are total modular expressions. Presence guards
+                // their use; replacing absent coordinates by zero would hide
+                // equality with native boundary coordinates and create ports.
                 patterns.push_back({{physical.space, physical.begin + fragment.slotAtom.first,
                                      physical.begin + fragment.slotAtom.second, physical.base},
                     fragment.payload, first, last, dag.land(exists, fragment.read), dag.land(exists, fragment.write)});
@@ -315,7 +316,7 @@ private:
     {
         std::map<uint32_t, std::vector<RegionalSelector>> firsts, lasts;
         const auto nonempty = dag.lt(begin, trips);
-        const auto last = dag.select(nonempty, dag.sub(trips, c(1)), c(0));
+        const auto last = dag.sub(trips, c(1));
         for (uint32_t type = 0; type < analysis->payloads.size(); ++type) {
             const auto& payload = analysis->payloads[type];
             auto present = dag.land(nonempty, payload.presence);
