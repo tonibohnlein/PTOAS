@@ -19,6 +19,7 @@
 // CHECK: scalar-evolution zero_trip_result: 1 passed
 // CHECK: scalar-evolution bounded_clamps: 4 passed
 // CHECK: scalar-evolution unsafe_clamps: 2 passed
+// CHECK: scalar-evolution inferred_operation_range: 2 passed
 module {
   func.func @carried_reset(%n: index) attributes {test.no_region} {
     %c0 = arith.constant 0 : index
@@ -70,7 +71,7 @@ module {
     %negative = arith.constant -1 : i8
     %unsigned = arith.extui %negative {test.scalar_opaque} : i8 to i64
     %large = arith.constant 2147483648 : i64
-    %narrow = arith.index_cast %large {test.scalar_opaque} : i64 to index
+    %narrow = arith.trunci %large {test.scalar_opaque} : i64 to i32
     return
   }
   func.func @conditional_update(%n: index, %condition: i1) attributes {test.no_region} {
@@ -146,4 +147,14 @@ module {
     return
   }
 
+  func.func @inferred_operation_range() attributes {test.no_region} {
+    %id = pto.get_subblock_idx {test.scalar_input}
+    %i = arith.index_cast %id : i64 to index
+    %stride = arith.constant 8192 : index
+    %bank = arith.muli %i, %stride {test.scalar_external_input,
+      test.scalar_samples = array<i64: 0,0, 1,8192>} : index
+    %huge = arith.constant 9223372036854775807 : i64
+    %unsafe = arith.addi %id, %huge {test.scalar_opaque} : i64
+    return
+  }
 }

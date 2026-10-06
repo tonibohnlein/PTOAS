@@ -140,6 +140,12 @@ FiniteGuardedAnalysis analyzeFiniteGuarded(func::FuncOp function, ArrayRef<Opera
         result.error = "finite guarded analysis has invalid modeled storage references";
         return result;
     }
+    SmallVector<const CompoundInstanceElement*> phases;
+    for (const auto& anchor : state->anchors) { phases.push_back(anchor.phase); }
+    auto prerequisites = index.mapPrerequisites(phases);
+    if (!prerequisites.error.empty()) { result.error = prerequisites.error; return result; }
+    state->nativePrerequisites = std::move(prerequisites.native);
+    llvm::append_range(state->residual, prerequisites.demands);
     state->closeAndReduce();
     state->summarize(input);
     if (!state->arena->constructionError().empty()) { result.error = state->arena->constructionError(); return result; }

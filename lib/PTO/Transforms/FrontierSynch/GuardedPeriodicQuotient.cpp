@@ -129,6 +129,11 @@ void Builder::addEdge(uint32_t source, uint32_t target, Threshold weight, std::s
 }
 void Builder::buildNative()
 {
+    for (const auto& edge : output.nativePrerequisites) {
+        auto active = expressions.land(edge.active, expressions.land(
+            output.payloads[edge.source].presence, output.payloads[edge.target].presence));
+        addEdge(2*edge.source+1, 2*edge.target, guarded(active, edge.displacement));
+    }
     for (uint32_t a = 0; a < output.payloads.size(); ++a) {
         const auto& payload = output.payloads[a];
         const auto identity = guarded(payload.presence, zero);
@@ -241,7 +246,8 @@ void Builder::run()
 } // namespace
 GuardedPeriodicQuotient analyzeGuardedPeriodicQuotient(
     std::shared_ptr<RegionExpressions> expressions,
-    llvm::ArrayRef<GuardedPeriodicPayload> payloads, llvm::ArrayRef<GuardedPeriodicRecord> records)
+    llvm::ArrayRef<GuardedPeriodicPayload> payloads, llvm::ArrayRef<GuardedPeriodicRecord> records,
+    llvm::ArrayRef<GuardedPeriodicRecord> nativePrerequisites)
 {
     GuardedPeriodicQuotient result;
     result.expressions = std::move(expressions);
@@ -249,12 +255,15 @@ GuardedPeriodicQuotient analyzeGuardedPeriodicQuotient(
         result.error = "guarded quotient requires an expression arena";
         return result;
     }
-    if (const char* error = validate(*result.expressions, payloads, records)) {
+    std::vector<GuardedPeriodicRecord> all(records.begin(), records.end());
+    all.insert(all.end(), nativePrerequisites.begin(), nativePrerequisites.end());
+    if (const char* error = validate(*result.expressions, payloads, all)) {
         result.error = error;
         return result;
     }
     result.payloads.assign(payloads.begin(), payloads.end());
     result.records.assign(records.begin(), records.end());
+    result.nativePrerequisites.assign(nativePrerequisites.begin(), nativePrerequisites.end());
     Builder(result).run();
     if (!result.expressions->constructionError().empty()) {
         result.error = result.expressions->constructionError();

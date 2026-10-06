@@ -46,7 +46,8 @@ void boundary(ExplicitAnalysis& result)
         }
     }
 }
-ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, const SyncInput& input,
+ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, const PhaseIndex& index,
+                             const SyncInput& input,
                              ArrayRef<std::size_t> discharged = {})
 {
     ExplicitAnalysis result;
@@ -102,12 +103,18 @@ ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, co
             if (conflict) { residual.push_back({std::min(a, b), std::max(a, b)}); }
         }
     }
+    const auto prerequisites = index.mapPrerequisites(phases);
+    if (!prerequisites.error.empty()) {
+        result.error = prerequisites.error;
+        return result;
+    }
+    llvm::append_range(residual, prerequisites.demands);
     result.scan = scanStorageLifetimes(result.occurrences, residual);
     if (!result.scan.error.empty()) {
         result.error = result.scan.error;
         return result;
     }
-    result.reduction = reduceExplicitDemands(result.occurrences, result.scan.generators);
+    result.reduction = reduceExplicitDemands(result.occurrences, result.scan.generators, prerequisites.native);
     result.error = result.reduction.error;
     if (result.error.empty()) {
         boundary(result);
@@ -191,7 +198,7 @@ ExplicitAnalysis analyzeExplicit(ArrayRef<const CompoundInstanceElement*> phases
         result.error = "explicit span requires consecutive payloads and no additional prerequisites";
         return result;
     }
-    return analyzeSpan(phases, input, discharged);
+    return analyzeSpan(phases, index, input, discharged);
 }
 std::optional<bool> explicitEventPrecedes(const ExplicitAnalysis& analysis,
                                         PeriodicEvent source, PeriodicEvent target)

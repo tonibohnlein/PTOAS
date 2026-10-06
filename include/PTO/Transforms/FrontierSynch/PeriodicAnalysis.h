@@ -51,6 +51,7 @@ struct PeriodicAnalysis {
     std::string error;
     std::vector<PeriodicPayload> payloads;
     std::vector<PeriodicRecord> generators; // Canonical endpoint/distance deduplication.
+    std::vector<PeriodicRecord> nativePrerequisites;
     std::vector<uint32_t> retained; // Indices into generators, exactly F* records.
     std::vector<uint32_t> sourceRows;
     std::vector<uint32_t> localRanks;
@@ -79,6 +80,7 @@ struct PeriodicAnalysis {
 // generator certificate. Physical allocation requires its separate interface.
 // On invalid input or checked integer overflow, no partial index is returned.
 PeriodicAnalysis analyzePeriodicDemands(llvm::ArrayRef<PeriodicPayload> payloads,
-                                       llvm::ArrayRef<PeriodicRecord> records);
+                                       llvm::ArrayRef<PeriodicRecord> records,
+                                       llvm::ArrayRef<PeriodicRecord> nativePrerequisites = {});
 } // namespace mlir::pto::frontiersynch
 #endif

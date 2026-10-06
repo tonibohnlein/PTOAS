@@ -92,13 +92,14 @@ def check(case, output):
     occurrences = case["scan"]
     require(not result["error"], result["error"])
     edges = expected_edges(case)
-    reach = closure(occurrences, edges)
+    native = edge_positions(case.get("native_prerequisites", []), occurrences)
+    reach = closure(occurrences, edges | native)
     retained = edge_positions(result["retained"], occurrences)
-    covers = {(a, b) for a, b in edges
+    covers = {(a, b) for a, b in edges - native
               if not any(2 * b in reach[z] for z in reach[2 * a + 1])}
     require(len(result["retained"]) == len(retained), "duplicate retained edges")
     require(retained == covers, f"cover mismatch: {retained} != {covers}; {case}")
-    require(closure(occurrences, retained) == reach, "reduced closure changed")
+    require(closure(occurrences, retained | native) == reach, "reduced closure changed")
     check_rows(occurrences, reach, result)
 
 
@@ -146,7 +147,8 @@ def requests():
                         modes.append(modes[-1].copy())
             occurrences.append(occurrence(identity, rng.choice((0, 17, 2**32 - 1)), modes))
         extra = [[ids[a], ids[b], 0] for a in range(size) for b in range(a + 1, size) if rng.randrange(20) == 0]
-        cases.append({"scan": occurrences, "prerequisites": extra, "reduce": True})
+        native = [[ids[a], ids[b], 0] for a in range(size) for b in range(a + 1, size) if rng.randrange(20) == 0]
+        cases.append({"scan": occurrences, "prerequisites": extra, "native_prerequisites": native, "reduce": True})
     # An unrelated-buffer path covers x's direct conflict, with reader and RMW chains.
     cases.append({"reduce": True, "scan": [
         occurrence(31, 0, [access(0, write=True), access(1, write=True)]),

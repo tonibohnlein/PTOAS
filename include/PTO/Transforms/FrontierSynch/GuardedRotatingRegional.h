@@ -10,13 +10,21 @@
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAnalysis.h"
 namespace mlir::pto::frontiersynch {
+struct PeriodicSlice {
+    RegionExpressions::Id begin, end; // Original iteration ordinals, half-open.
+};
 // Export one counted immutable region on its existing expression arena. This
-// requires a finite encoded physical slot table, charged separately from the
-// compact periodic analysis. No iterations, offset values or guards are expanded.
+// materializes at most maxRegionalSlotVisits physical slot visits per child,
+// charged separately from compact periodic analysis. Larger families require a
+// compact-selector exporter. No runtime iterations, offsets or guards are expanded.
 // The returned callbacks own the analysis and internal endpoint recipes. Original
 // IR and SyncInput phase anchors must remain alive and unchanged, as for all
 // regional exports. Preparation is detached and adds no invocation completion.
 FailureOr<RegionalAnalysis> guardedRotatingRegionalResult(func::FuncOp function, const SyncInput& input,
-    const GuardedRotatingAnalysis& analysis, std::string& error);
+    const GuardedRotatingAnalysis& analysis, std::string& error,
+    std::optional<PeriodicSlice> slice = std::nullopt);
+// A slice must satisfy 0 <= begin <= end <= trip count. The caller proves that
+// its selected skeleton describes precisely those whole iterations. Original
+// ordinal identities and insertion cuts are retained; there is no IR cloning.
 } // namespace mlir::pto::frontiersynch
 #endif

@@ -113,7 +113,10 @@ RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
                 bool conflict = false;
                 for (auto x : input.accesses().effectsFor(result.phases[a])) {
                     for (auto y : input.accesses().effectsFor(result.phases[b])) {
-                        conflict |= input.accesses().uniformConflict(x, y);
+                        if (!llvm::is_contained(recognized.dischargedEffects, x) &&
+                            !llvm::is_contained(recognized.dischargedEffects, y)) {
+                            conflict |= input.accesses().uniformConflict(x, y);
+                        }
                     }
                 }
                 if (conflict) {
@@ -123,7 +126,14 @@ RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
             }
         }
     }
-    result.periodic = analyzePeriodicDemands(payloads, result.extraction.generators);
+    const auto prerequisites = index.mapPrerequisites(result.phases);
+    if (!prerequisites.error.empty()) { result.error = prerequisites.error; return result; }
+    std::vector<PeriodicRecord> native;
+    for (const auto& edge : prerequisites.native) { native.push_back({edge.source, edge.target, 0}); }
+    for (const auto& edge : prerequisites.demands) {
+        result.extraction.generators.push_back({edge.source, edge.target, 0});
+    }
+    result.periodic = analyzePeriodicDemands(payloads, result.extraction.generators, native);
     result.error = result.periodic.error;
     if (!result.error.empty()) {
         return result;

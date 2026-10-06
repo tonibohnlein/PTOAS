@@ -42,11 +42,16 @@ struct RotatingAccess {
     SmallVector<std::size_t> effects; // All supplied effect IDs merged into this fragment.
     bool reads = false;
     bool writes = false;
+    // A contiguous physical bank family recovered from an address map. The
+    // family identity is shared across SSA allocations with this same geometry.
+    std::optional<SyncStorageCell> firstPhysicalSlot;
+    uint64_t physicalSlotStride = 0;
 };
 struct RecognitionResult {
     RecognitionState state = RecognitionState::Applicable;
     SmallVector<RecognitionDiagnostic> diagnostics;
-    SmallVector<RotatingAccess> accesses;
+    SmallVector<RotatingAccess, 0> accesses;
+    SmallVector<std::size_t> dischargedEffects; // Proved conflict-free in the unchanged input.
     void note(RecognitionIssue issue, Operation* anchor, bool outsideClass = false);
 };
 
