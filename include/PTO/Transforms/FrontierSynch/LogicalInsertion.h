@@ -44,6 +44,7 @@ struct PreparedLogicalPlan {
     Block& addPreparation(Operation* before);
     int64_t planId;
     bool completeInvocation = false; // Drain whole-function work before return.
+    bool nestedIdentities = false; // Version-four matching tuples; physical allocation is separate.
     bool independentPieces = false; // Match records across independently grouped endpoint sides.
     bool groupedFamilies = false; // One endpoint per family side; member operand selects its record.
     // Optional producer certificate for the immediately following allocation

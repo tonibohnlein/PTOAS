@@ -107,7 +107,7 @@ void SequenceAnalysisState::bindAdapters()
         }
     }
 }
-bool SequenceAnalysisState::importSummaries()
+bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
 {
     std::map<AddressSpace, llvm::MapVector<Value, std::set<uint64_t>>> points;
     SmallVector<SyncStorageCell> identities;
@@ -115,8 +115,9 @@ bool SequenceAnalysisState::importSummaries()
     for (const auto& child : children) {
         const auto& out = child.regional;
         if (out.expressions != arena || !out.capabilities.completeStorageModel || !out.capabilities.exactQueries ||
-            !out.capabilities.exactSelectors || !out.capabilities.endpointRecipes || !out.presence ||
-            !out.reachability || !out.prepare || out.anchors.size() != out.occurrenceLoops.size() ||
+            !out.capabilities.exactSelectors || !out.presence ||
+            (requireEndpoints && (!out.capabilities.endpointRecipes || !out.prepare)) ||
+            !out.reachability || out.anchors.size() != out.occurrenceLoops.size() ||
             (!out.outerLoops.empty() && out.outerLoops.size() != out.anchors.size())) {
             return fail("sequence child lacks a constructed exact regional interface");
         }
@@ -296,6 +297,9 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
         auto result = prepareSequenceInsertion(*owned);
         if (succeeded(result)) { (*result)->completeInvocation = false; }
         return result;
+    };
+    out.prepareWithVisits = [owned](ArrayRef<scf::ForOp> enclosing) {
+        return owned->state->prepare(enclosing);
     };
     auto convert = [&](SequenceSelectedEvent selected) {
         const auto& occurrence = analysis.occurrences[selected.port];

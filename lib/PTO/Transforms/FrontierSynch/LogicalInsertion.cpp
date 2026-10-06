@@ -87,18 +87,24 @@ LogicalResult validatePieces(func::FuncOp function, const PreparedLogicalPlan& p
         namespaces.try_emplace({family->sourcePipe, family->targetPipe, family->displacement}, record);
     }
     std::map<uint32_t, unsigned> kinds;
+    std::map<uint32_t, std::size_t> arities;
     std::set<int64_t> pieces;
     for (const auto& endpoint : plan.endpoints) {
         const bool local = endpoint.kind == LogicalCommandKind::Barrier;
         const bool publish = endpoint.kind == LogicalCommandKind::Set;
         if (endpoint.records.empty() || endpoint.piece < 0 || !pieces.insert(endpoint.piece).second ||
-            endpoint.memberCoordinates.size() != (local ? 0U : 1U)) {
+            (local ? !endpoint.memberCoordinates.empty() :
+             (plan.nestedIdentities ? endpoint.memberCoordinates.empty() : endpoint.memberCoordinates.size() != 1))) {
             return function.emitError("invalid endpoint-piece identity or member selector");
         }
         for (auto record : endpoint.records) {
             auto found = owners.find(record);
             if (found == owners.end()) {
                 return function.emitError("endpoint piece has an unknown original record");
+            }
+            auto [arity, fresh] = arities.emplace(record, endpoint.memberCoordinates.size());
+            if (!fresh && arity->second != endpoint.memberCoordinates.size()) {
+                return function.emitError("matching endpoint pieces have different coordinate arities");
             }
             const auto& family = *found->second;
             const auto key = Namespace{family.sourcePipe, family.targetPipe, family.displacement};
@@ -124,6 +130,9 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
     if (plan.planId < 0 || !RegisteredOperationName::lookup("pto.logical_set", function.getContext()) ||
         !RegisteredOperationName::lookup("pto.logical_wait", function.getContext())) {
         return function.emitError("logical insertion requires a nonnegative namespace and registered logical commands");
+    }
+    if (plan.nestedIdentities && !plan.independentPieces) {
+        return function.emitError("nested matching requires independent endpoint pieces");
     }
     bool collision = false;
     function.walk([&](Operation* operation) {
@@ -321,7 +330,8 @@ void serializeFamilies(func::FuncOp function, const PreparedLogicalPlan& plan,
     }
     function->setAttr("pto.endpoint_families", builder.getDictionaryAttr({
         builder.getNamedAttr("version",
-                             builder.getI64IntegerAttr(plan.independentPieces ? 3 : (plan.groupedFamilies ? 2 : 1))),
+                             builder.getI64IntegerAttr(plan.nestedIdentities ? 4 :
+                                 (plan.independentPieces ? 3 : (plan.groupedFamilies ? 2 : 1)))),
         builder.getNamedAttr("plan", builder.getI64IntegerAttr(plan.planId)),
         builder.getNamedAttr("families", builder.getArrayAttr(families)),
         builder.getNamedAttr("pieces", builder.getArrayAttr(pieces))}));

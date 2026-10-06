@@ -107,6 +107,9 @@ FailureOr<Families> readFamilies(func::FuncOp function, const PhysicalAllocation
     }
     auto version = metadata ? number(metadata, "version") : std::optional<int64_t>(1);
     auto planId = metadata ? number(metadata, "plan") : std::optional<int64_t>(plan.planId);
+    if (version == 4) {
+        return function.emitError("nested logical-plan physical allocation is not implemented yet"), failure();
+    }
     if (!version || (*version != 1 && *version != 2 && *version != 3) || !planId || *planId != plan.planId) {
         return function.emitError("unsupported endpoint-family metadata version or plan identity"), failure();
     }

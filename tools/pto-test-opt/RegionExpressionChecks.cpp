@@ -14,6 +14,7 @@
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 bool runNestedRegionalChecks(func::FuncOp function);
+bool runRepeatedRegionChecks(func::FuncOp function);
 namespace {
 std::string render(func::FuncOp function)
 {
@@ -228,7 +229,7 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
     if (!checkAlgebra(function.getArgument(0), function.getArgument(1)) || !checkEmission(function, cuts) ||
         !checkImplicationTruthTables(function.getArgument(0), function.getArgument(1)) ||
         !checkPlacementRetry(function, cuts) || !checkSubstitution(function.getArgument(0), function.getArgument(1)) ||
-        !runNestedRegionalChecks(function) ||
+        !runNestedRegionalChecks(function) || !runRepeatedRegionChecks(function) ||
         !rejectedWithoutCode(function, cuts[0], cuts[0]->getResult(0)) ||
         !rejectedWithoutCode(function, cuts[1], hidden) || render(function) != before) {
         return function.emitError("regional expression checks failed");
