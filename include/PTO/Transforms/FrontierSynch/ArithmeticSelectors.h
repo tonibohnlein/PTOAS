@@ -50,8 +50,11 @@ struct ArithmeticSelectors {
 // Original coordinates, including signed parameters, are period*q + residue.
 // Closed DBM projection yields each input guard; singleton output intervals
 // yield maxima of input-plus-constant lower bounds, including the zero column.
-// For K input pieces of at most D variables, construction uses O(K*D^3)
-// arbitrary-precision operations plus group lookup, with O(K*D^2) output.
+// Initial construction uses O(K*D^3) arbitrary-precision operations for K
+// pieces of at most D variables. Exact coalescing tries O(K^2) pairs; each
+// hull check uses at most O(D^4) cubic closures, for O(K^2*D^7) total
+// operations, plus group lookup. Output remains O(K*D^2). Integer bit costs
+// are additional. The greedy sweep need not find the fewest selector pieces.
 // No occurrence, parameter-valuation or numeric-distance enumeration; no IR mutation.
 ArithmeticSelectors buildArithmeticSelectors(const ArithmeticDemandAnalysis& analysis,
                                              llvm::ArrayRef<uint32_t> sitePipes);
