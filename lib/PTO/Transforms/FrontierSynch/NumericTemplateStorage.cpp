@@ -64,21 +64,26 @@ std::optional<int64_t> translation(const TemplateRegion& map, SyncAccessRegion& 
         dimensions.push_back(getAffineDimExpr(i, context));
     }
     auto at = [&](int64_t ordinal) {
-        return mlir::pto::detail::substitute(map.byteOffset, dimensions, {getAffineConstantExpr(ordinal, context)});
+        SmallVector<AffineExpr> symbols{getAffineConstantExpr(ordinal, context)};
+        for (unsigned i = 0; i < map.invariantSymbols.size(); ++i) {
+            symbols.push_back(getAffineSymbolExpr(i + 1, context));
+        }
+        return mlir::pto::detail::substitute(map.byteOffset, dimensions, symbols);
     };
     auto zero = at(0), one = at(1);
     auto negative = getAffineConstantExpr(-1, context);
     auto difference = mlir::pto::detail::checkedAdd(one, mlir::pto::detail::checkedMul(zero, negative));
-    auto stride = difference ? dyn_cast<AffineConstantExpr>(simplifyAffineExpr(difference, dimensions.size(), 0)) :
-                               AffineConstantExpr{};
+    const unsigned symbolCount = 1 + map.invariantSymbols.size();
+    auto stride = difference ? dyn_cast<AffineConstantExpr>(
+        simplifyAffineExpr(difference, dimensions.size(), symbolCount)) : AffineConstantExpr{};
     if (!stride) {
         return std::nullopt;
     }
     auto rebuilt = mlir::pto::detail::checkedAdd(zero, mlir::pto::detail::checkedMul(
         getAffineSymbolExpr(0, context), stride));
     auto delta = mlir::pto::detail::checkedAdd(map.byteOffset, mlir::pto::detail::checkedMul(rebuilt, negative));
-    auto exact = delta ? dyn_cast<AffineConstantExpr>(simplifyAffineExpr(delta, dimensions.size(), 1)) :
-                        AffineConstantExpr{};
+    auto exact = delta ? dyn_cast<AffineConstantExpr>(
+        simplifyAffineExpr(delta, dimensions.size(), symbolCount)) : AffineConstantExpr{};
     if (!exact || exact.getValue() != 0) {
         return std::nullopt;
     }
@@ -87,12 +92,47 @@ std::optional<int64_t> translation(const TemplateRegion& map, SyncAccessRegion& 
     fixed.elementBytes = map.elementBytes;
     return stride.getValue();
 }
+// Translation tests may cancel an unknown address origin only when every
+// footprint of the writing payload has that same loop-invariant origin.
+// Relative offsets and extents must then be concrete before interval checks.
+bool relativeOrigin(const TemplateRegion& map, SyncAccessRegion& fixed,
+                    std::optional<AffineExpr>& common, SmallVectorImpl<Value>& symbols)
+{
+    auto* context = map.byteOffset.getContext();
+    SmallVector<AffineExpr> zeros(map.extents.size(), getAffineConstantExpr(0, context));
+    auto origin = simplifyAffineExpr(fixed.byteOffset.replaceDims(zeros), 0, 1 + map.invariantSymbols.size());
+    if (common && (*common != origin || ArrayRef<Value>(symbols) != ArrayRef<Value>(map.invariantSymbols))) {
+        return false;
+    }
+    common = origin;
+    symbols.assign(map.invariantSymbols.begin(), map.invariantSymbols.end());
+    auto relative = mlir::pto::detail::checkedAdd(fixed.byteOffset,
+        mlir::pto::detail::checkedMul(origin, getAffineConstantExpr(-1, context)));
+    if (!relative) {
+        return false;
+    }
+    fixed.byteOffset = simplifyAffineExpr(relative, map.extents.size(), 1 + map.invariantSymbols.size());
+    for (unsigned i = 0; i <= map.invariantSymbols.size(); ++i) {
+        if (fixed.byteOffset.isFunctionOfSymbol(i) || llvm::any_of(fixed.extents, [i](AffineExpr extent) {
+                return extent.isFunctionOfSymbol(i);
+            })) {
+            return false;
+        }
+    }
+    return true;
+}
 bool discharge(TemplateBuilder& builder, const GlobalBase& base)
 {
     if (base.writes && base.payloads.size() != 1) {
         return false;
     }
     std::optional<int64_t> commonStride;
+    std::optional<AffineExpr> commonOrigin;
+    SmallVector<Value> originSymbols;
+    const bool relative = llvm::any_of(base.effects, [&](EffectRef ref) {
+        return llvm::any_of(builder.output.payloads[ref.first].effects[ref.second].regions,
+                           [](const TemplateRegion& map) { return !map.invariantSymbols.empty(); });
+    });
     uint64_t begin = UINT64_MAX, end = 0;
     for (auto [payloadId, effectId] : base.effects) {
         auto& effect = builder.output.payloads[payloadId].effects[effectId];
@@ -105,6 +145,7 @@ bool discharge(TemplateBuilder& builder, const GlobalBase& base)
             auto stride = translation(map, fixed);
             SmallVector<SyncStorageCell> ranges;
             if (!stride || (commonStride && *stride != *commonStride) ||
+                (relative && !relativeOrigin(map, fixed, commonOrigin, originSymbols)) ||
                 !mlir::pto::detail::materializeRegion(fixed, AddressSpace::GM, ranges) ||
                 !builder.charge(ranges.size(), builder.output.fragments, builder.output.limits.fragments,
                                 builder.output.payloads[payloadId].phase->elementOp)) {
