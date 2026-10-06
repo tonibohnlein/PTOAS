@@ -14,19 +14,23 @@ namespace {
 bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recognized, const SyncInput& input)
 {
     HardwareProtectionBuilder protection;
-    SmallVector<std::size_t> retainedEffects;
     std::optional<std::size_t> previousGuard;
     Operation* previous = nullptr;
+    std::vector<SmallVector<const CompoundInstanceElement*>> scopes;
+    std::vector<std::size_t> scopeOf;
     for (const auto& guarded : recognized.phases) {
-        if (previousGuard != guarded.guard) { protection.endScope(); }
+        bool reset = previousGuard != guarded.guard;
         previousGuard = guarded.guard;
         auto* operation = guarded.phase->elementOp;
         if (previous && previous->getBlock() == operation->getBlock()) {
             for (auto* between = previous->getNextNode(); between && between != operation;
                  between = between->getNextNode()) {
-                if (between->getNumRegions()) { protection.endScope(); }
+                if (between->getNumRegions()) { reset = true; }
             }
-        } else { protection.endScope(); }
+        } else { reset = true; }
+        if (reset || scopes.empty()) { protection.endScope(); scopes.emplace_back(); }
+        scopes.back().push_back(guarded.phase);
+        scopeOf.push_back(scopes.size() - 1);
         previous = operation;
         auto* phase = guarded.phase;
         ExplicitEffects occurrence;
@@ -36,8 +40,6 @@ bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recogni
         for (auto id : input.accesses().effectsFor(phase)) {
             const auto& effect = input.accesses().effects()[id];
             if (input.accesses().independentOfOtherPhases(id)) { continue; }
-            if (effect.precision != SyncAccessPrecision::Exact || !effect.exactRanges) { return false; }
-            retainedEffects.push_back(id);
             state.cost.physicalFragments += effect.ranges.size();
             for (auto cell : effect.cells) {
                 if (cell >= input.accesses().cells().size() || cell > UINT32_MAX) { return false; }
@@ -55,7 +57,28 @@ bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recogni
         protection.observe(phase->elementOp, occurrence, accumulator);
         state.effects.push_back(std::move(occurrence));
     }
-    return input.accesses().hasExactCellPartition(retainedEffects);
+    std::vector<uint64_t> modeledGroups(input.accesses().effects().size(), 0);
+    for (const auto& scope : scopes) {
+        const auto groups = modeledProtectionGroups(input, scope);
+        for (const auto* phase : scope) {
+            for (auto effect : input.accesses().effectsFor(phase)) { modeledGroups[effect] = groups[effect]; }
+        }
+    }
+    for (uint32_t a = 0; a < recognized.phases.size(); ++a) {
+        for (uint32_t b = a + 1; b < recognized.phases.size(); ++b) {
+            bool conflict = false;
+            for (auto x : input.accesses().effectsFor(recognized.phases[a].phase)) {
+                for (auto y : input.accesses().effectsFor(recognized.phases[b].phase)) {
+                    const bool protectedPair = scopeOf[a] == scopeOf[b] && hardwareProtectsConflict(
+                        static_cast<uint32_t>(recognized.phases[a].phase->kPipeValue), modeledGroups[x],
+                        static_cast<uint32_t>(recognized.phases[b].phase->kPipeValue), modeledGroups[y]);
+                    conflict |= input.accesses().residualConflict(x, y) && !protectedPair;
+                }
+            }
+            if (conflict) { state.residual.push_back({a, b}); }
+        }
+    }
+    return true;
 }
 bool validRoots(func::FuncOp function, ArrayRef<Operation*> roots)
 {
@@ -81,12 +104,8 @@ FiniteGuardedAnalysis analyzeFiniteGuarded(func::FuncOp function, ArrayRef<Opera
         result.error = "finite guarded endpoint arithmetic requires a 64-bit index representation"; return result;
     }
     auto recognized = recognizeFiniteGuarded(roots, index, input.accesses());
-    for (const auto& diagnostic : recognized.result.diagnostics) {
-        if (diagnostic.issue != RecognitionIssue::InexactFootprint &&
-            diagnostic.issue != RecognitionIssue::SymbolicGeometry &&
-            diagnostic.issue != RecognitionIssue::UnknownGeometry) {
-            result.error = "finite guarded analysis has unsupported control or additional prerequisites"; return result;
-        }
+    if (recognized.result.state != RecognitionState::Applicable) {
+        result.error = "finite guarded analysis has unsupported control or additional prerequisites"; return result;
     }
     if (recognized.phases.size() > UINT32_MAX / 2 ||
         recognized.phases.size() > std::numeric_limits<std::size_t>::max() / 2) {
@@ -94,6 +113,7 @@ FiniteGuardedAnalysis analyzeFiniteGuarded(func::FuncOp function, ArrayRef<Opera
     }
     auto state = std::make_shared<FiniteGuardedState>();
     state->function = function;
+    state->accessModel = &input.accesses();
     state->gmAliasPolicy = input.memory().gmPolicy();
     state->arena = expressions ? std::move(expressions) : std::make_shared<RegionExpressions>();
     std::vector<RegionExpressions::Id> guards;
@@ -116,7 +136,7 @@ FiniteGuardedAnalysis analyzeFiniteGuarded(func::FuncOp function, ArrayRef<Opera
         state->arena->forbidRecomputation(op);
     }
     if (!collectEffects(*state, recognized, input)) {
-        result.error = "finite guarded analysis requires exact physical ranges or globally independent GM effects";
+        result.error = "finite guarded analysis has invalid modeled storage references";
         return result;
     }
     state->closeAndReduce();
@@ -144,6 +164,14 @@ RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analys
     out.cost = state->cost;
     out.gmAliasPolicy = state->gmAliasPolicy;
     out.capabilities = {true, true, true, true, true};
+    out.accessModel = state->accessModel;
+    for (uint32_t type = 0; type < out.anchors.size(); ++type) {
+        RegionalSelector selector{{type, state->arena->constant(0), PeriodicEventKind::Start}, state->presence[type]};
+        for (auto effect : out.accessModel->effectsFor(out.anchors[type].phase)) {
+            out.accessBoundary.push_back({effect, selector, selector,
+                out.accessModel->effects()[effect].rangesMaterialized});
+        }
+    }
     auto valid = [state](RegionalEvent event) {
         return event.type < state->anchors.size() && event.ordinal < state->arena->size() &&
             !state->arena->isBoolean(event.ordinal) &&

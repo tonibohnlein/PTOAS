@@ -81,7 +81,28 @@ ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, co
         protection.observe(phase->elementOp, occurrence, accumulatorAtoms);
         result.occurrences.push_back(std::move(occurrence));
     }
-    result.scan = scanStorageLifetimes(result.occurrences);
+    const auto modeledProtection = modeledProtectionGroups(input, phases);
+    const bool unresolvedBases = input.accesses().hasUniformRelationships(phases);
+    std::vector<StorageGenerator> residual;
+    for (uint32_t a = 0; a < phases.size(); ++a) {
+        if (!input.accesses().needsOverlapQueries(phases[a], unresolvedBases)) { continue; }
+        for (uint32_t b = 0; b < phases.size(); ++b) {
+            if (a == b || (b < a && input.accesses().needsOverlapQueries(phases[b], unresolvedBases))) { continue; }
+            bool conflict = false;
+            for (auto x : input.accesses().effectsFor(phases[a])) {
+                for (auto y : input.accesses().effectsFor(phases[b])) {
+                    if (input.accesses().residualConflict(x, y) &&
+                        !hardwareProtectsConflict(static_cast<uint32_t>(phases[a]->kPipeValue), modeledProtection[x],
+                            static_cast<uint32_t>(phases[b]->kPipeValue), modeledProtection[y])) {
+                        conflict = true; break;
+                    }
+                }
+                if (conflict) { break; }
+            }
+            if (conflict) { residual.push_back({std::min(a, b), std::max(a, b)}); }
+        }
+    }
+    result.scan = scanStorageLifetimes(result.occurrences, residual);
     if (!result.scan.error.empty()) {
         result.error = result.scan.error;
         return result;
@@ -108,21 +129,13 @@ bool independentGM(std::size_t id, const SyncInput& input)
 bool spanEffects(ArrayRef<const CompoundInstanceElement*> phases, const SyncInput& input,
                  bool dischargeIndependentGM, SmallVectorImpl<std::size_t>& discharged)
 {
-    SmallVector<std::size_t> retained;
     for (const auto* phase : phases) {
         for (auto id : input.accesses().effectsFor(phase)) {
-            const auto& effect = input.accesses().effects()[id];
-            if (effect.precision == SyncAccessPrecision::Exact && effect.exactRanges) {
-                retained.push_back(id);
-                continue;
-            }
-            if (!dischargeIndependentGM || !independentGM(id, input)) {
-                return false;
-            }
-            discharged.push_back(id);
+            if (dischargeIndependentGM && !input.accesses().effects()[id].rangesMaterialized &&
+                independentGM(id, input)) { discharged.push_back(id); }
         }
     }
-    return input.accesses().hasExactCellPartition(retained);
+    return true;
 }
 bool validSpan(ArrayRef<const CompoundInstanceElement*> phases, const PhaseIndex& index,
                const SyncInput& input, bool dischargeIndependentGM,
@@ -149,12 +162,7 @@ bool validSpan(ArrayRef<const CompoundInstanceElement*> phases, const PhaseIndex
                 return false;
             }
             const auto recognized = recognizeExplicitRun(operations, index, input.accesses());
-            for (const auto& diagnostic : recognized.diagnostics) {
-                if (diagnostic.issue != RecognitionIssue::InexactFootprint &&
-                    diagnostic.issue != RecognitionIssue::SymbolicGeometry) {
-                    return false;
-                }
-            }
+            if (recognized.state != RecognitionState::Applicable) { return false; }
             return spanEffects(phases, input, dischargeIndependentGM, discharged);
         }
     }
@@ -164,14 +172,10 @@ bool validSpan(ArrayRef<const CompoundInstanceElement*> phases, const PhaseIndex
 ExplicitAnalysis analyzeExplicit(Block& block, const PhaseIndex& index, const SyncInput& input)
 {
     const auto recognized = recognizeExplicit(block, index, input.accesses());
-    const bool structuralIssue = llvm::any_of(recognized.diagnostics, [](const auto& diagnostic) {
-        return diagnostic.issue != RecognitionIssue::InexactFootprint &&
-               diagnostic.issue != RecognitionIssue::SymbolicGeometry;
-    });
     const auto sequence = index.explicitSequence(block);
-    if (failed(sequence) || structuralIssue) {
+    if (failed(sequence) || recognized.state != RecognitionState::Applicable) {
         ExplicitAnalysis result;
-        result.error = "explicit route requires resolved control and exact enumerated physical effects";
+        result.error = "explicit route requires resolved control and shared modeled effects";
         return result;
     }
     // Function roots and regional spans use the same effect contract. A GM
@@ -184,7 +188,7 @@ ExplicitAnalysis analyzeExplicit(ArrayRef<const CompoundInstanceElement*> phases
     SmallVector<std::size_t> discharged;
     if (!validSpan(phases, index, input, dischargeIndependentGM, discharged)) {
         ExplicitAnalysis result;
-        result.error = "explicit span requires consecutive payloads, exact effects and no additional prerequisites";
+        result.error = "explicit span requires consecutive payloads and no additional prerequisites";
         return result;
     }
     return analyzeSpan(phases, input, discharged);

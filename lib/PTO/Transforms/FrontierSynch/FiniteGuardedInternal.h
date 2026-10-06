@@ -21,9 +21,11 @@ struct FiniteGuardedState {
     std::vector<ExplicitEffects> effects;
     std::vector<std::vector<Expr>> graph;
     std::vector<GuardedDemand> retained;
+    std::vector<StorageGenerator> residual;
     std::vector<RegionalStorageBoundary> storageBoundary;
     std::map<uint32_t, std::vector<RegionalSelector>> firstPayloads, lastPayloads;
     RegionalCost cost;
+    const SyncStorageEffects* accessModel = nullptr;
     GMAliasPolicy gmAliasPolicy = GMAliasPolicy::MayAlias;
     std::string insertionError;
     uint32_t pipe(uint32_t type) const { return effects[type].pipe; }

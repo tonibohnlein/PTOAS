@@ -94,19 +94,6 @@ GuardedRecognition recognizeFiniteGuarded(ArrayRef<Operation*> roots, const Phas
         previous = root;
     }
     collect(roots, entry, index, output, false);
-    SmallVector<std::size_t> selected;
-    for (const auto& item : output.phases) {
-        for (auto id : effects.effectsFor(item.phase)) {
-            selected.push_back(id);
-            if (effects.effects()[id].precision != SyncAccessPrecision::Exact || !effects.effects()[id].exactRanges) {
-                output.result.note(effects.effects()[id].precision == SyncAccessPrecision::Exact ?
-                    RecognitionIssue::SymbolicGeometry : RecognitionIssue::InexactFootprint, item.phase->elementOp);
-            }
-        }
-    }
-    if (output.result.state == RecognitionState::Applicable && !effects.hasExactCellPartition(selected)) {
-        output.result.note(RecognitionIssue::SymbolicGeometry, entry);
-    }
     return output;
 }
 

@@ -23,7 +23,7 @@ bool collectGlobal(TemplateBuilder& builder, DenseMap<Value, GlobalBase>& bases)
     for (auto [id, payload] : llvm::enumerate(builder.output.payloads)) {
         for (auto [effectId, effect] : llvm::enumerate(payload.effects)) {
             const auto& original = builder.input.accesses().effects()[effect.sourceEffect];
-            if (original.memory->scope != AddressSpace::GM) {
+            if (original.memory->scope != AddressSpace::GM || effect.regions.empty()) {
                 continue;
             }
             Value base;
@@ -44,10 +44,6 @@ bool collectGlobal(TemplateBuilder& builder, DenseMap<Value, GlobalBase>& bases)
             summary.payloads.insert(id);
             summary.writes |= effect.mode == SyncAccessMode::Write;
         }
-    }
-    if (bases.size() > 1 && builder.input.memory().gmPolicy() != GMAliasPolicy::MayNotAlias) {
-        builder.output.result.note(RecognitionIssue::GMDischarge, builder.output.outer);
-        return false;
     }
     return true;
 }
@@ -238,6 +234,21 @@ bool prepareTemplateEffects(TemplateBuilder& builder)
         if (!discharge(builder, item.second)) {
             builder.output.result.note(RecognitionIssue::GMDischarge, builder.output.outer);
             return false;
+        }
+    }
+    SmallVector<const CompoundInstanceElement*> phases;
+    for (const auto& payload : builder.output.payloads) { phases.push_back(payload.phase); }
+    if (builder.input.accesses().hasUniformRelationships(phases)) {
+        for (uint32_t a = 0; a < builder.output.payloads.size(); ++a) {
+            for (uint32_t b = a; b < builder.output.payloads.size(); ++b) {
+                bool conflict = false;
+                for (const auto& x : builder.output.payloads[a].effects) {
+                    for (const auto& y : builder.output.payloads[b].effects) {
+                        conflict |= builder.input.accesses().uniformConflict(x.sourceEffect, y.sourceEffect);
+                    }
+                }
+                if (conflict) { builder.output.uniformConflicts.emplace_back(a, b); }
+            }
         }
     }
     return partition(builder);

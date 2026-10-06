@@ -1,3 +1,9 @@
+> Access contract update: all routes reduce the supplied shared storage model.
+> Original-effect precision is not an admission gate. See
+> [Shared modeled storage accesses](sync-effect-precision.md) for representation,
+> residual alias obligations, composition and cost. Historical milestone notes
+> below describe the implementation at their respective commits.
+
 # Analysis-route recognition
 
 ## Active implementation
@@ -751,7 +757,7 @@ allocation for the new result classes is a separate interface obligation.
 The explicit recognizer accepts a single-block sequence without nested regions
 or ambiguous multi-phase anchors, with assigned pipes and exact supplied cell
 effects. It uses the original `PhaseIndex` sequence and never makes a compact
-loop explicit. Upper-bound or unknown effects produce `inexact-footprint`.
+loop explicit. Shared buffer bounds and unresolved alias predicates remain modeled inputs; their precision does not reject a region.
 The result describes one invocation of the block, not repetitions of an
 enclosing loop.
 
@@ -792,7 +798,7 @@ family remains a possible extension.
 
 Within-slot fragments must come from an exact shared access region. The earlier
 recognizer-local `tgetval`/`tsetval` recovery shortcut has been removed. Access
-regions and their precision now come from the shared access producer; the
+regions and alias predicates come from the shared access producer; the
 recognizer does not maintain a second instruction-effect table. An unresolved
 footprint reports `inexact-footprint`, while structural checks still report
 slot expressions, families and refresh distances.
@@ -900,7 +906,7 @@ For a candidate with `N` immediate operations, `A` supplied access records, and
 `O(N + A + S log(S+1))` time and `O(A + S)` additional space. Family lookups
 use hash maps; a sorted interval sweep checks disjointness. Expression matching
 checks only the documented bounded-depth syntax. These costs exclude building
-the shared input and precision partition, and charge the slot intervals
+the shared input and modeled storage partition, and charge the slot intervals
 explicitly: this first implementation enumerates known physical slots. It does
 not claim the paper's slot-count-independent extraction bound. The output has
 at most one normalized fragment per supplied record; deduplication and

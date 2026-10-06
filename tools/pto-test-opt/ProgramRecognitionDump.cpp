@@ -112,13 +112,13 @@ LogicalResult dumpProgramRecognition(func::FuncOp function, const pto::SyncInput
         llvm::json::Array effects;
         for (auto effectId : payload.effects) {
             const auto& effect = input.accesses().effects()[effectId];
-            StringRef precision = effect.precision == pto::SyncAccessPrecision::Exact ? "exact" :
-                (effect.precision == pto::SyncAccessPrecision::UpperBound ? "upper" : "unknown");
-            effects.push_back(llvm::json::Object{{"id", effectId}, {"precision", precision},
+            StringRef representation = effect.rangesMaterialized ? "intervals" :
+                (!effect.regions.empty() ? "symbolic" : "unresolved");
+            effects.push_back(llvm::json::Object{{"id", effectId}, {"representation", representation},
                 {"mode", effect.mode == pto::SyncAccessMode::Read ? "read" : "write"},
                 {"space", static_cast<unsigned>(effect.memory->scope)},
                 {"has_descriptor", effect.descriptorRegion.has_value()},
-                {"has_access_map", !effect.regions.empty()}, {"concrete_exact_ranges", effect.exactRanges}});
+                {"has_access_map", !effect.regions.empty()}, {"materialized_ranges", effect.rangesMaterialized}});
         }
         payloads.push_back(llvm::json::Object{{"id", id}, {"node", payload.node},
             {"operation", payload.phase->opName.getStringRef()},

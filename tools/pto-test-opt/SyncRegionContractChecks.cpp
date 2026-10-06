@@ -49,8 +49,7 @@ int runSyncRegionContractChecks(func::FuncOp function, const SyncInput& input)
                 mlir::pto::detail::applyAccessCoverage(input, selectedCopy, {selection});
                 auto begin = function->getAttrOfType<IntegerAttr>("test.selected_begin");
                 auto bytes = function->getAttrOfType<IntegerAttr>("test.selected_bytes");
-                if (!begin || !bytes || selectedCopy.precision != SyncAccessPrecision::Exact ||
-                    !selectedCopy.exactRanges || selectedCopy.ranges.size() != 1 ||
+                if (!begin || !bytes || !selectedCopy.rangesMaterialized || selectedCopy.ranges.size() != 1 ||
                     selectedCopy.ranges[0].begin != begin.getValue().getZExtValue() ||
                     selectedCopy.ranges[0].end - selectedCopy.ranges[0].begin != bytes.getValue().getZExtValue()) {
                     return 1;
@@ -60,11 +59,11 @@ int runSyncRegionContractChecks(func::FuncOp function, const SyncInput& input)
         SyncMemoryEffect full(kind, operand, 0, true);
         auto copy = effect;
         mlir::pto::detail::applyAccessCoverage(input, copy, {full});
-        if (copy.precision != SyncAccessPrecision::Exact || !copy.region ||
-            (copy.region->symbols.empty() && !copy.region->base && !copy.exactRanges)) {
+        if (!copy.region ||
+            (copy.region->symbols.empty() && !copy.region->base && !copy.rangesMaterialized)) {
             return 1;
         }
-        if (copy.exactRanges) {
+        if (copy.rangesMaterialized) {
             uint64_t bytes = 0;
             for (const auto& range : copy.ranges) {
                 bytes += range.end - range.begin;
@@ -80,34 +79,46 @@ int runSyncRegionContractChecks(func::FuncOp function, const SyncInput& input)
             AffineMap::getMultiDimIdentityMap(effect.descriptorRegion->extents.size(), function.getContext()));
         SyncMemoryEffect identity(kind, operand, selected);
         mlir::pto::detail::applyAccessCoverage(input, copy, {identity});
-        if (copy.precision != SyncAccessPrecision::Exact || !copy.region ||
+        if (!copy.region ||
             copy.region->byteOffset != effect.descriptorRegion->byteOffset ||
             copy.region->extents != effect.descriptorRegion->extents) {
             return 1;
         }
+        auto bound = effect;
+        SyncMemoryEffect boundDeclaration(kind, operand);
+        mlir::pto::detail::applyAccessCoverage(input, bound, {boundDeclaration});
+        auto matchesBound = [&]() {
+            return copy.rangesMaterialized == bound.rangesMaterialized && copy.regions.size() == bound.regions.size() &&
+                copy.ranges.size() == bound.ranges.size() && llvm::all_of(llvm::zip(copy.ranges, bound.ranges),
+                    [](auto pair) {
+                        const auto& a = std::get<0>(pair);
+                        const auto& b = std::get<1>(pair);
+                        return sameStorageDomain(a, b) && a.begin == b.begin && a.end == b.end;
+                    });
+        };
         NamedAttrList malformed(selected);
         malformed.set("shape_operand", IntegerAttr::get(IntegerType::get(function.getContext(), 64), -1));
         SyncMemoryEffect invalid(kind, operand, malformed.getDictionary(function.getContext()));
         mlir::pto::detail::applyAccessCoverage(input, copy, {invalid});
-        if (copy.precision == SyncAccessPrecision::Exact || copy.region) {
+        if (!matchesBound()) {
             return 1;
         }
         mlir::pto::detail::applyAccessCoverage(input, copy, {full, identity});
-        if (copy.precision != SyncAccessPrecision::Exact || copy.regions.size() != 2) {
+        if (copy.regions.size() != 2) {
             return 1;
         }
         SyncMemoryEffect partial(kind, operand);
         mlir::pto::detail::applyAccessCoverage(input, copy, {full, partial});
-        if (copy.precision == SyncAccessPrecision::Exact || copy.region || copy.exactRanges) {
+        if (!matchesBound()) {
             return 1;
         }
         SyncMemoryEffect parameters(kind, operand, StringAttr::get(function.getContext(), "opaque"), 0, true);
         mlir::pto::detail::applyAccessCoverage(input, copy, {parameters});
-        if (copy.precision == SyncAccessPrecision::Exact) {
+        if (!matchesBound()) {
             return 1;
         }
         mlir::pto::detail::applyAccessCoverage(input, copy, input.effectsFor(*effect.phase));
-        if (copy.precision != effect.precision) {
+        if (copy.rangesMaterialized != effect.rangesMaterialized || copy.regions.size() != effect.regions.size()) {
             return 1;
         }
         ++checked;

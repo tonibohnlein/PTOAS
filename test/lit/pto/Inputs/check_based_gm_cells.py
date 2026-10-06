@@ -39,11 +39,9 @@ def main():
                 documents = [json.loads(line) for line in output.splitlines() if line.startswith("{")]
                 require(len(documents) == 1, output)
                 doc = documents[0]
-                accepted = source != "%b" or policy == "may-not-alias"
-                require(bool(doc["error"]) != accepted, doc)
-                if not accepted:
-                    continue
-                require(doc["retained"] == ([] if source == "%b" else [[0, 1]]), doc)
+                require(not doc["error"], doc)
+                disjoint = source == "%b" and policy == "may-not-alias"
+                require(doc["retained"] == ([] if disjoint else [[0, 1]]), doc)
                 require([cell for cell in doc["cells"] if cell[0] == 1] == cells, doc)
                 text = run(tool, path, "--arithmetic", policy)
                 lines = [line.removeprefix("arithmetic-json ") for line in text.splitlines()

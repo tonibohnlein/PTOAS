@@ -19,11 +19,9 @@ std::optional<int64_t> sequenceInteger(Value value)
 bool SequenceAnalysisState::explicitChild(const StructureNode& node)
 {
 
-    if (!node.explicitResult || llvm::any_of(node.explicitResult->diagnostics, [](const auto& diagnostic) {
-        return diagnostic.issue != RecognitionIssue::InexactFootprint &&
-               diagnostic.issue != RecognitionIssue::SymbolicGeometry &&
-               diagnostic.issue != RecognitionIssue::UnknownGeometry;
-    })) { return fail("sequence explicit child has an unsupported control or prerequisite obligation"); }
+    if (!node.explicitResult || node.explicitResult->state != RecognitionState::Applicable) {
+        return fail("sequence explicit child has an unsupported control or prerequisite obligation");
+    }
     SmallVector<const CompoundInstanceElement*> phases;
     for (auto id : node.payloads) { phases.push_back(program->payloads[id].phase); }
     if (phases.empty()) { return true; }
@@ -42,7 +40,6 @@ bool SequenceAnalysisState::explicitChild(const StructureNode& node)
                 // against every other phase in the shared input.
                 continue;
             }
-            if (!effect.exactRanges) { return fail("sequence explicit effect has unresolved physical geometry"); }
             for (const auto& range : effect.ranges) {
                 child.patterns.push_back({range, type, 0, 1,
                     effect.mode == SyncAccessMode::Read, effect.mode == SyncAccessMode::Write});
@@ -206,9 +203,6 @@ bool SequenceAnalysisState::partition()
             ++changes[pattern.range.space][pattern.range.base][pattern.range.begin];
             --changes[pattern.range.space][pattern.range.base][pattern.range.end];
         }
-    }
-    if (!storageBasesAreComparable(identities, input->memory().gmPolicy())) {
-        return fail("sequence storage bases have unresolved alias relationships");
     }
     for (const auto& [space, bases] : changes) {
         for (const auto& [base, points] : bases) {

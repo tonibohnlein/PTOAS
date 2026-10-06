@@ -16,7 +16,7 @@
 // RANGES-LABEL: storage overlapping_selection:
 // RANGES: overlap 1,2=1
 // RANGES-LABEL: storage unresolved_selection:
-// RANGES: effect 2 pto.textract read upper
+// RANGES: effect 2 pto.textract read intervals
 // RANGES: overlap 1,2=1
 // INSERT-LABEL: func.func @disjoint_selection
 // INSERT-NOT: pto.set_flag
