@@ -37,7 +37,7 @@ struct GuardedRotatingAnalysis {
 // are enumerated. Conditional alias normalization and strict writer selection
 // cost O(A^2) circuit operations, excluding encoded arithmetic bit costs.
 // Queries/retention are supplied by the shared parameterized quotient. Insertion
-// must separately establish legal matching cuts and adjacent local demands.
+// must separately establish legal matching cuts. Local barriers precede their consumers.
 // Potential target-protected accumulator writer pairs are unsupported here;
 // use the numerical protected route until conditional protection is represented
 // in the required graph. Ordinary unprotected ACC effects are supported.

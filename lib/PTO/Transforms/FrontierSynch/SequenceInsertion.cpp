@@ -110,39 +110,6 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare()
         const auto& ab = cb.anchors[b.type];
         auto p = static_cast<uint32_t>(aa.phase->kPipeValue);
         auto q = static_cast<uint32_t>(ab.phase->kPipeValue);
-        if (p == q) {
-            // Adjacency is an insertion premise. A crossing local cover must
-            // connect the last occurrence on p to the next first one on p.
-            {
-                auto selectedAs = [&](const std::map<uint32_t, std::vector<RegionalSelector>>& selectors,
-                                      const Port& occurrence) {
-                    Expr selected = no();
-                    auto found = selectors.find(p);
-                    if (found != selectors.end()) {
-                        for (const auto& candidate : found->second) {
-                            if (candidate.event.type == occurrence.type) {
-                                selected = either(selected, both(candidate.present,
-                                    expressions.eq(candidate.event.ordinal, occurrence.ordinal)));
-                            }
-                        }
-                    }
-                    return selected;
-                };
-                auto adjacent = both(selectedAs(ca.regional.lastPayloads, a),
-                                     selectedAs(cb.regional.firstPayloads, b));
-                for (uint32_t child = a.child + 1; child < b.child; ++child) {
-                    auto found = children[child].regional.firstPayloads.find(p);
-                    if (found != children[child].regional.firstPayloads.end()) {
-                        for (auto selected : found->second) { adjacent = both(adjacent, negate(selected.present)); }
-                    }
-                }
-                if (!expressions.implies(retained, adjacent)) {
-                    return fail("sequence local cover needs an unproved occurrence-adjacency predicate: child " +
-                        std::to_string(a.child) + ":" + std::to_string(a.type) + " to " +
-                        std::to_string(b.child) + ":" + std::to_string(b.type));
-                }
-            }
-        }
 
         if (nextRecord == UINT32_MAX) { return fail("sequence endpoint identity overflow"); }
         const auto record = nextRecord++;

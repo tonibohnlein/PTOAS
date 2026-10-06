@@ -15,6 +15,21 @@ They use common logical insertion. Physical allocation
 supports numerical templates, direct rotating results, finite explicit/guarded/sequence
 plans, and the sufficient compact strategies described in M13. Other compact
 results still require a uniform allocation export before physical compilation.
+Same-pipe demands always emit a pipe barrier immediately before the consumer,
+including when the source and consumer are not consecutive on that pipe. The
+barrier also completes intervening same-pipe payloads. Demand reduction remains
+exact for the supplied model; order equality and leastness apply only when this
+placement adds no ordering. Required-order queries remain valid sufficient
+witnesses for event-ID reuse, even if insertion strengthens the order.
+
+A failed route is not a missing shared memory-effect input by default. Distinguish
+an input outside that route's mathematical contract from an unimplemented
+normalization, regional interface, selector, or command emitter. Current aggregate
+failure messages do not establish which of these occurred; inspect the anchored
+recognition diagnostics and the rejecting adapter. In particular, blanket checks
+on carried values or runtime lower bounds are implementation restrictions, not a
+claim that the draft excludes all such loops.
+
 The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
 
 | Stage | Entry point and implementation |
