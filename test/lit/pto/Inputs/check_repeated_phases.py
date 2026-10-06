@@ -88,6 +88,7 @@ def main():
         path.write_text(writer)
         rejected = json.loads(run(tool, "--sequence-analysis", path))
         assert rejected["error"] and not rejected["prepared"], rejected
+        assert "q1 repeat" in rejected["error"] and "q-phase repeat" in rejected["error"], rejected
         print(f"repeated phases: {tested} exact command closures, partial periods and compact size passed")
 
 
