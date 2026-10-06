@@ -151,6 +151,7 @@ struct SequenceAnalysisState {
     }
     bool collect(std::size_t rootNode = 0);
     bool explicitChild(const StructureNode& node);
+    bool conditionalChild(const StructureNode& node);
     bool loopChild(const StructureNode& node);
     bool repeatedChild(const StructureNode& node, Expr trips);
     bool phasedChild(const StructureNode& node, Expr trips);
