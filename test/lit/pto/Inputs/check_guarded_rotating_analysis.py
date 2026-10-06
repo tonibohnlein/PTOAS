@@ -136,8 +136,10 @@ def main():
                     tainted.add(value)
         assert "overflow<nsw>" not in entry_emitted or masked, emitted
         count += 2
-        # Presence varying with the induction variable is outside the grammar.
-        varying = source.replace("// LOCAL_GUARD", "%varying = arith.cmpi eq, %i, %zero : index")
+        # Repeatedly alternating presence is outside immutable guards and finite
+        # monotone boundary slicing (a single equality is now supported there).
+        varying = source.replace("// LOCAL_GUARD", "%parity = arith.remui %i, %banks : index\n"
+                                 "        %varying = arith.cmpi eq, %parity, %zero : index")
         varying = varying.replace("scf.if %h", "scf.if %varying")
         # Removing the consumer leaves the writer's distance-two WAW cover
         # non-adjacent on its pipe; a barrier would impose an extra order.

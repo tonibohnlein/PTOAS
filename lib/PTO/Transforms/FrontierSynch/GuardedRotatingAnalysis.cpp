@@ -41,8 +41,8 @@ class Extractor {
 public:
     GuardedRotatingAnalysis result;
     Extractor(scf::ForOp loop, const SyncInput& input, const GuardedRecognition& recognized,
-              std::shared_ptr<RegionExpressions> expressions)
-        : input(input), recognized(recognized)
+              std::shared_ptr<RegionExpressions> expressions, const DenseMap<Value, Expr>& guardBindings)
+        : input(input), recognized(recognized), guardBindings(guardBindings)
     {
         result.loop = loop;
         result.expressions = expressions ? std::move(expressions) : std::make_shared<RegionExpressions>();
@@ -108,6 +108,7 @@ public:
 private:
     const SyncInput& input;
     const GuardedRecognition& recognized;
+    const DenseMap<Value, Expr>& guardBindings;
     std::vector<Expr> guards;
     std::vector<Fragment> fragments;
     RegionExpressions& dag() { return *result.expressions; }
@@ -194,7 +195,11 @@ private:
                 (guard.parent && *guard.parent >= guards.size())) {
                 fail("invalid guarded rotating presence predicate"); return false;
             }
-            auto value = dag().input(guard.condition);
+            auto binding = guardBindings.find(guard.condition);
+            auto value = binding == guardBindings.end() ? dag().input(guard.condition) : binding->second;
+            if (value >= dag().size() || !dag().isBoolean(value)) {
+                fail("guarded rotating substitution requires a Boolean in the shared arena"); return false;
+            }
             if (!guard.takeThen) { value = dag().lnot(value); }
             // Presence follows the enclosing branch. Emission still requires
             // all predicate inputs to be available or safely replayable.
@@ -372,9 +377,15 @@ private:
 };
 } // namespace
 GuardedRotatingAnalysis analyzeGuardedRotating(scf::ForOp loop, const SyncInput& input,
-    const GuardedRecognition& recognition, std::shared_ptr<RegionExpressions> expressions)
+    const GuardedRecognition& recognition, std::shared_ptr<RegionExpressions> expressions,
+    const DenseMap<Value, RegionExpressions::Id>& guardBindings)
 {
-    Extractor extractor(loop, input, recognition, std::move(expressions));
+    if (!expressions && !guardBindings.empty()) {
+        GuardedRotatingAnalysis failure;
+        failure.error = "guard substitutions require their originating expression arena";
+        return failure;
+    }
+    Extractor extractor(loop, input, recognition, std::move(expressions), guardBindings);
     extractor.run();
     return std::move(extractor.result);
 }
