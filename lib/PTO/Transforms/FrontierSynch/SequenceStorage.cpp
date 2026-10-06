@@ -208,6 +208,7 @@ bool SequenceAnalysisState::collect(std::size_t rootNode)
     const auto& root = program->nodes[rootNode];
     if (root.kind == StructureKind::ExplicitRun) { return explicitChild(root); }
     if (root.kind == StructureKind::Loop) { return loopChild(root); }
+    if (root.kind == StructureKind::Conditional) { return conditionalChild(root); }
     if (root.kind != StructureKind::Sequence || !root.region ||
         (root.region->getParentOp() != function && !function->isProperAncestor(root.region->getParentOp()))) {
         return fail("regional sequence must belong to the original function");
@@ -218,6 +219,17 @@ bool SequenceAnalysisState::collect(std::size_t rootNode)
             if (!loopChild(node)) { return false; }
             ++position; continue;
         }
+        auto containsLoop = [](const StructureNode& child) {
+            bool found = false;
+            if (child.kind == StructureKind::Conditional) {
+                child.anchor->walk([&](scf::ForOp) { found = true; return WalkResult::interrupt(); });
+            }
+            return found;
+        };
+        if (containsLoop(node)) {
+            if (!conditionalChild(node)) { return false; }
+            ++position; continue;
+        }
         SmallVector<Operation*> roots;
         auto end = position;
         bool guarded = false;
@@ -226,6 +238,7 @@ bool SequenceAnalysisState::collect(std::size_t rootNode)
             if (child.kind == StructureKind::ExplicitRun) {
                 roots.append(child.operations.begin(),child.operations.end());
             } else if (child.kind == StructureKind::Conditional) {
+                if (containsLoop(child)) { break; }
                 roots.push_back(child.anchor); guarded = true;
             } else { break; }
             ++end;

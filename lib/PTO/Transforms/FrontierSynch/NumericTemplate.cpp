@@ -24,8 +24,9 @@ std::optional<int64_t> constant(Value value)
 bool scope(NumericTemplate& output, const PhaseIndex& index, const SyncInput& input, bool regional)
 {
     auto outer = output.outer;
-    auto function = dyn_cast<func::FuncOp>(outer->getParentOp());
-    if (!function || !function.getBody().hasOneBlock()) {
+    auto function = outer->getParentOfType<func::FuncOp>();
+    const bool originalScope = function && function.getBody().hasOneBlock();
+    if (!originalScope || (!regional && outer->getParentOp() != function)) {
         output.result.note(RecognitionIssue::TemplateContext, outer);
         return false;
     }
