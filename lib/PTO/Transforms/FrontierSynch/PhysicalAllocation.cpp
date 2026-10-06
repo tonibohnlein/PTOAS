@@ -139,6 +139,15 @@ FailureOr<Families> readFamilies(func::FuncOp function, const PhysicalAllocation
     }
     return result;
 }
+bool validSourceTuple(Operation* op, const Family& family)
+{
+    if (family.members.size() != 1 || op->getNumOperands() == 0 ||
+        !llvm::all_of(op->getOperandTypes(), [](Type type) { return type.isIndex(); })) { return false; }
+    const auto& allocation = *family.members.front();
+    APInt identity;
+    return !allocation.ids.empty() && allocation.stride % allocation.ids.size() == 0 &&
+        matchPattern(op->getOperand(0), m_ConstantInt(&identity)) && identity.isZero();
+}
 bool validMember(Operation* op, const Family& family)
 {
     if (op->getNumOperands() < 1 || op->getNumOperands() > 2 || !op->getOperand(0).getType().isIndex()) {
@@ -417,6 +426,9 @@ FailureOr<SmallVector<Endpoint>> preflight(func::FuncOp function, const Physical
     if (metadata && number(metadata, "version") == 3) {
         return preflightPieces(function, plan, records, *families);
     }
+    auto certificate = function->getAttrOfType<DictionaryAttr>(CyclicAllocationAttr);
+    auto strategy = certificate ? certificate.getAs<StringAttr>("strategy") : StringAttr{};
+    const bool sourceTuples = strategy && strategy.getValue() == "dedicated-families";
     SmallVector<Endpoint> endpoints;
     auto walked = function.walk([&](Operation* op) -> WalkResult {
         const bool publish = isa<LogicalSetOp>(op), consume = isa<LogicalWaitOp>(op);
@@ -438,7 +450,8 @@ FailureOr<SmallVector<Endpoint>> preflight(func::FuncOp function, const Physical
         const auto& family = found->second;
         const auto* allocation = family.members.front();
         if (!source || !target || static_cast<uint32_t>(source.getPipe()) != allocation->sourcePipe ||
-            static_cast<uint32_t>(target.getPipe()) != allocation->targetPipe || !validMember(op, family)) {
+            static_cast<uint32_t>(target.getPipe()) != allocation->targetPipe ||
+            !(sourceTuples ? validSourceTuple(op, family) : validMember(op, family))) {
             op->emitError("logical endpoint has an invalid family member or pipe assignment");
             return WalkResult::interrupt();
         }
