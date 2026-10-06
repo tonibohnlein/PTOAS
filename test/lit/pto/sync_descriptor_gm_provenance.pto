@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --gm-alias=may-not-alias --storage-effects %s | FileCheck %s --check-prefix=NO
+// RUN: pto-sync-input-test --gm-alias=may-alias --storage-effects %s | FileCheck %s --check-prefix=MAY
+// A selected load extent is unavailable, but the descriptor still establishes
+// its canonical GM base. Aliased/selected origins must remain conservative.
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @descriptor_origins(%a: !pto.ptr<f32, gm>, %b: !pto.ptr<f32, gm>, %offset: index) attributes {test.overlap = array<i64: 1, 2, 1, 4>} {
+    %zero = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %va = pto.make_tensor_view %a, shape = [%c16, %c1], strides = [%c1, %c1] : !pto.tensor_view<16x1xf32>
+    %vb = pto.make_tensor_view %b, shape = [%c16, %c1], strides = [%c1, %c1] : !pto.tensor_view<16x1xf32>
+    %pa = pto.partition_view %va, offsets = [%offset, %c0], sizes = [%c16, %c1] : !pto.tensor_view<16x1xf32> -> !pto.partition_tensor_view<16x1xf32>
+    %pb = pto.partition_view %vb, offsets = [%offset, %c0], sizes = [%c16, %c1] : !pto.tensor_view<16x1xf32> -> !pto.partition_tensor_view<16x1xf32>
+    %tile = pto.alloc_tile addr = %zero : !tile
+    pto.tstore ins(%tile : !tile) outs(%pa : !pto.partition_tensor_view<16x1xf32>)
+    pto.tload ins(%pb : !pto.partition_tensor_view<16x1xf32>) outs(%tile : !tile)
+    pto.tload ins(%pa : !pto.partition_tensor_view<16x1xf32>) outs(%tile : !tile)
+    return
+  }
+  func.func @selected_origin(%flag: i1, %a: !pto.ptr<f32, gm>, %b: !pto.ptr<f32, gm>, %offset: index) attributes {test.overlap = array<i64: 1, 2, 1, 5>} {
+    %zero = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %va = pto.make_tensor_view %a, shape = [%c16, %c1], strides = [%c1, %c1] : !pto.tensor_view<16x1xf32>
+    %selected = arith.select %flag, %a, %b : !pto.ptr<f32, gm>
+    %vb = pto.make_tensor_view %selected, shape = [%c16, %c1], strides = [%c1, %c1] : !pto.tensor_view<16x1xf32>
+    %pa = pto.partition_view %va, offsets = [%offset, %c0], sizes = [%c16, %c1] : !pto.tensor_view<16x1xf32> -> !pto.partition_tensor_view<16x1xf32>
+    %pb = pto.partition_view %vb, offsets = [%offset, %c0], sizes = [%c16, %c1] : !pto.tensor_view<16x1xf32> -> !pto.partition_tensor_view<16x1xf32>
+    %tile = pto.alloc_tile addr = %zero : !tile
+    pto.tstore ins(%tile : !tile) outs(%pa : !pto.partition_tensor_view<16x1xf32>)
+    pto.tload ins(%pb : !pto.partition_tensor_view<16x1xf32>) outs(%tile : !tile)
+    pto.tload ins(%pa : !pto.partition_tensor_view<16x1xf32>) outs(%tile : !tile)
+    return
+  }
+}
+// NO-LABEL: storage descriptor_origins
+// NO: effect 2 pto.tload read unresolved
+// NO-NEXT: descriptor base=pointer
+// NO: overlap 1,2=0
+// NO: overlap 1,4=1
+// MAY-LABEL: storage descriptor_origins
+// MAY: effect 2 pto.tload read unresolved
+// MAY-NEXT: descriptor base=pointer
+// MAY: overlap 1,2=1
+// MAY: overlap 1,4=1
+
+// NO-LABEL: storage selected_origin
+// NO: overlap 1,2=1
+// NO: overlap 1,5=1
+// MAY-LABEL: storage selected_origin
+// MAY: overlap 1,2=1
+// MAY: overlap 1,5=1
