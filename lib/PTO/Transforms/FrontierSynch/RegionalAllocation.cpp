@@ -14,9 +14,16 @@
 #include <numeric>
 #include <set>
 namespace mlir::pto::frontiersynch {
+namespace {
+bool hasNestedFrame(const RegionalAnalysis& region)
+{
+    return llvm::any_of(region.outerLoops, [](const auto& loops) { return !loops.empty(); });
+}
+} // namespace
 std::shared_ptr<RegionalAllocationSummary> periodicRegionalAllocation(
     const RegionalAnalysis& region, const PeriodicAnalysis& periodic, RegionExpressions::Id trips)
 {
+    if (hasNestedFrame(region)) { return {}; }
     auto allocation = buildPeriodicAllocation(periodic);
     if (!allocation.error.empty() || !region.expressions || region.anchors.size() != periodic.payloads.size()) {
         return {};
@@ -39,7 +46,8 @@ std::shared_ptr<RegionalAllocationSummary> periodicRegionalAllocation(
 std::shared_ptr<RegionalAllocationSummary> finiteRegionalAllocation(
     const RegionalAnalysis& region, const PreparedLogicalPlan& plan)
 {
-    if (!region.expressions || !region.presence || region.anchors.size() != region.occurrenceLoops.size()) {
+    if (hasNestedFrame(region) || !region.expressions || !region.presence ||
+        region.anchors.size() != region.occurrenceLoops.size()) {
         return {};
     }
     std::map<Operation*, uint32_t> starts, finishes;
@@ -67,7 +75,8 @@ std::shared_ptr<RegionalAllocationSummary> finiteRegionalAllocation(
 }
 DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, const PreparedLogicalPlan& plan)
 {
-    if (!plan.regionalAllocation || !region.expressions || !region.reachability || region.anchors.empty()) {
+    if (hasNestedFrame(region) || !plan.regionalAllocation || !region.expressions ||
+        !region.reachability || region.anchors.empty()) {
         return {};
     }
     auto& a = *region.expressions;

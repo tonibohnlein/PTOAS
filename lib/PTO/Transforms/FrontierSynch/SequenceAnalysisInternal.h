@@ -49,6 +49,9 @@ struct Port {
     uint32_t child = 0;
     uint32_t type = 0;
     Expr ordinal = 0;
+    std::vector<Expr> visits;
+    RegionalEvent event(PeriodicEventKind kind = PeriodicEventKind::Start) const
+    { return {type, ordinal, kind, visits}; }
 };
 struct Selected { uint32_t port = 0; Expr present = 0; };
 struct CellBoundary {
@@ -61,6 +64,8 @@ struct SequenceAnalysisState {
     const SyncInput* input = nullptr;
     const ProgramRecognition* program = nullptr;
     PhaseIndex index;
+    bool completeInvocation = true;
+    bool requiresOuterBinding = false;
     std::shared_ptr<RegionExpressions> arena;
     RegionExpressions& expressions;
     SequenceCost costs;
@@ -68,7 +73,7 @@ struct SequenceAnalysisState {
     std::vector<Child> children;
     std::vector<SyncStorageCell> cells;
     std::vector<Port> ports;
-    std::map<std::tuple<uint32_t, uint32_t, Expr>, uint32_t> portIds;
+    std::map<std::tuple<uint32_t, uint32_t, Expr, std::vector<Expr>>, uint32_t> portIds;
     std::vector<Crossing> crossings;
     std::vector<Crossing> nativeValueCrossings;
     std::map<std::pair<uint32_t, uint32_t>, uint32_t> crossingIds;
@@ -89,29 +94,42 @@ struct SequenceAnalysisState {
         const auto& p = ports[port];
         return static_cast<uint32_t>(children[p.child].anchors[p.type].phase->kPipeValue);
     }
-    uint32_t port(uint32_t child, uint32_t type, Expr ordinal) {
+    uint32_t port(uint32_t child, uint32_t type, Expr ordinal, const std::vector<Expr>& visits = {}) {
         if (ports.size() >= UINT32_MAX / 2) { fail("sequence boundary event identity overflow"); return 0; }
-        auto key = std::make_tuple(child, type, ordinal);
+        auto key = std::make_tuple(child, type, ordinal, visits);
         auto [position, added] = portIds.emplace(key, ports.size());
-        if (added) { ports.push_back({child, type, ordinal}); }
+        if (added) { ports.push_back({child, type, ordinal, visits}); }
         return position->second;
+    }
+    uint32_t port(uint32_t child, const RegionalEvent& event) {
+        return port(child, event.type, event.ordinal, event.visits);
     }
     Expr before(uint32_t a, uint32_t b) {
         ++costs.selectorComparisons;
         const auto& x = ports[a];
         const auto& y = ports[b];
         if (x.child != y.child) { return expressions.boolean(x.child < y.child); }
-        return either(expressions.lt(x.ordinal, y.ordinal),
-            both(expressions.eq(x.ordinal, y.ordinal), expressions.boolean(x.type < y.type)));
+        if (!children[x.child].regional.presence && x.visits.empty() && y.visits.empty()) {
+            return either(expressions.lt(x.ordinal, y.ordinal),
+                both(expressions.eq(x.ordinal, y.ordinal), expressions.boolean(x.type < y.type)));
+        }
+        auto answer = regionalReferenceBefore(children[x.child].regional, x.event(), y.event());
+        if (!answer) { fail("regional reference order unavailable"); return no(); }
+        return *answer;
     }
     Expr same(uint32_t a, uint32_t b) {
         const auto& x = ports[a];
         const auto& y = ports[b];
-        return x.child == y.child && x.type == y.type ? expressions.eq(x.ordinal, y.ordinal) : no();
+        if (x.child != y.child || x.type != y.type || x.visits.size() != y.visits.size()) { return no(); }
+        auto equal = expressions.eq(x.ordinal, y.ordinal);
+        for (std::size_t i = 0; i < x.visits.size(); ++i) {
+            equal = both(equal, expressions.eq(x.visits[i], y.visits[i]));
+        }
+        return equal;
     }
     Expr present(uint32_t id) {
         const auto& p = ports[id];
-        auto answer = children[p.child].regional.presence({p.type, p.ordinal, PeriodicEventKind::Start});
+        auto answer = regionalPresence(children[p.child].regional, p.event());
         if (!answer) { fail("regional occurrence presence query unavailable"); return no(); }
         return *answer;
     }
@@ -123,7 +141,7 @@ struct SequenceAnalysisState {
         if (added) { crossings.push_back({source.port, target.port, guard}); }
         else { crossings[position->second].guard = either(crossings[position->second].guard, guard); }
     }
-    bool collect();
+    bool collect(std::size_t rootNode = 0);
     bool explicitChild(const StructureNode& node);
     bool loopChild(const StructureNode& node);
     bool boundaryLoop(scf::ForOp loop);

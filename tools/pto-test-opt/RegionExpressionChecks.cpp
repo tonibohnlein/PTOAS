@@ -13,6 +13,7 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
+bool runNestedRegionalChecks(func::FuncOp function);
 namespace {
 std::string render(func::FuncOp function)
 {
@@ -87,6 +88,33 @@ bool checkAlgebra(Value index, Value predicate)
     fs::RegionExpressions typed;
     valid &= typed.add(typed.input(index), typed.input(predicate)) == fs::RegionExpressions::invalid;
     return valid && expressions.error().empty();
+}
+bool checkSubstitution(Value index, Value predicate)
+{
+    fs::RegionExpressions a;
+    auto x = a.input(index), p = a.input(predicate), one = a.constant(1);
+    auto shifted = a.add(x, one);
+    fs::RegionExpressions::Substitution shift({{x, shifted}});
+    auto twice = a.substitute(shifted, shift);
+    if (twice != a.add(shifted, one)) { return false; }
+    auto size = a.size();
+    if (a.substitute(shifted, shift) != twice || a.size() != size) { return false; }
+    fs::RegionExpressions::Substitution bind({{x, a.constant(7)}, {p, a.boolean(false)}});
+    auto choice = a.select(p, x, a.add(x, a.constant(3)));
+    if (a.constantValue(a.substitute(choice, bind)) != 10) { return false; }
+    // Swapped nodes are simultaneous, not recursively rewritten.
+    fs::RegionExpressions::Substitution swap({{x, shifted}, {shifted, x}});
+    if (a.substitute(x, swap) != shifted || a.substitute(shifted, swap) != x) { return false; }
+    fs::RegionExpressions wrong;
+    auto y = wrong.input(index);
+    if (wrong.substitute(y, bind) != fs::RegionExpressions::invalid) { return false; }
+    fs::RegionExpressions typed;
+    fs::RegionExpressions::Substitution invalid({{typed.input(index), typed.input(predicate)}});
+    if (typed.substitute(typed.input(index), invalid) != fs::RegionExpressions::invalid) { return false; }
+    fs::RegionExpressions duplicate;
+    auto v = duplicate.input(index);
+    fs::RegionExpressions::Substitution conflict({{v, duplicate.constant(1)}, {v, duplicate.constant(2)}});
+    return duplicate.substitute(v, conflict) == fs::RegionExpressions::invalid && a.error().empty();
 }
 bool checkImplicationTruthTables(Value index, Value predicate)
 {
@@ -199,7 +227,8 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
     const auto before = render(function);
     if (!checkAlgebra(function.getArgument(0), function.getArgument(1)) || !checkEmission(function, cuts) ||
         !checkImplicationTruthTables(function.getArgument(0), function.getArgument(1)) ||
-        !checkPlacementRetry(function, cuts) ||
+        !checkPlacementRetry(function, cuts) || !checkSubstitution(function.getArgument(0), function.getArgument(1)) ||
+        !runNestedRegionalChecks(function) ||
         !rejectedWithoutCode(function, cuts[0], cuts[0]->getResult(0)) ||
         !rejectedWithoutCode(function, cuts[1], hidden) || render(function) != before) {
         return function.emitError("regional expression checks failed");

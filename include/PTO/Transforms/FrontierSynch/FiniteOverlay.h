@@ -34,7 +34,7 @@ struct FiniteOverlayAnalysis {
 // An unbounded iteration-indexed edge family is not a finite overlay. The base
 // has exact reflexive queries and minimum nonnative cover recipes on this same
 // occurrence frame. Distinct type IDs identify distinct payload occurrences;
-// equal type/ordinal/kind tuples identify the same event. Absent endpoints
+// equal type/ordinal/kind/visits tuples identify the same event. Absent endpoints
 // disable records. referenceBefore must return exact strict occurrence order;
 // acceptance proves active => forward using the arena's sufficient implication.
 // The wrapper neither discovers exceptions nor establishes that the selected

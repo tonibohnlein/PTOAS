@@ -59,7 +59,8 @@ DictionaryAttr explicitAllocationCertificate(const ExplicitAnalysis& analysis, i
 }
 DictionaryAttr finiteRegionalAllocationCertificate(const RegionalAnalysis& region, const PreparedLogicalPlan& plan)
 {
-    if (region.anchors.empty() || !region.capabilities.exactQueries || !region.expressions ||
+    if (llvm::any_of(region.outerLoops, [](const auto& loops) { return !loops.empty(); }) ||
+        region.anchors.empty() || !region.capabilities.exactQueries || !region.expressions ||
         !region.presence || !region.reachability ||
         region.anchors.size() != region.occurrenceLoops.size()) { return {}; }
     auto& arena = *region.expressions;

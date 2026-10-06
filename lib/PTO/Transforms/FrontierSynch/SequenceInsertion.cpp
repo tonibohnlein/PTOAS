@@ -10,8 +10,17 @@
 namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare()
 {
+    if (requiresOuterBinding) {
+        fail("subregion endpoint binding to enclosing visits is not implemented yet"); return failure();
+    }
+    for (const auto& child : children) {
+        if (llvm::any_of(child.regional.outerLoops, [](const auto& loops) { return !loops.empty(); })) {
+            fail("nested regional endpoint binding is not implemented yet"); return failure();
+        }
+    }
     auto result = std::make_unique<PreparedLogicalPlan>(0);
-    result->completeInvocation = llvm::any_of(children, [](const Child& child) { return !child.anchors.empty(); });
+    result->completeInvocation = completeInvocation &&
+        llvm::any_of(children, [](const Child& child) { return !child.anchors.empty(); });
     result->groupedFamilies = true;
     result->independentPieces = true;
     result->regionalAllocation = std::make_shared<RegionalAllocationSummary>();

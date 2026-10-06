@@ -16,6 +16,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(
     std::string& error)
 {
     const auto& base = analysis.base;
+    if (llvm::any_of(base.outerLoops, [](const auto& loops) { return !loops.empty(); })) {
+        error = "nested overlay endpoint binding is not implemented yet"; return failure();
+    }
     if (!function || !analysis.error.empty() || !analysis.retainBase || !base.prepareFiltered ||
         !base.expressions || analysis.demands.size() != analysis.retained.size() ||
         base.anchors.size() != base.occurrenceLoops.size()) {
@@ -149,7 +152,8 @@ RegionalAnalysis finiteOverlayRegionalResult(func::FuncOp function,
     const FiniteOverlayAnalysis& analysis)
 {
     auto result = analysis.regional;
-    if (!function || !analysis.error.empty() || !analysis.base.prepareFiltered || !analysis.retainBase) {
+    if (!function || !analysis.error.empty() || !analysis.base.prepareFiltered || !analysis.retainBase ||
+        llvm::any_of(analysis.base.outerLoops, [](const auto& loops) { return !loops.empty(); })) {
         return result;
     }
     auto owned = std::make_shared<FiniteOverlayAnalysis>(analysis);

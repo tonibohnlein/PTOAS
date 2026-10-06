@@ -145,6 +145,8 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/SyncRegionDigits.cpp
   InsertSync/SyncEffectRanges.cpp
   FrontierSynch/FrontierAnalysis.cpp
+  FrontierSynch/RegionalEvents.cpp
+  FrontierSynch/RegionSubstitution.cpp
   FrontierSynch/RegionExpressions.cpp
   FrontierSynch/RegionExpressionContext.cpp
   FrontierSynch/FiniteGuardedAnalysis.cpp
