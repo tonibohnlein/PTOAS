@@ -205,13 +205,16 @@ def main():
                     shared_effects = {f"X{i}": ({"mat"}, {"left"}) for i in range(count)}
                     validate(invoke(tool, "--structured-trace", path), labels, shared_effects)
                     checked += 1
-        # A non-adjacent local cover must not be replaced by a stronger pipe barrier.
+        # A nonadjacent local cover emits a barrier immediately before its consumer.
         body = f"{load()}\nscf.if %g {{\n{load('X', 'second')}\n}}\n{load('E')}"
         path.write_text(render(source, body, 1, 0))
         result = invoke(tool, "--structured-trace", path)
-        assert not result["accepted"] and result["unchanged_on_failure"], result
+        assert result["accepted"] and not result["trace"]["error"], result
+        barriers = [event for event in result["trace"]["events"]
+                    if event["kind"] == "barrier" and event["pipe"] != 6]
+        assert len(barriers) == 1 and barriers[0]["gap"] == 2 and barriers[0]["pipe"] == 3, barriers
         report = invoke(tool, "--sequence-analysis", path)
-        assert not report["error"] and not report["prepared"] and report["queries_available"], report
+        assert not report["error"] and report["prepared"] and report["queries_available"], report
         # Inactive arm-local poison must be masked before it reaches SET/WAIT predicates.
         body = (
             f"{load()}\nscf.if %g {{\n%one64 = arith.constant 1 : i64\n"
@@ -252,7 +255,7 @@ def main():
         assert not result["accepted"] and result["unchanged_on_failure"], result
         report = invoke(tool, "--sequence-analysis", path)
         assert not report["error"] and not report["prepared"] and report["queries_available"], report
-    print(f"finite guarded: {checked} concrete valuations and three transactional rejections passed")
+    print(f"finite guarded: {checked} concrete valuations and late-barrier insertion and two transactional rejections passed")
 
 
 if __name__ == "__main__":

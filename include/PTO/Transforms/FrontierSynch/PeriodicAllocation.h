@@ -45,8 +45,9 @@ struct PeriodicAllocation {
     std::string error;
     std::vector<DirectedAllocation> directions;
 };
-// For the canonical direct plan on these covers, under the model's local
-// adjacency and command contracts. No exceptional entry/interface reuse paths.
+// Required-order reuse witnesses remain sufficient when consumer-side barriers
+// add order. Minimum-budget claims require order equality with the direct plan.
+// No exceptional entry/interface reuse paths.
 // Validates ordered/unique cross-pipe endpoints, including periodic wrap.
 // No assumed hardware capacity or disjointness between actual ID resources.
 // A supplied arbitrary logical plan is outside this interface's contract.

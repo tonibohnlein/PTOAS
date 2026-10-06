@@ -51,10 +51,10 @@ struct TypedArithmeticDemandAnalysis {
     TypedArithmeticRelation<System> requiredOrder; // Strict H, all payload event pairs.
     TypedArithmeticRelation<System> minimumDemands; // F*: completion-to-start covers.
     ArithmeticAnalysisCost cost;
-    // This certifies the relational construction only. Executable selectors,
-    // cut availability and same-pipe adjacency remain consumer obligations.
+    // This certifies the relational construction only. Executable selectors and
+    // cut availability remain consumer obligations.
     bool exactMinimum = false;
-    bool adjacentLocalDemands = false; // No executed same-pipe payload lies between local endpoints.
+    bool adjacentLocalDemands = false; // Order-equality fact, not an insertion requirement.
 };
 using ArithmeticDemandAnalysis = TypedArithmeticDemandAnalysis<DifferenceBoundSystem>;
 using GeneralArithmeticDemandAnalysis = TypedArithmeticDemandAnalysis<IntegerSystem>;

@@ -185,7 +185,7 @@ LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp function, pto::GMAlia
         {event(1, zero), event(2, zero), guard}, {event(3, zero), event(4, zero), guard},
         {event(1, zero), event(2, zero), guard}}, order);
     std::string error = overlay.error;
-    auto plan = fs::prepareFiniteOverlayInsertion(function, overlay, {}, error);
+    auto plan = fs::prepareFiniteOverlayInsertion(function, overlay, error);
     const bool unchanged = before == render(function);
     const bool noPhysicalCertificate = succeeded(plan) && !(**plan).allocationCertificate;
     const bool accepted = unchanged && noPhysicalCertificate && succeeded(plan) &&

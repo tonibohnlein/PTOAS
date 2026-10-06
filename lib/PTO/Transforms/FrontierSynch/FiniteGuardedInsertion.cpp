@@ -34,15 +34,6 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
         }
         if (arena->constantValue(demand.guard) == 0) { continue; }
         auto p = pipe(demand.source), q = pipe(demand.target);
-        if (p == q) {
-            auto adjacent = yes();
-            for (uint32_t i = demand.source+1; i < demand.target; ++i) {
-                if (pipe(i) == p) { adjacent = both(adjacent,negate(presence[i])); }
-            }
-            if (!arena->implies(demand.guard,adjacent)) {
-                insertionError = "finite guarded local cover lacks executed-payload adjacency"; return failure();
-            }
-        }
         if (plan->families.size() >= UINT32_MAX) {
             insertionError = "finite guarded record identity overflow"; return failure();
         }

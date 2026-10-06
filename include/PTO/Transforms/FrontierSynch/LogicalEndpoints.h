@@ -52,7 +52,8 @@ struct LogicalEndpointPlan {
     // plan are errors; inactive must not be interpreted as an analysis failure.
     EndpointEvaluation evaluate(uint32_t recipe, uint64_t trips, uint64_t ordinal) const;
 };
-// Same-pipe adjacency is the model premise, not a new program check.
+// Local demands emit barriers before their consumers, including nonadjacent pairs.
+// Nonadjacent barriers may order intervening payloads beyond the demand relation.
 LogicalEndpointPlan buildLogicalEndpoints(const PeriodicAnalysis& analysis);
 // Caller has identified ONE actual legal cut. Sorts SET, barrier,
 // WAIT and coalesces duplicate identities and one barrier per pipe. Rejects

@@ -13,7 +13,7 @@
 namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(
     func::FuncOp function, const FiniteOverlayAnalysis& analysis,
-    const RegionalOrderQuery& adjacent, std::string& error)
+    std::string& error)
 {
     const auto& base = analysis.base;
     if (!function || !analysis.error.empty() || !analysis.retainBase || !base.prepareFiltered ||
@@ -99,12 +99,6 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(
         const auto& a = base.anchors[demand.source.type]; const auto& b = base.anchors[demand.target.type];
         if (!a.phase || !b.phase) { error = "finite overlay has no payload anchors"; return failure(); }
         auto p = static_cast<uint32_t>(a.phase->kPipeValue), q = static_cast<uint32_t>(b.phase->kPipeValue);
-        if (p == q) {
-            auto predicate = adjacent ? adjacent(demand.source, demand.target) : std::nullopt;
-            if (!predicate || !arena.isBoolean(*predicate) || !arena.implies(retained, *predicate)) {
-                error = "finite overlay local cover lacks executed adjacency"; return failure();
-            }
-        }
         auto record = static_cast<uint32_t>(nextRecord++);
         EndpointFamily family;
         family.id = record; family.sourcePipe = p; family.targetPipe = q; family.local = p == q;
@@ -151,16 +145,16 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(
     return plan;
 }
 RegionalAnalysis finiteOverlayRegionalResult(func::FuncOp function,
-    const FiniteOverlayAnalysis& analysis, RegionalOrderQuery adjacent)
+    const FiniteOverlayAnalysis& analysis)
 {
     auto result = analysis.regional;
     if (!function || !analysis.error.empty() || !analysis.base.prepareFiltered || !analysis.retainBase) {
         return result;
     }
     auto owned = std::make_shared<FiniteOverlayAnalysis>(analysis);
-    result.prepare = [owned, function, adjacent]() -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
+    result.prepare = [owned, function]() -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
         std::string error;
-        auto plan = prepareFiniteOverlayInsertion(function, *owned, adjacent, error);
+        auto plan = prepareFiniteOverlayInsertion(function, *owned, error);
         if (succeeded(plan)) { (*plan)->completeInvocation = false; }
         return plan;
     };
