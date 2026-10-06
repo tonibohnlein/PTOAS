@@ -125,6 +125,22 @@ RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
         result.error = result.extraction.error;
         return result;
     }
+    if (input.accesses().hasUniformRelationships(result.phases)) {
+        for (uint32_t a = 0; a < result.phases.size(); ++a) {
+            for (uint32_t b = 0; b < result.phases.size(); ++b) {
+                bool conflict = false;
+                for (auto x : input.accesses().effectsFor(result.phases[a])) {
+                    for (auto y : input.accesses().effectsFor(result.phases[b])) {
+                        conflict |= input.accesses().uniformConflict(x, y);
+                    }
+                }
+                if (conflict) {
+                    result.extraction.generators.push_back({a, b, a < b ? 0U : 1U});
+                    result.extraction.refreshBound = std::max<uint64_t>(result.extraction.refreshBound, 1);
+                }
+            }
+        }
+    }
     result.periodic = analyzePeriodicDemands(payloads, result.extraction.generators);
     result.error = result.periodic.error;
     if (!result.error.empty()) {

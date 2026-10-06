@@ -17,23 +17,23 @@
 // roots. InsertSync's shared ranges distinguish the disjoint smaller buffers
 // and the separate allocation while preserving overlap with the large buffer.
 // Only the shared scalar declarations establish exact element overwrites.
-// CHECK-LABEL: storage reused_ranges: cells=5 all-exact=0
-// CHECK: effect 0 pto.texpands write upper definite-write=0 cells=
-// CHECK: effect 1 pto.texpands write upper definite-write=0 cells=
-// CHECK: effect 2 pto.texpands write upper definite-write=0 cells=
-// CHECK: effect 3 pto.tsetval write exact definite-write=1 cells=
-// CHECK: effect 4 pto.tgetval read exact definite-write=0 cells=
-// CHECK: effect 5 pto.tsetval write exact definite-write=1 cells=
-// CHECK: effect 6 pto.texpands write upper definite-write=0 cells=
+// CHECK-LABEL: storage reused_ranges: cells=5 all-materialized=1
+// CHECK: effect 0 pto.texpands write intervals cells=
+// CHECK: effect 1 pto.texpands write intervals cells=
+// CHECK: effect 2 pto.texpands write intervals cells=
+// CHECK: effect 3 pto.tsetval write intervals cells=
+// CHECK: effect 4 pto.tgetval read intervals cells=
+// CHECK: effect 5 pto.tsetval write intervals cells=
+// CHECK: effect 6 pto.texpands write intervals cells=
 // CHECK: overlap 0,1=1
 // CHECK: overlap 0,2=1
 // CHECK: overlap 1,2=0
 // CHECK: overlap 4,5=1
 // CHECK: overlap 3,5=0
 // CHECK: overlap 0,6=0
-// CHECK-LABEL: storage scalar_only: cells=1 all-exact=1
-// CHECK: effect 0 pto.tsetval write exact definite-write=1 cells=
-// CHECK: effect 1 pto.tgetval read exact definite-write=0 cells=
+// CHECK-LABEL: storage scalar_only: cells=1 all-materialized=1
+// CHECK: effect 0 pto.tsetval write intervals cells=
+// CHECK: effect 1 pto.tgetval read intervals cells=
 // CHECK: source-unchanged; dependency-analysis-not-run
 
 !large = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>

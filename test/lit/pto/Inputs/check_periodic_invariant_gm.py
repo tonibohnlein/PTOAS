@@ -112,13 +112,13 @@ def main():
         assert "pto.logical_" not in result.stdout
         for operation in ["scf.for", "pto.tload", "pto.tstore"]:
             assert result.stdout.count(operation) == 1
-        # No independence assumption may be smuggled into may-alias mode.
+        # May-alias mode retains cross-base obligations in the same model.
         result = run(tool, ["--gm-alias=may-alias", "--recognize"], path)
         documents = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
         attempts = [attempt for node in documents[0]["nodes"] for attempt in node["attempts"]
                     if attempt["route"] == "numeric-template"]
-        assert attempts and all(attempt["state"] != "applicable" for attempt in attempts)
-    print("periodic invariant GM: 10 exact-order/reuse traces; overlap, clamp and alias rejections passed")
+        assert attempts and any(attempt["state"] == "applicable" for attempt in attempts)
+    print("periodic invariant GM: 10 exact-order/reuse traces; overlap/clamp rejections and modeled aliases passed")
 
 
 if __name__ == "__main__":

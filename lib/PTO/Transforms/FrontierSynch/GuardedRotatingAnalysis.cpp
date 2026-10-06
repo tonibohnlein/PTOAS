@@ -68,6 +68,22 @@ public:
             neighbors(target, false);
             neighbors(target, true);
         }
+        if (input.accesses().hasUniformRelationships(result.phases)) {
+            for (uint32_t a = 0; a < result.phases.size(); ++a) {
+                for (uint32_t b = 0; b < result.phases.size(); ++b) {
+                    bool conflict = false;
+                    for (auto x : input.accesses().effectsFor(result.phases[a])) {
+                        for (auto y : input.accesses().effectsFor(result.phases[b])) {
+                            conflict |= input.accesses().uniformConflict(x, y);
+                        }
+                    }
+                    if (conflict) {
+                        result.generators.push_back({a, b, c(a < b ? 0 : 1),
+                            dag().land(result.payloads[a].presence, result.payloads[b].presence), a < b ? 0U : 1U});
+                    }
+                }
+            }
+        }
         if (!dag().constructionError().empty()) { fail(dag().constructionError()); return; }
         result.periodic = analyzeGuardedPeriodicQuotient(result.expressions, result.payloads, result.generators);
         if (!result.periodic.error.empty()) { fail(result.periodic.error); }

@@ -40,6 +40,11 @@ private:
     Type accumulatorType;
     std::unordered_set<uint32_t> activeAtoms;
 };
+// Protection for residual effect pairs with identical buffer operands. This
+// preserves the same target rule when physical addresses are symbolic. Results
+// are indexed by shared effect ID; zero requires ordinary software ordering.
+std::vector<uint64_t> modeledProtectionGroups(const SyncInput& input,
+    llvm::ArrayRef<const CompoundInstanceElement*> phases);
 // Conservative applicability check for routes that have no conditional
 // hardware-protection export. Uses the shared target rule, including pairs
 // crossing repeated visits; it does not change effects or add native edges.

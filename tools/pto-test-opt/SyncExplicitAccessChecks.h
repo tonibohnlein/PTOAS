@@ -49,38 +49,59 @@ inline bool checkExplicitAccessContracts(mlir::func::FuncOp function, const mlir
     };
     auto point = makeByteAccessRegion(operand, singleton, oneOffset(12), 4);
     auto result = apply(point);
-    if (result.precision != SyncAccessPrecision::Exact || !result.exactRanges || result.ranges.size() != 1 ||
+    if (!result.rangesMaterialized || result.ranges.size() != 1 ||
         result.ranges.front().begin != 1036 || result.ranges.front().end != 1040) {
         return false;
     }
     auto stride = makeByteAccessRegion(operand, oneOffset(3), AffineMap::get(1, 0, {d * 8}, context), 4);
     result = apply(stride);
-    if (!result.exactRanges || result.ranges.size() != 3 || result.ranges.back().begin != 1040) {
+    if (!result.rangesMaterialized || result.ranges.size() != 3 || result.ranges.back().begin != 1040) {
         return false;
     }
     auto empty = makeByteAccessRegion(operand, oneOffset(0), AffineMap::get(1, 0, {d}, context), 4);
     result = apply(empty);
-    if (result.precision != SyncAccessPrecision::Exact || !result.exactRanges || !result.ranges.empty()) {
+    if (!result.rangesMaterialized || !result.ranges.empty()) {
         return false;
     }
     auto symbolic = makeByteAccessRegion(operand, AffineMap::get(0, 1, {}, context),
         AffineMap::get(0, 1, {s * 4}, context), 4, {1});
     result = apply(symbolic);
-    if (result.precision != SyncAccessPrecision::Exact || result.exactRanges ||
+    if (result.rangesMaterialized ||
         !result.region || result.region->symbols.size() != 1) {
         return false;
     }
     auto symbolicExtent = makeByteAccessRegion(operand, AffineMap::get(0, 1, {s}, context),
         AffineMap::get(1, 1, {d * 4}, context), 4, {1});
     result = apply(symbolicExtent);
-    if (result.precision != SyncAccessPrecision::Exact || result.exactRanges || !result.region) {
+    if (result.rangesMaterialized || !result.region) {
         return false;
     }
     auto coordinates = makeExplicitAccessRegion(operand, singleton, AffineMap::get(0, 0, {c(1), c(2)}, context));
     result = apply(coordinates);
-    if (!result.exactRanges || result.ranges.size() != 1 || result.ranges.front().begin != 1064) {
+    if (!result.rangesMaterialized || result.ranges.size() != 1 || result.ranges.front().begin != 1064) {
         return false;
     }
+    auto bound = effect;
+    SyncMemoryEffect bufferBound(MemoryEffects::Read::get(), &operand);
+    mlir::pto::detail::applyAccessCoverage(input, bound, {bufferBound});
+    auto matchesBound = [&](const auto& access) {
+        return access.rangesMaterialized == bound.rangesMaterialized &&
+            access.ranges.size() == bound.ranges.size() &&
+            llvm::equal(access.ranges, bound.ranges, [](const auto& a, const auto& b) {
+                return sameStorageDomain(a, b) && a.begin == b.begin && a.end == b.end;
+            });
+    };
+    auto highMemory = *effect.memory;
+    highMemory.baseAddresses = {1024, uint64_t(INT64_MAX) + 1};
+    highMemory.allocateSize = 64;
+    highMemory.hasKnownPhysicalAddresses = true;
+    highMemory.aliasesUnknownRange = false;
+    auto highBound = effect;
+    highBound.memory = &highMemory;
+    highBound.sharedProvenanceComplete = true;
+    mlir::pto::detail::applyAccessCoverage(input, highBound, {bufferBound});
+    if (!highBound.rangesMaterialized || highBound.ranges.size() != 2 ||
+        !highBound.regions.empty() || highBound.region) { return false; }
     Builder builder(context);
     for (auto [key, bad] : SmallVector<std::pair<StringRef, Attribute>>{
              {"byte_width", builder.getI64IntegerAttr(0)},
@@ -93,7 +114,7 @@ inline bool checkExplicitAccessContracts(mlir::func::FuncOp function, const mlir
         NamedAttrList invalid(point);
         invalid.set(key, bad);
         result = apply(invalid.getDictionary(context));
-        if (result.precision == SyncAccessPrecision::Exact || result.region) {
+        if (!matchesBound(result)) {
             return false;
         }
     }
@@ -101,11 +122,11 @@ inline bool checkExplicitAccessContracts(mlir::func::FuncOp function, const mlir
     SyncMemoryEffect duplicate(MemoryEffects::Read::get(), &operand, point);
     result = effect;
     mlir::pto::detail::applyAccessCoverage(input, result, {first, duplicate});
-    if (result.precision != SyncAccessPrecision::Exact || result.regions.size() != 2) {
+    if (result.regions.size() != 2) {
         return false;
     }
     SyncMemoryEffect unresolved(MemoryEffects::Read::get(), &operand);
     mlir::pto::detail::applyAccessCoverage(input, result, {first, unresolved});
-    return result.precision == SyncAccessPrecision::UpperBound && !result.hasDefiniteWrites();
+    return matchesBound(result);
 }
 #endif

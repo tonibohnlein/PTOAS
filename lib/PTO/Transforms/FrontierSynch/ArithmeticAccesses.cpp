@@ -94,41 +94,24 @@ bool symbolicRegion(ProgramBuilder& builder, std::size_t siteId, const SyncStora
     }
     return true;
 }
-bool checkStorageBases(ProgramBuilder& builder, const SyncInput& input, const SyncStorageEffects& effects)
-{
-    SmallVector<SyncStorageCell> identities;
-    for (const auto& site : builder.output.sites) {
-        if (builder.staticallyEmpty(site)) {
-            continue;
-        }
-        for (auto id : effects.effectsFor(site.phase)) {
-            const auto& effect = effects.effects()[id];
-            if (effect.exactRanges) { llvm::append_range(identities, effect.ranges); }
-            for (const auto& region : effect.regions) {
-                if (region.empty()) { continue; }
-                if (region.base && (effect.memory->scope != AddressSpace::GM ||
-                                    effect.memory->rootBuffer != region.base)) {
-                    builder.output.extraction.note(RecognitionIssue::SymbolicGeometry, site.phase->elementOp);
-                    return false;
-                }
-                // A one-byte witness checks the identity of a symbolic region;
-                // this does not materialize or approximate its access domain.
-                identities.push_back({effect.memory->scope, 0, 1, region.base});
-            }
-        }
-    }
-    if (!storageBasesAreComparable(identities, input.memory().gmPolicy())) {
-        builder.output.extraction.note(RecognitionIssue::SymbolicGeometry,
-                                      builder.output.sites.front().phase->elementOp);
-        return false;
-    }
-    return true;
-}
+
 }
 void extractAccesses(ProgramBuilder& builder, const SyncInput& input, const SyncStorageEffects& effects)
 {
-    if (!checkStorageBases(builder, input, effects)) {
-        return;
+    SmallVector<const CompoundInstanceElement*> phases;
+    for (const auto& site : builder.output.sites) { phases.push_back(site.phase); }
+    if (effects.hasUniformRelationships(phases)) {
+        for (uint32_t a = 0; a < builder.output.sites.size(); ++a) {
+            for (uint32_t b = a; b < builder.output.sites.size(); ++b) {
+                bool conflict = false;
+                for (auto x : effects.effectsFor(builder.output.sites[a].phase)) {
+                    for (auto y : effects.effectsFor(builder.output.sites[b].phase)) {
+                        conflict |= effects.uniformConflict(x, y);
+                    }
+                }
+                if (conflict) { builder.output.uniformConflicts.emplace_back(a, b); }
+            }
+        }
     }
     for (auto [siteId, site] : llvm::enumerate(builder.output.sites)) {
         if (builder.staticallyEmpty(site)) {
@@ -136,18 +119,11 @@ void extractAccesses(ProgramBuilder& builder, const SyncInput& input, const Sync
         }
         for (auto id : effects.effectsFor(site.phase)) {
             const auto& effect = effects.effects()[id];
-            if (effect.precision != SyncAccessPrecision::Exact) {
-                builder.output.extraction.note(RecognitionIssue::InexactFootprint, site.phase->elementOp);
-                continue;
-            }
-            if (effect.exactRanges) {
+            if (effect.rangesMaterialized) {
                 for (const auto& range : effect.ranges) {
                     emitRange(builder, siteId, effect, range, getAffineConstantExpr(0, builder.context));
                 }
                 continue;
-            }
-            if (effect.regions.empty()) {
-                builder.output.extraction.note(RecognitionIssue::SymbolicGeometry, site.phase->elementOp);
             }
             for (const auto& region : effect.regions) {
                 if (!symbolicRegion(builder, siteId, effect, region)) {

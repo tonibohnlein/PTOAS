@@ -9,7 +9,7 @@
 // CHECK: "function":"read_only"
 // CHECK-SAME: "prepared":true
 // CHECK: "function":"outside_write"
-// CHECK-SAME: "prepared":false
+// CHECK-SAME: "prepared":true
 !tile = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
 module attributes {pto.target_arch = "a3"} {
   func.func @read_only(%p: !pto.ptr<f16, gm>, %n: index) {

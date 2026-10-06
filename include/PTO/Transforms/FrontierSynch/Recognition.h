@@ -16,7 +16,7 @@ namespace mlir::pto::frontiersynch {
 enum class RecognitionState { Applicable, NotApplicable, MissingPremise };
 enum class RecognitionIssue {
     StructuredBody, MultiplePhases, UnmodeledOperation, UnknownPipe,
-    InexactFootprint, WithinSlotFootprint, SymbolicGeometry, UnknownGeometry, LoopDomain, LoopCarriedState,
+    WithinSlotFootprint, SymbolicGeometry, UnknownGeometry, LoopDomain, LoopCarriedState,
     SlotExpression, IndexArithmetic, CommonStride, OverlappingFamilies,
     AliasedOperand, UnsupportedView, GuardInvariance, UnsupportedControl,
     ArithmeticDimension, ArithmeticPeriod, ArithmeticPipeLimit, ArithmeticConfiguration, AdditionalPrerequisite,

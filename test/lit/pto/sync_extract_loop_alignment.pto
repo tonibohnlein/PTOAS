@@ -14,9 +14,9 @@
 !dst = !pto.tile_buf<left, 128x64xbf16, slayout=row_major>
 module attributes {pto.target_arch = "a3"} {
 // CHECK-LABEL: storage aligned_iv:
-// CHECK: pto.textract read exact
+// CHECK: pto.textract read symbolic
 // CHECK: access base=absolute bytes=2 map={{.*}} extents=128, 64 loops=1
-// CHECK: pto.textract write exact
+// CHECK: pto.textract write intervals
   func.func @aligned_iv(%runtime: index) {
     %base = arith.constant 0 : i64
     %zero = arith.constant 0 : index
@@ -31,9 +31,9 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 // CHECK-LABEL: storage aligned_nonzero:
-// CHECK: pto.textract read exact
+// CHECK: pto.textract read symbolic
 // CHECK: access base=absolute bytes=2 map={{.*}} extents=128, 64 loops=1
-// CHECK: pto.textract write exact
+// CHECK: pto.textract write intervals
   func.func @aligned_nonzero(%runtime: index) {
     %base = arith.constant 0 : i64
     %zero = arith.constant 0 : index
@@ -48,8 +48,8 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 // CHECK-LABEL: storage bad_lower:
-// CHECK: pto.textract read upper
-// CHECK: pto.textract write upper
+// CHECK: pto.textract read intervals
+// CHECK: pto.textract write intervals
   func.func @bad_lower(%runtime: index) {
     %base = arith.constant 0 : i64
     %zero = arith.constant 0 : index
@@ -64,8 +64,8 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 // CHECK-LABEL: storage bad_step:
-// CHECK: pto.textract read upper
-// CHECK: pto.textract write upper
+// CHECK: pto.textract read intervals
+// CHECK: pto.textract write intervals
   func.func @bad_step(%runtime: index) {
     %base = arith.constant 0 : i64
     %zero = arith.constant 0 : index
@@ -80,8 +80,8 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 // CHECK-LABEL: storage unknown_lower:
-// CHECK: pto.textract read upper
-// CHECK: pto.textract write upper
+// CHECK: pto.textract read intervals
+// CHECK: pto.textract write intervals
   func.func @unknown_lower(%runtime: index) {
     %base = arith.constant 0 : i64
     %zero = arith.constant 0 : index
@@ -95,8 +95,8 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 // CHECK-LABEL: storage unknown_step:
-// CHECK: pto.textract read upper
-// CHECK: pto.textract write upper
+// CHECK: pto.textract read intervals
+// CHECK: pto.textract write intervals
   func.func @unknown_step(%runtime: index) {
     %base = arith.constant 0 : i64
     %zero = arith.constant 0 : index
@@ -110,9 +110,9 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 // CHECK-LABEL: storage dynamic_end:
-// CHECK: pto.textract read exact
+// CHECK: pto.textract read symbolic
 // CHECK: access base=absolute bytes=2 map={{.*}} extents=128, 64 loops=1
-// CHECK: pto.textract write exact
+// CHECK: pto.textract write intervals
   func.func @dynamic_end(%runtime: index) {
     %base = arith.constant 0 : i64
     %zero = arith.constant 0 : index
@@ -126,9 +126,9 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 // CHECK-LABEL: storage zero_trip:
-// CHECK: pto.textract read exact
+// CHECK: pto.textract read symbolic
 // CHECK: access base=absolute bytes=2 map={{.*}} extents=128, 64 loops=1
-// CHECK: pto.textract write exact
+// CHECK: pto.textract write intervals
   func.func @zero_trip(%runtime: index) {
     %base = arith.constant 0 : i64
     %zero = arith.constant 0 : index
@@ -143,9 +143,9 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 // CHECK-LABEL: storage short_trip:
-// CHECK: pto.textract read exact
+// CHECK: pto.textract read symbolic
 // CHECK: access base=absolute bytes=2 map={{.*}} extents=128, 64 loops=1
-// CHECK: pto.textract write exact
+// CHECK: pto.textract write intervals
   func.func @short_trip(%runtime: index) {
     %base = arith.constant 0 : i64
     %zero = arith.constant 0 : index
@@ -160,9 +160,9 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 // CHECK-LABEL: storage nested_iv:
-// CHECK: pto.textract read exact
+// CHECK: pto.textract read symbolic
 // CHECK: access base=absolute bytes=2 map={{.*}} extents=128, 64 loops=2
-// CHECK: pto.textract write exact
+// CHECK: pto.textract write intervals
   func.func @nested_iv() {
     %base = arith.constant 0 : i64
     %zero = arith.constant 0 : index
@@ -178,8 +178,8 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 // CHECK-LABEL: storage carried_offset:
-// CHECK: pto.textract read upper
-// CHECK: pto.textract write upper
+// CHECK: pto.textract read intervals
+// CHECK: pto.textract write intervals
   func.func @carried_offset() {
     %base = arith.constant 0 : i64
     %zero = arith.constant 0 : index

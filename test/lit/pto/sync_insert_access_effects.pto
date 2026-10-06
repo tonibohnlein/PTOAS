@@ -10,27 +10,27 @@
 // COPY: phase-copy-check {{.*}}: passed
 // Source valid dimensions select two 32-byte rows, separated by 32 bytes.
 // Destination rows begin at 1024 + (1*32+8)*4 and one row-stride later.
-// CHECK-LABEL: storage insert_rectangle: cells=6 all-exact=1
+// CHECK-LABEL: storage insert_rectangle: cells=6 all-materialized=1
 // CHECK: cell 0 space=6 [0,32)
 // CHECK: cell 1 space=6 [64,96)
 // CHECK: cell 2 space=6 [1184,1188)
 // CHECK: cell 5 space=6 [1312,1344)
-// CHECK: effect 0 pto.tinsert read exact definite-write=0 cells=0, 1
-// CHECK: effect 1 pto.tinsert write exact definite-write=1 cells=2, 3, 5
+// CHECK: effect 0 pto.tinsert read intervals cells=0, 1
+// CHECK: effect 1 pto.tinsert write intervals cells=2, 3, 5
 // CHECK: overlap 1,2=1
 // CHECK: overlap 1,3=0
-// CHECK-LABEL: storage insert_symbolic: cells=2 all-exact=1
-// CHECK: effect 1 pto.tinsert write exact definite-write=1
+// CHECK-LABEL: storage insert_symbolic: cells=2 all-materialized=0
+// CHECK: effect 1 pto.tinsert write symbolic
 // CHECK: access base=absolute bytes=4 map=(d0, d1)[s0, s1] -> (((d0 + s0 mod 65536) * 32 + d1 + s1 mod 65536) * 4 + 1024) extents=2, 8
-// CHECK-LABEL: storage unaligned_insert: cells=2 all-exact=0
-// CHECK: effect 0 pto.tinsert read upper definite-write=0
-// CHECK: effect 1 pto.tinsert write upper definite-write=0
-// CHECK-LABEL: storage unassigned_insert: cells=0 all-exact=0
-// CHECK: effect 0 pto.tinsert read unknown definite-write=0
-// CHECK: effect 1 pto.tinsert write unknown definite-write=0
-// CHECK-LABEL: storage burst_overflow: cells=2 all-exact=0
-// CHECK: effect 0 pto.tinsert read upper definite-write=0
-// CHECK: effect 1 pto.tinsert write upper definite-write=0
+// CHECK-LABEL: storage unaligned_insert: cells=2 all-materialized=1
+// CHECK: effect 0 pto.tinsert read intervals
+// CHECK: effect 1 pto.tinsert write intervals
+// CHECK-LABEL: storage unassigned_insert: cells=0 all-materialized=0
+// CHECK: effect 0 pto.tinsert read unresolved
+// CHECK: effect 1 pto.tinsert write unresolved
+// CHECK-LABEL: storage burst_overflow: cells=2 all-materialized=1
+// CHECK: effect 0 pto.tinsert read intervals
+// CHECK: effect 1 pto.tinsert write intervals
 !src = !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=16, v_row=2, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 !dst = !pto.tile_buf<vec, 4x32xf32>
 module attributes {pto.target_arch = "a3"} {

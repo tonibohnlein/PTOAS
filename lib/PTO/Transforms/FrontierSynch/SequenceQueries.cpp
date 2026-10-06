@@ -9,6 +9,41 @@
 namespace mlir::pto::frontiersynch {
 void SequenceAnalysisState::bridges()
 {
+    const SyncStorageEffects* model = nullptr;
+    SmallVector<const CompoundInstanceElement*> phases;
+    bool residual = false;
+    for (const auto& child : children) {
+        if (child.regional.accessModel) { model = child.regional.accessModel; }
+        for (const auto& anchor : child.regional.anchors) { phases.push_back(anchor.phase); }
+        for (const auto& access : child.regional.accessBoundary) { residual |= !access.representedByCells; }
+    }
+    residual |= model && model->hasUniformRelationships(phases);
+    if (residual) {
+        for (uint32_t a = 0; a < children.size(); ++a) {
+            for (uint32_t b = a + 1; b < children.size(); ++b) {
+                const auto& left = children[a].regional;
+                const auto& right = children[b].regional;
+                if (!left.accessModel || !right.accessModel) { continue; }
+                for (const auto& x : left.accessBoundary) {
+                    for (const auto& y : right.accessBoundary) {
+                        const auto& model = *left.accessModel;
+                        bool conflict = model.uniformConflict(x.effect, y.effect);
+                        if (!conflict && (!x.representedByCells || !y.representedByCells) &&
+                            model.residualConflict(x.effect, y.effect)) {
+                            if (left.occurrenceLoops[x.last.event.type] || right.occurrenceLoops[y.first.event.type]) {
+                                fail("crossing symbolic access predicate needs an occurrence adapter"); return;
+                            }
+                            conflict = true;
+                        }
+                        if (conflict) {
+                            crossing({port(a, x.last.event.type, x.last.event.ordinal), x.last.present},
+                                     {port(b, y.first.event.type, y.first.event.ordinal), y.first.present});
+                        }
+                    }
+                }
+            }
+        }
+    }
     for (uint32_t cell = 0; cell < cells.size(); ++cell) {
         std::vector<Selected> writers;
         std::map<uint32_t, std::vector<Selected>> readers;

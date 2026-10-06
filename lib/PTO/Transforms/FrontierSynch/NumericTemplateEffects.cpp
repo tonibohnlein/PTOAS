@@ -64,13 +64,12 @@ bool TemplateBuilder::payload(const CompoundInstanceElement* phase)
     payload.coordinates = path;
     for (auto id : input.accesses().effectsFor(phase)) {
         const auto& source = input.accesses().effects()[id];
-        if (source.precision != SyncAccessPrecision::Exact || source.regions.empty()) {
-            output.result.note(RecognitionIssue::InexactFootprint, phase->elementOp);
-            return false;
-        }
         TemplateEffect effect;
         effect.sourceEffect = id;
         effect.mode = source.mode;
+        if (source.regions.empty() && source.rangesMaterialized) {
+            effect.ranges = source.ranges;
+        }
         for (const auto& original : source.regions) {
             auto map = substitute(*this, original);
             if (!map || !charge(1, output.fragments, output.limits.fragments, phase->elementOp)) {

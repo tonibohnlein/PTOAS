@@ -106,6 +106,26 @@ def ir_checks(tool, source):
         assert groups[0] and not groups[1] and not groups[2]
         assert groups[3] and groups[3] == groups[4] and groups[0] != groups[3]
         validate(template, json.loads(invoke(tool, '--insertion-trace', path)))
+        # Symbolic accumulator addresses retain the same native protection.
+        head = original[:original.index("    scf.for")]
+        head = head.replace("@accumulation()", "@accumulation(%address: i64, %g: i1)")
+        head = head.replace("%c = pto.alloc_tile addr = %base", "%c = pto.alloc_tile addr = %address")
+        pair = ("pto.tmatmul ins(%a, %b : !a, !b) outs(%c : !c)\n"
+                "pto.tmatmul.acc ins(%c, %a, %b : !c, !a, !b) outs(%c : !c)\n")
+        path.write_text(head + pair + "return\n}\n}\n")
+        explicit = next(json.loads(line) for line in invoke(tool, "--explicit-analysis", path).splitlines()
+                        if line.startswith("{"))
+        assert not explicit["error"] and explicit["retained"] == [], explicit
+        for guard in (0, 1):
+            guarded_head = head.replace("%g: i1) {", "%g: i1) attributes {test.trace_arguments = "
+                                        f"array<i64: 0, {guard}>" + "} {")
+            path.write_text(guarded_head + "scf.if %g {\n" + pair + "}\nreturn\n}\n}\n")
+            report = json.loads(invoke(tool, "--structured-trace", path))
+            assert report["accepted"] and not report["trace"]["error"], report
+            events = report["trace"]["events"]
+            assert sum(e["kind"] == "payload" for e in events) == 2 * guard
+            assert all(e["kind"] == "payload" or (e["kind"] == "barrier" and e["pipe"] == 6)
+                       for e in events), events
         # Dynamic types with known extents now have exact shared footprints;
         # footprint precision alone must not infer accumulation protection.
         text = original.replace('32x16xf16, slayout=', '32x16xf16, valid=?x16, slayout=')
@@ -116,7 +136,7 @@ def ir_checks(tool, source):
         template = recognized(tool, path)
         assert not any(p['hardware_protection'] for p in template['payloads'])
         validate(template, json.loads(invoke(tool, '--insertion-trace', path)))
-        # A genuinely unknown row extent remains unsupported.
+        # Unknown row extents use the shared buffer bound without inferring hardware protection.
         unknown = text.replace('@accumulation()', '@accumulation(%m: index)')
         unknown = unknown.replace('    %m = arith.constant 32 : index\n', '')
         path.write_text(unknown)
@@ -124,7 +144,10 @@ def ir_checks(tool, source):
                 if line.startswith('{')]
         attempts = [a for d in docs for n in d['nodes'] for a in n['attempts']
                     if a['route'] == 'numeric-template']
-        assert attempts and all(a['state'] != 'applicable' for a in attempts)
+        assert attempts and any(a['state'] == 'applicable' for a in attempts)
+        template = recognized(tool, path)
+        assert not any(p['hardware_protection'] for p in template['payloads'])
+        validate(template, json.loads(invoke(tool, '--insertion-trace', path)))
 
 
 def main():

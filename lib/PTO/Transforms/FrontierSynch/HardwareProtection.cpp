@@ -123,6 +123,50 @@ void HardwareProtectionBuilder::observe(Operation* operation, ExplicitEffects& o
         }
     }
 }
+std::vector<uint64_t> modeledProtectionGroups(const SyncInput& input,
+    llvm::ArrayRef<const CompoundInstanceElement*> phases)
+{
+    const auto effects = input.accesses().effects();
+    std::vector<uint64_t> groups(effects.size(), 0);
+    HardwareProtectionBuilder builder;
+    std::optional<std::size_t> active;
+    for (const auto* phase : phases) {
+        SmallVector<std::size_t> accumulators;
+        for (auto id : input.accesses().effectsFor(phase)) {
+            if (effects[id].memory->scope == AddressSpace::ACC) { accumulators.push_back(id); }
+        }
+        // An unrelated pipe can break the chain by accessing this accumulator.
+        if (static_cast<uint32_t>(phase->kPipeValue) != static_cast<uint32_t>(PipelineType::PIPE_M)) {
+            if (active && llvm::any_of(input.accesses().effectsFor(phase), [&](auto id) {
+                    return input.accesses().mayOverlap(*active, id);
+                })) { builder.endScope(); active.reset(); }
+            continue;
+        }
+        if (accumulators.empty()) { builder.endScope(); active.reset(); continue; }
+        const auto first = accumulators.front();
+        const auto& candidate = effects[first];
+        const bool oneOperand = candidate.sharedProvenanceComplete &&
+            llvm::all_of(accumulators, [&](auto id) {
+                return effects[id].sharedProvenanceComplete &&
+                    effects[id].memory->baseBuffer == candidate.memory->baseBuffer;
+            });
+        if (!oneOperand) { builder.endScope(); active.reset(); continue; }
+        if (!active || effects[*active].memory->baseBuffer != candidate.memory->baseBuffer) {
+            builder.endScope();
+        }
+        ExplicitEffects occurrence;
+        occurrence.pipe = static_cast<uint32_t>(phase->kPipeValue);
+        for (auto id : accumulators) {
+            occurrence.accesses.push_back({0, effects[id].mode == SyncAccessMode::Read,
+                effects[id].mode == SyncAccessMode::Write});
+        }
+        builder.observe(phase->elementOp, occurrence, {0});
+        const auto group = occurrence.accesses.front().protectionGroup;
+        for (auto id : accumulators) { groups[id] = group; }
+        active = group ? std::optional<std::size_t>(first) : std::nullopt;
+    }
+    return groups;
+}
 bool mayHaveHardwareProtectedPair(const SyncInput& input,
                                  llvm::ArrayRef<const CompoundInstanceElement*> phases)
 {

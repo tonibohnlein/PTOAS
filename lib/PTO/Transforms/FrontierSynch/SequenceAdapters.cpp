@@ -21,6 +21,17 @@ void SequenceAnalysisState::bindAdapters()
         out.occurrenceLoops.assign(child.anchors.size(), child.loop);
         out.capabilities = {true, true, true, true};
         out.gmAliasPolicy = input->memory().gmPolicy();
+        out.accessModel = &input->accesses();
+        for (uint32_t type = 0; type < child.anchors.size(); ++type) {
+            auto present = expressions.lt(c(0), child.trips);
+            RegionalSelector first{{type, c(0), PeriodicEventKind::Start}, present};
+            RegionalSelector last{{type, expressions.sub(child.trips, c(1)), PeriodicEventKind::Start}, present};
+            for (auto effect : input->accesses().effectsFor(child.anchors[type].phase)) {
+                const auto& access = input->accesses().effects()[effect];
+                out.accessBoundary.push_back({effect, first, last,
+                    child.loop ? !access.regions.empty() : access.rangesMaterialized});
+            }
+        }
         out.cost = child.costs;
         out.cost.children = 1;
         out.cost.physicalFragments = child.patterns.size();
@@ -99,7 +110,7 @@ bool SequenceAnalysisState::importSummaries()
     std::optional<GMAliasPolicy> gmPolicy;
     for (const auto& child : children) {
         const auto& out = child.regional;
-        if (out.expressions != arena || !out.capabilities.exactEffects || !out.capabilities.exactQueries ||
+        if (out.expressions != arena || !out.capabilities.completeStorageModel || !out.capabilities.exactQueries ||
             !out.capabilities.exactSelectors || !out.capabilities.endpointRecipes || !out.presence ||
             !out.reachability || !out.prepare || out.anchors.size() != out.occurrenceLoops.size()) {
             return fail("sequence child lacks a constructed exact regional interface");
@@ -118,8 +129,25 @@ bool SequenceAnalysisState::importSummaries()
             points[cell.cell.space][cell.cell.base].insert(cell.cell.end);
         }
     }
-    if (!storageBasesAreComparable(identities, gmPolicy.value_or(GMAliasPolicy::MayAlias))) {
-        return fail("regional storage bases have unresolved alias relationships");
+    const SyncStorageEffects* commonModel = nullptr;
+    bool unmodeledStorage = false;
+    for (const auto& child : children) {
+        if (!child.regional.accessModel) {
+            unmodeledStorage |= llvm::any_of(child.regional.storageBoundary, [](const auto& boundary) {
+                return boundary.cell.begin != boundary.cell.end;
+            });
+            continue;
+        }
+        if (commonModel && commonModel != child.regional.accessModel) {
+            return fail("regional access models belong to different inputs");
+        }
+        commonModel = child.regional.accessModel;
+    }
+    if (commonModel && unmodeledStorage) {
+        return fail("mixed regional storage needs shared effect selectors on every nonempty child");
+    }
+    if (!commonModel && !storageBasesAreComparable(identities, gmPolicy.value_or(GMAliasPolicy::MayAlias))) {
+        return fail("regional storage relationships need the shared access model");
     }
     cells.clear(); ports.clear(); portIds.clear(); boundaries.clear();
     for (const auto& [space, bases] : points) {
@@ -141,9 +169,12 @@ bool SequenceAnalysisState::importSummaries()
     for (uint32_t id = 0; id < children.size(); ++id) {
         auto& child = children[id];
         child.anchors = child.regional.anchors;
+        auto validSelector = [&](RegionalSelector selector) {
+            return selector.event.type < child.anchors.size() && selector.event.ordinal < expressions.size() &&
+                !expressions.isBoolean(selector.event.ordinal) && expressions.isBoolean(selector.present);
+        };
         auto convert = [&](RegionalSelector selector, std::vector<Selected>& destination) {
-            if (selector.event.type >= child.anchors.size() || selector.event.ordinal >= expressions.size() ||
-                expressions.isBoolean(selector.event.ordinal) || !expressions.isBoolean(selector.present)) {
+            if (!validSelector(selector)) {
                 fail("regional selector has an invalid occurrence or predicate"); return;
             }
             destination.push_back({port(id, selector.event.type, selector.event.ordinal), selector.present});
@@ -161,6 +192,16 @@ bool SequenceAnalysisState::importSummaries()
                 for (const auto& [pipe, values] : local.lastReaders) {
                     for (auto selected : values) { convert(selected, out.lastReaders[pipe]); }
                 }
+            }
+        }
+        for (const auto& access : child.regional.accessBoundary) {
+            if (!child.regional.accessModel || access.effect >= child.regional.accessModel->effects().size()) {
+                return fail("regional access selector has no shared effect");
+            }
+            // Register a port only when a residual crossing actually uses it.
+            // Fully geometric composition retains its compact boundary graph.
+            if (!validSelector(access.first) || !validSelector(access.last)) {
+                return fail("regional access selector has an invalid occurrence or predicate");
             }
         }
         for (const auto* side : {&child.regional.firstPayloads, &child.regional.lastPayloads}) {
@@ -190,6 +231,15 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
             coordinates->push_back({child, type});
             out.anchors.push_back(region.anchors[type]);
             out.occurrenceLoops.push_back(region.occurrenceLoops[type]);
+        }
+    }
+    for (uint32_t child = 0; child < state->children.size(); ++child) {
+        const auto& regional = state->children[child].regional;
+        if (regional.accessModel) { out.accessModel = regional.accessModel; }
+        for (auto access : regional.accessBoundary) {
+            access.first.event.type += starts[child];
+            access.last.event.type += starts[child];
+            out.accessBoundary.push_back(std::move(access));
         }
     }
     out.presence = [state, coordinates](RegionalEvent event) -> std::optional<Expr> {

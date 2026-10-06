@@ -8,31 +8,31 @@
 // RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
 // RUN: pto-sync-input-test --phase-copy-checks %s | FileCheck %s --check-prefix=COPY
 // COPY: phase-copy-check {{.*}}: passed
-// CHECK-LABEL: storage tile_scalar: cells=2 all-exact=1
+// CHECK-LABEL: storage tile_scalar: cells=2 all-materialized=0
 // CHECK: cell 0 space=6 [1024,1028)
 // CHECK: cell 1 space=6 [1028,1032)
-// CHECK: effect 0 pto.tsetval write exact definite-write=1 cells=0
-// CHECK: effect 1 pto.tgetval read exact definite-write=0 cells=1
-// CHECK: effect 2 pto.tgetval read exact definite-write=0 cells=0
+// CHECK: effect 0 pto.tsetval write intervals cells=0
+// CHECK: effect 1 pto.tgetval read intervals cells=1
+// CHECK: effect 2 pto.tgetval read intervals cells=0
 // CHECK: access base=absolute bytes=4 map=()[s0] -> ((s0 mod 4294967296) * 4 + 1024)
 // CHECK: overlap 0,1=0
 // CHECK: overlap 0,2=1
 // CHECK: overlap 0,3=1
-// CHECK-LABEL: storage tile_view: cells=1 all-exact=1
+// CHECK-LABEL: storage tile_view: cells=1 all-materialized=1
 // CHECK: cell 0 space=6 [1060,1064)
-// CHECK-LABEL: storage pointer_scalar: cells=2 all-exact=1
+// CHECK-LABEL: storage pointer_scalar: cells=2 all-materialized=0
 // CHECK: access base=pointer bytes=4 map=() -> (4)
 // CHECK: access base=pointer bytes=4 map=() -> (8)
 // CHECK: access base=pointer bytes=4 map=()[s0] -> (s0 * 4)
 // CHECK: overlap 0,1=0
 // CHECK: overlap 0,2=1
-// CHECK-LABEL: storage pointer_vector: cells=1 all-exact=1
+// CHECK-LABEL: storage pointer_vector: cells=1 all-materialized=1
 // CHECK: access base=pointer bytes=16 map=() -> (32)
 // CHECK: access base=pointer bytes=16 map=() -> (32)
 // CHECK: overlap 0,1=1
-// CHECK-LABEL: storage padded_vector: cells=0 all-exact=0
-// CHECK: effect 0 pto.load read unknown definite-write=0
-// CHECK-LABEL: storage loop_offset: cells=0 all-exact=1
+// CHECK-LABEL: storage padded_vector: cells=0 all-materialized=0
+// CHECK: effect 0 pto.load read unresolved
+// CHECK-LABEL: storage loop_offset: cells=0 all-materialized=0
 // CHECK: access base=absolute bytes=4 map=()[s0] -> ((s0 mod 4294967296) * 4 + 1024) extents= loops=1
 !tile = !pto.tile_buf<vec, 4x8xf32>
 !view = !pto.tile_buf<vec, 2x8xf32>

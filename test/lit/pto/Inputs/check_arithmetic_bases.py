@@ -63,17 +63,16 @@ def main():
         check_same_base(documents["same_base"])
         check_views(documents["same_base_views"])
         check_local(documents["local_reuse"])
-        rejected = ["selected_base", "carried_base", "absolute_mixture"]
-        if policy == "may-alias":
-            rejected.append("distinct_bases")
-        else:
-            document = documents["distinct_bases"]
-            assert len(document["sites"]) == 2
-            for byte in range(-1, 9):
-                assert access(document, 4, 0, 0, byte) == (0 <= byte < 4)
-                assert access(document, 5, 1, 1, byte) == (0 <= byte < 4)
-                assert not access(document, 4, 0, 1, byte)
-                assert not access(document, 5, 1, 0, byte)
+        rejected = ["carried_base"]
+        for name in ["selected_base", "absolute_mixture", "distinct_bases"]:
+            assert documents[name]["sites"], documents[name]
+        document = documents["distinct_bases"]
+        assert len(document["sites"]) == 2
+        for byte in range(-1, 9):
+            assert access(document, 4, 0, 0, byte) == (0 <= byte < 4)
+            assert access(document, 5, 1, 1, byte) == (0 <= byte < 4)
+            assert not access(document, 4, 0, 1, byte)
+            assert not access(document, 5, 1, 0, byte)
         for name in rejected:
             assert not documents[name]["sites"], (policy, name)
             assert not documents[name]["relations"], (policy, name)

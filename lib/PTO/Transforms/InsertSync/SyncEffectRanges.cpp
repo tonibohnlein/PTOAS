@@ -62,21 +62,77 @@ SmallVector<SyncStorageCell> physicalSlotRanges(const SyncInput& input, const Ba
 }
 
 namespace {
-void retainBufferBound(SyncStorageEffect& effect)
+void retainBufferBound(const SyncInput& input, SyncStorageEffect& effect)
 {
     effect.region.reset();
     effect.regions.clear();
     effect.ranges.clear();
     effect.cells.clear();
-    effect.exactRanges = false;
+    effect.rangesMaterialized = false;
     // The translator's ranges enclose accesses through this buffer, including
     // slot alternatives. A cached initial alias of a loop-carried pointer does
     // not enclose all visits, so it cannot be used as a bound here.
     if (effect.sharedProvenanceComplete) {
         effect.ranges = sharedRanges(*effect.memory);
     }
-    effect.precision = effect.ranges.empty() ? SyncAccessPrecision::Unknown : SyncAccessPrecision::UpperBound;
-    effect.precisionReason = effect.ranges.empty() ? "access geometry unresolved" : "buffer range bounds the access";
+    effect.rangesMaterialized = !effect.ranges.empty();
+    if (effect.selection) {
+        // Preserve the selected allocation's bound, rather than forgetting
+        // which slot is used merely because its selector varies in a loop.
+        auto slots = physicalSlotRanges(input, *effect.memory);
+        Value operand = effect.memory->baseBuffer;
+        while (auto* op = operand.getDefiningOp()) {
+            if (isa<MultiTileGetOp>(op)) { break; }
+            auto view = dyn_cast<ViewLikeOpInterface>(op);
+            if (!view || view.getViewSource() == operand) { break; }
+            operand = view.getViewSource();
+        }
+        auto origin = resolveBufferRegion(input, operand, effect.phase->elementOp);
+        if (origin && !slots.empty() && slots.front().end >= slots.front().begin) {
+            const auto bytes = slots.front().end - slots.front().begin;
+            if (bytes <= INT64_MAX && llvm::all_of(slots, [&](const auto& slot) {
+                    return slot.end >= slot.begin && slot.end - slot.begin == bytes;
+                })) {
+                auto* context = effect.phase->elementOp->getContext();
+                SmallVector<AffineExpr> zeros(origin->extents.size(), getAffineConstantExpr(0, context));
+                origin->byteOffset = origin->byteOffset.replaceDims(zeros) + getAffineDimExpr(0, context);
+                origin->extents = {getAffineConstantExpr(bytes, context)};
+                origin->elementBytes = 1;
+                SmallVector<Value> symbols;
+                SmallVector<AffineExpr> replacements;
+                for (auto [position, symbol] : llvm::enumerate(origin->symbols)) {
+                    if (origin->byteOffset.isFunctionOfSymbol(position)) {
+                        replacements.push_back(getAffineSymbolExpr(symbols.size(), context));
+                        symbols.push_back(symbol);
+                    } else { replacements.push_back(getAffineConstantExpr(0, context)); }
+                }
+                origin->byteOffset = origin->byteOffset.replaceSymbols(replacements);
+                origin->symbols = std::move(symbols);
+                effect.regions.push_back(*origin);
+                effect.region = *origin;
+                effect.ranges.clear();
+                effect.rangesMaterialized = materializeRegion(*origin, effect.memory->scope, effect.ranges);
+                return;
+            }
+        }
+    }
+    // An enclosing allocation interval is the supplied access model when no
+    // narrower selection is available. It is not an instruction admission test.
+    auto* context = effect.phase->elementOp->getContext();
+    for (const auto& range : effect.ranges) {
+        if (range.end > INT64_MAX) {
+            // A partial affine union must never stand for the complete bound.
+            effect.regions.clear();
+            return;
+        }
+        SyncAccessRegion region;
+        region.base = range.base;
+        region.byteOffset = getAffineConstantExpr(range.begin, context) + getAffineDimExpr(0, context);
+        region.extents.push_back(getAffineConstantExpr(range.end - range.begin, context));
+        region.elementBytes = 1;
+        effect.regions.push_back(std::move(region));
+    }
+    if (effect.regions.size() == 1) { effect.region = effect.regions.front(); }
 }
 
 std::optional<SyncAccessRegion> declaredRegion(const SyncInput& input, const SyncStorageEffect& effect,
@@ -96,7 +152,7 @@ std::optional<SyncAccessRegion> declaredRegion(const SyncInput& input, const Syn
 void applyAccessCoverage(const SyncInput& input, SyncStorageEffect& effect,
                          ArrayRef<SyncMemoryEffect> declarations)
 {
-    retainBufferBound(effect);
+    retainBufferBound(input, effect);
     auto aliases = input.buffers().find(effect.memory->baseBuffer);
     if (effect.phase->macroOpInstanceId >= 0 ||
         aliases == input.buffers().end() || aliases->second.size() != 1) {
@@ -120,17 +176,16 @@ void applyAccessCoverage(const SyncInput& input, SyncStorageEffect& effect,
         return;
     }
     effect.regions = std::move(regions);
+    effect.region.reset();
     if (effect.regions.size() == 1) {
         effect.region = effect.regions.front();
     }
-    effect.precision = SyncAccessPrecision::Exact;
-    effect.precisionReason.clear();
     effect.ranges.clear();
-    effect.exactRanges = true;
+    effect.rangesMaterialized = true;
     for (const auto& region : effect.regions) {
         SmallVector<SyncStorageCell> piece;
         if (!materializeRegion(region, effect.memory->scope, piece)) {
-            effect.exactRanges = false;
+            effect.rangesMaterialized = false;
             effect.ranges.clear();
             break;
         }

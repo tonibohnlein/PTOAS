@@ -162,6 +162,7 @@ void clearExports(ArithmeticProgram& output)
     output.primitives = {};
     output.sites.clear();
     output.parameters.clear();
+    output.uniformConflicts.clear();
 }
 } // namespace
 ArithmeticProgram recognizeArithmeticProgram(func::FuncOp function, const PhaseIndex& index,

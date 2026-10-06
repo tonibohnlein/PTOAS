@@ -120,6 +120,9 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
     const auto& effect = effects.effects()[id];
     const auto& memory = *effect.memory;
     Operation* anchor = effect.phase->elementOp;
+    // An unresolved address has an occurrence-independent alias predicate.
+    // Its obligations are added beside the rotating geometric generators.
+    if (!effect.rangesMaterialized && effect.regions.empty()) { return; }
     auto alias = input.buffers().find(memory.baseBuffer);
     if (alias == input.buffers().end() || alias->second.size() != 1 || !memory.rootBuffer) {
         result.note(RecognitionIssue::AliasedOperand, anchor);
@@ -173,8 +176,7 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
         const auto bytes = family.bytes;
         atoms = detail::withinSlotRanges(effect, input, bytes);
         if (!atoms) {
-            result.note(effect.precision == SyncAccessPrecision::Exact ?
-                        RecognitionIssue::WithinSlotFootprint : RecognitionIssue::InexactFootprint, anchor);
+            result.note(RecognitionIssue::WithinSlotFootprint, anchor);
         }
     }
     RotatingAccess access{id, memory.rootBuffer, count, pattern->stride, pattern->offset,
@@ -206,19 +208,6 @@ RecognitionResult recognizeExplicit(Block& block, const PhaseIndex& index, const
         result.note(RecognitionIssue::StructuredBody, block.getParentOp(), true);
         return result;
     }
-    SmallVector<std::size_t> selected;
-    for (const auto* phase : *sequence) {
-        for (auto id : effects.effectsFor(phase)) {
-            selected.push_back(id);
-            if (effects.effects()[id].precision != SyncAccessPrecision::Exact || !effects.effects()[id].exactRanges) {
-                result.note(effects.effects()[id].precision == SyncAccessPrecision::Exact ?
-                            RecognitionIssue::SymbolicGeometry : RecognitionIssue::InexactFootprint, phase->elementOp);
-            }
-        }
-    }
-    if (result.state == RecognitionState::Applicable && !effects.hasExactCellPartition(selected)) {
-        result.note(RecognitionIssue::SymbolicGeometry, block.getParentOp());
-    }
     return result;
 }
 
@@ -227,7 +216,6 @@ RecognitionResult recognizeExplicitRun(ArrayRef<Operation*> operations, const Ph
 {
     RecognitionResult result;
     Operation* previous = nullptr;
-    SmallVector<std::size_t> selected;
     for (auto* op : operations) {
         if (!op || op->getNumRegions() || (previous && previous->getNextNode() != op)) {
             result.note(RecognitionIssue::StructuredBody, op, true);
@@ -235,19 +223,6 @@ RecognitionResult recognizeExplicitRun(ArrayRef<Operation*> operations, const Ph
         }
         previous = op;
         detail::inspectLeaf(*op, index, result);
-        for (const auto* phase : index.phasesFor(op)) {
-            for (auto id : effects.effectsFor(phase)) {
-                selected.push_back(id);
-                const auto& effect = effects.effects()[id];
-                if (effect.precision != SyncAccessPrecision::Exact || !effect.exactRanges) {
-                    result.note(effect.precision == SyncAccessPrecision::Exact ?
-                                RecognitionIssue::SymbolicGeometry : RecognitionIssue::InexactFootprint, op);
-                }
-            }
-        }
-    }
-    if (result.state == RecognitionState::Applicable && !effects.hasExactCellPartition(selected)) {
-        result.note(RecognitionIssue::SymbolicGeometry, previous);
     }
     return result;
 }
@@ -337,7 +312,6 @@ StringRef recognitionName(RecognitionIssue issue)
     case RecognitionIssue::MultiplePhases: return "multiple-phases";
     case RecognitionIssue::UnmodeledOperation: return "unmodeled-operation";
     case RecognitionIssue::UnknownPipe: return "unknown-pipe";
-    case RecognitionIssue::InexactFootprint: return "inexact-footprint";
     case RecognitionIssue::WithinSlotFootprint: return "unsupported-slot-footprint";
     case RecognitionIssue::SymbolicGeometry: return "symbolic-storage-partition";
     case RecognitionIssue::UnknownGeometry: return "unknown-geometry";

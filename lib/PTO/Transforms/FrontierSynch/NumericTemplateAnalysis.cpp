@@ -111,6 +111,10 @@ PeriodicAnalysis analyzeNumericTemplate(const NumericTemplate& input)
             records.push_back({generator.source, generator.target % count, generator.target / count});
         }
     }
+    for (const auto& [a, b] : input.uniformConflicts) {
+        records.push_back({a, b, a < b ? 0U : 1U});
+        if (a != b) { records.push_back({b, a, 1}); }
+    }
     // Every written atom has the same writer one visit later. Two visits
     // therefore contain every source-zero lifetime generator. Read-only atoms
     // yield none. Endpoint truncation handles all finite trip counts, including 0.

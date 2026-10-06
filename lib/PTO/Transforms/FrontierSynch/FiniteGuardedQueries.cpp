@@ -35,6 +35,10 @@ void FiniteGuardedState::closeAndReduce()
             }
         }
     }
+    for (const auto& edge : residual) {
+        demands[edge.source][edge.target] = either(demands[edge.source][edge.target],
+            both(presence[edge.source], presence[edge.target]));
+    }
     for (uint32_t i = 0; i < count; ++i) {
         for (uint32_t j = i+1; j < count; ++j) { graph[2*i+1][2*j] = demands[i][j]; }
     }

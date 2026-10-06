@@ -130,9 +130,9 @@ ArrayRef<std::size_t> SyncStorageEffects::effectsFor(const CompoundInstanceEleme
     return found->second;
 }
 
-bool SyncStorageEffects::allAccessesExact() const
+bool SyncStorageEffects::allAccessesMaterialized() const
 {
-    return llvm::all_of(records, [](const auto& effect) { return effect.precision == SyncAccessPrecision::Exact; });
+    return llvm::all_of(records, [](const auto& effect) { return effect.rangesMaterialized; });
 }
 
 bool storageBasesAreComparable(ArrayRef<SyncStorageCell> ranges, GMAliasPolicy policy)
@@ -143,6 +143,7 @@ bool storageBasesAreComparable(ArrayRef<SyncStorageCell> ranges, GMAliasPolicy p
     for (const auto& range : ranges) {
         if (range.begin > range.end) { return false; }
         if (range.begin == range.end) { continue; }
+        if (range.space == AddressSpace::Zero) { return false; }
         if (range.space != AddressSpace::GM) {
             if (range.base) { return false; }
             continue;
@@ -158,13 +159,13 @@ bool storageBasesAreComparable(ArrayRef<SyncStorageCell> ranges, GMAliasPolicy p
         (bases.size() <= 1 || policy == GMAliasPolicy::MayNotAlias);
 }
 
-bool SyncStorageEffects::hasExactCellPartition(ArrayRef<std::size_t> effectIds) const
+bool SyncStorageEffects::hasMaterializedCellPartition(ArrayRef<std::size_t> effectIds) const
 {
     SmallVector<SyncStorageCell> ranges;
     for (auto id : effectIds) {
         if (id >= records.size()) { return false; }
         const auto& effect = records[id];
-        if (!effect.memory || effect.precision != SyncAccessPrecision::Exact || !effect.exactRanges) {
+        if (!effect.memory || !effect.rangesMaterialized) {
             return false;
         }
         for (const auto& range : effect.ranges) {
@@ -185,6 +186,9 @@ bool SyncStorageEffects::mayOverlap(std::size_t first, std::size_t second) const
     }
     const auto& a = records[first];
     const auto& b = records[second];
+    if ((a.rangesMaterialized && a.ranges.empty()) || (b.rangesMaterialized && b.ranges.empty())) {
+        return false;
+    }
     if (a.memory->scope == AddressSpace::Zero || b.memory->scope == AddressSpace::Zero) {
         return true;
     }
@@ -226,11 +230,7 @@ bool SyncStorageEffects::mayOverlap(std::size_t first, std::size_t second) const
     if (a.memory->scope == AddressSpace::GM) {
         return true;
     }
-    if (a.precision == SyncAccessPrecision::Unknown || b.precision == SyncAccessPrecision::Unknown) {
-        return true;
-    }
-    if ((a.precision == SyncAccessPrecision::Exact && !a.exactRanges) ||
-        (b.precision == SyncAccessPrecision::Exact && !b.exactRanges)) {
+    if (!a.rangesMaterialized || !b.rangesMaterialized) {
         return true;
     }
     std::size_t i = 0, j = 0;
@@ -255,6 +255,63 @@ bool SyncStorageEffects::mayConflict(std::size_t first, std::size_t second) cons
         return false;
     }
     return mayOverlap(first, second);
+}
+bool SyncStorageEffects::needsOverlapQueries(const CompoundInstanceElement* phase, bool unresolvedBases) const
+{
+    return llvm::any_of(effectsFor(phase), [&](std::size_t id) {
+        const auto& effect = records[id];
+        return !effect.rangesMaterialized || effect.memory->scope == AddressSpace::Zero ||
+            (unresolvedBases && effect.memory->scope == AddressSpace::GM);
+    });
+}
+bool SyncStorageEffects::residualConflict(std::size_t first, std::size_t second) const
+{
+    if (first >= records.size() || second >= records.size()) { return true; }
+    const auto& a = records[first];
+    const auto& b = records[second];
+    if ((a.mode == SyncAccessMode::Read && b.mode == SyncAccessMode::Read) ||
+        (a.memory->scope != AddressSpace::Zero && b.memory->scope != AddressSpace::Zero &&
+         a.memory->scope != b.memory->scope)) { return false; }
+    if (a.rangesMaterialized && b.rangesMaterialized) {
+        SmallVector<SyncStorageCell> domains(a.ranges);
+        llvm::append_range(domains, b.ranges);
+        if (storageBasesAreComparable(domains, memory.gmPolicy())) { return false; }
+    }
+    return mayConflict(first, second);
+}
+bool SyncStorageEffects::hasUniformRelationships(ArrayRef<const CompoundInstanceElement*> phases) const
+{
+    SmallVector<SyncStorageCell> domains;
+    for (const auto* phase : phases) {
+        for (auto id : effectsFor(phase)) {
+            const auto& effect = records[id];
+            if (!effect.rangesMaterialized && effect.regions.empty()) { return true; }
+            llvm::append_range(domains, effect.ranges);
+            for (const auto& region : effect.regions) {
+                if (!region.empty()) { domains.push_back({effect.memory->scope, 0, 1, region.base}); }
+            }
+        }
+    }
+    return !storageBasesAreComparable(domains, memory.gmPolicy());
+}
+bool SyncStorageEffects::uniformConflict(std::size_t first, std::size_t second) const
+{
+    if (first >= records.size() || second >= records.size()) { return true; }
+    const auto& a = records[first];
+    const auto& b = records[second];
+    if ((a.mode == SyncAccessMode::Read && b.mode == SyncAccessMode::Read) ||
+        (a.memory->scope != AddressSpace::Zero && b.memory->scope != AddressSpace::Zero &&
+         a.memory->scope != b.memory->scope)) { return false; }
+    if ((!a.rangesMaterialized && a.regions.empty()) ||
+        (!b.rangesMaterialized && b.regions.empty())) { return mayConflict(first, second); }
+    SmallVector<SyncStorageCell> domains;
+    for (const auto* effect : {&a, &b}) {
+        llvm::append_range(domains, effect->ranges);
+        for (const auto& region : effect->regions) {
+            if (!region.empty()) { domains.push_back({effect->memory->scope, 0, 1, region.base}); }
+        }
+    }
+    return !storageBasesAreComparable(domains, memory.gmPolicy()) && mayConflict(first, second);
 }
 bool SyncStorageEffects::independentOfOtherPhases(std::size_t effect) const
 {

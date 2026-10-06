@@ -24,6 +24,7 @@ struct ArithmeticProgram {
     ArithmeticRecognition recognition;
     ArithmeticPrimitives primitives;
     SmallVector<ArithmeticSite> sites;
+    SmallVector<std::pair<uint32_t, uint32_t>> uniformConflicts;
     SmallVector<Value> parameters; // Matches primitives.parameters.
 };
 // No unfolding: counted nests with constant nonnegative lower bounds and

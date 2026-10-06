@@ -1,92 +1,82 @@
-# Synchronization effects and buffer geometry
+# Shared modeled storage accesses
 
-`SyncInput` supplies instruction phases, pipes and read/write operands through
-the same translator and operation interfaces as InsertSync. `SyncStorageEffects`
-retains these records without adding instruction-specific footprint rules.
-The source IR and borrowed input records must remain unchanged during analysis.
-Declarations on operations without a translated pipe phase are retained through
-`SyncInput::effectsFor(Operation*)`; their classification is not inferred from
-the presence of a read/write effect. The Step 0 corpus audit is documented in
-`test/step0/README.md`.
+`SyncInput` supplies the same instruction phases, pipes and read/write operands
+used by InsertSync. `SyncStorageEffects` combines those declarations with the
+shared buffer, view, physical-range and alias analysis. Frontier adds no
+instruction whitelist. The source IR and borrowed records remain unchanged
+until analysis and endpoint preparation finish.
 
-## What the representation establishes
+## Contract
 
-`descriptorRegion` describes a buffer operand: its base address, valid extents,
-element width and coordinate-to-byte mapping. It composes pointer offsets,
-tensor partitions and local views; symbolic values remain SSA symbols instead
-of being evaluated or unrolled. Local physical identity includes memory space
-and address, so separate SSA allocation roots do not hide address reuse.
-Straight-line valid-shape updates are tracked; unresolved control-dependent
-metadata remains unknown.
+The demand algorithms compute the minimum demands for the **supplied storage
+model**. A narrower shared access selection refines that model. Without one,
+the shared buffer enclosure is the modeled access. If geometry cannot be
+resolved, the shared alias predicate retains the possible interaction.
+Missing byte addresses do not reject a payload or choose another algorithm.
 
-A descriptor is not an accessed-byte set. The importer retains the original MLIR `MemoryEffectOpInterface` declarations
-alongside the translator's read/write records. A matching default-resource
-effect with `getEffectOnFullRegion()` set, no uninterpreted parameters, and one
-resolved operand mapping supplies whole-region coverage. For this bridge,
-that region is the operand's valid logical region mapped to physical bytes.
-Such a declaration produces an exact symbolic access; a concrete map can also
-be materialized and partitioned. Partial, absent or ambiguous declarations
-remain `Unknown` and cannot establish definite overwrite. Macro phases require
-their own declarations and cannot inherit whole-operation coverage.
+There is no Exact/UpperBound/Unknown precision enum. Each record retains:
 
-Existing PTO effect definitions generally omit the full-region flag, so this
-bridge does not upgrade them automatically. No opcode-specific recovery is
-performed, including for scalar reads and writes. Arbitrary parameter attributes
-are preserved but not interpreted as access geometry.
+- The read/write mode, memory space and original shared buffer record.
+- Available access maps, including views, valid extents and symbolic offsets.
+- Materialized ranges and cells when available, with `rangesMaterialized`
+  distinguishing a known empty set from an unmaterialized set.
+- Original slot selectors and planner address tables.
 
-The access representation retains three precision values:
+These are representation choices. An enclosing range can be materialized;
+a precisely described access can remain symbolic. Neither representation is
+an instruction-admission category. Completeness of the upstream read/write
+records is a separate input requirement.
 
-| Precision | Meaning | Allowed use |
-|---|---|---|
-| Exact | The actual accessed byte set is known, possibly symbolically. | Exact dependence queries; definite writes where coverage is established. |
-| UpperBound | A supplied region contains all accessed bytes. | Disjointness filtering, but no overwrite kills. |
-| Unknown | No accessed region is established. | Retain possible overlap. |
+A complete selected union is published only when every declaration can be
+interpreted. Otherwise the importer retains the shared buffer bound. Likewise,
+an affine representation of a fallback union is published only if every range
+fits its coordinate representation; the complete unsigned ranges remain usable.
 
-An empty cell list for an unknown or symbolic effect does not mean no access.
-Completeness of the upstream read/write records remains a separate premise;
-`allAccessesExact()` does not audit missing implicit accesses.
+## Alias relationships and reduction
 
-## Filtering and alias policy
-
-Possible overlap uses the existing `MemoryDependentAnalyzer::MemAlias` query
-on shared buffer records. Planned local addresses, view ranges and possible
-slot addresses can establish disjointness even without exact instruction
-coverage. Unknown local addresses remain conservative; distinct SSA roots alone
-do not establish physical disjointness. Supplied exact access regions can refine
-the result further. Neither a disjointness test nor overlapping allocation
-ranges establish a definite overwrite.
-
-The shared root/range check is used only when the buffer's SSA dependencies do
-not cross region arguments or region-producing results. The existing translator
-may retain only the initial root of a loop-carried buffer; that root cannot prove
-disjointness for later iterations. A memoized dependency walk checks this
-condition once per build. Structured-control aliases remain conservative unless
-an independent descriptor-region proof establishes disjointness.
-
+Known local addresses identify storage across distinct SSA allocation roots.
 Different known memory spaces are disjoint; an unknown space may overlap any
-space. Two reads require no storage ordering. Pipe assignments come from the
-shared instruction phases; same-pipe accesses can conflict.
+space. Read/read pairs impose no storage order. GM uses the existing configured
+MayAlias/MayNotAlias policy, including pointer provenance and view offsets.
+Unresolved provenance cannot establish independence.
 
-For GM, `MayNotAlias` asserts independence of distinct resolved function-entry
-pointer roots, matching the existing default. `MayAlias` retains possible
-aliasing between them. Pointer offsets preserve provenance; selected, carried
-or unresolved pointers do not acquire an independence assumption. Absolute GM
-addresses need not be known. Same-root accesses remain potentially overlapping
-when the shared ranges cannot separate them. Local allocation reuse never uses
-the GM root-independence assumption.
+Materialized cell accesses use the storage-lifetime scan. Interactions absent
+from that partition enter as additional forward conflict obligations, and the
+same reduction computes their minimum generating set. An unresolved write does
+not kill the state of a known cell. Possible aliasing is not an equivalence
+relation: if an unknown access may overlap two disjoint buffers, those buffers
+remain disjoint from each other.
 
-## Analysis status
+Finite guarded analysis attaches both endpoint presence predicates to each
+additional obligation. Compact adapters retain known symbolic maps and add
+occurrence-independent alias obligations beside geometric generators. A periodic
+body needs only the nearest reference-ordered source occurrence for each such
+site pair; native completion order covers earlier sources. Arithmetic analysis
+restricts the corresponding source/target domains by reference order before
+using its existing reduction.
 
-The structural recognizers remain available and report missing access premises
-instead of claiming exact applicability from buffer descriptors. The generic
-whole-region bridge consumes a declaration; it does not prove native instruction
-coverage. Exact subregions still need a shared producer contract. The existing
-InsertSync pass and its dependency analysis are unchanged.
+Regional exports retain shared effect identities and guarded first/last access
+selectors in addition to cell lifetimes. Composition carries unresolved
+relationships across boundaries through those selectors. It requires the same
+unchanged access model and alias context. A varying crossing predicate still
+needs an adapter that can represent it; a static alias predicate cannot replace
+an available iteration-dependent relation silently.
 
-The retained cell-partition utility splits supplied byte intervals at endpoints,
-not at every byte. Its cost is `O(R + S log(S+1) + I)` for records `R`, intervals
-`S` and effect-to-cell incidences `I`, excluding geometry recovery. The importer supplies exact intervals only for qualified full-region declarations. The generic symbolic mapping and overlap
-helpers are representations and queries, not a lifetime or demand algorithm.
+## Cost and diagnostics
+
+Partitioning intervals costs `O(R + S log(S+1) + I)` for records, ranges and
+cell incidences, excluding geometry recovery. The ordinary materialized case
+retains the existing scan/reduction bound. For `r` occurrences requiring alias
+queries among `n` occurrences, residual generation performs `O(r*n)` occurrence
+comparisons, multiplied by the effect-pair query cost. It short-circuits once a
+conflict is found and visits each affected occurrence pair once. Compact uniform
+relations are charged by their static effect/site pairs, not by runtime trips.
+Regional residual crossing comparisons are charged separately from the cell
+summary scan. No linear bound is claimed for arbitrary unresolved aliasing.
+
+Dumps report `intervals`, `symbolic`, or `unresolved`, and Step 0 counts
+`materialized_accesses`, `symbolic_accesses`, and `unresolved_accesses`. These
+report the available representation; all three feed the same demand analysis.
 
 ## Compact occurrence information
 
@@ -105,7 +95,7 @@ A selected buffer also retains its original selector and planner-assigned slot
 address table, including nonuniform tables for which no affine address map is
 currently constructed. This avoids replacing `addresses[k mod b]` by an
 unqualified union when passing compact storage information to future backends.
-The retained table is geometry, not an exact access or a dependence result.
+The retained table describes storage selection; it is not a dependence result.
 
 `sync_compact_access_bridge.pto` checks nested reset selectors, non-contiguous
 and irregular slot tables, wraparound handling and original-loop preservation.
@@ -126,7 +116,7 @@ operand. Map symbols refer to scalar operands of the same operation. An identity
 map describes a whole region; a translated map describes a subregion. The generic
 consumer composes either with the existing view/layout/physical-address map.
 It checks the schema, indices, dimensions and arithmetic before publishing an
-exact region. Missing or incompatible declarations remain unresolved. Several
+exact region. Missing or incompatible declarations retain the shared buffer bound. Several
 accesses of the same buffer/mode must agree; a known selection cannot hide an
 additional unspecified access. Malformed contracts publish no partial result.
 

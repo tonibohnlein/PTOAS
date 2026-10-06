@@ -392,6 +392,14 @@ private:
             }
         }
         auto forward = intersect(conflicts, order);
+        for (const auto& [key, values] : order) {
+            const auto pair = std::minmax(key.source.site, key.target.site);
+            if (llvm::any_of(program.uniformConflicts, [&](const auto& conflict) {
+                    return conflict.first == pair.first && conflict.second == pair.second;
+                })) {
+                for (const auto& value : values) { append(forward, key, value); }
+            }
+        }
         for (const auto& [key, values] : forward) {
             auto endpoints = key;
             endpoints.source.event = ArithmeticEvent::Completion;

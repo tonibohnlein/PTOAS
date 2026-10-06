@@ -35,8 +35,13 @@ struct RegionalStorageBoundary {
     std::vector<RegionalSelector> firstWriters, lastWriters;
     std::map<uint32_t, std::vector<RegionalSelector>> firstReaders, lastReaders;
 };
+struct RegionalAccessBoundary {
+    std::size_t effect = 0;
+    RegionalSelector first, last;
+    bool representedByCells = false;
+};
 struct RegionalCapabilities {
-    bool exactEffects = false, exactQueries = false, exactSelectors = false, endpointRecipes = false;
+    bool completeStorageModel = false, exactQueries = false, exactSelectors = false, endpointRecipes = false;
     bool contextualGuards = false; // Endpoint circuits may contain branch-local predicates.
 };
 struct RegionalAnalysis {
@@ -44,6 +49,8 @@ struct RegionalAnalysis {
     std::vector<TemplateEndpointAnchor> anchors;
     std::vector<scf::ForOp> occurrenceLoops; // Empty loop: ordinal must be zero.
     std::vector<RegionalStorageBoundary> storageBoundary;
+    const SyncStorageEffects* accessModel = nullptr; // Borrows the unchanged shared input.
+    std::vector<RegionalAccessBoundary> accessBoundary;
     std::map<uint32_t, std::vector<RegionalSelector>> firstPayloads, lastPayloads;
     RegionalCapabilities capabilities;
     RegionalCost cost;

@@ -35,7 +35,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="ordinary-access-") as directory:
         path = Path(directory) / "case.pto"
         path.write_text(original)
-        for alias, accepted in [("may-not-alias", True), ("may-alias", False)]:
+        for alias, accepted in [("may-not-alias", True), ("may-alias", True)]:
             analysis = run(tool, path, "--explicit-analysis", alias)
             require(analysis.returncode == 0, analysis.stderr)
             doc = document(analysis.stdout)
@@ -65,8 +65,8 @@ def main():
         require(inserted.returncode == 0, inserted.stderr)
         require(inserted.stdout.count("pto.logical_set") == 1, inserted.stdout)
         require(inserted.stdout.count("pto.logical_wait") == 1, inserted.stdout)
-        # Runtime valid metadata and vector tails must not be promoted from
-        # allocation capacity. The shared effect dump exposes the distinction.
+        # Runtime metadata and vector tails retain their shared buffer bound when
+        # a narrower map is unavailable. Mutable metadata is a separate structural limit.
         changed = original.replace("    pto.tadds", "    pto.set_validshape %tile, %one, %cols : !tile\n    pto.tadds")
         oversized = original.replace("2x64", "1024x4096").replace("constant 2 : index", "constant 1024 : index")
         oversized = oversized.replace("constant 64 : index", "constant 4096 : index")
@@ -76,8 +76,14 @@ def main():
         for text in [changed, tail, oversized, wide]:
             path.write_text(text)
             effects = run(tool, path, "--storage-effects")
-            require(effects.returncode == 0 and "all-exact=0" in effects.stdout, effects.stderr + effects.stdout)
-            require(run(tool, path, "--insert-logical").returncode != 0, text)
+            require(effects.returncode == 0 and "all-materialized=" in effects.stdout, effects.stderr + effects.stdout)
+            inserted = run(tool, path, "--insert-logical")
+            if text == changed:
+                recognition = run(tool, path, "--recognize")
+                require("unmodeled-operation" in recognition.stdout, recognition.stdout)
+                require(inserted.returncode != 0, inserted.stdout)
+            else:
+                require(inserted.returncode == 0, inserted.stderr)
     print("ordinary access routes: exact, alias, guarded and metadata cases passed")
 
 

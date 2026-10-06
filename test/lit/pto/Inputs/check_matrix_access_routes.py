@@ -34,14 +34,14 @@ def main():
             for source in [base, dynamic]:
                 path.write_text(source)
                 effects = run(tool, path, "--storage-effects")
-                assert "all-exact=1" in effects, effects
-                assert len(re.findall(r"effect \d+ .* exact", effects)) == 17, effects
+                assert "all-materialized=1" in effects, effects
+                assert len(re.findall(r"effect \d+ .* intervals", effects)) == 17, effects
                 # Whole 16x16 operands occupy exactly these physical byte spans.
                 assert f"space=2 [0,{256 * width})" in effects, effects
                 assert f"space=3 [0,{256 * width})" in effects, effects
                 assert "space=5 [0,1024)" in effects, effects
-                assert "effect 11 pto.tmatmul.acc read exact" in effects
-                assert "effect 14 pto.tmatmul.acc write exact" in effects
+                assert "effect 11 pto.tmatmul.acc read intervals" in effects
+                assert "effect 14 pto.tmatmul.acc write intervals" in effects
                 # Existing InsertSync consumes the same shared declarations.
                 existing = run(tool, path, "--existing-dump")
                 assert "pto.set_flag" in existing and "pto.wait_flag" in existing, existing
@@ -50,22 +50,22 @@ def main():
                                       "    pto.set_validshape %al, %i1, %i16 : !left\n    pto.tmatmul ins")
             path.write_text(changed)
             effects = run(tool, path, "--storage-effects")
-            assert "effect 5 pto.textract write exact" in effects, effects
-            assert "effect 8 pto.tmatmul read upper" in effects, effects
-            assert "effect 15 pto.tstore read exact" in effects, effects
+            assert "effect 5 pto.textract write intervals" in effects, effects
+            assert "effect 8 pto.tmatmul read intervals" in effects, effects
+            assert "effect 15 pto.tstore read intervals" in effects, effects
             restored = changed.replace("    pto.tmatmul.acc",
                                        "    pto.set_validshape %al, %i16, %i16 : !left\n    pto.tmatmul.acc")
             path.write_text(restored)
             effects = run(tool, path, "--storage-effects")
-            assert "effect 8 pto.tmatmul read upper" in effects, effects
-            assert "effect 11 pto.tmatmul.acc read exact" in effects, effects
+            assert "effect 8 pto.tmatmul read intervals" in effects, effects
+            assert "effect 11 pto.tmatmul.acc read intervals" in effects, effects
             # An unknown extent remains conservative even with fixed capacity.
             unknown = dynamic.replace("%a: !pto.ptr", "%rows: index, %a: !pto.ptr")
             unknown = unknown.replace("%al = pto.alloc_tile addr = %base0 valid_row = %i16",
                                       "%al = pto.alloc_tile addr = %base0 valid_row = %rows")
             path.write_text(unknown)
             effects = run(tool, path, "--storage-effects")
-            assert "effect 8 pto.tmatmul read upper" in effects, effects
+            assert "effect 8 pto.tmatmul read intervals" in effects, effects
     print("matrix accesses: F16/F32 rectangles, RMW, dynamic metadata and existing consumer passed")
 
 

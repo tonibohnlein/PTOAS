@@ -12,53 +12,53 @@
 // All payload accesses in this full aligned GEMM use shared exact declarations.
 // Conversion to f16 changes the destination byte width, not its rectangle.
 // CHECK-LABEL: storage full_gemm:
-// CHECK: effect 0 pto.tload read exact
-// CHECK: effect 1 pto.tload write exact definite-write=1
-// CHECK: effect 2 pto.tload read exact
-// CHECK: effect 3 pto.tload write exact definite-write=1
-// CHECK: effect 4 pto.textract read exact
-// CHECK: effect 5 pto.textract write exact
-// CHECK: effect 6 pto.textract read exact
-// CHECK: effect 7 pto.textract write exact
-// CHECK: effect 8 pto.tmatmul read exact
-// CHECK: effect 9 pto.tmatmul read exact
-// CHECK: effect 10 pto.tmatmul write exact
-// CHECK: effect 11 pto.tmatmul.acc read exact
-// CHECK: effect 12 pto.tmatmul.acc read exact
-// CHECK: effect 13 pto.tmatmul.acc read exact
-// CHECK: effect 14 pto.tmatmul.acc write exact
-// CHECK: effect 15 pto.tstore read exact
-// CHECK: effect 16 pto.tstore write exact
+// CHECK: effect 0 pto.tload read intervals
+// CHECK: effect 1 pto.tload write intervals
+// CHECK: effect 2 pto.tload read intervals
+// CHECK: effect 3 pto.tload write intervals
+// CHECK: effect 4 pto.textract read intervals
+// CHECK: effect 5 pto.textract write intervals
+// CHECK: effect 6 pto.textract read intervals
+// CHECK: effect 7 pto.textract write intervals
+// CHECK: effect 8 pto.tmatmul read intervals
+// CHECK: effect 9 pto.tmatmul read intervals
+// CHECK: effect 10 pto.tmatmul write intervals
+// CHECK: effect 11 pto.tmatmul.acc read intervals
+// CHECK: effect 12 pto.tmatmul.acc read intervals
+// CHECK: effect 13 pto.tmatmul.acc read intervals
+// CHECK: effect 14 pto.tmatmul.acc write intervals
+// CHECK: effect 15 pto.tstore read intervals
+// CHECK: effect 16 pto.tstore write intervals
 // CHECK: access {{.*}}bytes=2{{.*}}extents=16, 16
 // CHECK: overlap 0,2=0
 // MAY-LABEL: storage full_gemm:
 // MAY: overlap 0,2=1
 // CHECK-LABEL: storage partial_shapes:
-// CHECK: effect 0 pto.tload read unknown
-// CHECK: effect 1 pto.tload write upper
-// CHECK: effect 2 pto.tmatmul read upper
-// CHECK: effect 3 pto.tmatmul read upper
-// CHECK: effect 4 pto.tmatmul write upper
-// CHECK: effect 5 pto.tstore read upper
-// CHECK: effect 6 pto.tstore write unknown
+// CHECK: effect 0 pto.tload read unresolved
+// CHECK: effect 1 pto.tload write intervals
+// CHECK: effect 2 pto.tmatmul read intervals
+// CHECK: effect 3 pto.tmatmul read intervals
+// CHECK: effect 4 pto.tmatmul write intervals
+// CHECK: effect 5 pto.tstore read intervals
+// CHECK: effect 6 pto.tstore write unresolved
 // CHECK-LABEL: storage separate_accumulator:
-// CHECK: effect 0 pto.tmatmul.acc read upper
-// CHECK: effect 3 pto.tmatmul.acc write upper
+// CHECK: effect 0 pto.tmatmul.acc read intervals
+// CHECK: effect 3 pto.tmatmul.acc write intervals
 // CHECK-LABEL: storage wide_stride:
-// CHECK: effect 0 pto.tload read unknown
-// CHECK: effect 1 pto.tload write upper
+// CHECK: effect 0 pto.tload read unresolved
+// CHECK: effect 1 pto.tload write intervals
 // CHECK-LABEL: storage alternate_fractal:
-// CHECK: effect 0 pto.tload read unknown
-// CHECK: effect 1 pto.tload write upper
+// CHECK: effect 0 pto.tload read unresolved
+// CHECK: effect 1 pto.tload write intervals
 // CHECK-LABEL: storage unsupported_nd_to_zn:
-// CHECK: effect 0 pto.tload read unknown
-// CHECK: effect 1 pto.tload write upper
-// AUDIT: "exact_accesses":17
-// AUDIT: "exact_accesses":0
-// AUDIT: "exact_accesses":0
-// AUDIT: "exact_accesses":0
-// AUDIT: "exact_accesses":0
-// AUDIT: "exact_accesses":0
+// CHECK: effect 0 pto.tload read unresolved
+// CHECK: effect 1 pto.tload write intervals
+// AUDIT: "materialized_accesses":17
+// AUDIT: "materialized_accesses":5
+// AUDIT: "materialized_accesses":4
+// AUDIT: "materialized_accesses":1
+// AUDIT: "materialized_accesses":1
+// AUDIT: "materialized_accesses":1
 !mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
 !left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
 !right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
