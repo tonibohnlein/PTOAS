@@ -6,8 +6,8 @@ The executable routes are explicit analysis, numerical-template periodic
 analysis, direct and immutable guarded rotating-footprint analysis, exact
 sequence composition, finite guarded analysis, and restricted arithmetic analysis.
 They use common logical insertion. Physical allocation
-remains available for certified numerical templates; the other routes require
-an allocation export before they can complete physical compilation.
+supports certified numerical templates and finite explicit/guarded/sequence plans.
+Other compact routes require uniform allocation exports before physical compilation.
 The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
 
 | Stage | Entry point and implementation |
@@ -68,6 +68,62 @@ Each milestone is committed separately after review. The corpus report under
 `.local/composition-corpus-20261005/` is the baseline for additional accepted
 regions and whole functions. Partial recognition is reported separately from
 successful logical insertion and from physical compilation.
+
+## Next end-to-end milestones (M10–M13)
+
+Baseline: `.local/route-coverage-m9-20261006/REPORT.md`, 20 nonempty original
+modules with logical insertion, no original-module allocation, and two separately
+pinned GEMMs with C++ output. Each milestone requires architecture, correctness
+and performance acceptance before its own commit. All use the existing pass and
+shared access interface; no kernel-specific recognizers or new emission modes.
+
+| Milestone | Deliverable | Acceptance | Status |
+|---|---|---|---|
+| M10 | Finite allocation exports, explicit interval allocation and guarded compatibility | Existing straight-line logical successes compile; independent reuse/closure checks | Implemented; review gates accepted |
+| M11 | Shared matrix valid extents, views and justified element/layout contracts | Independently checked exact ranges; affected corpus and existing mode checked | Planned |
+| M12 | Shared, domain-simplified arithmetic endpoint formulas | Nested corpus example has at most 207 arithmetic operations, unchanged demands | Planned |
+| M13 | Uniform allocation for supported compact results using existing queries | Nested arithmetic and representative rotating/guarded cases compile in IDs 0–5 | Planned |
+
+Allocation preserves endpoints and order, reports unsupported proof separately
+from capacity, and leaves scarcity repair and shared-pool optimization separate.
+Finite guarded assignments use only proved compatibility; failure is not a proof
+of minimum capacity. Existing numerical certificates remain supported. M13 does
+not assume a general theorem for repeatedly composing nested summaries.
+Matrix precision is strengthened only from instruction semantics and shared
+geometry, retaining explicit conservative results otherwise. Arithmetic emission
+retains exact integer and divisibility semantics and safe cut availability.
+Each gate records recognition, logical insertion, allocation and C++ separately;
+new device validation is a subsequent task. The final gate repeats the pinned
+corpus and compares compile times and generated sizes.
+
+### M10 finite allocation
+
+Explicit producers export ordered release indices from their completion-rank
+rows. The allocator uses release buckets and a free-ID list, optimal within each
+direction for these ordered handoffs. Grouping costs O(h log k); the scan and
+allocation cost O(h) for h handoffs and fixed hardware pipe count k.
+Finite guarded and loop-free sequence producers export sufficient pairwise
+compatibility using endpoint presence and their existing exact all-event queries.
+Presence overapproximates retention: uncertain implications prevent reuse, never
+justify it. Every previous incompatible user of an ID is checked, including
+users separated by a skipped branch. Failure of this assignment does not prove
+capacity infeasibility. Export costs include O(sum h_pq² * (query + implication))
+work and quadratic evidence, with cut lookup and expression construction charged
+separately. Sequence queries reuse the parent port graph, including internal
+endpoints which are not boundary ports; child allocations are not concatenated.
+
+The internal `pto.finite_allocation` certificate is an alternative to the existing
+cyclic certificate. It records original IDs, domains and release/compatibility
+evidence. Allocation checks its structure and endpoint coverage, trusts producer
+semantic evidence, and emits stride-zero phases using the common lowering.
+Empty/barrier-only analyzed plans need no IDs. Unanalyzed functions and stray
+notifications are not accepted as empty plans. Failure changes no IR.
+
+Validation: 20 finite logical/physical traces plus overlapping lifetime exhaustion
+and malformed evidence checks. All 21 finite original-corpus logical successes
+(including two empty modules) now generate C++; the nested arithmetic case awaits
+M13. Both supplemental GEMMs still generate C++. Local results are in
+`.local/route-completion-m10/`.
 
 ## Implementation milestones
 
