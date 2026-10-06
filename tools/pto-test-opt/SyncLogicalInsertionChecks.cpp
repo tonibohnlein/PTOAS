@@ -536,8 +536,9 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
     }
     auto analysis = fs::analyzeSequence(function, input, *program);
     auto prepared = fs::prepareSequenceInsertion(analysis);
+    auto regional = fs::sequenceRegionalResult(analysis);
     auto* expressions = fs::sequenceExpressions(analysis);
-    bool validQueries = true;
+    bool validQueries = analysis.error.empty() && bool(analysis.state);
     for (uint32_t port = 0; port < analysis.occurrences.size(); ++port) {
         auto result = fs::sequenceEventReachability(analysis, port, fs::PeriodicEventKind::Start,
                                                    port, fs::PeriodicEventKind::Completion);
@@ -558,6 +559,8 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         {"insertion_error", analysis.insertionError},
         {"prepared", succeeded(prepared)},
         {"nested_matching", succeeded(prepared) && (**prepared).nestedIdentities},
+        {"symbolic_storage_effects", regional.symbolicStorageEffects.size()},
+        {"storage_selector_interface", bool(regional.storageSelectors)},
         {"allocation_interface", failed(prepared) ? "no-logical-plan" :
             ((**prepared).nestedIdentities ? "nested-not-implemented" :
              ((**prepared).regionalAllocation || (**prepared).allocationCertificate ? "constructed" : "unavailable"))},

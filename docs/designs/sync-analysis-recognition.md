@@ -1737,3 +1737,15 @@ performs its own full applicability check. Symbolic bounds reach
 the repeat route directly. Fixed phase lists (q > 1), visit-owned symbolic
 storage selectors and nested physical allocation are not supplied by this
 increment.
+
+
+## Nested repetition implementation status
+
+The subsequent phase and storage increments are described in
+[nested-region implementation](frontier-nested-regions.md). That document records
+the constructed contracts, direct logical insertion, current composition and
+allocation limits, focused correctness checks, and the 326-input comparison.
+Invariant repeated regions can consume a compact child recursively; explicit
+phase construction and visit-owned storage have the narrower producer contracts
+stated there. Recognition failure reports which interface or certificate is
+missing rather than claiming that the full theorem is inapplicable.
