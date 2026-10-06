@@ -24,6 +24,31 @@ int runSyncRegionContractChecks(func::FuncOp function, const SyncInput& input)
         !checkSyncRegionDigits(function)) {
         return 1;
     }
+    auto dimensions = function.walk([&](Operation* operation) -> WalkResult {
+        auto expected = operation->getAttrOfType<DenseI64ArrayAttr>("test.tile_valid_shapes");
+        if (!expected) {
+            return WalkResult::advance();
+        }
+        if (expected.size() % 3) {
+            return WalkResult::interrupt();
+        }
+        for (int64_t i = 0; i < expected.size(); i += 3) {
+            auto operand = expected[i];
+            if (operand < 0 || static_cast<uint64_t>(operand) >= operation->getNumOperands()) {
+                return WalkResult::interrupt();
+            }
+            auto shape = resolveConstantTileValidShape(operation->getOperand(operand), operation);
+            if (expected[i + 1] == -1 ? bool(shape) :
+                (!shape || (*shape)[0] != expected[i + 1] || (*shape)[1] != expected[i + 2])) {
+                operation->emitError("unexpected effective valid dimensions");
+                return WalkResult::interrupt();
+            }
+        }
+        return WalkResult::advance();
+    });
+    if (dimensions.wasInterrupted()) {
+        return 1;
+    }
     const auto& storage = input.accesses();
     unsigned checked = 0;
     for (const auto& effect : storage.effects()) {

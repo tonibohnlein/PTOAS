@@ -9,6 +9,7 @@
 import json
 from pathlib import Path
 import random
+import re
 import shutil
 import sys
 import tempfile
@@ -126,16 +127,66 @@ def ir_checks(tool, source):
             assert sum(e["kind"] == "payload" for e in events) == 2 * guard
             assert all(e["kind"] == "payload" or (e["kind"] == "barrier" and e["pipe"] == 6)
                        for e in events), events
-        # Dynamic types with known extents now have exact shared footprints;
-        # footprint precision alone must not infer accumulation protection.
+        # Constant valid operands recover the effective MMAD dimensions even
+        # when the descriptor type marks those dimensions dynamic.
         text = original.replace('32x16xf16, slayout=', '32x16xf16, valid=?x16, slayout=')
         text = text.replace('%a = pto.alloc_tile addr = %base : !a',
                             '%m = arith.constant 32 : index\n'
                             '    %a = pto.alloc_tile addr = %base valid_row = %m : !a')
         path.write_text(text)
         template = recognized(tool, path)
-        assert not any(p['hardware_protection'] for p in template['payloads'])
+        groups = [dict(p['hardware_protection']) for p in template['payloads']]
+        assert all(groups) and groups[0] == groups[1] and groups[2] == groups[3]
         validate(template, json.loads(invoke(tool, '--insertion-trace', path)))
+        # Check all three operands, not only a dynamic lhs dimension. Capacity
+        # must not supply the threshold when current valid dimensions are small.
+        dynamic = re.sub(r'(tile_buf<\w+, \d+x\d+xf\d+)', r'\1, valid=?x?', original)
+        dynamic = dynamic.replace('    %a =', '    %m = arith.constant 32 : index\n'
+                                             '    %k = arith.constant 16 : index\n'
+                                             '    %n = arith.constant 80 : index\n    %a =')
+        for tile, row, col in [('a', 'm', 'k'), ('b', 'k', 'n'), ('c', 'm', 'n')]:
+            dynamic = dynamic.replace(f'%{tile} = pto.alloc_tile addr = %base :',
+                                      f'%{tile} = pto.alloc_tile addr = %base valid_row = %{row} valid_col = %{col} :')
+        for size, expected in [(80, True), (64, False)]:
+            path.write_text(dynamic.replace('constant 80 : index', f'constant {size} : index'))
+            template = recognized(tool, path)
+            assert all(bool(p['hardware_protection']) == expected for p in template['payloads'])
+            validate(template, json.loads(invoke(tool, '--insertion-trace', path)))
+        # Shared scalar normalization folds constant dimension expressions.
+        folded = dynamic.replace('%n = arith.constant 80 : index',
+                                 '%n = arith.addi %m, %k : index\n'
+                                 '    %nn = arith.addi %n, %m : index')
+        path.write_text(folded.replace('valid_col = %n :', 'valid_col = %nn :'))
+        template = recognized(tool, path)
+        assert all(p['hardware_protection'] for p in template['payloads'])
+        # A reaching metadata update, including one before each loop visit,
+        # takes precedence over allocation operands. Unknown metadata from
+        # another block must not be replaced by those initial dimensions.
+        loop = '    scf.for %t = %zero to %two step %one {'
+        for size in (80, 64):
+            update = (f'\n      %width = arith.constant {size} : index\n'
+                      '      pto.set_validshape %b, %k, %width : !b\n'
+                      '      pto.set_validshape %c, %m, %width : !c')
+            updated = dynamic.replace(loop, loop + update)
+            # Metadata operations currently prevent template recognition; check
+            # the shared dimensions directly without relying on that backend.
+            updated = updated.replace('outs(%c : !c)', 'outs(%c : !c) '
+                                      '{test.tile_valid_shapes = array<i64: 1, 16, ' + str(size) + '>}')
+            # acc's operand 1 is lhs, unlike the initializer's rhs operand 1.
+            updated = re.sub(r'(pto.tmatmul.acc[^\n]*test.tile_valid_shapes = array<i64:) 1, 16, \d+',
+                             r'\1 2, 16, ' + str(size), updated)
+            path.write_text(updated)
+            invoke(tool, '--region-contract-checks', path)
+        # A late update to a descriptor allocated outside the loop reaches the
+        # next visit. Recovering the initial allocation size would be unsound.
+        late = dynamic.replace('    }\n    return',
+                               '      pto.set_validshape %b, %k, %m : !b\n'
+                               '    }\n    return')
+        late = late.replace('outs(%c : !c)', 'outs(%c : !c) '
+                            '{test.tile_valid_shapes = array<i64: 1, -1, -1>}')
+        late = re.sub(r'(pto.tmatmul.acc[^\n]*test.tile_valid_shapes = array<i64:) 1,', r'\1 2,', late)
+        path.write_text(late)
+        invoke(tool, '--region-contract-checks', path)
         # Unknown row extents use the shared buffer bound without inferring hardware protection.
         unknown = text.replace('@accumulation()', '@accumulation(%m: index)')
         unknown = unknown.replace('    %m = arith.constant 32 : index\n', '')
