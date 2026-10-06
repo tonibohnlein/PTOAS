@@ -90,17 +90,29 @@ LogicalResult runPreparedInsertionChecks(func::FuncOp function)
     builder.setInsertionPointToEnd(&plan.addPreparation(cuts[0]));
     auto zero = builder.create<arith::ConstantIndexOp>(function.getLoc(), 0);
     auto identity = builder.create<arith::AddIOp>(function.getLoc(), ordinal, zero);
+    auto sharedGuard = builder.create<arith::AndIOp>(function.getLoc(), guard, guard);
+    builder.setInsertionPointToEnd(&plan.addPreparation(cuts[0]));
+    auto duplicateZero = builder.create<arith::ConstantIndexOp>(function.getLoc(), 0);
+    auto duplicateIdentity = builder.create<arith::AddIOp>(function.getLoc(), ordinal, duplicateZero);
+    auto duplicateGuard = builder.create<arith::AndIOp>(function.getLoc(), guard, guard);
+    builder.setInsertionPointToEnd(&plan.addPreparation(cuts[1]));
+    auto laterUse = builder.create<arith::AddIOp>(function.getLoc(), duplicateIdentity, duplicateZero);
     // Deliberately unordered input; the inserter must group by actual cut and
     // emit SET, one coalesced local barrier, WAIT regardless of record order.
     plan.endpoints = {
-        {cuts[1], Kind::Wait, mte2, vector, 0, guard, identity},
+        {cuts[1], Kind::Wait, mte2, vector, 0, duplicateGuard, duplicateIdentity, {duplicateZero}},
         {cuts[2], Kind::Wait, vector, mte3, 1, other, identity},
         {cuts[1], Kind::Barrier, vector, vector, 2, guard, {}},
-        {cuts[0], Kind::Set, mte2, vector, 0, guard, identity},
+        {cuts[0], Kind::Set, mte2, vector, 0, duplicateGuard, duplicateIdentity, {duplicateZero}},
         {cuts[1], Kind::Set, vector, mte3, 1, other, identity},
         {cuts[1], Kind::Barrier, vector, vector, 3, other, {}}};
     if (failed(fs::insertLogicalSynchronization(function, plan)) || failed(verify(function))) {
         return failure();
+    }
+    if (plan.endpoints[0].guard != sharedGuard || plan.endpoints[0].identity != identity ||
+        plan.endpoints[0].memberCoordinates.front() != zero ||
+        laterUse.getLhs() != identity || laterUse.getRhs() != zero) {
+        return function.emitError("same-cut preparation sharing lost a raw endpoint or later SSA use");
     }
     fs::PreparedLogicalPlan duplicate(7);
     if (!rejectedUnchanged(function, duplicate)) {

@@ -195,6 +195,10 @@ void Builder::close()
         auto previous = output.thresholds;
         for (uint32_t source = 0; source < vertices; ++source) {
             for (uint32_t target = 0; target < vertices; ++target) {
+                // Present vertices already have zero reflexive distance; all
+                // weights are nonnegative. These candidates cannot improve it
+                // or a path by adding a reflexive segment at either endpoint.
+                if (source == via || target == via || source == target) { continue; }
                 auto candidate = sum(previous[std::size_t(source) * vertices + via],
                                      previous[std::size_t(via) * vertices + target]);
                 cell(source, target) = minimum(previous[std::size_t(source) * vertices + target], candidate);
