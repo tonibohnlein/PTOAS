@@ -173,13 +173,15 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
         if (!value || !pa || !pb) { return std::nullopt; }
         return arena->land(*value, arena->land(*pa, *pb));
     };
-    for (auto& access : out.accessBoundary) {
-        const auto phase = typePhases[access.last.event.type];
-        auto exists = e.lt(e.constant(phase), trips);
-        access.first.present = e.land(access.first.present, exists);
-        access.last.present = e.land(access.last.present, exists);
-        access.last.event.visits.front() = e.select(e.lt(e.constant(phase), remainder), periods,
-            e.sub(periods, e.constant(1)));
+    for (auto* accesses : {&out.accessBoundary, &out.deferredAccessBoundary}) {
+        for (auto& access : *accesses) {
+            const auto phase = typePhases[access.last.event.type];
+            auto exists = e.lt(e.constant(phase), trips);
+            access.first.present = e.land(access.first.present, exists);
+            access.last.present = e.land(access.last.present, exists);
+            access.last.event.visits.front() = e.select(e.lt(e.constant(phase), remainder), periods,
+                e.sub(periods, e.constant(1)));
+        }
     }
     out.cost.phaseDescriptions += q;
     out.cost.expressionNodes = e.size();
