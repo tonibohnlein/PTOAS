@@ -46,7 +46,11 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
         }
         auto supplied = child.regional.prepareWithVisits ? child.regional.prepareWithVisits(enclosing) :
                                                           child.regional.prepare();
-        if (failed(supplied)) { fail("regional child endpoint preparation failed"); return failure(); }
+        if (failed(supplied)) {
+            fail("regional child endpoint preparation failed");
+            if (!expressions.error().empty()) { error += ": " + expressions.error(); }
+            return failure();
+        }
         auto prepared = std::move(*supplied);
         if (child.regional.endpointSiteGuard) {
             std::map<Operation*, RegionExpressions::CutEmission> contexts;
@@ -179,6 +183,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
         }
         return guard;
     };
+    std::set<Operation*> hoistedEntries;
     auto addDemand = [&](const Port& a, const Port& b, Expr retained) -> bool {
         if (expressions.constantValue(retained) == 0) { return true; }
         const auto& ca = children[a.child];
@@ -189,6 +194,37 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
         const auto& ab = cb.anchors[b.type];
         auto p = static_cast<uint32_t>(aa.phase->kPipeValue);
         auto q = static_cast<uint32_t>(ab.phase->kPipeValue);
+
+        auto sourceLoop = ca.regional.occurrenceLoops[a.type];
+        auto targetLoop = cb.regional.occurrenceLoops[b.type];
+        if (sourceLoop && sourceLoop == targetLoop) {
+            // Crossing retention depends on boundary selectors, often only on
+            // entry parameters. Emit it once when availability at the common
+            // loop entry is proved by the ordinary contextual preflight.
+            // Failure only forgoes this optimization; endpoint checks remain.
+            auto invariant = emit(retained, sourceLoop);
+            if (succeeded(invariant)) {
+                if (hoistedEntries.insert(sourceLoop).second) {
+                    auto stage = llvm::find_if(result->preparation, [&](const auto& preparation) {
+                        return preparation.code.get() == stages[sourceLoop];
+                    });
+                    // This entry block uses original inputs or its own earlier
+                    // results, never another detached stage. Put it before the
+                    // body stages that now borrow its values for preflight.
+                    std::rotate(result->preparation.begin(), stage, std::next(stage));
+                }
+                for (auto* cut : {aa.after.before, ab.before.before}) {
+                    auto& memo = memos[cut];
+                    if (!memo) {
+                        memo = std::make_unique<DenseMap<Expr, Value>>();
+                        stages[cut] = &result->addPreparation(cut);
+                    }
+                    (*memo)[retained] = *invariant;
+                    contexts[cut].values[retained] = *invariant;
+                    contexts[cut].cofactors[retained] = retained;
+                }
+            }
+        }
 
         if (nextRecord == UINT32_MAX) { return fail("sequence endpoint identity overflow"); }
         const auto record = nextRecord++;

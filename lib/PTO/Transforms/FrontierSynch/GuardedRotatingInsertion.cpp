@@ -85,7 +85,16 @@ private:
         auto* before = publish ? operation->getNextNode() : operation;
         if (!before) { return failure(); }
         auto& cut = cuts[before];
-        if (!cut.block) { cut.block = &plan.addPreparation(before); }
+        if (!cut.block) {
+            cut.block = &plan.addPreparation(before);
+            // Entry preparation dominates every original body cut. Preserve
+            // its computed invariants through contextual branch specialization
+            // instead of rebuilding their DAGs independently at each endpoint.
+            for (auto [expression, value] : entry.values) {
+                cut.context.values[expression] = value;
+                cut.context.cofactors[expression] = expression;
+            }
+        }
         builder.setInsertionPointToEnd(cut.block);
         auto retained = analysis.periodic.retained[item.record];
         cut.context.values[retained] = item.retained;
