@@ -6,8 +6,9 @@ The executable routes are explicit analysis, numerical-template periodic
 analysis, direct and immutable guarded rotating-footprint analysis, exact
 sequence composition, finite guarded analysis, and restricted arithmetic analysis.
 They use common logical insertion. Physical allocation
-supports certified numerical templates and finite explicit/guarded/sequence plans.
-Other compact routes require uniform allocation exports before physical compilation.
+supports numerical templates, direct rotating results, finite explicit/guarded/sequence
+plans, and the sufficient compact strategies described in M13. Other compact
+results still require a uniform allocation export before physical compilation.
 The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
 
 | Stage | Entry point and implementation |
@@ -23,7 +24,7 @@ The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
 | Restricted arithmetic reduction and selectors | `ArithmeticDemandAnalysis.cpp`, `DifferenceBoundRelations.cpp`, `IntegerRelations.cpp`, `ArithmeticSelectors.cpp`, `GeneralArithmeticSelectors.cpp` |
 | Exact generators and reduction | `NumericTemplateAnalysis.cpp`, `LifetimeScan.cpp`, `PeriodicDemandGraph.cpp`, `PeriodicFrontier.cpp` |
 | Endpoint preparation and insertion | `NumericTemplateEndpoints.cpp`, `NumericTemplateInsertion.cpp`, `LogicalInsertion.cpp` |
-| Reuse certificate and physical IDs | `PeriodicAllocation.cpp`, `AllocationCertificate.cpp`, `PhysicalAllocation.cpp` |
+| Reuse certificate and physical IDs | `PeriodicAllocation.cpp`, `FiniteAllocation.cpp`, `CompactAllocation.cpp`, `AllocationCertificate.cpp`, `PhysicalAllocation.cpp` |
 | Compact endpoint emission | `FamilyExpressions.cpp`, `FamilyInsertion.cpp` and `PhysicalAllocation.cpp` |
 
 Arithmetic recognition builds its relation bundle only when a caller requests
@@ -82,7 +83,7 @@ shared access interface; no kernel-specific recognizers or new emission modes.
 | M10 | Finite allocation exports, explicit interval allocation and guarded compatibility | Existing straight-line logical successes compile; independent reuse/closure checks | Implemented; review gates accepted |
 | M11 | Shared matrix valid extents, views and justified element/layout contracts | Independently checked exact ranges; affected corpus and existing mode checked | Implemented; review gates accepted |
 | M12 | Shared, domain-simplified arithmetic endpoint formulas | Nested corpus example has at most 207 arithmetic operations, unchanged demands | Implemented; review gates accepted |
-| M13 | Uniform allocation for supported compact results using existing queries | Nested arithmetic and representative rotating/guarded cases compile in IDs 0–5 | Planned |
+| M13 | Uniform allocation for supported compact results using existing queries | Nested arithmetic and representative rotating/guarded cases compile in IDs 0–5 | Implemented; review gates accepted |
 
 Allocation preserves endpoints and order, reports unsupported proof separately
 from capacity, and leaves scarcity repair and shared-pool optimization separate.
@@ -1460,3 +1461,64 @@ worker; these are local smoke timings, not an isolated benchmark. Independent
 expanded conflict graphs cover zero, singleton and repeated visits; selector
 unit checks cover integer-adjacent unions, holes, parameters, signed residues
 and inverse endpoint maps. Artifacts: `.local/route-completion-m12/`.
+
+### M13 uniform allocation for compact results
+
+Direct rotating results export their existing numerical periodic reuse budgets.
+DBM arithmetic results can export a sufficient dedicated-family assignment:
+each static endpoint pair gets one ID, after proving that every earlier
+retained handoff's target completion precedes every later handoff's source
+start in that family. Checks cover all relation pieces and residue combinations,
+share invocation parameters, and compare lexicographically ordered source
+coordinates. Exact projection and union subtraction discharge coverage queries.
+The source coordinate tuple remains the logical matching identity; the certified
+constant assignment does not need to evaluate it to choose an ID.
+
+Immutable guarded rotating results use a sufficient cyclic assignment. For
+each possibly retained record, Boolean specialization builds a numerical witness
+graph containing only payloads and generators guaranteed active under that
+record's guard. A completion-to-start threshold certifies a reuse gap. Distinct
+record phases occupy disjoint cyclic subsequences, including when other records
+are skipped. Unknown displacement/activation proofs remain unsupported. The
+assignment is uniform in loop trip count; it does not enumerate valuations.
+
+These strategies carry explicit names in the existing cyclic export. Their
+capacity failure states that the chosen sufficient assignment does not fit,
+not that the logical plan requires more IDs. Failed allocation leaves the
+logical IR unchanged. Scarcity repair, general-integer allocation and mixed
+compact-region allocation without a whole-plan reuse proof remain separate.
+
+Arithmetic proof work is quadratic in a family's piece count times its source
+coordinate dimension and exact coverage-query cost. Union subtraction can
+construct a large threshold arrangement; the polynomial guarantee requires
+fixed dimension. Guarded proof work includes one numerical quotient per record
+and O(R(R+M)) circuit queries. Each constant specialization costs at most O(G^2)
+forced-fact work in the expression DAG; the implementation performs no search
+over Boolean valuations. These are compile-time proofs, not runtime solvers.
+
+Validation includes 35 independently checked logical/physical matching traces,
+zero/single/repeated trips, guard alternatives, impossible guards, two
+transactional rejection cases, and constant-size physical output for 10 versus
+one billion trips. The nested arithmetic corpus case, a numerical rotating loop
+and an immutable guarded loop each generate C++ with eligible IDs 0–5. No new
+device execution was performed. Local artifacts: `.local/route-completion-m13/`.
+
+
+Final M10–M13 validation used 786 pinned inputs (784 original corpus modules
+and two supplemental GEMMs), with all input hashes verified. Physical allocation
+and C++ generation succeeded for 25 original modules, including two empty
+modules, and both supplemental GEMMs. All prior C++ successes were retained;
+there were no timeouts. The other 759 inputs still require unsupported logical
+or allocation capabilities. This is coverage progress, not complete corpus
+support. The campaign used the explicit GM may-not-alias mode and eligible
+IDs 0–5.
+
+The development-overlay regression run passed 119 RUN checks. Five full-CLI
+checks were skipped because the unified release CLI was unavailable. Three
+serial timing samples per version on 24 common logical successes measured
+median per-case analysis times of 0.0956 s before and 0.0959 s after. The nested
+arithmetic case decreased from 414 to 133 arithmetic operations while retaining
+four logical commands. These timings measure logical analysis preparation,
+not full compilation or device execution. Architecture, correctness and
+performance reviewers accepted all four milestones. Final artifacts and tool
+hashes: `.local/route-completion-m13/REPORT.md` and `metadata.json`.
