@@ -20,13 +20,15 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
         composer.costs.physicalFragments += cost.physicalFragments;
         composer.costs.rotatingResidues += cost.rotatingResidues;
         composer.costs.numericVisits += cost.numericVisits;
+        composer.costs.repeatedRegions += cost.repeatedRegions;
+        composer.costs.phaseDescriptions += cost.phaseDescriptions;
         composer.costs.selectorComparisons += cost.selectorComparisons;
         composer.costs.crossingCandidates += cost.crossingCandidates;
         composer.costs.implicationChecks += cost.implicationChecks;
     }
-    if (!composer.importSummaries()) { result.error = composer.error; return result; }
+    if (!composer.importSummaries(composer.requireEndpoints)) { result.error = composer.error; return result; }
     composer.bridges();
-    if (!composer.valueBridges()) { result.error = composer.error; return result; }
+    if (composer.reconstructPrerequisites && !composer.valueBridges()) { result.error = composer.error; return result; }
     if (!composer.closure()) { result.error = composer.error; return result; }
     if (!composer.expressions.constructionError().empty()) {
         result.error = composer.expressions.constructionError(); return result;
@@ -139,7 +141,8 @@ SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& i
     return finishSequence(std::move(state));
 }
 SequenceAnalysis composeRegionalSequence(func::FuncOp function,
-    std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children)
+    std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
+    bool reconstructPrerequisites, bool requireEndpoints)
 {
     SequenceAnalysis result;
     if (!function || function.isDeclaration() || !function.getBody().hasOneBlock() || !expressions ||
@@ -151,6 +154,8 @@ SequenceAnalysis composeRegionalSequence(func::FuncOp function,
         result.error = "sequence endpoint arithmetic requires a 64-bit index representation"; return result;
     }
     auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions));
+    state->reconstructPrerequisites = reconstructPrerequisites;
+    state->requireEndpoints = requireEndpoints;
     SmallVector<const CompoundInstanceElement*> phases;
     DenseSet<const CompoundInstanceElement*> seen;
     for (const auto& regional : children) {
@@ -160,7 +165,7 @@ SequenceAnalysis composeRegionalSequence(func::FuncOp function,
             }
         }
     }
-    if (failed(state->index.build(function, phases))) {
+    if (reconstructPrerequisites && failed(state->index.build(function, phases))) {
         result.error = "cannot reconstruct regional value prerequisites";
         return result;
     }

@@ -22,21 +22,28 @@ def run(tool, mode, path):
     return result.stdout
 
 
-def check(document, dimensions):
+def check(document, dimensions, outer_slots=None, outer_lower=0, outer_step=1, external_work=True):
     assert document["accepted"], document
     trace = document["trace"]
     assert not trace["error"], trace
     events = trace["events"]
     payloads = [event for event in events if event["kind"] == "payload"]
-    expected = [(0, [])]
+    expected = [(0, [])] if external_work else []
+    load_type, compute_type = (1, 2) if external_work else (0, 1)
     for coordinates in itertools.product(*(range(max(0, count)) for count in dimensions)):
-        expected.extend([(1, list(coordinates)), (2, list(coordinates))])
-    expected.append((3, []))
+        actual = list(coordinates)
+        if outer_slots is not None:
+            actual[-2] = outer_lower + outer_step * actual[-2]
+        expected.extend([(load_type, actual), (compute_type, actual)])
+    if external_work:
+        expected.append((3, []))
     assert [(p["type"], p["coordinates"]) for p in payloads] == expected
     effects = []
     for kind, coordinates in expected:
         slot = coordinates[-1] % 2 if coordinates else 0
-        effects.append(({("left", slot), ("right", 0)}, {("acc", 0)}) if kind == 2 else
+        if outer_slots is not None and coordinates:
+            slot = coordinates[-2] % outer_slots
+        effects.append(({("left", slot), ("right", 0)}, {("acc", 0)}) if kind == compute_type else
                        ({("mat", 0)}, {("left", slot)}))
     pipes = [p["pipe"] for p in payloads]
     edges = native(pipes)
@@ -99,10 +106,9 @@ def main():
         triangular_report = json.loads(run(tool, "--sequence-analysis", path))
         assert not triangular_report["error"] and triangular_report["numeric_visits"] > 0, triangular_report
         assert "version = 4" not in run(tool, "--insert-logical", path)
-        # Outer-dependent bounds, bank selection, and descriptor rebinding do
-        # not satisfy invariant-body repetition. Rejection is of this route.
+        # Evolving bounds and descriptor rebinding remain outside the admitted
+        # repeated routes. Outer banking is checked by the separate phase suite.
         negatives = [source.replace("%i = %zero to %m", "%i = %zero to %visit"),
-                     source.replace("arith.remui %i, %two", "arith.remui %visit, %two"),
                      source.replace("      scf.for %i", "      %address = arith.index_cast %visit : index to i64\n"
                          "      %rebound = pto.tassign %acc, %address : !acc -> !acc\n      scf.for %i")]
         for candidate in negatives:

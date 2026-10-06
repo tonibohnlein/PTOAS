@@ -14,6 +14,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
         fail("subregion endpoint binding requires its enclosing repeat coordinates"); return failure();
     }
     for (const auto& child : children) {
+        if (!child.regional.capabilities.endpointRecipes ||
+            (!child.regional.prepare && !child.regional.prepareWithVisits)) {
+            fail("regional child has no endpoint recipe"); return failure();
+        }
         if (llvm::any_of(child.regional.outerLoops, [](const auto& frame) { return !frame.empty(); }) &&
             !child.regional.prepareWithVisits) {
             fail("nested child has no contextual endpoint recipe"); return failure();
@@ -44,6 +48,18 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
                                                           child.regional.prepare();
         if (failed(supplied)) { fail("regional child endpoint preparation failed"); return failure(); }
         auto prepared = std::move(*supplied);
+        if (child.regional.endpointSiteGuard) {
+            std::map<Operation*, RegionExpressions::CutEmission> contexts;
+            for (auto& endpoint : prepared->endpoints) {
+                auto& block = prepared->addPreparation(endpoint.before);
+                OpBuilder builder(function.getContext());
+                builder.setInsertionPointToEnd(&block);
+                auto predicate = expressions.emitContextual(*child.regional.endpointSiteGuard,
+                    builder, endpoint.before, contexts[endpoint.before]);
+                if (failed(predicate)) { fail("phase site predicate unavailable at original cut"); return failure(); }
+                endpoint.guard = builder.create<arith::AndIOp>(endpoint.before->getLoc(), endpoint.guard, *predicate);
+            }
+        }
         result->nestedIdentities |= prepared->nestedIdentities;
         if (!prepared->regionalAllocation) {
             prepared->regionalAllocation = finiteRegionalAllocation(child.regional, *prepared);
@@ -130,6 +146,12 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
     };
     auto endpointGuard = [&](const Port& point, Expr guard) {
         const auto& child = children[point.child];
+        if (child.regional.endpointSiteGuard) { guard = both(guard, *child.regional.endpointSiteGuard); }
+        if (child.regional.endpointEventGuard) {
+            auto value = child.regional.endpointEventGuard(point.event());
+            if (!value) { fail("regional phase endpoint predicate unavailable"); return no(); }
+            guard = both(guard, *value);
+        }
         const auto& anchor = child.anchors[point.type];
         auto loop = child.regional.occurrenceLoops[point.type];
         if (loop) {
@@ -145,6 +167,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
                 if (!step || *step <= 0) { fail("nested endpoint requires a constant positive step"); return no(); }
                 auto ordinal = expressions.div(expressions.sub(expressions.input(coordinate.getInductionVar()),
                     expressions.input(coordinate.getLowerBound())), c(*step));
+                if (!child.regional.outerDivisors.empty()) {
+                    ordinal = expressions.div(ordinal, c(child.regional.outerDivisors[point.type][i]));
+                }
                 guard = both(guard, expressions.eq(ordinal, point.visits[i]));
             }
         }
@@ -158,6 +183,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
         if (expressions.constantValue(retained) == 0) { return true; }
         const auto& ca = children[a.child];
         const auto& cb = children[b.child];
+        if (ca.regional.endpointInvocationGuard) { retained = both(retained, *ca.regional.endpointInvocationGuard); }
+        if (cb.regional.endpointInvocationGuard) { retained = both(retained, *cb.regional.endpointInvocationGuard); }
         const auto& aa = ca.anchors[a.type];
         const auto& ab = cb.anchors[b.type];
         auto p = static_cast<uint32_t>(aa.phase->kPipeValue);

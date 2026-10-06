@@ -15,6 +15,7 @@ using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 bool runNestedRegionalChecks(func::FuncOp function);
 bool runRepeatedRegionChecks(func::FuncOp function);
+bool runRepeatedPhaseChecks(func::FuncOp function);
 namespace {
 std::string render(func::FuncOp function)
 {
@@ -36,6 +37,19 @@ bool checkAlgebra(Value index, Value predicate)
     valid &= expressions.div(maximum, one) == maximum && expressions.rem(maximum, one) == zero;
     valid &= expressions.lt(maximum, zero) == expressions.boolean(false);
     valid &= expressions.le(zero, maximum) == expressions.boolean(true);
+    valid &= expressions.le(zero, x) == expressions.boolean(true);
+    valid &= expressions.le(x, maximum) == expressions.boolean(true);
+    valid &= expressions.lt(x, zero) == expressions.boolean(false);
+    valid &= expressions.lt(maximum, x) == expressions.boolean(false);
+    valid &= !expressions.constantValue(expressions.slt(x, zero));
+    valid &= !expressions.constantValue(expressions.sle(zero, x));
+    auto prior = expressions.sub(x, one);
+    valid &= expressions.le(one, x) == expressions.lt(zero, x);
+    valid &= expressions.lt(prior, x) == expressions.le(one, x);
+    valid &= expressions.le(prior, x) == expressions.le(one, x);
+    valid &= expressions.eq(prior, zero) == expressions.eq(x, one);
+    valid &= expressions.eq(zero, prior) == expressions.eq(x, one);
+    valid &= expressions.lt(expressions.sub(x, maximum), x) == expressions.le(maximum, x);
     valid &= expressions.slt(maximum, zero) == expressions.boolean(true);
     valid &= expressions.sle(zero, maximum) == expressions.boolean(false);
     valid &= expressions.land(p, expressions.boolean(true)) == p;
@@ -229,7 +243,7 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
     if (!checkAlgebra(function.getArgument(0), function.getArgument(1)) || !checkEmission(function, cuts) ||
         !checkImplicationTruthTables(function.getArgument(0), function.getArgument(1)) ||
         !checkPlacementRetry(function, cuts) || !checkSubstitution(function.getArgument(0), function.getArgument(1)) ||
-        !runNestedRegionalChecks(function) || !runRepeatedRegionChecks(function) ||
+        !runNestedRegionalChecks(function) || !runRepeatedRegionChecks(function) || !runRepeatedPhaseChecks(function) ||
         !rejectedWithoutCode(function, cuts[0], cuts[0]->getResult(0)) ||
         !rejectedWithoutCode(function, cuts[1], hidden) || render(function) != before) {
         return function.emitError("regional expression checks failed");

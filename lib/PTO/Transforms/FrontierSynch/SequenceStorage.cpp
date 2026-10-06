@@ -108,6 +108,7 @@ bool SequenceAnalysisState::rotatingPatterns(Child& child, const RotatingAnalysi
 }
 bool SequenceAnalysisState::loopChild(const StructureNode& node)
 {
+    repeatedAttempt.clear();
     Child child;
     child.loop = dyn_cast<scf::ForOp>(node.anchor);
     if (!child.loop || child.loop.getNumResults()) { return fail("sequence loop interface has carried results"); }
@@ -171,11 +172,14 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         }
         if ((!cachedNumeric || cachedNumeric->result.state != RecognitionState::Applicable) &&
             repeatedChild(node, child.trips)) { return true; }
+        if ((!cachedNumeric || cachedNumeric->result.state != RecognitionState::Applicable) &&
+            phasedChild(node, child.trips)) { return true; }
         if (boundaryLoop(child.loop)) { return true; }
         auto numeric = cachedNumeric ? std::move(*cachedNumeric) :
                        recognizeRegionalNumericTemplate(child.loop, index, *input);
         if (numeric.result.state != RecognitionState::Applicable) {
-            return fail("sequence loop has no exact regional rotating or numerical template");
+            return fail(repeatedAttempt.empty() ? "sequence loop has no exact regional rotating or numerical template" :
+                        repeatedAttempt);
         }
         child.costs.numericVisits = numeric.countedVisits;
         if (!numericPatterns(child, numeric)) { return false; }

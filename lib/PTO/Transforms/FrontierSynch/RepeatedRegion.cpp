@@ -23,8 +23,15 @@ bool RepeatedRegionState::buildBoundary()
     }
     if (!pair.importSummaries(false)) { error = pair.error; return false; }
     pair.bridges();
+    for (const auto& edge : pair.crossings) {
+        if (e().constantValue(edge.guard) == 0) { continue; }
+        const auto& a = pair.ports[edge.source];
+        const auto& b = pair.ports[edge.target];
+        queryCrossings.push_back({a.event(PeriodicEventKind::Completion), b.event(), edge.guard, false});
+    }
     if (!pair.error.empty() || !pair.closure()) { error = pair.error; return false; }
     for (const auto& edge : pair.crossings) {
+        if (e().constantValue(edge.guard) == 0) { continue; }
         const auto& a = pair.ports[edge.source];
         const auto& b = pair.ports[edge.target];
         if (a.child != 0 || b.child != 1) { error = "invalid repeated boundary direction"; return false; }
@@ -40,7 +47,10 @@ bool RepeatedRegionState::buildBoundary()
                 for (auto kind : {PeriodicEventKind::Start, PeriodicEventKind::Completion}) {
                     auto a = last.event, b = first.event;
                     a.kind = kind; b.kind = kind;
-                    crossings.push_back({a, b, e().land(last.present, first.present), true});
+                    auto native = RepeatedCrossing{a, b, e().land(last.present, first.present), true};
+                    if (e().constantValue(native.guard) == 0) { continue; }
+                    crossings.push_back(native);
+                    queryCrossings.push_back(native);
                 }
             }
         }
@@ -56,7 +66,7 @@ bool RepeatedRegionState::closePorts()
         if (added) { slots.push_back(event); }
         return it->second;
     };
-    for (const auto& crossing : crossings) { port(crossing.source); port(crossing.target); }
+    for (const auto& crossing : queryCrossings) { port(crossing.source); port(crossing.target); }
     const auto count = slots.size();
     if (count >= UINT32_MAX || (count && count > distances.max_size() / count)) {
         error = "repeated port matrix size overflow"; return false;
@@ -66,12 +76,13 @@ bool RepeatedRegionState::closePorts()
     distances.assign(count * count, absent);
     for (std::size_t a = 0; a < count; ++a) {
         for (std::size_t b = 0; b < count; ++b) {
+            if (a == b) { distances[a * count + b] = zero; continue; }
             auto reachable = regionalReachability(body, slots[a], slots[b]);
             if (!reachable) { error = "repeated body port query unavailable"; return false; }
             distances[a * count + b] = e().select(*reachable, zero, absent);
         }
     }
-    for (const auto& crossing : crossings) {
+    for (const auto& crossing : queryCrossings) {
         auto a = port(crossing.source), b = port(crossing.target);
         auto pa = regionalPresence(body, crossing.source), pb = regionalPresence(body, crossing.target);
         if (!pa || !pb) { error = "repeated crossing endpoint unavailable"; return false; }
@@ -83,6 +94,9 @@ bool RepeatedRegionState::closePorts()
     for (std::size_t via = 0; via < count; ++via) {
         for (std::size_t a = 0; a < count; ++a) {
             for (std::size_t b = 0; b < count; ++b) {
+                // Nonnegative self traversals cannot improve a shortest path.
+                if (a == via || b == via || a == b ||
+                    distances[a * count + via] == absent || distances[via * count + b] == absent) { continue; }
                 // Values are at most P+1; the checked P<UINT32_MAX makes addition total.
                 auto candidate = e().add(distances[a * count + via], distances[via * count + b]);
                 auto& value = distances[a * count + b];
@@ -116,22 +130,50 @@ std::optional<RepeatedRegionState::Id> RepeatedRegionState::computeQuery(Regiona
     if (!ps || !pt) { return std::nullopt; }
     auto i = source.visits.front(), j = target.visits.front();
     source.visits.erase(source.visits.begin()); target.visits.erase(target.visits.begin());
-    auto local = regionalReachability(body, source, target);
-    if (!local) { return std::nullopt; }
-    auto result = e().land(e().eq(i, j), *local), across = e().boolean(false);
+    const auto sameVisit = e().eq(i, j), laterVisit = e().lt(i, j);
+    Id result = e().boolean(false), across = e().boolean(false);
+    if (e().constantValue(sameVisit) != 0) {
+        auto local = regionalReachability(body, source, target);
+        if (!local) { return std::nullopt; }
+        result = e().land(sameVisit, *local);
+    }
+    if (e().constantValue(sameVisit) == 1 || e().constantValue(laterVisit) == 0) {
+        return e().land(e().land(*ps, *pt), result);
+    }
+    auto slotIndex = [&](const RegionalEvent& event) -> std::optional<std::size_t> {
+        for (std::size_t slot = 0; slot < slots.size(); ++slot) {
+            const auto& candidate = slots[slot];
+            if (candidate.type == event.type && candidate.ordinal == event.ordinal &&
+                candidate.kind == event.kind && candidate.visits == event.visits) { return slot; }
+        }
+        return std::nullopt;
+    };
+    const auto sourceSlot = slotIndex(source), targetSlot = slotIndex(target);
+    if (sourceSlot && targetSlot) {
+        // D already includes all zero-cost body paths at both ends. Expanding
+        // Q*D*Q again for its own boundary vertices only duplicates the DAG.
+        const auto distance = distances[*sourceSlot * slots.size() + *targetSlot];
+        across = e().land(e().lt(distance, e().constant(infinity)), e().le(distance, e().sub(j, i)));
+        return e().land(e().land(*ps, *pt), e().lor(result, e().land(laterVisit, across)));
+    }
     std::vector<Id> entries, exits;
-    for (const auto& slot : slots) {
-        auto exit = regionalReachability(body, source, slot), entry = regionalReachability(body, slot, target);
+    for (std::size_t slot = 0; slot < slots.size(); ++slot) {
+        auto exit = sourceSlot ? std::optional<Id>(e().boolean(slot == *sourceSlot)) :
+                                regionalReachability(body, source, slots[slot]);
+        auto entry = targetSlot ? std::optional<Id>(e().boolean(slot == *targetSlot)) :
+                                 regionalReachability(body, slots[slot], target);
         if (!exit || !entry) { return std::nullopt; }
         exits.push_back(*exit); entries.push_back(*entry);
     }
     for (std::size_t a = 0; a < slots.size(); ++a) {
+        if (e().constantValue(exits[a]) == 0) { continue; }
         for (std::size_t b = 0; b < slots.size(); ++b) {
+            if (e().constantValue(entries[b]) == 0) { continue; }
             const auto distance = distances[a * slots.size() + b];
             auto reached = e().land(e().lt(distance, e().constant(infinity)), e().le(distance, e().sub(j, i)));
             across = e().lor(across, e().land(reached, e().land(exits[a], entries[b])));
         }
     }
-    return e().land(e().land(*ps, *pt), e().lor(result, e().land(e().lt(i, j), across)));
+    return e().land(e().land(*ps, *pt), e().lor(result, e().land(laterVisit, across)));
 }
 } // namespace mlir::pto::frontiersynch
