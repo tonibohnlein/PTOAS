@@ -14,10 +14,11 @@
 #include "llvm/ADT/DenseSet.h"
 namespace mlir::pto::frontiersynch {
 namespace {
-SmallVector<scf::ForOp> enclosing(Operation* op)
+SmallVector<scf::ForOp> enclosing(Operation* op, Operation* root)
 {
     SmallVector<scf::ForOp> loops;
-    for (auto* parent = op->getParentOp(); parent; parent = parent->getParentOp()) {
+    for (auto* parent = op->getParentOp(); parent && op != root && parent != root->getParentOp();
+         parent = parent->getParentOp()) {
         if (auto loop = dyn_cast<scf::ForOp>(parent)) {
             loops.push_back(loop);
         }
@@ -25,11 +26,12 @@ SmallVector<scf::ForOp> enclosing(Operation* op)
     std::reverse(loops.begin(), loops.end());
     return loops;
 }
-SmallVector<ArithmeticGuard> enclosingGuards(Operation* op)
+SmallVector<ArithmeticGuard> enclosingGuards(Operation* op, Operation* root)
 {
     SmallVector<ArithmeticGuard> guards;
     auto* child = op;
-    for (auto* parent = op->getParentOp(); parent; child = parent, parent = parent->getParentOp()) {
+    for (auto* parent = op->getParentOp(); parent && op != root && parent != root->getParentOp();
+         child = parent, parent = parent->getParentOp()) {
         if (auto branch = dyn_cast<scf::IfOp>(parent)) {
             guards.push_back({branch, child->getParentRegion() == &branch.getThenRegion()});
         }
@@ -48,16 +50,22 @@ bool supportedDomain(scf::ForOp loop, detail::ProgramBuilder& builder)
     if (!supported) {
         return false;
     }
-    return builder.prepareValue(loop.getUpperBound(), {nullptr, enclosing(loop), {}});
+    return builder.prepareValue(loop.getUpperBound(), {nullptr, enclosing(loop, builder.output.context.root), {}});
 }
-void collect(func::FuncOp function, const PhaseIndex& index, detail::ProgramBuilder& builder)
+void collect(const PhaseIndex& index, detail::ProgramBuilder& builder)
 {
     auto& output = builder.output;
-    function.walk<WalkOrder::PreOrder>([&](Operation* op) {
-        if (op == function.getOperation()) {
+    auto* root = output.context.root;
+    root->walk<WalkOrder::PreOrder>([&](Operation* op) {
+        if (op == output.context.function.getOperation()) {
             return;
         }
         auto phases = index.phasesFor(op);
+        for (const auto& prerequisite : index.prerequisitesFor(op)) {
+            if (!root->isAncestor(prerequisite.producer->elementOp)) {
+                output.incomingPrerequisites.push_back(prerequisite);
+            }
+        }
         const bool controlPrerequisite = op->getNumRegions() && index.needsValuePrerequisite(op);
         if (controlPrerequisite) {
             output.extraction.note(RecognitionIssue::AdditionalPrerequisite, op);
@@ -66,7 +74,7 @@ void collect(func::FuncOp function, const PhaseIndex& index, detail::ProgramBuil
             if (!supportedDomain(loop, builder)) {
                 output.extraction.note(RecognitionIssue::LoopDomain, op, true);
             }
-            auto bodyLoops = enclosing(loop);
+            auto bodyLoops = enclosing(loop, builder.output.context.root);
             bodyLoops.push_back(loop);
             // Retain the original recurrence. The shared scalar semantics must
             // prove every carried argument as a function of these coordinates;
@@ -79,7 +87,8 @@ void collect(func::FuncOp function, const PhaseIndex& index, detail::ProgramBuil
             return;
         }
         if (auto branch = dyn_cast<scf::IfOp>(op)) {
-            if (!builder.prepareGuard(branch.getCondition(), {nullptr, enclosing(op), {}})) {
+            ArithmeticSite context{nullptr, enclosing(op, root), {}};
+            if (!builder.prepareGuard(branch.getCondition(), context)) {
                 output.extraction.note(RecognitionIssue::UnsupportedControl, op, true);
             }
             return;
@@ -93,7 +102,7 @@ void collect(func::FuncOp function, const PhaseIndex& index, detail::ProgramBuil
         // and unknown effects. Any metadata used by a domain or footprint must
         // additionally pass that consumer's exact scalar/geometry extraction.
         if (phases.size() == 1) {
-            output.sites.push_back({phases.front(), enclosing(op), enclosingGuards(op)});
+            output.sites.push_back({phases.front(), enclosing(op, root), enclosingGuards(op, root)});
         }
     });
 }
@@ -190,15 +199,20 @@ void clearExports(ArithmeticProgram& output)
     output.sites.clear();
     output.parameters.clear();
     output.uniformConflicts.clear();
+    output.incomingPrerequisites.clear();
 }
 } // namespace
-ArithmeticProgram recognizeArithmeticProgram(func::FuncOp function, const PhaseIndex& index,
+ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, const PhaseIndex& index,
                                              const SyncInput& input, const SyncStorageEffects& effects,
                                              const ArithmeticLimits& limits)
 {
     ArithmeticProgram output;
+    output.context = region;
+    auto function = region.function;
     output.recognition.state = RecognitionState::MissingPremise;
-    if (function.isDeclaration() || !function.getBody().hasOneBlock()) {
+    if (!function || !region.root ||
+        (region.root != function.getOperation() && !function->isAncestor(region.root)) ||
+        function.isDeclaration() || !function.getBody().hasOneBlock()) {
         output.extraction.note(RecognitionIssue::UnsupportedControl, function, true);
         return output;
     }
@@ -217,8 +231,8 @@ ArithmeticProgram recognizeArithmeticProgram(func::FuncOp function, const PhaseI
         output.extraction.note(RecognitionIssue::ArithmeticDimension, function, true);
         return output;
     }
-    detail::ProgramBuilder builder{output, limits, function.getContext(), DenseMap<Value, unsigned>()};
-    collect(function, index, builder);
+    detail::ProgramBuilder builder{output, limits, function.getContext(), index, DenseMap<Value, unsigned>()};
+    collect(index, builder);
     if (output.extraction.state != RecognitionState::Applicable) {
         clearExports(output);
         return output;
@@ -292,5 +306,11 @@ ArithmeticProgram recognizeArithmeticProgram(func::FuncOp function, const PhaseI
         clearExports(output);
     }
     return output;
+}
+ArithmeticProgram recognizeArithmeticProgram(func::FuncOp function, const PhaseIndex& index,
+                                             const SyncInput& input, const SyncStorageEffects& effects,
+                                             const ArithmeticLimits& limits)
+{
+    return recognizeArithmeticProgram({function, function.getOperation()}, index, input, effects, limits);
 }
 } // namespace mlir::pto::frontiersynch
