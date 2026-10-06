@@ -251,8 +251,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareExplicitInsertion(
         const auto targetPipe = analysis.occurrences[edge.target].pipe;
         auto* source = analysis.phases[edge.source]->elementOp;
         auto* target = analysis.phases[edge.target]->elementOp;
-        if (source->getBlock() != &function.getBody().front() || target->getBlock() != source->getBlock() ||
-            !source->getNextNode()) {
+        if (source->getParentOfType<func::FuncOp>() != function ||
+            target->getBlock() != source->getBlock() || !source->getNextNode()) {
             return failure();
         }
         EndpointFamily family;
