@@ -182,9 +182,9 @@ execution.
 | gated_delta_rule | Whole-kernel tractable-class membership remains unestablished |
 
 Allocation failure is not a proof that six IDs are insufficient. No scarcity
-repair was added. M1's regional arithmetic query adapter, M3's affine selectors and
+repair was added. M3's regional arithmetic query adapter, affine selectors and
 crossing families, M4's composed phases and economical general boundary guards,
-and M5's supported allocation extensions remain unfinished. M2 is complete.
+and M5's supported allocation extensions remain unfinished. M1 and M2 are complete.
 Do not present the current branch as completing all five milestones.
 
 For regional arithmetic, enclosing iteration coordinates must remain shared
@@ -220,7 +220,7 @@ contract describes one visit at its actual entry bindings; repeating a summary
 still requires substitution/certification, and independent parameter assignments
 need not all correspond to realizable executions.
 
-This completes the extraction portion of M1, not a composable arithmetic route.
+This completes M1 under its original definition, not a composable arithmetic route.
 No production dispatcher returns Ready on the strength of this API. Per-byte
 first/last selectors, finite crossing families and an exact signed-arithmetic
 adapter to regional expressions remain necessary. The first consumer should
@@ -234,3 +234,18 @@ checks, plus 12 arithmetic insertion traces. The brace-rule prefilter also
 flags two already-braced compound conditions in ArithmeticResidues.cpp; these
 are inspected regex false positives. No device behavior or additional benchmark
 acceptance is claimed by this change.
+
+## Milestone acceptance gates
+
+At `840344a46`, the architecture, correctness and performance reviewers each
+accepted the full original M1 and M2 contracts, not merely individual patches.
+M1 comprises original-block adapters, precise diagnostics and explicit regional
+arithmetic input context. M2 comprises recursive compact-arm conditional
+composition. The query/selector integration needed to make arithmetic children
+composable belongs to M3. Earlier status wording incorrectly assigned that
+integration to M1; this correction does not change the original milestone list.
+
+Remaining milestones must each pass all three reviews as a complete milestone
+and be committed before proceeding to the next. Successful extraction alone is
+not M3 acceptance, finite slices alone are not M4 acceptance, and a sufficient
+allocation failure is neither a capacity impossibility proof nor M5 completion.
