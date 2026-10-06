@@ -1,0 +1,45 @@
+{
+  "source_commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+  "source_files": [
+    {
+      "path": "examples/causal_conv1d/causal_conv1d_decode.py",
+      "snapshot": "sources/tilelang-ascend/examples/causal_conv1d/causal_conv1d_decode.py.txt",
+      "sha256": "9c77625c815179121e0a18d8de1df3277b8fc9e9d69806ad5203f73bffd7b420",
+      "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/causal_conv1d/causal_conv1d_decode.py"
+    }
+  ],
+  "configuration": {
+    "batch": 8,
+    "dim": 2048,
+    "width": 4,
+    "state_shape": [
+      8,
+      3,
+      2048
+    ],
+    "dtype": "bfloat16",
+    "activation": "silu",
+    "launch_blocks": 8,
+    "threads": 2,
+    "mutates": [
+      "state"
+    ],
+    "scope": "One feature-dimension chunk per batch; dynamic read/write cache indices and initial-state flags retained.",
+    "requirements": [
+      "Cache read/write row unions are disjoint across tasks; indices are in range.",
+      "Authored ID 6 requires target/API qualification.",
+      "PTO helper expansion included; native AscendC equivalence needs device checking."
+    ]
+  },
+  "adaptations": [
+    "PTO MulAddDst/Silu helpers expanded with A3 barriers and scratch storage.",
+    "Authored event ID 6 preserved, not certified for a six-ID target."
+  ],
+  "baseline": "ported authored protocol; native upstream timing is a separate baseline",
+  "invocation": "Terminal ALL completion added; input removes all replaceable local synchronization.",
+  "gm_alias": "may-not-alias; pointer arguments denote disjoint allocations, except repeated uses of one argument",
+  "device_qualified": false,
+  "launch_wrapper": "not yet provided",
+  "comparison_gate": "Validate expert, existing and frontier against the independent reference before timing.",
+  "source_reference": "_torch_causal_conv1d_decode_ref and _run_ref_suite"
+}

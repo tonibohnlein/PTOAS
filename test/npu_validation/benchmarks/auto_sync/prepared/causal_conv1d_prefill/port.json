@@ -1,0 +1,52 @@
+{
+  "source_commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+  "source_files": [
+    {
+      "path": "examples/causal_conv1d/causal_conv1d_pto.py",
+      "snapshot": "sources/tilelang-ascend/examples/causal_conv1d/causal_conv1d_pto.py.txt",
+      "sha256": "72ababa5fbddd034ee5986a8b3e7d255682b02c144126204d4c2f1003ba0011f",
+      "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/causal_conv1d/causal_conv1d_pto.py"
+    },
+    {
+      "path": "examples/causal_conv1d/causal_conv1d.py",
+      "snapshot": "sources/tilelang-ascend/examples/causal_conv1d/causal_conv1d.py.txt",
+      "sha256": "e440d68c24a70077042147a0f7151cb8aaabe3977013b73cd105303a5e456f4c",
+      "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/causal_conv1d/causal_conv1d.py"
+    }
+  ],
+  "configuration": {
+    "batch": 2,
+    "max_total_tokens": 32,
+    "dim": 128,
+    "width": 4,
+    "dim_num": 1,
+    "dtype": "float16",
+    "state_shape": [
+      2,
+      3,
+      128
+    ],
+    "launch_blocks": 2,
+    "vector_lanes": 2,
+    "mutates": [
+      "state"
+    ],
+    "scope": "One sequence partition per batch; dynamic sequence/cache/initial data preserved.",
+    "requirements": [
+      "Positive sequence lengths divisible by four; sum at most 32.",
+      "Distinct valid cache indices; initialize output padding for checking.",
+      "Source ignores vid; launch mapping must be checked against native TileLang."
+    ]
+  },
+  "adaptations": [
+    "One sequence chunk per batch and four-token groups; positive lengths divisible by four.",
+    "PTO MulAddDst/Silu helpers expanded with A3 barriers and scratch storage."
+  ],
+  "baseline": "ported authored protocol; native upstream timing is a separate baseline",
+  "invocation": "Terminal ALL completion added; input removes all replaceable local synchronization.",
+  "gm_alias": "may-not-alias; pointer arguments denote disjoint allocations, except repeated uses of one argument",
+  "device_qualified": false,
+  "launch_wrapper": "not yet provided",
+  "comparison_gate": "Validate expert, existing and frontier against the independent reference before timing.",
+  "source_reference": "causal_conv1d_fn_ref and _run_test"
+}

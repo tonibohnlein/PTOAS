@@ -1,0 +1,36 @@
+{
+  "source_commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+  "source_files": [
+    {
+      "path": "examples/elementwise/elementwise_add_pipeline.py",
+      "snapshot": "sources/tilelang-ascend/examples/elementwise/elementwise_add_pipeline.py.txt",
+      "sha256": "8ced2c672a3e09fb75203f31b1284b4b70d0e6531e7f2eb549b52c91269da809",
+      "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/elementwise/elementwise_add_pipeline.py"
+    }
+  ],
+  "configuration": {
+    "shape": [
+      1024,
+      1024
+    ],
+    "tile": [
+      128,
+      128
+    ],
+    "sub_m": 32,
+    "dtype": "float32",
+    "launch_blocks": 64,
+    "vector_lanes": 2,
+    "scope": "Whole source shape; fixed disjoint UB banks; terminal completion added."
+  },
+  "adaptations": [
+    "Source sub-M=32 schedule, two vector lanes and two UB banks."
+  ],
+  "baseline": "ported authored protocol; native upstream timing is a separate baseline",
+  "invocation": "Terminal ALL completion added; input removes all replaceable local synchronization.",
+  "gm_alias": "may-not-alias; pointer arguments denote disjoint allocations, except repeated uses of one argument",
+  "device_qualified": false,
+  "launch_wrapper": "not yet provided",
+  "comparison_gate": "Validate expert, existing and frontier against the independent reference before timing.",
+  "source_reference": "a+b and assert_close in source"
+}

@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @elementwise_pipeline(%A: !pto.ptr<f32, gm>, %B: !pto.ptr<f32, gm>, %C: !pto.ptr<f32, gm>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 1024 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 8 : index
+    %c3 = arith.constant 128 : index
+    %c4 = arith.constant 16 : index
+    %c5 = arith.constant 0 : index
+    %c6 = arith.constant 8192 : index
+    %c7 = arith.constant 16384 : index
+    %c8 = arith.constant 4 : index
+    %c9 = arith.constant 2 : index
+    %c10 = arith.constant 3 : index
+    %c11 = arith.constant 32 : index
+    %c12 = arith.constant 32768 : index
+    %v0 = pto.make_tensor_view %A, shape = [%c0, %c0], strides = [%c0, %c1] : !pto.tensor_view<1024x1024xf32>
+    %v1 = pto.make_tensor_view %B, shape = [%c0, %c0], strides = [%c0, %c1] : !pto.tensor_view<1024x1024xf32>
+    %v2 = pto.make_tensor_view %C, shape = [%c0, %c0], strides = [%c0, %c1] : !pto.tensor_view<1024x1024xf32>
+    %v3 = pto.get_block_idx
+    %v4 = arith.index_cast %v3 : i64 to index
+    %v5 = pto.get_subblock_idx
+    %v6 = arith.index_cast %v5 : i64 to index
+    %v7 = arith.divui %v4, %c2 : index
+    %v8 = arith.remui %v4, %c2 : index
+    %v9 = arith.muli %v7, %c3 : index
+    %v10 = arith.muli %v6, %c4 : index
+    %v11 = arith.addi %v9, %v10 : index
+    %v12 = arith.muli %v8, %c3 : index
+    pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>, %c5]
+    pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>, %c1]
+    pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>, %c5]
+    %v13 = arith.muli %c5, %c6 : index
+    %v14 = arith.addi %v13, %c5 : index
+    %v15 = arith.index_cast %v14 : index to i64
+    %v16 = pto.alloc_tile addr = %v15 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %v17 = pto.partition_view %v0, offsets = [%v11, %v12], sizes = [%c4, %c3] : !pto.tensor_view<1024x1024xf32> -> !pto.partition_tensor_view<16x128xf32>
+    pto.tload ins(%v17 : !pto.partition_tensor_view<16x128xf32>) outs(%v16 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %v18 = arith.muli %c5, %c6 : index
+    %v19 = arith.addi %v18, %c7 : index
+    %v20 = arith.index_cast %v19 : index to i64
+    %v21 = pto.alloc_tile addr = %v20 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %v22 = pto.partition_view %v1, offsets = [%v11, %v12], sizes = [%c4, %c3] : !pto.tensor_view<1024x1024xf32> -> !pto.partition_tensor_view<16x128xf32>
+    pto.tload ins(%v22 : !pto.partition_tensor_view<16x128xf32>) outs(%v21 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_V>, %c5]
+    scf.for %iv23 = %c5 to %c8 step %c1 {
+      %v24 = arith.remui %iv23, %c9 : index
+      %v25 = arith.addi %iv23, %c1 : index
+      %v26 = arith.remui %v25, %c9 : index
+      %v27 = arith.cmpi ult, %iv23, %c10 : index
+      scf.if %v27 {
+        pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>, %v26]
+        %v28 = arith.muli %v25, %c11 : index
+        %v29 = arith.addi %v11, %v28 : index
+        %v30 = arith.muli %v26, %c6 : index
+        %v31 = arith.addi %v30, %c5 : index
+        %v32 = arith.index_cast %v31 : index to i64
+        %v33 = pto.alloc_tile addr = %v32 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+        %v34 = pto.partition_view %v0, offsets = [%v29, %v12], sizes = [%c4, %c3] : !pto.tensor_view<1024x1024xf32> -> !pto.partition_tensor_view<16x128xf32>
+        pto.tload ins(%v34 : !pto.partition_tensor_view<16x128xf32>) outs(%v33 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+        %v35 = arith.muli %v26, %c6 : index
+        %v36 = arith.addi %v35, %c7 : index
+        %v37 = arith.index_cast %v36 : index to i64
+        %v38 = pto.alloc_tile addr = %v37 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+        %v39 = pto.partition_view %v1, offsets = [%v29, %v12], sizes = [%c4, %c3] : !pto.tensor_view<1024x1024xf32> -> !pto.partition_tensor_view<16x128xf32>
+        pto.tload ins(%v39 : !pto.partition_tensor_view<16x128xf32>) outs(%v38 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+        pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_V>, %v26]
+      }
+      pto.wait_flag_dyn[<PIPE_MTE2>, <PIPE_V>, %v24]
+      %v40 = arith.muli %v24, %c6 : index
+      %v41 = arith.addi %v40, %c5 : index
+      %v42 = arith.index_cast %v41 : index to i64
+      %v43 = pto.alloc_tile addr = %v42 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %v44 = arith.muli %v24, %c6 : index
+      %v45 = arith.addi %v44, %c7 : index
+      %v46 = arith.index_cast %v45 : index to i64
+      %v47 = pto.alloc_tile addr = %v46 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %v48 = arith.muli %v24, %c6 : index
+      %v49 = arith.addi %v48, %c12 : index
+      %v50 = arith.index_cast %v49 : index to i64
+      %v51 = pto.alloc_tile addr = %v50 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      pto.tadd ins(%v43, %v47 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%v51 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.set_flag_dyn[<PIPE_V>, <PIPE_MTE3>, %v24]
+      pto.wait_flag_dyn[<PIPE_V>, <PIPE_MTE3>, %v24]
+      %v52 = arith.muli %iv23, %c11 : index
+      %v53 = arith.addi %v11, %v52 : index
+      %v54 = pto.partition_view %v2, offsets = [%v53, %v12], sizes = [%c4, %c3] : !pto.tensor_view<1024x1024xf32> -> !pto.partition_tensor_view<16x128xf32>
+      pto.tstore ins(%v51 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%v54 : !pto.partition_tensor_view<16x128xf32>)
+      pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>, %v24]
+    }
+    pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>, %c5]
+    pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>, %c1]
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

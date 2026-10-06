@@ -1,0 +1,45 @@
+{
+  "source_commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+  "source_files": [
+    {
+      "path": "examples/fused_sigmoid_gating_delta_rule/fused_sigmoid_gating_delta_rule_varlen.py",
+      "snapshot": "sources/tilelang-ascend/examples/fused_sigmoid_gating_delta_rule/fused_sigmoid_gating_delta_rule_varlen.py.txt",
+      "sha256": "d3a5c1482281bba1f10060d740ec38039482e876e2c79d4266f7b45a599191c6",
+      "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/fused_sigmoid_gating_delta_rule/fused_sigmoid_gating_delta_rule_varlen.py"
+    }
+  ],
+  "configuration": {
+    "num_seqs": 24,
+    "num_cache_slots": 24,
+    "total_tokens_padded": 192,
+    "max_seq_len": 8,
+    "nk": 1,
+    "nv": 1,
+    "dk": 32,
+    "dv": 32,
+    "block_v": 32,
+    "scale": 0.1767766952966369,
+    "use_qk_l2norm": true,
+    "softplus_beta": 1.0,
+    "dtype": "float16",
+    "launch_blocks": 24,
+    "threads": 2,
+    "requirements": [
+      "Each sequence has 1..8 tokens; prefix sum <=192.",
+      "Initial state index is -1 or in [0,24).",
+      "Authored ID 6 and upstream auto-sync defaults require device qualification."
+    ]
+  },
+  "adaptations": [
+    "Positive runtime sequence lengths; original state branch and scalar softplus branch.",
+    "PTO A3 reciprocal requires distinct storage: temporary, V barrier, copy back.",
+    "MulAddDst expanded; authored ID 6 preserved; upstream automatic-sync default not assumed."
+  ],
+  "baseline": "ported authored protocol; native upstream timing is a separate baseline",
+  "invocation": "Terminal ALL completion added; input removes all replaceable local synchronization.",
+  "gm_alias": "may-not-alias; pointer arguments denote disjoint allocations, except repeated uses of one argument",
+  "device_qualified": false,
+  "launch_wrapper": "not yet provided",
+  "comparison_gate": "Validate expert, existing and frontier against the independent reference before timing.",
+  "source_reference": "golden"
+}

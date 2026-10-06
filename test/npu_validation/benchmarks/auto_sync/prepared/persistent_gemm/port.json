@@ -1,0 +1,41 @@
+{
+  "source_commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+  "source_files": [
+    {
+      "path": "examples/gemm/example_gemm_intrinsic_persistent.py",
+      "snapshot": "sources/tilelang-ascend/examples/gemm/example_gemm_intrinsic_persistent.py.txt",
+      "sha256": "27d51b6f9bac8431ffddb880410425f609b7beea5cba8a4dad56102a782a4852",
+      "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/gemm/example_gemm_intrinsic_persistent.py"
+    }
+  ],
+  "configuration": {
+    "shape": {
+      "M": 8192,
+      "N": 1024,
+      "K": 8192
+    },
+    "blocks": [
+      128,
+      256,
+      64
+    ],
+    "K_L1": 256,
+    "stages": [
+      2,
+      2
+    ],
+    "launch_blocks": 20,
+    "waves": 13,
+    "scope": "Full source default shape and persistent task mapping; NZ L1 layout; terminal completion added."
+  },
+  "adaptations": [
+    "Intrinsic GEMM's audited NZ L1 layout; full persistent source task mapping."
+  ],
+  "baseline": "ported authored protocol; native upstream timing is a separate baseline",
+  "invocation": "Terminal ALL completion added; input removes all replaceable local synchronization.",
+  "gm_alias": "may-not-alias; pointer arguments denote disjoint allocations, except repeated uses of one argument",
+  "device_qualified": false,
+  "launch_wrapper": "not yet provided",
+  "comparison_gate": "Validate expert, existing and frontier against the independent reference before timing.",
+  "source_reference": "torch.matmul in source"
+}

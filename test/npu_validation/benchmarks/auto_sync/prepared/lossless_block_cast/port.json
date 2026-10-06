@@ -1,0 +1,57 @@
+{
+  "source_commit": "cbc67f2697e8ee18357adc447272691432b3948d",
+  "source_files": [
+    {
+      "path": "examples/tile_kernels/quant/per_block_cast_lossless_kernel.py",
+      "snapshot": "sources/tilelang-ascend/examples/tile_kernels/quant/per_block_cast_lossless_kernel.py.txt",
+      "sha256": "3b08143a6855a11f9dfc71c90be45547dadbb0e079b46b302ff8c7033d730821",
+      "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/tile_kernels/quant/per_block_cast_lossless_kernel.py"
+    },
+    {
+      "path": "examples/tile_kernels/quant/utils.py",
+      "snapshot": "sources/tilelang-ascend/examples/tile_kernels/quant/utils.py.txt",
+      "sha256": "f693d1148f2d0563548771b4f6e0a91305259d1c8ecedf25e1d4ae08563fa127",
+      "url": "https://github.com/tile-ai/tilelang-ascend/blob/cbc67f2697e8ee18357adc447272691432b3948d/examples/tile_kernels/quant/utils.py"
+    }
+  ],
+  "configuration": {
+    "shape": [
+      128,
+      256
+    ],
+    "in_sf_block": [
+      1,
+      32
+    ],
+    "out_sf_block": [
+      64,
+      64
+    ],
+    "block_m": 64,
+    "block_k": 128,
+    "input_dtype": "bfloat16",
+    "output_dtype": "float32",
+    "sf_layout": "plain row major, fp32 powers of two",
+    "launch_blocks": 4,
+    "threads": 2,
+    "factory_path": "generic vid==0",
+    "input_sf_is_tile_packed": false,
+    "scope": "Supported generic configuration; optimized default max4 path remains unported.",
+    "requirements": [
+      "Valid finite positive power-of-two scales; padded dimensions are exact.",
+      "Do not label this as the default max4 HPC configuration."
+    ]
+  },
+  "adaptations": [
+    "Generic 64x64 output-scale blocks, not the default max4 optimized path.",
+    "A3 i32 AND: i32 mask, i16 aliases, TAND, V barrier, copy back.",
+    "Scale tile row padding to 32 bytes; reinterpretation uses shared physical storage."
+  ],
+  "baseline": "ported authored protocol; native upstream timing is a separate baseline",
+  "invocation": "Terminal ALL completion added; input removes all replaceable local synchronization.",
+  "gm_alias": "may-not-alias; pointer arguments denote disjoint allocations, except repeated uses of one argument",
+  "device_qualified": false,
+  "launch_wrapper": "not yet provided",
+  "comparison_gate": "Validate expert, existing and frontier against the independent reference before timing.",
+  "source_reference": "compute_reference_out and test_per_block_cast_lossless"
+}

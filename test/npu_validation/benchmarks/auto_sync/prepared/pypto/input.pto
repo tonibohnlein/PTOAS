@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<cube>, pto.target_arch = "a3"} {
+  func.func @pypto_gemm(%arg0: !pto.ptr<f16, gm>, %arg1: !pto.ptr<f16, gm>, %arg2: !pto.ptr<f32, gm>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %c4096 = arith.constant 4096 : index
+    %c16384 = arith.constant 16384 : index
+    %c32768 = arith.constant 32768 : index
+    %c65536 = arith.constant 65536 : index
+    %c131072 = arith.constant 131072 : index
+    %0 = pto.make_tensor_view %arg0, shape = [%c256, %c4096], strides = [%c4096, %c1] {layout = #pto.layout<nd>, pto.inferred_layout = true} : !pto.tensor_view<?x?xf16>
+    %1 = pto.make_tensor_view %arg1, shape = [%c4096, %c256], strides = [%c256, %c1] {layout = #pto.layout<nd>, pto.inferred_layout = true} : !pto.tensor_view<?x?xf16>
+    %2 = pto.make_tensor_view %arg2, shape = [%c256, %c256], strides = [%c256, %c1] {layout = #pto.layout<nd>, pto.inferred_layout = true} : !pto.tensor_view<?x?xf32>
+    %3 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>
+    scf.for %arg3 = %c0 to %c2 step %c1 {
+      %4 = arith.muli %arg3, %c128 : index
+      %5 = pto.partition_view %2, offsets = [%4, %c0], sizes = [%c128, %c256] : !pto.tensor_view<?x?xf32>
+      %6 = scf.for %arg4 = %c0 to %c16 step %c1 iter_args(%arg5 = %c1) -> (index) {
+        %7 = arith.addi %arg5, %c1 : index
+        %8 = arith.remui %7, %c2 : index
+        %9 = arith.muli %arg4, %c256 : index
+        %10 = arith.muli %8, %c65536 : index
+        %11 = arith.index_cast %10 : index to i64
+        %12 = pto.alloc_tile addr = %11 : !pto.tile_buf<mat, 128x256xf16, blayout=col_major, slayout=row_major>
+        %13 = arith.muli %8, %c131072 : index
+        %14 = arith.addi %13, %c131072 : index
+        %15 = arith.index_cast %14 : index to i64
+        %16 = pto.alloc_tile addr = %15 : !pto.tile_buf<mat, 256x256xf16, blayout=col_major, slayout=row_major>
+        %17 = pto.partition_view %0, offsets = [%4, %9], sizes = [%c128, %c256] : !pto.tensor_view<?x?xf16>
+        %18 = pto.partition_view %1, offsets = [%9, %c0], sizes = [%c256, %c256] : !pto.tensor_view<?x?xf16>
+        pto.tload ins(%17 : !pto.partition_tensor_view<128x256xf16>) outs(%12 : !pto.tile_buf<mat, 128x256xf16, blayout=col_major, slayout=row_major>) {layout = #pto.layout<nd>, pto.inferred_layout = true}
+        pto.tload ins(%18 : !pto.partition_tensor_view<256x256xf16>) outs(%16 : !pto.tile_buf<mat, 256x256xf16, blayout=col_major, slayout=row_major>) {layout = #pto.layout<nd>, pto.inferred_layout = true}
+        %19 = scf.for %arg6 = %c0 to %c4 step %c1 iter_args(%arg7 = %c1) -> (index) {
+          %20 = arith.addi %arg7, %c1 : index
+          %21 = arith.remui %20, %c2 : index
+          %22 = arith.muli %21, %c16384 : index
+          %23 = arith.index_cast %22 : index to i64
+          %24 = pto.alloc_tile addr = %23 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>
+          %25 = arith.muli %21, %c32768 : index
+          %26 = arith.index_cast %25 : index to i64
+          %27 = pto.alloc_tile addr = %26 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>
+          %28 = arith.muli %arg6, %c64 : index
+          pto.textract ins(%12, %c0, %28 : !pto.tile_buf<mat, 128x256xf16, blayout=col_major, slayout=row_major>, index, index) outs(%24 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>)
+          pto.textract ins(%16, %28, %c0 : !pto.tile_buf<mat, 256x256xf16, blayout=col_major, slayout=row_major>, index, index) outs(%27 : !pto.tile_buf<right, 64x256xf16, slayout=col_major>)
+          %29 = arith.cmpi eq, %arg4, %c0 : index
+          %30 = arith.cmpi eq, %arg6, %c0 : index
+          %31 = arith.andi %29, %30 : i1
+          scf.if %31 {
+            pto.tmatmul ins(%24, %27 : !pto.tile_buf<left, 128x64xf16, slayout=row_major>, !pto.tile_buf<right, 64x256xf16, slayout=col_major>) outs(%3 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+          } else {
+            pto.tmatmul.acc ins(%3, %24, %27 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>, !pto.tile_buf<left, 128x64xf16, slayout=row_major>, !pto.tile_buf<right, 64x256xf16, slayout=col_major>) outs(%3 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+          }
+          scf.yield %21 : index
+        }
+        scf.yield %8 : index
+      }
+      pto.tstore ins(%3 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>) outs(%5 : !pto.partition_tensor_view<128x256xf32>) {layout = #pto.layout<nd>, pto.inferred_layout = true}
+    }
+    return
+  }
+}
+
