@@ -14,9 +14,12 @@ struct ProgramBuilder {
     ArithmeticProgram& output;
     const ArithmeticLimits& limits;
     MLIRContext* context;
+    const PhaseIndex& index;
     DenseMap<Value, unsigned> parameterIds;
     PrimitiveRelation relation(PrimitiveKind kind, unsigned dimensions) const;
     bool staticallyEmpty(const ArithmeticSite& site) const;
+    bool entryParameter(Value value) const;
+    AffineExpr registerParameter(Value value);
     bool prepareValue(Value input, const ArithmeticSite& site);
     bool prepareGuard(Value condition, const ArithmeticSite& site);
     // Conjoin both endpoint guard domains at their respective coordinate offsets.

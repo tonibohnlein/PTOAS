@@ -190,13 +190,8 @@ bool ProgramBuilder::prepareGuard(Value root, const ArithmeticSite& site)
         if (booleanConstant(value)) {
             continue;
         }
-        auto argument = dyn_cast<BlockArgument>(value);
-        if (argument && isa<func::FuncOp>(argument.getOwner()->getParentOp())) {
-            auto inserted = parameterIds.try_emplace(value, output.parameters.size());
-            if (inserted.second) {
-                output.parameters.push_back(value);
-                output.primitives.parameters.push_back("p" + std::to_string(argument.getArgNumber()));
-            }
+        if (entryParameter(value)) {
+            registerParameter(value);
             continue;
         }
         if (auto compare = value.getDefiningOp<arith::CmpIOp>()) {

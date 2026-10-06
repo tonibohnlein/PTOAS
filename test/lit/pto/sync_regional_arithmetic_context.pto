@@ -1,0 +1,73 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_regional_arithmetic_context.py pto-sync-input-test %s
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!cell = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=1, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @regional(%n: index, %flag: i1) {
+    %base = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %t = %c0 to %n step %c1 {
+      %bound = arith.addi %t, %c1 : index
+      scf.if %flag {
+        scf.for %j = %c1 to %bound step %c2 {
+          %offset = arith.addi %t, %j overflow<nsw> : index
+          %cell = pto.subview %tile[%c0, %offset] sizes [1, 1] : !tile -> !cell
+          pto.tsetval ins(%c0, %one : index, f32) outs(%cell : !cell)
+          %v = pto.tgetval ins(%cell, %c0 : !cell, index) outs : f32
+        } {frontier.test_arithmetic_region = "outer-binding"}
+      }
+      scf.if %flag {
+        %cell = pto.subview %tile[%c0, %t] sizes [1, 1] : !tile -> !cell
+        %read = pto.tgetval ins(%cell, %c0 : !cell, index) outs : f32
+      } {frontier.test_arithmetic_region = "root-conditional"}
+      %opaque = arith.muli %t, %t : index
+      scf.for %j = %c0 to %opaque step %c1 {
+        scf.if %flag {
+          %cell = pto.subview %tile[%c0, %j] sizes [1, 1] : !tile -> !cell
+          %v = pto.tgetval ins(%cell, %c0 : !cell, index) outs : f32
+        }
+      } {frontier.test_arithmetic_region = "entry-value"}
+      scf.for %j = %c0 to %n step %c1 {
+        %opaque_local = arith.muli %j, %j : index
+        %cell = pto.subview %tile[%c0, %opaque_local] sizes [1, 1] : !tile -> !cell
+        %v = pto.tgetval ins(%cell, %c0 : !cell, index) outs : f32
+      } {frontier.test_arithmetic_region = "local-nonlinear"}
+    }
+    return
+  }
+  func.func @loaded_entry() {
+    %base = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %tile = pto.alloc_tile addr = %base : !tile
+    %v = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+    %integer = arith.fptosi %v : f32 to i32
+    %bound = arith.index_cast %integer : i32 to index
+    scf.for %j = %c0 to %bound step %c1 {
+      %inside = arith.cmpi slt, %j, %bound : index
+      scf.if %inside {
+        %cell = pto.subview %tile[%c0, %j] sizes [1, 1] : !tile -> !cell
+        %x = pto.tgetval ins(%cell, %c0 : !cell, index) outs : f32
+      }
+    } {frontier.test_arithmetic_region = "loaded-bound"}
+    scf.for %j = %c0 to %c1 step %c1 {
+      %local = pto.tgetval ins(%tile, %j : !tile, index) outs : f32
+      %ivalue = arith.fptosi %local : f32 to i32
+      %local_bound = arith.index_cast %ivalue : i32 to index
+      scf.for %k = %c0 to %local_bound step %c1 {
+        %x = pto.tgetval ins(%tile, %k : !tile, index) outs : f32
+      }
+    } {frontier.test_arithmetic_region = "local-loaded-bound"}
+    return
+  }
+}

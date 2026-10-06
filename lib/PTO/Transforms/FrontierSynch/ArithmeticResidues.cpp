@@ -42,21 +42,31 @@ AffineExpr normalizeValue(Value input, const ArithmeticSite& site, unsigned offs
     });
 }
 }
+bool ProgramBuilder::entryParameter(Value value) const
+{
+    if (!value.getType().isIndex() && !value.getType().isInteger(1)) {
+        return false;
+    }
+    auto argument = dyn_cast<BlockArgument>(value);
+    if (argument && argument.getOwner() == &output.context.function.front()) {
+        return true;
+    }
+    auto* root = output.context.root;
+    return root != output.context.function.getOperation() && index.valueAvailable(value, root, Boundary::Before);
+}
+AffineExpr ProgramBuilder::registerParameter(Value value)
+{
+    auto inserted = parameterIds.try_emplace(value, output.parameters.size());
+    if (inserted.second) {
+        output.parameters.push_back(value);
+        output.primitives.parameters.push_back("p" + std::to_string(inserted.first->second));
+    }
+    return getAffineSymbolExpr(inserted.first->second, context);
+}
 bool ProgramBuilder::prepareValue(Value input, const ArithmeticSite& site)
 {
     auto expression = normalizeValue(input, site, 0, context, [&](Value value) -> AffineExpr {
-        auto argument = dyn_cast<BlockArgument>(value);
-        const bool entry = argument && isa<func::FuncOp>(argument.getOwner()->getParentOp()) &&
-                           value.getType().isIndex();
-        if (!entry) {
-            return {};
-        }
-        auto inserted = parameterIds.try_emplace(value, output.parameters.size());
-        if (inserted.second) {
-            output.parameters.push_back(value);
-            output.primitives.parameters.push_back("p" + std::to_string(argument.getArgNumber()));
-        }
-        return getAffineSymbolExpr(inserted.first->second, context);
+        return entryParameter(value) ? registerParameter(value) : AffineExpr{};
     });
     return static_cast<bool>(expression);
 }

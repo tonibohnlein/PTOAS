@@ -31,6 +31,8 @@ LogicalResult dumpProgramRecognition(func::FuncOp, const pto::SyncInput &,
     const pto::frontiersynch::ProgramRecognition &);
 LogicalResult verifyProgramStructure(func::FuncOp, const pto::SyncInput &,
     const pto::frontiersynch::ProgramRecognition &);
+void dumpRegionalArithmetic(func::FuncOp function, const pto::frontiersynch::PhaseIndex& index,
+                            const pto::SyncInput& input);
 void dumpArithmeticJSON(func::FuncOp function, const pto::frontiersynch::ArithmeticProgram& program);
 int runSyncRegionContractChecks(func::FuncOp function, const pto::SyncInput &input);
 int runPeriodicDemandChecks(llvm::StringRef path);
@@ -226,6 +228,7 @@ LogicalResult recognize(func::FuncOp function, const pto::SyncInput &input, bool
                << " class=" << fs::recognitionName(arithmetic.recognition.arithmeticClass) << "\n";
   if (arithmeticOnly) {
     dumpArithmeticJSON(function, arithmetic);
+    dumpRegionalArithmetic(function, index, input);
     return success();
   }
   if (!function.isDeclaration()) {
