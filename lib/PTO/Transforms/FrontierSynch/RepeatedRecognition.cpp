@@ -79,8 +79,15 @@ private:
 } // namespace
 bool SequenceAnalysisState::repeatedChild(const StructureNode& node, Expr trips)
 {
+    auto unavailable = [&](const std::string& reason) {
+        if (!repeatedAttempt.empty()) { repeatedAttempt += "; "; }
+        repeatedAttempt += reason;
+        return false;
+    };
     auto loop = dyn_cast<scf::ForOp>(node.anchor);
-    if (!loop || loop.getNumRegionIterArgs() || node.children.size() != 1) { return false; }
+    if (!loop || loop.getNumRegionIterArgs() || node.children.size() != 1) {
+        return unavailable("q1 repeat recognition: single result-free body required");
+    }
     bool nested = false, uniform = true;
     Invariance invariant(loop, index);
     loop.getBody()->walk([&](Operation* operation) {
@@ -93,15 +100,20 @@ bool SequenceAnalysisState::repeatedChild(const StructureNode& node, Expr trips)
             uniform &= invariant.value(branch.getCondition());
         }
     });
-    if (!nested || !uniform) { return false; }
+    if (!nested) { return unavailable("q1 repeat recognition: no nested body"); }
+    if (!uniform) { return unavailable("q1 repeat recognition: control or descriptor invariance unavailable"); }
     bool evolving = false;
     for (const auto& effect : input->accesses().effects()) {
         if (!effect.phase || !loop->isProperAncestor(effect.phase->elementOp)) { continue; }
-        if (effect.selection && !invariant.value(effect.selection->selector)) { return false; }
+        if (effect.selection && !invariant.value(effect.selection->selector)) {
+            return unavailable("q1 repeat recognition: storage selection varies with outer visit");
+        }
         for (const auto& region : effect.regions) { evolving |= !invariant.region(region); }
     }
     auto analyzed = analyzeSequenceRegion(function, *input, *program, node.children.front(), arena, indexOwner);
-    if (!analyzed.error.empty()) { repeatedAttempt = "q1 body interface: " + analyzed.error; return false; }
+    if (!analyzed.error.empty()) {
+        return unavailable("q1 repeat body interface: " + analyzed.error);
+    }
     auto body = sequenceRegionalResult(analyzed);
     if (evolving || !body.deferredAccessBoundary.empty()) {
         auto exported = body;
@@ -111,14 +123,17 @@ bool SequenceAnalysisState::repeatedChild(const StructureNode& node, Expr trips)
         auto storage = recognizeRepeatedStorage(exported, loop, trips);
         if (storage.storage) {
             auto repeated = repeatEvolvingRegion(function, std::move(storage.storage));
-            if (!repeated.error.empty()) { repeatedAttempt = "evolving interface: " + repeated.error; return false; }
+            if (!repeated.error.empty()) {
+                return unavailable("evolving repeat interface: " + repeated.error);
+            }
             Child child;
             child.regional = std::move(repeated.regional);
             child.anchors = child.regional.anchors;
             children.push_back(std::move(child));
             return true;
         }
-        if (evolving) { repeatedAttempt = "evolving repeat: " + storage.error; return false; }
+        unavailable("evolving repeat recognition: " + storage.error);
+        if (evolving) { return false; }
     }
     // A child may discharge a streaming effect within one visit. A write can
     // still conflict with itself after re-entry; it needs actual storage selectors.
@@ -127,12 +142,14 @@ bool SequenceAnalysisState::repeatedChild(const StructureNode& node, Expr trips)
     for (const auto& payload : body.anchors) {
         for (auto effect : input->accesses().effectsFor(payload.phase)) {
             if (input->accesses().effects()[effect].mode == SyncAccessMode::Write && !exported.count(effect)) {
-                return false;
+                return unavailable("q1 repeat interface: discharged writer lacks outer re-entry selectors");
             }
         }
     }
     auto repeated = repeatInvariantRegion(function, loop, std::move(body), trips);
-    if (!repeated.error.empty()) { return false; }
+    if (!repeated.error.empty()) {
+        return unavailable("q1 repeat interface: " + repeated.error);
+    }
     Child child;
     child.regional = std::move(repeated.regional);
     child.anchors = child.regional.anchors;

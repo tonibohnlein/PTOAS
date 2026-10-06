@@ -48,13 +48,15 @@ void specialize(GuardedRotatingAnalysis& analysis, RegionExpressions::Substituti
 } // namespace
 bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
 {
-    auto outer = dyn_cast<scf::ForOp>(node.anchor);
-    if (!outer || outer.getNumRegionIterArgs() || node.children.size() != 1) { return false; }
     auto unavailable = [&](const std::string& reason) {
         if (!repeatedAttempt.empty()) { repeatedAttempt += "; "; }
         repeatedAttempt += "q-phase repeat: " + reason;
         return false;
     };
+    auto outer = dyn_cast<scf::ForOp>(node.anchor);
+    if (!outer || outer.getNumRegionIterArgs() || node.children.size() != 1) {
+        return unavailable("single result-free body required");
+    }
     const auto& sequence = program->nodes[node.children.front()];
     const StructureNode* innerNode = nullptr;
     for (auto id : sequence.children) {
@@ -64,7 +66,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
             return unavailable("child phase-specialization interface unavailable for this sequence");
         }
     }
-    if (!innerNode) { return false; }
+    if (!innerNode) { return unavailable("no child loop with a phase-specialization interface"); }
     auto inner = dyn_cast<scf::ForOp>(innerNode->anchor);
     PhaseNormalization normalizer(outer, index, expressions);
     if (!inner || !normalizer.independent(inner.getLowerBound()) ||

@@ -67,6 +67,7 @@ def main():
         path.write_text(source)
         report = json.loads(run(tool, "--sequence-analysis", path))
         assert not report["error"] and report["prepared"] and report["numeric_visits"] == 0, report
+        assert report["symbolic_storage_effects"] > 0 and report["storage_selector_interface"], report
         assert report["repeated_regions"] > 0, report
         for outer, inner in cases:
             path.write_text(source.replace("array<i64: 2, 3>", f"array<i64: {outer}, {inner}>"))
@@ -79,7 +80,7 @@ def main():
                                        "    %external = pto.load %p[%zero] : !pto.ptr<f32, gm> -> f32\n    return")):
             path.write_text(invalid)
             rejected = json.loads(run(tool, "--sequence-analysis", path))
-            assert rejected["error"], rejected
+            assert rejected["error"] and not rejected["queries_available"], rejected
     print(f"repeated storage: {len(cases)} production closures, "
           "zero-inner stores and explicit crossing rejection passed")
 

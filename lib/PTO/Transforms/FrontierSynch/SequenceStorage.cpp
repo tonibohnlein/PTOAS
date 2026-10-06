@@ -175,11 +175,16 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         if ((!cachedNumeric || cachedNumeric->result.state != RecognitionState::Applicable) &&
             phasedChild(node, child.trips)) { return true; }
         if (boundaryLoop(child.loop)) { return true; }
-        auto numeric = cachedNumeric ? std::move(*cachedNumeric) :
-                       recognizeRegionalNumericTemplate(child.loop, index, *input);
+        // Reuse even a failed cached recognition; diagnostics must not rerun it.
+        if (!cachedNumeric) { cachedNumeric = recognizeRegionalNumericTemplate(child.loop, index, *input); }
+        auto numeric = std::move(*cachedNumeric);
         if (numeric.result.state != RecognitionState::Applicable) {
-            return fail(repeatedAttempt.empty() ? "sequence loop has no exact regional rotating or numerical template" :
-                        repeatedAttempt);
+            if (!repeatedAttempt.empty()) { repeatedAttempt += "; "; }
+            repeatedAttempt += "numeric repeat recognition: exact regional template unavailable";
+            for (const auto& diagnostic : numeric.result.diagnostics) {
+                repeatedAttempt += " / " + recognitionName(diagnostic.issue).str();
+            }
+            return fail(repeatedAttempt);
         }
         child.costs.numericVisits = numeric.countedVisits;
         if (!numericPatterns(child, numeric)) { return false; }
