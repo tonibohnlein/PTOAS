@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_repeated_storage.py pto-sync-input-test %s
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+!right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<left, 16x16xf16, slayout=row_major>, count=2>
+module attributes {pto.target_arch = "a3"} {
+  func.func @owned(%n: index, %m: index, %p: !pto.ptr<f32, gm>) attributes {test.trace_arguments = array<i64: 2, 3>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %value = arith.constant 1.0 : f32
+    %mat = pto.alloc_tile addr = %base : !mat
+    %ring = pto.alloc_multi_tile addr = %base : !ring
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %visit = %zero to %n step %one {
+      scf.for %i = %zero to %m step %one {
+        %slot = arith.remui %i, %two : index
+        %left = pto.multi_tile_get %ring[%slot] : !ring -> !left
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+      }
+      %offset = arith.muli %visit, %two overflow<nsw> : index
+      pto.store %value, %p[%offset] : !pto.ptr<f32, gm>, f32
+    }
+    return
+  }
+}
