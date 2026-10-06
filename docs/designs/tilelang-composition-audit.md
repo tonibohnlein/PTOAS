@@ -112,3 +112,94 @@ The changed-code prefilter flags four braced compound conditions under
 G.FMT.11-CPP because its regular expression matches an inner closing parenthesis
 before a Boolean operator. These are inspected false positives; every flagged
 body has braces. The actual long-line findings were corrected.
+
+## Follow-up implementation and validation
+
+Three further fixes preserve the shared model:
+
+- Finite strided streaming is proved from the union of physical intervals when
+  their enclosing interval is too coarse. The additional check is quadratic in
+  the interval count and does not enumerate loop iterations. Its independent
+  test checks 45 byte-footprint cases and a zero-trip case.
+- An unresolved selected footprint retains its descriptor's canonical GM base
+  for the existing alias-policy comparison. Descriptor extents are not treated
+  as accessed bytes. Tests cover distinct, equal and selected pointer origins
+  under both GM policies.
+- Explicit runs inside an original conditional block can insert handoffs at
+  that block's cuts. The conditional test additionally checks active/inactive
+  prefix execution and the prefix's load-to-compute readiness.
+
+Finite boundary slicing now accepts multiple supported `iv+c` comparisons,
+including equality and inequality. The loop has zero lower bound and unit
+step, and scalar evolution must prove the affine expression without wrap.
+Sorted clipped cut values define the slices; certified slice predicates become
+immutable guards in each periodic analysis. This is an incremental part of M4,
+not the general affine-boundary or composed-phase construction.
+
+Crossing reduction now asks for the last edge entering the consumer's child.
+The prefix ends in an earlier child and the suffix uses the child's internal
+reachability. All original native, value and storage links participate, and
+links with the candidate's actual endpoint pair are excluded together.
+Deduplication follows reduction. Full reachability remains available for
+exports without forcing all its intermediate-event circuits into endpoint code.
+
+Preparation reuses available loop-entry values and structurally identical
+detached arithmetic at the same original cut. The common insertion regression
+checks remapping of endpoint guards, identities, member coordinates and later
+SSA uses. Original payload code and cuts do not change.
+
+Architecture and correctness reviewers accepted this subset. Performance review
+accepted it as an incremental improvement, explicitly not completion of M4:
+the small multi-cut probe still emits 11,257 arithmetic operations before its
+loop and 9,085 inside/after it. Same-cut duplication is almost exhausted; the
+remaining cost needs better boundary-query and guard factoring. In contrast,
+the conditional-depth tests decreased from about 7,900 preparation operations
+to about 1,450. These are different fixtures and should not be conflated.
+
+Independent checks passed for 64 multi-cut closures (zero trips, empty/equal
+cuts, signed comparisons and first/last singleton slices), 56 prior boundary
+cases, 32 sequence closures, 101 mixed-regional closures, 15 allocation traces,
+15 conditional closures, 104 guarded-quotient valuations and 86 guarded storage
+traces. Billion-trip descriptions have unchanged emitted size. These finite
+tests do not establish a uniform proof or device performance.
+
+## Current benchmark outcome and outstanding work
+
+The serial rerun in `.local/nested-regions/tilelang-nine-reviewed` accounts for
+all nine ports plus the two prior GEMMs. All expert and Existing variants still
+generate C++. Input/tool hashes were unchanged throughout the run. It used no
+fixed timeout or virtual-memory cap. This is compiler validation, not device
+execution.
+
+| Cases | Frontier outcome |
+|---|---|
+| Earlier PyPTO GEMM, earlier TileLang GEMM, elementwise_pipeline | Logical insertion, six-ID allocation and C++ generation succeed |
+| group_norm | Newly succeeds through logical insertion; sufficient regional allocation fails with six supplied IDs |
+| causal_conv1d_decode | Logical insertion succeeds; sufficient regional allocation still fails |
+| persistent_gemm | Composed phase interfaces and finite first/last cases remain missing |
+| causal_conv1d_prefill | Entry metadata plus affine `L-4*i` boundary predicates need further treatment |
+| gdn_chunk_cumsum, mhc_head_mix, lossless_block_cast | Regional arithmetic and per-byte selectors/composition remain missing |
+| gated_delta_rule | Whole-kernel tractable-class membership remains unestablished |
+
+Allocation failure is not a proof that six IDs are insufficient. No scarcity
+repair was added. M1's regional arithmetic context, M3's affine selectors and
+crossing families, M4's composed phases and economical general boundary guards,
+and M5's supported allocation extensions remain unfinished. M2 is complete.
+Do not present the current branch as completing all five milestones.
+
+For regional arithmetic, enclosing iteration coordinates must remain shared
+context parameters across both endpoints; making each occurrence's outer
+coordinates independent would lose correlations. The existing signed arithmetic
+emitter and the unsigned modular regional-expression arena also need an exact
+adapter. A per-byte selector alone does not construct a finite family of
+crossing demands against a bulk access. These are implementation obligations,
+not reasons to invent operator-specific recognition or reinterpret unknown
+geometry as disjoint storage.
+
+The 52 previously successful logical plans in the selected PTO/PyPTO corpus
+also remain successful; 51 still allocate, with the same one allocation failure.
+This regression subset is not a new coverage census of the full corpus.
+
+The changed-code prefilter reports two brace-rule matches in guarded recognition
+and guard-binding validation. Both statements have braced bodies; the regex
+stops at an inner closing parenthesis. They are inspected false positives.

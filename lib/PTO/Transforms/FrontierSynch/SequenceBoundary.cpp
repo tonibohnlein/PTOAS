@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Partition one counted loop at a loop-invariant comparison threshold. Each
+// Partition one counted loop at finitely many comparison thresholds. Each
 // interval has an immutable skeleton and uses the ordinary periodic exporter.
 // Their original ordinals/cuts survive; sequence composition supplies all
 // cross-interval edges. No payloads or runtime iterations are cloned.
@@ -19,6 +19,13 @@ namespace {
 struct Split {
     Expr ordinal;
     bool prefixThen;
+    std::optional<Expr> equalityEnd;
+    Expr predicate(Expr begin, RegionExpressions& dag) const
+    {
+        auto value = equalityEnd ? dag.land(dag.le(ordinal, begin), dag.lt(begin, *equalityEnd)) :
+                                   dag.lt(begin, ordinal);
+        return prefixThen ? value : dag.lnot(value);
+    }
 };
 std::optional<Split> splitCondition(Value condition, scf::ForOp loop,
     const PhaseIndex& index, RegionExpressions& dag, Expr trips)
@@ -45,7 +52,7 @@ std::optional<Split> splitCondition(Value condition, scf::ForOp loop,
         else if (row.coefficients[i]) { return std::nullopt; }
     }
     if (!foundIV) { return std::nullopt; }
-    bool signedCompare = false, inclusive = false, prefixThen = true;
+    bool signedCompare = false, inclusive = false, prefixThen = true, equality = false;
     switch (predicate) {
     case arith::CmpIPredicate::slt: signedCompare = true; break;
     case arith::CmpIPredicate::ult: break;
@@ -55,6 +62,8 @@ std::optional<Split> splitCondition(Value condition, scf::ForOp loop,
     case arith::CmpIPredicate::uge: prefixThen = false; break;
     case arith::CmpIPredicate::sgt: signedCompare = true; inclusive = true; prefixThen = false; break;
     case arith::CmpIPredicate::ugt: inclusive = true; prefixThen = false; break;
+    case arith::CmpIPredicate::eq: equality = true; break;
+    case arith::CmpIPredicate::ne: equality = true; prefixThen = false; break;
     default: return std::nullopt;
     }
     // The varying expression is proved iv+c without machine wrap. Clip before
@@ -63,8 +72,11 @@ std::optional<Split> splitCondition(Value condition, scf::ForOp loop,
     auto below = signedCompare ? dag.slt(threshold, offset) : dag.lt(threshold, offset);
     auto delta = dag.sub(threshold, offset);
     auto clipped = dag.select(dag.lt(delta, trips), delta, trips);
-    if (inclusive) { clipped = dag.select(dag.lt(clipped, trips), dag.add(clipped, dag.constant(1)), trips); }
-    return Split{dag.select(below, zero, clipped), prefixThen};
+    auto next = dag.select(dag.lt(clipped, trips), dag.add(clipped, dag.constant(1)), trips);
+    if (equality) {
+        return Split{dag.select(below, zero, clipped), prefixThen, dag.select(below, zero, next)};
+    }
+    return Split{dag.select(below, zero, inclusive ? next : clipped), prefixThen, std::nullopt};
 }
 } // namespace
 bool SequenceAnalysisState::boundaryLoop(scf::ForOp loop)
@@ -73,30 +85,61 @@ bool SequenceAnalysisState::boundaryLoop(scf::ForOp loop)
         loop.getNumRegionIterArgs()) { return false; }
     auto upper = expressions.input(loop.getUpperBound());
     auto trips = expressions.select(expressions.slt(c(0), upper), upper, c(0));
-    DenseMap<Value, bool> prefix, suffix;
-    std::optional<Expr> cut;
+    SmallVector<std::pair<Value, Split>> predicates;
+    SmallVector<Expr> cuts;
     bool supported = true;
     loop.getBody()->walk([&](scf::IfOp branch) {
         SmallVector<Operation*> recipe;
         if (detail::entryExpression(branch.getCondition(), loop, index, recipe)) { return; }
         auto split = splitCondition(branch.getCondition(), loop, index, expressions, trips);
-        if (!split || (cut && *cut != split->ordinal)) { supported = false; return; }
-        cut = split->ordinal;
-        prefix[branch.getCondition()] = split->prefixThen;
-        suffix[branch.getCondition()] = !split->prefixThen;
+        if (!split) { supported = false; return; }
+        predicates.emplace_back(branch.getCondition(), *split);
+        cuts.push_back(split->ordinal);
+        if (split->equalityEnd) { cuts.push_back(*split->equalityEnd); }
     });
-    if (!supported || !cut) { return false; }
+    if (!supported || cuts.empty()) { return false; }
+    llvm::sort(cuts);
+    cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
+    const bool singleCut = cuts.size() == 1 &&
+        llvm::none_of(predicates, [](const auto& predicate) { return predicate.second.equalityEnd.has_value(); });
+    // A fixed insertion network sorts cut VALUES, not parameter valuations.
+    // There are O(h^2) select gates and h+1 slices for h distinct cut expressions.
+    for (std::size_t i = 1; i < cuts.size(); ++i) {
+        for (std::size_t j = i; j; --j) {
+            auto left = cuts[j - 1], right = cuts[j];
+            auto ordered = expressions.le(left, right);
+            cuts[j - 1] = expressions.select(ordered, left, right);
+            cuts[j] = expressions.select(ordered, right, left);
+        }
+    }
+    cuts.insert(cuts.begin(), c(0));
+    cuts.push_back(trips);
     std::vector<Child> slices;
-    for (unsigned part = 0; part < 2; ++part) {
-        PeriodicSlice interval{part ? *cut : c(0), part ? trips : *cut};
+    for (std::size_t part = 0; part + 1 < cuts.size(); ++part) {
+        PeriodicSlice interval{cuts[part], cuts[part + 1]};
         if (interval.begin == interval.end) { continue; }
-        auto recognized = detail::recognizeRotatingSlice(loop, index, *input, part ? suffix : prefix);
-        if (recognized.result.state != RecognitionState::Applicable) { return false; }
-        auto analyzed = analyzeGuardedRotating(loop, *input, recognized, arena);
-        if (!analyzed.error.empty()) { return false; }
+        DenseMap<Value, bool> choices;
+        DenseMap<Value, Expr> bindings;
+        SmallVector<Value> sliceGuards;
+        for (const auto& [condition, split] : predicates) {
+            auto guard = split.predicate(interval.begin, expressions);
+            if (singleCut) { choices[condition] = part ? !split.prefixThen : split.prefixThen; }
+            else if (auto known = expressions.constantValue(guard)) { choices[condition] = *known != 0; }
+            else { bindings[condition] = guard; sliceGuards.push_back(condition); }
+        }
+        auto recognized = detail::recognizeRotatingSlice(loop, index, *input, choices, sliceGuards);
+        if (recognized.result.state != RecognitionState::Applicable) {
+            repeatedAttempt += "; boundary slice recognition";
+            for (const auto& diagnostic : recognized.result.diagnostics) {
+                repeatedAttempt += " / " + recognitionName(diagnostic.issue).str();
+            }
+            return false;
+        }
+        auto analyzed = analyzeGuardedRotating(loop, *input, recognized, arena, bindings);
+        if (!analyzed.error.empty()) { repeatedAttempt += "; boundary slice: " + analyzed.error; return false; }
         std::string exportError;
         auto regional = guardedRotatingRegionalResult(function, *input, analyzed, exportError, interval);
-        if (failed(regional)) { return false; }
+        if (failed(regional)) { repeatedAttempt += "; boundary export: " + exportError; return false; }
         Child child;
         child.loop = loop;
         child.regional = std::move(*regional);
