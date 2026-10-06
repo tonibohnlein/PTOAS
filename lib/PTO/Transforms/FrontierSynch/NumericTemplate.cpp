@@ -57,6 +57,7 @@ void clear(NumericTemplate& output)
 {
     output.payloads.clear();
     output.atoms.clear();
+    output.uniformConflicts.clear();
     output.fragments = 0;
     output.period = 0;
     output.refresh = 0;
@@ -122,7 +123,8 @@ NumericTemplate recognizeTemplate(scf::ForOp outer, const PhaseIndex& index,
                 }
                 for (std::size_t external = 0; external < effects.size(); ++external) {
                     if (!outer->isProperAncestor(effects[external].phase->elementOp) &&
-                        input.accesses().mayConflict(effect.sourceEffect, external)) {
+                        input.accesses().mayConflict(effect.sourceEffect, external) &&
+                        !input.accesses().uniformConflict(effect.sourceEffect, external)) {
                         output.result.note(RecognitionIssue::TemplateContext, effects[external].phase->elementOp);
                         clear(output);
                         return output;

@@ -41,17 +41,17 @@ namespace {
 LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &input) {
   const auto& storage = input.accesses();
   llvm::outs() << "storage " << function.getSymName() << ": cells=" << storage.cells().size()
-               << " all-exact=" << storage.allAccessesExact() << "\n";
+               << " all-materialized=" << storage.allAccessesMaterialized() << "\n";
   for (auto [id, cell] : llvm::enumerate(storage.cells())) {
     llvm::outs() << "  cell " << id << " space=" << static_cast<unsigned>(cell.space)
                  << " [" << cell.begin << "," << cell.end << ")\n";
   }
   for (auto [id, effect] : llvm::enumerate(storage.effects())) {
-    auto precision = effect.precision == pto::SyncAccessPrecision::Exact ? "exact" :
-                     effect.precision == pto::SyncAccessPrecision::UpperBound ? "upper" : "unknown";
+    StringRef representation = effect.rangesMaterialized ? "intervals" :
+        (!effect.regions.empty() ? "symbolic" : "unresolved");
     llvm::outs() << "  effect " << id << " " << effect.phase->opName.getStringRef()
                  << (effect.mode == pto::SyncAccessMode::Read ? " read " : " write ")
-                 << precision << " definite-write=" << effect.hasDefiniteWrites() << " cells=";
+                 << representation << " cells=";
     llvm::interleaveComma(effect.cells, llvm::outs());
     llvm::outs() << "\n";
     auto dumpRegion = [&](const pto::SyncAccessRegion& region, StringRef label) {

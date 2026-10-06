@@ -47,6 +47,16 @@ public:
         result.cost.expressionNodes = dag.size();
         result.expressions = analysis->expressions;
         result.gmAliasPolicy = input.memory().gmPolicy();
+        result.accessModel = &input.accesses();
+        for (uint32_t type = 0; type < analysis->phases.size(); ++type) {
+            auto present = dag.land(dag.lt(c(0), trips), analysis->payloads[type].presence);
+            RegionalSelector first{{type, c(0), PeriodicEventKind::Start}, present};
+            RegionalSelector last{{type, dag.sub(trips, c(1)), PeriodicEventKind::Start}, present};
+            for (auto effect : input.accesses().effectsFor(analysis->phases[type])) {
+                result.accessBoundary.push_back({effect, first, last,
+                    !input.accesses().effects()[effect].regions.empty()});
+            }
+        }
         result.capabilities = {true, true, true, true, true};
         if (!dag.constructionError().empty()) { return fail(dag.constructionError()); }
         return true;

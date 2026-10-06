@@ -9,18 +9,18 @@
 
 // Strided, nested and dynamic descriptor views retain their geometry.
 // They do not by themselves specify which bytes an operation accesses.
-// CHECK-LABEL: storage views: cells=4 all-exact=0
-// CHECK: effect 0 pto.texpands write upper definite-write=0 cells=
-// CHECK: effect 1 pto.texpands write upper definite-write=0 cells=
-// CHECK: effect 2 pto.texpands write upper definite-write=0 cells=
-// CHECK: effect 3 pto.texpands write upper definite-write=0 cells=
-// CHECK: effect 4 pto.texpands write upper definite-write=0 cells=
+// CHECK-LABEL: storage views: cells=4 all-materialized=1
+// CHECK: effect 0 pto.texpands write intervals cells=
+// CHECK: effect 1 pto.texpands write intervals cells=
+// CHECK: effect 2 pto.texpands write intervals cells=
+// CHECK: effect 3 pto.texpands write intervals cells=
+// CHECK: effect 4 pto.texpands write intervals cells=
 // CHECK: overlap 1,2=0
 // CHECK: overlap 3,2=0
 // CHECK: overlap 4,2=1
-// CHECK-LABEL: storage unknown: cells=0 all-exact=0
-// CHECK: effect 0 pto.texpands write unknown definite-write=0 cells=
-// CHECK: effect 1 pto.tgetval read exact definite-write=0 cells=
+// CHECK-LABEL: storage unknown: cells=0 all-materialized=0
+// CHECK: effect 0 pto.texpands write unresolved cells=
+// CHECK: effect 1 pto.tgetval read symbolic cells=
 // CHECK: overlap 0,1=1
 // CHECK: source-unchanged; dependency-analysis-not-run
 

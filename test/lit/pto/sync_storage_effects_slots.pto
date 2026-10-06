@@ -10,10 +10,10 @@
 // Slot selectors belong to buffer geometry; shared scalar declarations select
 // one element within a slot, including when the slot is dynamic.
 // Shared ranges distinguish fixed slots; a runtime selector may choose either.
-// CHECK-LABEL: storage slots: cells=2 all-exact=1
-// CHECK: effect 0 pto.tsetval write exact definite-write=1 cells=
-// CHECK: effect 1 pto.tsetval write exact definite-write=1 cells=
-// CHECK: effect 2 pto.tgetval read exact definite-write=0 cells=
+// CHECK-LABEL: storage slots: cells=2 all-materialized=0
+// CHECK: effect 0 pto.tsetval write symbolic cells=
+// CHECK: effect 1 pto.tsetval write intervals cells=
+// CHECK: effect 2 pto.tgetval read intervals cells=
 // CHECK: overlap 0,1=1
 // CHECK: overlap 0,2=1
 // CHECK: overlap 1,2=0

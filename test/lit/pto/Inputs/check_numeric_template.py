@@ -133,8 +133,7 @@ def check_examples(documents, policy):
                 "expanded_stores": "gm-discharge", "unknown_state": "loop-carried-state",
                 "expansion_limit": "template-expansion-limit", "extra_prerequisite": "additional-prerequisite",
                 "unknown_nsw_bound": "loop-domain"}
-    if policy == "may-alias":
-        rejected["distinct_globals"] = "gm-discharge"
+    assert candidate(documents["distinct_globals"])["state"] == "applicable"
     for name, issue in rejected.items():
         template = candidate(documents[name])
         assert template["state"] != "applicable", name

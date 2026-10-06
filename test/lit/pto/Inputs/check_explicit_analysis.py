@@ -70,15 +70,12 @@ def main():
     with tempfile.TemporaryDirectory(prefix="explicit-analysis-") as tmp:
         for document, function in zip(documents, functions):
             name = document["function"]
-            if name != "reject_symbolic":
-                require(not document["error"], document)
-                check_graph(document)
-            else:
-                require(bool(document["error"]), document)
+            require(not document["error"], document)
+            check_graph(document)
             path = Path(tmp)/"case.pto"
             path.write_text(prefix + 'module attributes {pto.target_arch = "a3"} {\n' + function + '\n}\n')
             inserted = subprocess.run([tool, "--insert-logical", str(path)], capture_output=True, text=True)
-            require((inserted.returncode != 0) == name.startswith("reject_"), (name, inserted.stderr))
+            require((inserted.returncode != 0) == (name == "reject_nonadjacent"), (name, inserted.stderr))
             if inserted.returncode:
                 continue
             cross = sum(document["occurrences"][a]["pipe"] != document["occurrences"][b]["pipe"]

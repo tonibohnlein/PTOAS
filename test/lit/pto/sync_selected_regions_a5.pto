@@ -8,13 +8,13 @@
 // RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
 // A5 offsets are converted to uint16 then rounded down to sub-block boundaries.
 // CHECK-LABEL: storage rounded:
-// CHECK: effect 0 pto.textract read exact
+// CHECK: effect 0 pto.textract read intervals
 // CHECK: access {{.*}}extents=16, 16 loops=0
-// CHECK: effect 2 pto.textract read exact
+// CHECK: effect 2 pto.textract read intervals
 // CHECK: overlap 0,2=1
 // CHECK-LABEL: storage unsupported_fractal:
-// CHECK: effect 0 pto.textract read upper
-// CHECK: effect 1 pto.textract write upper
+// CHECK: effect 0 pto.textract read intervals
+// CHECK: effect 1 pto.textract write intervals
 !src1024 = !pto.tile_buf<mat, 32x32xf32, slayout=col_major, fractal=1024>
 !dst32 = !pto.tile_buf<left, 16x16xf32, blayout=col_major, slayout=row_major>
 !src = !pto.tile_buf<mat, 32x64xf16, slayout=col_major>

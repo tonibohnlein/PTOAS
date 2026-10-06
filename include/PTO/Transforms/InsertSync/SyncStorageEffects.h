@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Precision of the supplied phase effects, independent of dependence analysis.
+// Shared modeled accesses: available geometry and alias relationships.
 #ifndef PTO_TRANSFORMS_INSERTSYNC_SYNCSTORAGEEFFECTS_H
 #define PTO_TRANSFORMS_INSERTSYNC_SYNCSTORAGEEFFECTS_H
 
@@ -15,7 +15,6 @@
 
 namespace mlir::pto {
 enum class SyncAccessMode { Read, Write };
-enum class SyncAccessPrecision { Exact, UpperBound, Unknown };
 
 // Half-open physical byte interval. Local addresses are absolute (base is null).
 // GM intervals may be relative to a canonical entry pointer. Local allocation
@@ -49,27 +48,17 @@ struct SyncStorageEffect {
     // Legacy roots/ranges do not include arbitrary structured-control backedges.
     bool sharedProvenanceComplete = false;
     SyncAccessMode mode = SyncAccessMode::Read;
-    SyncAccessPrecision precision = SyncAccessPrecision::Unknown;
-    // Buffer geometry is retained independently from actual access precision.
+    // Buffer geometry is retained independently from access selections.
     std::optional<SyncAccessRegion> descriptorRegion;
     // Preserve address-table selection even when it has no affine byte map.
     std::optional<SyncSlotSelection> selection;
     std::optional<SyncAccessRegion> region;
-    // Union of exact declarations; region is populated for a single piece.
+    // Modeled access union; region is populated for a single piece.
     SmallVector<SyncAccessRegion> regions;
-    // Empty only when the shared contract and physical mapping are exact.
-    std::string precisionReason;
-    // Whether ranges enumerate the exact set, rather than its capacity bound.
-    bool exactRanges = false;
+    // Whether ranges completely materialize the modeled set, including empty sets.
+    bool rangesMaterialized = false;
     SmallVector<SyncStorageCell> ranges;
     SmallVector<std::size_t> cells;
-
-    // Exact writes overwrite every cell in this effect. Upper bounds never kill
-    // old writers/readers, even when their bounding cells match exactly.
-    bool hasDefiniteWrites() const
-    {
-        return mode == SyncAccessMode::Write && precision == SyncAccessPrecision::Exact;
-    }
 };
 
 class SyncStorageEffects {
@@ -81,12 +70,11 @@ public:
     ArrayRef<SyncStorageEffect> effects() const { return records; }
     ArrayRef<SyncStorageCell> cells() const { return partition; }
     ArrayRef<std::size_t> effectsFor(const CompoundInstanceElement* phase) const;
-    // All supplied effects have exact byte sets; this is not a control/alias
-    // certificate for effects omitted by the input producer.
-    bool allAccessesExact() const;
-    // Every selected effect must have an exact finite byte set with complete
+    // Every modeled access is materialized, including known-empty accesses.
+    bool allAccessesMaterialized() const;
+    // Every selected effect has a finite modeled byte set with comparable
     // base relationships. Omitted effects need a separate discharge proof.
-    bool hasExactCellPartition(ArrayRef<std::size_t> effectIds) const;
+    bool hasMaterializedCellPartition(ArrayRef<std::size_t> effectIds) const;
     // Reuse InsertSync's buffer-range/alias checks, then refine with supplied
     // access regions. Unknown local addresses remain conservative. GM uses the
     // shared root-alias policy, without needing absolute addresses.
@@ -94,6 +82,15 @@ public:
     bool mayOverlap(std::size_t first, std::size_t second) const;
     // Read/read pairs need no ordering. Pipe and space come from shared phases.
     bool mayConflict(std::size_t first, std::size_t second) const;
+    // A modeled conflict not represented by the common materialized cells.
+    // This preserves unresolved relationships without merging disjoint domains.
+    bool residualConflict(std::size_t first, std::size_t second) const;
+    // A conflict whose unresolved address relationship applies to every pair
+    // of occurrences. Known iteration-dependent maps are handled by adapters.
+    bool uniformConflict(std::size_t first, std::size_t second) const;
+    // Linear precheck keeps uniform-pair enumeration off fully comparable inputs.
+    bool hasUniformRelationships(ArrayRef<const CompoundInstanceElement*> phases) const;
+    bool needsOverlapQueries(const CompoundInstanceElement* phase, bool unresolvedBases = true) const;
     // A GM effect has no possible conflict with another static phase in this
     // unchanged input. Same-phase accesses are excluded; callers must establish
     // that they do not need ordering between repeated occurrences of that phase.

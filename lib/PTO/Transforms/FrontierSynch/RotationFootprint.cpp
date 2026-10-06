@@ -89,7 +89,7 @@ bool relativeRanges(const SyncAccessRegion& region, const SyncAccessRegion& orig
 std::optional<SlotRanges> withinSlotRanges(const SyncStorageEffect& effect,
                                                            const SyncInput& input, uint64_t bytes)
 {
-    if (effect.precision != SyncAccessPrecision::Exact || effect.regions.empty()) {
+    if (effect.regions.empty()) {
         return std::nullopt;
     }
     auto origin = slotOrigin(effect, input);

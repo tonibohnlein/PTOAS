@@ -17,9 +17,8 @@
 // CHECK: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=[0,4)
 // CHECK: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=[0,4)
 // CHECK-LABEL: recognition tile_write
-// CHECK: recognize rotating: missing-premise backend=available
-// CHECK-NEXT: issue inexact-footprint
-// CHECK: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=unknown
+// CHECK: recognize rotating: applicable backend=available
+// CHECK: rotation family=0 slots=2 stride=1 offset=0 refresh=2 atom=[0,1024)
 // CHECK-LABEL: recognition shifted
 // CHECK: recognize rotating: applicable backend=available
 // CHECK: rotation family=0 slots=2 stride=1 offset=1 refresh=2 atom=[0,4)
