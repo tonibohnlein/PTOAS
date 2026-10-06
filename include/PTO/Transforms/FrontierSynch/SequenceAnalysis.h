@@ -54,7 +54,8 @@ SequenceAnalysis composeRegionalSequence(func::FuncOp function,
 // Analyze original children of a selected sequence, or one explicit/loop node.
 // The caller supplies a common arena; original cuts and access records remain borrowed.
 SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& input,
-    const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions);
+    const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions,
+    std::shared_ptr<PhaseIndex> index = {});
 RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis);
 RegionExpressions* sequenceExpressions(SequenceAnalysis& analysis);
 std::optional<RegionExpressions::Id> sequenceEventReachability(const SequenceAnalysis& analysis,

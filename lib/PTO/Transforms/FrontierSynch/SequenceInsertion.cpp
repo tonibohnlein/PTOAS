@@ -8,14 +8,15 @@
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 namespace mlir::pto::frontiersynch {
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare()
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(ArrayRef<scf::ForOp> enclosing)
 {
-    if (requiresOuterBinding) {
-        fail("subregion endpoint binding to enclosing visits is not implemented yet"); return failure();
+    if (ArrayRef<scf::ForOp>(requiredOuterLoops) != enclosing) {
+        fail("subregion endpoint binding requires its enclosing repeat coordinates"); return failure();
     }
     for (const auto& child : children) {
-        if (llvm::any_of(child.regional.outerLoops, [](const auto& loops) { return !loops.empty(); })) {
-            fail("nested regional endpoint binding is not implemented yet"); return failure();
+        if (llvm::any_of(child.regional.outerLoops, [](const auto& frame) { return !frame.empty(); }) &&
+            !child.regional.prepareWithVisits) {
+            fail("nested child has no contextual endpoint recipe"); return failure();
         }
     }
     auto result = std::make_unique<PreparedLogicalPlan>(0);
@@ -39,9 +40,11 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare()
                 fail("regional endpoint loop requires an available constant positive index step"); return failure();
             }
         }
-        auto supplied = child.regional.prepare();
+        auto supplied = child.regional.prepareWithVisits ? child.regional.prepareWithVisits(enclosing) :
+                                                          child.regional.prepare();
         if (failed(supplied)) { fail("regional child endpoint preparation failed"); return failure(); }
         auto prepared = std::move(*supplied);
+        result->nestedIdentities |= prepared->nestedIdentities;
         if (!prepared->regionalAllocation) {
             prepared->regionalAllocation = finiteRegionalAllocation(child.regional, *prepared);
         }
@@ -134,6 +137,17 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare()
                 expressions.input(loop.getLowerBound())), c(*sequenceInteger(loop.getStep())));
             guard = both(guard, expressions.eq(ordinal, point.ordinal));
         }
+        if (!child.regional.outerLoops.empty()) {
+            const auto& loops = child.regional.outerLoops[point.type];
+            for (std::size_t i = 0; i < loops.size(); ++i) {
+                auto coordinate = loops[i];
+                auto step = sequenceInteger(coordinate.getStep());
+                if (!step || *step <= 0) { fail("nested endpoint requires a constant positive step"); return no(); }
+                auto ordinal = expressions.div(expressions.sub(expressions.input(coordinate.getInductionVar()),
+                    expressions.input(coordinate.getLowerBound())), c(*step));
+                guard = both(guard, expressions.eq(ordinal, point.visits[i]));
+            }
+        }
         for (auto coordinate : anchor.coordinates) {
             guard = both(guard, expressions.eq(expressions.input(coordinate.loop.getInductionVar()),
                                                c(coordinate.induction)));
@@ -205,7 +219,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare()
         endpoint.record = namespaces.at(recordNamespace.at(endpoint.records.front()));
     }
     if (!expressions.error().empty()) { fail(expressions.error()); return failure(); }
-    if (!allocationAvailable) { result->regionalAllocation.reset(); }
+    if (!allocationAvailable || result->nestedIdentities) { result->regionalAllocation.reset(); }
     return result;
 }
 } // namespace mlir::pto::frontiersynch

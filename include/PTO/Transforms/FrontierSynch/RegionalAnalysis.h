@@ -83,6 +83,9 @@ struct RegionalAnalysis {
     // Preparation is detached, adds no boundary drains, and cannot invalidate
     // the query/selector result if an endpoint-placement obligation fails.
     std::function<FailureOr<std::unique_ptr<PreparedLogicalPlan>>()> prepare;
+    // Bind a subtree in enclosing invariant repeats, preserving original cuts.
+    // Each repeat prefixes its own matching coordinate after preparing its body.
+    std::function<FailureOr<std::unique_ptr<PreparedLogicalPlan>>(ArrayRef<scf::ForOp>)> prepareWithVisits;
     // Optional overlay contract: refine each base cover before emitting either
     // endpoint. Both sides query the same actual completion/start pair, using
     // the inverse endpoint map at WAIT. Failure leaves original IR unchanged.

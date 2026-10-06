@@ -1689,6 +1689,51 @@ frames rather than treating different visits as one occurrence.
 The arena supports simultaneous typed substitution with a memo per immutable
 binding context. Replacement expressions are not recursively substituted. This
 is the foundation for phase descriptions without cloning or changing source IR.
-Repeated-region recognition, deferred phase binding, bridge generation and
-nested logical insertion are subsequent work; this foundation does not yet
-claim the repeated-region theorem as an executable route.
+The next increment below uses these identities for invariant repetition.
+Phase-dependent and visit-owned storage remain separate implementation work.
+
+
+## Invariant repeated compact regions (q = 1)
+
+The sequence dispatcher can now analyze a repeated compact body once, compose
+its two-copy storage boundary, and retain the crossings selected by the existing
+crossing reducer. Native start and completion edges are included across copies.
+A guarded zero/one port graph supplies all-event reachability through min-plus
+closure, as in Section 5's selected-order repetition lemma. First/last storage
+and native selectors are lifted to the first/last visit, guarded by nonemptiness.
+
+Recognition checks that control bounds, guards, modeled physical maps and
+metadata geometry inputs are invariant in the enclosing visit coordinate.
+Inner coordinates and immutable parameters remain symbolic. Evolving carried
+state is not admitted by this route. Every writable access must retain boundary
+selectors, including a write previously discharged only within one visit.
+The input remains the shared modeled-access representation. No instruction
+footprint registry or kernel-name matching is introduced. The existing automatic
+synchronization front end excludes manual descriptor rebinding (`tassign`);
+the repeated-region API assumes that admission contract rather than repeating
+its opcode checks.
+
+This construction composes recursively when each child exports the required
+interfaces. It supports symbolic inner trip counts, zero trips and supported
+arbitrary depth without flattening their Cartesian product. Its work is measured
+in boundary ports, child query instances and expression circuits, not execution
+length: a P-port distance matrix costs O(P^3) construction work and O(P^2)
+matrix entries. Exact query results are memoized by both complete event tuples.
+No polynomial bound in nesting depth is claimed.
+
+Logical insertion retains original loop bodies and legal cuts. Matching tuples
+carry canonical record membership and all enclosing visit coordinates. A
+crossing SET uses the current source visit and its WAIT uses the preceding
+visit, with first/last guards. Preparation is detached and carries no region
+drains. The metadata uses version 4 so the physical allocator explicitly reports
+that nested logical-plan allocation is not implemented yet, instead of assigning
+flat IDs to distinct nested handoffs.
+
+Existing numerical regional routes remain preferred when their inner bounds
+normalize to constants, preserving their physical-allocation support, including
+loops with explicit prologues and epilogues. A nonexpanding dependency check preserves folded constants and bounds
+specialized by enclosing inner induction variables; the numeric route still
+performs its own full applicability check. Symbolic bounds reach
+the repeat route directly. Fixed phase lists (q > 1), visit-owned symbolic
+storage selectors and nested physical allocation are not supplied by this
+increment.

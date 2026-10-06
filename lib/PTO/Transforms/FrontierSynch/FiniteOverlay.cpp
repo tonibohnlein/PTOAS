@@ -178,6 +178,7 @@ FiniteOverlayAnalysis analyzeFiniteOverlay(RegionalAnalysis base,
         return state->query(source, target);
     };
     result.regional.prepare = {};
+    result.regional.prepareWithVisits = {};
     result.regional.prepareFiltered = {};
     result.regional.capabilities.endpointRecipes = false;
     result.regional.capabilities.contextualGuards = true;

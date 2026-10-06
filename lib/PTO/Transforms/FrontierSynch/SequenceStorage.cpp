@@ -141,8 +141,39 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         children.push_back(std::move(child));
         return true;
     } else {
+        // Existing numerical routes can already allocate physical IDs. Preserve
+        // that capability for statically enumerable inner bodies, including
+        // regional candidates with prologues/epilogues. Dynamic inner bounds do
+        // not trigger expansion and go directly to repetition.
+        bool staticInnerBounds = true;
+        DenseMap<Value, bool> numericDependencies;
+        std::function<bool(Value)> mayEnumerate = [&](Value value) {
+            if (auto found = numericDependencies.find(value); found != numericDependencies.end()) {
+                return found->second;
+            }
+            numericDependencies[value] = false;
+            if (auto argument = dyn_cast<BlockArgument>(value)) {
+                auto inner = dyn_cast<scf::ForOp>(argument.getOwner()->getParentOp());
+                return numericDependencies[value] = inner && child.loop->isProperAncestor(inner) &&
+                    argument == inner.getInductionVar();
+            }
+            auto* definition = value.getDefiningOp();
+            return numericDependencies[value] = definition && !definition->getNumRegions() &&
+                llvm::all_of(definition->getOperands(), mayEnumerate);
+        };
+        child.loop.getBody()->walk([&](scf::ForOp inner) {
+            staticInnerBounds &= mayEnumerate(inner.getLowerBound()) &&
+                                 mayEnumerate(inner.getUpperBound()) && mayEnumerate(inner.getStep());
+        });
+        std::optional<NumericTemplate> cachedNumeric;
+        if (staticInnerBounds) {
+            cachedNumeric = recognizeRegionalNumericTemplate(child.loop, index, *input);
+        }
+        if ((!cachedNumeric || cachedNumeric->result.state != RecognitionState::Applicable) &&
+            repeatedChild(node, child.trips)) { return true; }
         if (boundaryLoop(child.loop)) { return true; }
-        auto numeric = recognizeRegionalNumericTemplate(child.loop, index, *input);
+        auto numeric = cachedNumeric ? std::move(*cachedNumeric) :
+                       recognizeRegionalNumericTemplate(child.loop, index, *input);
         if (numeric.result.state != RecognitionState::Applicable) {
             return fail("sequence loop has no exact regional rotating or numerical template");
         }
@@ -160,9 +191,10 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
 }
 bool SequenceAnalysisState::collect(std::size_t rootNode)
 {
-    if (failed(index.build(function, *input)) || program->nodes.empty()) {
+    if ((!indexReady && failed(index.build(function, *input))) || program->nodes.empty()) {
         return fail("sequence structure unavailable");
     }
+    indexReady = true;
     if (rootNode >= program->nodes.size()) { return fail("regional sequence node is invalid"); }
     const auto& root = program->nodes[rootNode];
     if (root.kind == StructureKind::ExplicitRun) { return explicitChild(root); }

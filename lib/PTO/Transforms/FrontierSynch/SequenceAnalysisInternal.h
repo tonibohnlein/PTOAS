@@ -63,9 +63,11 @@ struct SequenceAnalysisState {
     func::FuncOp function;
     const SyncInput* input = nullptr;
     const ProgramRecognition* program = nullptr;
-    PhaseIndex index;
+    std::shared_ptr<PhaseIndex> indexOwner;
+    PhaseIndex& index;
+    bool indexReady = false;
     bool completeInvocation = true;
-    bool requiresOuterBinding = false;
+    SmallVector<scf::ForOp> requiredOuterLoops;
     std::shared_ptr<RegionExpressions> arena;
     RegionExpressions& expressions;
     SequenceCost costs;
@@ -80,9 +82,12 @@ struct SequenceAnalysisState {
     std::vector<std::vector<Expr>> graph;
     std::vector<std::vector<CellBoundary>> boundaries;
     explicit SequenceAnalysisState(func::FuncOp f, const SyncInput& i, const ProgramRecognition& p)
-        : function(f), input(&i), program(&p), arena(std::make_shared<RegionExpressions>()), expressions(*arena) {}
-    SequenceAnalysisState(func::FuncOp f, std::shared_ptr<RegionExpressions> a)
-        : function(f), arena(std::move(a)), expressions(*arena) {}
+        : function(f), input(&i), program(&p), indexOwner(std::make_shared<PhaseIndex>()), index(*indexOwner),
+          arena(std::make_shared<RegionExpressions>()), expressions(*arena) {}
+    SequenceAnalysisState(func::FuncOp f, std::shared_ptr<RegionExpressions> a,
+                          std::shared_ptr<PhaseIndex> shared = {})
+        : function(f), indexOwner(shared ? shared : std::make_shared<PhaseIndex>()), index(*indexOwner),
+          indexReady(bool(shared)), arena(std::move(a)), expressions(*arena) {}
     Expr yes() { return expressions.boolean(true); }
     Expr no() { return expressions.boolean(false); }
     Expr c(uint64_t value) { return expressions.constant(value); }
@@ -144,18 +149,19 @@ struct SequenceAnalysisState {
     bool collect(std::size_t rootNode = 0);
     bool explicitChild(const StructureNode& node);
     bool loopChild(const StructureNode& node);
+    bool repeatedChild(const StructureNode& node, Expr trips);
     bool boundaryLoop(scf::ForOp loop);
     bool rotatingPatterns(Child& child, const RotatingAnalysis& analysis, const RecognitionResult& recognized);
     bool numericPatterns(Child& child, const NumericTemplate& numeric);
     bool partition();
     void summarize();
     void bindAdapters();
-    bool importSummaries();
+    bool importSummaries(bool requireEndpoints = true);
     void bridges();
     bool valueBridges();
     void canonicalizeCrossings();
     bool closure();
-    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare();
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare(ArrayRef<scf::ForOp> enclosing = {});
 };
 std::optional<int64_t> sequenceInteger(Value value);
 } // namespace mlir::pto::frontiersynch
