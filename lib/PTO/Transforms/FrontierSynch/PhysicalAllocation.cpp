@@ -12,6 +12,7 @@
 #include "PTO/Transforms/FrontierSynch/FamilyExpressions.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
@@ -790,6 +791,17 @@ public:
     explicit PTOFrontierAllocatePass(const PTOFrontierAllocateOptions& options) : Base(options) {}
     void runOnOperation() override
     {
+        auto function = getOperation();
+        if (function.isDeclaration()) { return; }
+        if (hasManualOnCoreSynchronization(function)) {
+            auto logical = function.walk([](Operation* op) {
+                return isa<LogicalSetOp, LogicalWaitOp>(op)
+                    ? WalkResult::interrupt() : WalkResult::advance();
+            });
+            // Analysis left a manual function untouched. A mixed logical and
+            // physical plan must still pass the allocator's rejection checks.
+            if (!logical.wasInterrupted()) { return; }
+        }
         if (failed(frontiersynch::allocatePhysicalEventIds(getOperation(), eligibleIds))) {
             signalPassFailure();
         }

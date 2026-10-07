@@ -12,6 +12,11 @@
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 namespace mlir::pto {
+// Shared automatic-insertion policy. On-core SET/WAIT (including dynamic IDs
+// and record/wait events) means the function already owns its synchronization.
+// Barriers and cross-core communication commands do not trigger this skip.
+bool hasManualOnCoreSynchronization(func::FuncOp function);
+
 using SyncMemoryEffect = SideEffects::EffectInstance<MemoryEffects::Effect>;
 // Scalar-pipe value operations return an ordinary value only after the scalar
 // access completes. This does not establish readiness of the accessed memory.
