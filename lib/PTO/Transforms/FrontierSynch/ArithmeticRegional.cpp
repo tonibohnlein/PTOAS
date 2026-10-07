@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exact arithmetic child interfaces for sequence composition.
+#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticStorageSelectors.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
@@ -497,7 +498,8 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext cont
     for (const auto& site : state->program.sites) {
         state->pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue));
     }
-    state->analysis = analyzeGeneralArithmeticDemands(state->program);
+    const auto protection = structuredProtection(input.accesses());
+    state->analysis = analyzeGeneralArithmeticDemandsWithProtection(state->program, protection);
     if (!state->analysis.error.empty()) { error = state->analysis.error; return failure(); }
     state->selectors = buildArithmeticStorageSelectors(state->program, state->pipes);
     if (!state->selectors.error.empty()) { error = state->selectors.error; return failure(); }

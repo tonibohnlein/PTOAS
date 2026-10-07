@@ -62,6 +62,11 @@ using GeneralArithmeticDemandAnalysis = TypedArithmeticDemandAnalysis<IntegerSys
 // complete physical primitives and the core-native model. Every join retains
 // one parameter context and matches endpoint residue tuples exactly. No loop
 // unfolding, IR mutation, hardware-protection inference or endpoint synthesis.
+class StructuredProtection;
+ArithmeticDemandAnalysis analyzeArithmeticDemandsWithProtection(const ArithmeticProgram& program,
+                                                               const StructuredProtection& protection);
+GeneralArithmeticDemandAnalysis analyzeGeneralArithmeticDemandsWithProtection(const ArithmeticProgram& program,
+                                                                             const StructuredProtection& protection);
 ArithmeticDemandAnalysis analyzeArithmeticDemands(const ArithmeticProgram& program);
 // Exact integer projection extends the same relational engine to recognized
 // octagons and bounded coefficients. Projected unions retain their congruences;

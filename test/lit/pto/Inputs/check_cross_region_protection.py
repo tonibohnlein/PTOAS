@@ -38,24 +38,23 @@ def main():
 
     positive = program(tagged(init, 1) + loop(tagged(acc, 1)) + tagged(acc, 1))
     cases = [positive,
-        program(loop(tagged(acc, 0)) + tagged(acc, 0)),
-        program(tagged(init, 1) + loop(tagged(init, 0) + tagged(acc, 0)) + tagged(acc, 0)),
+        program(loop(tagged(acc, 1)) + tagged(acc, 1)),
+        program(tagged(init, 1) + loop(tagged(init, 1) + tagged(acc, 1)) + tagged(acc, 1)),
         program(tagged(init, 1) + loop(loop(tagged(acc, 1), '%two').replace('%t =', '%u =')) + tagged(acc, 1)),
         program(tagged(init, 1) + '    scf.if %flag {\n' + tagged(acc, 1) +
                 '    } else {\n' + tagged(acc, 1) + '    }\n' + tagged(acc, 1)),
         program(tagged(init, 1) + '    scf.if %flag {\n' + tagged(acc, 1) + '    }\n' + tagged(acc, 1)),
-        # One incompatible branch invalidates the whole conditional transfer.
-        program(tagged(init, 1) + '    scf.if %flag {\n' + tagged(acc, 0) +
-                '    } else {\n' + tagged(init, 0) + '    }\n' + tagged(acc, 0)),
+        # Initializers keep incoming demands but publish the same protected output.
+        program(tagged(init, 1) + '    scf.if %flag {\n' + tagged(acc, 1) +
+                '    } else {\n' + tagged(init, 1) + '    }\n' + tagged(acc, 1)),
     ]
     alias = '    %alias = pto.alloc_tile addr = %base : !c\n'
     cases.append(program(tagged(init, 1) + alias + loop(tagged(acc.replace('%c', '%alias'), 1)) + tagged(acc, 1)))
     other = '    %other = arith.constant 32768 : i64\n' + alias.replace('%base', '%other')
-    cases.append(program(tagged(init, 1) + other + loop(tagged(acc.replace('%c', '%alias'), 0)) + tagged(acc, 0)))
+    cases.append(program(tagged(init, 1) + other + loop(tagged(acc.replace('%c', '%alias'), 2)) + tagged(acc, 3)))
     cases.append(positive.replace('80', '64').replace('test.protection_group = 1', 'test.protection_group = 0'))
     cases.append(positive.replace('%n: index,', '%base: i64, %n: index,').replace(
-        '    %base = arith.constant 0 : i64\n', '').replace(
-        'test.protection_group = 1', 'test.protection_group = 0'))
+        '    %base = arith.constant 0 : i64\n', ''))
     cases.append(positive.replace('"a3"', '"a5"').replace('left, 32x16xf16, slayout=',
                  'left, 32x16xf16, blayout=col_major, slayout=').replace(
                  'test.protection_group = 1', 'test.protection_group = 0'))
@@ -68,7 +67,7 @@ def main():
               ': !pto.tensor_view<?x?xf32>\n')
     store = '    pto.tstore ins(%c : !c) outs(%part : !pto.partition_tensor_view<32x80xf32>)\n'
     for interference in (store, loop(store), '    scf.if %flag {\n' + store + '    }\n'):
-        value = program(output + tagged(init, 1) + interference + tagged(acc, 0) +
+        value = program(output + tagged(init, 1) + interference + tagged(acc, 2) +
                         tagged(init, 2) + loop(tagged(acc, 2)))
         cases.append(value.replace('%n: index,', '%out: !pto.ptr<f32, gm>, %n: index,'))
     # Descriptor rebinding invalidates fixed geometry even when a later
@@ -93,6 +92,12 @@ def main():
                   for source, width in ((positive, 1), (cases[3], 2)) for trips in (0, 1, 3)]
         traces += [(cases[4], 3, flag, 3) for flag in (0, 1)]
         traces += [(cases[5], 3, flag, flag + 2) for flag in (0, 1)]
+        # A symbolic, invocation-invariant ACC base must use the same shared
+        # protection at residual-access crossings as at materialized cells.
+        symbolic = cases[4].replace('@accumulation(%n:', '@accumulation(%base: i64, %n:').replace(
+            '    %base = arith.constant 0 : i64\n', '')
+        symbolic = symbolic.replace('array<i64: 3, 1>', 'array<i64: 0, 3, 1>')
+        traces.append((symbolic, 3, 1, 3))
         for source, trips, flag, count in traces:
             path.write_text(source.replace('array<i64: 3, 1>', f'array<i64: {trips}, {flag}>'))
             document = json.loads(invoke(tool, '--structured-trace', path))

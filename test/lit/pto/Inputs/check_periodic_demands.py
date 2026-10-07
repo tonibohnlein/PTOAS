@@ -29,13 +29,15 @@ def conflicts(left, right):
                for atom in left.keys() & right.keys())
 
 
-def unprotected_conflict(left, right, left_groups, right_groups, same_scope):
+def unprotected_conflict(left, right, left_groups, right_groups, same_scope, same_pipe=False):
     for atom in left.keys() & right.keys():
         if not ((left[atom][1] and any(right[atom])) or (left[atom][0] and right[atom][1])):
             continue
-        protected = (same_scope and left[atom][1] and right[atom][1]
+        scope_matches = same_scope or (same_pipe and bool(left_groups.get(atom, 0) & (1 << 63)))
+        protected = (scope_matches and left[atom][1] and right[atom][1]
                      and left_groups.get(atom, 0) != 0
-                     and left_groups[atom] == right_groups.get(atom, 0))
+                     and not (right_groups.get(atom, 0) & (1 << 62))
+                     and (left_groups[atom] & ~(1 << 62)) == right_groups.get(atom, 0))
         if not protected:
             return True
     return False
@@ -79,7 +81,8 @@ def unfolded(case, count):
             for target in range(source + 1, count):
                 if unprotected_conflict(effects[source], effects[target],
                                         protection[source % types], protection[target % types],
-                                        pipes[source] == pipes[target] and source // types == target // types):
+                                        pipes[source] == pipes[target] and source // types == target // types,
+                                        same_pipe=pipes[source] == pipes[target]):
                     edges.add((2 * source + 1, 2 * target))
     for source, target, distance in case.get("records", []):
         for occurrence in range(source, count, types):

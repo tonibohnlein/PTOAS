@@ -163,8 +163,8 @@ FailureOr<RegionalAnalysis> specializedExplicitRunRegional(func::FuncOp function
     if (!prerequisites.error.empty()) { error = prerequisites.error; return failure(); }
     for (auto edge : prerequisites.native) { body.nativePrerequisites.emplace_back(edge.source, edge.target); }
     for (auto edge : prerequisites.demands) { body.valueDemands.emplace_back(edge.source, edge.target); }
-    const auto protection = invocationProtectionGroups(input.accesses());
-    for (auto& payload : body.payloads) { payload.invocationProtection = protection.lookup(payload.phase); }
+    const auto protection = structuredProtection(input.accesses());
+    for (auto& payload : body.payloads) { payload.invocationProtection = protection.at(payload.phase); }
     // Metadata/access normalization is charged by its finite input and fragment
     // counts. numericVisits stays zero: these are original payload occurrences.
     body.countedPayloads = phases.size();

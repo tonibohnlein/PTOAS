@@ -86,11 +86,9 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareWholeFunct
 {
     if (failed(analysis.recognizeArithmetic()) || !analysis.result()->arithmetic) { return failure(); }
     const auto& arithmetic = *analysis.result()->arithmetic;
-    SmallVector<const CompoundInstanceElement*> phases;
-    for (const auto& site : arithmetic.sites) { phases.push_back(site.phase); }
-    if (frontiersynch::mayHaveHardwareProtectedPair(*analysis.input(), phases)) { return failure(); }
+    const auto protection = frontiersynch::structuredProtection(analysis.input()->accesses());
     if (arithmetic.recognition.arithmeticClass == frontiersynch::ArithmeticClass::Differences) {
-        auto demands = frontiersynch::analyzeArithmeticDemands(arithmetic);
+        auto demands = frontiersynch::analyzeArithmeticDemandsWithProtection(arithmetic, protection);
         if (!demands.error.empty()) { error += "; arithmetic: " + demands.error; return failure(); }
         auto prepared = frontiersynch::prepareArithmeticInsertion(function, arithmetic, demands, error);
         if (succeeded(prepared) && requireAllocationCertificate && !(*prepared)->allocationCertificate) {
@@ -100,7 +98,7 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareWholeFunct
     }
     // The existing general arithmetic producer has no allocation export.
     if (requireAllocationCertificate) { return failure(); }
-    auto demands = frontiersynch::analyzeGeneralArithmeticDemands(arithmetic);
+    auto demands = frontiersynch::analyzeGeneralArithmeticDemandsWithProtection(arithmetic, protection);
     if (!demands.error.empty()) { error += "; arithmetic: " + demands.error; return failure(); }
     return frontiersynch::prepareGeneralArithmeticInsertion(function, arithmetic, demands, error);
 }

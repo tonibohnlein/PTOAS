@@ -15,6 +15,9 @@ bool RepeatedRegionState::buildBoundary()
     // All body SSA prerequisites are internal, by the repetition contract;
     // running valueBridges here would mistake them for cross-visit edges.
     SequenceAnalysisState pair(function, body.expressions);
+    for (auto* parent = loop->getParentOp(); parent; parent = parent->getParentOp()) {
+        if (auto enclosing = dyn_cast<scf::ForOp>(parent)) { pair.requiredOuterLoops.push_back(enclosing); }
+    }
     for (unsigned i = 0; i < 2; ++i) {
         Child child;
         child.regional = body;

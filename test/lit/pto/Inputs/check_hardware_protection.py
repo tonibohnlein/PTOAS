@@ -47,6 +47,8 @@ def scan_checks(tool):
                 mode = rng.randrange(4)
                 if mode:
                     group = 1 + 3 * pipe + rng.randrange(3) if mode & 2 and rng.randrange(2) else 0
+                    if group and rng.randrange(3) == 0:
+                        group |= 1 << 62
                     effects.append(access(atom, bool(mode & 1), bool(mode & 2), group))
             values.append(op(ident, *effects, pipe=pipe))
         cases.append(dict(scan=values))
@@ -72,8 +74,10 @@ def ir_checks(tool, source):
             groups = [dict(p['hardware_protection']) for p in template['payloads']]
             assert len(groups) == 4
             if expected:
-                assert all(groups) and groups[0] == groups[1] and groups[2] == groups[3]
-                assert groups[0] != groups[2], 'initializer must end the previous group'
+                assert all(groups)
+                for i in (0, 2):
+                    assert {a: g & ~(1 << 62) for a, g in groups[i].items()} == groups[i + 1]
+                    assert all(g & (1 << 62) for g in groups[i].values()), 'retain reset requirements'
             else:
                 assert not any(groups), 'below-threshold shapes must retain barriers'
             trace = json.loads(invoke(tool, '--insertion-trace', path))
@@ -104,8 +108,8 @@ def ir_checks(tool, source):
         path.write_text(text.replace(acc, store + '\n' + acc, 1))
         template = recognized(tool, path)
         groups = [dict(p['hardware_protection']) for p in template['payloads']]
-        assert groups[0] and not groups[1] and not groups[2]
-        assert groups[3] and groups[3] == groups[4] and groups[0] != groups[3]
+        assert groups[0] and not groups[1] and groups[2]
+        assert groups[3] and {a: g & ~(1 << 62) for a, g in groups[3].items()} == groups[4] and groups[0] != groups[3]
         validate(template, json.loads(invoke(tool, '--insertion-trace', path)))
         # Symbolic accumulator addresses retain the same native protection.
         head = original[:original.index("    scf.for")]
@@ -136,7 +140,9 @@ def ir_checks(tool, source):
         path.write_text(text)
         template = recognized(tool, path)
         groups = [dict(p['hardware_protection']) for p in template['payloads']]
-        assert all(groups) and groups[0] == groups[1] and groups[2] == groups[3]
+        assert all(groups)
+        for i in (0, 2):
+            assert {a: g & ~(1 << 62) for a, g in groups[i].items()} == groups[i + 1]
         validate(template, json.loads(invoke(tool, '--insertion-trace', path)))
         # Check all three operands, not only a dynamic lhs dimension. Capacity
         # must not supply the threshold when current valid dimensions are small.

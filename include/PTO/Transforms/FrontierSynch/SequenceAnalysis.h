@@ -52,6 +52,10 @@ SequenceAnalysis analyzeSequence(func::FuncOp function, const SyncInput& input,
 SequenceAnalysis composeRegionalSequence(func::FuncOp function,
     std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
     bool reconstructPrerequisites = true, bool requireEndpoints = true);
+// Enclosing loops are fixed during this composition, not repeated by it.
+SequenceAnalysis composeRegionalSequenceWithin(func::FuncOp function,
+    std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
+    bool reconstructPrerequisites, bool requireEndpoints, ArrayRef<scf::ForOp> enclosing);
 // Analyze original children of a selected sequence, or one explicit/loop node.
 // The caller supplies a common arena; original cuts and access records remain borrowed.
 SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& input,

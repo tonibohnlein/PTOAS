@@ -10,8 +10,10 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_HARDWAREPROTECTION_H
 #include "PTO/Transforms/FrontierSynch/LifetimeScan.h"
 #include "mlir/IR/Types.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/DenseMap.h"
 #include <unordered_set>
+#include <optional>
 namespace mlir {
 class Operation;
 namespace pto {
@@ -20,18 +22,21 @@ class SyncStorageEffects;
 class CompoundInstanceElement;
 namespace frontiersynch {
 inline constexpr uint64_t invocationProtectionBit = uint64_t{1} << 63;
-// A group certifies protection between every ordered pair of its WRITERS to
-// one resource, on one pipe. It is not a completion-before-start edge. Group
-// identities include dynamic scope; zero means ordinary software ordering.
+// An initializer publishes protected output, but never consumes protection.
+inline constexpr uint64_t protectionResetBit = uint64_t{1} << 62;
+// A group certifies ordered writer pairs to one resource on one pipe, except
+// pairs targeting a reset. It is not a completion-before-start edge. Identities
+// include dynamic scope; zero means ordinary software ordering.
 inline bool hardwareProtectsConflict(uint32_t sourcePipe, uint64_t sourceGroup,
                                      uint32_t targetPipe, uint64_t targetGroup)
 {
-    return sourceGroup != 0 && sourceGroup == targetGroup && sourcePipe == targetPipe;
+    return sourceGroup != 0 && targetGroup != 0 && !(targetGroup & protectionResetBit) &&
+        (sourceGroup & ~protectionResetBit) == targetGroup && sourcePipe == targetPipe;
 }
 // Consume a reference-ordered sequence of exact occurrences. The caller supplies
 // the accumulator's normalized physical atoms, NOT SSA allocation identities.
-// Reuse this builder across adjacent explicit pieces; endScope at unresolved
-// control/region boundaries. Separate repeated visits must be observed again.
+// This is the leaf transfer used by StructuredProtection, not a backend-local
+// analysis. Structured consumers project its scoped facts into occurrences.
 class HardwareProtectionBuilder {
 public:
     void observe(Operation* operation, ExplicitEffects& occurrence,
@@ -44,23 +49,30 @@ private:
     Type accumulatorType;
     std::unordered_set<uint32_t> activeAtoms;
 };
-// Invocation-wide groups start only in the function body. A structured child
-// preserves a group only when every path and repeated visit preserves the same
-// fixed physical accumulator. Facts borrow the unchanged input and cannot be
-// reused after moving a region or changing its surrounding accesses.
-// The high bit distinguishes these identities from local builder identities.
-using InvocationProtection = llvm::DenseMap<const CompoundInstanceElement*, uint64_t>;
-InvocationProtection invocationProtectionGroups(const SyncStorageEffects& storage);
+// Static facts are scoped to one visit of a nonuniform enclosing loop. Uniform
+// structured children share the incoming chain; reset writers retain ordinary
+// incoming demands. Consumers must project facts into their occurrence context.
+struct ProtectionFact {
+    uint64_t group = 0;
+    Operation* scope = nullptr;
+};
+class StructuredProtection {
+public:
+    StructuredProtection() : facts() {}
+    llvm::DenseMap<const CompoundInstanceElement*, ProtectionFact> facts;
+    uint64_t lookup(const CompoundInstanceElement* phase) const;
+    uint64_t at(const CompoundInstanceElement* phase) const;
+    uint64_t inLoop(const CompoundInstanceElement* phase, scf::ForOp loop) const;
+    uint64_t within(const CompoundInstanceElement* phase, llvm::ArrayRef<scf::ForOp> enclosing) const;
+};
+StructuredProtection structuredProtection(const SyncStorageEffects& storage);
+struct MatrixProtectionInfo { Type accumulator; bool initializes = false; };
+std::optional<MatrixProtectionInfo> matrixProtectionInfo(Operation* operation);
 // Protection for residual effect pairs with identical buffer operands. This
 // preserves the same target rule when physical addresses are symbolic. Results
 // are indexed by shared effect ID; zero requires ordinary software ordering.
 std::vector<uint64_t> modeledProtectionGroups(const SyncInput& input,
-    llvm::ArrayRef<const CompoundInstanceElement*> phases);
-// Conservative applicability check for routes that have no conditional
-// hardware-protection export. Uses the shared target rule, including pairs
-// crossing repeated visits; it does not change effects or add native edges.
-bool mayHaveHardwareProtectedPair(const SyncInput& input,
-                                 llvm::ArrayRef<const CompoundInstanceElement*> phases);
+    llvm::ArrayRef<const CompoundInstanceElement*> phases, const StructuredProtection& protection);
 } // namespace frontiersynch
 } // namespace pto
 } // namespace mlir

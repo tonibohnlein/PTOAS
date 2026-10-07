@@ -14,26 +14,10 @@ namespace mlir::pto::frontiersynch {
 namespace {
 bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recognized, const SyncInput& input)
 {
-    HardwareProtectionBuilder protection;
-    const auto invocation = invocationProtectionGroups(input.accesses());
-    std::optional<std::size_t> previousGuard;
-    Operation* previous = nullptr;
-    std::vector<SmallVector<const CompoundInstanceElement*>> scopes;
-    std::vector<std::size_t> scopeOf;
+    const auto invocation = structuredProtection(input.accesses());
+    SmallVector<const CompoundInstanceElement*> phases;
     for (const auto& guarded : recognized.phases) {
-        bool reset = previousGuard != guarded.guard;
-        previousGuard = guarded.guard;
-        auto* operation = guarded.phase->elementOp;
-        if (previous && previous->getBlock() == operation->getBlock()) {
-            for (auto* between = previous->getNextNode(); between && between != operation;
-                 between = between->getNextNode()) {
-                if (between->getNumRegions()) { reset = true; }
-            }
-        } else { reset = true; }
-        if (reset || scopes.empty()) { protection.endScope(); scopes.emplace_back(); }
-        scopes.back().push_back(guarded.phase);
-        scopeOf.push_back(scopes.size() - 1);
-        previous = operation;
+        phases.push_back(guarded.phase);
         auto* phase = guarded.phase;
         ExplicitEffects occurrence;
         occurrence.payload = state.effects.size();
@@ -51,13 +35,10 @@ bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recogni
                 mode.write |= effect.mode == SyncAccessMode::Write;
             }
         }
-        SmallVector<uint32_t> accumulator;
         for (auto [id, mode] : modes) {
             occurrence.accesses.push_back(mode);
-            if (input.accesses().cells()[id].space == AddressSpace::ACC) { accumulator.push_back(id); }
         }
-        protection.observe(phase->elementOp, occurrence, accumulator);
-        if (auto group = invocation.lookup(phase)) {
+        if (auto group = invocation.at(phase)) {
             for (auto& access : occurrence.accesses) {
                 if (input.accesses().cells()[access.atom].space == AddressSpace::ACC) {
                     access.protectionGroup = group;
@@ -66,19 +47,13 @@ bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recogni
         }
         state.effects.push_back(std::move(occurrence));
     }
-    std::vector<uint64_t> modeledGroups(input.accesses().effects().size(), 0);
-    for (const auto& scope : scopes) {
-        const auto groups = modeledProtectionGroups(input, scope);
-        for (const auto* phase : scope) {
-            for (auto effect : input.accesses().effectsFor(phase)) { modeledGroups[effect] = groups[effect]; }
-        }
-    }
+    const auto modeledGroups = modeledProtectionGroups(input, phases, invocation);
     for (uint32_t a = 0; a < recognized.phases.size(); ++a) {
         for (uint32_t b = a + 1; b < recognized.phases.size(); ++b) {
             bool conflict = false;
             for (auto x : input.accesses().effectsFor(recognized.phases[a].phase)) {
                 for (auto y : input.accesses().effectsFor(recognized.phases[b].phase)) {
-                    const bool protectedPair = scopeOf[a] == scopeOf[b] && hardwareProtectsConflict(
+                    const bool protectedPair = hardwareProtectsConflict(
                         static_cast<uint32_t>(recognized.phases[a].phase->kPipeValue), modeledGroups[x],
                         static_cast<uint32_t>(recognized.phases[b].phase->kPipeValue), modeledGroups[y]);
                     conflict |= input.accesses().residualConflict(x, y) && !protectedPair;
