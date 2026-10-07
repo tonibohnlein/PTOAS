@@ -97,7 +97,7 @@ def rejection_checks(optimizer, path, source):
 
 def piece_source(source):
     """Use independent source/consumer partitions with original record labels."""
-    source = source.replace("version = 2 : i64", "version = 3 : i64")
+    source = source.replace("pto.endpoint_families = {version = 2 : i64", "pto.endpoint_families = {version = 3 : i64")
     closing = "members = [{record = 20 : i64, source = [], target = []}]}]}"
     pieces = """members = [{record = 20 : i64, source = [], target = []}]}], pieces = [
       {id = 0 : i64, family = 10 : i64, kind = 0 : i64, cut = 0 : i64,
@@ -188,7 +188,7 @@ def tuple_checks(optimizer, path, source):
     text = text.replace("members(%member)", "members(%member, %visit)")
     start = text.index("    pto.cyclic_allocation =")
     end = text.index("    pto.endpoint_families =", start)
-    certificate = """    pto.finite_allocation = {version = 1 : i64, plan = 0 : i64, kind = "finite",
+    certificate = """    pto.finite_allocation = {version = 2 : i64, plan = 0 : i64, kind = "finite",
       strategy = "regional-palettes", groups = [
       {source = 4 : i64, target = 3 : i64, budget = 4 : i64,
        records = array<i64: 10, 11, 12, 13>, strides = array<i64: 0, 0, 0, 0>,

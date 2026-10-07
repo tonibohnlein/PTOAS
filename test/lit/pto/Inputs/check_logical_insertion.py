@@ -195,7 +195,7 @@ def main():
         assert empty_template["empty_invocation"] and not empty_template["payloads"]
         assert not empty_template["counted_visits"]
         empty_inserted = invoke(tool, "--insert-logical", path)
-        empty_certificate = 'pto.cyclic_allocation = {directions = [], plan = 0 : i64, version = 1 : i64}, '
+        empty_certificate = 'pto.cyclic_allocation = {directions = [], plan = 0 : i64, version = 2 : i64}, '
         assert empty_certificate in empty_inserted
         assert empty_inserted.replace(empty_certificate, '', 1) == invoke(tool, "--roundtrip", path)
         empty_trace = json.loads(invoke(tool, "--insertion-trace", path))

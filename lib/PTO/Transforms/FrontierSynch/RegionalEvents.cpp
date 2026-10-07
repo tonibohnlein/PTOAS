@@ -68,6 +68,20 @@ std::optional<RegionExpressions::Id> regionalReachability(
     }
     return region.reachability(std::move(source), std::move(target));
 }
+std::optional<RegionExpressions::Id> regionalHandoffReuse(
+    const RegionalAnalysis& region, RegionalEvent consumer, RegionalEvent producer)
+{
+    if (!validRegionalEvent(region, consumer) || !validRegionalEvent(region, producer) ||
+        consumer.type >= region.anchors.size() || producer.type >= region.anchors.size() ||
+        !region.anchors[consumer.type].phase || !region.anchors[producer.type].phase) { return std::nullopt; }
+    if (region.anchors[consumer.type].phase->kPipeValue == region.anchors[producer.type].phase->kPipeValue) {
+        consumer.kind = producer.kind = PeriodicEventKind::Start;
+    } else {
+        consumer.kind = PeriodicEventKind::Completion;
+        producer.kind = PeriodicEventKind::Start;
+    }
+    return regionalReachability(region, std::move(consumer), std::move(producer));
+}
 std::optional<RegionExpressions::Id> regionalReferenceBefore(
     const RegionalAnalysis& region, RegionalEvent source, RegionalEvent target)
 {

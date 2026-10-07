@@ -37,7 +37,8 @@ def physical_check(report, eligible):
             identity = (old["plan"], old["record"], old["source_ordinal"], tuple(old.get("members", [])))
             command["identity"] = identity
             assert new["physical_id"] in eligible
-            event = (new["source_pipe"], new["target_pipe"], new["physical_id"])
+            event = new["physical_id"]
+            identity += (new["source_pipe"], new["target_pipe"])
             uses.append((len(commands), new["kind"], event, identity))
         commands.append(command)
     reach = closure_with_commands(pipes, commands, include_commands=True)
@@ -92,8 +93,8 @@ def main():
         logical = run(opt, ['--mlir-disable-threading', '--pto-frontier-analysis'], path)
         assert logical.returncode == 0, logical.stderr
         assert 'pto.finite_allocation' in logical.stdout
-        for old, new in [('evidence = [2, 2]', 'evidence = [0, 2]'),
-                         ('version = 1 : i64', 'version = 9 : i64')]:
+        for old, new in [('evidence = array<i64>', 'evidence = array<i64: 0>'),
+                         ('version = 2 : i64', 'version = 1 : i64')]:
             assert old in logical.stdout, logical.stdout
             path.write_text(logical.stdout.replace(old, new, 1))
             result = run(opt, ['--mlir-disable-threading', '--pto-frontier-allocate=eligible-ids=0,1'], path)

@@ -10,7 +10,7 @@
 // storage-effect analysis certificate or a new source-program recognizer.
 module {
   func.func @irregular(%ordinal: index, %member: index) attributes {
-    pto.cyclic_allocation = {version = 1 : i64, plan = 0 : i64, directions = [
+    pto.cyclic_allocation = {version = 2 : i64, plan = 0 : i64, directions = [
       {source = 4 : i64, target = 3 : i64, budget = 4 : i64, records = array<i64: 10, 12, 11, 13, 20>}]},
     pto.endpoint_families = {version = 2 : i64, plan = 0 : i64, families = [
       {id = 10 : i64, local = false, source_pipe = 4 : i64, target_pipe = 3 : i64,
