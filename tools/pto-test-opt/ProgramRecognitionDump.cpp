@@ -14,6 +14,7 @@ using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 llvm::json::Object dumpPeriodicAnalysis(const fs::PeriodicAnalysis& result);
 llvm::json::Object dumpPeriodicAllocation(const fs::PeriodicAllocation& result);
+llvm::json::Object dumpPeriodicSharedAllocation(const fs::PeriodicAnalysis&, mlir::MLIRContext*);
 llvm::json::Object dumpNumericTemplateEndpoints(const fs::NumericTemplateEndpoints& result, AsmState& state);
 llvm::json::Object dumpNumericTemplate(const fs::NumericTemplate& result, AsmState& state);
 namespace {
@@ -108,6 +109,8 @@ LogicalResult dumpProgramRecognition(func::FuncOp function, const pto::SyncInput
             auto candidate = dumpNumericTemplate(*node.numericTemplate, state);
             if (node.periodicAnalysis) {
                 candidate["analysis"] = dumpPeriodicAnalysis(*node.periodicAnalysis);
+                candidate["shared_allocation"] = dumpPeriodicSharedAllocation(
+                    *node.periodicAnalysis, node.anchor->getContext());
             }
             if (node.logicalEndpoints) {
                 candidate["logical_endpoints"] = dumpNumericTemplateEndpoints(*node.logicalEndpoints, state);

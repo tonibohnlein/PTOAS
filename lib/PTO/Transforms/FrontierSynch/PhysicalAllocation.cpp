@@ -63,9 +63,16 @@ struct Endpoint {
     SmallVector<uint64_t> labels;
     std::unique_ptr<Block> phaseCode;
     Operation* phaseBefore = nullptr;
-    Value directPhase;
+    Value directPhase; // Original record label when tupleMembers selects mixed palettes; phase otherwise.
     SmallVector<const PhysicalRecordAllocation*> tupleMembers;
 };
+bool commonPalette(ArrayRef<const PhysicalRecordAllocation*> members)
+{
+    return !members.empty() && llvm::all_of(members, [&](const PhysicalRecordAllocation* member) {
+        return !member->tupleRule && member->stride == members.front()->stride &&
+               member->ids == members.front()->ids;
+    });
+}
 std::optional<int64_t> number(DictionaryAttr dictionary, StringRef name)
 {
     auto attr = dictionary.getAs<IntegerAttr>(name);
@@ -105,11 +112,9 @@ LogicalResult readFamily(func::FuncOp function, DictionaryAttr item, const Recor
         if (!allocation) {
             continue;
         }
-        if (allocation->sourcePipe != *source || allocation->targetPipe != *target ||
-            (!nested && !family.members.empty() &&
-             (allocation->stride != family.members.front()->stride ||
-              allocation->ids != family.members.front()->ids))) {
-            return function.emitError("endpoint-family members have incompatible cyclic allocations");
+        if (allocation->sourcePipe != *source || allocation->targetPipe != *target || allocation->ids.empty() ||
+            (!nested && allocation->tupleRule)) {
+            return function.emitError("endpoint-family member has invalid pipes, palette, or source-tuple rule");
         }
         family.members.push_back(allocation);
     }
@@ -350,11 +355,16 @@ LogicalResult prepareCoordinatePhase(Endpoint& endpoint, const CoordinateProvena
     auto block = std::make_unique<Block>();
     OpBuilder builder(before->getContext());
     builder.setInsertionPointToEnd(block.get());
-    SmallVector<int64_t> phases;
-    for (auto phase : endpoint.phases) {
-        phases.push_back(static_cast<int64_t>(phase));
+    SmallVector<int64_t> values;
+    const bool generic = !endpoint.tupleMembers.empty();
+    for (auto value : generic ? endpoint.labels : endpoint.phases) {
+        values.push_back(static_cast<int64_t>(value));
     }
-    auto result = emitFamilyExpressions(builder, before->getLoc(), points, phases, endpoint.allocation->ids.size());
+    // Mixed palettes need the original record label, not a phase reduced in
+    // another record's modulus. Preserve the coordinate selector as one shared
+    // expression; the generic emitter selects the corresponding ID expression.
+    auto result = emitFamilyExpressions(builder, before->getLoc(), points, values,
+                                        generic ? 0 : endpoint.allocation->ids.size());
     if (!result.error.empty()) {
         return before->emitError("invalid endpoint-family phase coordinates: ") << result.error;
     }
@@ -416,9 +426,7 @@ FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const Ph
         }
         for (auto record : piece.records) {
             const auto* member = records.lookup(record);
-            if (!member || member->ids.empty() ||
-                (!nested && (member->stride != endpoint.allocation->stride ||
-                             member->ids != endpoint.allocation->ids || member->tupleRule))) {
+            if (!member || member->ids.empty() || (!nested && member->tupleRule)) {
                 op->emitError("executable piece has inconsistent member allocations");
                 return WalkResult::interrupt();
             }
@@ -432,11 +440,12 @@ FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const Ph
                     op->emitError("nested allocation requires a certified rule with matching source-tuple arity");
                     return WalkResult::interrupt();
                 }
-                endpoint.tupleMembers.push_back(member);
             }
+            endpoint.tupleMembers.push_back(member);
             endpoint.phases.push_back(member->phase % member->ids.size());
             endpoint.labels.push_back(static_cast<uint64_t>(record));
         }
+        if (!nested && commonPalette(endpoint.tupleMembers)) { endpoint.tupleMembers.clear(); }
         if (!nested && failed(prepareCoordinatePhase(endpoint, *coordinates, dominance, publish))) {
             return WalkResult::interrupt();
         }
@@ -514,7 +523,9 @@ FailureOr<SmallVector<Endpoint>> preflight(func::FuncOp function, const Physical
             }
             endpoint.phases.push_back(member->phase % member->ids.size());
             endpoint.labels.push_back(endpoint.labels.size());
+            endpoint.tupleMembers.push_back(member);
         }
+        if (commonPalette(endpoint.tupleMembers)) { endpoint.tupleMembers.clear(); }
         endpoints.push_back(std::move(endpoint));
         return WalkResult::advance();
     });
@@ -649,7 +660,11 @@ Value tuplePhysicalId(OpBuilder& builder, const Endpoint& endpoint)
     std::map<TermKey, Value> terms;
     auto memberId = [&](const PhysicalRecordAllocation& member) -> Value {
         if (auto fixed = constantTupleId(member)) { return constant(*fixed); }
-        const auto& rule = *member.tupleRule;
+        // Flat grouped families keep their original source ordinal in operand
+        // zero. Express each cyclic palette as a one-coordinate rule, allowing
+        // the same bounded arithmetic and common-term cache as nested tuples.
+        PhysicalTupleRule flatRule{1, 0, {{0, member.stride, member.phase, member.ids.size(), 1}}};
+        const auto& rule = member.tupleRule ? *member.tupleRule : flatRule;
         Value offset = constant(rule.base);
         for (const auto& term : rule.terms) {
             if (!term.scale || term.modulus == 1) { continue; }
@@ -685,8 +700,9 @@ Value tuplePhysicalId(OpBuilder& builder, const Endpoint& endpoint)
     };
     Value result = memberId(*endpoint.tupleMembers.front());
     for (std::size_t i = 1; i < endpoint.tupleMembers.size(); ++i) {
+        Value label = endpoint.directPhase ? endpoint.directPhase : op->getOperand(1);
         auto selected = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq,
-            op->getOperand(1), constant(endpoint.labels[i]));
+            label, constant(endpoint.labels[i]));
         result = builder.create<arith::SelectOp>(location, selected, memberId(*endpoint.tupleMembers[i]), result);
     }
     return result;
@@ -751,6 +767,13 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
         }
         Value eventId;
         std::optional<int64_t> staticId;
+        if (endpoint.directPhase) {
+            auto* before = endpoint.phaseBefore;
+            before->getBlock()->getOperations().splice(before->getIterator(), endpoint.phaseCode->getOperations());
+            // The source ordinal can remain inside the guard even when a
+            // coordinate-derived phase or original-record selector is outside.
+            if (before == endpoint.operation) { builder.setInsertionPoint(endpoint.operation); }
+        }
         if (!endpoint.tupleMembers.empty()) {
             staticId = constantTupleId(*endpoint.tupleMembers.front());
             for (const auto* member : endpoint.tupleMembers) {
@@ -762,14 +785,7 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
         } else {
             Value phase;
             if (endpoint.directPhase) {
-                auto* before = endpoint.phaseBefore;
-                before->getBlock()->getOperations().splice(before->getIterator(), endpoint.phaseCode->getOperations());
                 phase = endpoint.directPhase;
-                // The ordinal may be defined inside its guard even when the
-                // coordinate phase can safely be shared outside that guard.
-                if (before == endpoint.operation) {
-                    builder.setInsertionPoint(endpoint.operation);
-                }
             } else {
                 phase = memberPhase(builder, endpoint);
             }

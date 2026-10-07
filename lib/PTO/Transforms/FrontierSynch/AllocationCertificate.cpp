@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Serialize allocation evidence for the shared numeric event-ID pool.
+#include "PTO/Transforms/FrontierSynch/PeriodicSharedCertificate.h"
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/ExecutionContexts.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
@@ -105,6 +106,10 @@ FailureOr<PhysicalAllocationPlan> decodeCyclicAllocation(func::FuncOp function, 
     auto certificate = function->getAttrOfType<DictionaryAttr>(CyclicAllocationAttr);
     if (!certificate) {
         return function.emitError("physical allocation requires a cyclic allocation certificate"), failure();
+    }
+    if (auto strategy = certificate.getAs<StringAttr>("strategy");
+        strategy && strategy.getValue() == "shared-cycle-cover") {
+        return decodePeriodicSharedAllocation(function, certificate, eligibleIds);
     }
     auto version = number(certificate, "version"), plan = number(certificate, "plan");
     auto directions = certificate.getAs<ArrayAttr>("directions");

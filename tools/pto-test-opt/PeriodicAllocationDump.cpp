@@ -8,6 +8,7 @@
 // Budgets do not assign overlapping physical resources to independent directions.
 #include "PTO/Transforms/FrontierSynch/PeriodicAllocation.h"
 #include "llvm/Support/JSON.h"
+#include "PTO/Transforms/FrontierSynch/PeriodicSharedCertificate.h"
 namespace fs = mlir::pto::frontiersynch;
 llvm::json::Object dumpPeriodicAllocation(const fs::PeriodicAllocation& result)
 {
@@ -27,4 +28,21 @@ llvm::json::Object dumpPeriodicAllocation(const fs::PeriodicAllocation& result)
     }
     return llvm::json::Object{{"error", result.error}, {"directions", std::move(directions)},
         {"budgets_ready", result.error.empty()}, {"physical_ids_ready", false}, {"ir_emitted", false}};
+}
+
+llvm::json::Object dumpPeriodicSharedAllocation(const fs::PeriodicAnalysis& analysis, mlir::MLIRContext* context)
+{
+    auto certificate = fs::encodePeriodicSharedAllocation(analysis, 0, context);
+    if (!certificate) { return llvm::json::Object{{"available", false}}; }
+    llvm::json::Array entries;
+    for (auto raw : certificate.getAs<mlir::ArrayAttr>("entries")) {
+        auto item = mlir::cast<mlir::DictionaryAttr>(raw);
+        llvm::json::Object entry;
+        for (auto key : {"record", "source", "target", "lane_begin", "lane_count", "offset"}) {
+            entry[key] = item.getAs<mlir::IntegerAttr>(key).getInt();
+        }
+        entries.push_back(std::move(entry));
+    }
+    return llvm::json::Object{{"available", true}, {"entries", std::move(entries)},
+        {"budget", certificate.getAs<mlir::IntegerAttr>("budget").getInt()}};
 }

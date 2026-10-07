@@ -137,3 +137,29 @@ assignment failure, not a minimum-capacity claim; lane-level composition in M3 m
 sharing. The finite guarded rank circuit also needs integer guard simplification to recover
 one-ID sharing between mutually exclusive covers. These are recorded obligations, not class
 mismatches. No device timing or full corpus run has been performed for this milestone.
+
+### Milestone 2
+
+Unconditional periodic plans now construct a WAIT-to-SET phase matrix and solve its
+minimum-weight cycle cover using exact integer Hungarian assignment. Different directions
+may share one cycle. Each record emits its certified source-period modulo rule; grouped
+command sites select the original record's rule even when member palettes or strides differ.
+The uniform-palette fast path remains. The solver uses O(c³) integer operations and O(c²)
+input storage without expanding numerical distances or trip counts.
+
+Finite prefixes retain both endpoints of every emitted handoff. Nonnegative cycle links
+place every intermediate consumer no later than the next source; restricting the uniform
+chains therefore preserves reuse, including zero trips and partial final iterations.
+Local nonadjacent barrier order is reconstructed only when its startup guard permits a
+uniform predecessor edge; otherwise the required-order certificate remains sufficient and
+is explicitly marked order_exact=false. No arbitrary indexed guards are admitted by this
+producer, and no universal hardware-capacity optimum is claimed.
+
+Validation: 19,864 phase matrices matched an independent permutation oracle, including
+missing edges, zero cycles and integer overflow. Physical command checks passed empty,
+short and longer prefixes and caught forced global ID collisions. Family allocation passed
+259 phase evaluations (including mixed palettes at UINT64_MAX ordinal) and 21 rejected
+interfaces; family emission passed 23 independent ordering checks; six logical insertion
+checks passed. Two independent reviewers accepted the implementation. The two-slot
+readiness/release test uses two shared IDs rather than four devoted IDs, with static IDs
+where the selected cycles permit them. No device measurements were run.

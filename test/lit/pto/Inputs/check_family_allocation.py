@@ -238,6 +238,45 @@ def tuple_checks(optimizer, path, source):
     return checked, len(cases)
 
 
+def mixed_palette_checks(optimizer, path, source):
+    """Keep v2 families and v3 pieces compact across different cyclic palettes."""
+    certificate = """    pto.finite_allocation = {version = 2 : i64, plan = 0 : i64, kind = "finite",
+      strategy = "regional-palettes", groups = [
+      {source = 4 : i64, target = 3 : i64, budget = 3 : i64,
+       records = array<i64: 10, 12, 20>, strides = array<i64: 1, 2, 1>,
+       phases = array<i64: 0, 2, 1>, conflicts = array<i64>},
+      {source = 4 : i64, target = 3 : i64, budget = 2 : i64,
+       records = array<i64: 11, 13>, strides = array<i64: 1, 1>,
+       phases = array<i64: 1, 0>, conflicts = array<i64: 0>}]},
+"""
+    checked = 0
+    for pieces, text in [(False, source), (True, piece_source(source))]:
+        start = text.index("    pto.cyclic_allocation =")
+        end = text.index("    pto.endpoint_families =", start)
+        text = text[:start] + certificate + text[end:]
+        path.write_text(text)
+        emitted = opt(optimizer, path, ["--pto-frontier-allocate=eligible-ids=1,3,5,0,2"]).stdout
+        assert "pto.logical_" not in emitted
+        assert emitted.count("pto.set_flag_dyn") == (1 if pieces else 2)
+        assert emitted.count("pto.wait_flag_dyn") == 2
+        for ordinal in (0, 1, 2, 17, (1 << 63) - 1, MASK):
+            expected = {10: [1, 3, 5][ordinal % 3], 11: [0, 2][(ordinal + 1) % 2],
+                        12: [1, 3, 5][(2 * ordinal + 2) % 3], 13: [0, 2][ordinal % 2],
+                        20: [1, 3, 5][(ordinal + 1) % 3]}
+            if pieces:
+                for record, event_id in expected.items():
+                    assert evaluate(emitted, ordinal, record) == [("set", event_id), ("wait", event_id)]
+                    checked += 1
+            else:
+                for member, record in enumerate((10, 11, 12, 13)):
+                    values = [expected[record], expected[20]]
+                    commands = list(zip(("set", "set", "wait", "wait"), values + values))
+                    assert evaluate(emitted, ordinal, member) == commands
+                    checked += 1
+        assert evaluate(emitted, 0, 14 if pieces else 4) == []
+    return checked
+
+
 def main():
     optimizer = shutil.which(sys.argv[1])
     assert optimizer, "test optimizer must be available"
@@ -248,7 +287,8 @@ def main():
         rejected = rejection_checks(optimizer, path, source)
         piece_phases, piece_rejected = piece_checks(optimizer, path, source)
         tuple_phases, tuple_rejected = tuple_checks(optimizer, path, source)
-    print(f"family allocation: {phases + piece_phases + tuple_phases} phase evaluations, "
+        mixed_phases = mixed_palette_checks(optimizer, path, source)
+    print(f"family allocation: {phases + piece_phases + tuple_phases + mixed_phases} phase evaluations, "
           f"{rejected + piece_rejected + tuple_rejected} rejected interfaces")
 
 

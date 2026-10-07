@@ -58,20 +58,15 @@ def check_phase_mapping(template, report, eligible):
     for family in template['logical_endpoints']['families']:
         for member, record in enumerate(family['members']):
             owners[family['id'], member] = record['record']
-    # The certificate's order is the periodic allocation handoff order.
-    phases = {}
-    base = 0
-    for direction in template['allocation']['directions']:
-        for phase, handoff in enumerate(direction['handoffs']):
-            phases[handoff['record']] = (phase, len(direction['handoffs']), direction['uniform_budget'], base)
-        base += direction['uniform_budget']
+    phases = {entry['record']: entry for entry in template['shared_allocation']['entries']}
     for logical, physical in zip(report['logical']['events'], report['physical']['events']):
         if logical['kind'] not in ('set', 'wait'):
             continue
         member = logical.get('members', [0])[0]
         record = member if logical.get('record_label') else owners[logical['record'], member]
-        phase, stride, budget, base = phases[record]
-        expected = eligible[base + (logical['source_ordinal'] * stride + phase) % budget]
+        rule = phases[record]
+        offset = (logical['source_ordinal'] + rule['offset']) % rule['lane_count']
+        expected = eligible[rule['lane_begin'] + offset]
         assert physical['physical_id'] == expected, (logical, physical, expected)
 
 
