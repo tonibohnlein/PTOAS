@@ -90,22 +90,18 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
         result.storageBoundary.push_back(std::move(out));
     }
     for (uint32_t childId = 0; childId < composer.children.size(); ++childId) {
-        const auto& child = composer.children[childId].regional;
-        for (const auto& [pipe, values] : child.firstPayloads) {
+        for (const auto& [pipe, values] : composer.nativeFirst[childId]) {
             auto seen = composer.no(), nonempty = composer.no();
             for (auto previous : result.firstPayloads[pipe]) { seen = composer.either(seen, previous.present); }
             for (auto selected : values) {
                 nonempty = composer.either(nonempty, selected.present);
-                auto event = composer.port(childId, selected.event);
-                result.firstPayloads[pipe].push_back({event,
+                result.firstPayloads[pipe].push_back({selected.port,
                     composer.both(selected.present, composer.negate(seen))});
             }
             mask(result.lastPayloads[pipe], composer.negate(nonempty));
-            auto found = child.lastPayloads.find(pipe);
-            if (found != child.lastPayloads.end()) {
-                for (auto selected : found->second) {
-                    result.lastPayloads[pipe].push_back({composer.port(childId, selected.event), selected.present});
-                }
+            auto found = composer.nativeLast[childId].find(pipe);
+            if (found != composer.nativeLast[childId].end()) {
+                append(result.lastPayloads[pipe], found->second);
             }
         }
     }

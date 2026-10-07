@@ -332,6 +332,16 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
     }
 }
 } // namespace
+bool detail::dischargeGlobalReadOnlyEffect(std::size_t id, const SyncStorageEffects& effects)
+{
+    if (id >= effects.effects().size()) { return false; }
+    const auto& effect = effects.effects()[id];
+    if (effect.mode != SyncAccessMode::Read || !effects.independentOfOtherPhases(id)) { return false; }
+    for (auto other : effects.effectsFor(effect.phase)) {
+        if (effects.effects()[other].mode == SyncAccessMode::Write && effects.mayOverlap(id, other)) { return false; }
+    }
+    return true;
+}
 bool detail::dischargeGlobalEffect(std::size_t effect, scf::ForOp loop,
                                    const SyncInput& input, const PhaseIndex& index)
 {

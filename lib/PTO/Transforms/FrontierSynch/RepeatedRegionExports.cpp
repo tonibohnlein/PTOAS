@@ -8,6 +8,24 @@
 // Common exact regional contract. All expressions belong to the supplied arena.
 #include "RepeatedRegionInternal.h"
 namespace mlir::pto::frontiersynch {
+namespace {
+std::string invalidRepeatedFrames(const RegionalAnalysis& body)
+{
+    if (body.occurrenceLoops.size() != body.anchors.size() ||
+        (!body.outerLoops.empty() && body.outerLoops.size() != body.anchors.size()) ||
+        (!body.outerDivisors.empty() && (body.outerLoops.empty() ||
+            body.outerDivisors.size() != body.anchors.size()))) {
+        return "repeated coordinate frames and divisors must match payload types";
+    }
+    for (std::size_t type = 0; type < body.outerDivisors.size(); ++type) {
+        if (body.outerDivisors[type].size() != body.outerLoops[type].size() ||
+            llvm::any_of(body.outerDivisors[type], [](uint64_t value) { return value == 0; })) {
+            return "repeated coordinate divisors must be positive and match their frames";
+        }
+    }
+    return {};
+}
+} // namespace
 void liftRepeatedSelectors(RegionalAnalysis& out, RegionExpressions::Id trips)
 {
     auto& e = *out.expressions;
@@ -40,23 +58,26 @@ RepeatedRegionAnalysis repeatInvariantRegion(func::FuncOp function, scf::ForOp l
         trips >= body.expressions->size() || body.expressions->isBoolean(trips)) {
         result.error = "repetition requires original loop and integer trip expression"; return result;
     }
-    if ((!body.outerLoops.empty() && body.outerLoops.size() != body.anchors.size()) ||
-        (!body.outerDivisors.empty() && (body.outerLoops.empty() ||
-            body.outerDivisors.size() != body.anchors.size()))) {
-        result.error = "repeated coordinate frames and divisors must match payload types"; return result;
-    }
-    for (std::size_t type = 0; type < body.outerDivisors.size(); ++type) {
-        if (body.outerDivisors[type].size() != body.outerLoops[type].size() ||
-            llvm::any_of(body.outerDivisors[type], [](uint64_t value) { return value == 0; })) {
-            result.error = "repeated coordinate divisors must be positive and match their frames"; return result;
-        }
-    }
+    result.error = invalidRepeatedFrames(body);
+    if (!result.error.empty()) { return result; }
     auto state = std::make_shared<RepeatedRegionState>();
     state->function = function; state->loop = loop; state->body = std::move(body); state->trips = trips;
     if (!state->buildBoundary() || !state->closePorts()) {
         result.error = state->error.empty() ? state->e().constructionError() : state->error;
         return result;
     }
+    return exportRepeatedRegion(std::move(state));
+}
+RepeatedRegionAnalysis exportRepeatedRegion(std::shared_ptr<RepeatedRegionState> state)
+{
+    RepeatedRegionAnalysis result;
+    if (!state || !state->function || !state->loop || !state->body.expressions) {
+        result.error = "repeated export requires a valid original loop and expression arena"; return result;
+    }
+    result.error = invalidRepeatedFrames(state->body);
+    if (!result.error.empty()) { return result; }
+    auto loop = state->loop;
+    auto trips = state->trips;
     auto& out = result.regional;
     out = state->body;
     out.prepare = {}; out.prepareFiltered = {}; out.prepareWithVisits = {};

@@ -95,12 +95,26 @@ def main():
                 # Payloads 1 and 2 are the inserted TEXTRACT and TMATMUL:
                 # the latter reads the tile written by the former.
                 assert actual[3] & (1 << 4), "missing explicit prefix readiness"
-        unavailable = source.replace("%g: i1,", "%flags: !pto.ptr<i1, gm>, %g: i1,")
-        unavailable = unavailable.replace("    scf.if %g {",
+        loaded = source.replace("%g: i1,", "%flags: !pto.ptr<i1, gm>, %g: i1,")
+        loaded = loaded.replace("    scf.if %g {",
             "    %predicate = pto.load %flags[%zero] : !pto.ptr<i1, gm> -> i1\n    scf.if %predicate {", 1)
+        # Prefix and branch writers share a pipe: the incoming requirement is
+        # a consumer-side barrier. Exit handoffs can use the already loaded
+        # predicate, so no endpoint needs to replay this load before its cut.
+        path.write_text(loaded)
+        report = run(tool, "--sequence-analysis", path)
+        assert report["prepared"] and report["unchanged"], report
+        # A prefix reader instead requires a cross-pipe SET before the load.
+        # Its branch-dependent predicate is unavailable there: reject without
+        # moving or replaying the original load.
+        unavailable = loaded.replace("    %predicate = pto.load",
+            "    pto.tmatmul ins(%first, %right : !left, !right) outs(%acc : !acc)\n"
+            "    %predicate = pto.load", 1)
         path.write_text(unavailable)
         report = run(tool, "--sequence-analysis", path)
         assert not report["prepared"] and report["unchanged"], report
+        assert "sequence SET predicate or matching identity unavailable at its cut" in (
+            report["error"] + report.get("insertion_error", "")), report
     print(f"conditional compact regions: {tested} emitted closures passed")
 
 

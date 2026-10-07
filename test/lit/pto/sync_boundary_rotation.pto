@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: %python %S/Inputs/check_boundary_rotation.py pto-sync-input-test %s
 // RUN: %python %S/Inputs/check_multicut_rotation.py pto-sync-input-test %s
+// RUN: %python %S/Inputs/check_affine_boundary_rotation.py pto-sync-input-test %s
 !tile = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 module {
   func.func @boundary_rotation(%n: index, %gm: !pto.ptr<f32, gm>) attributes {test.trace_arguments = array<i64: 5>} {

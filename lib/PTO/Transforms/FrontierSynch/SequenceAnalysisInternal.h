@@ -23,6 +23,7 @@
 #include <set>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
+RegionalAnalysis guardRegionalArm(RegionalAnalysis body, RegionExpressions::Id guard);
 using Expr = RegionExpressions::Id;
 struct Pattern {
     SyncStorageCell range;
@@ -79,6 +80,14 @@ struct SequenceAnalysisState {
     std::vector<SyncStorageCell> cells;
     std::vector<Port> ports;
     std::map<std::tuple<uint32_t, uint32_t, Expr, std::vector<Expr>>, uint32_t> portIds;
+    // Endpoint folding keeps executable selected coordinates, but queries
+    // distribute through their original ports instead of asking a compact
+    // child to reconstruct reachability for newly invented coordinates.
+    // Registered only for new ports: both alternatives have smaller IDs.
+    struct PortChoice { Expr choose; uint32_t yes, no; };
+    std::map<uint32_t, PortChoice> portChoices;
+    using SelectorKey = std::vector<std::pair<uint32_t, Expr>>;
+    std::map<SelectorKey, std::vector<Selected>> selectorAlternatives;
     std::vector<Crossing> crossings;
     std::vector<Crossing> nativeValueCrossings;
     std::map<std::pair<uint32_t, uint32_t>, uint32_t> crossingIds;
@@ -87,6 +96,8 @@ struct SequenceAnalysisState {
     using EventKey = std::tuple<uint32_t, uint32_t, Expr, PeriodicEventKind, std::vector<Expr>>;
     std::map<std::pair<EventKey, EventKey>, Expr> reachabilityCache;
     std::vector<std::vector<CellBoundary>> boundaries;
+    using NativeSelectors = std::map<uint32_t, std::vector<Selected>>;
+    std::vector<NativeSelectors> nativeFirst, nativeLast;
     uint64_t childPreparationOperations = 0, crossingPreparationOperations = 0;
     explicit SequenceAnalysisState(func::FuncOp f, const SyncInput& i, const ProgramRecognition& p)
         : function(f), input(&i), program(&p), indexOwner(std::make_shared<PhaseIndex>()), index(*indexOwner),
@@ -169,6 +180,8 @@ struct SequenceAnalysisState {
     void bridges();
     bool valueBridges();
     void canonicalizeCrossings();
+    uint32_t selectPort(Expr choose, uint32_t yesPort, uint32_t noPort);
+    void normalizeSelectorAlternatives(std::vector<Selected>& values);
     void foldCrossingEndpoints(bool incomingSources);
     void consolidateCrossings(bool incomingSources);
     SequenceEvent event(std::size_t id) const;

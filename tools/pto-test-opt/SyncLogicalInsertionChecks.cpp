@@ -569,7 +569,11 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
     llvm::raw_string_ostream original(before);
     function.print(original);
     bool regionScope = true;
-    for (std::size_t node = 1; node < program->nodes.size(); ++node) {
+    // Independent scope-contract probes deliberately analyze each child on
+    // its own. Keep them on the dedicated fixture: an unsupported child may
+    // require expensive arithmetic even when its parent has a cheap route.
+    const bool checkRegionScope = function->hasAttr("test.check_region_scope");
+    for (std::size_t node = 1; checkRegionScope && node < program->nodes.size(); ++node) {
         const auto& entry = program->nodes[node];
         if (entry.kind != fs::StructureKind::ExplicitRun && entry.kind != fs::StructureKind::Loop) { continue; }
         auto child = fs::analyzeSequenceRegion(function, input, *program, node,
@@ -610,7 +614,8 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
             ((**prepared).nestedIdentities ? "nested-not-implemented" :
              ((**prepared).regionalAllocation || (**prepared).allocationCertificate ? "constructed" : "unavailable"))},
         {"queries_available", validQueries}, {"unchanged", before == after},
-        {"slice_prerequisite", checkSlicePrerequisite(function, input)}, {"region_scope", regionScope},
+        {"slice_prerequisite", checkSlicePrerequisite(function, input)},
+        {"region_scope", checkRegionScope ? llvm::json::Value(regionScope) : llvm::json::Value(nullptr)},
         {"arithmetic_entry_prerequisite", checkArithmeticEntryPrerequisite(function, input)},
         {"children", analysis.cost.children}, {"cells", analysis.cost.cells},
         {"ports", analysis.cost.ports}, {"crossings", analysis.cost.crossings},

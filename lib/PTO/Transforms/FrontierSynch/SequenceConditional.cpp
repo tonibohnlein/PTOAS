@@ -93,6 +93,10 @@ RegionalAnalysis guardedArm(RegionalAnalysis body, Expr guard)
     return out;
 }
 } // namespace
+RegionalAnalysis guardRegionalArm(RegionalAnalysis body, RegionExpressions::Id guard)
+{
+    return guardedArm(std::move(body), guard);
+}
 bool SequenceAnalysisState::conditionalChild(const StructureNode& node)
 {
     auto branch = dyn_cast_or_null<scf::IfOp>(node.anchor);

@@ -6,13 +6,16 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: %python %S/Inputs/check_conditional_regions.py pto-sync-input-test %s
+// RUN: pto-sync-input-test --sequence-analysis %s | FileCheck %s --check-prefix=SCOPE
+// SCOPE: "region_scope":true
 !mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
 !left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
 !right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
 !acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
 !ring = !pto.multi_tile_buf<!pto.tile_buf<left, 16x16xf16, slayout=row_major>, count=2>
 module attributes {pto.target_arch = "a3"} {
-  func.func @conditional_regions(%g: i1, %n: index, %m: index) attributes {test.trace_arguments = array<i64: 1, 2, 3>} {
+  func.func @conditional_regions(%g: i1, %n: index, %m: index)
+      attributes {test.check_region_scope, test.trace_arguments = array<i64: 1, 2, 3>} {
     %base = arith.constant 0 : i64
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
