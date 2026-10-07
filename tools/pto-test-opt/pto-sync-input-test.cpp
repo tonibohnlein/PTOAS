@@ -14,6 +14,7 @@
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/ClosedCallees.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingInsertion.h"
 #include "PTO/IR/PTO.h"
 #include "SyncPhaseCopyChecks.h"
@@ -509,7 +510,7 @@ int main(int argc, char **argv) {
     PassManager manager(&context);
     pto::PTOFrontierAnalysisOptions options;
     options.gmAlias = policy == pto::GMAliasPolicy::MayAlias ? "may-alias" : "may-not-alias";
-    manager.addNestedPass<func::FuncOp>(pto::createPTOFrontierAnalysisPass(options));
+    manager.addPass(pto::createPTOFrontierAnalysisPass(options));
     if (failed(manager.run(*module))) {
       return 1;
     }
@@ -518,11 +519,23 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (recognition || numericAnalysis) {
+    auto delegation = pto::frontiersynch::recognizeClosedCallees(*module);
     for (auto function : module->getOps<func::FuncOp>()) {
       if (function.isDeclaration()) { continue; }
       if (pto::hasManualOnCoreSynchronization(function)) {
         llvm::outs() << "recognition-skipped " << function.getSymName() << ": manual-on-core-synchronization\n";
         continue;
+      }
+      if (auto found = delegation.wrappers.find(function); found != delegation.wrappers.end()) {
+        llvm::outs() << "recognition " << function.getSymName() << "\n";
+        dumpRecognition("closed-callee", found->second.result);
+        llvm::outs() << "  callee-closure=requires-analysis-and-insertion\n";
+        llvm::json::Array callees;
+        for (auto callee : found->second.callees) { callees.push_back(callee.getSymName().str()); }
+        llvm::outs() << "closed-callee-json " << llvm::json::Value(llvm::json::Object{
+            {"function", function.getSymName()},
+            {"state", pto::frontiersynch::recognitionName(found->second.result.state)},
+            {"callees", std::move(callees)}, {"closure_established", false}}) << "\n";
       }
       pto::frontiersynch::FrontierAnalysis analysis(function);
       if (failed(analysis.initialize(policy))) {

@@ -12,7 +12,11 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_FRONTIERANALYSIS_H
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
 namespace mlir::pto::frontiersynch {
+// Detached whole-function producer shared by module coordination and tests.
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFunctionSynchronization(
+    func::FuncOp function, GMAliasPolicy policy);
 class FrontierAnalysis {
 public:
     explicit FrontierAnalysis(Operation* operation) : function(dyn_cast<func::FuncOp>(operation)) {}

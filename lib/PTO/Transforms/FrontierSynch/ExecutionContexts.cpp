@@ -44,10 +44,12 @@ struct FunctionCopy {
     {
         if (auto parent = original->getParentOfType<ModuleOp>()) {
             (*module)->setAttrs(parent->getAttrs());
-            // Symbol metadata is needed by shared helper-call interpretation.
+            // Shared helper-call interpretation inspects defined bodies. Retain
+            // those bodies in the temporary symbol context; declarations alone
+            // would turn a supported scalar helper into an unresolved call.
             for (auto sibling : parent.getOps<func::FuncOp>()) {
                 if (sibling == original) { continue; }
-                module->push_back(sibling.cloneWithoutRegions());
+                module->push_back(sibling.clone());
             }
         }
         function = cast<func::FuncOp>(original->clone(mapping));

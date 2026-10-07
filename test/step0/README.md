@@ -161,21 +161,20 @@ its expression form.
 
 ## Program structure and recognition
 
-The registered `pto-frontier-analysis` pass builds an owning MLIR
-`FrontierAnalysis`: shared Step 0 input followed by the structure and recognition
-results. The analysis owns the shared records for as long as the results borrow
-them; MLIR invalidates it after IR-changing passes. The current arithmetic class
-is fixed to 8 pipes, 8 coordinates, period 2 and coefficient bound 8.
+The registered `pto-frontier-analysis` pass coordinates analysis and logical
+insertion at module scope. Each function's `FrontierAnalysis` owns shared Step 0
+records and structural recognition results. Closed delegation wrappers retain
+their calls; their callees are analyzed independently with an explicit completion
+interface. Physical event allocation remains a separate function pass.
 
-`pto-sync-input-test --recognize input.pto` runs this real pass followed by a
-test consumer of its cached result. The consumer verifies structure against the
-original MLIR and emits the existing recognition text plus one JSON object per
-function. It also checks that the pass leaves the IR unchanged. There is no
-separate program-recognition mode. This is the analysis stage under development;
-it does not yet generate demands or insert synchronization.
-`--gm-alias=may-alias` and `--gm-alias=may-not-alias` select the existing shared
-policy. The pass is callable in a standard MLIR pipeline as
-`builtin.module(func.func(pto-frontier-analysis))`.
+`pto-sync-input-test --recognize input.pto` performs read-only recognition and
+checks structure against the original MLIR. It emits recognition text and one
+JSON object per function, plus `closed-callee-json` candidate reports where
+applicable. Candidate recognition does not establish callee closure or allocation
+success. The probe leaves IR unchanged and runs no demand backend.
+`--gm-alias=may-alias` and `--gm-alias=may-not-alias` select the shared root policy;
+called functions use may-alias so actual argument aliases are preserved.
+The analysis pass is callable as `builtin.module(pto-frontier-analysis)`.
 
 The reusable `frontiersynch::recognizeProgram` API follows the original MLIR
 region structure without unrolling. Sequences contain maximal adjacent leaf

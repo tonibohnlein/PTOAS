@@ -5,9 +5,11 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Shared pass state: input extraction followed by structural route recognition.
+// Per-function recognition and detached demand production. The public pass
+// coordinates module closure before committing logical synchronization.
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/ExecutionContexts.h"
+#include "PTO/Transforms/FrontierSynch/ClosedCallees.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
@@ -243,25 +245,19 @@ public:
             signalPassFailure();
             return;
         }
-        auto function = getOperation();
-        if (function.isDeclaration() || hasManualOnCoreSynchronization(function)) {
-            return;
-        }
         auto policy = gmAlias == "may-alias" ? GMAliasPolicy::MayAlias : GMAliasPolicy::MayNotAlias;
-        if (frontiersynch::hasPhysicalSections(function)) {
-            if (failed(frontiersynch::insertContextSynchronization(function, [&](func::FuncOp projected) {
-                    return prepareFunction(projected, policy);
-                }))) { signalPassFailure(); }
-            return;
-        }
-        auto prepared = prepareFunction(function, policy);
-        if (failed(prepared) || failed(frontiersynch::insertLogicalSynchronization(function, **prepared))) {
+        if (failed(frontiersynch::insertModuleSynchronization(getOperation(), policy, prepareFunction))) {
             signalPassFailure();
         }
         // Inserted guards and commands invalidate structural analysis.
     }
 };
 } // namespace
+FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>>
+frontiersynch::prepareFunctionSynchronization(func::FuncOp function, GMAliasPolicy policy)
+{
+    return prepareFunction(function, policy);
+}
 std::unique_ptr<Pass> createPTOFrontierAnalysisPass() {
     return std::make_unique<PTOFrontierAnalysisPass>();
 }
