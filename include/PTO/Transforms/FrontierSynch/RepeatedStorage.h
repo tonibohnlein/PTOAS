@@ -44,9 +44,10 @@ struct RepeatedStorageResult {
 };
 // Validate supplied modeled maps, not inferred instruction footprints. Each
 // selected effect's complete union must equal a+t*S+local; local maps must have
-// finite constant ranges independent of all body occurrences. The body's exact
-// first/last effect selectors then apply to each covered byte. More general
-// byte-dependent occurrence selectors need another adapter, not a discharge.
+// finite constant ranges after projecting supported finite inner coordinates.
+// Every projected piece retains its original occurrence and presence, so byte
+// selectors use the child's actual first/last accesses. Unbounded inner geometry
+// requires a separate projection adapter and is never replaced by a hull.
 RepeatedStorageResult buildRepeatedStorage(const RegionalAnalysis& body, scf::ForOp loop,
     RegionExpressions::Id trips, ArrayRef<RepeatedStorageFamily> families);
 // Propose and validate the constant-stride subclass directly from shared maps.

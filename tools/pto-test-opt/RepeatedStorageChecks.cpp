@@ -174,6 +174,96 @@ bool originDomain(MLIRContext* context, unsigned kind)
     }
     return selected(selectors->firstWriters, e, std::make_pair(1U, uint64_t(1)));
 }
+// Independently inspect the ownership export for corpus qr_proj_seed's inner
+// 16x128 tiles. This invokes the nested adapter even when the dispatcher can
+// choose a numerical template for this particular constant inner count.
+bool projectedCorpus(MLIRContext* context)
+{
+    constexpr const char* corpus = R"mlir(module attributes {pto.backend = "emitc", pto.kernel_kind =
+#pto.kernel_kind<vector>, pto.target_arch = "a3"} {
+  func.func @qr_proj_seed(%arg0: !pto.ptr<f32, gm>, %arg1: index, %arg2: index) attributes {pto.kernel_kind =
+#pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c1024 = arith.constant 1024 : index
+    %c1 = arith.constant 1 : index
+    %c0 = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %c8 = arith.constant 8 : index
+    %c128 = arith.constant 128 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = pto.make_tensor_view %arg0, shape = [%arg2, %c1024], strides = [%c1024, %c1] {layout = #pto.layout<nd>} :
+!pto.tensor_view<?x?xf32>
+    %1 = arith.divsi %arg2, %c16 : index
+    scf.for %arg3 = %c0 to %1 step %c1 {
+      %2 = arith.muli %arg3, %c16 : index
+      scf.for %arg4 = %c0 to %c8 step %c1 {
+        %3 = arith.muli %arg4, %c128 : index
+        %4 = pto.alloc_tile addr = %c0_i64 valid_row = %c16 valid_col = %c128 : !pto.tile_buf<vec, 16x128xf32,
+valid=?x?>
+        pto.texpands ins(%cst : f32) outs(%4 : !pto.tile_buf<vec, 16x128xf32, valid=?x?>)
+        %5 = arith.maxsi %2, %c0 : index
+        %6 = arith.maxsi %3, %c0 : index
+        %7 = pto.partition_view %0, offsets = [%5, %6], sizes = [%c16, %c128] : !pto.tensor_view<?x?xf32>
+        pto.tstore ins(%4 : !pto.tile_buf<vec, 16x128xf32, valid=?x?>) outs(%7 :
+!pto.partition_tensor_view<16x128xf32>) {layout = #pto.layout<nd>}
+      }
+    }
+    return
+  }
+}
+)mlir";
+    auto module = parseSourceString<ModuleOp>(corpus, context);
+    if (!module) { return false; }
+    auto function = module->lookupSymbol<func::FuncOp>("qr_proj_seed");
+    SmallVector<scf::ForOp> loops;
+    function.walk<WalkOrder::PreOrder>([&](scf::ForOp loop) { loops.push_back(loop); });
+    if (loops.size() != 2) { return false; }
+    pto::SyncInput input(pto::GMAliasPolicy::MayNotAlias);
+    if (failed(input.build(function))) { return false; }
+    auto body = bodyFor(input, loops[0]);
+    auto& e = *body.expressions;
+    body.occurrenceLoops.assign(body.anchors.size(), loops[1]);
+    body.presence = [arena = body.expressions](fs::RegionalEvent event) -> std::optional<fs::RegionExpressions::Id> {
+        if (event.type >= 2 || !event.visits.empty()) { return std::nullopt; }
+        return arena->lt(event.ordinal, arena->constant(8));
+    };
+    for (auto& access : body.accessBoundary) {
+        access.last.event.ordinal = e.constant(7);
+        access.representedByCells = input.accesses().effects()[access.effect].memory->scope != pto::AddressSpace::GM;
+    }
+    for (uint64_t trips : {0U, 1U, 3U}) {
+        auto certificate = fs::recognizeRepeatedStorage(body, loops[0], e.constant(trips));
+        if (!certificate.storage) { llvm::errs() << certificate.error << "\n"; return false; }
+        for (uint64_t visit = 0; visit <= trips; ++visit) {
+            for (uint64_t row : {0U, 7U, 15U}) {
+                for (uint64_t column = 0; column < 8; ++column) {
+                    for (uint64_t byte : {0U, 511U}) {
+                        auto selectors = certificate.storage->selectors({pto::AddressSpace::GM,
+                            function.getArgument(0), e.constant(visit * 65536 + row * 4096 + column * 512 + byte)});
+                        if (!selectors) { return false; }
+                        for (auto* candidates : {&selectors->firstWriters, &selectors->lastWriters}) {
+                            unsigned active = 0;
+                            for (const auto& value : *candidates) {
+                                auto present = e.constantValue(value.present);
+                                if (!present) { return false; }
+                                if (!*present) { continue; }
+                                ++active;
+                                if (value.event.type != 1 || value.event.visits.size() != 1 ||
+                                    e.constantValue(value.event.visits[0]) != visit ||
+                                    e.constantValue(value.event.ordinal) != column) { return false; }
+                            }
+                            if (active != unsigned(visit < trips)) { return false; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    auto malformed = body; malformed.expressions.reset();
+    if (fs::recognizeRepeatedStorage(malformed, loops[0], e.constant(1)).storage) { return false; }
+    malformed = body; malformed.occurrenceLoops.clear();
+    return !fs::recognizeRepeatedStorage(malformed, loops[0], e.constant(1)).storage;
+}
 // input_rmsnorm's 16 rows of 512 bf16 columns in a 7168-column tensor.
 // Check the exact translated union against pairwise concrete intervals, including
 // a fifteenth visit that collides with the next row and partial-column strides.
@@ -204,7 +294,8 @@ bool corpusColumns()
 } // namespace
 bool runRepeatedStorageChecks(MLIRContext* context)
 {
-    if (!corpusColumns()) { return false; }
+    if (!corpusColumns()) { llvm::errs() << "corpus column union check failed\n"; return false; }
+    if (!projectedCorpus(context)) { llvm::errs() << "corpus nested owner check failed\n"; return false; }
     auto module = parseSourceString<ModuleOp>(source, context);
     if (!module) { return false; }
     auto function = module->lookupSymbol<func::FuncOp>("storage");

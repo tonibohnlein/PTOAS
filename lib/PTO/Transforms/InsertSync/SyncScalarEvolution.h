@@ -114,12 +114,20 @@ class ScalarEvolution {
         // Range inference is shared operation semantics, not an address-op
         // whitelist. Keep unsupported expressions symbolic while using their
         // declared result bounds to prove subsequent arithmetic cannot wrap.
-        if (!result.range && v.getDefiningOp() && isa<IntegerType>(v.getType()) && width(v.getType()) <= 64) {
-            if (auto infer = dyn_cast<InferIntRangeInterface>(v.getDefiningOp())) {
+        if (!result.range && v.getDefiningOp() && v.getType().isIntOrIndex() &&
+            width(v.getType()) && width(v.getType()) <= 64) {
+            auto* operation = v.getDefiningOp();
+            const bool hasIndex =
+                llvm::any_of(operation->getOperandTypes(), [](Type type) { return type.isIndex(); }) ||
+                llvm::any_of(operation->getResultTypes(), [](Type type) { return type.isIndex(); });
+            // LLVM's generic index range interface uses its internal storage
+            // width; it cannot model narrowing casts for a different layout.
+            if (auto infer = dyn_cast<InferIntRangeInterface>(operation);
+                infer && (!hasIndex || indexBits == IndexType::kInternalStorageBitWidth)) {
                 SmallVector<ConstantIntRanges> operands;
                 bool supported = true;
                 for (Value operand : v.getDefiningOp()->getOperands()) {
-                    unsigned bits = isa<IntegerType>(operand.getType()) ? width(operand.getType()) : 0;
+                    unsigned bits = operand.getType().isIntOrIndex() ? width(operand.getType()) : 0;
                     if (!bits || bits > 64) {
                         supported = false;
                         break;
@@ -132,7 +140,8 @@ class ScalarEvolution {
                 if (supported) {
                     infer.inferResultRanges(operands, [&](Value value, const ConstantIntRanges& range) {
                         if (value == v && range.smin().isSignedIntN(64) && range.smax().isSignedIntN(64)) {
-                            result.range = Range{range.smin().getSExtValue(), range.smax().getSExtValue()};
+                            Range inferred{range.smin().getSExtValue(), range.smax().getSExtValue()};
+                            if (fits(inferred, v.getType())) { result.range = inferred; }
                         }
                     });
                 }
@@ -141,7 +150,7 @@ class ScalarEvolution {
         // A scalar load or opaque integer operation still has its declared
         // signed bit range. This supplies no expression or alias fact, but it
         // proves widening index casts and later bounded arithmetic exact.
-        if (!result.range && isa<IntegerType>(v.getType()) && width(v.getType()) <= 64) {
+        if (!result.range && v.getType().isIntOrIndex() && width(v.getType()) && width(v.getType()) <= 64) {
             const unsigned bits = width(v.getType());
             result.range = Range{APInt::getSignedMinValue(bits).getSExtValue(),
                                  APInt::getSignedMaxValue(bits).getSExtValue()};

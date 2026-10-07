@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Generic constant-stride proposals from shared, non-wrapping mathematical maps.
 #include "PTO/Transforms/FrontierSynch/RepeatedStorage.h"
+#include "RepeatedStorageProjection.h"
 #include "../InsertSync/SyncRegionArithmetic.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseSet.h"
@@ -35,10 +36,10 @@ bool pruneSymbols(SyncAccessRegion& origin)
     origin.symbols = std::move(symbols);
     return bool(origin.byteOffset);
 }
-std::optional<RepeatedStorageFamily> propose(const SyncStorageEffect& effect, scf::ForOp loop, std::size_t id)
+std::optional<RepeatedStorageFamily> propose(const SyncStorageEffect& effect, const SyncAccessRegion& physical,
+                                              scf::ForOp loop, std::size_t id)
 {
     if (!effect.memory || effect.regions.empty()) { return std::nullopt; }
-    const auto& physical = effect.regions.front();
     auto lower = integer(loop.getLowerBound()), step = integer(loop.getStep());
     if (!physical.byteOffset || !lower || *lower < 0 || !step || *step <= 0) { return std::nullopt; }
     auto* context = loop.getContext();
@@ -98,7 +99,9 @@ RepeatedStorageResult recognizeRepeatedStorage(const RegionalAnalysis& body, scf
             // the original access record has no materialized static ranges.
             // completeEffects still checks invariance of every unclassified map.
             if (represented) { continue; }
-            auto candidate = propose(effect, loop, id);
+            auto projected = detail::projectAccesses(body, loop, id);
+            if (!projected || projected->empty()) { continue; }
+            auto candidate = propose(effect, projected->front().region, loop, id);
             if (!candidate) { continue; } // Remaining effects must still satisfy completeEffects.
             auto existing = llvm::find_if(families, [&](const auto& family) { return sameFamily(family, *candidate); });
             if (existing == families.end()) { families.push_back(std::move(*candidate)); }
