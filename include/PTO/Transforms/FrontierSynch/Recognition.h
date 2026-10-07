@@ -24,6 +24,8 @@ enum class RecognitionIssue {
 };
 struct RecognitionDiagnostic {
     RecognitionIssue issue;
+    // A proved contract exclusion, rather than an unavailable input/proof.
+    bool outsideClass = false;
     Operation* anchor = nullptr;
 };
 struct RotatingAccess {

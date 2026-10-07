@@ -42,6 +42,7 @@ llvm::json::Object attempt(StringRef route, const fs::RecognitionResult& result)
     llvm::json::Array issues;
     for (const auto& issue : result.diagnostics) {
         issues.push_back(llvm::json::Object{{"issue", fs::recognitionName(issue.issue)},
+            {"category", issue.outsideClass ? "class-mismatch" : "unmet-obligation"},
             {"operation", issue.anchor ? issue.anchor->getName().getStringRef() : StringRef()},
             {"location", location(issue.anchor)}});
     }
@@ -151,6 +152,7 @@ LogicalResult dumpProgramRecognition(func::FuncOp function, const pto::SyncInput
             llvm::json::Array issues;
             for (const auto& issue : program.recognition.diagnostics) {
                 issues.push_back(llvm::json::Object{{"issue", fs::recognitionName(issue.issue)},
+                    {"category", issue.outsideClass ? "class-mismatch" : "unmet-obligation"},
                     {"relation", issue.relation}, {"piece", issue.piece}});
             }
             arithmetic["issues"] = std::move(issues);

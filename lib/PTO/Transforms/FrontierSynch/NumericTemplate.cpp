@@ -28,12 +28,12 @@ bool scope(NumericTemplate& output, const PhaseIndex& index, const SyncInput& in
     auto function = outer->getParentOfType<func::FuncOp>();
     const bool originalScope = function && function.getBody().hasOneBlock();
     if (!originalScope || (!regional && outer->getParentOp() != function)) {
-        output.result.note(RecognitionIssue::TemplateContext, outer);
+        output.result.note(RecognitionIssue::TemplateContext, outer, true);
         return false;
     }
     for (const auto* phase : input.instructions()) {
         if (!regional && !outer->isProperAncestor(phase->elementOp)) {
-            output.result.note(RecognitionIssue::TemplateContext, phase->elementOp);
+            output.result.note(RecognitionIssue::TemplateContext, phase->elementOp, true);
             return false;
         }
     }

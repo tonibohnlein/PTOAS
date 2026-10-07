@@ -297,7 +297,7 @@ void ProgramBuilder::emit(PrimitiveRelation& target, ArrayRef<AffineExpr> rows,
                     Operation* anchor = target.sourceSite && *target.sourceSite < output.sites.size() ?
                         output.sites[*target.sourceSite].phase->elementOp : nullptr;
                     output.extraction.note(locals.dimensionExceeded ? RecognitionIssue::ArithmeticDimension :
-                        RecognitionIssue::IndexArithmetic, anchor);
+                        RecognitionIssue::IndexArithmetic, anchor, locals.dimensionExceeded);
                     return;
                 }
                 constraints.push_back(expression);

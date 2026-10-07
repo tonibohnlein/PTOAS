@@ -23,7 +23,7 @@
 namespace mlir::pto::frontiersynch {
 void RecognitionResult::note(RecognitionIssue issue, Operation* anchor, bool outsideClass)
 {
-    diagnostics.push_back({issue, anchor});
+    diagnostics.push_back({issue, outsideClass, anchor});
     if (outsideClass) {
         state = RecognitionState::NotApplicable;
     } else if (state != RecognitionState::NotApplicable) {
@@ -374,7 +374,7 @@ void detail::inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResu
         result.note(RecognitionIssue::AdditionalPrerequisite, &op);
     }
     if (!allowEnvelopes && llvm::any_of(phases, [](auto* phase) { return phase->macroOpInstanceId >= 0; })) {
-        result.note(RecognitionIssue::MultiplePhases, &op);
+        result.note(RecognitionIssue::MultiplePhases, &op, true);
     } else if (phases.empty() && !metadata(op)) {
         result.note(RecognitionIssue::UnmodeledOperation, &op);
     }

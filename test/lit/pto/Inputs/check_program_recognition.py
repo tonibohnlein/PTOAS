@@ -39,6 +39,14 @@ def check_common(document):
     effects = [effect["id"] for payload in payloads for effect in payload["effects"]]
     assert len(effects) == len(set(effects))
     assert document["arithmetic"]["scope"] == "whole-function"
+    for attempt in [a for n in nodes for a in n["attempts"]] + [document["arithmetic"]]:
+        assert all(i["category"] in ("class-mismatch", "unmet-obligation") for i in attempt["issues"])
+        if attempt["state"] == "applicable":
+            assert not attempt["issues"]
+        if attempt["state"] == "missing-premise":
+            assert all(i["category"] == "unmet-obligation" for i in attempt["issues"])
+        if attempt["state"] == "not-applicable":
+            assert any(i["category"] == "class-mismatch" for i in attempt["issues"])
 
 
 def routes(document, name):
@@ -82,7 +90,7 @@ def main():
         for name in ("nested_arms", "invariant_loop", "varying_loop"):
             assert documents[name]["arithmetic"]["state"] == "applicable"
         late_arithmetic = documents["late_finite"]["arithmetic"]
-        assert late_arithmetic["state"] == "not-applicable"
+        assert late_arithmetic["state"] == "missing-premise"
         assert {issue["issue"] for issue in late_arithmetic["issues"]} == {
             "unsupported-control"}
         assert any(a["state"] == "applicable" for a in routes(documents["nested_arms"], "finite-guarded"))

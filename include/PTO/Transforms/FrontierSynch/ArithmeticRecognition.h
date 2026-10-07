@@ -73,6 +73,7 @@ enum class ArithmeticIssue {
 };
 struct ArithmeticDiagnostic {
     ArithmeticIssue issue;
+    bool outsideClass = false;
     std::size_t relation = 0;
     std::size_t piece = 0;
 };
