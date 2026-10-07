@@ -15,6 +15,8 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/IR/OwningOpRef.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/InferIntRangeInterface.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
@@ -82,12 +84,13 @@ class ScalarEvolution {
     }
     Result argument(BlockArgument arg, Symbol symbol);
     Result recurrence(BlockArgument arg, scf::ForOp loop, Symbol symbol);
+    Result folded(Value v, Symbol symbol, unsigned depth);
     Result operation(Value v, Symbol symbol, unsigned depth);
     Result binary(Operation* op, Result a, Result b);
     static std::optional<Range> arithmeticRange(Operation* op, Range a, Range b);
     Result resolve(Value v, Symbol symbol, unsigned depth)
     {
-        if (auto n = constant(v)) {
+        if (auto n = constant(v); n && fits(Range{*n, *n}, v.getType())) {
             return {number(*n), Range{*n, *n}};
         }
         auto found = cache.find(v);
@@ -271,11 +274,56 @@ inline ScalarEvolution::Result ScalarEvolution::binary(Operation* op, Result a, 
     return {expression, proven ? range : std::nullopt};
 }
 
+// Use dialect folding for identities and machine-width constant arithmetic.
+// Folders may mutate their operation: fold a detached scalar copy and accept
+// only a constant or an existing SSA value. Never rewrite the analyzed program.
+inline ScalarEvolution::Result ScalarEvolution::folded(Value v, Symbol symbol, unsigned depth)
+{
+    auto* op = v.getDefiningOp();
+    if (op->getNumResults() != 1 || op->getNumRegions() || op->getNumSuccessors() ||
+        !isMemoryEffectFree(op)) {
+        return {};
+    }
+    // Arith scalar folders are context independent; an arbitrary dialect's
+    // folder may require ancestors that a detached copy deliberately lacks.
+    if (!isa<arith::ArithDialect>(op->getDialect())) {
+        return {};
+    }
+    // Index attributes use the internal storage width, not the target width.
+    // Even representable inputs/results are insufficient (unsigned -1 % 7
+    // differs at 32 and 64 bits). Keep checked symbolic reasoning below for
+    // narrow/unknown index layouts instead of accepting host-width folds.
+    const bool usesIndex = v.getType().isIndex() ||
+        llvm::any_of(op->getOperandTypes(), [](Type type) { return type.isIndex(); });
+    if (usesIndex && indexBits != IndexType::kInternalStorageBitWidth) {
+        return {};
+    }
+    OwningOpRef<Operation*> copy(op->cloneWithoutRegions());
+    SmallVector<OpFoldResult> results;
+    if (failed(copy->fold(results)) || results.size() != 1) {
+        return {};
+    }
+    if (auto value = dyn_cast<Value>(results.front())) {
+        return value != v && value.getDefiningOp() != copy.get() && value.getType() == v.getType() ?
+            resolve(value, symbol, depth) : Result{};
+    }
+    auto integer = dyn_cast<IntegerAttr>(dyn_cast<Attribute>(results.front()));
+    if (!integer || integer.getType() != v.getType() || !integer.getValue().isSignedIntN(64)) {
+        return {};
+    }
+    int64_t n = integer.getValue().getSExtValue();
+    return fits(Range{n, n}, v.getType()) ? Result{number(n), Range{n, n}} : Result{};
+}
+
 inline ScalarEvolution::Result ScalarEvolution::operation(Value v, Symbol symbol, unsigned depth)
 {
     auto* op = v.getDefiningOp();
     if (!op || width(v.getType()) == 0 || width(v.getType()) > 64) {
         return {};
+    }
+    auto fold = folded(v, symbol, depth);
+    if (fold.expression) {
+        return fold;
     }
     if (isa<arith::IndexCastOp, arith::ExtSIOp, arith::ExtUIOp, arith::TruncIOp>(op)) {
         auto input = resolve(op->getOperand(0), symbol, depth);
@@ -328,7 +376,17 @@ inline ScalarEvolution::Result ScalarEvolution::operation(Value v, Symbol symbol
     }
     if (isa<arith::RemUIOp, arith::RemSIOp, arith::DivUIOp, arith::DivSIOp>(op)) {
         auto divisor = constant(op->getOperand(1));
-        if (!divisor || *divisor <= 0 || !a.range || a.range->lower < 0) {
+        if (!divisor || *divisor <= 0 || !fits(Range{0, *divisor}, v.getType())) {
+            return {};
+        }
+        // Unsigned remainder by 2^j selects low bits. Signed and unsigned
+        // interpretations differ by 2^w, divisible by 2^j for j < w.
+        // Non-power-of-two divisors and signed remainders still need the
+        // nonnegative proof; signed remainder of a negative input is not mod.
+        if (isa<arith::RemUIOp>(op) && llvm::isPowerOf2_64(static_cast<uint64_t>(*divisor))) {
+            return {modulo(a.expression, *divisor), Range{0, *divisor - 1}};
+        }
+        if (!a.range || a.range->lower < 0) {
             return {};
         }
         if (isa<arith::RemUIOp, arith::RemSIOp>(op)) {

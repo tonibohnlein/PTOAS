@@ -70,9 +70,9 @@ module {
     %c1 = arith.constant 1 : index
     %add = arith.addi %unknown, %c1 {test.scalar_opaque} : index
     %negative = arith.constant -1 : i8
-    %unsigned = arith.extui %negative {test.scalar_opaque} : i8 to i64
+    %unsigned = arith.extui %negative {test.scalar_samples = array<i64: 0,255>} : i8 to i64
     %large = arith.constant 2147483648 : i64
-    %narrow = arith.trunci %large {test.scalar_opaque} : i64 to i32
+    %narrow = arith.trunci %large {test.scalar_samples = array<i64: 0,-2147483648>} : i64 to i32
     return
   }
   func.func @conditional_update(%n: index, %condition: i1) attributes {test.no_region} {
