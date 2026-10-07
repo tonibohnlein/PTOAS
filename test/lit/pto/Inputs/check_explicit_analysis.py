@@ -18,7 +18,8 @@ from check_explicit_reduction import occurrence, access, conflicts, closure, req
 def check_graph(document):
     occurrences = [occurrence(i, item["pipe"], [access(*a) for a in item["accesses"]])
                    for i, item in enumerate(document["occurrences"])]
-    edges = conflicts(occurrences)
+    edges = {(a, b) for a, b in conflicts(occurrences)
+             if occurrences[a]["pipe"] != 0 or occurrences[b]["pipe"] != 0}
     reachable = closure(occurrences, edges)
     for source, row in enumerate(document["event_reachable"]):
         expected = [source == target or target in reachable[source] for target in range(2 * len(occurrences))]
@@ -99,9 +100,9 @@ def main():
             require(seen == len(document["occurrences"]), (name, seen))
             for opname in ("pto.tsetval", "pto.tgetval", "pto.textract", "pto.tmatmul"):
                 require(inserted.stdout.count(opname) == function.count(opname), (name, opname))
-    require(documents[1]["retained"] == [[0,1],[1,2]], documents[1])
+    require(documents[1]["retained"] == [], documents[1])
     require(documents[2]["retained"] == [], documents[2])
-    require(documents[3]["retained"] == [[0,1]], documents[3])
+    require(documents[3]["retained"] == [], documents[3])
     protected = next(d for d in documents if d["function"] == "accumulation")
     require(any(a[3] for item in protected["occurrences"] for a in item["accesses"]), protected)
     require(protected["retained"] == [[1, 2]], protected)

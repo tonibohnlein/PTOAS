@@ -91,6 +91,8 @@ ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, co
         if (!input.accesses().needsOverlapQueries(phases[a], unresolvedBases)) { continue; }
         for (uint32_t b = 0; b < phases.size(); ++b) {
             if (a == b || (b < a && input.accesses().needsOverlapQueries(phases[b], unresolvedBases))) { continue; }
+            if (ptoStorageProtection().protectsScalar(static_cast<uint32_t>(phases[a]->kPipeValue),
+                                                      static_cast<uint32_t>(phases[b]->kPipeValue))) { continue; }
             bool conflict = false;
             for (auto x : input.accesses().effectsFor(phases[a])) {
                 for (auto y : input.accesses().effectsFor(phases[b])) {
@@ -111,7 +113,7 @@ ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, co
         return result;
     }
     llvm::append_range(residual, prerequisites.demands);
-    result.scan = scanStorageLifetimes(result.occurrences, residual);
+    result.scan = scanStorageLifetimes(result.occurrences, residual, ptoStorageProtection());
     if (!result.scan.error.empty()) {
         result.error = result.scan.error;
         return result;

@@ -103,7 +103,7 @@ PeriodicAnalysis analyzeNumericTemplate(const NumericTemplate& input)
     for (uint32_t i = 0; i < count; ++i) {
         payloads.push_back({(*visits)[i].pipe});
     }
-    auto scanned = scanStorageLifetimes(*visits);
+    auto scanned = scanStorageLifetimes(*visits, {}, ptoStorageProtection());
     if (!scanned.error.empty()) {
         return reject("numeric template lifetime scan failed");
     }
@@ -114,6 +114,10 @@ PeriodicAnalysis analyzeNumericTemplate(const NumericTemplate& input)
         }
     }
     for (const auto& [a, b] : input.uniformConflicts) {
+        if (a >= payloads.size() || b >= payloads.size()) {
+            return reject("numeric template conflict has invalid payload reference");
+        }
+        if (ptoStorageProtection().protectsScalar(payloads[a].pipe, payloads[b].pipe)) { continue; }
         records.push_back({a, b, a < b ? 0U : 1U});
         if (a != b) { records.push_back({b, a, 1}); }
     }

@@ -83,7 +83,8 @@ uint64_t distance(const Access& source, const Access& target)
 class Extractor {
 public:
     RotatingExtraction output;
-    explicit Extractor(llvm::ArrayRef<PeriodicPayload> input) : payloads(input) {}
+    Extractor(llvm::ArrayRef<PeriodicPayload> input, StorageProtectionPolicy policy)
+        : storageProtection(policy), payloads(input) {}
     bool run(llvm::ArrayRef<RotatingFragment> fragments)
     {
         const auto maxID = std::numeric_limits<uint32_t>::max();
@@ -111,6 +112,7 @@ public:
         return true;
     }
 private:
+    StorageProtectionPolicy storageProtection;
     llvm::ArrayRef<PeriodicPayload> payloads;
     std::unordered_map<uint32_t, Family> families;
     std::unordered_map<uint64_t, uint32_t> groupPipes;
@@ -185,6 +187,11 @@ private:
     }
     void emit(const Access& source, const Access& target)
     {
+        if (storageProtection.protectsScalar(payloads[source.fragment.payload].pipe,
+                                     payloads[target.fragment.payload].pipe)) {
+            ++output.protectedHazards;
+            return;
+        }
         const auto advance = distance(source, target);
         // Local groups protect one visit; invocation proofs also cover wraps.
         const bool sameScope = advance == 0 || (source.fragment.protectionGroup & invocationProtectionBit);
@@ -242,9 +249,10 @@ private:
 };
 } // namespace
 RotatingExtraction extractRotatingGenerators(llvm::ArrayRef<PeriodicPayload> payloads,
-                                             llvm::ArrayRef<RotatingFragment> fragments)
+                                             llvm::ArrayRef<RotatingFragment> fragments,
+                                             StorageProtectionPolicy protection)
 {
-    Extractor extractor(payloads);
+    Extractor extractor(payloads, protection);
     if (!extractor.run(fragments)) {
         RotatingExtraction failure;
         failure.error = extractor.output.error;

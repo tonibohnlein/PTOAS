@@ -47,7 +47,8 @@ def conflicts(occurrences):
             for atom in modes[a].keys() & modes[b].keys():
                 read_a, write_a, group_a = modes[a][atom]
                 read_b, write_b, group_b = modes[b][atom]
-                protected = (write_a and write_b and group_a != 0 and group_a == group_b
+                protected = (write_a and write_b and group_a != 0 and group_b != 0
+                             and not (group_b & (1 << 62)) and (group_a & ~(1 << 62)) == group_b
                              and first["pipe"] == second["pipe"])
                 if not protected and (write_a and (read_b or write_b) or read_a and write_b):
                     result.add((a, b))
