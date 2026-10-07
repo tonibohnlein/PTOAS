@@ -117,9 +117,8 @@ bool decodeEntries(ArrayAttr raw, int64_t budget, std::vector<Entry>& entries)
     return end == budget;
 }
 } // namespace
-DictionaryAttr encodePeriodicSharedAllocation(const PeriodicAnalysis& analysis, int64_t plan, MLIRContext* context)
+std::optional<PeriodicSharedAssignment> buildPeriodicSharedAssignment(const PeriodicAnalysis& analysis)
 {
-    if (!context || plan < 0) { return {}; }
     bool exact = true;
     std::vector<uint32_t> records;
     std::vector<PeriodicRecord> barriers;
@@ -136,7 +135,16 @@ DictionaryAttr encodePeriodicSharedAllocation(const PeriodicAnalysis& analysis, 
     PeriodicReuseMatrix weights;
     if (!reuseWeights(analysis, *order, records, weights)) { return {}; }
     auto allocation = allocatePeriodicShared(weights);
-    if (allocation.status != PeriodicSharedAllocationStatus::Success || allocation.budget > INT64_MAX) { return {}; }
+    if (allocation.status != PeriodicSharedAllocationStatus::Success) { return std::nullopt; }
+    return PeriodicSharedAssignment{std::move(allocation), std::move(records), exact};
+}
+DictionaryAttr encodePeriodicSharedAllocation(const PeriodicAnalysis& analysis, int64_t plan, MLIRContext* context)
+{
+    if (!context || plan < 0) { return {}; }
+    auto assignment = buildPeriodicSharedAssignment(analysis);
+    if (!assignment || assignment->allocation.budget > INT64_MAX) { return {}; }
+    const auto& allocation = assignment->allocation;
+    const auto& records = assignment->records;
     // A selected edge has shift d(current)+h, with h>=0. Along a lane chain,
     // source ordinals never decrease and each consumer is no later than the
     // next source. Between two active handoffs every intermediate endpoint
@@ -161,7 +169,7 @@ DictionaryAttr encodePeriodicSharedAllocation(const PeriodicAnalysis& analysis, 
     return b.getDictionaryAttr({b.getNamedAttr("version", b.getI64IntegerAttr(2)),
         b.getNamedAttr("plan", b.getI64IntegerAttr(plan)),
         b.getNamedAttr("strategy", b.getStringAttr("shared-cycle-cover")),
-        b.getNamedAttr("order_exact", b.getBoolAttr(exact)),
+        b.getNamedAttr("order_exact", b.getBoolAttr(assignment->orderExact)),
         b.getNamedAttr("budget", b.getI64IntegerAttr(static_cast<int64_t>(allocation.budget))),
         b.getNamedAttr("entries", b.getArrayAttr(entries))});
 }

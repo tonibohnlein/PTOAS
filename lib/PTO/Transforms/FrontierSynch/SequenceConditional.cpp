@@ -35,6 +35,13 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> maskPlan(
             for (auto& member : group.members) {
                 member.active = arena->select(guard, member.active, arena->boolean(false));
             }
+            for (auto& lane : group.lanes) {
+                for (auto* selectors : {&lane.firstSources, &lane.lastTargets}) {
+                    for (auto& selector : *selectors) {
+                        selector.present = arena->select(guard, selector.present, arena->boolean(false));
+                    }
+                }
+            }
         }
     }
     return std::move(*prepared);

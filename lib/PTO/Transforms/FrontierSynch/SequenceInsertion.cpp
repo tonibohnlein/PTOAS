@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/RegionalLaneExports.h"
 #include "mlir/IR/Dominance.h"
 namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(ArrayRef<scf::ForOp> enclosing)
@@ -84,6 +85,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
         if (!prepared->regionalAllocation) { allocationAvailable = false; }
         else {
             for (auto group : prepared->regionalAllocation->groups) {
+                exportConstantRegionalLanes(group);
                 for (auto& member : group.members) {
                     if (member.record > UINT32_MAX - nextRecord ||
                         member.firstSource.type > UINT32_MAX - nextType ||
@@ -93,6 +95,16 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
                     member.record += nextRecord;
                     member.firstSource.type += nextType;
                     member.lastTarget.type += nextType;
+                }
+                for (auto& lane : group.lanes) {
+                    for (auto* selectors : {&lane.firstSources, &lane.lastTargets}) {
+                        for (auto& selector : *selectors) {
+                            if (selector.event.type > UINT32_MAX - nextType) {
+                                fail("regional lane identity overflow"); return failure();
+                            }
+                            selector.event.type += nextType;
+                        }
+                    }
                 }
                 result->regionalAllocation->groups.push_back(std::move(group));
             }
@@ -320,6 +332,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
             {typeOffsets[a.child] + a.type, a.ordinal, PeriodicEventKind::Start, a.visits},
             {typeOffsets[b.child] + b.type, b.ordinal, PeriodicEventKind::Completion, b.visits},
             allocationActive, {}, true}}});
+        exportConstantRegionalLanes(result->regionalAllocation->groups.back());
         auto sourceGuard = emit(endpointGuard(a, retained), aa.after.before);
         auto sourceIdentity = emit(c(0), aa.after.before);
         auto targetIdentity = emit(c(0), ab.before.before);
