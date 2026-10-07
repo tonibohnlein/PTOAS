@@ -8,6 +8,7 @@
 // A reusable lane needs a return path through guaranteed-present occurrences.
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeAllocation.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
+#include "PTO/Transforms/FrontierSynch/PeriodicSharedAllocation.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PeriodicAnalysisInternal.h"
 #include <algorithm>
@@ -96,7 +97,31 @@ struct Palette {
     uint64_t gap = 1;
     SmallVector<int64_t> records;
 };
-DictionaryAttr encode(func::FuncOp function, llvm::ArrayRef<Palette> palettes, int64_t plan)
+// Optional occurrences cannot justify reuse through an absent phase. Check
+// every pair that maps to the same numeric label, not just cycle successors.
+bool certifyShared(const PeriodicReuseMatrix& costs, const PeriodicSharedAllocation& assignment)
+{
+    if (assignment.status != PeriodicSharedAllocationStatus::Success || assignment.budget > INT64_MAX ||
+        assignment.phases.size() != costs.size()) { return false; }
+    for (std::size_t i = 0; i < costs.size(); ++i) {
+        const auto& a = assignment.phases[i];
+        for (std::size_t j = 0; j < costs.size(); ++j) {
+            const auto& b = assignment.phases[j];
+            if (a.cycle != b.cycle) { continue; }
+            if (!a.laneCount || a.laneCount != b.laneCount || !costs[i][j]) { return false; }
+            // Offsets and widths are at most INT64_MAX, so this sum fits uint64.
+            auto gap = (a.offset + a.laneCount - b.offset) % a.laneCount;
+            if (!gap) {
+                if (i != j && *costs[i][j] && (!costs[j][i] || *costs[j][i])) { return false; }
+                gap = a.laneCount;
+            }
+            if (*costs[i][j] > gap) { return false; }
+        }
+    }
+    return true;
+}
+DictionaryAttr encode(func::FuncOp function, llvm::ArrayRef<Palette> palettes, int64_t plan,
+                      const PeriodicSharedAllocation* shared = nullptr)
 {
     Builder b(function.getContext());
     std::set<int64_t> reserved;
@@ -108,7 +133,8 @@ DictionaryAttr encode(func::FuncOp function, llvm::ArrayRef<Palette> palettes, i
         }
     });
     SmallVector<Attribute> groups;
-    for (std::size_t i = 0; i < palettes.size(); ++i) {
+    const auto count = shared && !palettes.empty() ? std::size_t(1) : palettes.size();
+    for (std::size_t i = 0; i < count; ++i) {
         const auto& p = palettes[i];
         SmallVector<int64_t> conflicts, strides(p.records.size(), 0), phases(p.records.size(), 0);
         for (std::size_t j = 0; j < i; ++j) {
@@ -119,13 +145,34 @@ DictionaryAttr encode(func::FuncOp function, llvm::ArrayRef<Palette> palettes, i
             b.getNamedAttr("base", b.getI64IntegerAttr(0)),
             b.getNamedAttr("terms", b.getArrayAttr({b.getDenseI64ArrayAttr({0, 1, 0, int64_t(p.gap), 1})}))});
         SmallVector<Attribute> rules(p.records.size(), rule);
+        SmallVector<int64_t> records(p.records), sources(p.records.size(), p.source);
+        SmallVector<int64_t> targets(p.records.size(), p.target);
+        uint64_t paletteBudget = p.gap;
+        if (shared) {
+            records.clear(); sources.clear(); targets.clear(); rules.clear();
+            paletteBudget = shared->budget;
+            for (std::size_t j = 0; j < palettes.size(); ++j) {
+                const auto& phase = shared->phases[j];
+                auto tuple = b.getDictionaryAttr({b.getNamedAttr("coordinate_count", b.getI64IntegerAttr(1)),
+                    b.getNamedAttr("base", b.getI64IntegerAttr(phase.laneBegin)),
+                    b.getNamedAttr("terms", b.getArrayAttr({b.getDenseI64ArrayAttr(
+                        {0, 1, int64_t(phase.offset), int64_t(phase.laneCount), 1})}))});
+                for (auto record : palettes[j].records) {
+                    records.push_back(record); sources.push_back(palettes[j].source);
+                    targets.push_back(palettes[j].target); rules.push_back(tuple);
+                }
+            }
+            strides.assign(records.size(), 0); phases.assign(records.size(), 0); conflicts.clear();
+        }
         const auto& hidden = reserved;
         SmallVector<int64_t> forbidden(hidden.begin(), hidden.end());
         groups.push_back(b.getDictionaryAttr({
             b.getNamedAttr("source", b.getI64IntegerAttr(p.source)),
             b.getNamedAttr("target", b.getI64IntegerAttr(p.target)),
-            b.getNamedAttr("budget", b.getI64IntegerAttr(p.gap)),
-            b.getNamedAttr("records", b.getDenseI64ArrayAttr(p.records)),
+            b.getNamedAttr("budget", b.getI64IntegerAttr(paletteBudget)),
+            b.getNamedAttr("records", b.getDenseI64ArrayAttr(records)),
+            b.getNamedAttr("sources", b.getDenseI64ArrayAttr(sources)),
+            b.getNamedAttr("targets", b.getDenseI64ArrayAttr(targets)),
             b.getNamedAttr("strides", b.getDenseI64ArrayAttr(strides)),
             b.getNamedAttr("phases", b.getDenseI64ArrayAttr(phases)),
             b.getNamedAttr("tuple_rules", b.getArrayAttr(rules)),
@@ -140,8 +187,11 @@ DictionaryAttr encode(func::FuncOp function, llvm::ArrayRef<Palette> palettes, i
 } // namespace
 DictionaryAttr boundedLifetimeAllocationCertificate(
     func::FuncOp function, RegionExpressions& e, const LifetimeWindowInput& w,
-    llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> demands, int64_t plan)
+    llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> demands, int64_t plan,
+    llvm::ArrayRef<uint32_t> originalRecords)
 {
+    if (!originalRecords.empty() && (originalRecords.size() != demands.size() ||
+        std::set<uint32_t>(originalRecords.begin(), originalRecords.end()).size() != demands.size())) { return {}; }
     if (!w.sites || w.span >= UINT32_MAX || w.sites > UINT32_MAX / (w.span + 1) ||
         w.payloads.size() != w.sites * (w.span + 1) || unconditional.size() != w.sites ||
         (!w.operations.empty() && w.operations.size() != w.payloads.size())) { return {}; }
@@ -180,6 +230,34 @@ DictionaryAttr boundedLifetimeAllocationCertificate(
         palette.gap = std::max(palette.gap, gap);
         palette.records.push_back(r);
     }
+    PeriodicReuseMatrix costs(palettes.size(),
+        std::vector<std::optional<uint64_t>>(palettes.size()));
+    for (std::size_t i = 0; i < palettes.size(); ++i) {
+        for (std::size_t j = 0; j < palettes.size(); ++j) {
+            std::optional<uint64_t> maximum = 0;
+            for (auto record : palettes[i].records) {
+                const auto& edge = demands[record];
+                const auto consumer = edge.target % w.sites, producer = palettes[j].site;
+                // WAIT blocks the consumer's start; SET is after producer issue.
+                // On one pipe native start order suffices, including equality.
+                auto h = w.payloads[consumer].pipe == w.payloads[producer].pipe ?
+                    std::optional<uint64_t>(consumer <= producer ? 0 : 1) : proof.threshold(consumer, producer);
+                uint64_t gap;
+                if (!h || !periodic::add(edge.target / w.sites, *h, gap) || gap > INT64_MAX) {
+                    maximum.reset(); break;
+                }
+                maximum = std::max(*maximum, gap);
+            }
+            costs[i][j] = maximum;
+        }
+    }
+    auto shared = allocatePeriodicShared(costs);
+    if (!originalRecords.empty()) {
+        for (auto& palette : palettes) {
+            for (auto& record : palette.records) { record = originalRecords[record]; }
+        }
+    }
+    if (certifyShared(costs, shared)) { return encode(function, palettes, plan, &shared); }
     return encode(function, palettes, plan);
 }
 } // namespace mlir::pto::frontiersynch

@@ -12,6 +12,71 @@
 #include <set>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
+namespace {
+using Id = RegionExpressions::Id;
+struct Mode {
+    Id read, write;
+    uint64_t group;
+};
+using Witnesses = std::map<std::pair<uint32_t, uint32_t>, std::vector<LifetimeStorageWitness>>;
+// Prefixes contain only accesses strictly between the source and target.
+// A read-modify-write access closes a lifetime; it is never a read-only user.
+class WitnessPrefix {
+public:
+    explicit WitnessPrefix(RegionExpressions& expressions) : e(expressions), noReaders(e.boolean(true)) {}
+    void append(Witnesses& witnesses, uint32_t cell, uint32_t source, uint32_t target,
+                uint32_t sourcePipe, uint32_t targetPipe, Mode a, Mode b, Id generator)
+    {
+        auto sourceRead = e.land(a.read, e.lnot(a.write));
+        auto targetRead = e.land(b.read, e.lnot(b.write));
+        auto add = [&](StorageHazard hazard, uint32_t pipe, Id mode, Id prefix) {
+            auto guard = e.land(generator, e.land(mode, prefix));
+            if (e.constantValue(guard) != 0) {
+                witnesses[{source, target}].push_back({cell, hazard, pipe, guard});
+            }
+        };
+        add(StorageHazard::RAW, targetPipe, e.land(a.write, targetRead), absent(targetPipe));
+        add(StorageHazard::WAR, sourcePipe, e.land(sourceRead, b.write), absent(sourcePipe));
+        add(StorageHazard::WAW, targetPipe, e.land(a.write, b.write), noReaders);
+        auto notReader = e.lnot(targetRead);
+        readers[targetPipe] = e.land(absent(targetPipe), notReader);
+        noReaders = e.land(noReaders, notReader);
+    }
+private:
+    RegionExpressions& e;
+    Id noReaders;
+    std::map<uint32_t, Id> readers;
+    Id absent(uint32_t pipe) const
+    {
+        auto found = readers.find(pipe);
+        return found == readers.end() ? e.boolean(true) : found->second;
+    }
+};
+void retainWitnesses(RegionExpressions& e, const LifetimeWindowInput& input,
+                     const Witnesses& witnesses, LifetimeWindowAnalysis& out)
+{
+    for (auto edge : out.window.retained) {
+        if (edge.source >= input.sites) { continue; }
+        out.sourceDemands.push_back(edge);
+        auto& selected = out.sourceWitnesses.emplace_back();
+        auto found = witnesses.find({edge.source, edge.target});
+        if (found != witnesses.end()) {
+            for (auto witness : found->second) {
+                witness.guard = e.land(edge.guard, witness.guard);
+                if (e.constantValue(witness.guard) != 0) { selected.push_back(witness); }
+            }
+        }
+        for (auto supplied : input.prerequisites) {
+            if (supplied.source == edge.source && supplied.target == edge.target) {
+                auto guard = e.land(edge.guard, supplied.guard);
+                if (e.constantValue(guard) != 0) {
+                    selected.push_back({0, StorageHazard::Supplied, input.payloads[edge.target].pipe, guard});
+                }
+            }
+        }
+    }
+}
+} // namespace
 LifetimeWindowAnalysis analyzeLifetimeWindow(RegionExpressions& e, const LifetimeWindowInput& input)
 {
     LifetimeWindowAnalysis out;
@@ -21,10 +86,6 @@ LifetimeWindowAnalysis analyzeLifetimeWindow(RegionExpressions& e, const Lifetim
         out.error = "bounded window has invalid potential occurrence dimensions";
         return out;
     }
-    struct Mode {
-        RegionExpressions::Id read, write;
-        uint64_t group;
-    };
     std::map<uint32_t, std::map<uint32_t, Mode>> cells;
     for (const auto& access : input.accesses) {
         if (access.payload >= input.payloads.size() || access.read >= e.size() || access.write >= e.size() ||
@@ -52,6 +113,7 @@ LifetimeWindowAnalysis analyzeLifetimeWindow(RegionExpressions& e, const Lifetim
     // carries readiness forward and native start order carries release forward.
     // Arbitrary pair exemptions would not justify the no-writer test below.
     std::vector<GuardedRankEdge> generators = input.prerequisites;
+    Witnesses witnesses;
     auto sameOperation = [&](uint32_t a, uint32_t b) {
         return !input.operations.empty() && input.operations[a] && input.operations[a] == input.operations[b];
     };
@@ -67,6 +129,7 @@ LifetimeWindowAnalysis analyzeLifetimeWindow(RegionExpressions& e, const Lifetim
         }
         for (auto a = uses.begin(); a != uses.end(); ++a) {
             auto noWriter = e.boolean(true);
+            WitnessPrefix prefix(e);
             for (auto b = std::next(a); b != uses.end(); ++b) {
                 auto [ar, aw, ag] = a->second;
                 auto [br, bw, bg] = b->second;
@@ -84,7 +147,11 @@ LifetimeWindowAnalysis analyzeLifetimeWindow(RegionExpressions& e, const Lifetim
                     // readiness/release; resets never consume protection.
                     conflict = e.land(conflict, e.lnot(e.land(aw, bw)));
                 }
-                generators.push_back({a->first, b->first, e.land(conflict, noWriter)});
+                auto generator = e.land(conflict, noWriter);
+                generators.push_back({a->first, b->first, generator});
+                if (plain && a->first < input.sites) {
+                    prefix.append(witnesses, cell, a->first, b->first, p, q, a->second, b->second, generator);
+                }
                 // Simultaneous envelopes do not form a writer chain. As in
                 // finite guarded analysis, keep raw pairs for such cells.
                 if (plain) {
@@ -99,11 +166,7 @@ LifetimeWindowAnalysis analyzeLifetimeWindow(RegionExpressions& e, const Lifetim
     if (!out.error.empty()) {
         return out;
     }
-    for (auto edge : out.window.retained) {
-        if (edge.source < input.sites) {
-            out.sourceDemands.push_back(edge);
-        }
-    }
+    retainWitnesses(e, input, witnesses, out);
     return out;
 }
 RefreshCertificate certifyRotatingRefresh(

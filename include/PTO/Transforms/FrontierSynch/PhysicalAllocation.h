@@ -22,7 +22,9 @@ inline constexpr llvm::StringLiteral CyclicAllocationAttr = "pto.cyclic_allocati
 DictionaryAttr encodeCyclicAllocation(const PeriodicAllocation& allocation, int64_t planId, MLIRContext* context);
 // A source-tuple rule indexes one certified palette without changing matching.
 // Coordinate zero is the logical source identity; subsequent coordinates are
-// source enclosing visits, excluding the original-record selector operand.
+// source enclosing visits or producer-certified derived selectors, excluding
+// the original-record selector operand. A derived selector must evaluate
+// identically at both endpoints and cannot stand in for a regional visit.
 struct PhysicalCoordinateTerm {
     uint64_t coordinate = 0, stride = 0, phase = 0, modulus = 1, scale = 1;
 };

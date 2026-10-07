@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent closure oracle and actual-IR insertion checks for finite overlays.
 #include "PTO/Transforms/FrontierSynch/FiniteOverlayInsertion.h"
+#include "PTO/Transforms/FrontierSynch/FiniteOverlayAllocation.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
 #include "SyncLogicalInsertionChecks.h"
@@ -120,6 +121,53 @@ bool valuation(unsigned mask, bool middle, uint64_t& checked)
     auto wrongSort = fs::analyzeFiniteOverlay(base, {{event(1, zero), event(4, zero), zero}}, order);
     return !backward.error.empty() && !wrongSort.error.empty();
 }
+bool allocationMetadata()
+{
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    const auto zero = arena->constant(0), yes = arena->boolean(true);
+    fs::FiniteOverlayAnalysis analysis;
+    analysis.regional.expressions = arena;
+    analysis.regional.anchors.resize(2); analysis.regional.occurrenceLoops.resize(2);
+    analysis.demands.push_back({{0, zero, fs::PeriodicEventKind::Completion},
+        {1, zero, fs::PeriodicEventKind::Start}, yes});
+    analysis.retained.push_back(yes);
+    fs::PreparedLogicalPlan plan(0);
+    plan.independentPieces = plan.groupedFamilies = plan.nestedIdentities = true;
+    for (uint32_t record : {7U, 9U}) {
+        fs::EndpointFamily family;
+        family.id = record; family.sourcePipe = 1; family.targetPipe = 2;
+        family.members.push_back({record, 0, 1, {}, {}});
+        plan.families.push_back(std::move(family));
+        for (auto kind : {fs::LogicalCommandKind::Set, fs::LogicalCommandKind::Wait}) {
+            fs::PreparedLogicalEndpoint endpoint{nullptr, kind, 1, 2, 7, {}, {}};
+            endpoint.records = {record};
+            endpoint.memberCoordinates.resize(record == 7 ? 2 : 1);
+            plan.endpoints.push_back(std::move(endpoint));
+        }
+    }
+    plan.regionalAllocation = std::make_shared<fs::RegionalAllocationSummary>();
+    fs::RegionalAllocationGroup base;
+    base.sourcePipe = 1; base.targetPipe = 2; base.budget = 2;
+    fs::RegionalAllocationMember member;
+    member.record = 7; member.active = yes;
+    member.firstSource = {0, zero, fs::PeriodicEventKind::Start};
+    member.lastTarget = {1, arena->constant(8), fs::PeriodicEventKind::Completion};
+    member.tupleRule = fs::PhysicalTupleRule{2, 0, {{1, 1, 0, 2, 1}}};
+    base.members.push_back(member); plan.regionalAllocation->groups.push_back(base);
+    std::vector<std::optional<uint32_t>> ids{9};
+    auto result = fs::finiteOverlayAllocation(analysis, plan, ids);
+    if (!result || result->groups.size() != 2 || result->groups[0].members[0].record != 7 ||
+        result->groups[0].members[0].lastTarget.ordinal != member.lastTarget.ordinal ||
+        result->groups[0].members[0].tupleRule->terms[0].coordinate != 1 ||
+        result->groups[1].members[0].record != 9 || !result->groups[1].members[0].singletonHandoff ||
+        result->groups[1].lanes.size() != 1 || result->groups[1].members[0].tupleRule->coordinateCount != 1 ||
+        plan.regionalAllocation->groups.size() != 1) { return false; }
+    ids[0] = 7; // Namespace IDs cannot substitute for the original record.
+    if (fs::finiteOverlayAllocation(analysis, plan, ids)) { return false; }
+    ids[0] = 9;
+    plan.regionalAllocation.reset();
+    return !fs::finiteOverlayAllocation(analysis, plan, ids);
+}
 std::string render(func::FuncOp function)
 {
     std::string text;
@@ -130,6 +178,7 @@ std::string render(func::FuncOp function)
 } // namespace
 int runFiniteOverlayChecks()
 {
+    if (!allocationMetadata()) { llvm::errs() << "finite overlay allocation metadata failed\n"; return 1; }
     uint64_t checked = 0;
     for (unsigned mask = 0; mask < 16; ++mask) {
         for (bool middle : {false, true}) {
@@ -187,12 +236,21 @@ LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp function, pto::GMAlia
     std::string error = overlay.error;
     auto plan = fs::prepareFiniteOverlayInsertion(function, overlay, error);
     const bool unchanged = before == render(function);
-    const bool noPhysicalCertificate = succeeded(plan) && !(**plan).allocationCertificate;
-    const bool accepted = unchanged && noPhysicalCertificate && succeeded(plan) &&
+    const bool physicalCertificate = succeeded(plan) && static_cast<bool>((**plan).allocationCertificate);
+    const bool accepted = unchanged && physicalCertificate && succeeded(plan) &&
         succeeded(fs::insertLogicalSynchronization(function, **plan)) && succeeded(verify(function));
     llvm::json::Object report{{"accepted", accepted}, {"unchanged_before_insertion", unchanged},
-        {"no_physical_certificate", noPhysicalCertificate}, {"error", error}, {"base_error", baseError}};
-    if (accepted) { report["trace"] = traceStructuredLogicalInsertion(function, input.instructions()); }
+        {"physical_certificate", physicalCertificate}, {"error", error}, {"base_error", baseError}};
+    if (accepted) {
+        report["trace"] = traceStructuredLogicalInsertion(function, input.instructions());
+        const bool allocated = succeeded(fs::allocatePhysicalEventIds(function, {0, 1, 2, 3, 4, 5}));
+        report["allocated"] = allocated;
+        if (allocated) {
+            pto::SyncInput physicalInput(policy);
+            if (failed(physicalInput.build(function))) { return failure(); }
+            report["physical"] = traceStructuredLogicalInsertion(function, physicalInput.instructions());
+        }
+    }
     llvm::outs() << llvm::json::Value(std::move(report)) << "\n";
     return success(accepted);
 }

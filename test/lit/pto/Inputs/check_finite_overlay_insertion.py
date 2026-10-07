@@ -13,6 +13,7 @@ import sys
 import tempfile
 from check_logical_insertion import closure_with_commands
 from check_periodic_demands import closure, native
+from check_finite_allocation import physical_check
 
 
 def main():
@@ -33,7 +34,8 @@ def main():
             assert run.returncode == 0, run.stderr + run.stdout
             report = json.loads(run.stdout)
             assert report["accepted"] and report["unchanged_before_insertion"], report
-            assert report["no_physical_certificate"], report
+            assert report["physical_certificate"] and report["allocated"], report
+            physical_check(report, range(6))
             assert not report["trace"]["error"], report
             events = report["trace"]["events"]
             payloads = [event for event in events if event["kind"] == "payload"]

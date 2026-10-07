@@ -15,7 +15,8 @@ namespace mlir::pto::frontiersynch {
 // unconditional flags certify that those sites execute in every iteration;
 // numeric access modes, cell identities and operation identities repeat under
 // that renaming. Exact sourceDemands have at most one active partner per source
-// occurrence and destination pipe. Record numbers follow sourceDemands order.
+// occurrence and destination pipe. Record numbers follow sourceDemands order
+// unless originalRecords supplies their stable enclosing-plan IDs.
 // Uses only guaranteed intermediate occurrences to certify optional endpoints.
 // Applies to one whole-loop invocation. Repeated invocation requires a separate
 // visit-qualified lifetime proof; this certificate is not a regional export.
@@ -23,6 +24,7 @@ namespace mlir::pto::frontiersynch {
 // are sufficient and may exceed the minimum required hardware capacity.
 DictionaryAttr boundedLifetimeAllocationCertificate(
     func::FuncOp function, RegionExpressions& expressions, const LifetimeWindowInput& window,
-    llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> sourceDemands, int64_t plan);
+    llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> sourceDemands, int64_t plan,
+    llvm::ArrayRef<uint32_t> originalRecords = {});
 } // namespace mlir::pto::frontiersynch
 #endif

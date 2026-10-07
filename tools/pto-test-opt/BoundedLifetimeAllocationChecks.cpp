@@ -80,6 +80,19 @@ bool palettes(mlir::func::FuncOp function)
     auto empty = fs::boundedLifetimeAllocationCertificate(function, e, w, {0, 0}, {}, 0);
     return empty && empty.getAs<mlir::ArrayAttr>("groups").empty();
 }
+bool sharedDirections(mlir::func::FuncOp function)
+{
+    fs::RegionExpressions e;
+    auto w = window(e, 1);
+    std::vector<fs::GuardedRankEdge> demands{{0, 1, e.boolean(true)}, {1, 2, e.boolean(true)}};
+    auto certificate = fs::boundedLifetimeAllocationCertificate(function, e, w, {1, 1}, demands, 0);
+    if (budget(certificate) != 1) { return false; }
+    auto group = mlir::cast<mlir::DictionaryAttr>(certificate.getAs<mlir::ArrayAttr>("groups")[0]);
+    auto sources = group.getAs<mlir::DenseI64ArrayAttr>("sources");
+    auto targets = group.getAs<mlir::DenseI64ArrayAttr>("targets");
+    return sources && targets && sources.asArrayRef() == llvm::ArrayRef<int64_t>({0, 1}) &&
+        targets.asArrayRef() == llvm::ArrayRef<int64_t>({1, 0});
+}
 bool protectedModes(mlir::func::FuncOp function)
 {
     fs::RegionExpressions e;
@@ -110,7 +123,7 @@ int runBoundedLifetimeAllocationChecks()
     mlir::Builder builder(&context);
     mlir::OwningOpRef<mlir::func::FuncOp> function(mlir::func::FuncOp::create(
         builder.getUnknownLoc(), "bounded_allocation_checks", builder.getFunctionType({}, {})));
-    if (!ordinary(*function) || !palettes(*function) || !protectedModes(*function)) {
+    if (!ordinary(*function) || !palettes(*function) || !sharedDirections(*function) || !protectedModes(*function)) {
         llvm::errs() << "bounded lifetime allocation certificate check failed\n";
         return 1;
     }

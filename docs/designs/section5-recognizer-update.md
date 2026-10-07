@@ -356,3 +356,49 @@ builds and links passed. The compliance prefilter reported 55 nested-parenthesis
 brace matches; all corresponding bodies are braced, and line-width findings
 were corrected. No full static-analyzer or device claim is made here. The
 pinned corpus campaign remains milestone 7.
+
+### Milestone 6
+
+Bounded-lifetime analysis retains guarded sparse-generator provenance: physical
+window cell, RAW/WAR/WAW or supplied prerequisite, and the reader/consumer pipe.
+The witnesses distinguish first readers, last readers and reader-free writer
+pairs. RMW accesses remain writers; simultaneous macro envelopes do not acquire
+an invented storage chain. Witness predicates include the exact retention guard.
+
+Whole-function insertion maps each window cell through its common rotating
+storage renaming. A deterministic available witness selects a physical-cell/pipe
+lane. The same source-derived lane selector is evaluated at SET and WAIT without
+changing the original source ordinal or record identity. Incomplete witness
+coverage remains on the guaranteed-skeleton allocation strategy, with stable
+original record IDs and disjoint shared-pool palettes. Additional selector
+availability is checked before mutation; failure retries the original logical
+endpoint recipe. These selectors are not exported as enclosing loop coordinates.
+
+The guaranteed-skeleton strategy now proposes shared cycle covers and validates
+every potentially colliding phase pair directly. Skipped optional handoffs cannot
+provide fictitious reuse. Same-pipe WAIT-to-SET reuse uses native start order;
+cross-pipe reuse requires its guaranteed return path. Both strategies exclude
+hidden macro IDs globally and are sufficient assignments, not minimum-capacity
+claims. No scarcity repair or additional ordering is inserted.
+
+Finite overlays preserve the filtered base's typed allocation summary and original
+record formulas. Each retained finite crossing exports one guarded handoff lane;
+allocation uses the augmented region's queries. Original nested occurrence frames
+and divisors can bind finite endpoints when the base supplies filtered recipes.
+The built-in sequence/repeated adapters still do not supply general nested
+filtered recipes. This is an export gap, not a newly rejected mathematical class.
+Likewise, bounded-window rank rows are not advertised as global query profiles.
+
+M6 validation: 1,280 independent presence/read/write valuations checked retained
+witnesses; 784 handoffs checked physical storage lanes against independent cell
+lifetimes. Composite tests cover partially witnessed records, original-ID
+remapping, mixed tuple arities and duplicate rejection. Ten bounded command
+traces and ten finite/compact overlay traces passed logical closure and shared
+physical-ID reuse checks. Nested supplied guards were evaluated over every
+coordinate of a 3-by-4 example including a divisor and phase guard. The existing
+regional expression, repeated-query and allocation regressions passed. Two
+independent reviewers accepted the final production changes and composite path.
+Serial incremental builds and both tool links passed; two test-only include/
+lambda compilation issues were corrected. The changed-code prefilter's 48 brace
+matches were verified to have braced bodies; line-width and diff checks passed.
+No full corpus or device campaign was run in this milestone.

@@ -93,6 +93,8 @@ add_llvm_executable(pto-sync-input-test
   GeneralArithmeticAllocationChecks.cpp
   MixedStrideChecks.cpp
   PhysicalExecutedCounterChecks.cpp
+  StorageLaneAllocationChecks.cpp
+  BoundedLifetimeProvenanceChecks.cpp
   BoundedLifetimeAllocationChecks.cpp
   ArithmeticStorageSelectorChecks.cpp
   ArithmeticDemandChecks.cpp

@@ -337,12 +337,20 @@ int runGuardedRankChecks();
 int runGeneralArithmeticAllocationChecks();
 int runMixedStrideChecks();
 int runPhysicalExecutedCounterChecks();
+int runStorageLaneAllocationChecks();
+int runBoundedLifetimeProvenanceChecks();
 int runBoundedLifetimeAllocationChecks();
 int runSharedHandoffAllocationChecks();
 int runPeriodicSharedAllocationChecks();
 bool runRepeatedReadOnlyStorageChecks(MLIRContext*);
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
 int main(int argc, char **argv) {
+  if (argc == 2 && StringRef(argv[1]) == "--storage-lane-checks") {
+    return runStorageLaneAllocationChecks();
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--bounded-provenance-checks") {
+    return runBoundedLifetimeProvenanceChecks();
+  }
   if (argc == 2 && StringRef(argv[1]) == "--physical-executed-counter-checks") {
     return runPhysicalExecutedCounterChecks();
   }

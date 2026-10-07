@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/FiniteOverlayInsertion.h"
+#include "PTO/Transforms/FrontierSynch/FiniteOverlayAllocation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
 #include <map>
@@ -16,9 +17,6 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(
     std::string& error)
 {
     const auto& base = analysis.base;
-    if (llvm::any_of(base.outerLoops, [](const auto& loops) { return !loops.empty(); })) {
-        error = "nested overlay endpoint binding is not implemented yet"; return failure();
-    }
     if (!function || !analysis.error.empty() || !analysis.retainBase || !base.prepareFiltered ||
         !base.expressions || analysis.demands.size() != analysis.retained.size() ||
         base.anchors.size() != base.occurrenceLoops.size()) {
@@ -37,7 +35,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(
     if (failed(supplied)) { error = "finite overlay base endpoint refinement failed"; return failure(); }
     auto plan = std::move(*supplied);
     plan->allocationCertificate = {};
-    plan->regionalAllocation.reset(); // Added overlay records need their own reuse proof.
+    // Retain the typed base proof, then rebuild the certificate against augmented queries.
     auto& arena = *base.expressions;
     using Expr = RegionExpressions::Id;
     std::map<Operation*, Block*> blocks;
@@ -63,37 +61,57 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(
             if (endpoint.record < 0 || static_cast<uint64_t>(endpoint.record) >= nextRecord) {
                 error = "finite overlay base has invalid record identity"; return failure();
             }
-            if (!endpoint.memberCoordinates.empty()) {
+            if (plan->groupedFamilies && !endpoint.memberCoordinates.empty()) {
                 error = "finite overlay needs a filtered base with ungrouped or independent recipes"; return failure();
             }
             endpoint.records = {static_cast<uint32_t>(endpoint.record)};
             if (endpoint.kind != LogicalCommandKind::Barrier) {
                 auto member = emit(arena.constant(endpoint.record), endpoint.before);
                 if (failed(member)) { return failure(); }
-                endpoint.memberCoordinates.push_back(*member);
+                endpoint.memberCoordinates.insert(endpoint.memberCoordinates.begin(), *member);
             }
         }
     }
     plan->groupedFamilies = true;
     plan->independentPieces = true;
+    auto ordinal = [&](scf::ForOp loop) -> std::optional<Expr> {
+        APInt step;
+        if (!loop || !matchPattern(loop.getStep(), m_ConstantInt(&step)) || !step.isSignedIntN(64) ||
+            step.getSExtValue() <= 0 || !loop.getInductionVar().getType().isIndex()) { return std::nullopt; }
+        return arena.div(arena.sub(arena.input(loop.getInductionVar()), arena.input(loop.getLowerBound())),
+            arena.constant(step.getSExtValue()));
+    };
     auto cutGuard = [&](RegionalEvent event, Expr retained) -> std::optional<Expr> {
-        if (event.type >= base.anchors.size()) { return std::nullopt; }
+        if (!validRegionalEvent(base, event)) { return std::nullopt; }
+        if (base.endpointEventGuard) {
+            auto guard = base.endpointEventGuard(event);
+            if (!guard) { return std::nullopt; }
+            retained = arena.land(retained, *guard);
+        }
         const auto& anchor = base.anchors[event.type];
         auto loop = base.occurrenceLoops[event.type];
         if (loop) {
-            APInt step;
-            if (!matchPattern(loop.getStep(), m_ConstantInt(&step)) || !step.isSignedIntN(64) ||
-                step.getSExtValue() <= 0 || !loop.getInductionVar().getType().isIndex()) { return std::nullopt; }
-            auto current = arena.div(arena.sub(arena.input(loop.getInductionVar()),
-                arena.input(loop.getLowerBound())), arena.constant(step.getSExtValue()));
-            retained = arena.land(retained, arena.eq(current, event.ordinal));
+            auto current = ordinal(loop);
+            if (!current) { return std::nullopt; }
+            retained = arena.land(retained, arena.eq(*current, event.ordinal));
         } else { retained = arena.land(retained, arena.eq(event.ordinal, arena.constant(0))); }
+        if (!base.outerLoops.empty()) {
+            for (std::size_t i = 0; i < event.visits.size(); ++i) {
+                auto current = ordinal(base.outerLoops[event.type][i]);
+                if (!current) { return std::nullopt; }
+                if (!base.outerDivisors.empty()) {
+                    current = arena.div(*current, arena.constant(base.outerDivisors[event.type][i]));
+                }
+                retained = arena.land(retained, arena.eq(*current, event.visits[i]));
+            }
+        }
         for (auto coordinate : anchor.coordinates) {
             retained = arena.land(retained, arena.eq(arena.input(coordinate.loop.getInductionVar()),
                                                       arena.constant(coordinate.induction)));
         }
         return retained;
     };
+    std::vector<std::optional<uint32_t>> overlayRecords(analysis.demands.size());
     for (std::size_t i = 0; i < analysis.demands.size(); ++i) {
         auto retained = analysis.retained[i];
         if (arena.constantValue(retained) == 0) { continue; }
@@ -104,6 +122,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(
         if (!a.phase || !b.phase) { error = "finite overlay has no payload anchors"; return failure(); }
         auto p = static_cast<uint32_t>(a.phase->kPipeValue), q = static_cast<uint32_t>(b.phase->kPipeValue);
         auto record = static_cast<uint32_t>(nextRecord++);
+        overlayRecords[i] = record;
         EndpointFamily family;
         family.id = record; family.sourcePipe = p; family.targetPipe = q; family.local = p == q;
         family.sourceCut = a.after; family.targetCut = b.before;
@@ -146,14 +165,15 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(
         endpoint.record = namespaces.at(records.at(endpoint.records.front())); endpoint.piece = piece++;
     }
     if (!arena.constructionError().empty()) { error = arena.constructionError(); return failure(); }
+    plan->regionalAllocation = finiteOverlayAllocation(analysis, *plan, overlayRecords);
+    plan->allocationCertificate = regionalAllocationCertificate(analysis.regional, *plan);
     return plan;
 }
 RegionalAnalysis finiteOverlayRegionalResult(func::FuncOp function,
     const FiniteOverlayAnalysis& analysis)
 {
     auto result = analysis.regional;
-    if (!function || !analysis.error.empty() || !analysis.base.prepareFiltered || !analysis.retainBase ||
-        llvm::any_of(analysis.base.outerLoops, [](const auto& loops) { return !loops.empty(); })) {
+    if (!function || !analysis.error.empty() || !analysis.base.prepareFiltered || !analysis.retainBase) {
         return result;
     }
     auto owned = std::make_shared<FiniteOverlayAnalysis>(analysis);
