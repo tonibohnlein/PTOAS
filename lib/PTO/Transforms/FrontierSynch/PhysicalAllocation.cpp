@@ -113,7 +113,9 @@ LogicalResult readFamily(func::FuncOp function, DictionaryAttr item, const Recor
             continue;
         }
         if (allocation->sourcePipe != *source || allocation->targetPipe != *target || allocation->ids.empty() ||
-            (!nested && allocation->tupleRule)) {
+            (!nested && allocation->tupleRule &&
+             (allocation->tupleRule->coordinateCount != 1 ||
+              !validPhysicalTupleRule(*allocation->tupleRule, allocation->ids.size())))) {
             return function.emitError("endpoint-family member has invalid pipes, palette, or source-tuple rule");
         }
         family.members.push_back(allocation);
@@ -426,7 +428,9 @@ FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const Ph
         }
         for (auto record : piece.records) {
             const auto* member = records.lookup(record);
-            if (!member || member->ids.empty() || (!nested && member->tupleRule)) {
+            if (!member || member->ids.empty() || (!nested && member->tupleRule &&
+                (member->tupleRule->coordinateCount != 1 ||
+                 !validPhysicalTupleRule(*member->tupleRule, member->ids.size())))) {
                 op->emitError("executable piece has inconsistent member allocations");
                 return WalkResult::interrupt();
             }
@@ -515,6 +519,12 @@ FailureOr<SmallVector<Endpoint>> preflight(func::FuncOp function, const Physical
         }
         Endpoint endpoint{op, allocation, {}};
         for (const auto* member : family.members) {
+            if (member->ids.empty() || (member->tupleRule &&
+                (member->tupleRule->coordinateCount != 1 ||
+                 !validPhysicalTupleRule(*member->tupleRule, member->ids.size())))) {
+                op->emitError("flat logical endpoint requires a one-coordinate allocation rule");
+                return WalkResult::interrupt();
+            }
             auto& count = counts[member->record];
             unsigned& occurrences = publish ? count.first : count.second;
             if (++occurrences != 1) {

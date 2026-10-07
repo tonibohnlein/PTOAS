@@ -338,6 +338,7 @@ int runGeneralArithmeticAllocationChecks();
 int runBoundedLifetimeAllocationChecks();
 int runSharedHandoffAllocationChecks();
 int runPeriodicSharedAllocationChecks();
+bool runRepeatedReadOnlyStorageChecks(MLIRContext*);
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
 int main(int argc, char **argv) {
   if (argc == 2 && StringRef(argv[1]) == "--periodic-shared-allocation-checks") {
@@ -440,6 +441,10 @@ int main(int argc, char **argv) {
   DialectRegistry dialects;
   dialects.insert<pto::PTODialect, func::FuncDialect, arith::ArithDialect, scf::SCFDialect, LLVM::LLVMDialect>();
   MLIRContext context(dialects);
+  if (argc == 2 && StringRef(argv[1]) == "--repeated-readonly-storage-checks") {
+    context.disableMultithreading();
+    return runRepeatedReadOnlyStorageChecks(&context) ? 0 : 1;
+  }
   context.disableMultithreading();
   const bool hasOption = rotatingAnalysis || explicitAnalysis || expectFailure || capabilities || phaseIndex ||
                          storageEffects || recognition || numericAnalysis || insertLogical ||

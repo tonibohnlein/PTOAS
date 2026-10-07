@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Common exact regional contract. All expressions belong to the supplied arena.
 #include "RepeatedRegionInternal.h"
+#include "RepeatedReadOnlyStorage.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 std::string invalidRepeatedFrames(const RegionalAnalysis& body)
@@ -51,8 +52,7 @@ RepeatedRegionAnalysis repeatInvariantRegion(func::FuncOp function, scf::ForOp l
 {
     RepeatedRegionAnalysis result;
     if (body.storageSelectors || !body.symbolicStorageEffects.empty()) {
-        result.error = "nested symbolic storage requires an ownership-lifting adapter";
-        return result;
+        return repeatSymbolicStorageRegion(function, loop, std::move(body), trips);
     }
     if (!function || !loop || loop->getParentOfType<func::FuncOp>() != function || !body.expressions ||
         trips >= body.expressions->size() || body.expressions->isBoolean(trips)) {

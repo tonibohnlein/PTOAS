@@ -181,13 +181,17 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
         body.prepare = {}; body.prepareWithVisits = {}; body.prepareFiltered = {};
         body.capabilities.endpointRecipes = false;
     }
+    // The interval exporter below reconstructs finite boundaries from each
+    // phase. It does not yet clip symbolic byte callbacks or retain the finite
+    // atoms materialized by invariant repetition; admitting them would export
+    // visits outside [begin, trips) or lose persistent-writer bridges.
+    if (body.storageSelectors || !body.symbolicStorageEffects.empty()) {
+        failure.error = "phased symbolic storage requires interval-aware selector and boundary lifting";
+        return failure;
+    }
     auto count = e.add(periods, e.select(e.lt(e.constant(0), remainder), e.constant(1), e.constant(0)));
     RepeatedRegionAnalysis result;
     if (maximumLength && *maximumLength <= 1) {
-        if (body.storageSelectors || !body.symbolicStorageEffects.empty()) {
-            failure.error = "singleton symbolic storage requires an ownership-lifting adapter";
-            return failure;
-        }
         // Every present endpoint has the same absolute outer visit, hence the
         // same period. Preserve its coordinates but build no wrap graph: the
         // interval masks below exclude all other periods and phases.

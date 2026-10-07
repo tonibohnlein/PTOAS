@@ -277,6 +277,29 @@ def mixed_palette_checks(optimizer, path, source):
     return checked
 
 
+def legacy_tuple_rejection(optimizer, path):
+    """A legacy flat endpoint cannot supply an enclosing-visit coordinate."""
+    path.write_text('''module {
+  func.func @legacy(%ordinal: index) attributes {
+    pto.finite_allocation = {version = 2 : i64, plan = 0 : i64, kind = "finite",
+      strategy = "regional-palettes", groups = [
+      {source = 4 : i64, target = 3 : i64, budget = 2 : i64,
+       records = array<i64: 0>, strides = array<i64: 0>, phases = array<i64: 0>,
+       conflicts = array<i64>, tuple_rules = [
+        {coordinate_count = 2 : i64, base = 0 : i64,
+         terms = [array<i64: 1, 1, 0, 2, 1>]}]}]},
+    pto.endpoint_families = {version = 1 : i64, plan = 0 : i64}
+  } {
+    pto.logical_set [<PIPE_MTE2>, <PIPE_MTE1>] plan 0 record 0 ordinal %ordinal
+    pto.logical_wait [<PIPE_MTE2>, <PIPE_MTE1>] plan 0 record 0 ordinal %ordinal
+    return
+  }
+}''')
+    result = opt(optimizer, path, ["--pto-frontier-allocate=eligible-ids=0,1"], success=False)
+    assert "one-coordinate allocation rule" in result.stderr, result.stderr
+    return 1
+
+
 def main():
     optimizer = shutil.which(sys.argv[1])
     assert optimizer, "test optimizer must be available"
@@ -288,8 +311,9 @@ def main():
         piece_phases, piece_rejected = piece_checks(optimizer, path, source)
         tuple_phases, tuple_rejected = tuple_checks(optimizer, path, source)
         mixed_phases = mixed_palette_checks(optimizer, path, source)
+        legacy_rejected = legacy_tuple_rejection(optimizer, path)
     print(f"family allocation: {phases + piece_phases + tuple_phases + mixed_phases} phase evaluations, "
-          f"{rejected + piece_rejected + tuple_rejected} rejected interfaces")
+          f"{rejected + piece_rejected + tuple_rejected + legacy_rejected} rejected interfaces")
 
 
 if __name__ == "__main__":

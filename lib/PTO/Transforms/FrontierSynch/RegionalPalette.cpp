@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Reserve contiguous child palettes using their certified lifetime envelopes.
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
+#include "RegionalConstantPalette.h"
+#include "PTO/Transforms/FrontierSynch/RegionalLaneExports.h"
 #include <algorithm>
 #include <map>
 #include <numeric>
@@ -21,12 +23,22 @@ std::shared_ptr<RegionalAllocationSummary> coalesceRegionalAllocation(
     std::set<uint32_t> records;
     for (const auto& group : groups) {
         if (!group.budget || group.budget > INT64_MAX || group.members.empty()) { return {}; }
+        if (!group.lanes.empty() && group.lanes.size() != group.budget) { return {}; }
         for (const auto& member : group.members) {
             if (!records.insert(member.record).second || !validRegionalEvent(region, member.firstSource) ||
                 !validRegionalEvent(region, member.lastTarget) || member.active >= e.size() ||
                 !e.isBoolean(member.active) ||
                 (member.tupleRule && !validPhysicalTupleRule(*member.tupleRule, group.budget))) { return {}; }
         }
+    }
+    // Preserve dynamic lane mappings and mixed cycles. Constant formulas can
+    // still share across directions using pairwise command-lifetime proofs.
+    if (llvm::any_of(groups, [&](const auto& group) {
+        return !group.lanes.empty() || llvm::any_of(group.members, [&](const auto& member) {
+            return regionalAllocationDirection(group, member) != std::make_pair(group.sourcePipe, group.targetPipe);
+        });
+    })) {
+        return coalesceConstantRegionalAllocation(region, input);
     }
     using EventKey = std::tuple<uint32_t, RegionExpressions::Id, PeriodicEventKind,
                                 std::vector<RegionExpressions::Id>>;
@@ -97,6 +109,7 @@ std::shared_ptr<RegionalAllocationSummary> coalesceRegionalAllocation(
             combined.members.push_back(std::move(member));
         }
     }
+    for (auto& group : result->groups) { exportConstantRegionalLanes(group); }
     return result;
 }
 } // namespace mlir::pto::frontiersynch

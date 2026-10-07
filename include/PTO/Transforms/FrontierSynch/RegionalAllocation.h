@@ -20,6 +20,15 @@ struct RegionalAllocationMember {
     // At most one paired handoff per invocation of the supplying region.
     // Repeating the region invalidates this property even for a constant lane.
     bool singletonHandoff = false;
+    // Mixed-direction palettes carry the actual direction on each record.
+    // Missing values preserve the legacy group direction.
+    std::optional<uint32_t> sourcePipe, targetPipe;
+};
+struct RegionalAllocationLane {
+    // Guarded per-phase bounds for one certified lane. Candidates may coexist;
+    // a reuse proof must cover every present last/first pair. Coordinates are
+    // meaningful only under their selector presence in the common arena.
+    std::vector<RegionalSelector> firstSources, lastTargets;
 };
 // Internal reuse within a palette is already certified. Different palettes may
 // share IDs only when every pair of their active lifetime envelopes is ordered.
@@ -27,10 +36,15 @@ struct RegionalAllocationGroup {
     uint32_t sourcePipe = 0, targetPipe = 0;
     uint64_t budget = 0;
     std::vector<RegionalAllocationMember> members;
+    // Index is the member formula's local lane. Complete iff size == budget;
+    // empty means unavailable. Members/record IDs are never duplicated to
+    // obtain a lane view. An empty selector pair denotes an unused lane.
+    std::vector<RegionalAllocationLane> lanes;
 };
 struct RegionalAllocationSummary { std::vector<RegionalAllocationGroup> groups; };
-// Preserve certified child rules while placing compatible palettes in shared
-// direction-local offsets. Null means no complete typed result was produced.
+// Preserve certified child rules while combining compatible palette formulas.
+// These offsets are logical; physical IDs come from the single shared pool.
+// Null means no complete typed result was produced.
 std::shared_ptr<RegionalAllocationSummary> coalesceRegionalAllocation(
     const RegionalAnalysis& region, const RegionalAllocationSummary& allocation);
 // For an unconditional fixed skeleton: every type is present in each period.

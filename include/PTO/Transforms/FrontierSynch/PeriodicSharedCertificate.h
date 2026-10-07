@@ -9,8 +9,17 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_PERIODICSHAREDCERTIFICATE_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_PERIODICSHAREDCERTIFICATE_H
 #include "PTO/Transforms/FrontierSynch/PeriodicAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/PeriodicSharedAllocation.h"
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 namespace mlir::pto::frontiersynch {
+struct PeriodicSharedAssignment {
+    PeriodicSharedAllocation allocation;
+    std::vector<uint32_t> records; // Phase index -> original canonical record.
+    bool orderExact = true;
+};
+// Numerical result shared by whole-invocation and regional adapters. Empty
+// means invalid input, checked arithmetic overflow, or no finite cycle cover.
+std::optional<PeriodicSharedAssignment> buildPeriodicSharedAssignment(const PeriodicAnalysis& analysis);
 // Every retained record executes precisely when both endpoints belong to the
 // same finite prefix of the unconditional skeleton. The caller guarantees a
 // fresh entry, paired logical commands, closed exit, and the existing policy
