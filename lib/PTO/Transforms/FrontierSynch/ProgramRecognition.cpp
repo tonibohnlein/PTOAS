@@ -57,7 +57,8 @@ public:
                 }
                 run.reset();
                 auto kind = isa<scf::ForOp>(op) ? StructureKind::Loop :
-                    (isa<scf::IfOp>(op) ? StructureKind::Conditional : StructureKind::Unsupported);
+                    (isa<scf::IfOp>(op) ? StructureKind::Conditional :
+                     (isa<SectionCubeOp, SectionVectorOp>(op) ? StructureKind::Section : StructureKind::Unsupported));
                 auto child = add(kind, &op, nullptr, id);
                 result.nodes[child].unsupportedContext |= kind == StructureKind::Unsupported;
                 // Retain payload-bearing structured anchors too; their route
@@ -191,6 +192,7 @@ StringRef structureName(StructureKind kind) {
     case StructureKind::ExplicitRun: return "explicit-run";
     case StructureKind::Loop: return "loop";
     case StructureKind::Conditional: return "conditional";
+    case StructureKind::Section: return "section";
     case StructureKind::Unsupported: return "unsupported";
     default: return "invalid";
     }
