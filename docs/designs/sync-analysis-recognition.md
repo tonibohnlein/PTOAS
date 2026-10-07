@@ -1812,3 +1812,19 @@ analysis gives these existing boundaries no additional reachability credit;
 this can retain redundant demands but cannot remove a required dependency.
 An existing terminal ALL barrier satisfies the invocation drain without inserting
 a duplicate. Barrier-aware demand reduction remains separate optimization work.
+
+
+## Recognition and backend requests
+
+`recognizeProgram` recovers structure and checks candidate contracts without
+running numeric demand reduction, endpoint preparation or event allocation.
+`FrontierAnalysis::analyzeNumericCandidates` requests and caches that work,
+including unsuccessful attempts, only when a compilation consumer needs it.
+The logical pass requests it before its numerical-route selection, preserving
+route priority. Guarded recognition likewise does not prepare a logical plan.
+
+The test tool's `--recognize` output reports `backend=not-run`; applicability
+is not a claim that construction, endpoint emission or allocation is ready.
+Backend regression tests request `--numeric-analysis` explicitly. This is a
+test-tool query, not another production compilation mode. Recognition verifies
+that no numeric backend fields were populated and leaves source IR unchanged.

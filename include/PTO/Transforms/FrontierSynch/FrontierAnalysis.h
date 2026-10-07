@@ -22,6 +22,9 @@ public:
     // Build and cache the whole-function arithmetic candidate only on request.
     // Requires successful initialization; uses fixed class limits, not input-derived limits.
     LogicalResult recognizeArithmetic();
+    // Demand reduction, endpoint recipes and allocation are backend work.
+    // Cache both successful and failed numeric attempts without changing recognition.
+    LogicalResult analyzeNumericCandidates();
     bool hasOnlyNativeScalarRequirements() const { return nativeScalarOnly; }
     LogicalResult analyzeExplicitFunction();
     const ExplicitAnalysis* explicitResult() const { return explicitAnalysis ? &*explicitAnalysis : nullptr; }
