@@ -63,11 +63,8 @@ struct ProgramRecognition {
 };
 // Visits all regions without unrolling, fuses adjacent leaves, and runs the
 // structural checks independently. Arithmetic extraction is requested separately.
-// Applicable is not an executable analysis plan:
-// Supported numeric templates additionally compute minimum records and completion
-// queries, guarded logical endpoint recipes at original cuts, and periodic
-// direction budgets. No composition certificate, emitted commands or physical
-// event IDs are produced.
+// Applicable certifies the input contract only. Backend fields remain absent
+// until an explicit FrontierAnalysis::analyzeNumericCandidates request.
 FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input);
 StringRef structureName(StructureKind kind);
 } // namespace mlir::pto::frontiersynch

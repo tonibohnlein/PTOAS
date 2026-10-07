@@ -142,7 +142,7 @@ LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &in
 void dumpRecognition(StringRef label, const pto::frontiersynch::RecognitionResult &result) {
   namespace fs = pto::frontiersynch;
   llvm::outs() << "recognize " << label << ": " << fs::recognitionName(result.state)
-               << " backend=available\n";
+               << " backend=not-run\n";
   for (const auto &diagnostic : result.diagnostics) {
     llvm::outs() << "  issue " << fs::recognitionName(diagnostic.issue);
     if (diagnostic.anchor) {
@@ -215,7 +215,7 @@ LogicalResult recognize(func::FuncOp function, const pto::SyncInput &input, bool
   const auto& arithmetic = direct ? *direct : *cached->arithmetic;
   auto status = arithmetic.extraction.state == fs::RecognitionState::Applicable ?
                 arithmetic.recognition.state : arithmetic.extraction.state;
-  llvm::outs() << "recognize arithmetic: " << fs::recognitionName(status) << " backend=available\n";
+  llvm::outs() << "recognize arithmetic: " << fs::recognitionName(status) << " backend=not-run\n";
   for (const auto &diagnostic : arithmetic.extraction.diagnostics) {
     llvm::outs() << "  issue " << fs::recognitionName(diagnostic.issue) << "\n";
   }
@@ -246,16 +246,6 @@ LogicalResult recognize(func::FuncOp function, const pto::SyncInput &input, bool
         if (hasLoopResult) {
           dumpRecognition("rotating", *node.rotatingResult);
           dumpGuarded("guarded-rotating", *node.guardedRotatingResult);
-          if (node.rotatingResult->state != pto::frontiersynch::RecognitionState::Applicable &&
-              node.guardedRotatingResult->result.state == pto::frontiersynch::RecognitionState::Applicable) {
-            auto guarded = pto::frontiersynch::analyzeGuardedRotating(loop, input, *node.guardedRotatingResult);
-            std::string error = guarded.error;
-            if (error.empty()) {
-              auto endpoints = pto::frontiersynch::prepareGuardedRotatingEndpoints(function, guarded, error);
-              (void)endpoints;
-            }
-            llvm::outs() << "  guarded-backend=" << (error.empty() ? "ready" : error) << "\n";
-          }
           break;
         }
       }
@@ -399,6 +389,7 @@ int main(int argc, char **argv) {
   const bool explicitAnalysis = argc == 3 && StringRef(argv[1]) == "--explicit-analysis";
   const bool arithmetic = argc == 3 && StringRef(argv[1]) == "--arithmetic";
   const bool recognition = argc == 3 && StringRef(argv[1]) == "--recognize";
+  const bool numericAnalysis = argc == 3 && StringRef(argv[1]) == "--numeric-analysis";
   const bool insertLogical = argc == 3 && StringRef(argv[1]) == "--insert-logical";
   const bool preparedInsertion = argc == 3 && StringRef(argv[1]) == "--prepared-insertion-checks";
   const bool insertionTrace = argc == 3 && StringRef(argv[1]) == "--insertion-trace";
@@ -408,7 +399,8 @@ int main(int argc, char **argv) {
   const bool sequenceAnalysis = argc == 3 && StringRef(argv[1]) == "--sequence-analysis";
   const bool structuredTrace = argc == 3 && StringRef(argv[1]) == "--structured-trace";
   const bool physicalTrace = argc == 3 && StringRef(argv[1]) == "--physical-trace";
-  if (argc != 2 && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !recognition && !insertLogical &&
+  if (argc != 2 && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !recognition &&
+      !numericAnalysis && !insertLogical &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
       !expressionChecks && !preparedInsertion && !finiteOverlayInsertion &&
       !expectFailure && !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip &&
@@ -416,7 +408,7 @@ int main(int argc, char **argv) {
     llvm::errs() << "usage: pto-sync-input-test "
                  << "[--gm-alias=may-alias|may-not-alias] "
                  << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
-                 "--recognize|--insert-logical|--prepared-insertion-checks|--insertion-trace|"
+                 "--recognize|--numeric-analysis|--insert-logical|--prepared-insertion-checks|--insertion-trace|"
                  "--finite-guarded-analysis|--finite-overlay-insertion|--region-expression-checks|--sequence-analysis|"
                  "--structured-trace|--physical-trace|"
                  "--arithmetic|--explicit-analysis|--rotating-analysis|--roundtrip|"
@@ -429,7 +421,8 @@ int main(int argc, char **argv) {
   MLIRContext context(dialects);
   context.disableMultithreading();
   const bool hasOption = rotatingAnalysis || explicitAnalysis || expectFailure || capabilities || phaseIndex ||
-                         storageEffects || recognition || insertLogical || insertionTrace || physicalTrace ||
+                         storageEffects || recognition || numericAnalysis || insertLogical ||
+                         insertionTrace || physicalTrace ||
                          structuredTrace || sequenceAnalysis || finiteGuardedAnalysis || finiteOverlayInsertion ||
                          expressionChecks ||
                          preparedInsertion || arithmetic ||
@@ -524,7 +517,7 @@ int main(int argc, char **argv) {
     llvm::outs() << "\n";
     return 0;
   }
-  if (recognition) {
+  if (recognition || numericAnalysis) {
     for (auto function : module->getOps<func::FuncOp>()) {
       pto::frontiersynch::FrontierAnalysis analysis(function);
       if (failed(analysis.initialize(policy))) {
@@ -540,10 +533,17 @@ int main(int argc, char **argv) {
           (analysis.result()->arithmetic ? &*analysis.result()->arithmetic : nullptr) != arithmeticCandidate) {
         return 1;
       }
+      if (llvm::any_of(analysis.result()->nodes, [](const auto& node) {
+            return node.periodicAnalysis || node.logicalEndpoints || node.periodicAllocation;
+          })) {
+        function.emitError("recognition unexpectedly executed a numeric backend");
+        return 1;
+      }
+      if (numericAnalysis && failed(analysis.analyzeNumericCandidates())) { return 1; }
       const auto& input = *analysis.input();
       const auto& program = *analysis.result();
       if (failed(verifyProgramStructure(function, input, program)) ||
-          failed(recognize(function, input, false, &program)) ||
+          (!numericAnalysis && failed(recognize(function, input, false, &program))) ||
           failed(dumpProgramRecognition(function, input, program))) {
         return 1;
       }
