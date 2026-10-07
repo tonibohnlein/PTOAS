@@ -8,16 +8,15 @@
 // Exact reuse certification for general restricted-arithmetic demand relations.
 #ifndef PTO_FRONTIERSYNCH_GENERALARITHMETICALLOCATION_H
 #define PTO_FRONTIERSYNCH_GENERALARITHMETICALLOCATION_H
-#include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticHandoffAllocation.h"
 #include "mlir/IR/BuiltinAttributes.h"
 namespace mlir::pto::frontiersynch {
-// Assign one dedicated ID per nonlocal (source site, target site) family.
-// Every pair of retained instances with increasing original source coordinates
-// must satisfy C(earlier target) -> I(later source), in their shared parameter
-// context. Exact projection/subtraction preserves guards and congruences.
-// Source identity remains zero; the paired source tuple is a member coordinate.
-// Empty attr means this sufficient strategy was not certified, not that no
-// allocation exists. This does not optimize capacity or repair event scarcity.
+// Width-one proofs retain the static serializer. Wider families use certified
+// executed-rank counters at SET/WAIT, never original ordinals modulo E.
+// Empty means unavailable sufficient allocation, never event-ID scarcity.
+DictionaryAttr encodeGeneralArithmeticAllocationCertificate(
+    const ArithmeticHandoffAllocation& allocation, ArrayRef<uint32_t> pipes,
+    const std::map<std::pair<std::size_t, std::size_t>, int64_t>& records, int64_t plan, MLIRContext* context);
 DictionaryAttr generalArithmeticAllocationCertificate(
     const GeneralArithmeticDemandAnalysis& analysis, ArrayRef<uint32_t> pipes,
     const std::map<std::pair<std::size_t, std::size_t>, int64_t>& records, int64_t plan, MLIRContext* context);

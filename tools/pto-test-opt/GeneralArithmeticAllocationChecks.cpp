@@ -81,11 +81,88 @@ bool nestedCoordinates(mlir::MLIRContext& context)
     analysis.minimumDemands[edge] = {*domain};
     analysis.requiredOrder[order] = {*outer, *inner};
     auto certify = [&]() {
-        return fs::generalArithmeticAllocationCertificate(analysis, {0, 1}, {{{0, 1}, 0}}, 0, &context);
+        return fs::encodeGeneralArithmeticAllocationCertificate(
+            fs::buildArithmeticHandoffAllocation(analysis, {0, 1}, 1), {0, 1}, {{{0, 1}, 0}}, 0, &context);
     };
     if (!certify()) { return false; }
     analysis.requiredOrder[order] = {*inner};
     return !certify();
+}
+bool activeSuccessors(uint64_t period)
+{
+    fs::GeneralArithmeticDemandAnalysis analysis;
+    analysis.exactMinimum = true; analysis.period = period;
+    fs::ArithmeticRelationKey edge{{0, fs::ArithmeticEvent::Completion, {0}},
+                                  {1, fs::ArithmeticEvent::Start, {0}}, {}};
+    fs::ArithmeticRelationKey ordered{{1, fs::ArithmeticEvent::Completion, {0}},
+                                     {0, fs::ArithmeticEvent::Start, {0}}, {}};
+    // Active sources 0,2,6,8,10: ordinal modulo two is always zero. Two
+    // executed-handoff lanes are sufficient; one is not. Numeric gaps and
+    // the missing source 4 must not be interpreted as executed publications.
+    for (int64_t coordinate : {0, 2, 6, 8, 10}) {
+        auto quotient = coordinate / static_cast<int64_t>(period);
+        auto point = fs::IntegerSystem::create(2,
+            {row({1, 0}, quotient), row({-1, 0}, -quotient),
+             row({0, 1}, quotient), row({0, -1}, -quotient)});
+        if (mlir::failed(point)) { return false; }
+        edge.source.residues = {coordinate % period}; edge.target.residues = edge.source.residues;
+        analysis.minimumDemands[edge].push_back(*point);
+    }
+    for (uint64_t from = 0; from < period; ++from) {
+        for (uint64_t to = 0; to < period; ++to) {
+            auto bound = floorDiv(fs::BoundInteger(to) - fs::BoundInteger(from) - 4, fs::BoundInteger(period));
+            auto constraint = row({1, -1}, 0); constraint.bound = bound;
+            auto reuse = fs::IntegerSystem::create(2, {constraint});
+            if (mlir::failed(reuse)) { return false; }
+            ordered.source.residues = {from}; ordered.target.residues = {to};
+            analysis.requiredOrder[ordered] = {*reuse};
+        }
+    }
+    auto one = fs::buildArithmeticHandoffAllocation(analysis, {0, 1}, 1);
+    auto two = fs::buildArithmeticHandoffAllocation(analysis, {0, 1}, 2);
+    if (one.error.empty() || !two.error.empty() || two.families.size() != 1 || two.families[0].width != 2) {
+        return false;
+    }
+    auto first = fs::evaluateGeneralArithmeticSelector(two.families[0].firstSource, period, {}, {});
+    auto last = fs::evaluateGeneralArithmeticSelector(two.families[0].lastTarget, period, {}, {});
+    if (mlir::failed(first) || mlir::failed(last) || !*first || !*last ||
+        (**first).coordinates != std::vector<fs::BoundInteger>{fs::BoundInteger(0)} ||
+        (**last).coordinates != std::vector<fs::BoundInteger>{fs::BoundInteger(10)}) { return false; }
+    // Even a palette wider than the finite domain cannot justify two counters
+    // if their source and consumer execution sequences disagree.
+    analysis.minimumDemands.clear(); analysis.requiredOrder.clear();
+    for (int64_t coordinate : {0, 2}) {
+        auto source = coordinate / static_cast<int64_t>(period);
+        auto target = (2 - coordinate) / static_cast<int64_t>(period);
+        auto point = fs::IntegerSystem::create(2,
+            {row({1, 0}, source), row({-1, 0}, -source), row({0, 1}, target), row({0, -1}, -target)});
+        if (mlir::failed(point)) { return false; }
+        edge.source.residues = {coordinate % period}; edge.target.residues = {(2 - coordinate) % period};
+        analysis.minimumDemands[edge].push_back(*point);
+    }
+    return !fs::buildArithmeticHandoffAllocation(analysis, {0, 1}, 6).error.empty();
+}
+bool differenceBoundSuccessors(mlir::MLIRContext& context)
+{
+    fs::ArithmeticDemandAnalysis analysis; analysis.exactMinimum = true;
+    fs::ArithmeticRelationKey edge{{0, fs::ArithmeticEvent::Completion, {0}},
+                                  {1, fs::ArithmeticEvent::Start, {0}}, {}};
+    fs::ArithmeticRelationKey order{{1, fs::ArithmeticEvent::Completion, {0}},
+                                   {0, fs::ArithmeticEvent::Start, {0}}, {}};
+    for (int64_t value : {0, 2, 6, 8, 10}) {
+        auto point = fs::DifferenceBoundSystem::create(2,
+            {{1, 0, fs::BoundInteger(value)}, {0, 1, fs::BoundInteger(-value)},
+             {2, 0, fs::BoundInteger(value)}, {0, 2, fs::BoundInteger(-value)}});
+        if (mlir::failed(point)) { return false; }
+        analysis.minimumDemands[edge].push_back(*point);
+    }
+    auto reuse = fs::DifferenceBoundSystem::create(2, {{1, 2, fs::BoundInteger(-4)}});
+    if (mlir::failed(reuse)) { return false; }
+    analysis.requiredOrder[order] = {*reuse};
+    auto proof = fs::buildArithmeticHandoffAllocation(analysis, {0, 1});
+    if (!proof.error.empty() || proof.families.size() != 1 || proof.families.front().width != 2) { return false; }
+    auto encoded = fs::encodeGeneralArithmeticAllocationCertificate(proof, {0, 1}, {{{0, 1}, 0}}, 0, &context);
+    return encoded && encoded.getAs<mlir::StringAttr>("strategy").getValue() == "executed-family-counters";
 }
 bool check(mlir::MLIRContext& context)
 {
@@ -114,7 +191,8 @@ bool check(mlir::MLIRContext& context)
     }
     const std::map<std::pair<std::size_t, std::size_t>, int64_t> records{{{0, 1}, 7}};
     auto certify = [&](const auto& value) {
-        return fs::generalArithmeticAllocationCertificate(value, {0, 1}, records, 3, &context);
+        return fs::encodeGeneralArithmeticAllocationCertificate(
+            fs::buildArithmeticHandoffAllocation(value, {0, 1}, 1), {0, 1}, records, 3, &context);
     };
     auto certificate = certify(analysis);
     if (!certificate || certificate.getAs<mlir::StringAttr>("strategy").getValue() != "dedicated-families") {
@@ -153,7 +231,8 @@ bool check(mlir::MLIRContext& context)
 int runGeneralArithmeticAllocationChecks()
 {
     mlir::MLIRContext context;
-    if (!check(context) || !parameterContexts(context) || !singleton(context) || !nestedCoordinates(context)) {
+    if (!check(context) || !parameterContexts(context) || !singleton(context) || !nestedCoordinates(context) ||
+        !activeSuccessors(1) || !activeSuccessors(3) || !differenceBoundSuccessors(context)) {
         llvm::errs() << "general arithmetic allocation certificate check failed\n";
         return 1;
     }
