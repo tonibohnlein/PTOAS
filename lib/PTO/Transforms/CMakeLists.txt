@@ -233,6 +233,8 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/FiniteOverlayInsertion.cpp
   FrontierSynch/RotatingAnalysis.cpp
   FrontierSynch/VaryingRotatingRecognition.cpp
+  FrontierSynch/VaryingRotatingAllocation.cpp
+  FrontierSynch/VaryingBoundaryQuery.cpp
   FrontierSynch/VaryingRotatingRegional.cpp
   FrontierSynch/SequenceNumerical.cpp
   FrontierSynch/GuardedRanks.cpp

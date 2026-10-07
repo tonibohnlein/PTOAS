@@ -16,6 +16,17 @@ bool SequenceAnalysisState::numericalCrossingReduction()
         children[1].regional.referenceBefore) {
         return false;
     }
+    // Symbolic guards require the general reduction, which can discard
+    // mutually exclusive candidates before asking any child queries. Check
+    // this eligibility before constructing the numerical child interfaces.
+    for (const auto& edge : crossings) {
+        if (!expressions.constantValue(edge.guard)) { return false; }
+    }
+    if (auto incomingTarget = incoming.find(1); incomingTarget != incoming.end()) {
+        for (const auto& link : incomingTarget->second) {
+            if (!expressions.constantValue(link.guard)) { return false; }
+        }
+    }
     std::vector<uint32_t> ids[2];
     std::map<std::pair<uint32_t, unsigned>, std::vector<uint32_t>> lists[2];
     std::vector<uint32_t> local(2 * ports.size(), UINT32_MAX);

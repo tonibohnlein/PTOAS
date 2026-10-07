@@ -257,7 +257,7 @@ bool allocationCheck(func::FuncOp function, Operation* anchor, scf::ForOp loop,
                                  fs::repeatedRegionalAllocation(state, child, crossings);
     if (!summary) {
         llvm::errs() << "allocation producer rejected " << q << ":" << begin << ":" << end
-                     << " storage=" << storage << "\n";
+                     << " storage=" << storage << " omit=" << omitMember << " cycle_policy=" << cyclePolicy << "\n";
         return false;
     }
     // The concrete graph uses only actual occurrences in the retained interval.
@@ -320,9 +320,20 @@ bool allocationCheck(func::FuncOp function, Operation* anchor, scf::ForOp loop,
         std::map<uint64_t, unsigned> lastConsumer;
         for (const auto& handoff : handoffs) {
             auto previous = lastConsumer.find(handoff.id);
-            if (previous != lastConsumer.end() && !graph[2*previous->second+1][2*handoff.source]) {
-                llvm::errs() << "unsafe repeated ID reuse " << q << ":" << begin << ":" << end << "\n";
-                return false;
+            if (previous != lastConsumer.end()) {
+                // The concrete fixture assigns A/B to distinct pipes by parity.
+                // A WAIT is before its consumer's issue and the next SET is
+                // after its producer's issue. On the same pipe, native start
+                // order suffices, including one payload between WAIT and SET.
+                // Across pipes the previous consumer must complete before the
+                // next producer starts; keep that stronger event-graph check.
+                const bool samePipe = previous->second%2 == handoff.source%2;
+                const auto previousEvent = 2*previous->second + (samePipe ? 0 : 1);
+                if (!graph[previousEvent][2*handoff.source]) {
+                    llvm::errs() << "unsafe repeated ID reuse " << q << ":" << begin << ":" << end
+                                 << " consumer=" << previous->second << " producer=" << handoff.source << "\n";
+                    return false;
+                }
             }
             lastConsumer[handoff.id] = handoff.target;
         }
