@@ -375,7 +375,7 @@ private:
             }
             return prepared;
         };
-        result.prepareFiltered = [owned, parent, domainFilter](const RegionalDemandFilter& filter)
+        result.prepareFiltered = [owned, parent, domainFilter, allocation](const RegionalDemandFilter& filter)
             -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
             std::string error;
             RegionalDemandFilter combined = [owned, domainFilter, filter](RegionalEvent a, RegionalEvent b)
@@ -387,7 +387,10 @@ private:
                 return owned->expressions->land(*first, *second);
             };
             auto prepared = prepareGuardedRotatingEndpoints(parent, *owned, error, combined);
-            if (succeeded(prepared)) { (*prepared)->completeInvocation = false; }
+            if (succeeded(prepared)) {
+                (*prepared)->completeInvocation = false;
+                (*prepared)->regionalAllocation = allocation;
+            }
             return prepared;
         };
     }

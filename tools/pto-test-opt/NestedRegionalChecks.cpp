@@ -9,8 +9,40 @@
 #include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/FiniteOverlayInsertion.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Matchers.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
+namespace {
+std::optional<uint64_t> guardValue(Value value, Value outer, Value inner, uint64_t i, uint64_t j)
+{
+    if (value == outer) { return i; }
+    if (value == inner) { return j; }
+    APInt constant;
+    if (matchPattern(value, m_ConstantInt(&constant))) { return constant.getZExtValue(); }
+    auto* op = value.getDefiningOp();
+    if (!op || op->getNumOperands() != 2) { return std::nullopt; }
+    auto a = guardValue(op->getOperand(0), outer, inner, i, j);
+    auto b = guardValue(op->getOperand(1), outer, inner, i, j);
+    if (!a || !b) { return std::nullopt; }
+    if (isa<arith::SubIOp>(op)) { return *a - *b; }
+    if (isa<arith::DivUIOp>(op) && *b) { return *a / *b; }
+    if (isa<arith::RemUIOp>(op) && *b) { return *a % *b; }
+    if (isa<arith::AndIOp>(op)) { return *a & *b; }
+    if (isa<arith::OrIOp>(op)) { return *a | *b; }
+    if (isa<arith::XOrIOp>(op)) { return *a ^ *b; }
+    if (auto compare = dyn_cast<arith::CmpIOp>(op)) {
+        switch (compare.getPredicate()) {
+        case arith::CmpIPredicate::eq: return *a == *b;
+        case arith::CmpIPredicate::ult: return *a < *b;
+        case arith::CmpIPredicate::ule: return *a <= *b;
+        default: return std::nullopt;
+        }
+    }
+    return std::nullopt;
+}
+} // namespace
 bool runNestedRegionalChecks(func::FuncOp function)
 {
     Operation* anchor = nullptr;
@@ -71,9 +103,60 @@ bool runNestedRegionalChecks(func::FuncOp function)
     auto forward = fs::regionalReachability(overlay.regional, early, late);
     auto reverse = fs::regionalReachability(overlay.regional, late, early);
     if (!forward || !reverse || e.constantValue(*forward) != 1 || e.constantValue(*reverse) != 0) { return false; }
-    if (fs::finiteOverlayRegionalResult(function, overlay).capabilities.endpointRecipes) { return false; }
+    if (!fs::finiteOverlayRegionalResult(function, overlay).capabilities.endpointRecipes) { return false; }
     std::string overlayError;
-    if (succeeded(fs::prepareFiniteOverlayInsertion(function, overlay, overlayError))) { return false; }
+    if (failed(fs::prepareFiniteOverlayInsertion(function, overlay, overlayError))) { return false; }
+    // A finite cross-pipe overlay selects one precise occurrence in each nested
+    // frame. Its detached guards must depend on both original induction values.
+    auto nestedBase = child;
+    pto::CompoundInstanceElement otherPhase(1, {}, {}, pto::PipelineType::PIPE_MTE1, anchor->getName());
+    otherPhase.elementOp = anchor;
+    nestedBase.anchors.push_back(nestedBase.anchors.front());
+    nestedBase.anchors.back().phase = &otherPhase;
+    nestedBase.occurrenceLoops.push_back({}); nestedBase.outerLoops.push_back({outer, inner});
+    nestedBase.outerDivisors = {{1, 2}, {1, 2}};
+    nestedBase.endpointEventGuard = [arena, inner](fs::RegionalEvent) mutable
+        -> std::optional<fs::RegionExpressions::Id> {
+        auto& e = *arena;
+        auto visit = e.div(e.sub(e.input(inner.getInductionVar()), e.input(inner.getLowerBound())),
+            e.input(inner.getStep()));
+        return e.eq(e.rem(visit, e.constant(2)), e.constant(0));
+    };
+    nestedBase.presence = [present = child.presence](fs::RegionalEvent value) {
+        value.type = 0; return present(value);
+    };
+    nestedBase.reachability = [query = child.reachability, arena](fs::RegionalEvent a, fs::RegionalEvent b)
+        -> std::optional<fs::RegionExpressions::Id> {
+        if (a.type != b.type) { return arena->boolean(false); }
+        a.type = b.type = 0; return query(a, b);
+    };
+    fs::RegionalEvent addedSource{0, zero, fs::PeriodicEventKind::Completion, {zero, one}};
+    fs::RegionalEvent addedTarget{1, zero, fs::PeriodicEventKind::Start, {one, zero}};
+    auto nestedOverlay = fs::analyzeFiniteOverlay(nestedBase,
+        {{addedSource, addedTarget, e.boolean(true)}}, nestedBase.referenceBefore);
+    auto nestedPlan = fs::prepareFiniteOverlayInsertion(function, nestedOverlay, overlayError);
+    if (failed(nestedPlan) || (*nestedPlan)->endpoints.size() != 2 || !(*nestedPlan)->regionalAllocation ||
+        (*nestedPlan)->regionalAllocation->groups.size() != 1) { return false; }
+    for (const auto& endpoint : (*nestedPlan)->endpoints) {
+        SmallVector<Value> work{endpoint.guard};
+        bool hasOuter = false, hasInner = false;
+        llvm::SmallPtrSet<Operation*, 16> seen;
+        while (!work.empty()) {
+            auto value = work.pop_back_val();
+            hasOuter |= value == outer.getInductionVar(); hasInner |= value == inner.getInductionVar();
+            auto* op = value.getDefiningOp();
+            if (op && seen.insert(op).second) { work.append(op->operand_begin(), op->operand_end()); }
+        }
+        if (!hasOuter || !hasInner || endpoint.records != SmallVector<uint32_t>{0}) { return false; }
+        for (uint64_t i = 0; i < 3; ++i) {
+            for (uint64_t j = 0; j < 4; ++j) {
+                const bool expected = endpoint.kind == fs::LogicalCommandKind::Set ? i == 0 && j == 2 :
+                    i == 1 && j == 0;
+                auto actual = guardValue(endpoint.guard, outer.getInductionVar(), inner.getInductionVar(), i, j);
+                if (actual != uint64_t(expected)) { return false; }
+            }
+        }
+    }
     auto flat = child; flat.outerLoops.clear();
     if (fs::regionalPresence(flat, first.event)) { return false; }
     auto malformed = first.event; malformed.visits[0] = e.boolean(true);

@@ -10,6 +10,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_BOUNDEDLIFETIME_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_BOUNDEDLIFETIME_H
 #include "PTO/Transforms/FrontierSynch/GuardedRanks.h"
+#include "PTO/Transforms/FrontierSynch/LifetimeScan.h"
 #include "PTO/Transforms/FrontierSynch/RotatingExtraction.h"
 namespace mlir::pto::frontiersynch {
 struct LifetimeAccess {
@@ -30,10 +31,29 @@ struct LifetimeWindowInput {
     std::vector<LifetimeAccess> accesses;
     std::vector<GuardedRankEdge> prerequisites, nativePrerequisites;
 };
+struct LifetimeStorageWitness {
+    // This is a source-relative window cell, NOT a physical cell identity
+    // shared by different source iterations. Allocation must supply its
+    // storage-renaming map before assigning a physical (cell, pipe) lane.
+    uint32_t cell = 0;
+    StorageHazard hazard = StorageHazard::Supplied;
+    uint32_t pipe = 0;
+    RegionExpressions::Id guard = RegionExpressions::invalid;
+};
 struct LifetimeWindowAnalysis {
     std::string error;
     GuardedRanks window;
     std::vector<GuardedRankEdge> sourceDemands;
+    // One entry per sourceDemands record. Guards include record retention.
+    // RAW selects the first read-only access on its pipe after a writer;
+    // WAR selects the last read-only access on its pipe before the next
+    // writer; WAW has no intervening writer or read-only access. RMW is a
+    // writer. pipe is the reader's pipe, or the consuming writer's for WAW.
+    // Supplied has no storage cell and must be allocated separately.
+    // Several witnesses may hold: choose one identically at both endpoints.
+    // No storage witness is exported for a cell with simultaneous operation
+    // envelopes. Missing coverage is an allocation gap, not an analysis error.
+    std::vector<std::vector<LifetimeStorageWitness>> sourceWitnesses;
     uint64_t accessPairs = 0;
 };
 // Precondition: a uniform certificate bounds every sparse lifetime generator
