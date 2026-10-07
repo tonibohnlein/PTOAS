@@ -14,7 +14,7 @@
 #include <climits>
 namespace mlir::pto {
 bool isPreservedSyncProtocol(Operation* operation) {
-  return isa<SyncSetOp, SyncWaitOp, SetCrossBlockOp, WaitCrossBlockOp,
+  return isa<BarrierOp, SyncSetOp, SyncWaitOp, SetCrossBlockOp, WaitCrossBlockOp,
              SetIntraBlockOp, WaitIntraBlockOp, GetBufOp, RlsBufOp, GetBufDynOp, RlsBufDynOp>(operation);
 }
 bool hasManualOnCoreSynchronization(func::FuncOp function) {
