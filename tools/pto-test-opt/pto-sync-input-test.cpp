@@ -586,7 +586,7 @@ int main(int argc, char **argv) {
       continue;
     }
     if (phaseCopies) {
-      if (!checkPhaseCopies(input)) {
+      if (!checkPhaseCopies(input) || !checkMacroEnvelopeView(function, input)) {
         llvm::errs() << "copied phase lost shared dependencies\n";
         return 1;
       }

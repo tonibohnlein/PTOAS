@@ -69,7 +69,7 @@ LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy, bool r
         return failure();
     }
     auto pending = std::make_unique<SyncInput>(policy);
-    if (failed(pending->build(function))) {
+    if (failed(pending->build(function, SyncInstructionView::PipeEnvelopes))) {
         return failure();
     }
     nativeScalarOnly = nativeScalarRequirements(function, *pending);
@@ -196,6 +196,11 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
                                                                *analysis.result(), routeError);
             sequencePrepared = succeeded(prepared);
         }
+    }
+    if (failed(prepared) && straight && analysis.result()) {
+        prepared = frontiersynch::prepareSequenceInsertion(function, *analysis.input(),
+                                                           *analysis.result(), routeError);
+        sequencePrepared = succeeded(prepared);
     }
     if (failed(prepared)) {
         prepared = prepareWholeFunctionArithmetic(function, analysis, routeError, false);

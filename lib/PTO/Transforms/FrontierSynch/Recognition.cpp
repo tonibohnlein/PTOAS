@@ -362,13 +362,18 @@ RecognitionResult recognizeExplicitRun(ArrayRef<Operation*> operations, const Ph
 
 void detail::inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result)
 {
+    inspectLeaf(op, index, result, false);
+}
+
+void detail::inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result, bool allowEnvelopes)
+{
     auto phases = index.phasesFor(&op);
     const bool extra = index.needsValuePrerequisite(&op) ||
         isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp, RecordEventOp, WaitEventOp, BarrierOp>(op);
     if (extra) {
         result.note(RecognitionIssue::AdditionalPrerequisite, &op);
     }
-    if (phases.size() > 1) {
+    if (!allowEnvelopes && llvm::any_of(phases, [](auto* phase) { return phase->macroOpInstanceId >= 0; })) {
         result.note(RecognitionIssue::MultiplePhases, &op);
     } else if (phases.empty() && !metadata(op)) {
         result.note(RecognitionIssue::UnmodeledOperation, &op);
