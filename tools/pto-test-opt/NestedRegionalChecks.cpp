@@ -100,5 +100,86 @@ bool runNestedRegionalChecks(func::FuncOp function)
         if (succeeded(fs::prepareSequenceInsertion(composed))) { return false; }
     }
     fs::PreparedLogicalPlan plan(0);
-    return !fs::finiteRegionalAllocation(child, plan) && e.error().empty();
+    auto empty = fs::finiteRegionalAllocation(child, plan);
+    if (!empty || !empty->groups.empty()) { return false; }
+    fs::EndpointFamily local;
+    local.local = true;
+    plan.families.push_back(local);
+    empty = fs::finiteRegionalAllocation(child, plan);
+    if (!empty || !empty->groups.empty()) { return false; }
+    // An unexported repeated notification still cannot acquire a finite rule.
+    plan.families.back().local = false;
+    if (fs::finiteRegionalAllocation(child, plan)) { return false; }
+    plan.families.clear();
+
+    // Three typed finite spans use the same site and local ordinal but distinct
+    // visit coordinates. The third overlaps both earlier spans; a cache that
+    // omits visits incorrectly borrows the first pair's reuse proof.
+    plan.regionalAllocation = std::make_shared<fs::RegionalAllocationSummary>();
+    auto span = [&](uint32_t record, fs::RegionExpressions::Id firstVisit,
+                    fs::RegionExpressions::Id lastVisit) {
+        fs::RegionalEvent source{0, zero, fs::PeriodicEventKind::Start, {zero, firstVisit}};
+        fs::RegionalEvent target{0, zero, fs::PeriodicEventKind::Completion, {zero, lastVisit}};
+        plan.regionalAllocation->groups.push_back({1, 2, 1,
+            {{record, 0, 0, source, target, e.boolean(true)}}});
+    };
+    span(0, zero, one);
+    span(1, two, three);
+    span(2, zero, three);
+    plan.regionalAllocation->groups[1].members[0].tupleRule =
+        fs::PhysicalTupleRule{3, 0, {{2, 5, 7, 1, 1}}};
+    auto certificate = fs::regionalAllocationCertificate(child, plan);
+    if (!certificate) { return false; }
+    auto groups = certificate.getAs<ArrayAttr>("groups");
+    if (!groups || groups.size() != 3) { return false; }
+    auto conflicts = [&](std::size_t group) {
+        return cast<DictionaryAttr>(groups[group]).getAs<DenseI64ArrayAttr>("conflicts");
+    };
+    if (!conflicts(0).empty() || !conflicts(1).empty() || conflicts(2).size() != 2 ||
+        conflicts(2)[0] != 0 || conflicts(2)[1] != 1) { return false; }
+    auto coalesced = fs::coalesceRegionalAllocation(child, *plan.regionalAllocation);
+    if (!coalesced || coalesced->groups.size() != 1 || coalesced->groups[0].budget != 2 ||
+        coalesced->groups[0].members.size() != 3) { return false; }
+    const auto& members = coalesced->groups[0].members;
+    if (!members[0].tupleRule || !members[1].tupleRule || !members[2].tupleRule ||
+        members[0].tupleRule->base != members[1].tupleRule->base ||
+        members[2].tupleRule->base == members[0].tupleRule->base) { return false; }
+    for (const auto& member : members) {
+        if (!fs::validPhysicalTupleRule(*member.tupleRule, 2)) { return false; }
+    }
+    auto unequal = *plan.regionalAllocation;
+    unequal.groups[0].budget = 2;
+    unequal.groups[0].members[0].stride = 3;
+    unequal.groups[0].members[0].phase = 1;
+    unequal.groups[1].budget = 2;
+    unequal.groups[1].members[0].tupleRule = fs::PhysicalTupleRule{3, 0, {{2, 1, 1, 2, 1}}};
+    auto colored = fs::coalesceRegionalAllocation(child, unequal);
+    if (!colored || colored->groups.size() != 1 || colored->groups[0].budget != 3) { return false; }
+    const auto& varied = colored->groups[0].members;
+    for (uint64_t ordinal = 0; ordinal < 8; ++ordinal) {
+        auto evaluate = [&](const fs::PhysicalTupleRule& rule) {
+            uint64_t lane = rule.base;
+            for (const auto& term : rule.terms) {
+                uint64_t value = term.coordinate == 0 ? ordinal : ordinal + 1;
+                lane += term.scale * ((term.stride * value + term.phase) % term.modulus);
+            }
+            return lane;
+        };
+        if (evaluate(*varied[0].tupleRule) != (3 * ordinal + 1) % 2 ||
+            evaluate(*varied[1].tupleRule) != (ordinal + 2) % 2 ||
+            evaluate(*varied[2].tupleRule) != 2 || varied[1].tupleRule->coordinateCount != 3) { return false; }
+    }
+    auto decoded = fs::decodeRegionalAllocation(function, certificate, {0, 1});
+    if (failed(decoded) || decoded->records.size() != 3 || !decoded->records[1].tupleRule) { return false; }
+    const auto& rule = *decoded->records[1].tupleRule;
+    if (rule.coordinateCount != 3 || rule.base || rule.terms.size() != 1 ||
+        rule.terms[0].coordinate != 2 || rule.terms[0].stride != 5 || rule.terms[0].phase != 7 ||
+        rule.terms[0].modulus != 1 || rule.terms[0].scale != 1) { return false; }
+    fs::PhysicalTupleRule bounded{2, 0, {{0, 1, 0, 2, 1}, {1, 1, 0, 3, 2}}};
+    if (!fs::validPhysicalTupleRule(bounded, 6) || fs::validPhysicalTupleRule(bounded, 5)) { return false; }
+    bounded.terms[0].scale = INT64_MAX;
+    if (fs::validPhysicalTupleRule(bounded, 6)) { return false; }
+    plan.regionalAllocation->groups.back().members.front().lastTarget.visits.pop_back();
+    return !fs::regionalAllocationCertificate(child, plan) &&
+        !fs::coalesceRegionalAllocation(child, *plan.regionalAllocation) && e.error().empty();
 }

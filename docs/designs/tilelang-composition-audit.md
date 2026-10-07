@@ -434,3 +434,91 @@ was removed. The changed-code prefilter's brace findings were inspected: each
 flagged control body is braced, and the matcher stops at an inner parenthesis.
 Actual line-width findings were fixed. M5 still needs allocation exports for the
 new logical plans; no scarcity repair or new whole-kernel class is claimed here.
+
+
+## M5 implementation and final acceptance
+
+All five planned milestones are complete within their stated contracts. M3 is
+commit `637f7e6ea`; M4 is `fc64753d3`. M5 was accepted independently by the
+architecture, correctness and performance reviewers before committing.
+
+Allocation now consumes the nested endpoint identity instead of discarding its
+visit coordinates. Version-four certificates carry validated tuple expressions
+for physical IDs. Both endpoints use the original source identity; allocation
+emits one physical command for each logical command. Finite arithmetic regions
+export their allocation summaries, including empty and local-only regions.
+Sequence composition retains those summaries and separates invariant handoff
+presence from the current-visit guard used by emitted endpoint code.
+
+For repeated regions, certified child palettes are first coalesced using full
+guarded interval queries. Constant-offset child lanes and outer crossing
+handoffs then enter a per-direction periodic cycle cover. Each reuse link is
+proved from the existing order, with its consumer displacement counted once.
+Cycles require equivalent invariant activity and positive total displacement.
+Cycle potentials determine a compact modulo-ID expression; actual selectors
+clip first and last invocations, including zero trips and partial periods.
+The construction does not introduce synchronization edges or repair scarcity.
+
+For N certified lanes in one direction, the cycle-cover stage uses O(N^2)
+threshold queries at up to seven displacements and O(N^3) integer assignment
+operations. Its representation and assignment cost do not grow with the trip
+count. Query construction retains the cost of the underlying regional interface.
+A sufficient whole-palette reservation remains available when the lane route
+cannot certify an assignment. Failure is not a minimum-capacity proof.
+
+### Verified results
+
+The serial pinned eleven-input rerun is stored in
+`.local/nested-regions/tilelang-nine-m5-final/`. All expert and existing variants
+emit C++; Frontier produces nine logical plans and seven complete C++ outputs.
+Input and compiler hashes remained unchanged during the campaign.
+
+| Input | Final result | Logical analysis (s) | Allocation (s) | C++ emission (s) |
+|---|---|---:|---:|---:|
+| Earlier TileLang GEMM | Complete | 0.105 | 0.101 | 0.141 |
+| Earlier PyPTO GEMM | Complete | 0.106 | 0.103 | 0.140 |
+| Persistent GEMM | Newly complete | 0.346 | 0.114 | 0.182 |
+| GDN chunk cumulative sum | Newly complete | 5.919 | 0.081 | 0.121 |
+| mHC head mix | Newly complete | 0.117 | 0.082 | 0.119 |
+| Elementwise pipeline | Complete | 0.096 | 0.081 | 0.123 |
+| Lossless block cast | Newly complete | 56.957 | 0.085 | 0.132 |
+| Group norm | Sufficient allocation fails within six supplied IDs | 0.091 | 0.084 | — |
+| Causal convolution decode | Sufficient allocation fails within six supplied IDs | 0.091 | 0.082 | — |
+| Causal convolution prefill | Logical contract unresolved | — | — | — |
+| Gated delta rule | Logical control/domain obligations unresolved | — | — | — |
+
+These are single local compile measurements, not device timings. Persistent
+GEMM retains its 304 logical SETs and 304 logical WAITs; allocation yields exactly
+608 physical commands, with no command expansion. Its C++ is still 111,168 bytes
+and 3,619 lines, compared with the existing pass's 13,326 bytes and 356 lines.
+This inherited logical-plan/code-size limitation and the GDN/lossless arithmetic
+analysis costs remain explicit; M5 establishes no device-performance claim.
+
+The independent allocation oracle passes 1,535 member-envelope and reuse-chain
+checks, including mixed zero/positive cycle links, delayed crossings, optional
+lanes, and every tested partial interval. The surrounding oracle passes 27,264
+phase queries and 123,552 event-pair queries. End-to-end interpretation passes
+21 nested matching/causal-reuse traces and 205 tuple evaluations; 21 malformed
+interfaces are rejected. Tests include zero trips, partial periods, one/two/three
+banks and numeric three-level nests. Eleven regression groups pass. The selected
+52-input corpus retains all 52 logical and 51 allocation successes, matching its
+baseline; this is a regression subset, not a new whole-corpus coverage census.
+
+All builds and test campaigns ran serially. Build-only memory safeguards were
+retained; benchmark analysis used neither a timeout nor a fixed memory cap.
+The changed-code prefilter's brace findings were inspected as false positives:
+the reported control bodies are braced. The genuine test line-width finding was
+corrected. No temporary allocation diagnostics remain.
+
+### Remaining scope
+
+A symbolic child can export a varying multi-lane palette without per-lane first
+and last selectors. Repeating that child may still lack a certified allocation;
+the implementation preserves its logical plan and reports failure without
+mutation. The draft's child-lane theorem can apply once those lane selectors are
+constructed, but M5 does not provide a general symbolic lane-decomposition
+adapter. The two benchmark allocation failures above likewise remain sufficient
+certificate failures, not proofs that six IDs cannot suffice. Scarcity repair,
+the unresolved prefill/gated logical contracts, and device validation are outside
+this milestone. No kernel-specific recognition or access-precision gate was
+introduced.
