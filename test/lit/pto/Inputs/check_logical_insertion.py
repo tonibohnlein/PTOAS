@@ -103,7 +103,7 @@ def invoke(tool, mode, path):
 
 
 def recognized(tool, path):
-    docs = [json.loads(line) for line in invoke(tool, "--recognize", path).splitlines() if line.startswith("{")]
+    docs = [json.loads(line) for line in invoke(tool, "--numeric-analysis", path).splitlines() if line.startswith("{")]
     assert len(docs) == 1
     candidates = [a for n in docs[0]["nodes"] for a in n["attempts"]
                   if a["route"] == "numeric-template" and a["state"] == "applicable"]
@@ -205,13 +205,14 @@ def main():
         path.write_text(original.replace("%k = %one to %five", "%k = %one to %n"))
         accepted = invoke(tool, "--insert-logical", path)
         assert accepted.count("scf.for") == original.count("scf.for")
-        # An unsupported nonlinear bound still cannot publish a partial plan.
-        nonlinear = original.replace("    scf.for %t", "    %unknown = arith.muli %n, %n : index\n    scf.for %t")
-        path.write_text(nonlinear.replace("%k = %one to %five", "%k = %one to %unknown"))
+        # A runtime step is outside the numerical template contract; failure
+        # must not publish a partially inserted plan.
+        path.write_text(original.replace("%k = %one to %five step %two",
+                                         "%k = %one to %five step %n"))
         rejected = subprocess.run([tool, "--insert-logical", str(path)], capture_output=True, text=True,
                                   check=False, timeout=90)
         assert rejected.returncode != 0
-        assert "sequence loop has no exact regional rotating or numerical template" in rejected.stderr
+        assert "loop-domain" in rejected.stderr
     assert summaries[0]["commands"] == summaries[1]["commands"] == 0
     assert summaries[-1]["payloads"] > summaries[2]["payloads"]
     print(f"logical IR insertion: {len(summaries)} exact command-order checks, rejection and roundtrip passed")

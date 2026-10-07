@@ -369,6 +369,9 @@ LogicalResult runLogicalInsertionChecks(func::FuncOp function, pto::GMAliasPolic
     if (failed(analysis.initialize(policy))) {
         return failure();
     }
+    if (failed(analysis.analyzeNumericCandidates())) {
+        return failure();
+    }
     const auto* program = analysis.result();
     const fs::NumericTemplate* input = nullptr;
     for (const auto& node : program->nodes) {

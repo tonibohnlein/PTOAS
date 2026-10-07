@@ -172,16 +172,6 @@ FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const Sync
     for (auto& node : result.nodes) {
         if (!node.unsupportedContext && node.kind == StructureKind::Loop && node.payloadCount) {
             node.numericTemplate = recognizeNumericTemplate(cast<scf::ForOp>(node.anchor), index, input);
-            if (node.numericTemplate->result.state == RecognitionState::Applicable) {
-                node.periodicAnalysis = analyzeNumericTemplate(*node.numericTemplate);
-                if (node.periodicAnalysis->error.empty()) {
-                    node.logicalEndpoints = buildNumericTemplateEndpoints(*node.numericTemplate,
-                                                                          *node.periodicAnalysis);
-                    if (node.logicalEndpoints->logical.error.empty()) {
-                        node.periodicAllocation = buildPeriodicAllocation(*node.periodicAnalysis);
-                    }
-                }
-            }
         }
     }
     return result;

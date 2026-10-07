@@ -152,8 +152,16 @@ def main():
         raise RuntimeError("missing recognition executable")
     source = Path(sys.argv[2]).resolve()
     before = source.read_bytes()
+    recognition = subprocess.run([tool, "--recognize", str(source)], check=True,
+                                 capture_output=True, text=True, timeout=60)
+    for line in recognition.stdout.splitlines():
+        if not line.startswith("{"):
+            continue
+        for node in json.loads(line)["nodes"]:
+            for attempt in node["attempts"]:
+                assert not {"analysis", "logical_endpoints", "allocation"}.intersection(attempt)
     for policy in ("may-not-alias", "may-alias"):
-        run = subprocess.run([tool, "--gm-alias=" + policy, "--recognize", str(source)],
+        run = subprocess.run([tool, "--gm-alias=" + policy, "--numeric-analysis", str(source)],
                              check=True, capture_output=True, text=True, timeout=60)
         documents = {d["function"]: d for line in run.stdout.splitlines() if line.startswith("{")
                      for d in [json.loads(line)]}

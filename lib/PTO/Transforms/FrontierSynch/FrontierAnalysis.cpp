@@ -84,6 +84,19 @@ LogicalResult FrontierAnalysis::recognizeStructure() {
     program = std::move(*recognized);
     return success();
 }
+LogicalResult FrontierAnalysis::analyzeNumericCandidates() {
+    if (failed(recognizeStructure())) { return failure(); }
+    for (auto& node : program->nodes) {
+        if (!node.numericTemplate || node.periodicAnalysis ||
+            node.numericTemplate->result.state != RecognitionState::Applicable) { continue; }
+        node.periodicAnalysis = analyzeNumericTemplate(*node.numericTemplate);
+        if (!node.periodicAnalysis->error.empty()) { continue; }
+        node.logicalEndpoints = buildNumericTemplateEndpoints(*node.numericTemplate, *node.periodicAnalysis);
+        if (!node.logicalEndpoints->logical.error.empty()) { continue; }
+        node.periodicAllocation = buildPeriodicAllocation(*node.periodicAnalysis);
+    }
+    return success();
+}
 LogicalResult FrontierAnalysis::analyzeExplicitFunction() {
     if (!storage || function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
         return failure();
@@ -176,6 +189,7 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
         // Preserve the existing certified numerical route (including its
         // allocation export) when available. Direct rotating extraction
         // covers symbolic rotations which have no fixed local effect word.
+        if (failed(analysis.analyzeNumericCandidates())) { return failure(); }
         const bool numerical = llvm::any_of(analysis.result()->nodes, [](const auto& node) {
             return node.numericTemplate &&
                 node.numericTemplate->result.state == frontiersynch::RecognitionState::Applicable &&
