@@ -77,7 +77,7 @@ bool checkAlgebra(Value index, Value predicate)
     valid &= expressions.implies(expressions.land(p, expressions.lnot(q)), expressions.lnot(q));
     valid &= expressions.implies(expressions.land(expressions.land(p, q), r), expressions.land(q, p));
     valid &= !expressions.implies(p, q) && !expressions.implies(expressions.lor(p, q), p);
-    valid &= !expressions.implies(q, r); // Arithmetic correlation is deliberately not inferred.
+    valid &= expressions.implies(q, r); // Exact unsigned bounds on the same operand.
     valid &= expressions.land(q, r) == q && expressions.lor(q, r) == r;
     auto lower5 = expressions.lt(expressions.constant(5), x);
     auto lower6 = expressions.lt(expressions.constant(6), x);
@@ -110,6 +110,26 @@ bool checkAlgebra(Value index, Value predicate)
     valid &= expressions.constantUnder(expressions.land(p, q), nested) == 9;
     valid &= expressions.constantUnder(expressions.land(expressions.lnot(p), expressions.lnot(q)), nested) == 14;
     valid &= !expressions.constantUnder(p, expressions.add(choice, x));
+    // Unrelated prior queries must not be specialized or gain negation nodes.
+    // The requested root is deliberately newer than this unrelated arena DAG.
+    for (uint64_t i = 1000; i < 2024; ++i) {
+        (void)expressions.lt(x, expressions.constant(i));
+    }
+    auto sparseChoice = expressions.select(p, expressions.constant(41), expressions.constant(73));
+    auto sharedRoot = expressions.add(sparseChoice, sparseChoice);
+    const auto beforeSparseProof = expressions.size();
+    const auto sparseValue = expressions.constantUnder(p, sharedRoot);
+    if (sparseValue != 82 || expressions.size() != beforeSparseProof) {
+        llvm::errs() << "sparse constant proof: value=" << sparseValue.value_or(UINT64_MAX)
+                     << " nodes=" << expressions.size() << " before=" << beforeSparseProof << "\n";
+    }
+    valid &= sparseValue == 82;
+    valid &= expressions.size() == beforeSparseProof;
+    // A premise may be newer than the root and need not occur in its DAG.
+    auto newerPremise = expressions.land(p, expressions.lt(x, expressions.constant(9000)));
+    valid &= expressions.constantUnder(newerPremise, sharedRoot) == 82;
+    valid &= expressions.constantUnder(expressions.lnot(p), sharedRoot) == 146;
+    valid &= !expressions.constantUnder(expressions.boolean(true), sharedRoot);
     fs::RegionExpressions bad;
     valid &= bad.div(bad.input(index), bad.constant(0)) == fs::RegionExpressions::invalid;
     fs::RegionExpressions dynamic;
@@ -809,6 +829,66 @@ bool checkIntegerEmission(func::FuncOp function, ArrayRef<Operation*> cuts, Valu
     llvm::DenseMap<fs::RegionExpressions::Id, Value> memo;
     return hasWide && failed(expressions.emit(unavailable, builder, cuts[1], memo)) && absent.empty() && memo.empty();
 }
+bool checkConstantBoundImplications(Value index)
+{
+    fs::RegionExpressions e;
+    const auto x = e.input(index), zero = e.constant(0), one = e.constant(1), maximum = e.constant(UINT64_MAX);
+    const auto plus = e.add(x, one), minus = e.sub(x, one);
+    const auto four = e.constant(4);
+    const auto singleton = e.land(e.le(four, x), e.le(x, four));
+    if (!e.implies(singleton, e.eq(x, four)) ||
+        !e.implies(e.land(singleton, e.lnot(e.eq(x, four))), e.boolean(false)) ||
+        !e.implies(e.land(e.lt(x, four), e.le(four, x)), e.boolean(false)) ||
+        !e.implies(e.lt(four, x), e.lt(e.constant(3), x)) ||
+        e.implies(e.lnot(e.eq(x, four)), e.lt(x, four)) ||
+        // Actual counterexamples: MAX+1=0 and 0-1=MAX in this machine layout.
+        e.implies(e.eq(x, maximum), e.le(one, plus)) ||
+        e.implies(e.eq(x, zero), e.lt(minus, maximum)) ||
+        e.implies(e.slt(x, zero), e.lt(x, maximum))) { return false; }
+    const std::vector<uint64_t> bounds{0, 1, 4, UINT64_MAX - 1, UINT64_MAX};
+    std::set<uint64_t> samples;
+    for (auto bound : bounds) {
+        for (uint64_t delta = 0; delta <= 2; ++delta) {
+            samples.insert(bound + delta);
+            samples.insert(bound - delta);
+        }
+    }
+    // Boundary values include both sides of each comparison and the shifted
+    // boundaries of the modular operands; the oracle evaluates unsigned bits.
+    if (samples.size() >= 64) { return false; }
+    const auto mask = (uint64_t(1) << samples.size()) - 1;
+    std::vector<std::pair<fs::RegionExpressions::Id, uint64_t>> formulas;
+    for (unsigned root = 0; root < 3; ++root) {
+        const auto operand = root == 0 ? x : root == 1 ? plus : minus;
+        for (auto bound : bounds) {
+            const auto c = e.constant(bound);
+            for (unsigned comparison = 0; comparison < 5; ++comparison) {
+                const auto formula = comparison == 0 ? e.eq(operand, c) :
+                    comparison == 1 ? e.lt(operand, c) : comparison == 2 ? e.lt(c, operand) :
+                    comparison == 3 ? e.le(operand, c) : e.le(c, operand);
+                uint64_t truth = 0;
+                unsigned bit = 0;
+                for (auto sample : samples) {
+                    const auto value = root == 0 ? sample : root == 1 ? sample + 1 : sample - 1;
+                    const bool yes = comparison == 0 ? value == bound : comparison == 1 ? value < bound :
+                        comparison == 2 ? bound < value : comparison == 3 ? value <= bound : bound <= value;
+                    if (yes) { truth |= uint64_t(1) << bit; }
+                    ++bit;
+                }
+                formulas.push_back({formula, truth});
+                formulas.push_back({e.lnot(formula), (~truth) & mask});
+            }
+        }
+    }
+    for (const auto& premise : formulas) {
+        for (const auto& consequence : formulas) {
+            if (e.implies(premise.first, consequence.first) && (premise.second & ~consequence.second)) {
+                return false;
+            }
+        }
+    }
+    return e.constructionError().empty();
+}
 bool checkImplicationTruthTables(Value index, Value predicate)
 {
     fs::RegionExpressions expressions;
@@ -816,8 +896,8 @@ bool checkImplicationTruthTables(Value index, Value predicate)
     const auto q = expressions.eq(x, expressions.constant(5));
     const auto r = expressions.eq(x, expressions.constant(6));
     using Formula = std::pair<fs::RegionExpressions::Id, unsigned>;
-    // Eight valuations of three abstract atoms. Arithmetic correlations are
-    // deliberately omitted, matching the proof engine's conservative contract.
+    // p is independent; q=(x==5) and r=(x==6) cannot both hold. Keep the
+    // existing eight-bit encoding and ignore its two impossible valuations.
     std::vector<Formula> formulas{{p, 0xaa}, {q, 0xcc}, {r, 0xf0},
         {expressions.boolean(false), 0}, {expressions.boolean(true), 255}};
     for (uint32_t i = 0; i < 3; ++i) {
@@ -839,7 +919,7 @@ bool checkImplicationTruthTables(Value index, Value predicate)
     }
     for (auto [premise, truth] : formulas) {
         for (auto [consequence, implied] : formulas) {
-            if (expressions.implies(premise, consequence) && (truth & ~implied)) { return false; }
+            if (expressions.implies(premise, consequence) && (truth & ~implied & 0x3f)) { return false; }
         }
     }
     return expressions.constructionError().empty();
@@ -929,26 +1009,39 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
         return function.emitError("regional expression fixture requires two arguments, cuts and a hidden result");
     }
     const auto before = render(function);
-    if (!checkAlgebra(function.getArgument(0), function.getArgument(1)) || !checkEmission(function, cuts) ||
-        !checkTransaction(function.getArgument(0)) ||
-        !checkPortProvenance(function) ||
-        !checkIncompatibleCrossings(function) ||
-        !checkRegionalNativeOrder(function) ||
-        !checkCrossChildNative(function) ||
-        !checkConsolidatedCandidateExclusion(function) ||
-        !checkDistanceAlgebra(function.getArgument(0), function.getArgument(1)) ||
-        !checkGuardedMinimum(function.getArgument(0), function.getArgument(1)) ||
-        !checkBoundedZeroEdges(function.getArgument(0), function.getArgument(1)) ||
-        !checkThresholdAlgebra(function.getArgument(0)) ||
-        !checkImplicationTruthTables(function.getArgument(0), function.getArgument(1)) ||
-        !checkIntegerAdapters(function.getArgument(0), function.getArgument(1)) ||
-        !checkPartialIntegerAdapters(function.getArgument(0), function.getArgument(1)) ||
-        !checkIntegerEmission(function, cuts, hidden) ||
-        !checkPlacementRetry(function, cuts) || !checkSubstitution(function.getArgument(0), function.getArgument(1)) ||
-        !runNestedRegionalChecks(function) || !runRepeatedRegionChecks(function) ||
-        !runRepeatedStorageChecks(function.getContext()) || !runRepeatedPhaseChecks(function) ||
-        !rejectedWithoutCode(function, cuts[0], cuts[0]->getResult(0)) ||
-        !rejectedWithoutCode(function, cuts[1], hidden) || render(function) != before) {
+    if (!checkAlgebra(function.getArgument(0), function.getArgument(1))) {
+        return function.emitError("regional expression algebra checks failed");
+    }
+    auto checked = [](StringRef name, bool result) {
+        if (!result) { llvm::errs() << "regional expression subcheck failed: " << name << "\n"; }
+        return result;
+    };
+    if (!checked("checkEmission", checkEmission(function, cuts)) ||
+        !checked("checkTransaction", checkTransaction(function.getArgument(0))) ||
+        !checked("checkPortProvenance", checkPortProvenance(function)) ||
+        !checked("checkIncompatibleCrossings", checkIncompatibleCrossings(function)) ||
+        !checked("checkRegionalNativeOrder", checkRegionalNativeOrder(function)) ||
+        !checked("checkCrossChildNative", checkCrossChildNative(function)) ||
+        !checked("checkConsolidatedCandidateExclusion", checkConsolidatedCandidateExclusion(function)) ||
+        !checked("checkDistanceAlgebra", checkDistanceAlgebra(function.getArgument(0), function.getArgument(1))) ||
+        !checked("checkGuardedMinimum", checkGuardedMinimum(function.getArgument(0), function.getArgument(1))) ||
+        !checked("checkBoundedZeroEdges", checkBoundedZeroEdges(function.getArgument(0), function.getArgument(1))) ||
+        !checked("checkThresholdAlgebra", checkThresholdAlgebra(function.getArgument(0))) ||
+        !checked("checkConstantBoundImplications", checkConstantBoundImplications(function.getArgument(0))) ||
+        !checked("checkImplicationTruthTables",
+                 checkImplicationTruthTables(function.getArgument(0), function.getArgument(1))) ||
+        !checked("checkIntegerAdapters", checkIntegerAdapters(function.getArgument(0), function.getArgument(1))) ||
+        !checked("checkPartialIntegerAdapters",
+                 checkPartialIntegerAdapters(function.getArgument(0), function.getArgument(1))) ||
+        !checked("checkIntegerEmission", checkIntegerEmission(function, cuts, hidden)) ||
+        !checked("checkPlacementRetry", checkPlacementRetry(function, cuts)) ||
+        !checked("checkSubstitution", checkSubstitution(function.getArgument(0), function.getArgument(1))) ||
+        !checked("runNestedRegionalChecks", runNestedRegionalChecks(function)) ||
+        !checked("runRepeatedRegionChecks", runRepeatedRegionChecks(function)) ||
+        !checked("runRepeatedStorageChecks", runRepeatedStorageChecks(function.getContext())) ||
+        !checked("runRepeatedPhaseChecks", runRepeatedPhaseChecks(function)) ||
+        !checked("rejectedWithoutCode", rejectedWithoutCode(function, cuts[0], cuts[0]->getResult(0))) ||
+        !checked("rejectedWithoutCode", rejectedWithoutCode(function, cuts[1], hidden)) || render(function) != before) {
         return function.emitError("regional expression checks failed");
     }
     llvm::outs() << "regional expression checks passed\n";

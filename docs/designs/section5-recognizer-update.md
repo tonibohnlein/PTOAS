@@ -227,3 +227,59 @@ The compliance prefilter's 43 nested-parenthesis brace matches were inspected;
 every body is braced. Line-length findings were fixed, and git diff --check is
 clean. Full static-analyzer metrics, corpus and device measurements were not run
 for this milestone.
+
+### Milestone 4
+
+Varying-length repetition exports sufficient allocation palettes and guarded
+first/last handoffs for each lane. The original source identity remains the
+inner ordinal and outer visit. Startup and seam records are singletons; suffix
+records use their actual source-visit residue. A suffix lane's first collision
+is separated by the least common multiple of its record period and palette
+width. Numerical boundary transfers certify reuse without unfolding visits.
+
+Internal child cycles reuse the numerical shared allocator when their width
+divides the selector period and their endpoint residues lie within the proved
+boundary fringe. Other internal records use a dedicated cyclic palette when
+its return path is certified. All groups enter the existing global six-ID
+allocator. These are sufficient strategies: failure is not a minimum-capacity
+result, and no payload order is added to make a palette fit.
+
+The universal query checks exact short visits and proves that long-class
+attachments remain constant under the certified length residue. It retains the
+existing startup/suffix matrices. For P ports, an uncached query uses O(P)
+quotient attachments and O((s+q+64)P²) Boolean work, where s is the startup
+length and q the suffix period. Existing matrix construction is charged
+separately. The implication counter counts proof requests, including cache hits;
+it does not assign one common cost to numerical and guarded queries.
+
+Two repeated computations exposed by this integration are removed: once two
+successive squared transfer matrices agree, every higher square is the same
+idempotent matrix; a single conditional application replaces those bits.
+Guard specialization visits only the requested expression's ancestors, avoiding
+work and generated negations for unrelated queries in the shared arena.
+
+Forced unsigned comparisons against constants now contribute exact bounds on
+the same expression. No bounds are propagated through wrapping arithmetic or
+signed comparisons. This proves startup facts such as T>4 implying T>3, which
+the former Boolean-only proof treated as independent predicates. Numerical
+sequence specialization also checks its constant-guard contract before querying
+children; symbolic guards retain the general guarded reduction.
+
+M4 validation: all 20 varying command/physical-allocation cases passed, including
+zero trips, empty first visits, slope and step changes, startup and suffix
+boundaries, exact all-event queries, and unchanged preparation size at a billion
+outer iterations. One-ID failure is transactional. Serial incremental builds
+and links passed. The expression checks pass the new 22,500 unsigned-bound
+implications and wraparound counterexamples. The representative sequence query
+fell from a 90-second timeout to about 0.15 seconds after the two local fixes;
+this is a diagnostic measurement, not a corpus performance claim.
+
+Two previously outstanding allocation tests remain visible. The broad repeated
+region suite reaches an unsupported clipped period-two assignment (M5's active
+successor obligation). The bounded-lifetime physical suite exceeds six with its
+dedicated palettes (M6); its allocator has been unchanged since M1 corrected
+the shared pool. The varying and bounded tests have separate invocations, and
+both remain in lit with their original success assertions. No test was changed
+to call these proof gaps hardware scarcity. The repeated-reuse oracle was
+corrected to use native start order for same-pipe WAIT-to-SET reuse and retains
+completion-to-start checks across pipes.

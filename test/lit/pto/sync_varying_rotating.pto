@@ -7,7 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Derived from sync_repeated_region.pto; varying inner length, unchanged payloads.
 // RUN: %python %S/Inputs/check_varying_rotating.py pto-sync-input-test %s
-// RUN: %python %S/Inputs/check_compact_endpoints.py pto-sync-input-test %s
+// RUN: %python %S/Inputs/check_compact_endpoints.py pto-sync-input-test %s varying
+// RUN: %python %S/Inputs/check_compact_endpoints.py pto-sync-input-test %s bounded
 !mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
 !left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
 !right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>

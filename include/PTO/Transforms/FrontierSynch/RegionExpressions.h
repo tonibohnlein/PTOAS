@@ -98,11 +98,13 @@ public:
     std::optional<uint64_t> constantValue(Id expression) const;
     bool isBoolean(Id expression) const;
     // Sound constant specialization under an immutable Boolean premise.
-    // Unknown means unsupported, not nonconstant. Uses O(G^2) Boolean proof
-    // work in the worst case; no valuation search or arithmetic solver.
+    // Unknown means unsupported, not nonconstant. Visits only the root's operand
+    // DAG; Boolean proofs also inspect the premise. Uses O(G^2) proof work in
+    // their combined reachable size; no valuation search or arithmetic solver.
     std::optional<uint64_t> constantUnder(Id premise, Id expression);
-    // Sound sufficient implication by forced Boolean facts, without arithmetic
-    // reasoning, Boolean search or SAT. A conjunction of A distinct obligations costs O(A*G)
+    // Sound sufficient implication by forced Boolean facts and unsigned constant
+    // bounds on identical integer expressions. No arithmetic propagation, Boolean
+    // search or SAT. A conjunction of A distinct obligations costs O(A*G)
     // for G DAG nodes; one obligation costs O(G). Does not grow the DAG.
     bool implies(Id premise, Id consequence) const;
     // Syntactic conjuncts implied by every nonfalse predicate. False predicates
@@ -155,6 +157,7 @@ private:
     enum class Truth : uint8_t { Unknown, False, True };
     Truth evaluateBoolean(const Node& node, const llvm::DenseMap<Id, Truth>& values) const;
     bool refutesNegation(Id premise, Id consequence) const;
+    bool contradictoryConstantBounds(const llvm::DenseMap<Id, Truth>& bindings) const;
     Id intern(Node node);
     void appendOperands(const Node& node, SmallVectorImpl<Id>& operands) const;
     static bool equalInteger(const Node& a, const Node& b);

@@ -8,20 +8,20 @@
 // Algebraic storage generators without expanding banks or loop iterations.
 #include "PTO/Transforms/FrontierSynch/VaryingRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/VaryingRotatingAllocation.h"
+#include "VaryingBoundaryQuery.h"
 #include "CountedLoop.h"
 #include "CircuitEndpoints.h"
 #include "../InsertSync/SyncEffectRanges.h"
+#include "llvm/ADT/APInt.h"
 #include <map>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
 namespace {
 using Id = RegionExpressions::Id;
 using Occ = BoundaryOccurrence;
-using Matrix = std::vector<std::vector<uint8_t>>;
-struct Port {
-    Occ occurrence;
-    PeriodicEventKind kind;
-};
+using Matrix = VaryingBoundaryMatrix;
+using Port = VaryingBoundaryPort;
 using PortKey = std::tuple<uint32_t, uint64_t, bool, unsigned>;
 PortKey key(Port p) { return {p.occurrence.type, p.occurrence.coordinate, p.occurrence.tail, unsigned(p.kind)}; }
 Matrix product(const Matrix& a, const Matrix& b)
@@ -51,9 +51,13 @@ struct State : std::enable_shared_from_this<State> {
     std::map<PortKey, std::size_t> portIds;
     std::vector<Matrix> startup, suffix;
     std::vector<std::vector<Matrix>> powers;
+    std::vector<unsigned> lastPower;
     using TransferKey = std::tuple<uint32_t, Id, unsigned, Id, Id>;
     std::map<TransferKey, std::vector<Id>> transferMemo;
-    std::string error;
+    std::string error, allocationError;
+    std::optional<std::vector<VaryingAllocationRecord>> allocationRecords;
+    std::shared_ptr<RegionalAllocationSummary> allocation;
+    uint64_t allocationQueries = 0;
     RegionExpressions& e() { return *arena; }
     Id c(uint64_t x) { return e().constant(x); }
     Id mul(Id x, uint64_t n)
@@ -99,10 +103,12 @@ struct State : std::enable_shared_from_this<State> {
     }
     RotatingBoundaryType type(uint64_t t)
     {
-        // The recognizer proves actual lengths fit signed index. Representatives
-        // used here are checked separately by analyzeAffineRotatingVisits.
-        const auto n = visits.slope * t + visits.intercept;
-        return n < visits.child.cutoff ? visits.child.select(n) : visits.child.types[n % visits.child.period];
+        // Artificial transfer representatives need not be executable visits.
+        // Compute their residue without overflowing even when K(t) itself is
+        // beyond uint64; only exact short lengths are converted back to uint64.
+        const auto n = llvm::APInt(128, visits.slope) * llvm::APInt(128, t) + llvm::APInt(128, visits.intercept);
+        return n.ult(llvm::APInt(128, visits.child.cutoff)) ? visits.child.select(n.getZExtValue()) :
+            visits.child.types[n.urem(llvm::APInt(128, visits.child.period)).getZExtValue()];
     }
     void add(Occ x)
     {
@@ -210,12 +216,18 @@ struct State : std::enable_shared_from_this<State> {
             for (unsigned bit = 1; bit < 64; ++bit) {
                 column.push_back(product(column.back(), column.back()));
             }
+            unsigned last = 63;
+            for (unsigned bit = 0; bit < 63; ++bit) {
+                if (column[bit] == column[bit + 1]) { last = bit; break; }
+            }
+            lastPower.push_back(last);
             powers.push_back(std::move(column));
         }
         return error.empty();
     }
     std::vector<Id> advance(const std::vector<Id>& values, const Matrix& matrix, Id enabled)
     {
+        if (e().constantValue(enabled) == 0) { return values; }
         std::vector<Id> next(ports.size(), e().boolean(false));
         for (std::size_t j = 0; j < ports.size(); ++j) {
             for (std::size_t i = 0; i < ports.size(); ++i) {
@@ -260,10 +272,15 @@ struct State : std::enable_shared_from_this<State> {
             std::vector<Id> final(ports.size(), e().boolean(false));
             for (uint64_t p = 0; p < visits.period; ++p) {
                 auto row = values;
-                for (unsigned bit = 0; bit < 64; ++bit) {
+                for (unsigned bit = 0; bit < lastPower[p]; ++bit) {
                     auto active = e().eq(e().rem(e().div(cycles, c(uint64_t(1) << bit)), c(2)), c(1));
                     row = advance(row, powers[p][bit], active);
                 }
+                // Equal adjacent squares certify an idempotent matrix. Every
+                // remaining set bit applies that same matrix, so apply it once
+                // exactly when the remaining unsigned quotient is nonzero.
+                // Without stabilization, bit 63 has this same threshold test.
+                row = advance(row, powers[p][lastPower[p]], e().le(c(uint64_t(1) << lastPower[p]), cycles));
                 for (uint64_t j = 0; j < visits.period; ++j) {
                     row = advance(row, suffix[(p + j) % visits.period], e().lt(c(j), tail));
                 }
@@ -412,8 +429,26 @@ struct State : std::enable_shared_from_this<State> {
         }
         return true;
     }
+    void buildAllocation();
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare();
 };
+void State::buildAllocation()
+{
+    allocationRecords = enumerateVaryingAllocationRecords(visits, allocationError);
+    if (!allocationRecords) { return; }
+    VaryingBoundaryQuery queries(visits, ports, startup, suffix, powers);
+    if (!queries.error().empty()) { allocationError = queries.error(); return; }
+    const VaryingBoundaryReuseQuery query = [&queries](Occ source, PeriodicEventKind sourceKind,
+        Occ target, PeriodicEventKind targetKind, uint64_t sourceVisit, uint64_t gap) {
+        return queries.query(source, sourceKind, target, targetKind, sourceVisit, gap);
+    };
+    allocation = buildVaryingRotatingAllocation(out, visits, trips, *allocationRecords, query, allocationError);
+    allocationQueries = queries.queryCount;
+    // Query proof cost is numerical, not expression-circuit size. Each uncached
+    // query uses O(P) quotient attachments and O((startup+period+64)*P^2)
+    // Boolean row work. Existing transfer/power construction costs
+    // O((startup+period^2+64*period)*P^3), with no runtime-trip expansion.
+}
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> State::prepare()
 {
     CircuitEndpoints emit(function, e(), out.anchors);
@@ -467,7 +502,20 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> State::prepare()
             return failure();
         }
     }
-    return emit.take();
+    auto prepared = emit.take();
+    if (allocation && allocationRecords && prepared->families.size() == allocationRecords->size()) {
+        bool identitiesMatch = true;
+        for (std::size_t i = 0; i < allocationRecords->size(); ++i) {
+            const auto& expected = (*allocationRecords)[i];
+            const auto& family = prepared->families[i];
+            identitiesMatch &= expected.record == i && family.id == i && family.members.size() == 1 &&
+                family.members.front().record == expected.record && family.members.front().source == expected.source &&
+                family.members.front().target == expected.target;
+        }
+        if (identitiesMatch) { prepared->regionalAllocation = allocation; }
+        else { allocationError = "varying allocation and endpoint record identities disagree"; }
+    }
+    return prepared;
 }
 } // namespace
 FailureOr<RegionalAnalysis> varyingRotatingRegionalResult(
@@ -525,6 +573,9 @@ FailureOr<RegionalAnalysis> varyingRotatingRegionalResult(
         error = state->error;
         return failure();
     }
+    // Construct the numerical allocation proof once, before publishing its
+    // cost. Failure preserves the logical interface and original endpoint plan.
+    state->buildAllocation();
     // Closures own state. Keep them out of state's prototype to avoid cycles.
     auto result = out;
     result.presence = [state](RegionalEvent x) -> std::optional<Id> {
@@ -554,6 +605,7 @@ FailureOr<RegionalAnalysis> varyingRotatingRegionalResult(
     result.cost.ports = state->ports.size();
     result.cost.phaseDescriptions = state->visits.startup + state->visits.period;
     result.cost.expressionNodes = state->e().size();
+    result.cost.implicationChecks = state->allocationQueries;
     return result;
 }
 } // namespace mlir::pto::frontiersynch

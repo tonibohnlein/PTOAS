@@ -104,24 +104,42 @@ std::optional<uint64_t> RegionExpressions::constantValue(Id expression) const
 std::optional<uint64_t> RegionExpressions::constantUnder(Id premise, Id expression)
 {
     if (!isBoolean(premise) || !valid(expression)) { return std::nullopt; }
-    std::vector<std::optional<uint64_t>> values(static_cast<std::size_t>(expression) + 1);
-    for (Id i = 0; i <= expression; ++i) {
+    // Other regional queries share this arena. Specialize only the requested
+    // root's operand DAG; scanning its entire numeric-ID prefix makes later
+    // proofs revisit every unrelated query and manufacture their negations.
+    SmallVector<Id> pending{expression}, order;
+    llvm::DenseSet<Id> seen;
+    while (!pending.empty()) {
+        const auto next = pending.pop_back_val();
+        if (!seen.insert(next).second) { continue; }
+        order.push_back(next);
+        appendOperands(nodes[next], pending);
+    }
+    // Interned operands precede their users. Include Integer recipe operands
+    // through appendOperands even though this evaluator leaves recipes opaque.
+    llvm::sort(order);
+    llvm::DenseMap<Id, std::optional<uint64_t>> values;
+    auto known = [&](Id id) { return id == invalid ? std::optional<uint64_t>() : values.lookup(id); };
+    for (Id i : order) {
         const auto node = nodes[i]; // Boolean negations below may grow nodes.
-        auto& value = values[i];
+        const auto left = known(node.a), right = known(node.b);
+        std::optional<uint64_t> value;
         if (node.kind == Kind::Constant) { value = node.literal; }
         else if (node.kind == Kind::Select) {
-            if (values[node.a]) { value = *values[node.a] ? values[node.b] : values[node.c]; }
-            else if (values[node.b] && values[node.b] == values[node.c]) { value = values[node.b]; }
-        } else if (node.kind == Kind::Not && values[node.a]) { value = !*values[node.a]; }
-        else if (node.a != invalid && node.b != invalid && values[node.a] && values[node.b]) {
-            value = fold(node.kind, *values[node.a], *values[node.b]);
+            const auto other = known(node.c);
+            if (left) { value = *left ? right : other; }
+            else if (right && right == other) { value = right; }
+        } else if (node.kind == Kind::Not && left) { value = !*left; }
+        else if (node.a != invalid && node.b != invalid && left && right) {
+            value = fold(node.kind, *left, *right);
         }
         if (!value && node.boolean) {
             if (refutesNegation(premise, i)) { value = 1; }
             else if (refutesNegation(premise, lnot(i))) { value = 0; }
         }
+        values.try_emplace(i, value);
     }
-    return values[expression];
+    return values.lookup(expression);
 }
 bool RegionExpressions::isBoolean(Id expression) const
 {
@@ -152,11 +170,64 @@ RegionExpressions::Truth RegionExpressions::evaluateBoolean(
         default: return Truth::Unknown;
     }
 }
+bool RegionExpressions::contradictoryConstantBounds(const llvm::DenseMap<Id, Truth>& bindings) const
+{
+    struct Range {
+        uint64_t lower = 0, upper = UINT64_MAX;
+        SmallVector<uint64_t> excluded;
+    };
+    llvm::DenseMap<Id, Range> ranges;
+    for (const auto& binding : bindings) {
+        const auto& node = nodes[binding.first];
+        if (node.kind != Kind::Eq && node.kind != Kind::Lt && node.kind != Kind::Le) { continue; }
+        const auto a = constantValue(node.a), b = constantValue(node.b);
+        if (a.has_value() == b.has_value()) { continue; }
+        const bool left = a.has_value(), truth = binding.second == Truth::True;
+        const Id operand = left ? node.b : node.a;
+        if (isBoolean(operand)) { continue; }
+        const uint64_t bound = left ? *a : *b;
+        auto& range = ranges[operand];
+        if (node.kind == Kind::Eq) {
+            if (truth) {
+                range.lower = std::max(range.lower, bound);
+                range.upper = std::min(range.upper, bound);
+            } else { range.excluded.push_back(bound); }
+        } else if (node.kind == Kind::Lt) {
+            if (left && truth) { // c < x
+                if (bound == UINT64_MAX) { return true; }
+                range.lower = std::max(range.lower, bound + 1);
+            } else if (left) { range.upper = std::min(range.upper, bound); }
+            else if (truth) { // x < c
+                if (!bound) { return true; }
+                range.upper = std::min(range.upper, bound - 1);
+            } else { range.lower = std::max(range.lower, bound); }
+        } else {
+            if (left && truth) { range.lower = std::max(range.lower, bound); }
+            else if (left) { // NOT(c <= x)
+                if (!bound) { return true; }
+                range.upper = std::min(range.upper, bound - 1);
+            } else if (truth) { range.upper = std::min(range.upper, bound); }
+            else { // NOT(x <= c)
+                if (bound == UINT64_MAX) { return true; }
+                range.lower = std::max(range.lower, bound + 1);
+            }
+        }
+        if (range.lower > range.upper) { return true; }
+    }
+    for (const auto& entry : ranges) {
+        const auto& range = entry.second;
+        if (range.lower == range.upper && llvm::is_contained(range.excluded, range.lower)) { return true; }
+    }
+    // Each operand is an opaque 64-bit value. In particular no bound is moved
+    // through add/sub, whose modular wrap invalidates natural-number reasoning.
+    return false;
+}
 bool RegionExpressions::refutesNegation(Id premise, Id consequence) const
 {
     // These bindings are necessary if premise AND NOT consequence holds.
-    // Propagate only forced facts, never choose a Boolean valuation. Keeping
-    // comparisons as independent atoms enlarges the possible valuation set.
+    // Propagate only forced facts, never choose a Boolean valuation. Unsigned
+    // constant comparisons may constrain the same opaque integer operand;
+    // every other comparison remains an independent atom.
     llvm::DenseMap<Id, Truth> bindings;
     SmallVector<std::pair<Id, Truth>> pending{{premise, Truth::True}, {consequence, Truth::False}};
     while (!pending.empty()) {
@@ -190,6 +261,7 @@ bool RegionExpressions::refutesNegation(Id premise, Id consequence) const
             }
         }
     }
+    if (contradictoryConstantBounds(bindings)) { return true; }
     // Only Boolean ancestors of the two formulas can contribute to this
     // proof. Other region queries share the arena but are irrelevant here.
     // A postorder walk visits shared gates once; comparisons remain atoms.

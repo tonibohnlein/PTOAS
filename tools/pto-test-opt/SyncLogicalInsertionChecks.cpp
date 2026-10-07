@@ -681,8 +681,7 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         {"symbolic_storage_effects", regional.symbolicStorageEffects.size()},
         {"storage_selector_interface", bool(regional.storageSelectors)},
         {"allocation_interface", failed(prepared) ? "no-logical-plan" :
-            ((**prepared).nestedIdentities ? "nested-not-implemented" :
-             ((**prepared).regionalAllocation || (**prepared).allocationCertificate ? "constructed" : "unavailable"))},
+            ((**prepared).regionalAllocation || (**prepared).allocationCertificate ? "constructed" : "unavailable")},
         {"queries_available", validQueries}, {"unchanged", before == after},
         {"slice_prerequisite", checkSlicePrerequisite(function, input)},
         {"region_scope", checkRegionScope ? llvm::json::Value(regionScope) : llvm::json::Value(nullptr)},
