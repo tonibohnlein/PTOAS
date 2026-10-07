@@ -10,6 +10,7 @@
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "PTO/IR/PTOLinearAccess.h"
 #include "SyncRegionArithmetic.h"
+#include "SyncEffectRanges.h"
 #include "SyncScalarEvolution.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -606,9 +607,11 @@ bool RegionBuilder::selection(Value operand, DictionaryAttr contract)
     return static_cast<bool>(region.byteOffset);
 }
 
+} // namespace
+
 // Failed scalar expansions may have visited intermediate SSA values. Export
 // only symbols used by the final address or extents, keeping maps compact.
-void compactSymbols(SyncAccessRegion& region)
+void detail::compactRegionSymbols(SyncAccessRegion& region)
 {
     SmallVector<bool> used(region.symbols.size(), false);
     auto mark = [&](AffineExpr expression) {
@@ -638,8 +641,6 @@ void compactSymbols(SyncAccessRegion& region)
     region.symbols = std::move(symbols);
 }
 
-} // namespace
-
 std::optional<SyncAccessRegion> resolveSelectedRegion(const SyncInput& input, Value operand,
                                                      Operation* at, DictionaryAttr contract)
 {
@@ -657,7 +658,7 @@ std::optional<SyncAccessRegion> resolveSelectedRegion(const SyncInput& input, Va
     if (!builder.selection(operand, contract)) {
         return std::nullopt;
     }
-    compactSymbols(builder.region);
+    detail::compactRegionSymbols(builder.region);
     return std::move(builder.region);
 }
 
@@ -712,7 +713,7 @@ std::optional<SyncAccessRegion> resolveBufferRegion(const SyncInput& input, Valu
     if (!builder.region.byteOffset) {
         return std::nullopt;
     }
-    compactSymbols(builder.region);
+    detail::compactRegionSymbols(builder.region);
     return std::move(builder.region);
 }
 
