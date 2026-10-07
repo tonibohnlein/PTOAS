@@ -41,16 +41,14 @@ SmallVector<ArithmeticGuard> enclosingGuards(Operation* op, Operation* root)
 }
 bool supportedDomain(scf::ForOp loop, detail::ProgramBuilder& builder)
 {
-    APInt lower, step;
-    const bool constants = matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) &&
-                           matchPattern(loop.getStep(), m_ConstantInt(&step));
-    const bool positive = constants && lower.isSignedIntN(64) && step.isSignedIntN(64) &&
-                          lower.getSExtValue() >= 0 && step.getSExtValue() > 0;
-    const bool supported = positive && builder.limits.period % step.getSExtValue() == 0;
-    if (!supported) {
-        return false;
-    }
-    return builder.prepareValue(loop.getUpperBound(), {nullptr, enclosing(loop, builder.output.context.root), {}});
+    APInt step;
+    if (!matchPattern(loop.getStep(), m_ConstantInt(&step)) || !step.isSignedIntN(64) ||
+        step.getSExtValue() <= 0) { return false; }
+    // The relation retains original IVs. Congruence is represented by the
+    // exact local-quotient importer, not by expanding the configured period.
+    ArithmeticSite context{nullptr, enclosing(loop, builder.output.context.root), {}};
+    return builder.prepareValue(loop.getLowerBound(), context) &&
+           builder.prepareValue(loop.getUpperBound(), context);
 }
 void collect(const PhaseIndex& index, detail::ProgramBuilder& builder)
 {

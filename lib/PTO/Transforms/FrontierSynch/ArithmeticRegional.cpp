@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exact arithmetic child interfaces for sequence composition.
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
+#include "CountedLoop.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticStorageSelectors.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
@@ -31,7 +32,7 @@ struct State {
     std::vector<Id> parameters;
     std::vector<uint32_t> pipes;
     std::vector<scf::ForOp> enclosing;
-    struct LoopGeometry { int64_t lower = 0, step = 1; uint64_t maximumOrdinal = 0; };
+    struct LoopGeometry { Id lower; int64_t step; uint64_t maximumOrdinal; };
     std::map<Operation*, LoopGeometry> geometry;
     std::string error;
     Id no() { return arena->boolean(false); }
@@ -46,16 +47,26 @@ struct State {
         for (const auto& site : program.sites) {
             for (auto loop : site.loops) {
                 if (geometry.count(loop)) { continue; }
-                APInt lower, step;
-                if (!matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) ||
-                    !matchPattern(loop.getStep(), m_ConstantInt(&step)) || !lower.isSignedIntN(64) ||
-                    !step.isSignedIntN(64) || lower.getSExtValue() < 0 || step.getSExtValue() <= 0) {
-                    error = "arithmetic regional ordinals require the recognized "
-                            "nonnegative-lower positive-step domain";
+                auto domain = CountedLoop::get(loop);
+                auto lower = loop.getLowerBound();
+                // An entry-bound origin is reusable in every endpoint query.
+                // Origins depending on another queried coordinate need a map.
+                auto* definition = lower.getDefiningOp();
+                auto argument = dyn_cast<BlockArgument>(lower);
+                auto* owner = argument ? argument.getOwner()->getParentOp() : nullptr;
+                APInt constant;
+                const bool fixed = matchPattern(lower, m_ConstantInt(&constant)) && constant.isSignedIntN(64);
+                const bool entry = fixed || (definition ?
+                    (!program.context.root->isProperAncestor(definition) ||
+                     definition->getBlock() == &program.context.function.front()) :
+                    (owner == program.context.function.getOperation() ||
+                     (owner && owner != program.context.root && !program.context.root->isProperAncestor(owner))));
+                if (!domain || !entry) {
+                    error = "arithmetic regional ordinals require a representable counted domain and entry origin";
                     return false;
                 }
-                const auto start = lower.getSExtValue(), stride = step.getSExtValue();
-                geometry.emplace(loop, LoopGeometry{start, stride, static_cast<uint64_t>((INT64_MAX-start)/stride)});
+                geometry.emplace(loop, LoopGeometry{fixed ? c(constant.getSExtValue()) : arena->input(lower),
+                                                     domain->step, domain->maximumOrdinal});
             }
         }
         return true;
@@ -83,7 +94,12 @@ struct State {
         for (unsigned i = 0; i < loops.size(); ++i) {
             // Integer witnesses truncate off-domain. Exclude such ordinals
             // before interpreting the reconstructed bits as an occurrence.
-            valid = arena->land(valid, arena->le((*values)[i], c(geometry.at(loops[i]).maximumOrdinal)));
+            const auto& domain = geometry.at(loops[i]);
+            auto representable = IntegerSystem::create(2, {IntegerConstraint{
+                {BoundInteger(domain.step), BoundInteger(1)}, BoundInteger(INT64_MAX)}});
+            if (failed(representable)) { return RegionExpressions::invalid; }
+            valid = arena->land(valid, arena->land(arena->le((*values)[i], c(domain.maximumOrdinal)),
+                arena->integerPredicate(*representable, {(*values)[i], domain.lower}, 1, {0, 0})));
         }
         return valid;
     }
@@ -94,8 +110,8 @@ struct State {
         const auto& loops = program.sites[event.type].loops;
         for (unsigned i = 0; i < loops.size(); ++i) {
             const auto& domain = geometry.at(loops[i]);
-            IntegerAffine affine{{BoundInteger(domain.step)}, BoundInteger(domain.lower)};
-            (*result)[i] = arena->integerWitness(affine, BoundInteger(1), {(*result)[i]}, 1, {0}, 0);
+            IntegerAffine affine{{BoundInteger(domain.step), BoundInteger(1)}, BoundInteger(0)};
+            (*result)[i] = arena->integerWitness(affine, BoundInteger(1), {(*result)[i], domain.lower}, 1, {0, 0}, 0);
         }
         return result;
     }
@@ -208,8 +224,8 @@ struct State {
                 const auto& domain = geometry.at(loops[i]);
                 // Signed mathematical subtraction/division; unsigned modular
                 // subtraction is not the inverse at negative off-domain values.
-                tuple.push_back(arena->integerWitness({{BoundInteger(1)}, -BoundInteger(domain.lower)},
-                    BoundInteger(domain.step), {value}, 1, {0}, 0));
+                tuple.push_back(arena->integerWitness({{BoundInteger(1), BoundInteger(-1)}, BoundInteger(0)},
+                    BoundInteger(domain.step), {value, domain.lower}, 1, {0, 0}, 0));
             }
             RegionalEvent event{static_cast<uint32_t>(piece.outputSite), c(0), PeriodicEventKind::Start};
             if (!tuple.empty()) { event.ordinal = tuple.back(); tuple.pop_back(); event.visits = std::move(tuple); }

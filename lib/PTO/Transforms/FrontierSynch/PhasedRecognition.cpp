@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PhaseNormalization.h"
 #include "BoundarySlices.h"
+#include "CountedLoop.h"
 #include "RecognitionInternal.h"
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
@@ -243,12 +244,11 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                     }
                     if (auto inner = dyn_cast_or_null<scf::ForOp>(child.anchor);
                         child.kind == StructureKind::Loop && inner) {
-                        auto lower = sequenceInteger(inner.getLowerBound()), step = sequenceInteger(inner.getStep());
-                        if (!lower || *lower != 0 || !step || *step != 1) {
-                            return unavailable("nested sliced child requires a zero-based unit-step domain");
+                        auto domain = CountedLoop::get(inner);
+                        if (!domain) {
+                            return unavailable("nested sliced child requires a representable counted domain");
                         }
-                        auto upper = expressions.input(inner.getUpperBound());
-                        auto innerTrips = expressions.select(expressions.slt(c(0), upper), upper, c(0));
+                        auto innerTrips = domain->trips(expressions);
                         auto childSlices = collectBoundarySlices(
                             inner, index, expressions, innerTrips, interval.bindings, diagnostic);
                         if (!childSlices) { return unavailable("nested boundary: " + diagnostic); }
