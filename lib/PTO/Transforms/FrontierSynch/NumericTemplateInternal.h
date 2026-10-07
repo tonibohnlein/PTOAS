@@ -18,8 +18,11 @@ struct TemplateBuilder {
     SmallVector<TemplateCoordinate> path;
     uint64_t visits = 0;
     uint64_t phases = 0;
+    TemplateGeometryConstant geometryConstant;
+    TemplateControlConstant controlConstant;
     MLIRContext* context() const { return output.outer.getContext(); }
-    AffineExpr scalar(Value value, SmallVectorImpl<Value>* invariants = nullptr) const;
+    AffineExpr scalar(Value value, SmallVectorImpl<Value>* invariants = nullptr,
+                      bool control = false) const;
     std::optional<int64_t> integer(Value value) const;
     std::optional<bool> guard(Value value, unsigned depth = 0) const;
     bool charge(uint64_t count, uint64_t& total, uint64_t limit, Operation* anchor);

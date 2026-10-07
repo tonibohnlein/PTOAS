@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICPROGRAM_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICPROGRAM_H
 #include "PTO/Transforms/FrontierSynch/ArithmeticRecognition.h"
+#include <functional>
 namespace mlir::pto::frontiersynch {
 struct ArithmeticGuard {
     scf::IfOp branch;
@@ -53,18 +54,25 @@ struct ArithmeticProgram {
 // their exact finite unions are charged to the output size. Metadata follows
 // the shared leaf contract. Classified internal scalar prerequisites are retained;
 // existing synchronization and unclassified prerequisites remain unsupported.
-// The shared producer must supply all payload effects. A root-loop producer
-// may omit globally independent GM effects only with the shared disjoint-visit
-// certificate; extraction.dischargedEffects records them. Regional consumers
-// must retain these effects for enclosing re-entry. Output borrows input/IR.
+// The shared producer must supply all payload effects. Regional roots may
+// discharge GM reads proved independent of every writer in the shared input.
+// A root-loop producer may also discharge globally independent GM writes with
+// the shared disjoint-visit certificate. extraction.dischargedEffects records
+// both; regional consumers retain them for enclosing re-entry. Output borrows input/IR.
 // Failure clears primitive/site/parameter exports; diagnostics remain available.
 // Region extraction preserves original SSA bindings. Only index/i1 values
 // available before root can become extra parameters; local unsupported values
 // remain unsupported. This produces primitives, not a composable regional plan:
 // storage selectors, query adapters and boundary discharge are separate steps.
+// Optional entry constants are certified by an enclosing phase/interval
+// context. Substitute before relation construction and class checking; never
+// bind local occurrence coordinates. Consumers must enforce that same context
+// when using the specialized queries or inserting the resulting endpoints.
+using ArithmeticEntryConstant = std::function<std::optional<int64_t>(Value)>;
 ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext context, const PhaseIndex& index,
                                              const SyncInput& input, const SyncStorageEffects& effects,
-                                             const ArithmeticLimits& limits);
+                                             const ArithmeticLimits& limits,
+                                             ArithmeticEntryConstant entryConstant = {});
 ArithmeticProgram recognizeArithmeticProgram(func::FuncOp function, const PhaseIndex& index,
                                              const SyncInput& input, const SyncStorageEffects& effects,
                                              const ArithmeticLimits& limits);

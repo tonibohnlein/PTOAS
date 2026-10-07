@@ -129,6 +129,14 @@ class ScalarEvolution {
                 }
             }
         }
+        // A scalar load or opaque integer operation still has its declared
+        // signed bit range. This supplies no expression or alias fact, but it
+        // proves widening index casts and later bounded arithmetic exact.
+        if (!result.range && isa<IntegerType>(v.getType()) && width(v.getType()) <= 64) {
+            const unsigned bits = width(v.getType());
+            result.range = Range{APInt::getSignedMinValue(bits).getSExtValue(),
+                                 APInt::getSignedMaxValue(bits).getSExtValue()};
+        }
         cache[v] = result;
         return result;
     }
@@ -166,7 +174,24 @@ inline ScalarEvolution::Result ScalarEvolution::argument(BlockArgument arg, Symb
     const unsigned bits = width(arg.getType());
     if (!bits || bits > 64) { return {}; }
     const int64_t maximum = APInt::getSignedMaxValue(bits).getSExtValue();
-    return {symbol(arg), Range{*lower, upper ? *upper - 1 : maximum - 1}};
+    int64_t last = upper ? *upper - 1 : maximum - 1;
+    if (!upper) {
+        // The upper bound is defined outside this loop; resolving it cannot
+        // depend on this IV. Do not infer a lower/upper relation between loaded
+        // metadata: only its proven type/arithmetic range is used here.
+        // Range-only traversal must not register unused symbols in the
+        // caller's affine map, or pollute its expression cache with aliases.
+        ScalarEvolution bounds(context);
+        bounds.indexBits = indexBits;
+        auto range = bounds.resolve(loop.getUpperBound(), [&](Value) {
+            return getAffineSymbolExpr(0, context);
+        }, 0).range;
+        if (range) {
+            if (range->upper <= *lower) { return {}; } // no executed iteration
+            last = std::min(last, range->upper - 1);
+        }
+    }
+    return {symbol(arg), Range{*lower, last}};
 }
 
 inline ScalarEvolution::Result ScalarEvolution::recurrence(BlockArgument arg, scf::ForOp loop, Symbol symbol)
@@ -260,7 +285,12 @@ inline ScalarEvolution::Result ScalarEvolution::operation(Value v, Symbol symbol
         }
         return {};
     }
-    if (op->getNumOperands() != 2) {
+    if (op->getNumOperands() != 2 ||
+        !isa<arith::AddIOp, arith::SubIOp, arith::MulIOp, arith::MaxSIOp, arith::MinSIOp,
+             arith::AndIOp, arith::RemUIOp, arith::RemSIOp, arith::DivUIOp, arith::DivSIOp>(op)) {
+        // Unsupported scalar expressions remain one original SSA symbol. Do
+        // not register irrelevant operands (e.g. a load's pointer) in the
+        // caller's affine map merely to discover that normalization stops here.
         return {};
     }
     auto a = resolve(op->getOperand(0), symbol, depth), b = resolve(op->getOperand(1), symbol, depth);

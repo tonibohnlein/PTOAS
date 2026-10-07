@@ -13,8 +13,12 @@ namespace mlir::pto::frontiersynch {
 // Analyze one original region with shared entry bindings. The finite-boundary
 // adapter enumerates bounded physical bytes, never dynamic payload occurrences;
 // adjacent bytes with identical selector tuples share one exported cell.
+// A certified phase view can bind shared entry parameters before queries and
+// selectors are constructed. Caller-supplied event coordinates remain untouched.
+// Preparation retains original IR and requires the parent to enforce that phase.
 FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
-    std::string& error);
+    std::string& error,
+    std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding = {});
 }
 #endif

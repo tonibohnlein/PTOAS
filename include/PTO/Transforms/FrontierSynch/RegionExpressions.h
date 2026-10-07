@@ -25,6 +25,23 @@ class RegionExpressions {
 public:
     using Id = uint32_t;
     static constexpr Id invalid = std::numeric_limits<Id>::max();
+    // Speculative construction owns every newly created ID until committed.
+    // Destroy attempt-local queries/substitutions before rollback; neither
+    // their IDs nor emission caches may escape a rejected transaction.
+    // Prefix IDs remain valid. Transactions nest in lexical stack order.
+    class Transaction {
+    public:
+        explicit Transaction(RegionExpressions& arena);
+        ~Transaction();
+        Transaction(const Transaction&) = delete;
+        Transaction& operator=(const Transaction&) = delete;
+        void commit() { committed = true; }
+    private:
+        RegionExpressions& arena;
+        std::size_t count;
+        std::string constructionMessage, emissionMessage;
+        bool committed = false;
+    };
     Id constant(uint64_t value);
     Id boolean(bool value);
     Id input(Value value);
@@ -44,6 +61,11 @@ public:
     Id substitute(Id expression, Substitution& context);
     Id add(Id a, Id b);
     Id sub(Id a, Id b);
+    // Constant-work factoring of constant-leaf choices; no case distribution.
+    Id minimum(Id a, Id b);
+    // min(current,a+b), for current,a,b in [0,cap], cap<=UINT64_MAX/2.
+    // The caller establishes the operand bounds (as for quotient distances).
+    Id boundedMinPlus(Id current, Id a, Id b, uint64_t cap);
     Id div(Id a, Id b);
     Id rem(Id a, Id b);
     Id lt(Id a, Id b);
@@ -81,6 +103,10 @@ public:
     // reasoning, Boolean search or SAT. A conjunction of A distinct obligations costs O(A*G)
     // for G DAG nodes; one obligation costs O(G). Does not grow the DAG.
     bool implies(Id premise, Id consequence) const;
+    // Syntactic conjuncts implied by every nonfalse predicate. False predicates
+    // impose no obligation. Comparisons and other Boolean formulas stay atoms;
+    // this performs no valuation search or arithmetic reasoning.
+    SmallVector<Id> commonBooleanConjuncts(llvm::ArrayRef<Id> predicates) const;
 
     // Base arithmetic has unsigned 64-bit modular semantics; integerPredicate
     // and integerWitness use the signed, checked contract above. The producer establishes
@@ -125,7 +151,7 @@ private:
     };
     struct Hash { std::size_t operator()(const Node& node) const; };
     enum class Truth : uint8_t { Unknown, False, True };
-    Truth evaluateBoolean(const Node& node, ArrayRef<Truth> values) const;
+    Truth evaluateBoolean(const Node& node, const llvm::DenseMap<Id, Truth>& values) const;
     bool refutesNegation(Id premise, Id consequence) const;
     Id intern(Node node);
     void appendOperands(const Node& node, SmallVectorImpl<Id>& operands) const;

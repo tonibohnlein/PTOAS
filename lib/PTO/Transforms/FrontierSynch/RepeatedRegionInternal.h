@@ -23,15 +23,29 @@ struct RepeatedRegionState {
     // the partial final period. Empty typePhases denotes invariant q=1.
     uint64_t phaseCount = 1;
     Id originalTrips = RegionExpressions::invalid;
+    Id originalBegin = RegionExpressions::invalid;
     std::vector<uint32_t> typePhases;
     std::vector<RepeatedCrossing> crossings;
     // Raw bridge generators define Q; reduced guards are only endpoint recipes.
     std::vector<RepeatedCrossing> queryCrossings;
+    // Only crossing targets are quotient vertices. A unit edge contracts one
+    // complete within-body path followed by one crossing; no zero-edge body
+    // closure is repeated in the quotient.
     std::vector<RegionalEvent> slots;
+    std::vector<std::vector<std::size_t>> targetCrossings;
     std::vector<Id> distances;
+    std::map<std::tuple<std::size_t, std::size_t, std::size_t>, Id> distanceMemo;
+    // Every across-visit path uses a boundary port. Factor Boolean conditions
+    // necessary for any live port once, and restore them on across queries.
+    Id portEnable = RegionExpressions::invalid;
+    std::unique_ptr<RegionExpressions::Substitution> portCondition;
     uint64_t infinity = 0;
     using EventKey = std::tuple<uint32_t, Id, PeriodicEventKind, std::vector<Id>>;
-    std::map<std::pair<EventKey, EventKey>, std::optional<Id>> queryMemo;
+    std::map<std::pair<EventKey, EventKey>, std::optional<Id>> queryMemo, bodyPortMemo;
+    // Body coordinates only: R lazy distance columns and R first-crossing
+    // costs. Each finite answer includes at least one crossing. Invalid means
+    // not queried yet; every outer visit and consumer shares these entries.
+    std::map<EventKey, std::vector<Id>> sourceDistances;
     std::string error;
     RegionExpressions& e() { return *body.expressions; }
     bool buildBoundary();
@@ -40,6 +54,14 @@ struct RepeatedRegionState {
     std::optional<Id> query(RegionalEvent source, RegionalEvent target);
     std::optional<Id> present(RegionalEvent event);
     std::optional<Id> computeQuery(RegionalEvent source, RegionalEvent target);
+    std::optional<Id> distanceFrom(const RegionalEvent& source, std::size_t column);
+    std::optional<Id> crossingStep(const RegionalEvent& source, std::size_t target);
+    Id underPortEnable(Id expression);
+    std::optional<Id> portDistance(std::size_t source, std::size_t target);
+    std::optional<Id> bodyPortQuery(const RegionalEvent& source, const RegionalEvent& target);
 };
+// Export a validated state's body, coordinates, selectors and recipes. Callers
+// establish its crossing graph (possibly empty for a certified singleton).
+RepeatedRegionAnalysis exportRepeatedRegion(std::shared_ptr<RepeatedRegionState> state);
 } // namespace mlir::pto::frontiersynch
 #endif

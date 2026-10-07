@@ -147,8 +147,16 @@ bool ProgramBuilder::entryParameter(Value value) const
     auto* root = output.context.root;
     return root != output.context.function.getOperation() && index.valueAvailable(value, root, Boundary::Before);
 }
+std::optional<int64_t> ProgramBuilder::constant(Value value) const
+{
+    // Availability excludes local loop IVs and values produced inside root.
+    // Values from preceding payloads can be entry parameters; only the caller's
+    // certified phase/interval equality can specialize one to a constant.
+    return entryConstant && entryParameter(value) ? entryConstant(value) : std::nullopt;
+}
 AffineExpr ProgramBuilder::registerParameter(Value value)
 {
+    if (auto fixed = constant(value)) { return getAffineConstantExpr(*fixed, context); }
     auto inserted = parameterIds.try_emplace(value, output.parameters.size());
     if (inserted.second) {
         output.parameters.push_back(value);
@@ -158,6 +166,7 @@ AffineExpr ProgramBuilder::registerParameter(Value value)
 }
 bool ProgramBuilder::prepareValue(Value input, const ArithmeticSite& site)
 {
+    if (constant(input)) { return true; }
     auto expression = normalizeValue(input, site, 0, context, [&](Value value) -> AffineExpr {
         auto binding = indexParameter(*this, value);
         return binding ? registerParameter(binding) : AffineExpr{};
@@ -166,8 +175,12 @@ bool ProgramBuilder::prepareValue(Value input, const ArithmeticSite& site)
 }
 AffineExpr ProgramBuilder::value(Value input, const ArithmeticSite& site, unsigned offset) const
 {
+    if (auto fixed = constant(input)) { return getAffineConstantExpr(*fixed, context); }
     return normalizeValue(input, site, offset, context, [&](Value input) -> AffineExpr {
         auto binding = indexParameter(*this, input);
+        if (binding) {
+            if (auto fixed = constant(binding)) { return getAffineConstantExpr(*fixed, context); }
+        }
         auto parameter = parameterIds.find(binding);
         return parameter == parameterIds.end() ? AffineExpr{} : getAffineSymbolExpr(parameter->second, context);
     });

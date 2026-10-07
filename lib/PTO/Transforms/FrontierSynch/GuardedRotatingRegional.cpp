@@ -102,6 +102,10 @@ public:
         for (uint32_t type = 0; type < analysis->phases.size(); ++type) {
             auto present = dag.land(dag.lt(begin, trips), analysis->payloads[type].presence);
             RegionalSelector first{{type, begin, PeriodicEventKind::Start}, present};
+            // Occurrence guards are immutable throughout this selected slice.
+            // Thus an active type first executes at begin, including nonzero
+            // slice beginnings; parent repetition lifts this exact identity.
+            result.firstSitePayloads[type].push_back(first);
             RegionalSelector last{{type, dag.sub(trips, c(1)), PeriodicEventKind::Start}, present};
             for (auto effect : input.accesses().effectsFor(analysis->phases[type])) {
                 if (llvm::is_contained(analysis->dischargedEffects, effect)) {

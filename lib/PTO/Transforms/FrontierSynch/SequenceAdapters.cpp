@@ -26,6 +26,11 @@ void SequenceAnalysisState::bindAdapters()
         for (uint32_t type = 0; type < child.anchors.size(); ++type) {
             auto present = expressions.lt(c(0), child.trips);
             RegionalSelector first{{type, c(0), PeriodicEventKind::Start}, present};
+            // Each explicit/template type executes at ordinal zero whenever
+            // this body is nonempty. Keep this per-type selector when a parent
+            // adds repeat coordinates; a pipe-wide first is not sufficient for
+            // an incoming scalar prerequisite targeting a later payload site.
+            out.firstSitePayloads[type].push_back(first);
             RegionalSelector last{{type, expressions.sub(child.trips, c(1)), PeriodicEventKind::Start}, present};
             for (auto effect : input->accesses().effectsFor(child.anchors[type].phase)) {
                 if (llvm::is_contained(child.dischargedEffects, effect)) {
@@ -183,6 +188,9 @@ bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
         return fail("regional storage relationships need the shared access model");
     }
     cells.clear(); ports.clear(); portIds.clear(); boundaries.clear();
+    portChoices.clear(); selectorAlternatives.clear();
+    nativeFirst.clear(); nativeLast.clear();
+    nativeFirst.resize(children.size()); nativeLast.resize(children.size());
     for (const auto& [space, bases] : points) {
         for (const auto& [base, endpoints] : bases) {
             for (auto it = endpoints.begin(); it != endpoints.end() && std::next(it) != endpoints.end(); ++it) {
@@ -257,6 +265,10 @@ bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
                     for (auto selected : values) { convert(selected, out.lastReaders[pipe]); }
                 }
             }
+            normalizeSelectorAlternatives(out.firstWriters);
+            normalizeSelectorAlternatives(out.lastWriters);
+            for (auto& [pipe, values] : out.firstReaders) { normalizeSelectorAlternatives(values); }
+            for (auto& [pipe, values] : out.lastReaders) { normalizeSelectorAlternatives(values); }
         }
         for (const auto& access : child.regional.accessBoundary) {
             if (!child.regional.accessModel || access.effect >= child.regional.accessModel->effects().size()) {
@@ -268,12 +280,15 @@ bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
                 return fail("regional access selector has an invalid occurrence or predicate");
             }
         }
-        for (const auto* side : {&child.regional.firstPayloads, &child.regional.lastPayloads}) {
-            for (const auto& [pipe, values] : *side) {
-                std::vector<Selected> validated;
-                for (auto selected : values) { convert(selected, validated); }
+        auto importNative = [&](const auto& source, NativeSelectors& destination) {
+            for (const auto& [pipe, values] : source) {
+                auto& selected = destination[pipe];
+                for (auto value : values) { convert(value, selected); }
+                normalizeSelectorAlternatives(selected);
             }
-        }
+        };
+        importNative(child.regional.firstPayloads, nativeFirst[id]);
+        importNative(child.regional.lastPayloads, nativeLast[id]);
     }
     return error.empty();
 }

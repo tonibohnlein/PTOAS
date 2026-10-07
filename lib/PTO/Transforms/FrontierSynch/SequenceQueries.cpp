@@ -124,11 +124,60 @@ void SequenceAnalysisState::canonicalizeCrossings()
         edge.guard = expressions.select(edge.guard, negate(earlier), no());
     }
 }
+uint32_t SequenceAnalysisState::selectPort(Expr choose, uint32_t yesPort, uint32_t noPort)
+{
+    if (yesPort == noPort) { return yesPort; }
+    const auto candidate = ports[yesPort], previous = ports[noPort];
+    if (candidate.child != previous.child || candidate.type != previous.type ||
+        candidate.visits.size() != previous.visits.size()) {
+        fail("selected boundary alternatives require one occurrence frame"); return noPort;
+    }
+    auto ordinal = expressions.select(choose, candidate.ordinal, previous.ordinal);
+    std::vector<Expr> visits;
+    for (std::size_t i = 0; i < candidate.visits.size(); ++i) {
+        visits.push_back(expressions.select(choose, candidate.visits[i], previous.visits[i]));
+    }
+    const auto previousCount = ports.size();
+    auto combined = port(candidate.child, candidate.type, ordinal, visits);
+    if (combined == previousCount) { portChoices.emplace(combined, PortChoice{choose, yesPort, noPort}); }
+    return combined;
+}
+void SequenceAnalysisState::normalizeSelectorAlternatives(std::vector<Selected>& values)
+{
+    // Each exact first/last list denotes one boundary occurrence, possibly
+    // through several guarded descriptions. Simultaneously live alternatives
+    // denote that same occurrence. Merge descriptions before bridge products,
+    // so every neighboring region reuses one selected-coordinate map.
+    std::map<uint32_t, Expr> byPort;
+    for (const auto& selected : values) {
+        if (expressions.constantValue(selected.present) == 0) { continue; }
+        auto [found, added] = byPort.emplace(selected.port, selected.present);
+        if (!added) { found->second = either(found->second, selected.present); }
+    }
+    SelectorKey key(byPort.begin(), byPort.end());
+    if (auto found = selectorAlternatives.find(key); found != selectorAlternatives.end()) {
+        values = found->second; return;
+    }
+    using Group = std::tuple<uint32_t, uint32_t, std::size_t>;
+    std::map<Group, std::size_t> groups;
+    std::vector<Selected> folded;
+    for (const auto& [portId, presence] : key) {
+        const auto selected = ports[portId];
+        auto [found, added] = groups.emplace(
+            Group{selected.child, selected.type, selected.visits.size()}, folded.size());
+        if (added) { folded.push_back({portId, presence}); continue; }
+        auto& prior = folded[found->second];
+        prior.port = selectPort(presence, portId, prior.port);
+        prior.present = either(prior.present, presence);
+    }
+    selectorAlternatives.emplace(std::move(key), folded);
+    values = std::move(folded);
+}
 void SequenceAnalysisState::foldCrossingEndpoints(bool incomingSources)
 {
     // A fixed opposite endpoint needs only the latest active completion on
     // one source site, or the earliest active start on one consumer site.
-    // Keep the original links for reachability. This folds the candidate
+    // Preserve the closure through native endpoint chains. This folds the candidate
     // description into one selected occurrence, without enumerating guard
     // valuations or building one exclusion predicate per physical byte.
     using Group = std::tuple<uint32_t, uint32_t, uint32_t, std::size_t>;
@@ -144,19 +193,13 @@ void SequenceAnalysisState::foldCrossingEndpoints(bool incomingSources)
         if (added) { folded.push_back(edge); continue; }
         auto& accumulated = folded[found->second];
         auto prior = incomingSources ? accumulated.source : accumulated.target;
-        const auto previous = ports[prior];
         auto stronger = incomingSources ? before(prior, selected) : before(selected, prior);
         // The candidate/prior coordinates may use values evaluated only
         // when their respective occurrence guards hold. Preserve lazy masking
         // through selection instead of evaluating an inactive comparison.
         auto choose = expressions.select(edge.guard,
             expressions.select(accumulated.guard, stronger, yes()), no());
-        auto ordinal = expressions.select(choose, candidate.ordinal, previous.ordinal);
-        std::vector<Expr> visits;
-        for (std::size_t i = 0; i < candidate.visits.size(); ++i) {
-            visits.push_back(expressions.select(choose, candidate.visits[i], previous.visits[i]));
-        }
-        auto combined = port(candidate.child, candidate.type, ordinal, visits);
+        auto combined = selectPort(choose, selected, prior);
         if (incomingSources) { accumulated.source = combined; }
         else { accumulated.target = combined; }
         accumulated.guard = either(accumulated.guard, edge.guard);
@@ -167,8 +210,8 @@ void SequenceAnalysisState::consolidateCrossings(bool incomingSources)
 {
     // Incoming records keep the latest active source on each pipe. Dually,
     // outgoing records keep the earliest active consumer on each pipe. Native
-    // completion/start chains imply the eliminated records. Original crossing
-    // links stay immutable so later queries retain the full required order.
+    // completion/start chains imply the eliminated records. The consolidated
+    // snapshot stays immutable while cover deletion changes retained guards.
     auto selectedPort = [&](const Crossing& edge) {
         return incomingSources ? edge.source : edge.target;
     };
@@ -250,10 +293,47 @@ std::optional<Expr> SequenceAnalysisState::eventReachability(SequenceEvent sourc
     if (cached != reachabilityCache.end()) { return cached->second; }
     if (source.child >= children.size() || target.child >= children.size()) { return std::nullopt; }
     if (source.child > target.child) { return no(); }
+    // A selected occurrence denotes exactly one original occurrence, including
+    // its presence. Expand the alias before any child query. Memoization is by
+    // endpoint pair, so shared selection DAGs do not enumerate choice paths.
+    auto choice = [&](const SequenceEvent& value) -> const PortChoice* {
+        auto portId = portIds.find({value.child, value.type, value.ordinal, value.visits});
+        if (portId == portIds.end()) { return nullptr; }
+        auto found = portChoices.find(portId->second);
+        return found == portChoices.end() ? nullptr : &found->second;
+    };
+    const auto* sourceChoice = choice(source);
+    const auto* targetChoice = sourceChoice ? nullptr : choice(target);
+    if (sourceChoice || targetChoice) {
+        const auto selected = sourceChoice ? *sourceChoice : *targetChoice;
+        const auto kind = sourceChoice ? source.kind : target.kind;
+        auto original = [&](uint32_t portId) {
+            auto value = event(2 * static_cast<std::size_t>(portId));
+            value.kind = kind;
+            return value;
+        };
+        auto yes = sourceChoice ? eventReachability(original(selected.yes), target) :
+                                  eventReachability(source, original(selected.yes));
+        auto no = sourceChoice ? eventReachability(original(selected.no), target) :
+                                 eventReachability(source, original(selected.no));
+        if (!yes || !no) { return std::nullopt; }
+        auto answer = expressions.select(selected.choose, *yes, *no);
+        reachabilityCache.emplace(std::move(pair), answer);
+        return answer;
+    }
     auto local = [&](SequenceEvent a, SequenceEvent b) {
         const auto& region = children[a.child].regional;
         RegionalEvent left{a.type, a.ordinal, a.kind, a.visits};
         RegionalEvent right{b.type, b.ordinal, b.kind, b.visits};
+        // Every modeled edge is forward in occurrence order, regardless of
+        // its endpoint event kinds. Do not ask a compact backend to expand a
+        // query whose target is provably an earlier occurrence.
+        if (region.capabilities.exactQueries) {
+            auto reverse = regionalReferenceBefore(region, right, left);
+            if (reverse && expressions.constantValue(*reverse) == 1) {
+                return std::optional<Expr>{no()};
+            }
+        }
         auto reach = regionalReachability(region, left, right);
         auto leftPresent = regionalPresence(region, left), rightPresent = regionalPresence(region, right);
         if (!reach || !leftPresent || !rightPresent) { return std::optional<Expr>{}; }
@@ -262,6 +342,23 @@ std::optional<Expr> SequenceAnalysisState::eventReachability(SequenceEvent sourc
     if (source.child == target.child) {
         auto answer = local(source, target);
         if (answer) { reachabilityCache.emplace(std::move(pair), *answer); }
+        return answer;
+    }
+    // Reference order places every occurrence of an earlier child before
+    // every occurrence of a later child. On one pipe, native start and
+    // completion chains therefore decide all event-kind pairs except C->I,
+    // without traversing storage crossings or the intervening children.
+    const auto& left = children[source.child];
+    const auto& right = children[target.child];
+    if (!(source.kind == PeriodicEventKind::Completion && target.kind == PeriodicEventKind::Start) &&
+        source.type < left.anchors.size() && target.type < right.anchors.size() &&
+        left.anchors[source.type].phase && right.anchors[target.type].phase &&
+        left.anchors[source.type].phase->kPipeValue == right.anchors[target.type].phase->kPipeValue) {
+        auto pa = regionalPresence(left.regional, {source.type, source.ordinal, source.kind, source.visits});
+        auto pb = regionalPresence(right.regional, {target.type, target.ordinal, target.kind, target.visits});
+        if (!pa || !pb) { return std::nullopt; }
+        auto answer = both(*pa, *pb);
+        reachabilityCache.emplace(std::move(pair), answer);
         return answer;
     }
     // Every path has a last cross-child link. Its prefix ends in an earlier
@@ -274,7 +371,7 @@ std::optional<Expr> SequenceAnalysisState::eventReachability(SequenceEvent sourc
             if (ports[link.source / 2].child < source.child || expressions.constantValue(link.guard) == 0) {
                 continue;
             }
-            auto suffix = local(event(link.target), target);
+            auto suffix = eventReachability(event(link.target), target);
             if (!suffix) { return std::nullopt; }
             auto tail = expressions.select(link.guard, *suffix, no());
             if (expressions.constantValue(tail) == 0) { continue; }
@@ -338,6 +435,9 @@ bool SequenceAnalysisState::valueBridges()
 bool SequenceAnalysisState::closure()
 {
     if (!error.empty()) { return false; }
+    if (nativeFirst.size() != children.size() || nativeLast.size() != children.size()) {
+        return fail("sequence native boundary selectors were not imported");
+    }
     incoming.clear();
     reachabilityCache.clear();
     auto add = [&](std::size_t source, std::size_t target, Expr guard) {
@@ -347,12 +447,11 @@ bool SequenceAnalysisState::closure()
     };
     std::map<uint32_t, std::vector<Selected>> preceding;
     for (uint32_t childId = 0; childId < children.size(); ++childId) {
-        const auto& regional = children[childId].regional;
-        for (const auto& [p, firsts] : regional.firstPayloads) {
+        for (const auto& [p, firsts] : nativeFirst[childId]) {
             auto nonempty = no();
             for (auto selected : firsts) {
                 nonempty = either(nonempty, selected.present);
-                auto first = port(childId, selected.event);
+                auto first = selected.port;
                 for (auto old : preceding[p]) {
                     auto guard = both(old.present, selected.present);
                     add(2*old.port, 2*first, guard);
@@ -360,11 +459,9 @@ bool SequenceAnalysisState::closure()
                 }
             }
             for (auto& old : preceding[p]) { old.present = both(old.present, negate(nonempty)); }
-            auto found = regional.lastPayloads.find(p);
-            if (found != regional.lastPayloads.end()) {
-                for (auto selected : found->second) {
-                    preceding[p].push_back({port(childId, selected.event), selected.present});
-                }
+            auto found = nativeLast[childId].find(p);
+            if (found != nativeLast[childId].end()) {
+                llvm::append_range(preceding[p], found->second);
             }
         }
     }
@@ -386,31 +483,55 @@ bool SequenceAnalysisState::closure()
     // Native order and the consolidated generators have the same closure as
     // the original links. Snapshot every candidate before testing deletion;
     // deleting candidates in place must not change another candidate's test.
-    // Exported queries retain the original graph, while last-entry tests use
-    // this smaller, closure-equivalent generating set.
+    // Both exported queries and last-entry tests use the smaller graph. The
+    // immutable snapshot must precede cover deletion, whose retained guards
+    // can depend on those very queries.
     for (const auto& edge : crossings) {
         if (expressions.constantValue(edge.guard) != 0) {
             reductionLinks[ports[edge.target].child].push_back({2*edge.source+1, 2*edge.target, edge.guard});
         }
     }
+    incoming = reductionLinks;
+    reachabilityCache.clear();
+    // Consolidation can make candidate descriptions mutually exclusive. Prove
+    // those exclusions before constructing child reachability circuits. The
+    // cache keys are immutable predicate IDs from the predeletion snapshot;
+    // no retained guard is used to justify another candidate's deletion.
+    std::map<std::pair<Expr, Expr>, bool> incompatibilities;
+    auto incompatible = [&](Expr a, Expr b) {
+        const auto av = expressions.constantValue(a), bv = expressions.constantValue(b);
+        if (av == 0 || bv == 0) { return true; }
+        if (a == b || av == 1 || bv == 1) { return false; }
+        if (b < a) { std::swap(a, b); }
+        const auto key = std::make_pair(a, b);
+        auto found = incompatibilities.find(key);
+        if (found != incompatibilities.end()) { return found->second; }
+        const bool answer = expressions.implies(a, negate(b));
+        incompatibilities.emplace(key, answer);
+        return answer;
+    };
     // An alternative path has one last link entering the consumer's child.
     // Its prefix ends earlier and cannot use the tested edge. The suffix is
     // local. Exclude every alias of the tested completion-to-start pair.
     for (auto& edge : crossings) {
         if (expressions.constantValue(edge.guard) == 0) { continue; }
+        const auto candidateGuard = edge.guard;
         Expr alternate = no();
         for (const auto& entry : reductionLinks[ports[edge.target].child]) {
+            if (incompatible(candidateGuard, entry.guard)) { continue; }
             auto distinct = yes();
             if (entry.source % 2 == 1 && entry.target % 2 == 0) {
                 distinct = negate(both(same(entry.source / 2, edge.source), same(entry.target / 2, edge.target)));
             }
             if (expressions.constantValue(distinct) == 0) { continue; }
+            if (ports[entry.source / 2].child < ports[edge.source].child) { continue; }
+            auto prefix = eventReachability(2*edge.source+1, entry.source);
+            if (!prefix) { return fail("child all-event query unavailable"); }
+            if (expressions.constantValue(*prefix) == 0) { continue; }
             auto suffix = eventReachability(entry.target, 2*edge.target);
             if (!suffix) { return fail("child all-event query unavailable"); }
             auto tail = expressions.select(entry.guard, both(distinct, *suffix), no());
             if (expressions.constantValue(tail) == 0) { continue; }
-            auto prefix = eventReachability(2*edge.source+1, entry.source);
-            if (!prefix) { return fail("child all-event query unavailable"); }
             alternate = either(alternate, expressions.select(tail, *prefix, no()));
         }
         edge.guard = expressions.select(edge.guard, negate(alternate), no());

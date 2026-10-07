@@ -126,6 +126,9 @@ std::optional<Pieces> buildCondition(ProgramBuilder& builder, Value value, bool 
     if (auto constant = booleanConstant(value)) {
         return *constant == truth ? Pieces{Rows{}} : Pieces{};
     }
+    if (auto fixed = builder.constant(value)) {
+        return (*fixed != 0) == truth ? Pieces{Rows{}} : Pieces{};
+    }
     auto parameter = builder.parameterIds.find(value);
     const bool booleanParameter = parameter != builder.parameterIds.end() && value.getType().isInteger(1);
     if (booleanParameter) {
@@ -187,7 +190,7 @@ bool ProgramBuilder::prepareGuard(Value root, const ArithmeticSite& site)
         if (!value.getType().isInteger(1)) {
             return false;
         }
-        if (booleanConstant(value)) {
+        if (booleanConstant(value) || constant(value)) {
             continue;
         }
         if (entryParameter(value)) {
