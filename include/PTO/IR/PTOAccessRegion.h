@@ -71,6 +71,33 @@ inline DictionaryAttr makeByteAccessRegion(OpOperand& operand, AffineMap extents
     return parameters.getDictionary(operand.getOwner()->getContext());
 }
 
+// Descriptor effects preserve the ordinary read/write declaration for MLIR
+// scheduling, but do not access the physical bytes described by the operand.
+// Consumers must retain these operations and their scalar dependencies.
+inline DictionaryAttr makeDescriptorEffect(MLIRContext* context)
+{
+    Builder builder(context);
+    return builder.getDictionaryAttr({builder.getNamedAttr(
+        "pto.descriptor_state", builder.getUnitAttr())});
+}
+
+inline bool hasOnlyDescriptorEffects(Operation* operation)
+{
+    auto interface = dyn_cast<MemoryEffectOpInterface>(operation);
+    if (!interface || operation->getNumRegions()) { return false; }
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    interface.getEffects(effects);
+    if (effects.empty()) { return false; }
+    for (const auto& effect : effects) {
+        auto parameters = dyn_cast_or_null<DictionaryAttr>(effect.getParameters());
+        if (!parameters || !parameters.getAs<UnitAttr>("pto.descriptor_state") ||
+            !isa<MemoryEffects::Read, MemoryEffects::Write>(effect.getEffect())) {
+            return false;
+        }
+    }
+    return true;
+}
+
 inline void addAccessRegion(
     SmallVectorImpl<MemoryEffects::EffectInstance>& effects, OpOperand& operand,
     MemoryEffects::Effect* mode, DictionaryAttr region)
