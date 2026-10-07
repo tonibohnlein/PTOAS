@@ -491,6 +491,7 @@ bool SequenceAnalysisState::closure()
     }
     incoming = reductionLinks;
     reachabilityCache.clear();
+    if (numericalCrossingReduction()) { canonicalizeCrossings(); return error.empty(); }
     // Consolidation can make candidate descriptions mutually exclusive. Prove
     // those exclusions before constructing child reachability circuits. The
     // cache keys are immutable predicate IDs from the predeletion snapshot;

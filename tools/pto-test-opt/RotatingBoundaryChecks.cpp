@@ -1,0 +1,142 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// Algebraic storage generators without expanding banks or loop iterations.
+// Independent unfolded all-conflict graph, including cross-visit buffer reuse.
+#include "PTO/Transforms/FrontierSynch/RotatingBoundary.h"
+#include "llvm/Support/raw_ostream.h"
+#include <set>
+#include <tuple>
+namespace fs = mlir::pto::frontiersynch;
+namespace {
+using Pair = std::pair<unsigned, unsigned>;
+bool check(unsigned slots, unsigned stride, unsigned slope, unsigned intercept, unsigned trips, bool scalar)
+{
+    std::vector<fs::PeriodicPayload> payloads{{0}, {1}, {2}};
+    fs::StorageProtectionPolicy protection;
+    if (scalar) {
+        payloads[1].pipe = 0;
+        protection.scalarPipe = 0;
+    }
+    std::vector<fs::RotatingFragment> effects{
+        {0, 0, 0, slots, stride, 0, false, true, 0},
+        {1, 0, 0, slots, stride, 0, true, false, 0},
+        {2, 0, 0, slots, stride, slots - 1, true, false, 0}};
+    std::vector<fs::RotatingBoundaryCell> cells;
+    for (unsigned slot = 0; slot < slots; ++slot) {
+        cells.push_back({0, 0, slot});
+    }
+    auto certificate = fs::buildRotatingBoundaryCertificate(payloads, effects, cells, {}, 256, protection);
+    if (!certificate.error.empty()) {
+        llvm::errs() << certificate.error << "\n";
+        return false;
+    }
+    auto analysis = fs::analyzeAffineRotatingVisits(std::move(certificate), slope, intercept);
+    if (!analysis.error.empty()) {
+        llvm::errs() << analysis.error << "\n";
+        return false;
+    }
+    struct Event {
+        unsigned type, iteration, slot;
+        bool write;
+    };
+    std::vector<Event> events;
+    std::vector<unsigned> starts, lengths;
+    for (unsigned t = 0; t < trips; ++t) {
+        starts.push_back(events.size());
+        lengths.push_back(slope * t + intercept);
+        for (unsigned i = 0; i < lengths.back(); ++i) {
+            for (const auto& effect : effects) {
+                events.push_back({effect.payload, i, unsigned((stride * i + effect.offset) % slots), effect.write});
+            }
+        }
+    }
+    const unsigned n = events.size();
+    std::vector<std::vector<bool>> graph(2 * n, std::vector<bool>(2 * n));
+    for (unsigned i = 0; i < n; ++i) {
+        graph[2 * i][2 * i + 1] = true;
+        for (unsigned j = i + 1; j < n; ++j) {
+            const auto p = payloads[events[i].type].pipe, q = payloads[events[j].type].pipe;
+            if (p == q) {
+                graph[2 * i][2 * j] = graph[2 * i + 1][2 * j + 1] = true;
+            }
+            if (!protection.protectsScalar(p, q) && events[i].slot == events[j].slot &&
+                (events[i].write || events[j].write)) {
+                graph[2 * i + 1][2 * j] = true;
+            }
+        }
+    }
+    for (unsigned k = 0; k < 2 * n; ++k) {
+        for (unsigned i = 0; i < k; ++i) {
+            if (!graph[i][k]) {
+                continue;
+            }
+            for (unsigned j = k + 1; j < 2 * n; ++j) {
+                graph[i][j] = graph[i][j] || graph[k][j];
+            }
+        }
+    }
+    std::set<Pair> expected, actual;
+    for (unsigned a = 0; a < n; ++a) {
+        for (unsigned b = a + 1; b < n; ++b) {
+            if (!graph[2 * a + 1][2 * b]) {
+                continue;
+            }
+            bool redundant = false;
+            for (unsigned z = 2 * a + 2; z < 2 * b; ++z) {
+                redundant |= graph[2 * a + 1][z] && graph[z][2 * b];
+            }
+            if (!redundant) {
+                expected.emplace(a, b);
+            }
+        }
+    }
+    for (unsigned t = 0; t < trips; ++t) {
+        for (auto id : analysis.child.quotient.retained) {
+            const auto& e = analysis.child.quotient.generators[id];
+            for (unsigned i = 0; i < lengths[t]; ++i) {
+                if (e.displacement < lengths[t] - i) {
+                    actual.emplace(starts[t] + 3 * i + e.source, starts[t] + 3 * (i + e.displacement) + e.target);
+                }
+            }
+        }
+        for (const auto& edge : analysis.crossingInto(t)) {
+            actual.emplace(
+                starts[t - 1] + 3 * edge.source.at(lengths[t - 1]) + edge.source.type,
+                starts[t] + 3 * edge.target.at(lengths[t]) + edge.target.type);
+        }
+    }
+    if (expected != actual) {
+        llvm::errs() << "rotating boundary mismatch " << slots << "," << stride << "," << slope << "," << intercept
+                     << "," << trips << "\n";
+        return false;
+    }
+    return true;
+}
+} // namespace
+int runRotatingBoundaryChecks()
+{
+    unsigned checked = 0;
+    for (unsigned slots = 1; slots <= 3; ++slots) {
+        for (unsigned stride = 0; stride <= slots; ++stride) {
+            for (unsigned slope = 1; slope <= 2; ++slope) {
+                for (unsigned intercept = 0; intercept <= 3; ++intercept) {
+                    for (unsigned trips : {0U, 1U, 2U, 5U, 9U}) {
+                        for (bool scalar : {false, true}) {
+                            if (!check(slots, stride, slope, intercept, trips, scalar)) {
+                                return 1;
+                            }
+                            ++checked;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    llvm::outs() << "rotating boundary certificates: " << checked << " unfolded comparisons passed\n";
+    return 0;
+}

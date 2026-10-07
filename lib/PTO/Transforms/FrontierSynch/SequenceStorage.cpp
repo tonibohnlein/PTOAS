@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
 #include "CountedLoop.h"
+#include "PTO/Transforms/FrontierSynch/VaryingRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
@@ -137,6 +138,16 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
     child.trips = domain->trips(expressions);
     // A proved empty domain needs no body interface.
     if (expressions.constantValue(child.trips) == 0) { return true; }
+    if (node.varyingRotating && node.varyingRotating->result.state == RecognitionState::Applicable) {
+        std::string diagnostic;
+        auto regional = varyingRotatingRegionalResult(function,*node.varyingRotating,index,*input,arena,diagnostic,
+            node.varyingDemands ? &*node.varyingDemands : nullptr);
+        if (succeeded(regional)) {
+            child.regional = std::move(*regional); child.anchors = child.regional.anchors;
+            children.push_back(std::move(child)); return true;
+        }
+        repeatedAttempt = diagnostic;
+    }
     if (node.rotatingResult && node.rotatingResult->state == RecognitionState::Applicable) {
         auto analysis = analyzeRotating(child.loop, index, *input, *node.rotatingResult);
         if (!analysis.error.empty()) { return fail(analysis.error); }

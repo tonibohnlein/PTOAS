@@ -611,4 +611,18 @@ FailureOr<Value> RegionExpressions::emit(Id expression, OpBuilder& builder, Oper
     }
     return memo.lookup(expression);
 }
+SmallVector<std::pair<RegionExpressions::Id, Value>> RegionExpressions::referencedInputs(Id root) const
+{
+    SmallVector<std::pair<Id, Value>> result;
+    SmallVector<Id> pending{root};
+    llvm::DenseSet<Id> seen;
+    while (!pending.empty()) {
+        auto id = pending.pop_back_val();
+        if (!valid(id) || !seen.insert(id).second) { continue; }
+        if (nodes[id].kind == Kind::Input) { result.push_back({id,nodes[id].value}); }
+        appendOperands(nodes[id],pending);
+    }
+    llvm::sort(result,[](const auto& a,const auto& b) { return a.first < b.first; });
+    return result;
+}
 } // namespace mlir::pto::frontiersynch

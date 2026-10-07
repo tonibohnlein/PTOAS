@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_RECOGNITION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_RECOGNITION_H
 #include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
+#include "PTO/Transforms/FrontierSynch/BoundedLifetime.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
@@ -20,7 +21,7 @@ enum class RecognitionIssue {
     SlotExpression, IndexArithmetic, CommonStride, OverlappingFamilies,
     AliasedOperand, UnsupportedView, GuardInvariance, UnsupportedControl,
     ArithmeticDimension, ArithmeticPeriod, ArithmeticPipeLimit, ArithmeticConfiguration, AdditionalPrerequisite,
-    TemplateExpansionLimit, TemplateContext, GMDischarge
+    TemplateExpansionLimit, TemplateContext, GMDischarge, RefreshBound
 };
 struct RecognitionDiagnostic {
     RecognitionIssue issue;
@@ -96,6 +97,14 @@ GuardedRecognition recognizeFiniteGuarded(ArrayRef<Operation*> roots, const Phas
                                           const SyncStorageEffects& effects);
 GuardedRecognition recognizeGuardedRotating(scf::ForOp loop, const PhaseIndex& index,
                                             const SyncInput& input, const SyncStorageEffects& effects);
+struct BoundedLifetimeRecognition {
+    GuardedRecognition skeleton;
+    RefreshCertificate refresh;
+};
+// Independent iteration guards are allowed; unconditional producers establish
+// refresh. This does not certify that future predicates can run at a SET cut.
+BoundedLifetimeRecognition recognizeBoundedLifetime(scf::ForOp loop,
+    const PhaseIndex& index, const SyncInput& input);
 StringRef recognitionName(RecognitionState state);
 StringRef recognitionName(RecognitionIssue issue);
 } // namespace mlir::pto::frontiersynch

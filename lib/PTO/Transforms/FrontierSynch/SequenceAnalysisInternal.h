@@ -188,6 +188,7 @@ struct SequenceAnalysisState {
     std::optional<Expr> eventReachability(SequenceEvent source, SequenceEvent target);
     std::optional<Expr> eventReachability(std::size_t source, std::size_t target);
     bool closure();
+    bool numericalCrossingReduction();
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare(ArrayRef<scf::ForOp> enclosing = {});
 };
 std::optional<int64_t> sequenceInteger(Value value);

@@ -45,6 +45,8 @@ public:
     Id constant(uint64_t value);
     Id boolean(bool value);
     Id input(Value value);
+    // Inputs reachable from one circuit root, in DAG order.
+    SmallVector<std::pair<Id, Value>> referencedInputs(Id expression) const;
     // Simultaneous, typed DAG substitution. Bindings are immutable; the memo
     // belongs to this context and one arena. Replacement expressions are not
     // themselves substituted, so coordinate shifts never recursively expand.

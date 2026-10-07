@@ -137,16 +137,17 @@ def main():
             path.write_text(recomposed.replace("array<i64: 5>", f"array<i64: {n}>"))
             validate(json.loads(invoke(tool, "--structured-trace", path)), [n])
             checked += 1
-        # A late upper-bound value may describe exact storage evolution while
-        # being unavailable at an earlier SET cut. Keep analysis usable.
+        # The whole dispatcher can replay a pure scalar upper bound through an
+        # endpoint-capable route. The direct sequence adapter still exports its
+        # queries if that value is unavailable at its earlier SET cut.
         unavailable = source.replace("    scf.for %i = %zero to %n",
             "    %late = arith.addi %n, %one : index\n    scf.for %i = %zero to %late")
         unavailable = unavailable.replace(
             '      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)\n', '')
         unavailable = unavailable.replace('pto.tmatmul ins(%left, %right', 'pto.tmatmul ins(%first, %right')
         path.write_text(unavailable)
-        rejected = json.loads(invoke(tool, "--structured-trace", path))
-        assert not rejected["accepted"] and rejected["unchanged_on_failure"], rejected
+        replayed = json.loads(invoke(tool, "--structured-trace", path))
+        assert replayed["accepted"] and not replayed["trace"]["error"], replayed
         report = json.loads(invoke(tool, "--sequence-analysis", path))
         assert not report["error"] and not report["prepared"], report
         assert report["queries_available"] and report["unchanged"], report

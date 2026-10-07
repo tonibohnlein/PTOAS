@@ -10,6 +10,7 @@
 #define PTO_FRONTIERSYNCH_FINITEGUARDEDINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
+#include "PTO/Transforms/FrontierSynch/GuardedRanks.h"
 namespace mlir::pto::frontiersynch {
 struct GuardedDemand { uint32_t source = 0, target = 0; RegionExpressions::Id guard = 0; };
 struct FiniteGuardedState {
@@ -19,7 +20,7 @@ struct FiniteGuardedState {
     std::vector<TemplateEndpointAnchor> anchors;
     std::vector<Expr> presence;
     std::vector<ExplicitEffects> effects;
-    std::vector<std::vector<Expr>> graph;
+    GuardedRanks rankIndex;
     std::vector<GuardedDemand> retained;
     std::vector<StorageGenerator> residual;
     std::vector<StorageGenerator> nativePrerequisites;

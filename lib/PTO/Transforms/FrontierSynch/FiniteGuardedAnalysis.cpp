@@ -140,6 +140,7 @@ FiniteGuardedAnalysis analyzeFiniteGuarded(func::FuncOp function, ArrayRef<Opera
     state->nativePrerequisites = std::move(prerequisites.native);
     llvm::append_range(state->residual, prerequisites.demands);
     state->closeAndReduce();
+    if (!state->rankIndex.error.empty()) { result.error=state->rankIndex.error; return result; }
     state->summarize(input);
     if (!state->arena->constructionError().empty()) { result.error = state->arena->constructionError(); return result; }
     state->cost.children = 1;
@@ -184,8 +185,9 @@ RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analys
     out.reachability = [state, valid](RegionalEvent a, RegionalEvent b) -> std::optional<RegionExpressions::Id> {
         if (!valid(a) || !valid(b)) { return std::nullopt; }
         auto zero = state->arena->constant(0);
-        return state->both(state->graph[2*a.type + (a.kind == PeriodicEventKind::Completion)]
-            [2*b.type + (b.kind == PeriodicEventKind::Completion)], state->both(
+        auto answer=state->rankIndex.query(*state->arena,{a.type,a.kind},{b.type,b.kind});
+        if (!answer) { return std::nullopt; }
+        return state->both(*answer, state->both(
                 state->arena->eq(a.ordinal, zero), state->arena->eq(b.ordinal, zero)));
     };
     out.prepare = [state]() { return state->prepare(); };
