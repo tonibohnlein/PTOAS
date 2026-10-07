@@ -29,9 +29,10 @@ void FiniteGuardedState::closeAndReduce()
             for (std::size_t b = a+1; b < uses.size(); ++b) {
                 auto [j, y] = uses[b];
                 ++cost.crossingCandidates;
-                if (!(x.write || y.write) || ptoStorageProtection().protectsScalar(pipe(i), pipe(j)) ||
+                if (anchors[i].phase->elementOp == anchors[j].phase->elementOp || !(x.write || y.write) ||
+                    ptoStorageProtection().protectsScalar(pipe(i), pipe(j)) ||
                     hardwareProtectsConflict(pipe(i), x.protectionGroup,
-                                                                     pipe(j), y.protectionGroup)) { continue; }
+                                            pipe(j), y.protectionGroup)) { continue; }
                 demands[i][j] = either(demands[i][j], both(presence[i], presence[j]));
             }
         }
@@ -94,7 +95,7 @@ void FiniteGuardedState::summarize(const SyncInput& input)
             auto first = presence[i], last = presence[i];
             if (mode.write) {
                 for (auto [j, other] : uses) {
-                    if (!other.write) { continue; }
+                    if (!other.write || anchors[i].phase->elementOp == anchors[j].phase->elementOp) { continue; }
                     ++cost.selectorComparisons;
                     if (j < i) { first = both(first, negate(presence[j])); }
                     if (j > i) { last = both(last, negate(presence[j])); }
@@ -104,7 +105,8 @@ void FiniteGuardedState::summarize(const SyncInput& input)
             } else if (mode.read) {
                 for (auto [j, other] : uses) {
                     ++cost.selectorComparisons;
-                    bool supersedes = other.write || (other.read && pipe(i) == pipe(j));
+                    bool supersedes = anchors[i].phase->elementOp != anchors[j].phase->elementOp &&
+                        (other.write || (other.read && pipe(i) == pipe(j)));
                     if (supersedes && j < i) { first = both(first, negate(presence[j])); }
                     if (supersedes && j > i) { last = both(last, negate(presence[j])); }
                 }

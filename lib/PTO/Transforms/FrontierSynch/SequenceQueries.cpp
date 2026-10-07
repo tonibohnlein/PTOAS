@@ -74,24 +74,10 @@ void SequenceAnalysisState::bridges()
         for (uint32_t child = 0; child < children.size(); ++child) {
             const auto& summary = boundaries[child][cell];
             Expr overwritten = no();
-            Expr anyReader = no();
-            for (const auto& [p, oldReaders] : readers) {
-                for (auto old : oldReaders) { anyReader = either(anyReader, old.present); }
-            }
             for (auto first : summary.firstWriters) {
                 overwritten = either(overwritten, first.present);
                 for (auto old : writers) {
-                    bool suppliedByReader = false;
-                    for (const auto& [p, oldReaders] : readers) {
-                        for (auto reader : oldReaders) {
-                            ++costs.implicationChecks;
-                            suppliedByReader |= expressions.implies(old.present, reader.present);
-                        }
-                    }
-                    if (!suppliedByReader) {
-                        old.present = both(old.present, negate(anyReader));
-                        storageCrossing(cell, old, first);
-                    }
+                    storageCrossing(cell, old, first);
                 }
                 for (const auto& [p, oldReaders] : readers) {
                     for (auto old : oldReaders) { storageCrossing(cell, old, first); }
@@ -156,10 +142,10 @@ uint32_t SequenceAnalysisState::selectPort(Expr choose, uint32_t yesPort, uint32
 }
 void SequenceAnalysisState::normalizeSelectorAlternatives(std::vector<Selected>& values)
 {
-    // Each exact first/last list denotes one boundary occurrence, possibly
-    // through several guarded descriptions. Simultaneously live alternatives
-    // denote that same occurrence. Merge descriptions before bridge products,
-    // so every neighboring region reuses one selected-coordinate map.
+    // Merge guarded descriptions of the same boundary occurrence before bridge
+    // products. Different types, including simultaneous macro pipe envelopes,
+    // remain distinct; only coordinate alternatives of one type are selected.
+    // Every neighboring region reuses the resulting selected-coordinate maps.
     std::map<uint32_t, Expr> byPort;
     for (const auto& selected : values) {
         if (expressions.constantValue(selected.present) == 0) { continue; }

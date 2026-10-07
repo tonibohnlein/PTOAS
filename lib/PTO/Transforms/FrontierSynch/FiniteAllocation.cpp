@@ -64,18 +64,24 @@ DictionaryAttr finiteRegionalAllocationCertificate(const RegionalAnalysis& regio
         !region.presence || !region.reachability ||
         region.anchors.size() != region.occurrenceLoops.size()) { return {}; }
     auto& arena = *region.expressions;
-    std::map<Operation*, uint32_t> starts, finishes;
+    using CutPipe = std::pair<Operation*, uint32_t>;
+    std::map<CutPipe, uint32_t> starts, finishes;
     for (uint32_t i = 0; i < region.anchors.size(); ++i) {
         const auto& a = region.anchors[i];
-        if (!a.phase || !a.before.before || !a.after.before || region.occurrenceLoops[i] || !a.coordinates.empty() ||
-            !starts.emplace(a.before.before,i).second || !finishes.emplace(a.after.before,i).second) { return {}; }
+        if (!a.phase || !a.before.before || !a.after.before ||
+            region.occurrenceLoops[i] || !a.coordinates.empty() ||
+            !starts.emplace(CutPipe{a.before.before, static_cast<uint32_t>(a.phase->kPipeValue)},i).second ||
+            !finishes.emplace(CutPipe{a.after.before, static_cast<uint32_t>(a.phase->kPipeValue)},i).second) {
+            return {};
+        }
     }
     struct Handoff { int64_t record; uint32_t source, target; RegionExpressions::Id active; };
     std::map<std::pair<uint32_t,uint32_t>,std::vector<Handoff>> groups;
     auto zero = arena.constant(0);
     for (const auto& family : plan.families) {
         if (family.local) { continue; }
-        auto s = finishes.find(family.sourceCut.before), t = starts.find(family.targetCut.before);
+        auto s = finishes.find({family.sourceCut.before, family.sourcePipe});
+        auto t = starts.find({family.targetCut.before, family.targetPipe});
         if (s == finishes.end() || t == starts.end() || family.members.size() != 1) { return {}; }
         if (family.sourcePipe != static_cast<uint32_t>(region.anchors[s->second].phase->kPipeValue) ||
             family.targetPipe != static_cast<uint32_t>(region.anchors[t->second].phase->kPipeValue)) { return {}; }

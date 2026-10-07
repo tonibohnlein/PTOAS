@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Compose certified cyclic palettes using required-order lifetime envelopes.
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
+#include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "mlir/IR/Builders.h"
 #include "PTO/IR/PTO.h"
 #include "llvm/ADT/DenseSet.h"
@@ -55,11 +56,16 @@ std::shared_ptr<RegionalAllocationSummary> finiteRegionalAllocation(
         region.anchors.size() != region.occurrenceLoops.size()) {
         return {};
     }
-    std::map<Operation*, uint32_t> starts, finishes;
+    using CutPipe = std::pair<Operation*, uint32_t>;
+    std::map<CutPipe, uint32_t> starts, finishes;
     for (uint32_t i = 0; i < region.anchors.size(); ++i) {
         const auto& anchor = region.anchors[i];
-        if (region.occurrenceLoops[i] || !anchor.coordinates.empty() ||
-            !starts.emplace(anchor.before.before, i).second || !finishes.emplace(anchor.after.before, i).second) {
+        if (!anchor.phase || !anchor.before.before || !anchor.after.before ||
+            region.occurrenceLoops[i] || !anchor.coordinates.empty() ||
+            !starts.emplace(CutPipe{anchor.before.before,
+                static_cast<uint32_t>(anchor.phase->kPipeValue)}, i).second ||
+            !finishes.emplace(CutPipe{anchor.after.before,
+                static_cast<uint32_t>(anchor.phase->kPipeValue)}, i).second) {
             return {};
         }
     }
@@ -67,7 +73,8 @@ std::shared_ptr<RegionalAllocationSummary> finiteRegionalAllocation(
     auto& a = *region.expressions;
     for (const auto& family : plan.families) {
         if (family.local) { continue; }
-        auto source = finishes.find(family.sourceCut.before), target = starts.find(family.targetCut.before);
+        auto source = finishes.find({family.sourceCut.before, family.sourcePipe});
+        auto target = starts.find({family.targetCut.before, family.targetPipe});
         if (source == finishes.end() || target == starts.end() || family.members.size() != 1) { return {}; }
         RegionalEvent first{source->second, a.constant(0), PeriodicEventKind::Start};
         RegionalEvent last{target->second, a.constant(0), PeriodicEventKind::Completion};
@@ -84,7 +91,8 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
     // are supported for its selected span endpoints, without inferring an
     // allocation for arbitrary repeated handoff families.
     if (!plan.regionalAllocation || !region.expressions || !region.capabilities.exactQueries ||
-        !region.reachability || region.anchors.empty()) {
+        !region.reachability || region.anchors.empty() ||
+        (!region.outerLoops.empty() && region.outerLoops.size() != region.anchors.size())) {
         return {};
     }
     auto& a = *region.expressions;
@@ -103,11 +111,50 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
         if (answer) { queries.emplace(key, *answer); }
         return answer;
     };
+    // A hidden notification can overlap surrounding commands even after the
+    // host has returned from the macro call. Its bounds are pipe events, not
+    // lexical positions. Include pipes having no memory effects as well.
+    using OwnerPipe = std::pair<Operation*, uint32_t>;
+    std::map<OwnerPipe, uint32_t> envelopeTypes;
+    std::set<Operation*> owners;
+    for (uint32_t i = 0; i < region.anchors.size(); ++i) {
+        auto* phase = region.anchors[i].phase;
+        if (!phase || phase->macroOpInstanceId < 0) { continue; }
+        if (region.occurrenceLoops.size() != region.anchors.size() || region.occurrenceLoops[i] ||
+            !region.anchors[i].coordinates.empty() ||
+            (!region.outerLoops.empty() && !region.outerLoops[i].empty()) ||
+            !envelopeTypes.emplace(OwnerPipe{phase->elementOp, static_cast<uint32_t>(phase->kPipeValue)}, i).second) {
+            return {}; // Repeated reservations require coordinate-qualified lifetimes.
+        }
+        owners.insert(phase->elementOp);
+    }
+    struct Reservation {
+        uint32_t source, target;
+        SmallVector<unsigned> ids;
+        RegionalEvent first, last;
+        RegionExpressions::Id active;
+    };
+    std::vector<Reservation> reservations;
+    for (auto* owner : owners) {
+        auto model = getSyncMacroModel(owner);
+        if (!model) { return {}; }
+        for (const auto& hidden : model->hiddenEvents) {
+            auto p = static_cast<uint32_t>(hidden.srcPipe), q = static_cast<uint32_t>(hidden.dstPipe);
+            auto from = envelopeTypes.find({owner, p}), to = envelopeTypes.find({owner, q});
+            if (from == envelopeTypes.end() || to == envelopeTypes.end()) { return {}; }
+            RegionalEvent first{from->second, a.constant(0), PeriodicEventKind::Start};
+            RegionalEvent last{to->second, a.constant(0), PeriodicEventKind::Completion};
+            auto present = regionalPresence(region, first);
+            if (!present) { return {}; }
+            reservations.push_back({p, q, hidden.eventIds, first, last, *present});
+        }
+    }
     const auto& palettes = plan.regionalAllocation->groups;
     for (std::size_t i = 0; i < palettes.size(); ++i) {
         const auto& x = palettes[i];
         if (!x.budget || x.budget > INT64_MAX) { return {}; }
         SmallVector<int64_t> conflicts, records, strides, phases;
+        std::set<int64_t> forbidden;
         SmallVector<Attribute> tupleRules;
         for (const auto& member : x.members) {
             if (member.stride > INT64_MAX || member.phase > INT64_MAX ||
@@ -149,6 +196,20 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
             }
             if (!compatible) { conflicts.push_back(j); }
         }
+        for (const auto& hidden : reservations) {
+            if (x.sourcePipe != hidden.source || x.targetPipe != hidden.target) { continue; }
+            bool disjoint = true;
+            for (const auto& member : x.members) {
+                auto active = a.land(member.active, hidden.active);
+                if (a.constantValue(active) == 0) { continue; }
+                auto before = reaches(member.lastTarget, hidden.first);
+                auto after = reaches(hidden.last, member.firstSource);
+                if (!before || !after) { return {}; }
+                if (!a.implies(active, a.lor(*before, *after))) { disjoint = false; break; }
+            }
+            if (!disjoint) { forbidden.insert(hidden.ids.begin(), hidden.ids.end()); }
+        }
+        SmallVector<int64_t> forbiddenIds(forbidden.begin(), forbidden.end());
         groups.push_back(b.getDictionaryAttr({
             b.getNamedAttr("source", b.getI64IntegerAttr(x.sourcePipe)),
             b.getNamedAttr("target", b.getI64IntegerAttr(x.targetPipe)),
@@ -157,12 +218,14 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
             b.getNamedAttr("strides", b.getDenseI64ArrayAttr(strides)),
             b.getNamedAttr("phases", b.getDenseI64ArrayAttr(phases)),
             b.getNamedAttr("tuple_rules", b.getArrayAttr(tupleRules)),
-            b.getNamedAttr("conflicts", b.getDenseI64ArrayAttr(conflicts))}));
+            b.getNamedAttr("conflicts", b.getDenseI64ArrayAttr(conflicts)),
+            b.getNamedAttr("forbidden_ids", b.getDenseI64ArrayAttr(forbiddenIds))}));
     }
     return b.getDictionaryAttr({b.getNamedAttr("version", b.getI64IntegerAttr(1)),
         b.getNamedAttr("kind", b.getStringAttr("finite")),
         b.getNamedAttr("plan", b.getI64IntegerAttr(plan.planId)),
         b.getNamedAttr("strategy", b.getStringAttr("regional-palettes")),
+        b.getNamedAttr("macro_reservations", b.getUnitAttr()),
         b.getNamedAttr("groups", b.getArrayAttr(groups))});
 }
 namespace {
@@ -172,6 +235,7 @@ struct Palette {
     DenseI64ArrayAttr records, strides, phases, conflicts;
     SmallVector<int64_t> ids;
     std::vector<std::optional<PhysicalTupleRule>> tupleRules;
+    SmallVector<int64_t> forbidden;
 };
 std::optional<int64_t> integer(DictionaryAttr attr, StringRef key)
 {
@@ -252,8 +316,19 @@ FailureOr<PhysicalAllocationPlan> decodeRegionalAllocation(func::FuncOp function
             }
             previous = conflict;
         }
+        SmallVector<int64_t> forbiddenIds;
+        if (auto raw = attr.get("forbidden_ids")) {
+            auto values = dyn_cast<DenseI64ArrayAttr>(raw);
+            if (!values || llvm::any_of(values.asArrayRef(), [](int64_t id) {
+                    return id < 0 || id > UINT32_MAX || !symbolizeEVENT(static_cast<uint32_t>(id));
+                })) {
+                return function.emitError("invalid hidden event ID reservation"), failure();
+            }
+            forbiddenIds.append(values.asArrayRef().begin(), values.asArrayRef().end());
+        }
         palettes.push_back({static_cast<uint32_t>(*source), static_cast<uint32_t>(*target),
-            static_cast<uint64_t>(*budget), records, strides, phases, conflicts, {}, std::move(tupleRules)});
+            static_cast<uint64_t>(*budget), records, strides, phases, conflicts, {},
+            std::move(tupleRules), std::move(forbiddenIds)});
     }
     // Preserve every child cycle. Coloring only chooses its palette, never adds
     // ordering or changes the logical endpoints. Largest palettes go first.
@@ -262,7 +337,7 @@ FailureOr<PhysicalAllocationPlan> decodeRegionalAllocation(func::FuncOp function
     llvm::stable_sort(order, [&](std::size_t x, std::size_t y) { return palettes[x].budget > palettes[y].budget; });
     for (auto i : order) {
         auto& palette = palettes[i];
-        std::set<int64_t> unavailable;
+        std::set<int64_t> unavailable(palette.forbidden.begin(), palette.forbidden.end());
         for (std::size_t j = 0; j < palettes.size(); ++j) {
             if (j == i || palettes[j].ids.empty()) { continue; }
             const auto& later = palettes[std::max(i, j)];

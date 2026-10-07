@@ -65,7 +65,7 @@ void collect(ArrayRef<Operation*> roots, Operation* entry, const PhaseIndex& ind
             output.result.note(RecognitionIssue::UnsupportedControl, &op, true);
             continue;
         }
-        detail::inspectLeaf(op, index, output.result);
+        detail::inspectLeaf(op, index, output.result, /*allowEnvelopes=*/!requireInvariant);
         for (const auto* phase : index.phasesFor(&op)) {
             output.phases.push_back({phase, work.guard});
         }
