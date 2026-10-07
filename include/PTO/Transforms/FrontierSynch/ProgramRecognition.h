@@ -10,11 +10,12 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_PROGRAMRECOGNITION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_PROGRAMRECOGNITION_H
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
+#include "PTO/IR/PTOSyncCapabilities.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateEndpoints.h"
 #include "PTO/Transforms/FrontierSynch/PeriodicAllocation.h"
 namespace mlir::pto::frontiersynch {
-enum class StructureKind { Sequence, ExplicitRun, Loop, Conditional, Unsupported };
+enum class StructureKind { Sequence, ExplicitRun, Loop, Conditional, Unsupported, Section };
 struct StructureNode {
     StructureKind kind = StructureKind::Sequence;
     Operation* anchor = nullptr;
@@ -27,6 +28,7 @@ struct StructureNode {
     SmallVector<scf::ForOp> loops; // Enclosing coordinates, outer to inner.
     std::optional<std::size_t> guard;
     bool unsupportedContext = false;
+    SyncPhysicalCore executionCore() const { return recoverSyncPhysicalCore(anchor); }
     std::optional<RecognitionResult> explicitResult;
     std::optional<RecognitionResult> rotatingResult;
     std::optional<GuardedRecognition> finiteGuardedResult;

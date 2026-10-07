@@ -22,6 +22,11 @@ struct SyncEventCapability {
     // Informational only: the hardware event exists even when this is true.
     bool noApplicationScenario = false;
 };
+// Shared with section lowering: implicit A5 participation must also be visible
+// to synchronization analysis before it chooses matching endpoint guards.
+bool isA5NoSplitPipeOp(Operation* op);
+bool hasExplicitSubblockControl(Operation* op);
+bool needsA5NoSplitVectorGuard(Operation* op);
 SyncPhysicalCore recoverSyncPhysicalCore(Operation* anchor);
 std::optional<bool> getSyncPipelinePresence(llvm::StringRef architecture, SyncPhysicalCore core, PIPE pipe);
 SyncEventCapability getSyncEventAvailability(llvm::StringRef architecture, SyncPhysicalCore core,

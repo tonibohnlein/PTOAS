@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Shared pass state: input extraction followed by structural route recognition.
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/ExecutionContexts.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
@@ -143,6 +144,75 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareWholeFunct
     if (!demands.error.empty()) { error += "; arithmetic: " + demands.error; return failure(); }
     return frontiersynch::prepareGeneralArithmeticInsertion(function, arithmetic, demands, error);
 }
+FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
+    func::FuncOp function, GMAliasPolicy policy)
+{
+    frontiersynch::FrontierAnalysis analysis(function);
+    if (failed(analysis.initialize(policy, /*requireStructure=*/false))) {
+        return failure();
+    }
+    FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepared = failure();
+    std::string routeError;
+    bool sequencePrepared = false;
+    const bool straight = !function.isDeclaration() && llvm::hasSingleElement(function.getBody()) &&
+        llvm::all_of(function.front(), [](Operation& op) { return op.getNumRegions() == 0; });
+    if (analysis.hasOnlyNativeScalarRequirements()) {
+        auto scalar = std::make_unique<frontiersynch::PreparedLogicalPlan>(0);
+        // Protected scalar accesses need no internal demands. Keep the
+        // invocation drain: protection is not completion at issue.
+        scalar->completeInvocation = !analysis.input()->instructions().empty();
+        frontiersynch::ExplicitAnalysis empty;
+        scalar->allocationCertificate = frontiersynch::explicitAllocationCertificate(
+            empty, scalar->planId, function.getContext());
+        prepared = std::move(scalar);
+    } else if (straight) {
+        if (succeeded(analysis.analyzeExplicitFunction())) {
+            prepared = frontiersynch::prepareExplicitInsertion(function, *analysis.explicitResult());
+        } else {
+            routeError = analysis.explicitResult() ? analysis.explicitResult()->error :
+                         "explicit analysis unavailable";
+        }
+    } else {
+        // Preserve the existing certified numerical route (including its
+        // allocation export) when available. Direct rotating extraction
+        // covers symbolic rotations which have no fixed local effect word.
+        const bool numerical = llvm::any_of(analysis.result()->nodes, [](const auto& node) {
+            return node.numericTemplate &&
+                node.numericTemplate->result.state == frontiersynch::RecognitionState::Applicable &&
+                node.logicalEndpoints && node.logicalEndpoints->logical.error.empty();
+        });
+        if (!numerical) {
+            prepared = frontiersynch::prepareRotatingInsertion(function, *analysis.input(), *analysis.result());
+        }
+        if (failed(prepared) && numerical) {
+            prepared = frontiersynch::prepareNumericTemplateInsertion(function, *analysis.result());
+        }
+        if (failed(prepared)) {
+            prepared = frontiersynch::prepareGuardedRotatingInsertion(
+                function, *analysis.input(), *analysis.result());
+        }
+        if (failed(prepared)) {
+            prepared = frontiersynch::prepareSequenceInsertion(function, *analysis.input(),
+                                                               *analysis.result(), routeError);
+            sequencePrepared = succeeded(prepared);
+        }
+    }
+    if (failed(prepared)) {
+        prepared = prepareWholeFunctionArithmetic(function, analysis, routeError, false);
+    } else if (sequencePrepared && !(*prepared)->allocationCertificate && !(*prepared)->regionalAllocation &&
+               llvm::any_of((*prepared)->endpoints, [](const auto& endpoint) {
+                   return endpoint.kind != frontiersynch::LogicalCommandKind::Barrier;
+               })) {
+        // Keep the accepted logical plan unless another exact route also
+        // supplies the existing allocation interface. Both preparations
+        // remain detached; this neither assigns IDs nor repairs scarcity.
+        std::string allocationRouteError;
+        auto alternative = prepareWholeFunctionArithmetic(function, analysis, allocationRouteError, true);
+        if (succeeded(alternative)) { prepared = std::move(alternative); }
+    }
+    if (failed(prepared)) { function.emitError(routeError); }
+    return prepared;
+}
 class PTOFrontierAnalysisPass : public impl::PTOFrontierAnalysisBase<PTOFrontierAnalysisPass> {
 public:
     using Base = impl::PTOFrontierAnalysisBase<PTOFrontierAnalysisPass>;
@@ -159,72 +229,14 @@ public:
             return;
         }
         auto policy = gmAlias == "may-alias" ? GMAliasPolicy::MayAlias : GMAliasPolicy::MayNotAlias;
-        auto& analysis = getAnalysis<frontiersynch::FrontierAnalysis>();
-        if (failed(analysis.initialize(policy, /*requireStructure=*/false))) {
-            signalPassFailure();
+        if (frontiersynch::hasPhysicalSections(function)) {
+            if (failed(frontiersynch::insertContextSynchronization(function, [&](func::FuncOp projected) {
+                    return prepareFunction(projected, policy);
+                }))) { signalPassFailure(); }
             return;
         }
-        FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepared = failure();
-        std::string routeError;
-        bool sequencePrepared = false;
-        const bool straight = !function.isDeclaration() && llvm::hasSingleElement(function.getBody()) &&
-            llvm::all_of(function.front(), [](Operation& op) { return op.getNumRegions() == 0; });
-        if (analysis.hasOnlyNativeScalarRequirements()) {
-            auto scalar = std::make_unique<frontiersynch::PreparedLogicalPlan>(0);
-            // Protected scalar accesses need no internal demands. Keep the
-            // invocation drain: protection is not completion at issue.
-            scalar->completeInvocation = !analysis.input()->instructions().empty();
-            frontiersynch::ExplicitAnalysis empty;
-            scalar->allocationCertificate = frontiersynch::explicitAllocationCertificate(
-                empty, scalar->planId, function.getContext());
-            prepared = std::move(scalar);
-        } else if (straight) {
-            if (succeeded(analysis.analyzeExplicitFunction())) {
-                prepared = frontiersynch::prepareExplicitInsertion(function, *analysis.explicitResult());
-            } else {
-                routeError = analysis.explicitResult() ? analysis.explicitResult()->error :
-                             "explicit analysis unavailable";
-            }
-        } else {
-            // Preserve the existing certified numerical route (including its
-            // allocation export) when available. Direct rotating extraction
-            // covers symbolic rotations which have no fixed local effect word.
-            const bool numerical = llvm::any_of(analysis.result()->nodes, [](const auto& node) {
-                return node.numericTemplate &&
-                    node.numericTemplate->result.state == frontiersynch::RecognitionState::Applicable &&
-                    node.logicalEndpoints && node.logicalEndpoints->logical.error.empty();
-            });
-            if (!numerical) {
-                prepared = frontiersynch::prepareRotatingInsertion(function, *analysis.input(), *analysis.result());
-            }
-            if (failed(prepared) && numerical) {
-                prepared = frontiersynch::prepareNumericTemplateInsertion(function, *analysis.result());
-            }
-            if (failed(prepared)) {
-                prepared = frontiersynch::prepareGuardedRotatingInsertion(
-                    function, *analysis.input(), *analysis.result());
-            }
-            if (failed(prepared)) {
-                prepared = frontiersynch::prepareSequenceInsertion(function, *analysis.input(),
-                                                                   *analysis.result(), routeError);
-                sequencePrepared = succeeded(prepared);
-            }
-        }
-        if (failed(prepared)) {
-            prepared = prepareWholeFunctionArithmetic(function, analysis, routeError, false);
-        } else if (sequencePrepared && !(*prepared)->allocationCertificate && !(*prepared)->regionalAllocation &&
-                   llvm::any_of((*prepared)->endpoints, [](const auto& endpoint) {
-                       return endpoint.kind != frontiersynch::LogicalCommandKind::Barrier;
-                   })) {
-            // Keep the accepted logical plan unless another exact route also
-            // supplies the existing allocation interface. Both preparations
-            // remain detached; this neither assigns IDs nor repairs scarcity.
-            std::string allocationRouteError;
-            auto alternative = prepareWholeFunctionArithmetic(function, analysis, allocationRouteError, true);
-            if (succeeded(alternative)) { prepared = std::move(alternative); }
-        }
-        if (failed(prepared)) { function.emitError(routeError); }
-        if (failed(prepared) || failed(frontiersynch::insertLogicalSynchronization(getOperation(), **prepared))) {
+        auto prepared = prepareFunction(function, policy);
+        if (failed(prepared) || failed(frontiersynch::insertLogicalSynchronization(function, **prepared))) {
             signalPassFailure();
         }
         // Inserted guards and commands invalidate structural analysis.

@@ -8,6 +8,7 @@
 // Preflight logical families, preserve certified member-to-phase maps, and lower
 // commands in place. Allocation does not inspect or reconstruct endpoint guards.
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/ExecutionContexts.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/FamilyExpressions.h"
 #include "PTO/Transforms/Passes.h"
@@ -281,6 +282,7 @@ FailureOr<CoordinateProvenance> readCoordinates(func::FuncOp function)
 {
     CoordinateProvenance result;
     auto walked = function.walk([&](scf::ForOp loop) -> WalkResult {
+        if (!belongsToActiveContext(function, loop)) { return WalkResult::advance(); }
         auto attr = loop->getAttr("pto.family_loop");
         if (!attr) {
             return WalkResult::advance();
@@ -379,6 +381,7 @@ FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const Ph
     SmallVector<Endpoint> endpoints;
     llvm::DenseSet<int64_t> seen;
     auto walked = function.walk([&](Operation* op) -> WalkResult {
+        if (!belongsToActiveContext(function, op)) { return WalkResult::advance(); }
         const bool publish = isa<LogicalSetOp>(op), consume = isa<LogicalWaitOp>(op);
         if (!publish && !consume) {
             if (isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp, RecordEventOp, WaitEventOp>(op)) {
@@ -469,6 +472,7 @@ FailureOr<SmallVector<Endpoint>> preflight(func::FuncOp function, const Physical
     const bool sourceTuples = strategy && strategy.getValue() == "dedicated-families";
     SmallVector<Endpoint> endpoints;
     auto walked = function.walk([&](Operation* op) -> WalkResult {
+        if (!belongsToActiveContext(function, op)) { return WalkResult::advance(); }
         const bool publish = isa<LogicalSetOp>(op), consume = isa<LogicalWaitOp>(op);
         if (!publish && !consume) {
             if (isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp, RecordEventOp, WaitEventOp>(op)) {
@@ -767,7 +771,8 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
         emitAllocatedCommand(builder, endpoint.operation, staticId, eventId);
         endpoint.operation->erase();
     }
-    function.walk([](Operation* op) {
+    function.walk([&](Operation* op) {
+        if (!belongsToActiveContext(function, op)) { return; }
         op->removeAttr("pto.endpoint_cut");
         op->removeAttr("pto.family_loop");
         op->removeAttr("pto.endpoint_piece");
@@ -776,7 +781,9 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
     function->removeAttr(CyclicAllocationAttr);
     function->removeAttr(FiniteAllocationAttr);
     IRRewriter rewriter(function.getContext());
-    eliminateCommonSubExpressions(rewriter, dominance, function);
+    if (!function->hasAttr(ActiveContextAttr)) {
+        eliminateCommonSubExpressions(rewriter, dominance, function);
+    }
     return success();
 }
 } // namespace mlir::pto::frontiersynch
@@ -793,6 +800,10 @@ public:
     {
         auto function = getOperation();
         if (function.isDeclaration()) { return; }
+        if (function->hasAttr(frontiersynch::ContextPlansAttr)) {
+            if (failed(frontiersynch::allocateContextSynchronization(function, eligibleIds))) { signalPassFailure(); }
+            return;
+        }
         if (hasManualOnCoreSynchronization(function)) {
             auto logical = function.walk([](Operation* op) {
                 return isa<LogicalSetOp, LogicalWaitOp>(op)

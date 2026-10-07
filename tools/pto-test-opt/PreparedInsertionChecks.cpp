@@ -9,6 +9,9 @@
 #include "SyncLogicalInsertionChecks.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/ExecutionContexts.h"
+#include "PTO/IR/PTOSyncCapabilities.h"
+#include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Verifier.h"
@@ -29,9 +32,66 @@ bool rejectedUnchanged(func::FuncOp function, fs::PreparedLogicalPlan& plan)
     ScopedDiagnosticHandler silence(function.getContext(), [](Diagnostic&) { return success(); });
     return failed(fs::insertLogicalSynchronization(function, plan)) && render(function) == before;
 }
+LogicalResult sectionContextChecks(func::FuncOp function)
+{
+    const auto before = render(function);
+    const bool functionGuard = pto::needsA5NoSplitVectorGuard(function);
+    unsigned projected = 0;
+    auto prepare = [&](func::FuncOp projectedFunction)
+        -> FailureOr<std::unique_ptr<fs::PreparedLogicalPlan>> {
+        ++projected;
+        if (fs::hasPhysicalSections(projectedFunction)) { return failure(); }
+        unsigned branches = 0;
+        Value shared;
+        bool same = true;
+        projectedFunction.walk([&](scf::IfOp branch) {
+            ++branches;
+            same &= !shared || shared == branch.getCondition();
+            shared = branch.getCondition();
+        });
+        if (branches != 2 || !same || !shared) { return failure(); }
+        auto plan = std::make_unique<fs::PreparedLogicalPlan>(0);
+        fs::ExplicitAnalysis empty;
+        plan->allocationCertificate = fs::explicitAllocationCertificate(empty, 0, function.getContext());
+        return plan;
+    };
+    {
+        ScopedDiagnosticHandler silence(function.getContext(), [](Diagnostic&) { return success(); });
+        auto reject = [](func::FuncOp) -> FailureOr<std::unique_ptr<fs::PreparedLogicalPlan>> {
+            return failure();
+        };
+        if (succeeded(fs::insertContextSynchronization(function, reject)) || render(function) != before) {
+            return function.emitError("failed section preparation changed the original function");
+        }
+    }
+    if (failed(fs::insertContextSynchronization(function, prepare)) || projected != 1 ||
+        pto::needsA5NoSplitVectorGuard(function) != functionGuard || failed(verify(function))) {
+        return function.emitError("section projection lost implicit participation or SSA visibility");
+    }
+    unsigned branches = 0;
+    bool doubleGuard = false;
+    function.walk([&](pto::SectionVectorOp section) {
+        doubleGuard |= pto::needsA5NoSplitVectorGuard(section);
+        branches += llvm::count_if(section.getBody().front(), [](Operation& op) { return isa<scf::IfOp>(op); });
+    });
+    if (branches != 2 || doubleGuard) { return function.emitError("incorrect section predicate materialization"); }
+    auto bundle = function->getAttr(fs::ContextPlansAttr);
+    function->setAttr(fs::ContextPlansAttr, DictionaryAttr::get(function.getContext()));
+    auto invalid = render(function);
+    {
+        ScopedDiagnosticHandler silence(function.getContext(), [](Diagnostic&) { return success(); });
+        if (succeeded(fs::allocateContextSynchronization(function, {0,1,2,3,4,5})) ||
+            render(function) != invalid) { return failure(); }
+    }
+    function->setAttr(fs::ContextPlansAttr, bundle);
+    if (failed(fs::allocateContextSynchronization(function, {0,1,2,3,4,5}))) { return failure(); }
+    llvm::outs() << "section-context: predicates preserved; failed transactions unchanged\n";
+    return success();
+}
 } // namespace
 LogicalResult runPreparedInsertionChecks(func::FuncOp function)
 {
+    if (fs::hasPhysicalSections(function)) { return sectionContextChecks(function); }
     SmallVector<Operation*> cuts;
     function.walk([&](Operation* op) {
         if (op->hasAttr("test.cut")) {

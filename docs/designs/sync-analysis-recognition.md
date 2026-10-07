@@ -1736,3 +1736,30 @@ Invariant repeated regions can consume a compact child recursively; explicit
 phase construction and visit-owned storage have the narrower producer contracts
 stated there. Recognition failure reports which interface or certificate is
 missing rather than claiming that the full theorem is inapplicable.
+
+## Physical section contexts
+
+The Frontier pass analyzes one whole execution for each physical core selected by
+`pto.section.cube` and `pto.section.vector`. Detached projections retain common
+scalar/control operations and inline the selected sections. Repeated sections
+on the same core share storage lifetimes; opposite-core sections are not treated
+as simultaneous payloads on one pipe. Original insertion cuts and loop identities
+are mapped back before insertion, including cuts at section ends.
+
+Analysis and physical allocation commit only after every selected context passes.
+Each context owns its endpoint families and allocation certificate. Allocation
+validates complete endpoint ownership and leaves the original function unchanged
+on failure. Cross-core flags and buffer-token protocols remain in place and are
+not used as proofs for dropping on-core demands.
+
+A5 implicit no-split participation is made explicit using a shared dominating
+subblock predicate. The original function-wide lowering decision is preserved.
+New wrappers for synchronization select the compiled core without changing vector
+mask state. Arithmetic preparation can cross a section boundary only when its
+operands dominate the new cut and MLIR proves it safe to speculate.
+
+Validation: all ten previously rejected section-wrapper corpus inputs now pass
+logical insertion and six-ID physical allocation. Targeted checks cover shared
+storage across sections, A5 mixed/vector participation, and failed transactions.
+Shared multi-phase macro envelopes and hidden internal event reservations remain
+the next integration milestones; this section change does not certify them.

@@ -36,17 +36,19 @@ struct SectionToEmitC : public OpConversionPattern<SectionOpTy> {
                   typename SectionOpTy::Adaptor /*adaptor*/,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    bool needsNoSplitGuard = needsA5NoSplitVectorGuard(op.getOperation());
+    bool needsNoSplitGuard = !op->hasAttr("pto.sync_context_only") &&
+                             needsA5NoSplitVectorGuard(op.getOperation());
 
     std::string startMacro = "\n#if defined(" + getMacroName() + ")";
     rewriter.create<emitc::VerbatimOp>(loc, startMacro);
 
     if constexpr (std::is_same_v<SectionOpTy, pto::SectionVectorOp>) {
-      // Vector mask is a global HW state and may be modified by previous kernels
-      // (or earlier sections). Reset it to a well-defined state for deterministic
-      // execution of VEC ops.
-      rewriter.create<emitc::VerbatimOp>(loc, "set_mask_norm();");
-      rewriter.create<emitc::VerbatimOp>(loc, "set_vector_mask(-1, -1);");
+      if (!op->hasAttr("pto.sync_context_only")) {
+        // Ordinary vector sections initialize mask state; synchronization-only
+        // guards must not change vector state between original payloads.
+        rewriter.create<emitc::VerbatimOp>(loc, "set_mask_norm();");
+        rewriter.create<emitc::VerbatimOp>(loc, "set_vector_mask(-1, -1);");
+      }
     }
 
     if (needsNoSplitGuard) {

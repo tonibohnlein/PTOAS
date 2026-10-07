@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Serialize the analysis certificate; allocate IDs within each directed event domain.
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/ExecutionContexts.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 #include "PTO/IR/PTO.h"
@@ -165,7 +166,9 @@ FailureOr<PhysicalAllocationPlan> decodePhysicalAllocation(func::FuncOp function
     auto certificate = function->getAttrOfType<DictionaryAttr>(FiniteAllocationAttr);
     if (!certificate) {
         bool notifications = false;
-        function.walk([&](Operation* op) { notifications |= isa<LogicalSetOp,LogicalWaitOp>(op); });
+        function.walk([&](Operation* op) {
+            notifications |= belongsToActiveContext(function, op) && isa<LogicalSetOp, LogicalWaitOp>(op);
+        });
         if (notifications || function->hasAttr(FiniteAllocationAttr) || !function->hasAttr("pto.endpoint_families")) {
             return function.emitError("physical allocation requires a supported finite or uniform allocation export; "
                                       "allocation adapter not implemented yet"),

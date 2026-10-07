@@ -171,7 +171,7 @@ void PhaseIndex::traceResult(const CompoundInstanceElement* producer, Value resu
                 if (!native) {
                     valuePrerequisites.insert(user);
                 }
-            } else if (hasOnlyDescriptorEffects(user)) {
+            } else if (hasOnlyDescriptorEffects(user) || isPreservedSyncProtocol(user)) {
                 // Scalar descriptor updates execute natively. A result from an
                 // asynchronous pipe still needs an explicit completion mapping.
                 record(user);

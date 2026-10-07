@@ -10,6 +10,10 @@
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 namespace mlir::pto {
+bool isPreservedSyncProtocol(Operation* operation) {
+  return isa<SyncSetOp, SyncWaitOp, SetCrossBlockOp, WaitCrossBlockOp,
+             SetIntraBlockOp, WaitIntraBlockOp, GetBufOp, RlsBufOp, GetBufDynOp, RlsBufDynOp>(operation);
+}
 bool hasManualOnCoreSynchronization(func::FuncOp function) {
   if (!function) {
     return false;

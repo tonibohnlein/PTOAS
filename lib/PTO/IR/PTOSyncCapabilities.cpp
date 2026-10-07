@@ -8,7 +8,97 @@
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 namespace mlir::pto {
+bool isA5NoSplitPipeOp(Operation *op) {
+  if (auto talloc = dyn_cast<pto::TAllocOp>(op)) {
+    return talloc.getSplit() == 0;
+  }
+  if (auto tpush = dyn_cast<pto::TPushOp>(op)) {
+    return tpush.getSplit() == 0;
+  }
+  if (auto tpop = dyn_cast<pto::TPopOp>(op)) {
+    return tpop.getSplit() == 0;
+  }
+  if (auto tfree = dyn_cast<pto::TFreeOp>(op)) {
+    return tfree.getSplit() == 0;
+  }
+  if (auto tpush = dyn_cast<pto::TPushToAivOp>(op)) {
+    return tpush.getSplit() == 0;
+  }
+  if (auto tpush = dyn_cast<pto::TPushToAicOp>(op)) {
+    return tpush.getSplit() == 0;
+  }
+  if (auto talloc = dyn_cast<pto::TAllocToAivOp>(op)) {
+    return talloc.getSplit() == 0;
+  }
+  if (auto talloc = dyn_cast<pto::TAllocToAicOp>(op)) {
+    return talloc.getSplit() == 0;
+  }
+  if (auto tpop = dyn_cast<pto::TPopFromAicOp>(op)) {
+    return tpop.getSplit() == 0;
+  }
+  if (auto tpop = dyn_cast<pto::TPopFromAivOp>(op)) {
+    return tpop.getSplit() == 0;
+  }
+  if (auto tfree = dyn_cast<pto::TFreeFromAicOp>(op)) {
+    return tfree.getSplit() == 0;
+  }
+  if (auto tfree = dyn_cast<pto::TFreeFromAivOp>(op)) {
+    return tfree.getSplit() == 0;
+  }
+  return false;
+}
+
+bool hasExplicitSubblockControl(Operation *op) {
+  bool hasControl = false;
+  op->walk([&](Operation *nested) {
+    if (isa<pto::GetSubBlockIdxOp, pto::GetSubBlockNumOp>(nested)) {
+      hasControl = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return hasControl;
+}
+bool needsA5NoSplitVectorGuard(Operation *op) {
+  // Synchronization normalization may make an originally implicit section
+  // predicate explicit while preserving the original function-wide decision.
+  if (auto saved = op->getAttrOfType<BoolAttr>("pto.sync_subblock_guard")) {
+    return saved.getValue();
+  }
+  auto arch = getTargetArch(op);
+  if (arch != PTOArch::A5) {
+    return false;
+  }
+  bool isVectorScope = isa<pto::SectionVectorOp>(op);
+  if (auto func = dyn_cast<func::FuncOp>(op)) {
+    if (auto kernelKindAttr =
+            func->getAttrOfType<FunctionKernelKindAttr>(
+                FunctionKernelKindAttr::name)) {
+      isVectorScope =
+          kernelKindAttr.getKernelKind() == FunctionKernelKind::Vector;
+    }
+  }
+  if (!isVectorScope) {
+    return false;
+  }
+  if (hasExplicitSubblockControl(op)) {
+    return false;
+  }
+
+  bool hasNoSplitPipe = false;
+  op->walk([&](Operation *nested) {
+    if (!isA5NoSplitPipeOp(nested)) {
+      return WalkResult::advance();
+    }
+    hasNoSplitPipe = true;
+    return WalkResult::interrupt();
+  });
+  return hasNoSplitPipe;
+}
+
+
 namespace {
 // A2/A3 NPU-2201 AIC/AIV tables, HF-01/HF-06/HF-07 in
 // OAHS_Hardware_Facts_Verified_A2A3.docx (2026-09-11).
