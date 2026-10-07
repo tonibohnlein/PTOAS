@@ -399,7 +399,7 @@ void detail::inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResu
     }
 }
 
-bool detail::checkRotatingDomain(scf::ForOp loop, RecognitionResult& result, bool canonical)
+bool detail::checkRotatingDomain(scf::ForOp loop, const PhaseIndex& index, RecognitionResult& result, bool canonical)
 {
     if (!loop) {
         result.note(RecognitionIssue::LoopDomain, nullptr, true);
@@ -410,7 +410,7 @@ bool detail::checkRotatingDomain(scf::ForOp loop, RecognitionResult& result, boo
     if (!normalized || (canonical && (*lower != 0 || *step != 1))) {
         result.note(RecognitionIssue::LoopDomain, loop, true);
     }
-    if (loop.getNumRegionIterArgs()) {
+    if (index.hasRelevantCarriedState(loop)) {
         result.note(RecognitionIssue::LoopCarriedState, loop, true);
     }
     return true;
@@ -434,7 +434,7 @@ RecognitionResult recognizeRotating(scf::ForOp loop, const PhaseIndex& index,
                                     const SyncInput& input, const SyncStorageEffects& effects)
 {
     RecognitionResult result;
-    if (!detail::checkRotatingDomain(loop, result) || !fixedBody(*loop.getBody(), index, result)) {
+    if (!detail::checkRotatingDomain(loop, index, result) || !fixedBody(*loop.getBody(), index, result)) {
         return result;
     }
     if (index.needsValuePrerequisite(loop)) {

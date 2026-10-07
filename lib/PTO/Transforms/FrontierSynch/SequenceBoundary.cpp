@@ -277,7 +277,7 @@ std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
     const DenseMap<Value, Expr>& inherited, std::string& error)
 {
     if (sequenceInteger(loop.getLowerBound()) != 0 || sequenceInteger(loop.getStep()) != 1 ||
-        loop.getNumRegionIterArgs()) {
+        index.hasRelevantCarriedState(loop)) {
         error = "boundary slicing requires a zero-based unit-step result-free loop";
         return std::nullopt;
     }
@@ -365,7 +365,7 @@ std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
 bool SequenceAnalysisState::boundaryLoop(scf::ForOp loop)
 {
     if (sequenceInteger(loop.getLowerBound()) != 0 || sequenceInteger(loop.getStep()) != 1 ||
-        loop.getNumRegionIterArgs()) { return false; }
+        index.hasRelevantCarriedState(loop)) { return false; }
     auto upper = expressions.input(loop.getUpperBound());
     auto trips = expressions.select(expressions.slt(c(0), upper), upper, c(0));
     SmallVector<std::pair<Value, Split>> predicates;

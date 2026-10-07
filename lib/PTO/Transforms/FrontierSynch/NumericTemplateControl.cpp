@@ -161,7 +161,7 @@ bool TemplateBuilder::loop(scf::ForOp nested, bool emit, unsigned depth)
         coordinates[nested.getInductionVar()] = induction;
         path.push_back({nested, induction});
         for (auto state : nested.getRegionIterArgs()) {
-            if (!scalar(state)) {
+            if (index.isRelevant(state) && !scalar(state)) {
                 output.result.note(RecognitionIssue::LoopCarriedState, nested);
                 return false;
             }
