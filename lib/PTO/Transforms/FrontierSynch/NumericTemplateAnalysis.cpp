@@ -23,7 +23,7 @@ bool localEffects(const NumericTemplate& input, std::vector<ExplicitEffects>& wo
 {
     for (std::size_t i = 0; i < input.payloads.size(); ++i) {
         const auto& payload = input.payloads[i];
-        if (!payload.phase) {
+        if (!payload.phase || payload.phase->macroOpInstanceId >= 0) {
             return false;
         }
         ExplicitEffects occurrence;

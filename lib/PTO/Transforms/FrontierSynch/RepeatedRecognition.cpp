@@ -88,6 +88,11 @@ bool SequenceAnalysisState::repeatedChild(const StructureNode& node, Expr trips)
     if (!loop || index.hasRelevantCarriedState(loop) || node.children.size() != 1) {
         return unavailable("q1 repeat recognition: single body without relevant carried state required");
     }
+    if (llvm::any_of(input->instructions(), [&](auto* phase) {
+            return phase->macroOpInstanceId >= 0 && loop->isProperAncestor(phase->elementOp);
+        })) {
+        return unavailable("repeated macro envelope and hidden-event adapter not implemented yet");
+    }
     bool nested = false, uniform = true;
     Invariance invariant(loop, index);
     loop.getBody()->walk([&](Operation* operation) {

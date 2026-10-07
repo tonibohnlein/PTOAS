@@ -98,3 +98,16 @@ module {
 // CHECK:      set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID2);
 // CHECK-NEXT: wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID2);
 // CHECK:      pto::comm::TGATHER(
+
+// RUN: pto-test-opt --pto-frontier-analysis --pto-frontier-allocate='eligible-ids=0,1,2,3,4,5' %s | FileCheck %s --check-prefix=FRONTIER
+// FRONTIER-LABEL: func.func @tgather_waits_for_tstore_group
+// FRONTIER: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
+// FRONTIER: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
+// FRONTIER: pto.comm.tgather
+// FRONTIER-LABEL: func.func @tgather_pingpong_keeps_internal_events_hidden
+// FRONTIER: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID2>]
+// FRONTIER: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID2>]
+// FRONTIER: pto.comm.tgather
+// FRONTIER-NOT: pto.logical_
+// SCARCE: regional allocation not certified within supplied capacity
+// RUN: not pto-test-opt --pto-frontier-analysis --pto-frontier-allocate='eligible-ids=0' %s 2>&1 | FileCheck %s --check-prefix=SCARCE

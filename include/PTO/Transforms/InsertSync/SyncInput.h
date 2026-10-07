@@ -27,6 +27,7 @@ enum class SyncResultAvailability { NonScalar, SynchronousScalar, RequiresComple
 SyncResultAvailability resultAvailability(const CompoundInstanceElement& phase, Value result);
 
 class SyncStorageEffects;
+enum class SyncInstructionView { TranslatorStages, PipeEnvelopes };
 
 class SyncInput {
 public:
@@ -39,9 +40,12 @@ public:
   // Source MLIR must outlive the borrowed operation and value anchors.
   // Failure exposes no partial records. Geometry is a summary, not a full-write proof.
   LogicalResult build(func::FuncOp function);
+  LogicalResult build(func::FuncOp function, SyncInstructionView view);
   SyncIRs &ir() { return nodes; }
   const SyncIRs &ir() const { return nodes; }
   const Buffer2MemInfoMap &buffers() const { return storage; }
+  // PipeEnvelopes exports one macro envelope per pipe, not ordered stages.
+  // TranslatorStages retains the existing pass's raw stages and effect lookup.
   ArrayRef<const CompoundInstanceElement *> instructions() const { return phases; }
   // Original MLIR effect declarations, including coverage, stage and resource.
   // Macro phases need phase-specific declarations and therefore return none.
@@ -53,12 +57,15 @@ public:
   MemoryDependentAnalyzer &memory() { return analyzer; }
   const MemoryDependentAnalyzer &memory() const { return analyzer; }
 private:
+  LogicalResult buildPipeEnvelopes(func::FuncOp function);
   MemoryDependentAnalyzer analyzer;
   Buffer2MemInfoMap storage;
   SyncIRs nodes;
   SmallVector<const CompoundInstanceElement *> phases;
   DenseMap<Operation*, SmallVector<SyncMemoryEffect>> declaredEffects;
   std::unique_ptr<SyncStorageEffects> resolvedAccesses;
+  // Separate ownership: ir() remains the unmodified legacy translator output.
+  SmallVector<std::unique_ptr<CompoundInstanceElement>> macroEnvelopes;
 };
 } // namespace mlir::pto
 #endif

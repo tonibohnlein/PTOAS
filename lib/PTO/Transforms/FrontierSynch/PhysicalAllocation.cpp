@@ -9,6 +9,7 @@
 // commands in place. Allocation does not inspect or reconstruct endpoint guards.
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/ExecutionContexts.h"
+#include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/FamilyExpressions.h"
 #include "PTO/Transforms/Passes.h"
@@ -715,6 +716,16 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
 {
     if (!function) {
         return failure();
+    }
+    bool hidden = false;
+    function.walk([&](Operation* op) {
+        if (!belongsToActiveContext(function, op)) { return; }
+        auto model = getSyncMacroModel(op);
+        hidden |= model && !model->hiddenEvents.empty();
+    });
+    auto certificate = function->getAttrOfType<DictionaryAttr>(FiniteAllocationAttr);
+    if (hidden && (!certificate || !certificate.getAs<UnitAttr>("macro_reservations"))) {
+        return function.emitError("macro hidden-event allocation certificate not implemented for this route");
     }
     auto plan = decodePhysicalAllocation(function, eligibleIds);
     if (failed(plan)) {

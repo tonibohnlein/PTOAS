@@ -27,6 +27,7 @@ bool entryExpression(Value value, Operation* entry, const PhaseIndex& index,
                      SmallVectorImpl<Operation*>& recipe);
 void normalizeFragments(RecognitionResult& result, const SyncStorageEffects& effects);
 void inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result);
+void inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result, bool allowEnvelopes);
 bool checkRotatingDomain(scf::ForOp loop, const PhaseIndex& index, RecognitionResult& result, bool canonical = false);
 void inspectRotatingPhases(scf::ForOp loop, ArrayRef<const CompoundInstanceElement*> phases,
                           const SyncInput& input, const SyncStorageEffects& effects, RecognitionResult& result,

@@ -41,8 +41,9 @@ struct RegionalEvent {
 using RegionalDemandFilter = std::function<std::optional<RegionExpressions::Id>(RegionalEvent, RegionalEvent)>;
 struct RegionalSelector { RegionalEvent event; RegionExpressions::Id present = 0; };
 // Each first/last list contains guarded alternatives for its single extremum
-// (readers separately per pipe). Simultaneously present alternatives identify
-// the same occurrence; an empty list proves that no such boundary exists.
+// (readers separately per pipe). A macro occurrence may have simultaneous
+// envelopes on distinct pipes; retain all of them without assuming internal
+// completion order. An empty list proves that no such boundary exists.
 struct RegionalStorageBoundary {
     SyncStorageCell cell;
     std::vector<RegionalSelector> firstWriters, lastWriters;

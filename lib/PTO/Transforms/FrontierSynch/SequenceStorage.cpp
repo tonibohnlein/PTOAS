@@ -21,6 +21,17 @@ std::optional<int64_t> sequenceInteger(Value value)
 bool SequenceAnalysisState::explicitChild(const StructureNode& node)
 {
 
+    bool envelopes = llvm::any_of(node.payloads, [&](auto id) {
+        return program->payloads[id].phase->macroOpInstanceId >= 0;
+    });
+    if (envelopes) {
+        auto finite = analyzeFiniteGuarded(function, node.operations, index, *input, arena);
+        if (!finite.error.empty()) { return fail(finite.error); }
+        Child child;
+        child.regional = finiteGuardedRegionalResult(finite);
+        children.push_back(std::move(child));
+        return true;
+    }
     if (!node.explicitResult || node.explicitResult->state != RecognitionState::Applicable) {
         return fail("sequence explicit child has an unsupported control or prerequisite obligation");
     }

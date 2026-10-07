@@ -1763,3 +1763,36 @@ logical insertion and six-ID physical allocation. Targeted checks cover shared
 storage across sections, A5 mixed/vector participation, and failed transactions.
 Shared multi-phase macro envelopes and hidden internal event reservations remain
 the next integration milestones; this section change does not certify them.
+
+## Shared macro envelopes and local hidden event use
+
+Frontier requests a per-call, per-pipe view of the existing shared macro model.
+All accesses of one call on a pipe are combined in an envelope. The envelopes
+of that call have no inferred internal completion order; the macro implementation
+owns its internal synchronization. Existing InsertSync retains the original
+translator stages and their effect records. Neither view modifies source IR.
+
+Finite guarded analysis handles these envelopes in straight-line sequences and
+conditionals. It retains every external conflict and all boundary writers/readers
+of a macro. Sequence composition reduces the resulting crossings together;
+it cannot omit a writer edge merely because another envelope of the same call
+reads that cell. No instruction footprint registry is added.
+
+Hidden fixed event IDs come from the same shared macro contract. Empty envelopes
+represent pipes used only by the hidden protocol. A software palette excludes
+those IDs unless required-order queries prove its lifetime disjoint from the
+hidden use. The exclusion is local to that palette, not invocation-wide.
+Allocation reports failure without modifying the function if eligible IDs do not
+suffice. No scarcity repair is introduced.
+
+Repeated macro calls still need coordinate-qualified envelope and hidden-lifetime
+adapters. Compact routes report that missing adapter explicitly. This increment
+therefore supports finite macro-bearing regions, not every input in the broad
+operation/protocol corpus category. Existing barriers and protocol descriptor
+initialization are separate shared-classification work.
+
+Focused tests cover preservation of raw translator accesses, union of macro
+accesses, scalar/vector writer envelopes across guards and physical sections,
+hidden pipes without memory effects, fixed internal ID exclusions, and capacity
+failure. The finite closure uses the existing cubic guarded algorithm; ordinary
+explicit regions retain the sparse scan and rank reducer.
