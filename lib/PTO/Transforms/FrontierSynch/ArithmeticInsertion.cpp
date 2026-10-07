@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
 #include "PTO/Transforms/FrontierSynch/CompactAllocation.h"
+#include "PTO/Transforms/FrontierSynch/RegionExpressions.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/IR/Matchers.h"
@@ -83,6 +84,8 @@ public:
 private:
     struct Cut {
         Block* code = nullptr;
+        Operation* before = nullptr;
+        RegionExpressions::CutEmission replay;
         std::map<std::string, Value> constants;
         llvm::DenseMap<Value, Value> quotients, residues;
         llvm::DenseMap<std::size_t, SmallVector<Operation*>> arithmetic;
@@ -98,6 +101,7 @@ private:
     std::map<Operation*, Cut> cuts;
     std::map<Pair, int64_t> records;
     Cut* activeCut = nullptr;
+    RegionExpressions expressions;
     // Intern before returning a Value: endpoint recipes retain raw Value handles,
     // so erasing duplicates after preparing endpoints would invalidate them.
     // All calls below construct pure, region-free arithmetic in this one cut.
@@ -167,9 +171,14 @@ private:
     {
         if (!input || (!input.getType().isIndex() && !input.getType().isInteger(1))) { return failure(); }
         if (cut.quotients.count(input)) { return success(); }
+        auto available = expressions.emitContextual(expressions.input(input), builder, cut.before, cut.replay);
+        if (failed(available)) {
+            error = expressions.lastEmissionError();
+            return failure();
+        }
         Value original = input.getType().isIndex() ?
-            emit<arith::IndexCastOp>(loc, wide, input) :
-            emit<arith::ExtUIOp>(loc, wide, input);
+            emit<arith::IndexCastOp>(loc, wide, *available) :
+            emit<arith::ExtUIOp>(loc, wide, *available);
         auto period = number(static_cast<int64_t>(selectors.period), cut, loc);
         if (!period) { return failure(); }
         auto quotient = emit<arith::FloorDivSIOp>(loc, original, period);
@@ -316,6 +325,7 @@ private:
         auto* before = forward ? site.phase->elementOp->getNextNode() : site.phase->elementOp;
         if (!before) { return failure(); }
         auto& cut = cuts[before];
+        cut.before = before;
         if (!cut.code) { cut.code = &plan.addPreparation(before); }
         builder.setInsertionPointToEnd(cut.code);
         activeCut = &cut;

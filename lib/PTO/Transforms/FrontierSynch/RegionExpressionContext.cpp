@@ -8,6 +8,7 @@
 // Intern expressions independently of source cuts; emit shared arithmetic only
 // after checking original-IR availability at each detached preparation cut.
 #include "PTO/Transforms/FrontierSynch/RegionExpressions.h"
+#include "../InsertSync/SyncScalarReplay.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -98,11 +99,8 @@ FailureOr<Value> RegionExpressions::emitContextual(Id expression, OpBuilder& bui
         // Pure/speculatable is not a determinism contract (e.g. LLVM freeze).
         // Replay is restricted to the deterministic scalar arithmetic language;
         // values from every other dialect are usable when they dominate the cut.
-        auto dialect = op ? op->getName().getDialectNamespace() : StringRef();
-        bool deterministic = dialect == "arith" || dialect == "index";
-        if (!op || !deterministic || op->getNumRegions() || op->getNumSuccessors() ||
-            forbiddenRecomputation.contains(op) || !function->isProperAncestor(op) ||
-            !isMemoryEffectFree(op) || !isSpeculatable(op)) {
+        if (!mlir::pto::detail::canReplayScalar(op) ||
+            forbiddenRecomputation.contains(op) || !function->isProperAncestor(op)) {
             emissionMessage = "guarded endpoint needs an unavailable value outside deterministic scalar replay";
             return failure();
         }
