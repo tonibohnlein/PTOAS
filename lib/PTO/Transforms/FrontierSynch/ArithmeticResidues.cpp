@@ -9,6 +9,7 @@
 #include "ArithmeticProgramInternal.h"
 #include "ArithmeticRows.h"
 #include "../InsertSync/SyncScalarEvolution.h"
+#include "../InsertSync/SyncScalarReplay.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/Support/MathExtras.h"
 namespace mlir::pto::frontiersynch::detail {
@@ -148,8 +149,10 @@ bool ProgramBuilder::entryParameter(Value value) const
     if (root != output.context.function.getOperation() && index.valueAvailable(value, root, Boundary::Before)) {
         return true;
     }
-    // A pure entry-block expression over invocation arguments is also an
-    // invocation parameter. Keep its SSA identity; casts retain machine bits.
+    // A deterministic expression over invocation arguments is invariant even
+    // when its definition is nested. Endpoint emission replays the original
+    // operations at cuts where the definition is unavailable; no signed
+    // division or wrapping arithmetic is replaced by mathematical arithmetic.
     std::function<bool(Value)> entry = [&](Value current) {
         if (auto found = entryInputs.find(current); found != entryInputs.end()) { return found->second; }
         entryInputs[current] = false;
@@ -157,8 +160,8 @@ bool ProgramBuilder::entryParameter(Value value) const
             return entryInputs[current] = argument.getOwner() == &output.context.function.front();
         }
         auto* op = current.getDefiningOp();
-        if (!op || op->getBlock() != &output.context.function.front() || op->getNumRegions() ||
-            !index.phasesFor(op).empty() || !isMemoryEffectFree(op) || !isSpeculatable(op)) { return false; }
+        if (!mlir::pto::detail::canReplayScalar(op) ||
+            !output.context.function->isProperAncestor(op) || !index.phasesFor(op).empty()) { return false; }
         return entryInputs[current] = llvm::all_of(op->getOperands(), entry);
     };
     return entry(value);

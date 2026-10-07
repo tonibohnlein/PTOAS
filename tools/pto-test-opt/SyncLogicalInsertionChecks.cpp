@@ -15,6 +15,7 @@
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Pass/PassManager.h"
@@ -428,7 +429,17 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
     options.gmAlias = policy == pto::GMAliasPolicy::MayAlias ? "may-alias" : "may-not-alias";
     manager.addPass(pto::createPTOFrontierAnalysisPass(options));
     bool accepted = false;
-    if (function->hasAttr("test.recompose")) {
+    if (function->hasAttr("test.arithmetic_insertion")) {
+        fs::FrontierAnalysis analysis(function);
+        std::string error;
+        if (succeeded(analysis.initialize(policy)) && succeeded(analysis.recognizeArithmetic())) {
+            const auto& program = *analysis.result()->arithmetic;
+            auto demands = fs::analyzeGeneralArithmeticDemands(program);
+            auto prepared = fs::prepareGeneralArithmeticInsertion(function, program, demands, error);
+            accepted = succeeded(prepared) && succeeded(fs::insertLogicalSynchronization(function, **prepared));
+            if (accepted && failed(verify(function))) { return failure(); }
+        }
+    } else if (function->hasAttr("test.recompose")) {
         auto program = fs::recognizeProgram(function, input);
         if (failed(program)) { return failure(); }
         fs::RegionalAnalysis child;
