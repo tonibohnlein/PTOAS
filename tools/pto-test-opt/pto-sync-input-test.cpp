@@ -334,9 +334,17 @@ int runGeneralArithmeticDemandChecks();
 int runFiniteOverlayChecks();
 int runRotatingBoundaryChecks();
 int runGuardedRankChecks();
+int runGeneralArithmeticAllocationChecks();
+int runBoundedLifetimeAllocationChecks();
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
 int main(int argc, char **argv) {
   if (argc == 2 && StringRef(argv[1]) == "--guarded-rank-checks") { return runGuardedRankChecks(); }
+  if (argc == 2 && StringRef(argv[1]) == "--general-arithmetic-allocation-checks") {
+    return runGeneralArithmeticAllocationChecks();
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--bounded-lifetime-allocation-checks") {
+    return runBoundedLifetimeAllocationChecks();
+  }
   if (argc == 2 && StringRef(argv[1]) == "--rotating-boundary-checks") { return runRotatingBoundaryChecks(); }
   if (argc == 2 && StringRef(argv[1]) == "--finite-overlay-checks") {
     return runFiniteOverlayChecks();

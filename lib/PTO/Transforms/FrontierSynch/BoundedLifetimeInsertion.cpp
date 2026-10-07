@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Algebraic storage generators without expanding banks or loop iterations.
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
+#include "PTO/Transforms/FrontierSynch/BoundedLifetimeAllocation.h"
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "CountedLoop.h"
 #include "IterationPredicates.h"
@@ -20,10 +21,9 @@
 namespace mlir::pto::frontiersynch {
 namespace {
 using Id = RegionExpressions::Id;
-} // namespace
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeEndpoints(
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
     func::FuncOp function, scf::ForOp loop, const PhaseIndex& index, const SyncInput& input,
-    const BoundedLifetimeRecognition& recognized, std::string& error)
+    const BoundedLifetimeRecognition& recognized, std::string& error, bool completeInvocation)
 {
     const auto& skeleton = recognized.skeleton;
     auto domain = CountedLoop::get(loop);
@@ -165,7 +165,22 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeEndpoints(
             return failure();
         }
     }
-    return emitter.take();
+    auto result = emitter.take();
+    result->completeInvocation = completeInvocation;
+    if (completeInvocation) {
+        SmallVector<uint8_t> unconditional;
+        for (const auto& site : skeleton.phases) { unconditional.push_back(!site.guard); }
+        result->allocationCertificate = boundedLifetimeAllocationCertificate(
+            function, e, window, unconditional, analysis.sourceDemands, result->planId);
+    }
+    return result;
+}
+} // namespace
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeEndpoints(
+    func::FuncOp function, scf::ForOp loop, const PhaseIndex& index, const SyncInput& input,
+    const BoundedLifetimeRecognition& recognized, std::string& error)
+{
+    return prepareEndpoints(function, loop, index, input, recognized, error, false);
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeInsertion(
     func::FuncOp function, const SyncInput& input, const ProgramRecognition& program, std::string& error)
@@ -192,10 +207,6 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeInsertion(
     if (failed(index.build(function, input))) {
         return failure();
     }
-    auto result = prepareBoundedLifetimeEndpoints(function, loop, index, input, *selected->boundedLifetime, error);
-    if (succeeded(result)) {
-        (*result)->completeInvocation = true;
-    }
-    return result;
+    return prepareEndpoints(function, loop, index, input, *selected->boundedLifetime, error, true);
 }
 } // namespace mlir::pto::frontiersynch

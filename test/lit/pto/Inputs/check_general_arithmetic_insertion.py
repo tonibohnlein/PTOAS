@@ -13,12 +13,15 @@ import subprocess
 import sys
 import tempfile
 from check_logical_insertion import closure_with_commands
+from check_finite_allocation import physical_check
 from check_periodic_demands import closure, native
 
 
 def main():
     tool, fixture = sys.argv[1:]
-    source = Path(fixture).read_text()
+    source = Path(fixture).read_text().replace(
+        "attributes {test.trace_arguments",
+        "attributes {test.eligible_ids = array<i64: 0, 1, 2, 3, 4, 5>, test.trace_arguments")
     count = 0
     with tempfile.TemporaryDirectory(prefix="arithmetic-insertion-") as scratch:
         path = Path(scratch) / "case.pto"
@@ -36,6 +39,7 @@ def main():
             assert run.returncode == 0, run.stderr + run.stdout
             report = json.loads(run.stdout)
             assert report["accepted"], report
+            physical_check(report, set(range(6)))
             events = report["trace"]["events"]
             payloads = [event for event in events if event["kind"] == "payload"]
             expected = []
@@ -71,7 +75,7 @@ def main():
             actual = closure_with_commands(pipes, commands)
             assert actual == [row & ~(1 << i) for i, row in enumerate(required)], (weighted, trips)
             count += 1
-    print(f"general arithmetic insertion: {count} nested physical-conflict traces passed")
+    print(f"general arithmetic insertion: {count} nested physical-conflict and allocated-command traces passed")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
 #include "PTO/Transforms/FrontierSynch/CompactAllocation.h"
+#include "PTO/Transforms/FrontierSynch/GeneralArithmeticAllocation.h"
 #include "PTO/Transforms/FrontierSynch/RegionExpressions.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
@@ -437,6 +438,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneral(
     if (failed(preparer.run()) || (regional && failed(preparer.exportRegion()))) {
         if (error.empty()) { error = "arithmetic selector cannot be emitted at its original cut"; }
         return failure();
+    }
+    if (!regional) {
+        plan->allocationCertificate = generalArithmeticAllocationCertificate(
+            analysis, pipes, preparer.recordMap(), plan->planId, function.getContext());
     }
     return plan;
 }
