@@ -34,7 +34,8 @@ namespace {
 bool metadata(Operation& op)
 {
     return isa<AllocTileOp, AllocMultiTileOp, MultiTileGetOp, SubViewOp>(op) ||
-           op.hasTrait<OpTrait::IsTerminator>() || isMemoryEffectFree(&op) || hasOnlyDescriptorEffects(&op);
+           isPreservedSyncProtocol(&op) || op.hasTrait<OpTrait::IsTerminator>() ||
+           isMemoryEffectFree(&op) || hasOnlyDescriptorEffects(&op);
 }
 bool fixedBody(Block& block, const PhaseIndex& index, RecognitionResult& result)
 {

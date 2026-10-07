@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-test-opt --pto-frontier-analysis %s | FileCheck %s --check-prefix=LOGICAL
+// RUN: pto-test-opt --pto-frontier-analysis --pto-frontier-allocate='eligible-ids=0,1,2,3,4,5' %s | FileCheck %s --check-prefix=PHYSICAL
+// Reduced shared-buffer sequence: section boundaries do not reset lifetimes.
+module attributes {pto.target_arch = "a3"} {
+  func.func @sections(%ptr: !pto.ptr<f32, gm>) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %size = arith.constant 32 : index
+    %base = arith.constant 0 : i64
+    %view = pto.make_tensor_view %ptr, shape = [%size], strides = [%one] : !pto.tensor_view<32xf32>
+    %part = pto.partition_view %view, offsets = [%zero], sizes = [%size] : !pto.tensor_view<32xf32>
+    %tile = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x32xf32>
+    pto.section.vector {
+      pto.tload ins(%part : !pto.partition_tensor_view<32xf32>) outs(%tile : !pto.tile_buf<vec, 1x32xf32>)
+    }
+    pto.section.vector {
+      pto.tabs ins(%tile : !pto.tile_buf<vec, 1x32xf32>) outs(%tile : !pto.tile_buf<vec, 1x32xf32>)
+    }
+    return
+  }
+}
+// LOGICAL-LABEL: func.func @sections
+// LOGICAL: pto.sync_context_plans
+// LOGICAL: pto.section.vector
+// LOGICAL: pto.tload
+// LOGICAL: pto.logical_set
+// LOGICAL: pto.section.vector
+// LOGICAL: pto.logical_wait
+// LOGICAL: pto.tabs
+// PHYSICAL-LABEL: func.func @sections
+// PHYSICAL-NOT: pto.sync_context_plans
+// PHYSICAL: pto.section.vector
+// PHYSICAL: pto.tload
+// PHYSICAL: pto.set_flag
+// PHYSICAL: pto.section.vector
+// PHYSICAL: pto.wait_flag
+// PHYSICAL: pto.tabs
+// PHYSICAL-NOT: pto.logical_

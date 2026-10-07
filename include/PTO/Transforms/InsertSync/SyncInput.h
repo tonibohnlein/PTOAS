@@ -16,6 +16,9 @@ namespace mlir::pto {
 // and record/wait events) means the function already owns its synchronization.
 // Barriers and cross-core communication commands do not trigger this skip.
 bool hasManualOnCoreSynchronization(func::FuncOp function);
+// Explicit cross-core flags and buffer-token protocols are retained in place.
+// They are neither payload memory effects nor proofs used to drop on-core demands.
+bool isPreservedSyncProtocol(Operation* operation);
 
 using SyncMemoryEffect = SideEffects::EffectInstance<MemoryEffects::Effect>;
 // Scalar-pipe value operations return an ordinary value only after the scalar
