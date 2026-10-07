@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Validate byte ownership by exact map reconstruction and finite local ranges.
 #include "RepeatedStorageInternal.h"
+#include "RepeatedStorageProjection.h"
 #include "DisjointTranslations.h"
 #include "../InsertSync/SyncEffectRanges.h"
 #include "../InsertSync/SyncRegionArithmetic.h"
@@ -229,26 +230,23 @@ bool addFamily(State& state, const RepeatedStorageFamily& spec, llvm::DenseSet<s
             !validRegionalEvent(state.body, selected->last.event) ||
             !state.expressions().isBoolean(selected->first.present) ||
             !state.expressions().isBoolean(selected->last.present)) { return false; }
-        for (const auto& region : effect.regions) {
-            auto ranges = localRanges(state, family, region);
+        auto projected = detail::projectAccesses(state.body, state.loop, id);
+        if (!projected) { return false; }
+        for (const auto& projection : *projected) {
+            auto ranges = localRanges(state, family, projection.region);
             if (!ranges) { return false; }
+            const auto& access = projection.boundary;
+            if (!validRegionalEvent(state.body, access.first.event) ||
+                !validRegionalEvent(state.body, access.last.event) ||
+                state.body.anchors[access.first.event.type].phase != effect.phase ||
+                state.body.anchors[access.last.event.type].phase != effect.phase) { return false; }
             for (auto range : *ranges) {
                 if (range.begin > range.end) { return false; }
                 family.extent = std::max(family.extent, range.end);
-                for (const auto& access : state.body.accessBoundary) {
-                    if (access.effect != id) { continue; }
-                    if (!validRegionalEvent(state.body, access.first.event) ||
-                        !validRegionalEvent(state.body, access.last.event) ||
-                        access.first.event.type >= state.body.anchors.size() ||
-                        access.last.event.type >= state.body.anchors.size() ||
-                        state.body.anchors[access.first.event.type].phase != effect.phase ||
-                        state.body.anchors[access.last.event.type].phase != effect.phase ||
-                        !state.expressions().isBoolean(access.first.present) ||
-                        !state.expressions().isBoolean(access.last.present)) { return false; }
-                    family.pieces.push_back({range.begin, range.end, access, effect.mode,
-                                            static_cast<uint32_t>(effect.phase->kPipeValue)});
-                }
+                family.pieces.push_back({range.begin, range.end, access, effect.mode,
+                                        static_cast<uint32_t>(effect.phase->kPipeValue)});
             }
+            state.body.cost.physicalFragments += ranges->size();
         }
         state.effectIds.push_back(id);
     }
@@ -383,7 +381,7 @@ RepeatedStorageResult buildRepeatedStorage(const RegionalAnalysis& body, scf::Fo
 {
     RepeatedStorageResult result;
     if (!loop || !body.expressions || !body.accessModel || trips >= body.expressions->size() ||
-        body.expressions->isBoolean(trips) || body.storageSelectors || !body.symbolicStorageEffects.empty() ||
+        body.expressions->isBoolean(trips) ||
         !body.capabilities.exactSelectors || !body.capabilities.exactQueries || !body.presence || !body.reachability ||
         llvm::any_of(body.anchors, [&](const auto& anchor) {
             return !anchor.phase || !anchor.phase->elementOp || !loop->isProperAncestor(anchor.phase->elementOp);
@@ -400,7 +398,8 @@ RepeatedStorageResult buildRepeatedStorage(const RegionalAnalysis& body, scf::Fo
             return result;
         }
     }
-    if (!completeEffects(*state, assigned)) {
+    if (llvm::any_of(body.symbolicStorageEffects, [&](std::size_t id) { return !assigned.count(id); }) ||
+        !completeEffects(*state, assigned)) {
         result.error = "evolving storage has an unexported effect or an unclassified overlapping residual access";
         return result;
     }
