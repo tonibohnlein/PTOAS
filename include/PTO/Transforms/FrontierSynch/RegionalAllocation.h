@@ -16,6 +16,10 @@ struct RegionalAllocationMember {
     uint64_t stride = 0, phase = 0;
     RegionalEvent firstSource, lastTarget;
     RegionExpressions::Id active = 0;
+    std::optional<PhysicalTupleRule> tupleRule;
+    // At most one paired handoff per invocation of the supplying region.
+    // Repeating the region invalidates this property even for a constant lane.
+    bool singletonHandoff = false;
 };
 // Internal reuse within a palette is already certified. Different palettes may
 // share IDs only when every pair of their active lifetime envelopes is ordered.
@@ -25,6 +29,10 @@ struct RegionalAllocationGroup {
     std::vector<RegionalAllocationMember> members;
 };
 struct RegionalAllocationSummary { std::vector<RegionalAllocationGroup> groups; };
+// Preserve certified child rules while placing compatible palettes in shared
+// direction-local offsets. Null means no complete typed result was produced.
+std::shared_ptr<RegionalAllocationSummary> coalesceRegionalAllocation(
+    const RegionalAnalysis& region, const RegionalAllocationSummary& allocation);
 // For an unconditional fixed skeleton: every type is present in each period.
 // Guarded periodic producers must supply their own guarded lifetime selectors.
 std::shared_ptr<RegionalAllocationSummary> periodicRegionalAllocation(

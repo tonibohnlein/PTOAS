@@ -19,11 +19,11 @@ SSA = r"%[A-Za-z0-9_]+"
 MASK = (1 << 64) - 1
 
 
-def evaluate(text, ordinal, member):
+def evaluate(text, ordinal, member, *visits):
     """Interpret the emitted integer expressions independently of the allocator."""
     arguments = re.search(r"func.func @irregular\(([^)]*)\)", text)
     names = re.findall(SSA, arguments[1])
-    values = dict(zip(names, (ordinal, member)))
+    values = dict(zip(names, (ordinal, member, *visits)))
     commands = []
     active = True
     for line in text.splitlines():
@@ -181,6 +181,63 @@ def piece_checks(optimizer, path, source):
         opt(optimizer, path, ["--pto-frontier-allocate=eligible-ids=1,3,4,5"], success=False)
     return 31, len(cases)
 
+def tuple_checks(optimizer, path, source):
+    """Exercise certified source tuples, independent pieces and differing rules."""
+    text = piece_source(source).replace("version = 3 : i64", "version = 4 : i64")
+    text = text.replace("%member: index)", "%member: index, %visit: index)")
+    text = text.replace("members(%member)", "members(%member, %visit)")
+    start = text.index("    pto.cyclic_allocation =")
+    end = text.index("    pto.endpoint_families =", start)
+    certificate = """    pto.finite_allocation = {version = 1 : i64, plan = 0 : i64, kind = "finite",
+      strategy = "regional-palettes", groups = [
+      {source = 4 : i64, target = 3 : i64, budget = 4 : i64,
+       records = array<i64: 10, 11, 12, 13>, strides = array<i64: 0, 0, 0, 0>,
+       phases = array<i64: 0, 0, 0, 0>, conflicts = array<i64>, tuple_rules = [
+       {coordinate_count = 2 : i64, base = 0 : i64,
+        terms = [array<i64: 0, 1, 0, 2, 1>, array<i64: 1, 1, 0, 2, 2>]},
+       {coordinate_count = 2 : i64, base = 0 : i64,
+        terms = [array<i64: 0, 1, 1, 2, 1>, array<i64: 1, 1, 1, 2, 2>]},
+       {coordinate_count = 2 : i64, base = 0 : i64, terms = [array<i64: 1, 1, 0, 4, 1>]},
+       {coordinate_count = 2 : i64, base = 1 : i64, terms = [array<i64: 0, 1, 0, 3, 1>]}]},
+      {source = 4 : i64, target = 3 : i64, budget = 2 : i64,
+       records = array<i64: 20>, strides = array<i64: 0>, phases = array<i64: 1>,
+       conflicts = array<i64: 0>, tuple_rules = [{}]}]},
+"""
+    text = text[:start] + certificate + text[end:]
+    path.write_text(text)
+    allocate = ["--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5"]
+    emitted = opt(optimizer, path, allocate).stdout
+    assert emitted.count("pto.set_flag_dyn") == 1 and emitted.count("pto.wait_flag_dyn") == 2
+    assert "pto.logical_" not in emitted
+    checked = 0
+    for ordinal in (0, 1, 2, 17, (1 << 63) - 1, MASK):
+        for visit in (0, 1, 2, 9, MASK):
+            expected = {10: ordinal % 2 + 2 * (visit % 2),
+                        11: (ordinal + 1) % 2 + 2 * ((visit + 1) % 2),
+                        12: visit % 4, 13: 1 + ordinal % 3, 20: 5}
+            for label, event_id in expected.items():
+                assert evaluate(emitted, ordinal, label, visit) == [("set", event_id), ("wait", event_id)]
+                checked += 1
+    cases = [
+        text.replace("coordinate_count = 2", "coordinate_count = 1", 1),
+        text.replace("array<i64: 0, 1, 0, 2, 1>", "array<i64: 2, 1, 0, 2, 1>", 1),
+        text.replace("array<i64: 0, 1, 0, 2, 1>", "array<i64: 0, 1, 0, 0, 1>", 1),
+        text.replace("array<i64: 0, 1, 0, 2, 1>", "array<i64: 0, 1, 0, 2, 9223372036854775807>", 1),
+        text.replace("base = 0 : i64", "base = 4 : i64", 1),
+        text.replace("members(%member, %visit)", "members(%member)", 1),
+        text.replace("members(%member, %visit)\n        {pto.endpoint_piece = 1",
+                     "members(%member, %visit, %visit)\n        {pto.endpoint_piece = 1", 1),
+        text.replace("strides = array<i64: 0>, phases = array<i64: 1>",
+                     "strides = array<i64: 1>, phases = array<i64: 1>", 1),
+    ]
+    for broken in cases:
+        assert broken != text
+        path.write_text(broken)
+        result = opt(optimizer, path, allocate, success=False)
+        assert "error:" in result.stderr
+    return checked, len(cases)
+
+
 def main():
     optimizer = shutil.which(sys.argv[1])
     assert optimizer, "test optimizer must be available"
@@ -190,8 +247,9 @@ def main():
         phases = phase_checks(optimizer, path, source)
         rejected = rejection_checks(optimizer, path, source)
         piece_phases, piece_rejected = piece_checks(optimizer, path, source)
-    print(f"family allocation: {phases + piece_phases} phase evaluations, "
-          f"{rejected + piece_rejected} rejected interfaces")
+        tuple_phases, tuple_rejected = tuple_checks(optimizer, path, source)
+    print(f"family allocation: {phases + piece_phases + tuple_phases} phase evaluations, "
+          f"{rejected + piece_rejected + tuple_rejected} rejected interfaces")
 
 
 if __name__ == "__main__":

@@ -180,6 +180,9 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/InvocationProtection.cpp
   FrontierSynch/FiniteAllocation.cpp
   FrontierSynch/RegionalAllocation.cpp
+  FrontierSynch/RegionalPalette.cpp
+  FrontierSynch/RepeatedAllocation.cpp
+  FrontierSynch/RepeatedLaneAllocation.cpp
   FrontierSynch/CompactAllocation.cpp
   FrontierSynch/AllocationCertificate.cpp
   FrontierSynch/PhysicalAllocation.cpp

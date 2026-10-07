@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Common exact regional contract. All expressions belong to the supplied arena.
 #include "RepeatedRegionInternal.h"
+#include "RepeatedAllocation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
 namespace mlir::pto::frontiersynch
@@ -38,6 +39,8 @@ class RepeatedPreparation
         plan->completeInvocation = false;
         plan->nestedIdentities = true;
         plan->allocationCertificate = {};
+        auto childAllocation = plan->regionalAllocation;
+        if (!childAllocation) { childAllocation = finiteRegionalAllocation(body, *plan); }
         plan->regionalAllocation.reset();
         current = ordinal(loop);
         if (!current)
@@ -50,6 +53,9 @@ class RepeatedPreparation
         if (failed(prefixInternal()) || failed(addCrossings()))
         {
             return failure();
+        }
+        if (childAllocation) {
+            plan->regionalAllocation = repeatedRegionalAllocation(state, *childAllocation, allocationCrossings);
         }
         renameFamilies();
         return std::move(plan);
@@ -65,6 +71,7 @@ class RepeatedPreparation
     std::optional<Id> current;
     Id originalVisit = RegionExpressions::invalid;
     uint64_t nextRecord = 0;
+    std::vector<std::pair<uint32_t, std::size_t>> allocationCrossings;
     std::map<Operation *, Block *> blocks;
     std::map<Operation *, RegionExpressions::CutEmission> memos;
     RegionExpressions &e() { return state.e(); }
@@ -209,6 +216,7 @@ class RepeatedPreparation
                 return fail("repeated record identity overflow");
             }
             const auto record = static_cast<uint32_t>(nextRecord++);
+            allocationCrossings.emplace_back(record, &crossing - state.crossings.data());
             const auto &a = body.anchors[crossing.source.type];
             const auto &b = body.anchors[crossing.target.type];
             auto p = static_cast<uint32_t>(a.phase->kPipeValue), q = static_cast<uint32_t>(b.phase->kPipeValue);

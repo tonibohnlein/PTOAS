@@ -28,6 +28,21 @@
 #include <tuple>
 #include <optional>
 namespace mlir::pto::frontiersynch {
+bool validPhysicalTupleRule(const PhysicalTupleRule& rule, uint64_t budget)
+{
+    if (!budget || !rule.coordinateCount || rule.coordinateCount > INT64_MAX ||
+        rule.base > INT64_MAX || rule.base >= budget) { return false; }
+    uint64_t maximum = rule.base;
+    for (const auto& term : rule.terms) {
+        if (term.coordinate >= rule.coordinateCount || term.stride > INT64_MAX ||
+            term.phase > INT64_MAX || !term.modulus || term.modulus > INT64_MAX ||
+            term.scale > INT64_MAX) { return false; }
+        const auto residue = term.modulus - 1;
+        if (residue && term.scale > (budget - 1 - maximum) / residue) { return false; }
+        maximum += term.scale * residue;
+    }
+    return true;
+}
 namespace {
 struct Family {
     SmallVector<const PhysicalRecordAllocation*> members;
@@ -46,6 +61,7 @@ struct Endpoint {
     std::unique_ptr<Block> phaseCode;
     Operation* phaseBefore = nullptr;
     Value directPhase;
+    SmallVector<const PhysicalRecordAllocation*> tupleMembers;
 };
 std::optional<int64_t> number(DictionaryAttr dictionary, StringRef name)
 {
@@ -56,7 +72,7 @@ std::optional<int64_t> number(DictionaryAttr dictionary, StringRef name)
     return attr.getInt();
 }
 LogicalResult readFamily(func::FuncOp function, DictionaryAttr item, const Records& records,
-                         Families& families, llvm::DenseSet<int64_t>& seen)
+                         Families& families, llvm::DenseSet<int64_t>& seen, bool nested)
 {
     auto id = number(item, "id"), source = number(item, "source_pipe"), target = number(item, "target_pipe");
     auto sourceCut = number(item, "source_cut"), targetCut = number(item, "target_cut");
@@ -87,8 +103,9 @@ LogicalResult readFamily(func::FuncOp function, DictionaryAttr item, const Recor
             continue;
         }
         if (allocation->sourcePipe != *source || allocation->targetPipe != *target ||
-            (!family.members.empty() && (allocation->stride != family.members.front()->stride ||
-                                        allocation->ids != family.members.front()->ids))) {
+            (!nested && !family.members.empty() &&
+             (allocation->stride != family.members.front()->stride ||
+              allocation->ids != family.members.front()->ids))) {
             return function.emitError("endpoint-family members have incompatible cyclic allocations");
         }
         family.members.push_back(allocation);
@@ -107,10 +124,8 @@ FailureOr<Families> readFamilies(func::FuncOp function, const PhysicalAllocation
     }
     auto version = metadata ? number(metadata, "version") : std::optional<int64_t>(1);
     auto planId = metadata ? number(metadata, "plan") : std::optional<int64_t>(plan.planId);
-    if (version == 4) {
-        return function.emitError("nested logical-plan physical allocation is not implemented yet"), failure();
-    }
-    if (!version || (*version != 1 && *version != 2 && *version != 3) || !planId || *planId != plan.planId) {
+    if (!version || (*version != 1 && *version != 2 && *version != 3 && *version != 4) ||
+        !planId || *planId != plan.planId) {
         return function.emitError("unsupported endpoint-family metadata version or plan identity"), failure();
     }
     if (*version == 1) {
@@ -131,7 +146,7 @@ FailureOr<Families> readFamilies(func::FuncOp function, const PhysicalAllocation
         if (!item) {
             return function.emitError("malformed endpoint-family entry"), failure();
         }
-        if (failed(readFamily(function, item, records, result, seen))) {
+        if (failed(readFamily(function, item, records, result, seen, *version == 4))) {
             return failure();
         }
     }
@@ -244,10 +259,10 @@ FailureOr<Pieces> readPieces(func::FuncOp function, const Families& families)
     }
     return result;
 }
-bool validRecordMember(Operation* op, const Piece& piece)
+bool validRecordMember(Operation* op, const Piece& piece, bool nested)
 {
-    if (op->getNumOperands() != 2 || !op->getOperand(0).getType().isIndex() ||
-        !op->getOperand(1).getType().isIndex()) {
+    if ((nested ? op->getNumOperands() < 2 : op->getNumOperands() != 2) ||
+        !llvm::all_of(op->getOperandTypes(), [](Type type) { return type.isIndex(); })) {
         return false;
     }
     APInt value;
@@ -351,10 +366,14 @@ FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const Ph
     if (failed(pieces)) {
         return failure();
     }
-    auto coordinates = readCoordinates(function);
-    if (failed(coordinates)) {
-        return failure();
+    const bool nested = number(function->getAttrOfType<DictionaryAttr>("pto.endpoint_families"), "version") == 4;
+    std::optional<CoordinateProvenance> coordinates;
+    if (!nested) {
+        auto result = readCoordinates(function);
+        if (failed(result)) { return failure(); }
+        coordinates = std::move(*result);
     }
+    std::map<int64_t, unsigned> coordinateCounts;
     DominanceInfo dominance(function);
     SmallVector<Endpoint> endpoints;
     llvm::DenseSet<int64_t> seen;
@@ -380,7 +399,8 @@ FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const Ph
         if (!id || id.getInt() != plan.planId || !family || family.getInt() != piece.family ||
             piece.kind != (publish ? 0 : 2) || !cut || cut.getInt() != piece.cut ||
             !source || static_cast<int64_t>(source.getPipe()) != piece.sourcePipe ||
-            !target || static_cast<int64_t>(target.getPipe()) != piece.targetPipe || !validRecordMember(op, piece)) {
+            !target || static_cast<int64_t>(target.getPipe()) != piece.targetPipe ||
+            !validRecordMember(op, piece, nested)) {
             op->emitError("logical endpoint disagrees with its executable piece certificate");
             return WalkResult::interrupt();
         }
@@ -391,14 +411,28 @@ FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const Ph
         }
         for (auto record : piece.records) {
             const auto* member = records.lookup(record);
-            if (!member || member->stride != endpoint.allocation->stride || member->ids != endpoint.allocation->ids) {
+            if (!member || member->ids.empty() ||
+                (!nested && (member->stride != endpoint.allocation->stride ||
+                             member->ids != endpoint.allocation->ids || member->tupleRule))) {
                 op->emitError("executable piece has inconsistent member allocations");
                 return WalkResult::interrupt();
+            }
+            if (nested) {
+                const auto count = op->getNumOperands() - 1;
+                auto [entry, added] = coordinateCounts.emplace(record, count);
+                if ((!added && entry->second != count) ||
+                    (member->tupleRule ? member->tupleRule->coordinateCount != count ||
+                        !validPhysicalTupleRule(*member->tupleRule, member->ids.size()) :
+                        member->stride % member->ids.size() != 0)) {
+                    op->emitError("nested allocation requires a certified rule with matching source-tuple arity");
+                    return WalkResult::interrupt();
+                }
+                endpoint.tupleMembers.push_back(member);
             }
             endpoint.phases.push_back(member->phase % member->ids.size());
             endpoint.labels.push_back(static_cast<uint64_t>(record));
         }
-        if (failed(prepareCoordinatePhase(endpoint, *coordinates, dominance, publish))) {
+        if (!nested && failed(prepareCoordinatePhase(endpoint, *coordinates, dominance, publish))) {
             return WalkResult::interrupt();
         }
         endpoints.push_back(std::move(endpoint));
@@ -426,7 +460,7 @@ FailureOr<SmallVector<Endpoint>> preflight(func::FuncOp function, const Physical
         return failure();
     }
     auto metadata = function->getAttrOfType<DictionaryAttr>("pto.endpoint_families");
-    if (metadata && number(metadata, "version") == 3) {
+    if (metadata && (number(metadata, "version") == 3 || number(metadata, "version") == 4)) {
         return preflightPieces(function, plan, records, *families);
     }
     auto certificate = function->getAttrOfType<DictionaryAttr>(CyclicAllocationAttr);
@@ -584,13 +618,80 @@ Value physicalId(OpBuilder& builder, Location location, Value ordinal,
     }
     return id;
 }
-void emitAllocatedCommand(OpBuilder& builder, Operation* op, const PhysicalRecordAllocation& record,
+std::optional<int64_t> constantTupleId(const PhysicalRecordAllocation& record)
+{
+    if (!record.tupleRule) {
+        return record.stride % record.ids.size() == 0 ?
+            std::optional<int64_t>(record.ids[record.phase % record.ids.size()]) : std::nullopt;
+    }
+    uint64_t offset = record.tupleRule->base;
+    for (const auto& term : record.tupleRule->terms) {
+        if (!term.scale) { continue; }
+        if (term.stride % term.modulus) { return std::nullopt; }
+        offset += term.scale * (term.phase % term.modulus);
+    }
+    return record.ids[offset];
+}
+Value tuplePhysicalId(OpBuilder& builder, const Endpoint& endpoint)
+{
+    auto* op = endpoint.operation;
+    auto location = op->getLoc();
+    auto constant = [&](uint64_t value) -> Value {
+        return builder.create<arith::ConstantIndexOp>(location, static_cast<int64_t>(value));
+    };
+    using TermKey = std::tuple<uint64_t, uint64_t, uint64_t, uint64_t>;
+    std::map<TermKey, Value> terms;
+    auto memberId = [&](const PhysicalRecordAllocation& member) -> Value {
+        if (auto fixed = constantTupleId(member)) { return constant(*fixed); }
+        const auto& rule = *member.tupleRule;
+        Value offset = constant(rule.base);
+        for (const auto& term : rule.terms) {
+            if (!term.scale || term.modulus == 1) { continue; }
+            const auto stride = term.stride % term.modulus, phase = term.phase % term.modulus;
+            const TermKey key{term.coordinate, stride, phase, term.modulus};
+            auto [entry, added] = terms.try_emplace(key);
+            if (added) {
+                Value value = constant(phase);
+                if (stride) {
+                    auto coordinate = op->getOperand(term.coordinate == 0 ? 0 : term.coordinate + 1);
+                    auto modulus = constant(term.modulus);
+                    auto residue = builder.create<arith::RemUIOp>(location, coordinate, modulus);
+                    Value product = residue;
+                    if (stride != 1) { product = builder.create<arith::MulIOp>(location, product, constant(stride)); }
+                    if (phase) { product = builder.create<arith::AddIOp>(location, product, constant(phase)); }
+                    value = builder.create<arith::RemUIOp>(location, product, modulus);
+                }
+                entry->second = value;
+            }
+            Value value = entry->second;
+            if (term.scale != 1) { value = builder.create<arith::MulIOp>(location, value, constant(term.scale)); }
+            offset = builder.create<arith::AddIOp>(location, offset, value);
+        }
+        // The checked term bound keeps every intermediate within the palette;
+        // positive-scale moduli are at most its six eligible entries. Products
+        // use reduced residues, so large original source coordinates cannot wrap.
+        Value id = constant(member.ids.front());
+        for (std::size_t i = 1; i < member.ids.size(); ++i) {
+            auto selected = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq, offset, constant(i));
+            id = builder.create<arith::SelectOp>(location, selected, constant(member.ids[i]), id);
+        }
+        return id;
+    };
+    Value result = memberId(*endpoint.tupleMembers.front());
+    for (std::size_t i = 1; i < endpoint.tupleMembers.size(); ++i) {
+        auto selected = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq,
+            op->getOperand(1), constant(endpoint.labels[i]));
+        result = builder.create<arith::SelectOp>(location, selected, memberId(*endpoint.tupleMembers[i]), result);
+    }
+    return result;
+}
+void emitAllocatedCommand(OpBuilder& builder, Operation* op, std::optional<int64_t> staticId,
                           Value eventId)
 {
     const bool publish = isa<LogicalSetOp>(op);
     auto source = op->getAttrOfType<PipeAttr>("src_pipe"), target = op->getAttrOfType<PipeAttr>("dst_pipe");
-    if (record.ids.size() == 1) {
-        auto id = EventAttr::get(op->getContext(), *symbolizeEVENT(static_cast<uint32_t>(record.ids.front())));
+    if (staticId) {
+        auto id = EventAttr::get(op->getContext(), *symbolizeEVENT(static_cast<uint32_t>(*staticId)));
         if (publish) {
             builder.create<SetFlagOp>(op->getLoc(), source, target, id);
         } else {
@@ -633,7 +734,16 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
             builder.setInsertionPoint(branch);
         }
         Value eventId;
-        if (endpoint.allocation->ids.size() != 1) {
+        std::optional<int64_t> staticId;
+        if (!endpoint.tupleMembers.empty()) {
+            staticId = constantTupleId(*endpoint.tupleMembers.front());
+            for (const auto* member : endpoint.tupleMembers) {
+                if (constantTupleId(*member) != staticId) { staticId.reset(); break; }
+            }
+            if (!staticId) { eventId = tuplePhysicalId(builder, endpoint); }
+        } else if (endpoint.allocation->ids.size() == 1) {
+            staticId = endpoint.allocation->ids.front();
+        } else {
             Value phase;
             if (endpoint.directPhase) {
                 auto* before = endpoint.phaseBefore;
@@ -653,7 +763,7 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
         // All member-phase arithmetic is total and may be shared at the cut.
         // Command execution remains inside the original presence guard.
         builder.setInsertionPoint(endpoint.operation);
-        emitAllocatedCommand(builder, endpoint.operation, *endpoint.allocation, eventId);
+        emitAllocatedCommand(builder, endpoint.operation, staticId, eventId);
         endpoint.operation->erase();
     }
     function.walk([](Operation* op) {

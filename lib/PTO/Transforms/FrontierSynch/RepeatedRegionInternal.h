@@ -54,6 +54,10 @@ struct RepeatedRegionState {
     std::optional<Id> query(RegionalEvent source, RegionalEvent target);
     std::optional<Id> present(RegionalEvent event);
     std::optional<Id> computeQuery(RegionalEvent source, RegionalEvent target);
+    // Translation-invariant relation on body events, independent of finite
+    // outer invocation bounds. Callers separately establish actual endpoints.
+    std::optional<Id> relativeQuery(RegionalEvent source, RegionalEvent target, uint64_t gap);
+    std::optional<Id> acrossQuery(const RegionalEvent& source, const RegionalEvent& target, Id gap);
     std::optional<Id> distanceFrom(const RegionalEvent& source, std::size_t column);
     std::optional<Id> crossingStep(const RegionalEvent& source, std::size_t target);
     Id underPortEnable(Id expression);

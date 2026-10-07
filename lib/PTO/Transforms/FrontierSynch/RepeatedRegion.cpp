@@ -201,7 +201,7 @@ std::optional<RepeatedRegionState::Id> RepeatedRegionState::computeQuery(Regiona
     auto i = source.visits.front(), j = target.visits.front();
     source.visits.erase(source.visits.begin()); target.visits.erase(target.visits.begin());
     const auto sameVisit = e().eq(i, j), laterVisit = e().lt(i, j);
-    Id result = e().boolean(false), across = e().boolean(false);
+    Id result = e().boolean(false);
     if (e().constantValue(sameVisit) != 0) {
         auto local = regionalReachability(body, source, target);
         if (!local) { return std::nullopt; }
@@ -210,7 +210,26 @@ std::optional<RepeatedRegionState::Id> RepeatedRegionState::computeQuery(Regiona
     if (e().constantValue(sameVisit) == 1 || e().constantValue(laterVisit) == 0) {
         return e().land(e().land(*ps, *pt), result);
     }
-    const auto gap = e().sub(j, i);
+    auto acrossValue = acrossQuery(source, target, e().sub(j, i));
+    if (!acrossValue) { return std::nullopt; }
+    return e().land(e().land(*ps, *pt), e().lor(result, e().land(laterVisit, *acrossValue)));
+}
+std::optional<RepeatedRegionState::Id> RepeatedRegionState::relativeQuery(
+    RegionalEvent source, RegionalEvent target, uint64_t gap)
+{
+    if (!gap) { return regionalReachability(body, source, target); }
+    auto ps = regionalPresence(body, source), pt = regionalPresence(body, target);
+    if (!ps || !pt) { return std::nullopt; }
+    auto active = e().land(*ps, *pt);
+    if (e().constantValue(active) == 0) { return e().boolean(false); }
+    auto across = acrossQuery(source, target, e().constant(gap));
+    if (!across) { return std::nullopt; }
+    return e().land(active, *across);
+}
+std::optional<RepeatedRegionState::Id> RepeatedRegionState::acrossQuery(
+    const RegionalEvent& source, const RegionalEvent& target, Id gap)
+{
+    auto across = e().boolean(false);
     if (e().constantValue(gap) == 1) {
         // Reference-forward paths between adjacent visits cross their boundary
         // exactly once. Answer this query directly instead of constructing all
@@ -227,7 +246,7 @@ std::optional<RepeatedRegionState::Id> RepeatedRegionState::computeQuery(Regiona
             across = e().lor(across, path);
         }
         across = e().select(portEnable, across, e().boolean(false));
-        return e().land(e().land(*ps, *pt), e().lor(result, e().land(laterVisit, across)));
+        return across;
     }
     const auto absent = e().constant(infinity);
     auto distance = absent;
@@ -246,7 +265,7 @@ std::optional<RepeatedRegionState::Id> RepeatedRegionState::computeQuery(Regiona
     }
     across = e().select(portEnable,
         e().land(e().lt(distance, absent), e().le(distance, gap)), e().boolean(false));
-    return e().land(e().land(*ps, *pt), e().lor(result, e().land(laterVisit, across)));
+    return across;
 }
 std::optional<RepeatedRegionState::Id> RepeatedRegionState::distanceFrom(
     const RegionalEvent& source, std::size_t column)
