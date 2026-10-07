@@ -11,6 +11,7 @@
 // cross-interval edges. No payloads or runtime iterations are cloned.
 #include "SequenceAnalysisInternal.h"
 #include "BoundarySlices.h"
+#include "CountedLoop.h"
 #include "RecognitionInternal.h"
 #include "ArithmeticRows.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
@@ -202,7 +203,12 @@ std::optional<Split> affineCondition(Value condition, scf::ForOp loop,
         inputs.push_back(signedEntry(symbols[i], dag));
         difference.coefficients.push_back(coefficient);
     }
-    if (slope == 0) { return std::nullopt; }
+    auto domain = CountedLoop::get(loop);
+    if (slope == 0 || !domain) { return std::nullopt; }
+    // Substitute iv = lower + step*ordinal before finding Boolean cuts.
+    inputs.push_back(dag.input(loop.getLowerBound()));
+    difference.coefficients.push_back(slope);
+    slope *= domain->step;
     // Normalize to an increasing affine function. Reversing a signed strict
     // inequality exchanges prefix/suffix AND the inclusive threshold.
     if (slope < 0) {
@@ -238,7 +244,9 @@ std::optional<Split> affineCondition(Value condition, scf::ForOp loop,
 std::optional<Split> splitCondition(Value condition, scf::ForOp loop,
     const PhaseIndex& index, RegionExpressions& dag, Expr trips)
 {
-    if (auto simple = unitOffsetCondition(condition, loop, index, dag, trips)) { return simple; }
+    if (sequenceInteger(loop.getLowerBound()) == 0 && sequenceInteger(loop.getStep()) == 1) {
+        if (auto simple = unitOffsetCondition(condition, loop, index, dag, trips)) { return simple; }
+    }
     return affineCondition(condition, loop, index, dag, trips);
 }
 
@@ -276,9 +284,8 @@ std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
     const PhaseIndex& index, RegionExpressions& arena, Expr trips,
     const DenseMap<Value, Expr>& inherited, std::string& error)
 {
-    if (sequenceInteger(loop.getLowerBound()) != 0 || sequenceInteger(loop.getStep()) != 1 ||
-        index.hasRelevantCarriedState(loop)) {
-        error = "boundary slicing requires a zero-based unit-step result-free loop";
+    if (!CountedLoop::get(loop) || index.hasRelevantCarriedState(loop)) {
+        error = "boundary slicing requires a representable counted loop without relevant carried state";
         return std::nullopt;
     }
     PhaseNormalization normalizer(loop, index, arena);
@@ -364,10 +371,9 @@ std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
 }
 bool SequenceAnalysisState::boundaryLoop(scf::ForOp loop)
 {
-    if (sequenceInteger(loop.getLowerBound()) != 0 || sequenceInteger(loop.getStep()) != 1 ||
-        index.hasRelevantCarriedState(loop)) { return false; }
-    auto upper = expressions.input(loop.getUpperBound());
-    auto trips = expressions.select(expressions.slt(c(0), upper), upper, c(0));
+    auto domain = CountedLoop::get(loop);
+    if (!domain || index.hasRelevantCarriedState(loop)) { return false; }
+    auto trips = domain->trips(expressions);
     SmallVector<std::pair<Value, Split>> predicates;
     SmallVector<Expr> cuts;
     bool supported = true;

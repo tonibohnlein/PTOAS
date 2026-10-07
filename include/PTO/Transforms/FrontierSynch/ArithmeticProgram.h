@@ -41,9 +41,9 @@ struct ArithmeticProgram {
     SmallVector<std::pair<uint32_t, uint32_t>> uniformConflicts;
     SmallVector<Value> parameters; // Matches primitives.parameters.
 };
-// No unfolding: counted nests with constant nonnegative lower bounds and
-// positive steps dividing the configured residue period. Upper bounds use
-// proved affine expressions. Exact shared access maps retain symbolic origins
+// No unfolding: counted nests with proved affine bounds and constant positive
+// steps. Step congruences use exact existential quotients; their dimensions
+// and coefficients must satisfy the configured arithmetic class. Exact shared access maps retain symbolic origins
 // and finite within-origin byte unions. GM regions retain canonical function
 // entry pointer identities. Distinct GM bases require the shared MayNotAlias
 // policy; one base works under either policy. Unresolved bases and mixtures of
@@ -61,7 +61,8 @@ struct ArithmeticProgram {
 // both; regional consumers retain them for enclosing re-entry. Output borrows input/IR.
 // Failure clears primitive/site/parameter exports; diagnostics remain available.
 // Region extraction preserves original SSA bindings. Only index/i1 values
-// available before root can become extra parameters; local unsupported values
+// available before root, or pure invocation-entry expressions over function
+// arguments, can become extra parameters; local unsupported values
 // remain unsupported. This produces primitives, not a composable regional plan:
 // storage selectors, query adapters and boundary discharge are separate steps.
 // Optional entry constants are certified by an enclosing phase/interval

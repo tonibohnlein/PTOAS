@@ -26,9 +26,8 @@
 // CHECK: issue additional-prerequisite
 // CHECK: arithmetic sites=0 parameters=0 primitives=0
 // CHECK-LABEL: recognition opaque_bound
-// CHECK: recognize arithmetic: not-applicable
-// CHECK: issue loop-domain
-// CHECK: arithmetic sites=0 parameters=0 primitives=0
+// CHECK: recognize arithmetic: applicable
+// CHECK: arithmetic sites=1 parameters=2
 // CHECK: source-unchanged; dependency-analysis-not-run
 
 !tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
