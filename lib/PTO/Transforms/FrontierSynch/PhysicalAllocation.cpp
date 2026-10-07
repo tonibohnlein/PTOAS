@@ -8,6 +8,7 @@
 // Preflight logical families, preserve certified member-to-phase maps, and lower
 // commands in place. Allocation does not inspect or reconstruct endpoint guards.
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/PhysicalExecutedCounters.h"
 #include "PTO/Transforms/FrontierSynch/ExecutionContexts.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
@@ -742,6 +743,11 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
 {
     if (!function) {
         return failure();
+    }
+    auto cyclic = function->getAttrOfType<DictionaryAttr>(CyclicAllocationAttr);
+    auto strategy = cyclic ? cyclic.getAs<StringAttr>("strategy") : StringAttr{};
+    if (strategy && strategy.getValue() == "executed-family-counters") {
+        return allocateExecutedFamilyCounters(function, cyclic, eligibleIds);
     }
     bool hidden = false;
     function.walk([&](Operation* op) {

@@ -283,3 +283,76 @@ both remain in lit with their original success assertions. No test was changed
 to call these proof gaps hardware scarcity. The repeated-reuse oracle was
 corrected to use native start order for same-pipe WAIT-to-SET reuse and retains
 completion-to-start checks across pipes.
+
+
+### Milestone 5
+
+Arithmetic allocation now selects exact extrema from the retained handoff
+relation and certifies widths one through six over its active source order.
+The immediate-successor relation is the strict source order minus its square;
+its powers count executed handoffs, including holes in the iteration domain.
+For widths above one, a separate proof checks that matching preserves consumer
+order. Every join retains the same parameter and residue context. Completed
+DBM demands and required order can be converted exactly to the integer backend
+for this proof without repeating recognition or reachability construction.
+
+Whole-function arithmetic emission uses two bounded SSA counters per certified
+family, one for publications and one for consumptions. Only executed commands
+advance them. Structured loop and branch results carry the counters while
+preserving all original results and payloads. Empty loops and untaken arms keep
+the incoming state. Width-one families need no counters. Palettes are disjoint
+within the one numeric pool; failure to fit is a failure of this sufficient
+assignment, not a minimum hardware-capacity claim. Hidden IDs are excluded.
+The transformation validates a detached function copy before committing it.
+Regional arithmetic exports currently use width-one families with exact
+first-source and last-consumer selectors; counter scope is not silently reset
+at region boundaries.
+
+Mixed-stride accesses use a numerical phase adapter. For each slot family,
+relative strides determine a common period by GCD/LCM arithmetic. Expanding
+only the analysis skeleton makes the strides equal modulo that family size,
+so the existing rotating extractor and quotient apply. Endpoint recipes remain
+at the original payload cuts, select the correct phase, and independently test
+both endpoints against the actual finite prefix. Work and representation are
+charged to the expanded skeleton using the existing numerical-template limits.
+This adapter currently handles one whole fixed-body loop; it does not claim
+regional storage exports or compact treatment of an arbitrarily large encoded
+joint period.
+
+Supplied arithmetic endpoint relations may use other representable fixed
+periods; emission no longer has a period-two-only gate. The automatic arithmetic
+producer and dispatcher retain their configured period-one/period-two residue
+classes. This is distinct from the mixed-stride phase adapter.
+
+
+Repeated allocation now clips absent phases before constructing its reuse
+matrix. Conditional reuse edges propose an assignment; every pair that shares
+a numeric label then receives a direct collision check. Thus a skipped
+intermediate handoff cannot justify reuse. When one shared cycle is unavailable,
+a deterministic palette partition retries the same direct proof for each
+insertion. It costs O(6² n³) comparisons beyond the producer's reuse queries
+and remains a sufficient assignment. Guarded per-label first/last endpoints
+preserve clipping, phase offsets, and delayed consumers for outer composition.
+
+M5 validation: 360 independent mixed-stride graph comparisons and 30 emitted
+logical/physical traces passed, including incomplete final periods, reversed
+stationary/rotating accesses, and nonzero lower bounds/steps. The command oracle
+first checks exact cover endpoints, then applies the agreed consumer-adjacent
+barrier policy for nonadjacent local demands. Arithmetic proof checks include
+sparse active sources, exact residue/parameter contexts, reversed-consumer
+rejection, DBM fallback and supplied period-three selectors. The counter IR
+interpreter checks nested loops, branch results, original carried values, zero
+trips, skipped handoffs, original matching coordinates and transactional ID
+shortage. Ten full arithmetic traces and 21 nested physical traces passed.
+Repeated checks cover 123,552 event pairs, 27,264 phased queries, and 1,583
+member envelopes/reuse chains. Allocation testing uses one pool of six IDs.
+Both independent code reviews accepted the arithmetic/counter and mixed-stride
+changes; final repeated-lane review and selector checks are recorded below.
+
+The final repeated-lane review accepted the guarded partition and extrema
+proof. Its numerical oracle also passed the exported per-label selector checks
+across clipping, absent phases and eight-period ID wraps. Serial incremental
+builds and links passed. The compliance prefilter reported 55 nested-parenthesis
+brace matches; all corresponding bodies are braced, and line-width findings
+were corrected. No full static-analyzer or device claim is made here. The
+pinned corpus campaign remains milestone 7.
