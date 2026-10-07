@@ -14,6 +14,7 @@
 #include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingInsertion.h"
+#include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
 #include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
@@ -88,7 +89,13 @@ LogicalResult FrontierAnalysis::recognizeStructure() {
 }
 LogicalResult FrontierAnalysis::analyzeNumericCandidates() {
     if (failed(recognizeStructure())) { return failure(); }
+    PhaseIndex index;
+    if (failed(index.build(function, *storage))) { return failure(); }
     for (auto& node : program->nodes) {
+        if (node.varyingRotating && !node.varyingDemands &&
+            node.varyingRotating->result.state == RecognitionState::Applicable) {
+            node.varyingDemands = analyzeVaryingRotating(*node.varyingRotating, index, *storage);
+        }
         if (!node.numericTemplate || node.periodicAnalysis ||
             node.numericTemplate->result.state != RecognitionState::Applicable) { continue; }
         node.periodicAnalysis = analyzeNumericTemplate(*node.numericTemplate);
@@ -206,6 +213,10 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
         if (failed(prepared)) {
             prepared = frontiersynch::prepareGuardedRotatingInsertion(
                 function, *analysis.input(), *analysis.result());
+        }
+        if (failed(prepared)) {
+            prepared = frontiersynch::prepareBoundedLifetimeInsertion(
+                function,*analysis.input(),*analysis.result(),routeError);
         }
         if (failed(prepared)) {
             prepared = frontiersynch::prepareSequenceInsertion(function, *analysis.input(),

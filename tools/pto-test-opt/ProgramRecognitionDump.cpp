@@ -60,6 +60,33 @@ LogicalResult dumpProgramRecognition(func::FuncOp function, const pto::SyncInput
         for (auto loop : node.loops) {
             loops.push_back(valueName(loop.getInductionVar(), state));
         }
+        if (node.boundedLifetime) {
+            auto item=attempt("bounded-lifetime",node.boundedLifetime->skeleton.result);
+            item["certificate_error"]=node.boundedLifetime->refresh.error;
+            item["refresh_span"]=node.boundedLifetime->refresh.span;
+            item["endpoint_adapter"]="bounded-window";
+            item["endpoint_recipes_prepared"]=false;
+            item["entry_guards_available"]=node.boundedLifetime->skeleton.entryGuardsAvailable;
+            attempts.push_back(std::move(item));
+        }
+        if (node.varyingRotating) {
+            auto item = attempt("varying-rotating", node.varyingRotating->result);
+            item["slope"] = node.varyingRotating->slope;
+            item["intercept"] = node.varyingRotating->intercept;
+            if (node.varyingDemands) {
+                item["demand_error"] = node.varyingDemands->error;
+                item["startup_visits"] = node.varyingDemands->startup;
+                item["suffix_period"] = node.varyingDemands->period;
+                item["internal_records"] = node.varyingDemands->child.quotient.retained.size();
+                uint64_t crossings = node.varyingDemands->seam.size();
+                for (const auto& list : node.varyingDemands->startupCrossings) { crossings += list.size(); }
+                for (const auto& list : node.varyingDemands->suffixCrossings) { crossings += list.size(); }
+                item["crossing_records"] = crossings;
+                item["endpoint_adapter"] = "varying-regional";
+                item["endpoint_recipes_prepared"] = false;
+            }
+            attempts.push_back(std::move(item));
+        }
         if (node.explicitResult) {
             attempts.push_back(attempt("explicit", *node.explicitResult));
         }

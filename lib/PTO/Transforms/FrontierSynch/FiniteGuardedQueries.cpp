@@ -10,83 +10,94 @@ namespace mlir::pto::frontiersynch {
 void FiniteGuardedState::closeAndReduce()
 {
     const auto count = effects.size();
-    graph.assign(2*count, std::vector<Expr>(2*count, no()));
-    std::vector<std::vector<Expr>> demands(count, std::vector<Expr>(count, no()));
+    std::map<std::pair<uint32_t, uint32_t>, Expr> demands;
+    auto add = [&](uint32_t source, uint32_t target, Expr guard) {
+        auto [it, inserted] = demands.emplace(std::make_pair(source, target), guard);
+        if (!inserted) {
+            it->second = either(it->second, guard);
+        }
+    };
     std::map<uint32_t, std::vector<std::pair<uint32_t, CellAccess>>> accesses;
     for (uint32_t i = 0; i < count; ++i) {
-        graph[2*i][2*i] = graph[2*i+1][2*i+1] = graph[2*i][2*i+1] = presence[i];
-        for (uint32_t j = i+1; j < count; ++j) {
-            if (pipe(i) == pipe(j)) {
-                graph[2*i][2*j] = graph[2*i+1][2*j+1] = both(presence[i],presence[j]);
-            }
+        for (auto mode : effects[i].accesses) {
+            accesses[mode.atom].push_back({i, mode});
         }
-        for (auto mode : effects[i].accesses) { accesses[mode.atom].push_back({i, mode}); }
     }
     for (const auto& [cell, uses] : accesses) {
-        (void)cell;
+        // Protected writer pairs and simultaneous macro phases change the
+        // lifetime-chain proof. Retain their exact raw pair generators; rank
+        // reduction still applies, with the same O(W) candidate bound.
+        bool plain = true;
+        for (auto [i, x] : uses) {
+            for (auto [j, y] : uses) {
+                if (i == j) {
+                    continue;
+                }
+                plain &= anchors[i].phase->elementOp != anchors[j].phase->elementOp &&
+                         !ptoStorageProtection().protectsScalar(pipe(i), pipe(j)) &&
+                         !hardwareProtectsConflict(pipe(i), x.protectionGroup, pipe(j), y.protectionGroup);
+            }
+        }
         for (std::size_t a = 0; a < uses.size(); ++a) {
             auto [i, x] = uses[a];
-            for (std::size_t b = a+1; b < uses.size(); ++b) {
+            auto noWriter = yes();
+            for (std::size_t b = a + 1; b < uses.size(); ++b) {
                 auto [j, y] = uses[b];
                 ++cost.crossingCandidates;
-                if (anchors[i].phase->elementOp == anchors[j].phase->elementOp || !(x.write || y.write) ||
-                    ptoStorageProtection().protectsScalar(pipe(i), pipe(j)) ||
-                    hardwareProtectsConflict(pipe(i), x.protectionGroup,
-                                            pipe(j), y.protectionGroup)) { continue; }
-                demands[i][j] = either(demands[i][j], both(presence[i], presence[j]));
+                if (anchors[i].phase->elementOp != anchors[j].phase->elementOp && (x.write || y.write) &&
+                    !ptoStorageProtection().protectsScalar(pipe(i), pipe(j)) &&
+                    !hardwareProtectsConflict(pipe(i), x.protectionGroup, pipe(j), y.protectionGroup)) {
+                    add(i, j, both(both(presence[i], presence[j]), noWriter));
+                }
+                if (plain && y.write) {
+                    noWriter = both(noWriter, negate(presence[j]));
+                }
             }
         }
     }
-    for (const auto& edge : residual) {
-        demands[edge.source][edge.target] = either(demands[edge.source][edge.target],
-            both(presence[edge.source], presence[edge.target]));
+    for (auto edge : residual) {
+        add(edge.source, edge.target, both(presence[edge.source], presence[edge.target]));
     }
+    std::vector<GuardedRankPayload> payloads;
+    std::vector<GuardedRankEdge> generators, native;
     for (uint32_t i = 0; i < count; ++i) {
-        for (uint32_t j = i+1; j < count; ++j) { graph[2*i+1][2*j] = demands[i][j]; }
+        payloads.push_back({pipe(i), presence[i]});
     }
-    for (const auto& edge : nativePrerequisites) {
-        auto native = both(presence[edge.source], presence[edge.target]);
-        graph[2*edge.source+1][2*edge.target] = either(graph[2*edge.source+1][2*edge.target], native);
-        demands[edge.source][edge.target] = both(demands[edge.source][edge.target], negate(native));
+    for (auto [pair, guard] : demands) {
+        generators.push_back({pair.first, pair.second, guard});
     }
-    // Reflexive diagonals are presence-gated. Every nontrivial edge points
-    // forward in this potential-event order; mutually exclusive arms never join.
-    for (std::size_t k = 0; k < graph.size(); ++k) {
-        for (std::size_t i = 0; i < k; ++i) {
-            for (std::size_t j = k+1; j < graph.size(); ++j) {
-                graph[i][j] = either(graph[i][j], both(graph[i][k], graph[k][j]));
-            }
-        }
+    for (auto edge : nativePrerequisites) {
+        native.push_back({edge.source, edge.target, yes()});
     }
-    for (uint32_t i = 0; i < count; ++i) {
-        for (uint32_t j = i+1; j < count; ++j) {
-            if (arena->constantValue(demands[i][j]) == 0) { continue; }
-            Expr alternative = no();
-            for (std::size_t z = 2*i+2; z < 2*j; ++z) {
-                alternative = either(alternative, both(graph[2*i+1][z], graph[z][2*j]));
-            }
-            auto guard = both(demands[i][j], negate(alternative));
-            if (arena->constantValue(guard) != 0) { retained.push_back({i,j,guard}); }
-        }
+    rankIndex = reduceGuardedRanks(*arena, payloads, generators, native);
+    retained.clear();
+    for (auto edge : rankIndex.retained) {
+        retained.push_back({edge.source, edge.target, edge.guard});
     }
 }
+
 void FiniteGuardedState::summarize(const SyncInput& input)
 {
     auto selector = [&](uint32_t type, Expr present) {
         return RegionalSelector{{type, arena->constant(0), PeriodicEventKind::Start}, present};
     };
     std::map<uint32_t, std::vector<std::pair<uint32_t, CellAccess>>> cells;
+    std::map<uint32_t, Expr> preceding, following;
     for (uint32_t i = 0; i < effects.size(); ++i) {
-        for (auto mode : effects[i].accesses) { cells[mode.atom].push_back({i,mode}); }
-        auto first = presence[i], last = presence[i];
-        for (uint32_t j = 0; j < effects.size(); ++j) {
-            if (pipe(i) != pipe(j)) { continue; }
-            ++cost.selectorComparisons;
-            if (j < i) { first = both(first, negate(presence[j])); }
-            if (j > i) { last = both(last, negate(presence[j])); }
+        for (auto mode : effects[i].accesses) {
+            cells[mode.atom].push_back({i, mode});
         }
-        firstPayloads[pipe(i)].push_back(selector(i,first));
-        lastPayloads[pipe(i)].push_back(selector(i,last));
+        auto [seen, added] = preceding.emplace(pipe(i), no());
+        firstPayloads[pipe(i)].push_back(selector(i, both(presence[i], negate(seen->second))));
+        seen->second = either(seen->second, presence[i]);
+        ++cost.selectorComparisons;
+    }
+    for (std::size_t j = effects.size(); j; --j) {
+        const auto i = static_cast<uint32_t>(j - 1);
+        auto [seen, added] = following.emplace(pipe(i), no());
+        lastPayloads[pipe(i)].push_back(selector(i, both(presence[i], negate(seen->second))));
+        seen->second = either(seen->second, presence[i]);
+        ++cost.selectorComparisons;
     }
     for (const auto& [cell, uses] : cells) {
         RegionalStorageBoundary boundary;
@@ -95,23 +106,33 @@ void FiniteGuardedState::summarize(const SyncInput& input)
             auto first = presence[i], last = presence[i];
             if (mode.write) {
                 for (auto [j, other] : uses) {
-                    if (!other.write || anchors[i].phase->elementOp == anchors[j].phase->elementOp) { continue; }
+                    if (!other.write || anchors[i].phase->elementOp == anchors[j].phase->elementOp) {
+                        continue;
+                    }
                     ++cost.selectorComparisons;
-                    if (j < i) { first = both(first, negate(presence[j])); }
-                    if (j > i) { last = both(last, negate(presence[j])); }
+                    if (j < i) {
+                        first = both(first, negate(presence[j]));
+                    }
+                    if (j > i) {
+                        last = both(last, negate(presence[j]));
+                    }
                 }
-                boundary.firstWriters.push_back(selector(i,first));
-                boundary.lastWriters.push_back(selector(i,last));
+                boundary.firstWriters.push_back(selector(i, first));
+                boundary.lastWriters.push_back(selector(i, last));
             } else if (mode.read) {
                 for (auto [j, other] : uses) {
                     ++cost.selectorComparisons;
                     bool supersedes = anchors[i].phase->elementOp != anchors[j].phase->elementOp &&
-                        (other.write || (other.read && pipe(i) == pipe(j)));
-                    if (supersedes && j < i) { first = both(first, negate(presence[j])); }
-                    if (supersedes && j > i) { last = both(last, negate(presence[j])); }
+                                      (other.write || (other.read && pipe(i) == pipe(j)));
+                    if (supersedes && j < i) {
+                        first = both(first, negate(presence[j]));
+                    }
+                    if (supersedes && j > i) {
+                        last = both(last, negate(presence[j]));
+                    }
                 }
-                boundary.firstReaders[pipe(i)].push_back(selector(i,first));
-                boundary.lastReaders[pipe(i)].push_back(selector(i,last));
+                boundary.firstReaders[pipe(i)].push_back(selector(i, first));
+                boundary.lastReaders[pipe(i)].push_back(selector(i, last));
             }
         }
         storageBoundary.push_back(std::move(boundary));

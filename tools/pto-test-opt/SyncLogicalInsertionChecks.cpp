@@ -6,6 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Execute inserted arith/scf control, never regenerate commands from recipes.
+#include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
+#include "PTO/Transforms/FrontierSynch/VaryingRotatingRegional.h"
 #include "SyncLogicalInsertionChecks.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
@@ -424,8 +426,64 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
         return text;
     };
     const auto before = render();
+    if (auto requested = function->getAttrOfType<DenseI64ArrayAttr>("test.varying_queries")) {
+        auto program = fs::recognizeProgram(function,input);
+        fs::PhaseIndex index;
+        if (failed(program) || failed(index.build(function,input))) { return failure(); }
+        auto arena = std::make_shared<fs::RegionExpressions>();
+        std::string error;
+        FailureOr<fs::RegionalAnalysis> result = failure();
+        for (const auto& node : program->nodes) {
+            if (node.varyingRotating && node.varyingRotating->result.state == fs::RecognitionState::Applicable) {
+                result = fs::varyingRotatingRegionalResult(function,*node.varyingRotating,index,input,arena,error);
+                break;
+            }
+        }
+        if (failed(result) || requested.size()%3) { llvm::errs() << error; return failure(); }
+        std::vector<fs::RegionalEvent> events;
+        for (int64_t i=0;i<requested.size();i+=3) {
+            for (auto kind : {fs::PeriodicEventKind::Start,fs::PeriodicEventKind::Completion}) {
+                events.push_back({static_cast<uint32_t>(requested[i]),arena->constant(requested[i+2]),kind,
+                    {arena->constant(requested[i+1])}});
+            }
+        }
+        Block code;
+        OpBuilder builder(function.getContext()); builder.setInsertionPointToEnd(&code);
+        auto* cut = function.front().getTerminator();
+        fs::RegionExpressions::CutEmission context;
+        SmallVector<Value> answers;
+        for (auto a : events) {
+            for (auto b : events) {
+                auto query = fs::regionalReachability(*result,a,b);
+                if (!query) { return failure(); }
+                auto value = arena->emitContextual(*query,builder,cut,context);
+                if (failed(value)) { llvm::errs() << arena->error(); return failure(); }
+                answers.push_back(*value);
+            }
+        }
+        function.front().getOperations().splice(cut->getIterator(),code.getOperations());
+        Interpreter interpreter(input.instructions());
+        auto trace = interpreter.run(function);
+        llvm::json::Array queries;
+        for (auto value : answers) {
+            auto answer = interpreter.truth(value);
+            if (!answer) { return failure(); }
+            queries.push_back(*answer);
+        }
+        llvm::outs() << llvm::json::Value(llvm::json::Object{{"queries",std::move(queries)},
+            {"error",trace.getString("error").value_or("missing trace status")}}) << "\n";
+        return verify(function);
+    }
     bool accepted = false;
-    if (function->hasAttr("test.arithmetic_insertion")) {
+    if (function->hasAttr("test.bounded_lifetime_insertion")) {
+        auto program = fs::recognizeProgram(function,input);
+        std::string error;
+        if (succeeded(program)) {
+            auto prepared = fs::prepareBoundedLifetimeInsertion(function,input,*program,error);
+            accepted = succeeded(prepared) && succeeded(fs::insertLogicalSynchronization(function,**prepared));
+        }
+        if (!accepted) { llvm::errs() << error << "\n"; }
+    } else if (function->hasAttr("test.arithmetic_insertion")) {
         fs::FrontierAnalysis analysis(function);
         std::string error;
         if (succeeded(analysis.initialize(policy)) && succeeded(analysis.recognizeArithmetic())) {
