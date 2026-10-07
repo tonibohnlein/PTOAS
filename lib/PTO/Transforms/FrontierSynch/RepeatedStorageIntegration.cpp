@@ -14,6 +14,16 @@ RepeatedRegionAnalysis repeatEvolvingRegion(func::FuncOp function, std::shared_p
     RepeatedRegionAnalysis result;
     if (!storage) { result.error = "evolving repetition has no validated storage certificate"; return result; }
     auto crossingView = storage->body();
+    // The new certificate reconstructed every symbolic effect from its complete
+    // coordinate domain. Its byte selectors supersede the child's only in this
+    // inter-visit view; internal queries and endpoint recipes remain unchanged.
+    if (llvm::any_of(crossingView.symbolicStorageEffects,
+                    [&](std::size_t effect) { return !storage->contains(effect); })) {
+        result.error = "nested storage projection did not cover every symbolic effect";
+        return result;
+    }
+    crossingView.storageSelectors = {};
+    crossingView.symbolicStorageEffects.clear();
     llvm::erase_if(crossingView.accessBoundary,
                    [&](const auto& access) { return storage->contains(access.effect); });
     // The unchanged query and preparation closures still contain every payload

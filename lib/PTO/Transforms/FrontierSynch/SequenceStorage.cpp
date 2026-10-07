@@ -56,7 +56,12 @@ bool SequenceAnalysisState::numericPatterns(Child& child, const NumericTemplate&
 {
     for (uint32_t type = 0; type < numeric.payloads.size(); ++type) {
         for (const auto& effect : numeric.payloads[type].effects) {
-            if (effect.discharge != TemplateDischarge::None) { continue; }
+            if (effect.discharge != TemplateDischarge::None) {
+                if (!llvm::is_contained(child.dischargedEffects, effect.sourceEffect)) {
+                    child.dischargedEffects.push_back(effect.sourceEffect);
+                }
+                continue;
+            }
             for (const auto& range : effect.ranges) {
                 child.patterns.push_back({range, type, 0, 1,
                     effect.mode == SyncAccessMode::Read, effect.mode == SyncAccessMode::Write});
