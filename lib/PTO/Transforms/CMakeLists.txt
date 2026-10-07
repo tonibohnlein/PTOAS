@@ -232,6 +232,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/GuardedRotatingInsertion.cpp
   FrontierSynch/GuardedRotatingRegional.cpp
   FrontierSynch/FiniteOverlay.cpp
+  FrontierSynch/FiniteOverlayAllocation.cpp
   FrontierSynch/FiniteOverlayInsertion.cpp
   FrontierSynch/RotatingAnalysis.cpp
   FrontierSynch/MixedStrideAnalysis.cpp
@@ -244,6 +245,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/GuardedRanks.cpp
   FrontierSynch/BoundedLifetime.cpp
   FrontierSynch/BoundedLifetimeInsertion.cpp
+  FrontierSynch/StorageLaneAllocation.cpp
   FrontierSynch/BoundedLifetimeAllocation.cpp
   FrontierSynch/ChainInterface.cpp
   FrontierSynch/RotatingBoundary.cpp

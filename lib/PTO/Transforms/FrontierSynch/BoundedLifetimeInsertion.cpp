@@ -8,6 +8,7 @@
 // Algebraic storage generators without expanding banks or loop iterations.
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeAllocation.h"
+#include "PTO/Transforms/FrontierSynch/StorageLaneAllocation.h"
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "CountedLoop.h"
 #include "IterationPredicates.h"
@@ -16,6 +17,7 @@
 #include "../InsertSync/SyncScalarReplay.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/IRMapping.h"
+#include <algorithm>
 #include <map>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
@@ -23,7 +25,8 @@ namespace {
 using Id = RegionExpressions::Id;
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
     func::FuncOp function, scf::ForOp loop, const PhaseIndex& index, const SyncInput& input,
-    const BoundedLifetimeRecognition& recognized, std::string& error, bool completeInvocation)
+    const BoundedLifetimeRecognition& recognized, std::string& error, bool completeInvocation,
+    bool allowStorageLanes = true)
 {
     const auto& skeleton = recognized.skeleton;
     auto domain = CountedLoop::get(loop);
@@ -85,6 +88,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
     }
     DenseMap<Value, uint32_t> families;
     std::map<std::tuple<uint32_t, uint64_t, uint64_t, uint64_t>, uint32_t> cells;
+    std::vector<StorageLaneCell> physicalCells;
     for (uint64_t d = 0; d <= span; ++d) {
         for (const auto& access : skeleton.result.accesses) {
             const auto& effect = input.accesses().effects()[access.effect];
@@ -97,13 +101,14 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
             auto slot = (APInt(128, access.stride) * APInt(128, d) + APInt(128, access.offset))
                             .urem(APInt(128, access.slots))
                             .getZExtValue();
-            auto cell = cells
-                            .emplace(
-                                std::make_tuple(
-                                    families.try_emplace(access.family, families.size()).first->second,
-                                    access.atom->first, access.atom->second, slot),
-                                cells.size())
-                            .first->second;
+            const auto family = families.try_emplace(access.family, families.size()).first->second;
+            auto [entry, added] = cells.emplace(
+                std::make_tuple(family, access.atom->first, access.atom->second, slot), cells.size());
+            const auto cell = entry->second;
+            if (added) {
+                physicalCells.push_back({cell, family, access.atom->first, access.atom->second,
+                    access.slots, access.stride % access.slots, slot});
+            }
             uint64_t group = effect.memory && effect.memory->scope == AddressSpace::ACC && access.stride == 0 ?
                                  protection.inLoop(effect.phase, loop) :
                                  0;
@@ -141,14 +146,37 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
         error = analysis.error;
         return failure();
     }
+    SmallVector<uint8_t> unconditional;
+    for (const auto& site : skeleton.phases) { unconditional.push_back(!site.guard); }
+    StorageLaneAllocation storage;
+    DictionaryAttr storageCertificate;
+    if (completeInvocation && allowStorageLanes) {
+        storage = buildStorageLaneAllocation(e, window, analysis, physicalCells, base, true);
+        if (storage.error.empty() && storage.budget && !storage.records.empty()) {
+            SmallVector<GuardedRankEdge> residual;
+            SmallVector<uint32_t> originalRecords;
+            for (std::size_t r = 0; r < analysis.sourceDemands.size(); ++r) {
+                if (!std::binary_search(storage.records.begin(), storage.records.end(), r)) {
+                    if (r > UINT32_MAX) { error = "bounded lifetime record identity overflow"; return failure(); }
+                    residual.push_back(analysis.sourceDemands[r]); originalRecords.push_back(r);
+                }
+            }
+            auto storageOnly = storageLaneAllocationCertificate(function, window, analysis.sourceDemands, storage, 0);
+            auto remainder = boundedLifetimeAllocationCertificate(
+                function, e, window, unconditional, residual, 0, originalRecords);
+            storageCertificate = combineStorageLaneCertificates(storageOnly, remainder);
+        }
+    }
+    const bool useStorageLanes = bool(storageCertificate);
     CircuitEndpoints emitter(function, e, anchors);
     emitter.recover = [&](Id root, OpBuilder& builder, Operation* cut, RegionExpressions::CutEmission& context) {
         return predicates.recover(root, builder, cut, context);
     };
-    for (auto edge : analysis.sourceDemands) {
+    for (std::size_t record = 0; record < analysis.sourceDemands.size(); ++record) {
+        const auto edge = analysis.sourceDemands[record];
         auto distance = edge.target / m;
         auto source = ordinal, target = e.sub(ordinal, e.constant(distance));
-        auto bind = [&](bool consumer) {
+        auto bind = [&](Id root, bool consumer) {
             std::vector<std::pair<Id, Id>> bindings{{base, consumer ? target : source}};
             for (auto [id, recipe] : predicateBindings) {
                 auto shift = static_cast<int64_t>(recipe.second) - (consumer ? int64_t(distance) : 0);
@@ -156,20 +184,36 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
                 bindings.push_back({id, predicates.at(recipe.first, evaluation)});
             }
             RegionExpressions::Substitution substitution(bindings);
-            return e.substitute(edge.guard, substitution);
+            return e.substitute(root, substitution);
         };
-        auto sourceGuard = bind(false), targetGuard = bind(true);
+        auto sourceGuard = bind(edge.guard, false), targetGuard = bind(edge.guard, true);
         targetGuard = e.land(e.le(e.constant(distance), ordinal), targetGuard);
-        if (!emitter.add(edge.source, edge.target % m, sourceGuard, targetGuard, {source}, {target})) {
+        SmallVector<Id> sourceCoordinates, targetCoordinates;
+        if (useStorageLanes && std::binary_search(storage.records.begin(), storage.records.end(), record)) {
+            // A paired derived selector, not an enclosing visit. This path is
+            // intentionally available only to the whole-function producer.
+            sourceCoordinates.push_back(bind(storage.lanes[record], false));
+            targetCoordinates.push_back(bind(storage.lanes[record], true));
+        }
+        sourceCoordinates.push_back(source); targetCoordinates.push_back(target);
+        if (!emitter.add(edge.source, edge.target % m, sourceGuard, targetGuard,
+                         sourceCoordinates, targetCoordinates)) {
+            if (useStorageLanes) {
+                // Witness choice has its own endpoint-availability obligation.
+                // Retain the original logical plan if that extra recipe fails.
+                return prepareEndpoints(function, loop, index, input, recognized, error, completeInvocation, false);
+            }
             error = predicates.error.empty() ? e.lastEmissionError() : predicates.error;
             return failure();
         }
     }
     auto result = emitter.take();
     result->completeInvocation = completeInvocation;
-    if (completeInvocation) {
-        SmallVector<uint8_t> unconditional;
-        for (const auto& site : skeleton.phases) { unconditional.push_back(!site.guard); }
+    if (useStorageLanes) {
+        NamedAttrList attributes(storageCertificate);
+        attributes.set("plan", Builder(function.getContext()).getI64IntegerAttr(result->planId));
+        result->allocationCertificate = attributes.getDictionary(function.getContext());
+    } else if (completeInvocation) {
         result->allocationCertificate = boundedLifetimeAllocationCertificate(
             function, e, window, unconditional, analysis.sourceDemands, result->planId);
     }
