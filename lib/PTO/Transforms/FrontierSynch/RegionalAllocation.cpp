@@ -102,7 +102,13 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
                                 std::vector<RegionExpressions::Id>>;
     using Query = std::pair<EventKey, EventKey>;
     std::map<Query, RegionExpressions::Id> queries;
-    auto reaches = [&](RegionalEvent source, RegionalEvent target) -> std::optional<RegionExpressions::Id> {
+    auto reaches = [&](RegionalEvent source, RegionalEvent target, bool handoff = false)
+        -> std::optional<RegionExpressions::Id> {
+        if (handoff && source.type < region.anchors.size() && target.type < region.anchors.size() &&
+            region.anchors[source.type].phase && region.anchors[target.type].phase &&
+            region.anchors[source.type].phase->kPipeValue == region.anchors[target.type].phase->kPipeValue) {
+            source.kind = target.kind = PeriodicEventKind::Start;
+        }
         auto key = Query{{source.type, source.ordinal, source.kind, source.visits},
                          {target.type, target.ordinal, target.kind, target.visits}};
         auto found = queries.find(key);
@@ -181,14 +187,13 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
         }
         for (std::size_t j = 0; j < i; ++j) {
             const auto& y = palettes[j];
-            if (x.sourcePipe != y.sourcePipe || x.targetPipe != y.targetPipe) { continue; }
             bool compatible = true;
             for (const auto& xm : x.members) {
                 for (const auto& ym : y.members) {
                     auto active = a.land(xm.active, ym.active);
                     if (a.constantValue(active) == 0) { continue; }
-                    auto xy = reaches(xm.lastTarget, ym.firstSource);
-                    auto yx = reaches(ym.lastTarget, xm.firstSource);
+                    auto xy = reaches(xm.lastTarget, ym.firstSource, true);
+                    auto yx = reaches(ym.lastTarget, xm.firstSource, true);
                     if (!xy || !yx) { return {}; }
                     if (!a.implies(active, a.lor(*xy, *yx))) { compatible = false; break; }
                 }
@@ -197,7 +202,6 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
             if (!compatible) { conflicts.push_back(j); }
         }
         for (const auto& hidden : reservations) {
-            if (x.sourcePipe != hidden.source || x.targetPipe != hidden.target) { continue; }
             bool disjoint = true;
             for (const auto& member : x.members) {
                 auto active = a.land(member.active, hidden.active);
@@ -221,7 +225,7 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
             b.getNamedAttr("conflicts", b.getDenseI64ArrayAttr(conflicts)),
             b.getNamedAttr("forbidden_ids", b.getDenseI64ArrayAttr(forbiddenIds))}));
     }
-    return b.getDictionaryAttr({b.getNamedAttr("version", b.getI64IntegerAttr(1)),
+    return b.getDictionaryAttr({b.getNamedAttr("version", b.getI64IntegerAttr(2)),
         b.getNamedAttr("kind", b.getStringAttr("finite")),
         b.getNamedAttr("plan", b.getI64IntegerAttr(plan.planId)),
         b.getNamedAttr("strategy", b.getStringAttr("regional-palettes")),
@@ -270,7 +274,7 @@ FailureOr<PhysicalAllocationPlan> decodeRegionalAllocation(func::FuncOp function
     auto version = integer(certificate, "version"), plan = integer(certificate, "plan");
     auto groups = certificate.getAs<ArrayAttr>("groups");
     auto strategy = certificate.getAs<StringAttr>("strategy");
-    if (!version || *version != 1 || !plan || *plan < 0 || !groups ||
+    if (!version || *version != 2 || !plan || *plan < 0 || !groups ||
         !strategy || strategy.getValue() != "regional-palettes") {
         return function.emitError("malformed regional allocation certificate"), failure();
     }
@@ -310,8 +314,7 @@ FailureOr<PhysicalAllocationPlan> decodeRegionalAllocation(func::FuncOp function
         }
         int64_t previous = -1;
         for (auto conflict : conflicts.asArrayRef()) {
-            if (conflict <= previous || conflict < 0 || static_cast<uint64_t>(conflict) >= palettes.size() ||
-                palettes[conflict].source != *source || palettes[conflict].target != *target) {
+            if (conflict <= previous || conflict < 0 || static_cast<uint64_t>(conflict) >= palettes.size()) {
                 return function.emitError("invalid regional allocation conflict index"), failure();
             }
             previous = conflict;

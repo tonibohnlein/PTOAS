@@ -89,3 +89,51 @@ Both use the existing allocation-only pass and IDs 0 through 5. Failure of a suf
 Remaining end-to-end gaps include allocation for varying-length repetition, typed arithmetic allocation summaries for regional composition, and global-query/profile exports for general bounded lifetimes. Arithmetic recognition and endpoint emission also retain their configured dimensional, residue and machine-integer contracts. Recognizer acceptance alone does not imply full end-to-end support for every theorem class.
 
 Two independent reviewers accepted these allocation adapters and their integration on static review. Serial incremental compilation and linking passed. General arithmetic checks cover exact union coverage, residue transitions, shared parameter contexts, nested coordinates, and rejection of a witness that holds only for a short prefix. Bounded checks cover optional endpoints, absent mandatory return paths, palette grouping, empty demands, and split/merged RMW equivalence. The 30-case compact endpoint suite now checks physical reuse on its ten bounded cases and transactional failure with one eligible ID. Ten nested arithmetic command traces also passed physical reuse checks with six eligible IDs. The changed-code prefilter's 27 nested-parenthesis brace matches were inspected; every body is braced. No full corpus campaign, full static-analyzer metrics, or device run was performed for this change.
+
+## Full-path completion milestones
+
+The October 7 draft audit selected this order:
+
+1. Shared numeric event-ID contract and finite allocation: greedy reuse, then minimum chain partition if needed.
+2. Numerical periodic shared allocation through minimum-weight cycle covers; prefix-safe modular emission.
+3. Composable lane exports and global allocation across explicit, arithmetic, guarded and repeated regions.
+4. Allocation for varying-length repetition, preserving startup, residue, source identity and zero-trip conditions.
+5. Arithmetic endpoint/query adapters, uniform reuse certification, interval-to-periodic and mixed-stride adapters.
+6. Bounded-lifetime provenance, storage lanes, executable guards and finite overlays.
+7. Numerical hierarchy and sparse frontier performance paths, followed by the pinned corpus validation.
+
+Each milestone needs two code reviews and a separate commit. Scarcity repair stays out of scope: an
+allocation failure must distinguish a proved capacity shortage from an unsupported or merely
+sufficient assignment. Shared modeled access ranges remain input; no new precision admission gate
+or kernel-specific recognizer is introduced.
+
+### Milestone 1
+
+Allocation certificates now use version 2 and one shared numeric-ID pool. Old direction-local
+certificates are rejected. Finite explicit plans export the strict WAIT-before-SET relation;
+nonadjacent local barriers are included in this fixed-plan order. Same-pipe command order can
+establish reuse without a consumer-completion edge. The allocator tries deterministic greedy
+reuse and then exact bipartite matching when the greedy result exceeds capacity. A proved
+shortage reports the fixed-plan minimum. Guarded compatibility remains a sufficient coloring.
+
+Regional palette conflicts and macro reservations apply across directions. Existing cyclic
+certificates temporarily devote disjoint palettes to directions; milestone 2 adds sharing with
+periodic reuse evidence. No logical demands or commands are deleted to fit capacity.
+
+The independent command checker now tracks live state by numeric ID and checks direction and
+logical generation on consumption. Finite relation construction uses O(h²) queries; validation
+and matching take O(h³) worst-case time and O(h²) storage. This first implementation does not yet
+provide the draft's inexpensive query-driven greedy fast path; milestone 7 retains that obligation.
+
+M1 validation: 2,048 finite orders matched an independent brute-force chain partition;
+20 guarded/explicit traces passed global causal reuse checks; physical prefix, zero-trip,
+ID collision and transactional failure checks passed; family emission passed 23 independent
+ordering cases and allocation passed 205 phase evaluations plus 21 invalid-interface checks.
+Both reviewers accepted the production integration and the updated shared-pool fixtures.
+
+The stricter shared-pool check exposes a regional allocation gap: the two-loop composition
+fixture does not fit the current devoted whole-child palettes. It now reports a sufficient
+assignment failure, not a minimum-capacity claim; lane-level composition in M3 must recover
+sharing. The finite guarded rank circuit also needs integer guard simplification to recover
+one-ID sharing between mutually exclusive covers. These are recorded obligations, not class
+mismatches. No device timing or full corpus run has been performed for this milestone.

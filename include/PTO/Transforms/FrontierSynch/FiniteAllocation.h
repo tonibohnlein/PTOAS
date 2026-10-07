@@ -9,15 +9,18 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_FINITEALLOCATION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_FINITEALLOCATION_H
 #include "PTO/Transforms/FrontierSynch/RegionalAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
 namespace mlir::pto::frontiersynch {
 inline constexpr llvm::StringLiteral FiniteAllocationAttr = "pto.finite_allocation";
-// Internal evidence for the immediately following allocator. An interval export
-// is exact for ordered explicit handoffs; guarded compatibility is sufficient.
+// Version-two evidence uses one shared numeric-ID pool. Explicit reuse-order
+// exports are exact for the fixed plan; guarded compatibility is sufficient.
 // Records denote at most one handoff per invocation, never a repeated family.
 DictionaryAttr explicitAllocationCertificate(const ExplicitAnalysis& analysis, int64_t plan, MLIRContext* context);
 // Null means the regional finite interface is unavailable. No IR mutation.
 // Uses original cuts to identify occurrences; it never reads emitted guards.
 DictionaryAttr finiteRegionalAllocationCertificate(const RegionalAnalysis& region, const PreparedLogicalPlan& plan);
+FailureOr<PhysicalAllocationPlan> decodeFiniteAllocation(
+    func::FuncOp function, DictionaryAttr certificate, ArrayRef<int64_t> eligibleIds);
 } // namespace mlir::pto::frontiersynch
 #endif

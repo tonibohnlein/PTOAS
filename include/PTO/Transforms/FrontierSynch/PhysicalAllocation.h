@@ -50,8 +50,7 @@ FailureOr<PhysicalAllocationPlan> decodePhysicalAllocation(func::FuncOp function
 FailureOr<PhysicalAllocationPlan> decodeCyclicAllocation(func::FuncOp function, ArrayRef<int64_t> eligibleIds);
 // Success lowers all logical commands; failure leaves the function unchanged.
 // The caller supplies an eligible subset of 0..5; 6/7 are reserved. Every
-// supported direction may use this numeric list:
-// (source, destination, numeric ID), not numeric ID alone, identifies an event.
+// numeric ID holds at most one notification across all supported directions.
 LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> eligibleIds);
 } // namespace mlir::pto::frontiersynch
 #endif

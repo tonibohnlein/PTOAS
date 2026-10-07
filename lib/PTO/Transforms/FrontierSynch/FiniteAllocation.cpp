@@ -11,51 +11,65 @@
 #include <map>
 namespace mlir::pto::frontiersynch {
 namespace {
-DictionaryAttr certificate(Builder& b, int64_t plan, ArrayRef<Attribute> directions) {
-    return b.getDictionaryAttr({b.getNamedAttr("version", b.getI64IntegerAttr(1)),
+DictionaryAttr certificate(Builder& b, int64_t plan, StringRef mode, ArrayRef<Attribute> handoffs) {
+    return b.getDictionaryAttr({b.getNamedAttr("version", b.getI64IntegerAttr(2)),
         b.getNamedAttr("kind", b.getStringAttr("finite")),
         b.getNamedAttr("plan", b.getI64IntegerAttr(plan)),
-        b.getNamedAttr("directions", b.getArrayAttr(directions))});
-}
-DictionaryAttr direction(Builder& b, uint32_t p, uint32_t q, StringRef mode,
-                         ArrayRef<int64_t> records, ArrayRef<Attribute> evidence) {
-    return b.getDictionaryAttr({b.getNamedAttr("source", b.getI64IntegerAttr(p)),
-        b.getNamedAttr("target", b.getI64IntegerAttr(q)),
         b.getNamedAttr("mode", b.getStringAttr(mode)),
-        b.getNamedAttr("records", b.getDenseI64ArrayAttr(records)),
-        b.getNamedAttr("evidence", b.getArrayAttr(evidence))});
+        b.getNamedAttr("handoffs", b.getArrayAttr(handoffs))});
+}
+DictionaryAttr handoff(Builder& b, int64_t record, uint32_t p, uint32_t q,
+                       ArrayRef<int64_t> evidence) {
+    return b.getDictionaryAttr({b.getNamedAttr("record", b.getI64IntegerAttr(record)),
+        b.getNamedAttr("source", b.getI64IntegerAttr(p)),
+        b.getNamedAttr("target", b.getI64IntegerAttr(q)),
+        b.getNamedAttr("evidence", b.getDenseI64ArrayAttr(evidence))});
 }
 } // namespace
 DictionaryAttr explicitAllocationCertificate(const ExplicitAnalysis& analysis, int64_t plan, MLIRContext* context)
 {
     Builder b(context);
-    using Key = std::pair<uint32_t, uint32_t>;
-    std::map<Key, std::vector<std::size_t>> groups;
     const auto& r = analysis.reduction;
+    // Local insertion places a barrier before the consumer. For nonadjacent
+    // local demands this adds order: retain it in the fixed-plan reuse query.
+    std::vector<StorageGenerator> edges;
+    std::vector<std::vector<uint32_t>> byPipe(r.pipeLabels.size());
+    for (uint32_t i = 0; i < analysis.occurrences.size(); ++i) {
+        byPipe[r.pipeColumns[i]].push_back(i);
+    }
+    for (uint32_t i = 0; i < analysis.occurrences.size(); ++i) {
+        for (uint32_t p = 0; p < byPipe.size(); ++p) {
+            if (auto rank = r.startRanks[i][p]) { edges.push_back({byPipe[p][rank - 1], i}); }
+        }
+    }
+    bool strengthened = false;
+    std::vector<std::size_t> indices;
     for (std::size_t i = 0; i < r.retained.size(); ++i) {
         const auto& edge = r.retained[i];
-        auto p = analysis.occurrences[edge.source].pipe, q = analysis.occurrences[edge.target].pipe;
-        if (p != q) { groups[{p,q}].push_back(i); }
+        if (r.pipeColumns[edge.source] != r.pipeColumns[edge.target]) { indices.push_back(i); continue; }
+        auto previous = byPipe[r.pipeColumns[edge.target]][r.localRanks[edge.target] - 2];
+        if (previous != edge.source) { edges.push_back({previous, edge.target}); strengthened = true; }
     }
-    SmallVector<Attribute> directions;
-    for (const auto& [key, indices] : groups) {
-        SmallVector<int64_t> records;
-        SmallVector<Attribute> releases;
-        std::size_t next = 0;
-        for (std::size_t i = 0; i < indices.size(); ++i) {
-            const auto& edge = r.retained[indices[i]];
-            next = std::max(next, i+1);
-            while (next < indices.size()) {
-                auto source = r.retained[indices[next]].source;
-                if (r.startRanks[source][r.pipeColumns[edge.target]] >= r.localRanks[edge.target]) { break; }
-                ++next;
-            }
-            records.push_back(indices[i]);
-            releases.push_back(b.getI64IntegerAttr(next));
+    auto actual = strengthened ? reduceExplicitDemands(analysis.occurrences, edges) : ExplicitReduction{};
+    if (!actual.error.empty()) { return {}; }
+    const auto& order = strengthened ? actual : r;
+    SmallVector<Attribute> handoffs;
+    for (auto index : indices) {
+        const auto& edge = r.retained[index];
+        SmallVector<int64_t> successors;
+        for (auto [j, other] : llvm::enumerate(indices)) {
+            auto next = r.retained[other].source;
+            const bool samePipe = r.pipeColumns[edge.target] == r.pipeColumns[next];
+            // WAIT before its consumer precedes SET after that same or a later
+            // payload on this pipe, without requiring consumer completion.
+            bool reuse = samePipe ? edge.target <= next :
+                order.startRanks[next][order.pipeColumns[edge.target]] >= order.localRanks[edge.target];
+            if (reuse) { successors.push_back(j); }
         }
-        directions.push_back(direction(b,key.first,key.second,"intervals",records,releases));
+        handoffs.push_back(handoff(b, index, analysis.occurrences[edge.source].pipe,
+                                  analysis.occurrences[edge.target].pipe, successors));
     }
-    return certificate(b,plan,directions);
+    return certificate(b, plan, "reuse-order", handoffs);
 }
 DictionaryAttr finiteRegionalAllocationCertificate(const RegionalAnalysis& region, const PreparedLogicalPlan& plan)
 {
@@ -76,7 +90,7 @@ DictionaryAttr finiteRegionalAllocationCertificate(const RegionalAnalysis& regio
         }
     }
     struct Handoff { int64_t record; uint32_t source, target; RegionExpressions::Id active; };
-    std::map<std::pair<uint32_t,uint32_t>,std::vector<Handoff>> groups;
+    std::vector<Handoff> handoffs;
     auto zero = arena.constant(0);
     for (const auto& family : plan.families) {
         if (family.local) { continue; }
@@ -92,34 +106,27 @@ DictionaryAttr finiteRegionalAllocationCertificate(const RegionalAnalysis& regio
         if (!sp || !tp) { return {}; }
         // Endpoint presence overapproximates retention, so proving compatibility
         // under this stronger activation condition is safe but may lose sharing.
-        groups[{family.sourcePipe,family.targetPipe}].push_back(
+        handoffs.push_back(
             {member.record,s->second,t->second,arena.land(*sp,*tp)});
     }
     Builder b(plan.endpoints.empty() ? region.anchors.front().before.before->getContext() :
                                      plan.endpoints.front().before->getContext());
-    SmallVector<Attribute> directions;
-    for (const auto& [key, handoffs] : groups) {
-        SmallVector<int64_t> records;
-        SmallVector<Attribute> conflicts;
-        for (std::size_t i = 0; i < handoffs.size(); ++i) {
-            const auto& x = handoffs[i];
-            records.push_back(x.record);
-            SmallVector<int64_t> incompatible;
-            for (std::size_t j = 0; j < i; ++j) {
-                const auto& y = handoffs[j];
-                auto xy = region.reachability({x.target,zero,PeriodicEventKind::Completion},
-                                               {y.source,zero,PeriodicEventKind::Start});
-                auto yx = region.reachability({y.target,zero,PeriodicEventKind::Completion},
-                                               {x.source,zero,PeriodicEventKind::Start});
-                if (!xy || !yx) { return {}; }
-                if (!arena.implies(arena.land(x.active,y.active),arena.lor(*xy,*yx))) {
-                    incompatible.push_back(j);
-                }
-            }
-            conflicts.push_back(b.getDenseI64ArrayAttr(incompatible));
+    SmallVector<Attribute> entries;
+    for (std::size_t i = 0; i < handoffs.size(); ++i) {
+        const auto& x = handoffs[i];
+        SmallVector<int64_t> incompatible;
+        for (std::size_t j = 0; j < i; ++j) {
+            const auto& y = handoffs[j];
+            auto xy = regionalHandoffReuse(region, {x.target,zero,PeriodicEventKind::Completion},
+                                           {y.source,zero,PeriodicEventKind::Start});
+            auto yx = regionalHandoffReuse(region, {y.target,zero,PeriodicEventKind::Completion},
+                                           {x.source,zero,PeriodicEventKind::Start});
+            if (!xy || !yx) { return {}; }
+            if (!arena.implies(arena.land(x.active,y.active),arena.lor(*xy,*yx))) { incompatible.push_back(j); }
         }
-        directions.push_back(direction(b,key.first,key.second,"compatibility",records,conflicts));
+        entries.push_back(handoff(b, x.record, static_cast<uint32_t>(region.anchors[x.source].phase->kPipeValue),
+                                  static_cast<uint32_t>(region.anchors[x.target].phase->kPipeValue), incompatible));
     }
-    return certificate(b,plan.planId,directions);
+    return certificate(b,plan.planId,"compatibility",entries);
 }
 } // namespace mlir::pto::frontiersynch

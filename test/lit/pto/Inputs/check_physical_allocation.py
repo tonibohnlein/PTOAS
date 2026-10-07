@@ -35,8 +35,9 @@ def check_physical(template, report, eligible):
             assert (old['source_pipe'], old['target_pipe']) == (new['source_pipe'], new['target_pipe'])
             command['identity'] = (old['plan'], old['record'], old['source_ordinal'], tuple(old.get('members', [])))
             assert new['physical_id'] in eligible
-            event = (new['source_pipe'], new['target_pipe'], new['physical_id'])
-            uses.append((len(commands), new['kind'], event, command['identity']))
+            event = new['physical_id']
+            identity = command['identity'] + (new['source_pipe'], new['target_pipe'])
+            uses.append((len(commands), new['kind'], event, identity))
         commands.append(command)
     reach = closure_with_commands(pipes, commands, include_commands=True)
     live, last_consumption = {}, {}
@@ -62,7 +63,7 @@ def opt(tool, path, passes, success=True):
 
 def run_checks(tool, optimizer, source):
     original = source.read_text()
-    allocate = '--pto-frontier-allocate=eligible-ids=1,3'
+    allocate = '--pto-frontier-allocate=eligible-ids=0,1,3,5'
     summaries = []
     with tempfile.TemporaryDirectory(prefix='physical-allocation-') as scratch:
         path = Path(scratch) / 'case.pto'
@@ -70,13 +71,15 @@ def run_checks(tool, optimizer, source):
             path.write_text(original.replace('array<i64: 8>', f'array<i64: {upper}>'))
             template = recognized(tool, path)
             report = json.loads(invoke(tool, '--physical-trace', path))
-            check_physical(template, report, {1, 3})
+            check_physical(template, report, {0, 1, 3, 5})
             domains = {}
             for event in report['physical']['events']:
                 if event['kind'] == 'set':
                     domains.setdefault((event['source_pipe'], event['target_pipe']), set()).add(event['physical_id'])
             if report['physical']['payloads'] >= 8:
-                assert len(domains) == 2 and all(ids == {1, 3} for ids in domains.values())
+                assert len(domains) == 2 and all(len(ids) == 2 for ids in domains.values())
+                first, second = domains.values()
+                assert first.isdisjoint(second)
             summaries.append(report['physical']['payloads'])
         physical = opt(optimizer, path, ['--pto-frontier-analysis', allocate]).stdout
         assert 'pto.logical_' not in physical and 'pto.cyclic_allocation' not in physical
@@ -96,7 +99,7 @@ def run_checks(tool, optimizer, source):
             raise AssertionError('oracle accepted forced physical-ID collisions')
         # Insufficient, absent, duplicate and out-of-range IDs do not mutate IR.
         for ids in ['1', '', '1, 1', '-1, 1', '1, 6', '1, 7', '1, 8']:
-            path.write_text(original.replace('array<i64: 1, 3>', f'array<i64: {ids}>' if ids else 'array<i64>'))
+            path.write_text(original.replace('array<i64: 0, 1, 3, 5>', f'array<i64: {ids}>' if ids else 'array<i64>'))
             report = json.loads(invoke(tool, '--physical-trace', path))
             assert not report['allocated'] and report['unchanged_on_failure']
         path.write_text(original)
@@ -109,7 +112,7 @@ def run_checks(tool, optimizer, source):
         assert 'pto.logical_' not in result.stdout
         logical = opt(optimizer, path, ['--pto-frontier-analysis']).stdout
         for changed, expected in [
-            (logical.replace('version = 1 : i64', 'version = 2 : i64'), 'malformed'),
+            (logical.replace('version = 2 : i64', 'version = 1 : i64', 1), 'malformed'),
             (logical.replace('budget = 2 : i64', 'budget = -1 : i64', 1), 'no finite'),
             (logical.replace('plan 0 record', 'plan 1 record', 1), 'disagrees with its executable piece certificate'),
             ('\n'.join(line for line in logical.splitlines() if 'pto.logical_wait' not in line), 'no logical endpoint'),

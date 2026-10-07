@@ -336,8 +336,12 @@ int runRotatingBoundaryChecks();
 int runGuardedRankChecks();
 int runGeneralArithmeticAllocationChecks();
 int runBoundedLifetimeAllocationChecks();
+int runSharedHandoffAllocationChecks();
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
 int main(int argc, char **argv) {
+  if (argc == 2 && StringRef(argv[1]) == "--shared-handoff-allocation-checks") {
+    return runSharedHandoffAllocationChecks();
+  }
   if (argc == 2 && StringRef(argv[1]) == "--guarded-rank-checks") { return runGuardedRankChecks(); }
   if (argc == 2 && StringRef(argv[1]) == "--general-arithmetic-allocation-checks") {
     return runGeneralArithmeticAllocationChecks();

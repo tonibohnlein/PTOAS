@@ -99,12 +99,11 @@ struct Palette {
 DictionaryAttr encode(func::FuncOp function, llvm::ArrayRef<Palette> palettes, int64_t plan)
 {
     Builder b(function.getContext());
-    std::map<std::pair<uint32_t, uint32_t>, std::set<int64_t>> reserved;
+    std::set<int64_t> reserved;
     function.walk([&](Operation* operation) {
         if (auto model = getSyncMacroModel(operation)) {
             for (const auto& event : model->hiddenEvents) {
-                auto& ids = reserved[{static_cast<uint32_t>(event.srcPipe), static_cast<uint32_t>(event.dstPipe)}];
-                ids.insert(event.eventIds.begin(), event.eventIds.end());
+                reserved.insert(event.eventIds.begin(), event.eventIds.end());
             }
         }
     });
@@ -113,14 +112,14 @@ DictionaryAttr encode(func::FuncOp function, llvm::ArrayRef<Palette> palettes, i
         const auto& p = palettes[i];
         SmallVector<int64_t> conflicts, strides(p.records.size(), 0), phases(p.records.size(), 0);
         for (std::size_t j = 0; j < i; ++j) {
-            if (p.source == palettes[j].source && p.target == palettes[j].target) { conflicts.push_back(j); }
+            conflicts.push_back(j);
         }
         // Version-four source tuple has one coordinate: the source ordinal.
         auto rule = b.getDictionaryAttr({b.getNamedAttr("coordinate_count", b.getI64IntegerAttr(1)),
             b.getNamedAttr("base", b.getI64IntegerAttr(0)),
             b.getNamedAttr("terms", b.getArrayAttr({b.getDenseI64ArrayAttr({0, 1, 0, int64_t(p.gap), 1})}))});
         SmallVector<Attribute> rules(p.records.size(), rule);
-        const auto& hidden = reserved[{p.source, p.target}];
+        const auto& hidden = reserved;
         SmallVector<int64_t> forbidden(hidden.begin(), hidden.end());
         groups.push_back(b.getDictionaryAttr({
             b.getNamedAttr("source", b.getI64IntegerAttr(p.source)),
@@ -133,7 +132,7 @@ DictionaryAttr encode(func::FuncOp function, llvm::ArrayRef<Palette> palettes, i
             b.getNamedAttr("conflicts", b.getDenseI64ArrayAttr(conflicts)),
             b.getNamedAttr("forbidden_ids", b.getDenseI64ArrayAttr(forbidden))}));
     }
-    return b.getDictionaryAttr({b.getNamedAttr("version", b.getI64IntegerAttr(1)),
+    return b.getDictionaryAttr({b.getNamedAttr("version", b.getI64IntegerAttr(2)),
         b.getNamedAttr("kind", b.getStringAttr("finite")), b.getNamedAttr("plan", b.getI64IntegerAttr(plan)),
         b.getNamedAttr("strategy", b.getStringAttr("regional-palettes")),
         b.getNamedAttr("macro_reservations", b.getUnitAttr()), b.getNamedAttr("groups", b.getArrayAttr(groups))});

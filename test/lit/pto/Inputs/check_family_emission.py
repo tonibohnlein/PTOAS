@@ -19,7 +19,7 @@ from check_physical_allocation import check_physical, opt
 def synthetic_plan(positions, records, barrier=False):
     """Exercise old saved-IR compatibility; this is not a storage-analysis certificate."""
     lines = ["module {", "func.func @emission() attributes {pto.cyclic_allocation = {",
-             "version = 1 : i64, plan = 0 : i64, directions = [{source = 4 : i64,",
+             "version = 2 : i64, plan = 0 : i64, directions = [{source = 4 : i64,",
              "target = 3 : i64, budget = 2 : i64, records = array<i64: " +
              ", ".join(map(str, records)) + ">}]}} {",
              "%zero = arith.constant 0 : index", "%one = arith.constant 1 : index",
@@ -39,7 +39,7 @@ def synthetic_plan(positions, records, barrier=False):
 
 
 def compatibility_checks(optimizer, path):
-    """Saved version-one IR adapts each existing record to a singleton family."""
+    """Saved singleton-record IR adapts each existing record to a singleton family."""
     passes = ["--pto-frontier-allocate=eligible-ids=1,3"]
     for positions, records, barrier in [([0, 1, 2], [0, 2, 1], False),
                                        ([0, 1, 2], [0, 1, 2], True),
@@ -60,22 +60,24 @@ def check_phase_mapping(template, report, eligible):
             owners[family['id'], member] = record['record']
     # The certificate's order is the periodic allocation handoff order.
     phases = {}
+    base = 0
     for direction in template['allocation']['directions']:
         for phase, handoff in enumerate(direction['handoffs']):
-            phases[handoff['record']] = (phase, len(direction['handoffs']), direction['uniform_budget'])
+            phases[handoff['record']] = (phase, len(direction['handoffs']), direction['uniform_budget'], base)
+        base += direction['uniform_budget']
     for logical, physical in zip(report['logical']['events'], report['physical']['events']):
         if logical['kind'] not in ('set', 'wait'):
             continue
         member = logical.get('members', [0])[0]
         record = member if logical.get('record_label') else owners[logical['record'], member]
-        phase, stride, budget = phases[record]
-        expected = eligible[(logical['source_ordinal'] * stride + phase) % budget]
+        phase, stride, budget, base = phases[record]
+        expected = eligible[base + (logical['source_ordinal'] * stride + phase) % budget]
         assert physical['physical_id'] == expected, (logical, physical, expected)
 
 
 def main():
     tool, optimizer = shutil.which(sys.argv[1]), shutil.which(sys.argv[2])
-    source = Path(sys.argv[3]).read_text()
+    source = Path(sys.argv[3]).read_text().replace("array<i64: 1, 3>", "array<i64: 0, 1, 3, 5>")
     checked = 0
     with tempfile.TemporaryDirectory(prefix="family-emission-") as scratch:
         path = Path(scratch) / "case.pto"
@@ -86,8 +88,8 @@ def main():
                 path.write_text(text)
                 compact = json.loads(invoke(tool, "--physical-trace", path))
                 template = recognized(tool, path)
-                check_physical(template, compact, {1, 3})
-                check_phase_mapping(template, compact, [1, 3])
+                check_physical(template, compact, {0, 1, 3, 5})
+                check_phase_mapping(template, compact, [0, 1, 3, 5])
                 checked += 1
         # The same static payload cut is visited at 1, 3 and 7, leaving a hole at 5.
         # Preserve selected-arm execution as well as the sparse coordinates.
@@ -100,8 +102,8 @@ def main():
         path.write_text(hole)
         compact = json.loads(invoke(tool, "--physical-trace", path))
         template = recognized(tool, path)
-        check_physical(template, compact, {1, 3})
-        check_phase_mapping(template, compact, [1, 3])
+        check_physical(template, compact, {0, 1, 3, 5})
+        check_phase_mapping(template, compact, [0, 1, 3, 5])
         checked += 1
         # Typed, nonzero coordinates must be normalized without narrowing.
         typed = source.replace("%inner_end = arith.constant 9 : index", """%inner_end = arith.constant 10 : i32
@@ -112,8 +114,8 @@ def main():
         path.write_text(typed)
         compact = json.loads(invoke(tool, "--physical-trace", path))
         template = recognized(tool, path)
-        check_physical(template, compact, {1, 3})
-        check_phase_mapping(template, compact, [1, 3])
+        check_physical(template, compact, {0, 1, 3, 5})
+        check_phase_mapping(template, compact, [0, 1, 3, 5])
         checked += 1
         # Numerical nested bounds may depend on an enclosing induction value.
         # Include a context-dependent positive step.
@@ -127,8 +129,8 @@ def main():
             path.write_text(nested)
             template = recognized(tool, path)
             report = json.loads(invoke(tool, "--physical-trace", path))
-            check_physical(template, report, {1, 3})
-            check_phase_mapping(template, report, [1, 3])
+            check_physical(template, report, {0, 1, 3, 5})
+            check_phase_mapping(template, report, [0, 1, 3, 5])
             checked += 1
         # One source cut reaches two distinct consumer cuts. Its SET emission
         # must be shared independently of those WAIT locations.
@@ -143,8 +145,8 @@ def main():
         path.write_text(asymmetric)
         template = recognized(tool, path)
         report = json.loads(invoke(tool, "--physical-trace", path))
-        check_physical(template, report, {1, 3})
-        check_phase_mapping(template, report, [1, 3])
+        check_physical(template, report, {0, 1, 3, 5})
+        check_phase_mapping(template, report, [0, 1, 3, 5])
         logical = opt(optimizer, path, ["--pto-frontier-analysis"]).stdout
         # The common producer cut contributes one readiness SET, while each
         # mutually exclusive consumer arm has its own readiness WAIT.
@@ -154,7 +156,8 @@ def main():
         compatibility_checks(optimizer, path)
         path.write_text(source)
         logical = opt(optimizer, path, ["--pto-frontier-analysis"]).stdout
-        physical = opt(optimizer, path, ["--pto-frontier-analysis", "--pto-frontier-allocate=eligible-ids=1,3"]).stdout
+        physical = opt(optimizer, path, ["--pto-frontier-analysis",
+                                         "--pto-frontier-allocate=eligible-ids=0,1,3,5"]).stdout
         plan = recognized(tool, path)['logical_endpoints']
         pairs = sum(recipe['kind'] == 'set' for recipe in plan['recipes'])
         assert logical.count("pto.logical_set") < pairs, "family structure lost before insertion"
