@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Record a safe operand-first recipe without changing the original IR.
 #include "RecognitionInternal.h"
+#include "../InsertSync/SyncScalarReplay.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
@@ -27,8 +28,7 @@ bool entryExpression(Value value, Operation* entry, const PhaseIndex& index,
             continue;
         }
         Operation* op = current.getDefiningOp();
-        const bool safe = op && !op->getNumRegions() && index.phasesFor(op).empty() &&
-                          isMemoryEffectFree(op) && isSpeculatable(op);
+        const bool safe = mlir::pto::detail::canReplayScalar(op) && index.phasesFor(op).empty();
         if (!safe) {
             return false;
         }

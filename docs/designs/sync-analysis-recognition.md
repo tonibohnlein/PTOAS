@@ -1872,3 +1872,23 @@ arithmetic schemas and coefficient overflow likewise do not prove that the
 program is outside the class. Neither category changes route order or runs a
 backend. Recognition probes use the same manual on-core SET/WAIT skip as the
 production pass; existing cross-core protocols do not trigger it.
+
+## Invariant scalar parameters
+
+A deterministic scalar expression over invocation arguments remains invariant
+when its definition is inside a loop. Arithmetic recognition retains that SSA
+expression as a parameter. At an endpoint where its definition is unavailable,
+shared scalar replay clones the original arith/index DAG only when every
+operation is memory-effect-free and speculatable and its operands are available.
+The original integer widths and operations are preserved before conversion to
+selector arithmetic; signed division and wrapping additions are not silently
+reinterpreted as mathematical integer operations. Loop-carried values and
+payload-produced values do not become invocation parameters by this rule.
+
+The corpus examples are `gemm_tile` offsets formed with `maxsi` inside its loop
+and `down_proj` inner trip arithmetic. Recognition of an invariant parameter
+does not establish that the remaining accesses fit the arithmetic fragment:
+coefficient limits and unresolved iteration-dependent expressions still apply.
+The regression directly invokes arithmetic insertion and compares the emitted
+order with physical conflicts, including negative division, empty iterations
+and signed overflow.
