@@ -87,56 +87,80 @@ def check_commands(document, bounded=False):
     return payloads, expected
 
 
+def check_varying(tool, text, path):
+    allocated_text = text.replace("attributes {test.trace_arguments",
+                                  "attributes {test.eligible_ids = array<i64: 0, 1, 2, 3, 4, 5>, "
+                                  "test.trace_arguments")
+    tests = 0
+    # Include zero trips, startup, the transition and several suffix periods.
+    for count in (0, 1, 2, 4, 6, 8):
+        case = allocated_text.replace("array<i64: 2, 3>", f"array<i64: {count}, 3>")
+        path.write_text(case)
+        report = run(tool, "--sequence-analysis", path)
+        assert report["prepared"] and not report["error"] and report["numeric_visits"] == 0, report
+        document = run(tool, "--structured-trace", path)
+        check_commands(document)
+        physical_check(document, set(range(6)))
+        tests += 1
+        if count not in (2, 8):
+            continue
+        # Query only the nested child: the surrounding work is irrelevant
+        # to paths whose endpoints lie inside this contiguous region.
+        requested = [(kind, v, i) for v in range(count) for i in (0, v+1) for kind in range(2)]
+        encoded = ", ".join(str(x) for row in requested for x in row)
+        query_attribute = f"test.varying_queries = array<i64: {encoded}>, test.trace_arguments"
+        path.write_text(case.replace("test.trace_arguments", query_attribute))
+        report = run(tool, "--structured-trace", path)
+        assert not report["error"], report
+        all_payloads = [{"type": kind+1, "coordinates": [v, i], "pipe": pipe}
+                        for v in range(count) for i in range(v+2) for kind, pipe in ((0, 3), (1, 2))]
+        expected = graph(all_payloads)
+        ids = {(p["type"]-1, *p["coordinates"]): i for i, p in enumerate(all_payloads)}
+        events = [2*ids[row]+kind for row in requested for kind in range(2)]
+        assert report["queries"] == [bool(expected[a] & (1 << b)) for a in events for b in events]
+    for intercept in (0, 1):
+        for count in (0, 1, 2, 5, 8):
+            case = allocated_text.replace("%length = arith.addi %visit, %two", "%length = arith.addi %visit, " +
+                                ("%zero" if intercept == 0 else "%one"))
+            path.write_text(case.replace("array<i64: 2, 3>", f"array<i64: {count}, 3>"))
+            document = run(tool, "--structured-trace", path)
+            check_commands(document)
+            physical_check(document, set(range(6)))
+            tests += 1
+    doubled = allocated_text.replace("%length = arith.addi %visit, %two : index",
+                           "%doubled = arith.muli %visit, %two : index\n"
+                           "      %length = arith.addi %doubled, %two : index")
+    for count, step in ((0, "%one"), (2, "%one"), (5, "%one"), (3, "%two")):
+        case = doubled.replace("%i = %zero to %length step %one", f"%i = %zero to %length step {step}")
+        path.write_text(case.replace("array<i64: 2, 3>", f"array<i64: {count}, 3>"))
+        document = run(tool, "--structured-trace", path)
+        check_commands(document)
+        physical_check(document, set(range(6)))
+        tests += 1
+    path.write_text(text)
+    small = run(tool, "--sequence-analysis", path)
+    path.write_text(text.replace("arith.constant 16 : index", "arith.constant 1000000000 : index"))
+    large = run(tool, "--sequence-analysis", path)
+    assert large["prepared"] and small["emitted"] == large["emitted"], (small, large)
+    constrained_varying = allocated_text.replace("array<i64: 0, 1, 2, 3, 4, 5>", "array<i64: 0>")
+    path.write_text(constrained_varying.replace("array<i64: 2, 3>", "array<i64: 8, 3>"))
+    report = run(tool, "--structured-trace", path)
+    assert report["accepted"] and not report["allocated"] and report["allocation_unchanged_on_failure"], report
+    return tests
+
+
 def main():
-    tool, fixture = sys.argv[1:]
+    tool, fixture, *selection = sys.argv[1:]
+    assert selection in ([], ["varying"], ["bounded"]), selection
     text = Path(fixture).read_text()
     tests = 0
     with tempfile.TemporaryDirectory(prefix="compact-endpoints-") as directory:
         path = Path(directory) / "case.pto"
-        # Include zero trips, startup, the transition and several suffix periods.
-        for count in (0, 1, 2, 4, 6, 8):
-            case = text.replace("array<i64: 2, 3>", f"array<i64: {count}, 3>")
-            path.write_text(case)
-            report = run(tool, "--sequence-analysis", path)
-            assert report["prepared"] and not report["error"] and report["numeric_visits"] == 0, report
-            check_commands(run(tool, "--structured-trace", path))
-            tests += 1
-            if count not in (2, 8):
-                continue
-            # Query only the nested child: the surrounding work is irrelevant
-            # to paths whose endpoints lie inside this contiguous region.
-            requested = [(kind, v, i) for v in range(count) for i in (0, v+1) for kind in range(2)]
-            encoded = ", ".join(str(x) for row in requested for x in row)
-            query_attribute = f"attributes {{test.varying_queries = array<i64: {encoded}>, test.trace_arguments"
-            path.write_text(case.replace("attributes {test.trace_arguments", query_attribute))
-            report = run(tool, "--structured-trace", path)
-            assert not report["error"], report
-            all_payloads = [{"type": kind+1, "coordinates": [v, i], "pipe": pipe}
-                            for v in range(count) for i in range(v+2) for kind, pipe in ((0, 3), (1, 2))]
-            expected = graph(all_payloads)
-            ids = {(p["type"]-1, *p["coordinates"]): i for i, p in enumerate(all_payloads)}
-            events = [2*ids[row]+kind for row in requested for kind in range(2)]
-            assert report["queries"] == [bool(expected[a] & (1 << b)) for a in events for b in events]
-        for intercept in (0, 1):
-            for count in (0, 1, 2, 5, 8):
-                case = text.replace("%length = arith.addi %visit, %two", "%length = arith.addi %visit, " +
-                                    ("%zero" if intercept == 0 else "%one"))
-                path.write_text(case.replace("array<i64: 2, 3>", f"array<i64: {count}, 3>"))
-                check_commands(run(tool, "--structured-trace", path))
-                tests += 1
-        doubled = text.replace("%length = arith.addi %visit, %two : index",
-                               "%doubled = arith.muli %visit, %two : index\n"
-                               "      %length = arith.addi %doubled, %two : index")
-        for count, step in ((0, "%one"), (2, "%one"), (5, "%one"), (3, "%two")):
-            case = doubled.replace("%i = %zero to %length step %one", f"%i = %zero to %length step {step}")
-            path.write_text(case.replace("array<i64: 2, 3>", f"array<i64: {count}, 3>"))
-            check_commands(run(tool, "--structured-trace", path))
-            tests += 1
-        path.write_text(text)
-        small = run(tool, "--sequence-analysis", path)
-        path.write_text(text.replace("arith.constant 16 : index", "arith.constant 1000000000 : index"))
-        large = run(tool, "--sequence-analysis", path)
-        assert large["prepared"] and small["emitted"] == large["emitted"], (small, large)
+        if selection != ["bounded"]:
+            tests += check_varying(tool, text, path)
+        if selection == ["varying"]:
+            print(f"{tests} varying command closures, physical allocations and query checks passed")
+            return
         window = text.replace("    scf.for %visit = %zero to %visits step %one {\n"
                               "      %length = arith.addi %visit, %two : index\n"
                               "      scf.for %i = %zero to %length step %one {",
