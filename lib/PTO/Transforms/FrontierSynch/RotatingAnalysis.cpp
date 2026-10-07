@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/FrontierSynch/PeriodicSharedCertificate.h"
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
@@ -163,10 +164,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareRotatingInsertion(
     if (failed(prepareCountedEndpointCode(function, analysis.endpoints, *prepared))) {
         return failure();
     }
-    auto allocation = buildPeriodicAllocation(analysis.periodic);
-    if (allocation.error.empty()) {
-        prepared->allocationCertificate = encodeCyclicAllocation(allocation, prepared->planId, function.getContext());
-    }
+    prepared->allocationCertificate =
+        encodePeriodicSharedAllocation(analysis.periodic, prepared->planId, function.getContext());
     return prepared;
 }
 } // namespace mlir::pto::frontiersynch

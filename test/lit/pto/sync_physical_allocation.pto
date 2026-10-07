@@ -6,14 +6,14 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: %python %S/Inputs/check_physical_allocation.py pto-sync-input-test pto-test-opt %s
-// Devoted palettes for two independent slots use two IDs per direction, four
-// IDs from one shared numeric pool. The IDs need not
+// Two slots require two shared IDs. The cycle cover shares each slot
+// across readiness and release directions. The IDs need not
 // form a contiguous range; runtime bounds use a nonzero lower and nonunit step.
 !tile = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
 !left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
 module attributes {pto.target_arch = "a3"} {
   func.func @two_slots(%a: !pto.ptr<f16, gm>, %n: index)
-      attributes {test.trace_arguments = array<i64: 8>, test.eligible_ids = array<i64: 0, 1, 3, 5>} {
+      attributes {test.trace_arguments = array<i64: 8>, test.eligible_ids = array<i64: 1, 3>} {
     %base = arith.constant 0 : i64
     %offset = arith.constant 512 : i64
     %zero = arith.constant 0 : index

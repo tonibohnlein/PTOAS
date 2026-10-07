@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Validate numerical templates and prepare their guards and source identities.
+#include "PTO/Transforms/FrontierSynch/PeriodicSharedCertificate.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
@@ -217,8 +218,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplateInsertion(
     if (failed(prepareFamilyEndpointCode(*node->logicalEndpoints, *prepared))) {
         return failure();
     }
-    if (node->periodicAllocation && node->periodicAllocation->error.empty()) {
-        prepared->allocationCertificate = encodeCyclicAllocation(*node->periodicAllocation, planId,
+    if (node->periodicAnalysis && node->periodicAnalysis->error.empty()) {
+        prepared->allocationCertificate = encodePeriodicSharedAllocation(*node->periodicAnalysis, planId,
                                                                  function.getContext());
     }
     return prepared;
