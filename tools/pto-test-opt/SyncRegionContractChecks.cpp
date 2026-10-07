@@ -13,6 +13,7 @@
 #include "../../lib/PTO/Transforms/InsertSync/SyncEffectRanges.h"
 #include "llvm/Support/raw_ostream.h"
 #include "SyncScalarEvolutionChecks.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/CountedLoop.h"
 #include "SyncExplicitAccessChecks.h"
 using namespace mlir;
 using namespace mlir::pto;
@@ -50,6 +51,26 @@ int runSyncRegionContractChecks(func::FuncOp function, const SyncInput& input)
     if (dimensions.wasInterrupted()) {
         return 1;
     }
+    auto counted = function.walk([&](scf::ForOp loop) -> WalkResult {
+        auto samples = loop->getAttrOfType<DenseI64ArrayAttr>("test.counted_samples");
+        if (!samples) { return WalkResult::advance(); }
+        auto domain = frontiersynch::CountedLoop::get(loop);
+        if (!domain || samples.size() % 3) { return WalkResult::interrupt(); }
+        frontiersynch::RegionExpressions arena;
+        auto expression = domain->trips(arena);
+        for (int64_t i = 0; i < samples.size(); i += 3) {
+            frontiersynch::RegionExpressions::Substitution values({
+                {arena.input(loop.getLowerBound()), arena.constant(samples[i])},
+                {arena.input(loop.getUpperBound()), arena.constant(samples[i + 1])}});
+            auto actual = arena.constantValue(arena.substitute(expression, values));
+            if (!actual || *actual != static_cast<uint64_t>(samples[i + 2])) {
+                loop.emitError("counted trip circuit differs from supplied execution count");
+                return WalkResult::interrupt();
+            }
+        }
+        return WalkResult::advance();
+    });
+    if (counted.wasInterrupted()) { return 1; }
     const auto groups = frontiersynch::structuredProtection(input.accesses());
     DenseMap<int64_t, uint64_t> expectedGroups;
     DenseMap<uint64_t, int64_t> actualGroups;

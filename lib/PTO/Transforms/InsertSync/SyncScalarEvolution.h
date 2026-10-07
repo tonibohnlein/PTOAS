@@ -23,6 +23,7 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include <algorithm>
 #include <iterator>
+#include <memory>
 namespace mlir::pto::detail {
 class ScalarEvolution {
     struct Range { int64_t lower, upper; };
@@ -34,6 +35,11 @@ class ScalarEvolution {
     MLIRContext* context;
     unsigned indexBits = 32;
     DenseMap<Value, Result> cache;
+    struct RangeQueries {
+        DenseMap<Value, std::optional<Range>> values;
+        unsigned depth = 0;
+    };
+    std::shared_ptr<RangeQueries> rangeQueries;
 
     AffineExpr number(int64_t n) { return getAffineConstantExpr(n, context); }
     static std::optional<int64_t> constant(Value v)
@@ -151,6 +157,36 @@ public:
             indexBits = !bits.isScalable() && bits.getFixedValue() <= 64 ? bits.getFixedValue() : 0;
         }
     }
+    // Range-only query uses independent state: it must not publish placeholder
+    // symbols into a caller's address-expression cache.
+    std::optional<std::pair<int64_t, int64_t>> signedRange(Value value)
+    {
+        if (!rangeQueries) { rangeQueries = std::make_shared<RangeQueries>(); }
+        auto& memo = rangeQueries->values;
+        auto found = memo.find(value);
+        if (found != memo.end()) {
+            return found->second ? std::optional<std::pair<int64_t, int64_t>>(
+                std::make_pair(found->second->lower, found->second->upper)) : std::nullopt;
+        }
+        // Mark before traversal and share the recursion bound between fresh
+        // expression contexts. Repeated lower/upper dependencies are visited once.
+        memo.try_emplace(value, std::nullopt);
+        if (rangeQueries->depth >= 64) { return std::nullopt; }
+        ++rangeQueries->depth;
+        ScalarEvolution query(context);
+        query.indexBits = indexBits;
+        query.rangeQueries = rangeQueries;
+        auto range = query.resolve(value, [&](Value) { return getAffineSymbolExpr(0, context); }, 0).range;
+        --rangeQueries->depth;
+        const unsigned bits = width(value.getType());
+        if (!range && bits && bits <= 64) {
+            range = Range{APInt::getSignedMinValue(bits).getSExtValue(),
+                          APInt::getSignedMaxValue(bits).getSExtValue()};
+        }
+        memo[value] = range;
+        return range ? std::optional<std::pair<int64_t, int64_t>>(
+            std::make_pair(range->lower, range->upper)) : std::nullopt;
+    }
     AffineExpr value(Value v, Symbol symbol)
     {
         return v ? resolve(v, symbol, 0).expression : AffineExpr{};
@@ -166,35 +202,15 @@ inline ScalarEvolution::Result ScalarEvolution::argument(BlockArgument arg, Symb
     if (arg != loop.getInductionVar()) {
         return recurrence(arg, loop, symbol);
     }
-    auto lower = constant(loop.getLowerBound()), upper = constant(loop.getUpperBound());
+    auto lower = signedRange(loop.getLowerBound()), upper = signedRange(loop.getUpperBound());
     auto step = constant(loop.getStep());
-    if (!lower || !step || *step <= 0 || (upper && *upper <= *lower)) {
-        return {};
-    }
-    // scf.for uses signed bounds. For a symbolic upper bound, this range
-    // is capped below the signed maximum: a visited iv is strictly below ub.
-    // This proves iv+1 cannot wrap, but not arbitrary larger increments.
+    if (!lower || !upper || !step || *step <= 0 || upper->second <= lower->first) { return {}; }
+    // On an executed visit lower <= iv < upper. Runtime origins retain their
+    // independently proved range; no relation between unrelated values is assumed.
     const unsigned bits = width(arg.getType());
     if (!bits || bits > 64) { return {}; }
-    const int64_t maximum = APInt::getSignedMaxValue(bits).getSExtValue();
-    int64_t last = upper ? *upper - 1 : maximum - 1;
-    if (!upper) {
-        // The upper bound is defined outside this loop; resolving it cannot
-        // depend on this IV. Do not infer a lower/upper relation between loaded
-        // metadata: only its proven type/arithmetic range is used here.
-        // Range-only traversal must not register unused symbols in the
-        // caller's affine map, or pollute its expression cache with aliases.
-        ScalarEvolution bounds(context);
-        bounds.indexBits = indexBits;
-        auto range = bounds.resolve(loop.getUpperBound(), [&](Value) {
-            return getAffineSymbolExpr(0, context);
-        }, 0).range;
-        if (range) {
-            if (range->upper <= *lower) { return {}; } // no executed iteration
-            last = std::min(last, range->upper - 1);
-        }
-    }
-    return {symbol(arg), Range{*lower, last}};
+    const int64_t last = upper->second - 1;
+    return {symbol(arg), Range{lower->first, last}};
 }
 
 inline ScalarEvolution::Result ScalarEvolution::recurrence(BlockArgument arg, scf::ForOp loop, Symbol symbol)

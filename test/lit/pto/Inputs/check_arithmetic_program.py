@@ -24,7 +24,7 @@ documents = [json.loads(line.removeprefix("arithmetic-json ")) for line in resul
 if len(documents) != 7:
     raise RuntimeError("expected all seven arithmetic fixtures")
 accepted = {"nested_reset": (3, 2), "triangular": (2, 1), "siblings": (4, 2), "empty_minimum": (1, 0),
-            "ssa_prerequisite": (2, 0)}
+            "ssa_prerequisite": (2, 0), "opaque_bound": (1, 2)}
 for document in documents:
     name = document["function"]
     if name in accepted:
@@ -47,6 +47,10 @@ def explicit_trace(name, bounds):
     if name == "siblings":
         return [(0, ())] + [(1, (i,)) for i in range(bounds[0])] + [
             (2, (i,)) for i in range(bounds[1])] + [(3, ())]
+    if name == "opaque_bound":
+        # The once-evaluated machine expression is an entry parameter; its
+        # value is not assumed to equal mathematical n+1 after overflow.
+        return [(0, (i,)) for i in range(bounds[1])]
     if name == "ssa_prerequisite":
         return [(0, ()), (1, ())]
     return []  # empty_minimum has a negative upper bound.
@@ -93,4 +97,4 @@ for document in documents:
                     actual = contains((3, site, b[0], source, target), values)
                     assert actual == expected, (name, "native", a, b, bounds, source, target)
                     checks += 1
-print("arithmetic exports: 5 accepted, 2 rejected; finite semantic checks:", checks)
+print("arithmetic exports: 6 accepted, 1 rejected; finite semantic checks:", checks)

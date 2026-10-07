@@ -17,6 +17,7 @@ struct ProgramBuilder {
     const PhaseIndex& index;
     DenseMap<Value, unsigned> parameterIds;
     ArithmeticEntryConstant entryConstant;
+    mutable DenseMap<Value, bool> entryInputs = DenseMap<Value, bool>();
     std::optional<int64_t> constant(Value value) const;
     PrimitiveRelation relation(PrimitiveKind kind, unsigned dimensions) const;
     bool staticallyEmpty(const ArithmeticSite& site) const;

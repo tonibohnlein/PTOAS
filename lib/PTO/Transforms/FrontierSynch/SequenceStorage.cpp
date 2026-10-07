@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
+#include "CountedLoop.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
@@ -115,18 +116,11 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
     if (!child.loop || index.hasRelevantCarriedState(child.loop)) {
         return fail("sequence loop interface has relevant carried state");
     }
-    auto lower = sequenceInteger(child.loop.getLowerBound()), step = sequenceInteger(child.loop.getStep());
-    if (!lower || *lower < 0 || !step || *step <= 0 || !child.loop.getInductionVar().getType().isIndex()) {
-        return fail("sequence loop requires a nonnegative constant lower bound and positive step");
-    }
-    auto upper = expressions.input(child.loop.getUpperBound());
-    auto difference = expressions.sub(upper, c(*lower));
-    auto quotient = expressions.div(difference, c(*step));
-    auto remainder = expressions.rem(difference, c(*step));
-    child.trips = expressions.select(expressions.slt(c(*lower), upper),
-        expressions.add(quotient, expressions.select(expressions.eq(remainder, c(0)), c(0), c(1))), c(0));
-    // Constants can prove absence even when body effects are unsupported.
-    if (auto ub = sequenceInteger(child.loop.getUpperBound()); ub && *ub <= *lower) { return true; }
+    auto domain = CountedLoop::get(child.loop);
+    if (!domain) { return fail("sequence loop requires a representable positive-step ordinal domain"); }
+    child.trips = domain->trips(expressions);
+    // A proved empty domain needs no body interface.
+    if (expressions.constantValue(child.trips) == 0) { return true; }
     if (node.rotatingResult && node.rotatingResult->state == RecognitionState::Applicable) {
         auto analysis = analyzeRotating(child.loop, index, *input, *node.rotatingResult);
         if (!analysis.error.empty()) { return fail(analysis.error); }

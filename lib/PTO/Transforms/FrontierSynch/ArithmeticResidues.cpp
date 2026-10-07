@@ -145,7 +145,23 @@ bool ProgramBuilder::entryParameter(Value value) const
         return true;
     }
     auto* root = output.context.root;
-    return root != output.context.function.getOperation() && index.valueAvailable(value, root, Boundary::Before);
+    if (root != output.context.function.getOperation() && index.valueAvailable(value, root, Boundary::Before)) {
+        return true;
+    }
+    // A pure entry-block expression over invocation arguments is also an
+    // invocation parameter. Keep its SSA identity; casts retain machine bits.
+    std::function<bool(Value)> entry = [&](Value current) {
+        if (auto found = entryInputs.find(current); found != entryInputs.end()) { return found->second; }
+        entryInputs[current] = false;
+        if (auto argument = dyn_cast<BlockArgument>(current)) {
+            return entryInputs[current] = argument.getOwner() == &output.context.function.front();
+        }
+        auto* op = current.getDefiningOp();
+        if (!op || op->getBlock() != &output.context.function.front() || op->getNumRegions() ||
+            !index.phasesFor(op).empty() || !isMemoryEffectFree(op) || !isSpeculatable(op)) { return false; }
+        return entryInputs[current] = llvm::all_of(op->getOperands(), entry);
+    };
+    return entry(value);
 }
 std::optional<int64_t> ProgramBuilder::constant(Value value) const
 {
@@ -216,7 +232,7 @@ SmallVector<AffineExpr> ProgramBuilder::domain(const ArithmeticSite& site, unsig
         rows.push_back(distance);
         auto constant = dyn_cast<AffineConstantExpr>(upper);
         // Avoid constructing INT64_MIN-1 for an already empty domain.
-        auto bound = constant && constant.getValue() <= 0 ? getAffineConstantExpr(-1, context) :
+        auto bound = constant && constant.getValue() == INT64_MIN ? getAffineConstantExpr(-1, context) :
             mlir::pto::detail::checkedAdd(mlir::pto::detail::checkedAdd(upper, -iv),
                                         getAffineConstantExpr(-1, context));
         rows.push_back(bound);

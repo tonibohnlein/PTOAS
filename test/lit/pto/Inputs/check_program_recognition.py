@@ -94,7 +94,7 @@ def main():
     elif mode == "arithmetic":
         assert documents["triangular"]["arithmetic"]["state"] == "applicable"
         assert documents["ssa_prerequisite"]["arithmetic"]["state"] == "applicable"
-        assert documents["opaque_bound"]["arithmetic"]["state"] == "not-applicable"
+        assert documents["opaque_bound"]["arithmetic"]["state"] == "applicable"
     else:
         raise ValueError("unknown check mode")
     print("program recognition checks passed:", mode)
