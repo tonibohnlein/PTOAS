@@ -50,13 +50,15 @@ void TSetValOp::getEffects(
 // SET_VALIDSHAPE: update runtime valid row/col metadata on source tile in-place.
 void SetValidShapeOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_WRITE(effects, getSourceMutable());
+  addAccessRegion(effects, getSourceMutable(), MemoryEffects::Write::get(),
+                  makeDescriptorEffect(getContext()));
 }
 
 // GET_VALIDSHAPE: read runtime valid row/col metadata from source tile.
 void GetValidShapeOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(effects, getSourceMutable());
+  addAccessRegion(effects, getSourceMutable(), MemoryEffects::Read::get(),
+                  makeDescriptorEffect(getContext()));
 }
 
 // Elementwise + reductions: mostly PIPE_V tilebuf ops

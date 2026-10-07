@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
+#include "PTO/IR/PTOAccessRegion.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -99,6 +100,11 @@ void PhaseIndex::traceResult(const CompoundInstanceElement* producer, Value resu
                 if (!native) {
                     valuePrerequisites.insert(user);
                 }
+            } else if (hasOnlyDescriptorEffects(user)) {
+                // Scalar descriptor updates execute natively. A result from an
+                // asynchronous pipe still needs an explicit completion mapping.
+                record(user);
+                if (!native) { valuePrerequisites.insert(user); }
             } else if (isMemoryEffectFree(user)) {
                 llvm::append_range(work, user->getResults());
             } else {

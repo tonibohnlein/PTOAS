@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-test-opt --pto-frontier-analysis %s | FileCheck %s
+// Regression reduced from pypto-lib ffn_norm (frozen corpus case 175).
+// Descriptor updates survive insertion and no longer count as unmodeled byte writes.
+// CHECK-LABEL: func.func @ffn_norm
+// CHECK: pto.set_validshape
+// CHECK: pto.trowsum
+// CHECK: return
+module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a3"} {
+  func.func @ffn_norm(%arg0: !pto.ptr<bf16, gm>, %arg1: !pto.ptr<bf16, gm>, %arg2: !pto.ptr<f32, gm>, %arg3: !pto.ptr<f32, gm>, %arg4: !pto.ptr<f32, gm>, %arg5: !pto.ptr<f32, gm>, %arg6: i32, %arg7: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c32800_i64 = arith.constant 32800 : i64
+    %c16416_i64 = arith.constant 16416 : i64
+    %c0_i64 = arith.constant 0 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %c8 = arith.constant 8 : index
+    %c4096 = arith.constant 4096 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c0 = arith.constant 0 : index
+    %c512 = arith.constant 512 : index
+    %cst = arith.constant 2.44140625E-4 : f32
+    %cst_0 = arith.constant 9.99999997E-7 : f32
+    %cst_1 = arith.constant 9.99999974E-5 : f32
+    %cst_2 = arith.constant 1.270000e+02 : f32
+    %cst_3 = arith.constant 0.00787401571 : f32
+    %0 = pto.make_tensor_view %arg0, shape = [%c8, %c4096], strides = [%c4096, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %1 = pto.make_tensor_view %arg1, shape = [%c1, %c4096], strides = [%c4096, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %2 = pto.make_tensor_view %arg2, shape = [%c16, %c4096], strides = [%c4096, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %3 = pto.make_tensor_view %arg3, shape = [%c16, %c1], strides = [%c1, %c16] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xf32, #pto.layout<dn>>
+    %4 = pto.make_tensor_view %arg4, shape = [%c8, %c1], strides = [%c1, %c8] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xf32, #pto.layout<dn>>
+    %5 = pto.make_tensor_view %arg5, shape = [%c16, %c1], strides = [%c1, %c16] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xf32, #pto.layout<dn>>
+    %6 = arith.index_cast %arg6 : i32 to index
+    %7 = pto.alloc_tile addr = %c32800_i64 valid_row = %c1 valid_col = %c4096 : !pto.tile_buf<vec, 1x4096xbf16, valid=?x?>
+    %8 = arith.maxsi %6, %c0 : index
+    %9 = pto.partition_view %0, offsets = [%8, %c0], sizes = [%c1, %c4096] : !pto.tensor_view<?x?xbf16>
+    pto.tload ins(%9 : !pto.partition_tensor_view<1x4096xbf16>) outs(%7 : !pto.tile_buf<vec, 1x4096xbf16, valid=?x?>) {layout = #pto.layout<nd>}
+    %10 = pto.alloc_tile addr = %c16416_i64 valid_row = %c1 valid_col = %c4096 : !pto.tile_buf<vec, 1x4096xf32, valid=?x?>
+    pto.tcvt ins(%7 {rmode = #pto<round_mode ROUND>, satmode = #pto<saturation_mode ON>} : !pto.tile_buf<vec, 1x4096xbf16, valid=?x?>) outs(%10 : !pto.tile_buf<vec, 1x4096xf32, valid=?x?>)
+    %11 = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c4096 : !pto.tile_buf<vec, 1x4096xbf16, valid=?x?>
+    %12 = pto.partition_view %1, offsets = [%c0, %c0], sizes = [%c1, %c4096] : !pto.tensor_view<?x?xbf16>
+    pto.tload ins(%12 : !pto.partition_tensor_view<1x4096xbf16>) outs(%11 : !pto.tile_buf<vec, 1x4096xbf16, valid=?x?>) {layout = #pto.layout<nd>}
+    %13 = pto.alloc_tile addr = %c32800_i64 valid_row = %c1 valid_col = %c4096 : !pto.tile_buf<vec, 1x4096xf32, valid=?x?>
+    pto.tcvt ins(%11 {rmode = #pto<round_mode ROUND>, satmode = #pto<saturation_mode ON>} : !pto.tile_buf<vec, 1x4096xbf16, valid=?x?>) outs(%13 : !pto.tile_buf<vec, 1x4096xf32, valid=?x?>)
+    %14 = pto.alloc_tile addr = %c32800_i64 valid_row = %c1 valid_col = %c4096 : !pto.tile_buf<vec, 1x4096xf32, valid=?x?>
+    pto.tmul ins(%10, %13 : !pto.tile_buf<vec, 1x4096xf32, valid=?x?>, !pto.tile_buf<vec, 1x4096xf32, valid=?x?>) outs(%14 : !pto.tile_buf<vec, 1x4096xf32, valid=?x?>)
+    %15 = arith.maxsi %6, %c0 : index
+    %16 = pto.partition_view %2, offsets = [%15, %c0], sizes = [%c1, %c4096] : !pto.tensor_view<?x?xf32>
+    pto.tstore ins(%14 : !pto.tile_buf<vec, 1x4096xf32, valid=?x?>) outs(%16 : !pto.partition_tensor_view<1x4096xf32>) {layout = #pto.layout<nd>}
+    %17 = pto.alloc_tile addr = %c16416_i64 valid_row = %c1 valid_col = %c4096 : !pto.tile_buf<vec, 1x4096xf32, valid=?x?>
+    pto.tmul ins(%10, %10 : !pto.tile_buf<vec, 1x4096xf32, valid=?x?>, !pto.tile_buf<vec, 1x4096xf32, valid=?x?>) outs(%17 : !pto.tile_buf<vec, 1x4096xf32, valid=?x?>)
+    %18 = pto.alloc_tile addr = %c16416_i64 valid_row = %c8 valid_col = %c512 : !pto.tile_buf<vec, 8x512xf32, valid=?x?>
+    %19 = pto.alloc_tile addr = %c0_i64 valid_row = %c8 valid_col = %c512 : !pto.tile_buf<vec, 8x512xf32, valid=?x?>
+    %20 = pto.alloc_tile addr = %c16384_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+    pto.trowsum ins(%18, %19 : !pto.tile_buf<vec, 8x512xf32, valid=?x?>, !pto.tile_buf<vec, 8x512xf32, valid=?x?>) outs(%20 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>)
+    %21 = pto.alloc_tile addr = %c16416_i64 valid_row = %c8 valid_col = %c8 : !pto.tile_buf<vec, 8x8xf32, valid=?x?>
+    %22 = pto.alloc_tile addr = %c16384_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+    %23 = pto.subview %21[%c0, %c0] sizes [1, 8] valid [%c1, %c8] : !pto.tile_buf<vec, 8x8xf32, valid=?x?> -> !pto.tile_buf<vec, 1x8xf32>
+    pto.tmov ins(%22 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%23 : !pto.tile_buf<vec, 1x8xf32>)
+    pto.set_validshape %21, %c1, %c8 : !pto.tile_buf<vec, 8x8xf32, valid=?x?>
+    %24 = pto.alloc_tile addr = %c0_i64 valid_row = %c8 valid_col = %c8 : !pto.tile_buf<vec, 8x8xf32, valid=?x?>
+    %25 = pto.alloc_tile addr = %c16384_i64 valid_row = %c1 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+    pto.trowsum ins(%21, %24 : !pto.tile_buf<vec, 8x8xf32, valid=?x?>, !pto.tile_buf<vec, 8x8xf32, valid=?x?>) outs(%25 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>)
+    return
+  }
+}
