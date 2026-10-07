@@ -1,0 +1,83 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// Frozen corpus 97: disjoint column tiles despite overlapping enclosing intervals.
+// RUN: pto-test-opt --mlir-disable-threading --pto-frontier-analysis=gm-alias=may-not-alias %s | FileCheck %s
+// CHECK: pto.endpoint_families
+module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
+  func.func @input_rmsnorm(%arg0: !pto.ptr<bf16, gm>, %arg1: !pto.ptr<bf16, gm>, %arg2: !pto.ptr<f32, gm>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c32832_i64 = arith.constant 32832 : i64
+    %c64_i64 = arith.constant 64 : i64
+    %c65600_i64 = arith.constant 65600 : i64
+    %c16 = arith.constant 16 : index
+    %c7168 = arith.constant 7168 : index
+    %c1 = arith.constant 1 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %c0 = arith.constant 0 : index
+    %c512 = arith.constant 512 : index
+    %cst_0 = arith.constant 1.39508935E-4 : f32
+    %cst_1 = arith.constant 9.99999997E-7 : f32
+    %0 = pto.make_tensor_view %arg0, shape = [%c16, %c7168], strides = [%c7168, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %1 = pto.make_tensor_view %arg1, shape = [%c16, %c7168], strides = [%c7168, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %2 = pto.make_tensor_view %arg2, shape = [%c1, %c7168], strides = [%c7168, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %3 = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c16 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+    pto.texpands ins(%cst : f32) outs(%3 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>)
+    scf.for %arg3 = %c0 to %c7168 step %c512 {
+      %13 = pto.alloc_tile addr = %c32832_i64 valid_row = %c16 valid_col = %c512 : !pto.tile_buf<vec, 16x512xbf16, valid=?x?>
+      %14 = arith.maxsi %arg3, %c0 : index
+      %15 = pto.partition_view %0, offsets = [%c0, %14], sizes = [%c16, %c512] : !pto.tensor_view<?x?xbf16>
+      pto.tload ins(%15 : !pto.partition_tensor_view<16x512xbf16>) outs(%13 : !pto.tile_buf<vec, 16x512xbf16, valid=?x?>) {layout = #pto.layout<nd>}
+      %16 = pto.alloc_tile addr = %c64_i64 valid_row = %c16 valid_col = %c512 : !pto.tile_buf<vec, 16x512xf32, valid=?x?>
+      pto.tcvt ins(%13 {rmode = #pto<round_mode ROUND>, satmode = #pto<saturation_mode ON>} : !pto.tile_buf<vec, 16x512xbf16, valid=?x?>) outs(%16 : !pto.tile_buf<vec, 16x512xf32, valid=?x?>)
+      %17 = pto.alloc_tile addr = %c64_i64 valid_row = %c16 valid_col = %c512 : !pto.tile_buf<vec, 16x512xf32, valid=?x?>
+      pto.tmul ins(%16, %16 : !pto.tile_buf<vec, 16x512xf32, valid=?x?>, !pto.tile_buf<vec, 16x512xf32, valid=?x?>) outs(%17 : !pto.tile_buf<vec, 16x512xf32, valid=?x?>)
+      %18 = pto.alloc_tile addr = %c32832_i64 valid_row = %c16 valid_col = %c512 : !pto.tile_buf<vec, 16x512xf32, valid=?x?>
+      %19 = pto.alloc_tile addr = %c65600_i64 valid_row = %c16 valid_col = %c1 : !pto.tile_buf<vec, 16x1xf32, valid=?x?, blayout=col_major>
+      pto.trowsum ins(%17, %18 : !pto.tile_buf<vec, 16x512xf32, valid=?x?>, !pto.tile_buf<vec, 16x512xf32, valid=?x?>) outs(%19 : !pto.tile_buf<vec, 16x1xf32, valid=?x?, blayout=col_major>)
+      %20 = pto.alloc_tile addr = %c65600_i64 valid_row = %c1 valid_col = %c16 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+      %21 = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c16 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+      pto.tadd ins(%3, %20 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>, !pto.tile_buf<vec, 1x16xf32, valid=?x?>) outs(%21 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>)
+    }
+    %4 = pto.alloc_tile addr = %c64_i64 valid_row = %c1 valid_col = %c16 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+    pto.tmuls ins(%3, %cst_0 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>, f32) outs(%4 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>)
+    %5 = pto.alloc_tile addr = %c64_i64 valid_row = %c1 valid_col = %c16 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+    pto.tadds ins(%4, %cst_1 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>, f32) outs(%5 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>)
+    %6 = pto.alloc_tile addr = %c64_i64 valid_row = %c16 valid_col = %c1 : !pto.tile_buf<vec, 16x1xf32, valid=?x?, blayout=col_major>
+    %7 = pto.alloc_tile addr = %c64_i64 valid_row = %c1 valid_col = %c16 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+    %8 = pto.alloc_tile addr = %c64_i64 valid_row = %c1 valid_col = %c16 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+    pto.tsqrt ins(%7 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>) outs(%8 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>)
+    %9 = pto.alloc_tile addr = %c64_i64 valid_row = %c16 valid_col = %c1 : !pto.tile_buf<vec, 16x1xf32, valid=?x?, blayout=col_major>
+    %10 = pto.alloc_tile addr = %c64_i64 valid_row = %c1 valid_col = %c16 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+    %11 = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c16 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+    pto.trecip ins(%10 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>) outs(%11 : !pto.tile_buf<vec, 1x16xf32, valid=?x?>)
+    %12 = pto.alloc_tile addr = %c0_i64 valid_row = %c16 valid_col = %c1 : !pto.tile_buf<vec, 16x1xf32, valid=?x?, blayout=col_major>
+    scf.for %arg3 = %c0 to %c7168 step %c512 {
+      %13 = pto.alloc_tile addr = %c32832_i64 valid_row = %c16 valid_col = %c512 : !pto.tile_buf<vec, 16x512xbf16, valid=?x?>
+      %14 = arith.maxsi %arg3, %c0 : index
+      %15 = pto.partition_view %0, offsets = [%c0, %14], sizes = [%c16, %c512] : !pto.tensor_view<?x?xbf16>
+      pto.tload ins(%15 : !pto.partition_tensor_view<16x512xbf16>) outs(%13 : !pto.tile_buf<vec, 16x512xbf16, valid=?x?>) {layout = #pto.layout<nd>}
+      %16 = pto.alloc_tile addr = %c64_i64 valid_row = %c16 valid_col = %c512 : !pto.tile_buf<vec, 16x512xf32, valid=?x?>
+      pto.tcvt ins(%13 {rmode = #pto<round_mode ROUND>, satmode = #pto<saturation_mode ON>} : !pto.tile_buf<vec, 16x512xbf16, valid=?x?>) outs(%16 : !pto.tile_buf<vec, 16x512xf32, valid=?x?>)
+      %17 = pto.alloc_tile addr = %c32832_i64 valid_row = %c1 valid_col = %c512 : !pto.tile_buf<vec, 1x512xf32, valid=?x?>
+      %18 = arith.maxsi %arg3, %c0 : index
+      %19 = pto.partition_view %2, offsets = [%c0, %18], sizes = [%c1, %c512] : !pto.tensor_view<?x?xf32>
+      pto.tload ins(%19 : !pto.partition_tensor_view<1x512xf32>) outs(%17 : !pto.tile_buf<vec, 1x512xf32, valid=?x?>) {layout = #pto.layout<nd>}
+      %20 = pto.alloc_tile addr = %c64_i64 valid_row = %c16 valid_col = %c512 : !pto.tile_buf<vec, 16x512xf32, valid=?x?>
+      pto.trowexpandmul ins(%16, %12 : !pto.tile_buf<vec, 16x512xf32, valid=?x?>, !pto.tile_buf<vec, 16x1xf32, valid=?x?, blayout=col_major>) outs(%20 : !pto.tile_buf<vec, 16x512xf32, valid=?x?>)
+      %21 = pto.alloc_tile addr = %c64_i64 valid_row = %c16 valid_col = %c512 : !pto.tile_buf<vec, 16x512xf32, valid=?x?>
+      pto.tcolexpandmul ins(%20, %17 : !pto.tile_buf<vec, 16x512xf32, valid=?x?>, !pto.tile_buf<vec, 1x512xf32, valid=?x?>) outs(%21 : !pto.tile_buf<vec, 16x512xf32, valid=?x?>)
+      %22 = pto.alloc_tile addr = %c64_i64 valid_row = %c16 valid_col = %c512 : !pto.tile_buf<vec, 16x512xbf16, valid=?x?>
+      pto.tcvt ins(%21 {rmode = #pto<round_mode ROUND>, satmode = #pto<saturation_mode ON>} : !pto.tile_buf<vec, 16x512xf32, valid=?x?>) outs(%22 : !pto.tile_buf<vec, 16x512xbf16, valid=?x?>)
+      %23 = arith.maxsi %arg3, %c0 : index
+      %24 = pto.partition_view %1, offsets = [%c0, %23], sizes = [%c16, %c512] : !pto.tensor_view<?x?xbf16>
+      pto.tstore ins(%22 : !pto.tile_buf<vec, 16x512xbf16, valid=?x?>) outs(%24 : !pto.partition_tensor_view<16x512xbf16>) {layout = #pto.layout<nd>}
+    }
+    return
+  }
+}
+

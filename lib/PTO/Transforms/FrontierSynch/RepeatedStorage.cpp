@@ -39,6 +39,26 @@ std::optional<RepeatedStorageOwner> lookupOwner(const State& state, std::size_t 
     if (family.spec.kind == RepeatedStorageKind::SharedReadOnly) {
         return RepeatedStorageOwner{e.land(present, e.lt(delta, e.constant(family.extent))), zero, delta};
     }
+    if (family.extent > family.spec.stride) {
+        // A finite union can be disjoint across visits even when its hull is
+        // wider than the translation. Invert each interval; the construction
+        // proved that overlapping candidates always identify the same visit.
+        auto active = e.boolean(false), visit = zero, local = zero;
+        const auto stride = e.constant(family.spec.stride);
+        const bool single = e.constantValue(state.trips) == uint64_t(1);
+        for (const auto& piece : family.pieces) {
+            const auto start = e.constant(piece.begin), width = e.constant(piece.end - piece.begin);
+            const auto offset = e.sub(delta, start);
+            const auto candidate = single ? zero : e.div(offset, stride);
+            const auto remainder = single ? offset : e.rem(offset, stride);
+            auto matches = e.land(present, e.land(e.le(start, delta),
+                e.land(e.lt(candidate, state.trips), e.lt(remainder, width))));
+            visit = e.select(matches, candidate, visit);
+            local = e.select(matches, e.add(start, remainder), local);
+            active = e.lor(active, matches);
+        }
+        return RepeatedStorageOwner{active, visit, local};
+    }
     const auto stride = e.constant(family.spec.stride);
     const auto visit = e.div(delta, stride);
     present = e.land(present, e.lt(visit, state.trips));

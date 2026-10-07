@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Validate byte ownership by exact map reconstruction and finite local ranges.
 #include "RepeatedStorageInternal.h"
+#include "DisjointTranslations.h"
 #include "../InsertSync/SyncEffectRanges.h"
 #include "../InsertSync/SyncRegionArithmetic.h"
 #include "mlir/IR/Matchers.h"
@@ -232,7 +233,7 @@ bool addFamily(State& state, const RepeatedStorageFamily& spec, llvm::DenseSet<s
             auto ranges = localRanges(state, family, region);
             if (!ranges) { return false; }
             for (auto range : *ranges) {
-                if (range.begin > range.end || (spec.stride && range.end > spec.stride)) { return false; }
+                if (range.begin > range.end) { return false; }
                 family.extent = std::max(family.extent, range.end);
                 for (const auto& access : state.body.accessBoundary) {
                     if (access.effect != id) { continue; }
@@ -251,6 +252,12 @@ bool addFamily(State& state, const RepeatedStorageFamily& spec, llvm::DenseSet<s
         }
         state.effectIds.push_back(id);
     }
+    if (spec.kind == RepeatedStorageKind::VisitOwned) {
+        SmallVector<SyncStorageCell> ranges;
+        for (const auto& piece : family.pieces) { ranges.push_back({spec.space, piece.begin, piece.end}); }
+        auto trips = state.expressions().constantValue(state.trips).value_or(UINT64_MAX);
+        if (!detail::disjointTranslations(ranges, APInt(128, spec.stride), trips)) { return false; }
+    }
     state.families.push_back(std::move(family));
     return true;
 }
@@ -267,8 +274,11 @@ std::optional<uint64_t> span(const State& state, const State::Family& family)
 {
     if (family.spec.kind == RepeatedStorageKind::SharedReadOnly) { return family.extent; }
     auto trips = state.expressions().constantValue(state.trips);
-    if (!trips || (family.spec.stride && *trips > UINT64_MAX / family.spec.stride)) { return std::nullopt; }
-    return *trips * family.spec.stride;
+    if (!trips) { return std::nullopt; }
+    if (!*trips) { return 0; }
+    auto extent = std::max(family.extent, family.spec.stride);
+    if (family.spec.stride && *trips - 1 > (UINT64_MAX - extent) / family.spec.stride) { return std::nullopt; }
+    return (*trips - 1) * family.spec.stride + extent;
 }
 bool separated(const State& state, const State::Family& a, const State::Family& b)
 {

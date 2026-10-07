@@ -11,6 +11,7 @@
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOAccessRegion.h"
 #include "RecognitionInternal.h"
+#include "DisjointTranslations.h"
 #include "../InsertSync/SyncEffectRanges.h"
 #include "../InsertSync/SyncRegionArithmetic.h"
 #include "mlir/IR/Matchers.h"
@@ -117,27 +118,6 @@ void checkDisjoint(const Families& families, RecognitionResult& result, Operatio
     }
 }
 
-// Prove disjoint translates of the actual interval union over a finite domain.
-// Test possible displacement multiples, never enumerate iteration pairs. The
-// caller has proved a common affine origin and translation for every piece.
-bool disjointTranslations(ArrayRef<SyncStorageCell> ranges, const APInt& stride, uint64_t trips)
-{
-    if (trips <= 1) { return true; }
-    if (stride.isZero()) { return ranges.empty(); }
-    const APInt one(128, 1), last(128, trips - 1);
-    for (const auto& a : ranges) {
-        for (const auto& b : ranges) {
-            auto low = APInt(128, a.begin) - APInt(128, b.end) + one;
-            auto high = APInt(128, a.end) - APInt(128, b.begin) - one;
-            if (high.slt(stride)) { continue; }
-            auto first = low.sle(stride) ? one : (low + stride - one).udiv(stride);
-            auto final = high.udiv(stride);
-            if (first.ule(final) && first.ule(last)) { return false; }
-        }
-    }
-    return true;
-}
-
 bool dischargeGlobal(std::size_t id, scf::ForOp loop, const SyncInput& input, const PhaseIndex& index)
 {
     const auto& effects = input.accesses();
@@ -216,7 +196,7 @@ bool dischargeGlobal(std::size_t id, scf::ForOp loop, const SyncInput& input, co
     const auto trips = span / *step + (span % *step != 0);
     // Reversing a translation exchanges the ordered pair of pieces; testing
     // all such pairs lets the same positive-magnitude test handle both signs.
-    return disjointTranslations(pieces, displacement, trips);
+    return detail::disjointTranslations(pieces, displacement, trips);
 }
 
 void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
