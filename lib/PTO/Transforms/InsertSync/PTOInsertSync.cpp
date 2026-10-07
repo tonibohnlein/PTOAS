@@ -64,30 +64,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
   explicit PTOInsertSyncPass(const PTOInsertSyncOptions &options) { gmAlias = options.gmAlias; }
 
   static bool shouldSkip(func::FuncOp func) {
-    // Backend-partitioned PTODSL containers carry private func declarations
-    // in the outer child module to model cross-child calls. Those declaration
-    // funcs have a function type but no entry block arguments, so the
-    // translator's argument walk must not run on them.
-    if (func.isDeclaration()) {
-      return true;
-    }
-
-    // If the function already contains explicit synchronization ops (either
-    // low-level pipe flags or the higher-level record/wait events), do not run
-    // the automatic insertion pass again. Re-inserting on top of manual sync
-    // can introduce duplicated/mismatched event dependencies that may lead to
-    // runtime failures on NPU.
-    //
-    bool hasExplicitSync = false;
-    func.walk([&](Operation *op) {
-      if (isa<pto::SetFlagOp, pto::WaitFlagOp, pto::RecordEventOp,
-              pto::WaitEventOp>(op)) {
-        hasExplicitSync = true;
-        return WalkResult::interrupt();
-      }
-      return WalkResult::advance();
-    });
-    return hasExplicitSync;
+    // Declarations have no body; existing on-core protocols keep ownership.
+    return func.isDeclaration() || hasManualOnCoreSynchronization(func);
   }
 
   void runOnOperation() override {

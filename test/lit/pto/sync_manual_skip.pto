@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-test-opt %s > %t.expected
+// RUN: pto-test-opt --pto-insert-sync %s > %t.existing
+// RUN: diff %t.expected %t.existing
+// RUN: pto-test-opt --pto-frontier-analysis %s > %t.frontier
+// RUN: diff %t.expected %t.frontier
+// RUN: pto-test-opt --pto-frontier-analysis --pto-frontier-allocate="eligible-ids=0,1,2,3,4,5" %s > %t.allocated
+// RUN: diff %t.expected %t.allocated
+// Each command independently triggers the skip, including inside control flow.
+// These are pass-through fixtures, not executable synchronization protocols.
+module {
+  func.func private @external()
+  func.func @manual_set() {
+    pto.set_flag [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, #pto.event<EVENT_ID0>]
+    return
+  }
+  func.func @manual_wait() {
+    pto.wait_flag [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, #pto.event<EVENT_ID0>]
+    return
+  }
+  func.func @manual_dynamic_set(%id: index) {
+    pto.set_flag_dyn [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, %id]
+    return
+  }
+  func.func @manual_dynamic_wait(%id: index) {
+    pto.wait_flag_dyn [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, %id]
+    return
+  }
+  func.func @manual_record() {
+    pto.record_event [#pto.pipe_event_type<TLOAD>, #pto.pipe_event_type<TVEC>, #pto.event<EVENT_ID0>]
+    return
+  }
+  func.func @manual_event_wait() {
+    pto.wait_event [#pto.pipe_event_type<TLOAD>, #pto.pipe_event_type<TVEC>, #pto.event<EVENT_ID0>]
+    return
+  }
+  func.func @nested_manual(%condition: i1) {
+    scf.if %condition {
+      pto.set_flag [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, #pto.event<EVENT_ID0>]
+      pto.wait_flag [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, #pto.event<EVENT_ID0>]
+    }
+    return
+  }
+}

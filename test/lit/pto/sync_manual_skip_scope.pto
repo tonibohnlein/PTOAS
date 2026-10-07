@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-test-opt --pto-insert-sync %s | FileCheck %s --check-prefix=EXISTING
+// RUN: pto-test-opt --pto-frontier-analysis %s | FileCheck %s --check-prefix=FRONTIER
+// A manual function does not disable analysis of its unsynchronized sibling.
+module attributes {pto.target_arch = "a3"} {
+  func.func @manual() {
+    pto.set_flag [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, #pto.event<EVENT_ID0>]
+    pto.wait_flag [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, #pto.event<EVENT_ID0>]
+    return
+  }
+  func.func @automatic(%ptr: !pto.ptr<f32, gm>) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %size = arith.constant 32 : index
+    %base = arith.constant 0 : i64
+    %view = pto.make_tensor_view %ptr, shape = [%size], strides = [%one] : !pto.tensor_view<32xf32>
+    %part = pto.partition_view %view, offsets = [%zero], sizes = [%size] : !pto.tensor_view<32xf32>
+    %tile = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x32xf32>
+    pto.tload ins(%part : !pto.partition_tensor_view<32xf32>) outs(%tile : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tabs ins(%tile : !pto.tile_buf<vec, 1x32xf32>) outs(%tile : !pto.tile_buf<vec, 1x32xf32>)
+    return
+  }
+}
+// EXISTING-LABEL: func.func @automatic
+// EXISTING: pto.set_flag
+// EXISTING: pto.wait_flag
+// FRONTIER-LABEL: func.func @automatic
+// FRONTIER: pto.logical_set
+// FRONTIER: pto.logical_wait
