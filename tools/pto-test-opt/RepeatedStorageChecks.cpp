@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Byte-level owner oracle with overlapping read/write footprints and holes.
 #include "PTO/Transforms/FrontierSynch/RepeatedStorage.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/DisjointTranslations.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
@@ -173,9 +174,37 @@ bool originDomain(MLIRContext* context, unsigned kind)
     }
     return selected(selectors->firstWriters, e, std::make_pair(1U, uint64_t(1)));
 }
+// input_rmsnorm's 16 rows of 512 bf16 columns in a 7168-column tensor.
+// Check the exact translated union against pairwise concrete intervals, including
+// a fifteenth visit that collides with the next row and partial-column strides.
+bool corpusColumns()
+{
+    SmallVector<pto::SyncStorageCell> ranges;
+    for (uint64_t row = 0; row < 16; ++row) {
+        ranges.push_back({pto::AddressSpace::GM, row * 14336, row * 14336 + 1024});
+    }
+    for (uint64_t stride : {512U, 1024U, 2048U}) {
+        for (uint64_t trips = 0; trips <= 16; ++trips) {
+            bool disjoint = true;
+            for (uint64_t a = 0; a < trips; ++a) {
+                for (uint64_t b = 0; b < a; ++b) {
+                    for (const auto& x : ranges) {
+                        for (const auto& y : ranges) {
+                            disjoint &= x.begin + a * stride >= y.end + b * stride ||
+                                y.begin + b * stride >= x.end + a * stride;
+                        }
+                    }
+                }
+            }
+            if (fs::detail::disjointTranslations(ranges, APInt(128, stride), trips) != disjoint) { return false; }
+        }
+    }
+    return true;
+}
 } // namespace
 bool runRepeatedStorageChecks(MLIRContext* context)
 {
+    if (!corpusColumns()) { return false; }
     auto module = parseSourceString<ModuleOp>(source, context);
     if (!module) { return false; }
     auto function = module->lookupSymbol<func::FuncOp>("storage");

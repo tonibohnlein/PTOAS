@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// Frozen corpus 602: disjoint column tiles despite overlapping enclosing intervals.
+// RUN: pto-test-opt --mlir-disable-threading --pto-frontier-analysis=gm-alias=may-not-alias %s | FileCheck %s
+// CHECK: pto.endpoint_families
+module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
+  func.func @prefill_hca_c128_norm_pad_init(%arg0: !pto.ptr<f32, gm>, %arg1: !pto.ptr<f32, gm>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c2048_i64 = arith.constant 2048 : i64
+    %c8 = arith.constant 8 : index
+    %c512 = arith.constant 512 : index
+    %c1 = arith.constant 1 : index
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c64 = arith.constant 64 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = pto.make_tensor_view %arg0, shape = [%c8, %c512], strides = [%c512, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %1 = pto.make_tensor_view %arg1, shape = [%c8, %c512], strides = [%c512, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    scf.for %arg2 = %c0 to %c8 step %c2 {
+      %2 = arith.muli %arg2, %c64 : index
+      %3 = arith.muli %arg2, %c64 : index
+      %4 = arith.addi %3, %c64 : index
+      %5 = pto.alloc_tile addr = %c0_i64 valid_row = %c8 valid_col = %c64 : !pto.tile_buf<vec, 8x64xf32, valid=?x?>
+      pto.texpands ins(%cst : f32) outs(%5 : !pto.tile_buf<vec, 8x64xf32, valid=?x?>)
+      %6 = arith.maxsi %2, %c0 : index
+      %7 = pto.partition_view %1, offsets = [%c0, %6], sizes = [%c8, %c64] : !pto.tensor_view<?x?xf32>
+      pto.tstore ins(%5 : !pto.tile_buf<vec, 8x64xf32, valid=?x?>) outs(%7 : !pto.partition_tensor_view<8x64xf32>) {layout = #pto.layout<nd>}
+      %8 = arith.maxsi %2, %c0 : index
+      %9 = pto.partition_view %0, offsets = [%c0, %8], sizes = [%c8, %c64] : !pto.tensor_view<?x?xf32>
+      pto.tstore ins(%5 : !pto.tile_buf<vec, 8x64xf32, valid=?x?>) outs(%9 : !pto.partition_tensor_view<8x64xf32>) {layout = #pto.layout<nd>}
+      %10 = pto.alloc_tile addr = %c2048_i64 valid_row = %c8 valid_col = %c64 : !pto.tile_buf<vec, 8x64xf32, valid=?x?>
+      pto.texpands ins(%cst : f32) outs(%10 : !pto.tile_buf<vec, 8x64xf32, valid=?x?>)
+      %11 = arith.maxsi %4, %c0 : index
+      %12 = pto.partition_view %1, offsets = [%c0, %11], sizes = [%c8, %c64] : !pto.tensor_view<?x?xf32>
+      pto.tstore ins(%10 : !pto.tile_buf<vec, 8x64xf32, valid=?x?>) outs(%12 : !pto.partition_tensor_view<8x64xf32>) {layout = #pto.layout<nd>}
+      %13 = arith.maxsi %4, %c0 : index
+      %14 = pto.partition_view %0, offsets = [%c0, %13], sizes = [%c8, %c64] : !pto.tensor_view<?x?xf32>
+      pto.tstore ins(%10 : !pto.tile_buf<vec, 8x64xf32, valid=?x?>) outs(%14 : !pto.partition_tensor_view<8x64xf32>) {layout = #pto.layout<nd>}
+    }
+    return
+  }
+}
+
