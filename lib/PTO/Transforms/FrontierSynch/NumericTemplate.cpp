@@ -103,7 +103,7 @@ NumericTemplate recognizeTemplate(scf::ForOp outer, const PhaseIndex& index,
     builder.geometryConstant = std::move(geometry);
     builder.controlConstant = std::move(control);
     for (auto state : outer.getRegionIterArgs()) {
-        if (!builder.scalar(state)) {
+        if (index.isRelevant(state) && !builder.scalar(state)) {
             output.result.note(RecognitionIssue::LoopCarriedState, outer);
             return output;
         }

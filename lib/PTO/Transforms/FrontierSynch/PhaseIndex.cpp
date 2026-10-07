@@ -24,6 +24,7 @@ LogicalResult PhaseIndex::build(func::FuncOp source, ArrayRef<const CompoundInst
     anchorPhases.clear();
     valuePrerequisites.clear();
     prerequisites.clear();
+    relevantValues.clear();
     dominance.invalidate();
     function = {};
     if (!source) {
@@ -39,18 +40,79 @@ LogicalResult PhaseIndex::build(func::FuncOp source, ArrayRef<const CompoundInst
     }
     anchorPhases = std::move(pending);
     function = source;
+    computeRelevance();
+    DenseMap<Operation*, bool> carriedRelevance;
     for (const auto& entry : anchorPhases) {
         if (entry.second.size() != 1) {
             continue;
         }
         for (Value value : entry.first->getResults()) {
-            traceResult(entry.second.front(), value);
+            traceResult(entry.second.front(), value, carriedRelevance);
         }
     }
     return success();
 }
 
-void PhaseIndex::traceResult(const CompoundInstanceElement* producer, Value result)
+// Treat structured SSA edges as dataflow, without rewriting carried values or
+// dropping their initializers. Worklist visitation handles cross-carried cycles.
+void PhaseIndex::computeRelevance()
+{
+    SmallVector<Value> work;
+    DenseSet<Operation*> expandedDefinitions;
+    function.walk([&](Operation* op) {
+        if (auto loop = dyn_cast<scf::ForOp>(op)) {
+            work.append({loop.getLowerBound(), loop.getUpperBound(), loop.getStep()});
+        } else if (auto branch = dyn_cast<scf::IfOp>(op)) {
+            work.push_back(branch.getCondition());
+        } else if (isa<scf::YieldOp>(op) && isa<scf::ForOp, scf::IfOp>(op->getParentOp())) {
+            // A live block argument or result requests its incoming value below.
+        } else if (isa<func::ReturnOp>(op) || !phasesFor(op).empty() || !isMemoryEffectFree(op)) {
+            llvm::append_range(work, op->getOperands());
+        }
+    });
+    auto incoming = [&](scf::ForOp loop, unsigned position) {
+        work.push_back(loop.getInitArgs()[position]);
+        work.push_back(cast<scf::YieldOp>(loop.getBody()->getTerminator()).getOperand(position));
+    };
+    while (!work.empty()) {
+        Value value = work.pop_back_val();
+        if (!relevantValues.insert(value).second) { continue; }
+        if (auto argument = dyn_cast<BlockArgument>(value)) {
+            auto loop = dyn_cast<scf::ForOp>(argument.getOwner()->getParentOp());
+            if (loop && argument.getArgNumber()) { incoming(loop, argument.getArgNumber() - 1); }
+            continue;
+        }
+        auto result = cast<OpResult>(value);
+        Operation* op = result.getOwner();
+        if (auto loop = dyn_cast<scf::ForOp>(op)) {
+            incoming(loop, result.getResultNumber());
+        } else if (auto branch = dyn_cast<scf::IfOp>(op)) {
+            for (Region& arm : branch->getRegions()) {
+                if (!arm.empty()) {
+                    work.push_back(cast<scf::YieldOp>(arm.front().getTerminator())
+                                       .getOperand(result.getResultNumber()));
+                }
+            }
+        } else if (expandedDefinitions.insert(op).second) {
+            llvm::append_range(work, op->getOperands());
+        }
+    }
+}
+
+bool PhaseIndex::hasRelevantResults(Operation* operation) const
+{
+    return llvm::any_of(operation->getResults(), [&](Value result) { return isRelevant(result); });
+}
+
+bool PhaseIndex::hasRelevantCarriedState(Operation* operation) const
+{
+    auto loop = dyn_cast<scf::ForOp>(operation);
+    return loop && (hasRelevantResults(loop) || llvm::any_of(loop.getRegionIterArgs(),
+        [&](Value argument) { return isRelevant(argument); }));
+}
+
+void PhaseIndex::traceResult(const CompoundInstanceElement* producer, Value result,
+                             DenseMap<Operation*, bool>& carriedRelevance)
 {
     const auto availability = resultAvailability(*producer, result);
     if (availability == SyncResultAvailability::NonScalar) {
@@ -95,7 +157,16 @@ void PhaseIndex::traceResult(const CompoundInstanceElement* producer, Value resu
                 });
             } else if (user->getNumRegions() || isa<scf::YieldOp>(user)) {
                 // A carried value needs an occurrence map, not a static SSA edge.
-                valuePrerequisites.insert(user->getNumRegions() ? user : user->getParentOp());
+                auto* owner = user->getNumRegions() ? user : user->getParentOp();
+                if (!native || !isa<scf::ForOp>(owner)) {
+                    valuePrerequisites.insert(owner);
+                } else {
+                    auto found = carriedRelevance.find(owner);
+                    if (found == carriedRelevance.end()) {
+                        found = carriedRelevance.try_emplace(owner, hasRelevantCarriedState(owner)).first;
+                    }
+                    if (found->second) { valuePrerequisites.insert(owner); }
+                }
             } else if (isa<func::ReturnOp>(user)) {
                 if (!native) {
                     valuePrerequisites.insert(user);

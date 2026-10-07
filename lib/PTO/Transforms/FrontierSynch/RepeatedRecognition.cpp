@@ -85,8 +85,8 @@ bool SequenceAnalysisState::repeatedChild(const StructureNode& node, Expr trips)
         return false;
     };
     auto loop = dyn_cast<scf::ForOp>(node.anchor);
-    if (!loop || loop.getNumRegionIterArgs() || node.children.size() != 1) {
-        return unavailable("q1 repeat recognition: single result-free body required");
+    if (!loop || index.hasRelevantCarriedState(loop) || node.children.size() != 1) {
+        return unavailable("q1 repeat recognition: single body without relevant carried state required");
     }
     bool nested = false, uniform = true;
     Invariance invariant(loop, index);

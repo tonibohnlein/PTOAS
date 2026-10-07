@@ -84,7 +84,7 @@ def main():
         late_arithmetic = documents["late_finite"]["arithmetic"]
         assert late_arithmetic["state"] == "not-applicable"
         assert {issue["issue"] for issue in late_arithmetic["issues"]} == {
-            "additional-prerequisite", "unsupported-control"}
+            "unsupported-control"}
         assert any(a["state"] == "applicable" for a in routes(documents["nested_arms"], "finite-guarded"))
         assert any(a["state"] == "applicable" and a["entry_guards_available"]
                    for a in routes(documents["invariant_loop"], "guarded-rotating"))
@@ -93,7 +93,7 @@ def main():
         assert any(not a["entry_guards_available"] for a in routes(documents["late_finite"], "finite-guarded"))
     elif mode == "arithmetic":
         assert documents["triangular"]["arithmetic"]["state"] == "applicable"
-        assert documents["ssa_prerequisite"]["arithmetic"]["state"] == "missing-premise"
+        assert documents["ssa_prerequisite"]["arithmetic"]["state"] == "applicable"
         assert documents["opaque_bound"]["arithmetic"]["state"] == "not-applicable"
     else:
         raise ValueError("unknown check mode")

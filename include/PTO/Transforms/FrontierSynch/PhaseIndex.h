@@ -55,6 +55,12 @@ public:
     // One occurrence per phase. External producers belong to composition.
     PhasePrerequisiteEdges mapPrerequisites(ArrayRef<const CompoundInstanceElement*> phases) const;
 
+    // Backward relevance to payload operands, effects, control and returned
+    // values. Computed once, including zero-trip and loop-carried SSA edges.
+    bool isRelevant(Value value) const { return relevantValues.contains(value); }
+    bool hasRelevantCarriedState(Operation* loop) const;
+    bool hasRelevantResults(Operation* operation) const;
+
     // SSA availability at an operation boundary. This says nothing about a
     // legal internal macro cut, pipe completion or synchronization visibility.
     bool valueAvailable(Value value, Operation* anchor, Boundary boundary) const;
@@ -65,8 +71,11 @@ private:
     DominanceInfo dominance;
     DenseMap<Operation*, SmallVector<const CompoundInstanceElement*>> anchorPhases;
     DenseSet<Operation*> valuePrerequisites;
+    DenseSet<Value> relevantValues;
+    void computeRelevance();
     DenseMap<Operation*, SmallVector<ValuePrerequisite>> prerequisites;
-    void traceResult(const CompoundInstanceElement* producer, Value result);
+    void traceResult(const CompoundInstanceElement* producer, Value result,
+                     DenseMap<Operation*, bool>& carriedRelevance);
 };
 } // namespace mlir::pto::frontiersynch
 #endif

@@ -133,9 +133,11 @@ private:
     bool fail(const std::string& message) { error = message; return false; }
     bool domain()
     {
+        // The producer already certified relevant carried state; unused SSA
+        // results do not change this loop's occurrence or boundary maps.
         auto loop = analysis->loop;
         auto lower = constant(loop.getLowerBound()), step = constant(loop.getStep());
-        if (!lower || *lower < 0 || !step || *step <= 0 || loop.getNumResults() ||
+        if (!lower || *lower < 0 || !step || *step <= 0 ||
             loop->getParentOfType<func::FuncOp>() != function) {
             return fail("guarded regional export requires one original counted loop with constant nonnegative start");
         }

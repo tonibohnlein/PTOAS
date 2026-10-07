@@ -46,8 +46,8 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
         return false;
     };
     auto outer = dyn_cast<scf::ForOp>(node.anchor);
-    if (!outer || outer.getNumRegionIterArgs() || node.children.size() != 1) {
-        return unavailable("single result-free body required");
+    if (!outer || index.hasRelevantCarriedState(outer) || node.children.size() != 1) {
+        return unavailable("single body without relevant carried state required");
     }
     const auto& sequence = program->nodes[node.children.front()];
     PhaseNormalization normalizer(outer, index, expressions);
@@ -65,7 +65,8 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
             uniformControl &= normalizer.independent(inner.getLowerBound()) &&
                 normalizer.independent(inner.getUpperBound()) && normalizer.independent(inner.getStep());
         }
-        if (operation->getNumResults() == 1 && !normalizer.independent(operation->getResult(0))) {
+        if (operation->getNumResults() == 1 && index.isRelevant(operation->getResult(0)) &&
+            !normalizer.independent(operation->getResult(0))) {
             if (auto divisor = PhaseNormalization::modulus(operation->getResult(0))) { addPeriod(*divisor); }
         }
     });
@@ -170,7 +171,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                     }
                     if (child.kind == StructureKind::Conditional) {
                         auto branch = dyn_cast_or_null<scf::IfOp>(child.anchor);
-                        if (!branch || branch.getNumResults() || index.needsValuePrerequisite(branch)) {
+                        if (!branch || index.hasRelevantResults(branch) || index.needsValuePrerequisite(branch)) {
                             return unavailable("phase conditional needs result-free mapped control");
                         }
                         auto condition = boundaryGuard(

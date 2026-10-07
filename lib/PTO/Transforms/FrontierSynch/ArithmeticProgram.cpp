@@ -80,7 +80,7 @@ void collect(const PhaseIndex& index, detail::ProgramBuilder& builder)
             // prove every carried argument as a function of these coordinates;
             // unrecognized state never becomes a free execution parameter.
             for (Value argument : loop.getRegionIterArgs()) {
-                if (!builder.prepareValue(argument, {nullptr, bodyLoops, {}})) {
+                if (index.isRelevant(argument) && !builder.prepareValue(argument, {nullptr, bodyLoops, {}})) {
                     output.extraction.note(RecognitionIssue::LoopCarriedState, op, true);
                 }
             }

@@ -108,7 +108,7 @@ GuardedRecognition detail::recognizeRotatingSlice(scf::ForOp loop, const PhaseIn
 {
     const auto& effects = input.accesses();
     GuardedRecognition output;
-    if (!detail::checkRotatingDomain(loop, output.result)) {
+    if (!detail::checkRotatingDomain(loop, index, output.result)) {
         return output;
     }
     if (index.needsValuePrerequisite(loop)) {

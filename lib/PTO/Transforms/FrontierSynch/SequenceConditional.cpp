@@ -102,7 +102,7 @@ bool SequenceAnalysisState::conditionalChild(const StructureNode& node)
     auto branch = dyn_cast_or_null<scf::IfOp>(node.anchor);
     if (!branch) { return fail("conditional region requires an scf.if operation"); }
     const bool requiresPrerequisite = index.needsValuePrerequisite(branch);
-    if (branch.getNumResults() || requiresPrerequisite) {
+    if (index.hasRelevantResults(branch) || requiresPrerequisite) {
         return fail("conditional region requires mapped control prerequisites and result-free arms");
     }
     auto condition = expressions.input(branch.getCondition());
