@@ -8,6 +8,7 @@
 // Certified late expansion of numeric inner visits, retaining one outer loop.
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_NUMERICTEMPLATE_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_NUMERICTEMPLATE_H
+#include <functional>
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 namespace mlir::pto::frontiersynch {
 struct NumericTemplateLimits {
@@ -60,6 +61,7 @@ struct NumericTemplate {
     int64_t step = 1;
     // Valid only for the retained constant outer bounds, not a changed trip count.
     bool emptyInvocation = false;
+    bool specializedBody = false; // Finite body only; no repeating-word certificate.
     NumericTemplateLimits limits;
     uint64_t countedVisits = 0; // Preflight upper bound before allocating visits.
     uint64_t countedPayloads = 0; // Includes both arms before guard specialization.
@@ -82,5 +84,12 @@ NumericTemplate recognizeNumericTemplate(scf::ForOp outer, const PhaseIndex& ind
 NumericTemplate recognizeRegionalNumericTemplate(scf::ForOp outer, const PhaseIndex& index,
                                                  const SyncInput& input,
                                                  NumericTemplateLimits limits = {});
+// Caller certifies physical-map periodicity before choosing a representative.
+// Geometry constants never participate in branch or loop-bound evaluation.
+using TemplateGeometryConstant = std::function<std::optional<int64_t>(Value)>;
+using TemplateControlConstant = std::function<std::optional<bool>(Value)>;
+NumericTemplate recognizeSpecializedNumericBody(scf::ForOp outer, const PhaseIndex& index,
+    const SyncInput& input, TemplateGeometryConstant geometry, TemplateControlConstant control,
+    NumericTemplateLimits limits = {});
 } // namespace mlir::pto::frontiersynch
 #endif

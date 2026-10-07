@@ -67,11 +67,13 @@ void clear(NumericTemplate& output)
     output.refresh = 0;
 }
 NumericTemplate recognizeTemplate(scf::ForOp outer, const PhaseIndex& index,
-                                  const SyncInput& input, NumericTemplateLimits limits, bool regional)
+                                  const SyncInput& input, NumericTemplateLimits limits, bool regional,
+                                  TemplateGeometryConstant geometry = {}, TemplateControlConstant control = {})
 {
     NumericTemplate output;
     output.outer = outer;
     output.limits = limits;
+    output.specializedBody = static_cast<bool>(geometry);
     auto lower = constant(outer.getLowerBound()), step = constant(outer.getStep());
     const bool valid = lower && step && *lower >= 0 && *step > 0 && limits.depth &&
         limits.visits && limits.payloads && limits.fragments &&
@@ -92,11 +94,13 @@ NumericTemplate recognizeTemplate(scf::ForOp outer, const PhaseIndex& index,
         // execute, so no effect substitution or inner-visit expansion is needed.
         // This certificate is tied to these bounds, not a periodic body schema.
         output.emptyInvocation = true;
-        output.period = 1;
-        output.refresh = 1;
+        output.period = output.specializedBody ? 0 : 1;
+        output.refresh = output.specializedBody ? 0 : 1;
         return output;
     }
     detail::TemplateBuilder builder{output, index, input, DenseMap<Value, int64_t>(), {}};
+    builder.geometryConstant = std::move(geometry);
+    builder.controlConstant = std::move(control);
     for (auto state : outer.getRegionIterArgs()) {
         if (!builder.scalar(state)) {
             output.result.note(RecognitionIssue::LoopCarriedState, outer);
@@ -153,8 +157,8 @@ NumericTemplate recognizeTemplate(scf::ForOp outer, const PhaseIndex& index,
             }
         }
     }
-    output.period = 1;
-    output.refresh = 1;
+    output.period = output.specializedBody ? 0 : 1;
+    output.refresh = output.specializedBody ? 0 : 1;
     const auto protection = invocationProtectionGroups(input.accesses());
     for (auto& payload : output.payloads) {
         payload.invocationProtection = protection.lookup(payload.phase);
@@ -171,5 +175,11 @@ NumericTemplate recognizeRegionalNumericTemplate(scf::ForOp outer, const PhaseIn
                                                  const SyncInput& input, NumericTemplateLimits limits)
 {
     return recognizeTemplate(outer, index, input, limits, true);
+}
+NumericTemplate recognizeSpecializedNumericBody(scf::ForOp outer, const PhaseIndex& index,
+    const SyncInput& input, TemplateGeometryConstant geometry, TemplateControlConstant control,
+    NumericTemplateLimits limits)
+{
+    return recognizeTemplate(outer, index, input, limits, true, std::move(geometry), std::move(control));
 }
 } // namespace mlir::pto::frontiersynch

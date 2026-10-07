@@ -304,3 +304,133 @@ positives for already-braced compound conditions; actual width findings were
 fixed. Serial builds, source review and independent tests pass. Production
 logical insertion also succeeds for lossless block cast; all three M3 target
 ports now produce logical plans. The milestone is accepted for commit.
+
+## M4 implementation and review evidence — 2026-10-07
+
+The earlier tables are historical checkpoints. Architecture, correctness and
+performance reviewers have accepted M4 under its original contract. These
+changes do not establish M5 allocation coverage or device correctness.
+
+### Constructed interfaces and route order
+
+Composed phase analysis now retains explicit outer payloads, recursively selected
+conditional arms and compact inner regions. It first proves periodicity of the
+complete physical maps, including offsets, extents and buffer selections. Each
+phase exports the original occurrence identities, storage extrema, all-event
+queries and endpoint recipes. A child is reused across visits only after the
+required control and storage invariance checks.
+
+Compact body composition is tried first. Original explicit runs with concrete
+phase geometry reuse the shared access normalizer, storage scan and rank reducer;
+this expands no loop. If compact composition fails, the existing finite-template
+machinery can expand numeric inner visits into one finite body word. Geometry
+uses a certified phase representative; control uses separate certified interval
+facts and actual inner coordinates. Geometry substitution cannot determine loop
+bounds or branch outcomes. Original cuts and inner coordinate tuples survive
+both routes, and numeric expansion is charged in the result. A discharged writer
+still needs an exported re-entry interface. Reader discharge requires the shared
+whole-input proof, so a writer in a sibling region cannot disappear.
+
+Signed affine boundary predicates can define several cuts. Cuts are sorted and
+clipped to the actual iteration domain. Certified intervals containing at most
+one visit avoid building an inter-visit quotient. Their selector coordinates are
+canonicalized only under their original nonempty guard; zero trips, swapped
+cuts and partial periods retain their original semantics. No nonnegative input
+length is inferred from a kernel's intended use.
+
+Speculative compact construction owns its expression suffix and query caches.
+Rejected attempts destroy those caches before rolling back the arena; phase
+normalizers with cached expression IDs are local to the attempt. A successful
+finite fallback does not inherit the rejected route's diagnostics.
+
+### Composition and cost accounting
+
+Storage and native boundary lists are normalized before bridge products. Each
+list denotes guarded alternatives for one extremum; simultaneous alternatives
+must name the same occurrence. Selected coordinates retain their original-port
+provenance, so queries distribute through existing boundary occurrences instead
+of asking children to rediscover arbitrary synthetic coordinates. Immutable
+consolidated generators answer reachability while cover guards are reduced.
+Native same-pipe queries, absent endpoints and proved incompatible guards are
+resolved before requesting more expensive child queries. Shared min-plus
+expressions preserve exact distance and guard semantics.
+
+The quotient contracts complete within-body paths and retains only crossing
+targets as vertices. Every across-visit query charges its first crossing and
+retains its final body path; guards remain correlated. This avoids closing the
+already-transitive zero-distance body relation again. The lazy quotient is not
+an O(P²)-memory algorithm. For P retained target ports, its memoized
+Floyd states `(source, target, level)` can occupy O(P³) entries. The current
+ordered-map implementation adds logarithmic lookup cost, giving O(P³ log P)
+map work in the worst case, apart from child-query and circuit costs. The base
+matrices themselves occupy O(P²). Laziness avoids unused queries; it does not
+improve this worst-case bound. No bound independent of nesting depth is claimed.
+
+### Recorded validation
+
+These are compiler and independent graph-oracle checks, not device runs. The
+final artifacts under `.local/nested-regions/` record the tested binary and
+pinned inputs; earlier measurement logs retain their own intermediate binaries.
+
+- `m4-regressions/results.json`: all eleven regression groups pass, covering
+  arithmetic relations, demands, selectors, expressions, incoming prerequisites,
+  composition, sequences, mixed and conditional regions, and insertion.
+- `m4-validation/affine-final.log`: sixty independently unfolded affine-boundary
+  closures pass.
+- `m4-validation/composed-final.log`: composed byte closures, zero trips,
+  partial periods, scalar inputs and three nesting levels pass. Finite moving
+  partial footprints and an external scalar producer are included.
+- `m4-validation/expressions-minplus-fixed.log`: 27,264 phased event queries
+  with storage selectors, 123,552 repeated-region event pairs, ownership checks
+  and expression checks pass. These counts include the added symbolic singleton
+  cases; earlier logs contain smaller totals.
+- `corpus-m4-final/results.json`: the selected regression corpus retains
+  52 logical successes and 51 allocation successes. This is not a full corpus
+  coverage census.
+
+`tilelang-nine-m4-final/results.json` covers all nine benchmark ports and both earlier
+GEMMs. All eleven expert and Existing variants generate C++. Frontier outcomes
+in that snapshot are:
+
+| Cases | Logical insertion | Physical allocation / C++ |
+|---|---|---|
+| Earlier PyPTO GEMM, earlier TileLang GEMM, elementwise_pipeline | Success | Success |
+| persistent_gemm | Newly succeeds | Allocation export remains M5 |
+| gdn_chunk_cumsum, mhc_head_mix, lossless_block_cast | Success | Allocation export remains M5 |
+| group_norm, causal_conv1d_decode | Success | Current sufficient allocation fails within supplied capacity |
+| causal_conv1d_prefill, gated_delta_rule | Not accepted by a complete current route | Not attempted |
+
+The sufficient allocation failures do not prove ID scarcity. Prefill still lacks
+a range/no-wrap certificate for its signed-length and derived unsigned-trip
+arithmetic; assuming a nonnegative length would change the supplied contract.
+Gated delta rule still has unsupported control/domain obligations. Neither is
+silently reclassified as a successful tractable instance.
+
+### Performance scope and acceptance
+
+Persistent GEMM now has a prepared logical result through generic phase and finite
+body interfaces. `m4-validation/persistent-finite.json` records 459 expression
+nodes, 10,245 preparation operations, 3,288 charged numeric visits and unchanged
+input. Its accompanying timing is 0.12 seconds with 83,744 KiB peak RSS. The
+production logical pass also succeeds in the eleven-case snapshot. These are
+preparation counts, not SET/WAIT counts or a performance measurement on hardware.
+
+The original three-level stress now emits 10,934 preparation operations, versus
+89,768 at the M3 baseline. `m4-validation/triple-final.json` and `.time` record
+0.07 seconds and 68,460 KiB peak RSS. This is the same fixture; the older plan's
+338,000 count predates intermediate improvements.
+
+The larger parameterized first/last fixture remains costly.
+`m4-validation/composed-native-order.json` records 312,281 expression nodes and
+318,333 preparation operations, with zero numeric expansion. Its accompanying
+log records 3.97 seconds and 427,268 KiB peak RSS. Earlier M4 attempts exceeded
+three million preparation operations. This improvement does not imply uniformly
+small emitted code, a near-linear algorithm, or measured device performance.
+The performance reviewer accepted the original milestone contract with this
+limitation explicit. Further cross-region query factoring remains future work.
+
+All three reviewers accepted the complete M4 scope. Temporary profiling code
+was removed. The changed-code prefilter's brace findings were inspected: each
+flagged control body is braced, and the matcher stops at an inner parenthesis.
+Actual line-width findings were fixed. M5 still needs allocation exports for the
+new logical plans; no scarcity repair or new whole-kernel class is claimed here.

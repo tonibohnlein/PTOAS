@@ -8,9 +8,11 @@
 // Check expression algebra, total detached emission and original SSA availability.
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/RegionExpressions.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/SequenceAnalysisInternal.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
+#include <set>
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 bool runNestedRegionalChecks(func::FuncOp function);
@@ -59,6 +61,8 @@ bool checkAlgebra(Value index, Value predicate)
     valid &= expressions.land(p, expressions.lnot(p)) == expressions.boolean(false);
     valid &= expressions.lor(p, expressions.lnot(p)) == expressions.boolean(true);
     valid &= expressions.select(p, sum, sum) == sum;
+    valid &= expressions.select(p, expressions.boolean(true), expressions.boolean(false)) == p;
+    valid &= expressions.select(p, expressions.boolean(false), expressions.boolean(true)) == expressions.lnot(p);
     auto q = expressions.lt(x, expressions.constant(5));
     auto r = expressions.lt(x, expressions.constant(6));
     auto both = expressions.land(p, q), either = expressions.lor(p, q);
@@ -74,6 +78,15 @@ bool checkAlgebra(Value index, Value predicate)
     valid &= expressions.implies(expressions.land(expressions.land(p, q), r), expressions.land(q, p));
     valid &= !expressions.implies(p, q) && !expressions.implies(expressions.lor(p, q), p);
     valid &= !expressions.implies(q, r); // Arithmetic correlation is deliberately not inferred.
+    valid &= expressions.land(q, r) == q && expressions.lor(q, r) == r;
+    auto lower5 = expressions.lt(expressions.constant(5), x);
+    auto lower6 = expressions.lt(expressions.constant(6), x);
+    valid &= expressions.land(lower5, lower6) == lower6 && expressions.lor(lower5, lower6) == lower5;
+    valid &= expressions.land(q, expressions.le(x, expressions.constant(5))) == q;
+    valid &= expressions.div(expressions.minimum(x, expressions.constant(3)), expressions.constant(4)) == zero;
+    valid &= expressions.div(expressions.minimum(expressions.constant(3), x), expressions.constant(4)) == zero;
+    valid &= !expressions.constantValue(expressions.div(expressions.minimum(x, expressions.constant(4)),
+                                                        expressions.constant(4)));
     valid &= expressions.implies(expressions.boolean(false), q);
     valid &= expressions.implies(p, expressions.boolean(true));
     auto masked = expressions.select(p, q, expressions.boolean(false));
@@ -101,9 +114,486 @@ bool checkAlgebra(Value index, Value predicate)
     valid &= bad.div(bad.input(index), bad.constant(0)) == fs::RegionExpressions::invalid;
     fs::RegionExpressions dynamic;
     valid &= dynamic.rem(dynamic.constant(3), dynamic.input(index)) == fs::RegionExpressions::invalid;
+    fs::RegionExpressions dynamicMinimum;
+    auto dynamicIndex = dynamicMinimum.input(index);
+    auto capped = dynamicMinimum.minimum(dynamicIndex, dynamicMinimum.constant(3));
+    valid &= dynamicMinimum.div(capped, dynamicIndex) == fs::RegionExpressions::invalid;
     fs::RegionExpressions typed;
     valid &= typed.add(typed.input(index), typed.input(predicate)) == fs::RegionExpressions::invalid;
     return valid && expressions.error().empty();
+}
+bool checkDistanceAlgebra(Value index, Value predicate)
+{
+    fs::RegionExpressions e;
+    const auto p = e.input(predicate), q = e.lt(e.input(index), e.constant(5));
+    // Independent truth tables cover equal finite alternatives, reversed
+    // alternatives, constant clamps and general (unfactored) choices.
+    for (uint64_t a = 0; a <= 3; ++a) { for (uint64_t b = 0; b <= 3; ++b) {
+        for (uint64_t c = 0; c <= 3; ++c) { for (uint64_t d = 0; d <= 3; ++d) {
+            auto left = e.select(p, e.constant(a), e.constant(b));
+            auto right = e.select(q, e.constant(c), e.constant(d));
+            auto minimum = e.minimum(left, right);
+            auto sum = e.boundedMinPlus(e.constant(3), left, right, 3);
+            auto relaxation = e.boundedMinPlus(e.constant(1), left, right, 3);
+            for (unsigned bits = 0; bits < 4; ++bits) {
+                fs::RegionExpressions::Substitution valuation({
+                    {p, e.boolean(bits & 1)}, {q, e.boolean(bits & 2)}});
+                auto x = bits & 1 ? a : b, y = bits & 2 ? c : d;
+                if (e.constantValue(e.substitute(minimum, valuation)) != std::min(x, y) ||
+                    e.constantValue(e.substitute(sum, valuation)) != std::min(x + y, uint64_t(3)) ||
+                    e.constantValue(e.substitute(relaxation, valuation)) != std::min(x + y, uint64_t(1))) {
+                    return false;
+                }
+            }
+        } }
+    } }
+    return e.error().empty();
+}
+bool checkThresholdAlgebra(Value index)
+{
+    fs::RegionExpressions e;
+    const auto x = e.input(index);
+    const uint64_t values[] = {0, 1, 2, 3, UINT64_MAX - 1, UINT64_MAX};
+    struct Test { fs::RegionExpressions::Id id; uint64_t bound; unsigned kind; };
+    SmallVector<Test> tests;
+    for (uint64_t bound : values) {
+        auto c = e.constant(bound);
+        tests.push_back({e.lt(x, c), bound, 0}); tests.push_back({e.le(x, c), bound, 1});
+        tests.push_back({e.lt(c, x), bound, 2}); tests.push_back({e.le(c, x), bound, 3});
+    }
+    auto truth = [](const Test& test, uint64_t value) {
+        switch (test.kind) {
+            case 0: return value < test.bound;
+            case 1: return value <= test.bound;
+            case 2: return test.bound < value;
+            default: return test.bound <= value;
+        }
+    };
+    for (const auto& a : tests) { for (const auto& b : tests) {
+        auto both = e.land(a.id, b.id), either = e.lor(a.id, b.id);
+        for (uint64_t value : values) {
+            fs::RegionExpressions::Substitution valuation({{x, e.constant(value)}});
+            if (e.constantValue(e.substitute(both, valuation)) != uint64_t(truth(a, value) && truth(b, value)) ||
+                e.constantValue(e.substitute(either, valuation)) != uint64_t(truth(a, value) || truth(b, value))) {
+                return false;
+            }
+        }
+    } }
+    return e.error().empty();
+}
+bool checkGuardedMinimum(Value index, Value predicate)
+{
+    fs::RegionExpressions e;
+    const auto p = e.input(predicate), q = e.lt(e.input(index), e.constant(5));
+    for (uint64_t cap : {uint64_t(0), uint64_t(1), uint64_t(3), UINT64_MAX}) {
+        std::set<uint64_t> values{0, 1, cap};
+        if (cap) { values.insert(cap - 1); }
+        if (cap < UINT64_MAX) { values.insert(cap + 1); }
+        for (auto a : values) { for (auto b : values) {
+            const auto left = e.select(p, e.constant(a), e.constant(cap));
+            const auto right = e.select(q, e.constant(b), e.constant(cap));
+            const auto answer = e.minimum(left, right);
+            // Check both guarded distances directly for all activity patterns,
+            // including neither active, finite==infinity and out-of-bound arms
+            // where the specialization must not apply.
+            for (unsigned mask = 0; mask < 4; ++mask) {
+                const bool activeLeft = mask & 1, activeRight = mask & 2;
+                fs::RegionExpressions::Substitution bindings({{p, e.boolean(activeLeft)},
+                                                              {q, e.boolean(activeRight)}});
+                const auto expected = std::min(activeLeft ? a : cap, activeRight ? b : cap);
+                if (e.constantValue(e.substitute(answer, bindings)) != expected) {
+                    llvm::errs() << "guarded minimum mismatch: cap=" << cap << " a=" << a
+                        << " b=" << b << " mask=" << mask << "\n";
+                    return false;
+                }
+            }
+            if ((a < b && b < cap && answer != e.select(p, e.constant(a), right)) ||
+                (b < a && a < cap && answer != e.select(q, e.constant(b), left))) {
+                llvm::errs() << "guarded minimum not factored: cap=" << cap << " a=" << a << " b=" << b << "\n";
+                return false;
+            }
+        } }
+    }
+    return e.error().empty();
+}
+bool checkBoundedZeroEdges(Value index, Value predicate)
+{
+    fs::RegionExpressions e;
+    const auto p = e.input(predicate), q = e.lt(e.input(index), e.constant(5));
+    // All four q/r valuations are possible (index 0,1,6,7). Ordered
+    // thresholds such as x<5 and x<7 are correlated and cannot model two
+    // independent atoms in this truth-table oracle.
+    const auto r = e.eq(e.rem(e.input(index), e.constant(2)), e.constant(0));
+    for (uint64_t cap : {uint64_t(0), uint64_t(1), uint64_t(3), UINT64_MAX / 2}) {
+        std::set<uint64_t> values{0, cap};
+        if (cap) { values.insert(1); }
+        for (auto current : values) { for (auto a : values) { for (auto b : values) {
+            const auto old = e.select(r, e.constant(current), e.constant(cap));
+            const auto left = e.select(p, e.constant(a), e.constant(cap));
+            const auto right = e.select(q, e.constant(b), e.constant(cap));
+            const auto answer = e.boundedMinPlus(old, left, right, cap);
+            for (unsigned mask = 0; mask < 8; ++mask) {
+                const bool pv = mask & 1, qv = mask & 2, rv = mask & 4;
+                fs::RegionExpressions::Substitution bindings({{p, e.boolean(pv)},
+                    {q, e.boolean(qv)}, {r, e.boolean(rv)}});
+                const auto expected = std::min(rv ? current : cap, (pv ? a : cap) + (qv ? b : cap));
+                if (e.constantValue(e.substitute(answer, bindings)) != expected) {
+                    llvm::errs() << "bounded zero-edge mismatch: cap=" << cap << " current=" << current
+                        << " a=" << a << " b=" << b << " mask=" << mask << "\n";
+                    return false;
+                }
+            }
+        } } }
+    }
+    return e.error().empty();
+}
+bool checkTransaction(Value index)
+{
+    fs::RegionExpressions expressions;
+    auto x = expressions.input(index), one = expressions.constant(1);
+    auto prefix = expressions.add(x, one);
+    const auto before = expressions.size();
+    {
+        fs::RegionExpressions::Transaction outer(expressions);
+        auto two = expressions.constant(2);
+        auto suffix = expressions.add(x, two);
+        {
+            fs::RegionExpressions::Transaction nested(expressions);
+            expressions.add(suffix, two);
+            nested.commit();
+        }
+        if (expressions.div(x, expressions.constant(0)) != fs::RegionExpressions::invalid ||
+            expressions.constructionError().empty()) { return false; }
+    }
+    if (expressions.size() != before || !expressions.error().empty() ||
+        expressions.add(x, one) != prefix || expressions.size() != before) { return false; }
+    // A removed intern-table entry must be rebuilt with a currently valid ID.
+    auto two = expressions.constant(2);
+    if (two != before || expressions.size() != before + 1) { return false; }
+    auto suffix = expressions.add(x, two);
+    {
+        fs::RegionExpressions::Transaction committed(expressions);
+        expressions.add(suffix, one);
+        committed.commit();
+    }
+    const auto retained = expressions.size();
+    expressions.div(x, expressions.constant(0));
+    const auto originalError = expressions.constructionError();
+    const auto rejectedSize = expressions.size();
+    {
+        fs::RegionExpressions::Transaction rejected(expressions);
+        expressions.constant(123);
+    }
+    return retained > before + 1 && expressions.size() == rejectedSize &&
+        expressions.constructionError() == originalError && !originalError.empty();
+}
+bool checkPortProvenance(func::FuncOp function)
+{
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto& e = *arena;
+    fs::SequenceAnalysisState state(function, arena);
+    const auto zero = e.constant(0), one = e.constant(1);
+    const auto p = e.input(function.getArgument(1));
+    const auto q = e.lt(e.input(function.getArgument(0)), e.constant(5));
+    unsigned rejectedCoordinates = 0;
+    for (unsigned i = 0; i < 2; ++i) {
+        fs::Child child;
+        child.regional.expressions = arena;
+        child.regional.presence = [arena, &rejectedCoordinates](fs::RegionalEvent event)
+            -> std::optional<fs::Expr> {
+            auto ordinal = arena->constantValue(event.ordinal);
+            if (!ordinal) { ++rejectedCoordinates; return std::nullopt; }
+            return arena->boolean(*ordinal < 2);
+        };
+        child.regional.reachability = [arena, present = child.regional.presence]
+            (fs::RegionalEvent a, fs::RegionalEvent b) -> std::optional<fs::Expr> {
+            auto pa = present(a), pb = present(b);
+            if (!pa || !pb) { return std::nullopt; }
+            auto before = arena->lt(a.ordinal, b.ordinal);
+            auto same = arena->land(arena->eq(a.ordinal, b.ordinal),
+                arena->boolean(a.kind == fs::PeriodicEventKind::Start ||
+                               b.kind == fs::PeriodicEventKind::Completion));
+            return arena->land(arena->land(*pa, *pb), arena->lor(before, same));
+        };
+        state.children.push_back(std::move(child));
+    }
+    auto a = state.port(0, 0, zero), b = state.port(0, 0, one);
+    auto c = state.port(1, 0, zero), d = state.port(1, 0, one);
+    state.crossings = {{a, c, p}, {b, c, q}};
+    state.foldCrossingEndpoints(true);
+    if (state.crossings.size() != 1 || state.portChoices.size() != 1) { return false; }
+    auto source = state.crossings.front().source;
+    state.crossings = {{a, c, p}, {a, d, q}};
+    state.foldCrossingEndpoints(false);
+    if (state.crossings.size() != 1 || state.portChoices.size() != 2) { return false; }
+    auto target = state.crossings.front().target;
+    // The backend rejects every synthetic coordinate. Both folds must instead
+    // query the four original occurrences and preserve their selected presence.
+    auto first = state.eventReachability(2 * source + 1, 2 * b);
+    auto second = state.eventReachability(2 * c + 1, 2 * target);
+    if (!first || !second || rejectedCoordinates || !state.error.empty()) { return false; }
+    state.incoming[1].push_back({2 * a + 1, 2 * target, e.boolean(true)});
+    auto across = state.eventReachability(2 * a + 1, 2 * d);
+    if (!across || e.constantValue(*across) != 1 || rejectedCoordinates) { return false; }
+    for (unsigned valuation = 0; valuation < 4; ++valuation) {
+        bool pv = valuation & 1, qv = valuation & 2;
+        fs::RegionExpressions::Substitution bindings({{p, e.boolean(pv)}, {q, e.boolean(qv)}});
+        if (e.constantValue(e.substitute(*first, bindings)) != !qv ||
+            e.constantValue(e.substitute(*second, bindings)) != (qv && !pv)) { return false; }
+    }
+    const auto size = e.size();
+    if (state.eventReachability(2 * source + 1, 2 * b) != first || e.size() != size) { return false; }
+    // Imported extremum lists contain alternatives for one actual event.
+    // Normalize once, share the chosen identity across neighboring cells, and
+    // keep the original-coordinate query contract even for conditional maps.
+    std::vector<fs::Selected> alternatives{{a, p}, {b, e.lnot(p)}, {a, p}};
+    auto originalAlternatives = alternatives;
+    state.normalizeSelectorAlternatives(alternatives);
+    if (alternatives.size() != 1 || e.constantValue(alternatives.front().present) != 1) { return false; }
+    auto chosen = state.eventReachability(2 * alternatives.front().port + 1, 2 * b);
+    if (!chosen || rejectedCoordinates) { return false; }
+    for (bool enabled : {false, true}) {
+        fs::RegionExpressions::Substitution bindings({{p, e.boolean(enabled)}});
+        if (e.constantValue(e.substitute(*chosen, bindings)) != uint64_t(enabled)) { return false; }
+    }
+    const auto normalizedSize = e.size(), normalizedPorts = state.ports.size();
+    state.normalizeSelectorAlternatives(originalAlternatives);
+    return originalAlternatives.size() == 1 && originalAlternatives.front().port == alternatives.front().port &&
+        e.size() == normalizedSize && state.ports.size() == normalizedPorts &&
+        !rejectedCoordinates && e.error().empty();
+}
+bool checkRegionalNativeOrder(func::FuncOp function)
+{
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto& e = *arena;
+    const auto zero = e.constant(0), n = e.input(function.getArgument(0));
+    const auto p = e.input(function.getArgument(1)), last = e.sub(n, e.constant(1));
+    pto::CompoundInstanceElement phase(0, {}, {}, pto::PipelineType::PIPE_MTE1, function->getName());
+    fs::RegionalAnalysis region;
+    region.expressions = arena;
+    region.capabilities.exactQueries = true;
+    for (unsigned type = 0; type < 2; ++type) {
+        region.anchors.push_back({&phase, {}, {}, {}});
+        region.occurrenceLoops.push_back({});
+    }
+    region.presence = [arena, n, p](fs::RegionalEvent event) {
+        return arena->land(arena->lt(event.ordinal, n), event.type ? arena->boolean(true) : p);
+    };
+    unsigned generalQueries = 0;
+    region.reachability = [arena, &generalQueries](fs::RegionalEvent a, fs::RegionalEvent b)
+        -> std::optional<fs::Expr> {
+        ++generalQueries;
+        // This body has no C->I requirements. All other same-pipe event pairs
+        // must be answered by native order, without querying this backend.
+        if (a.kind != fs::PeriodicEventKind::Completion || b.kind != fs::PeriodicEventKind::Start) {
+            return std::nullopt;
+        }
+        return arena->boolean(false);
+    };
+    for (uint32_t sourceType : {0U, 1U}) { for (uint32_t targetType : {0U, 1U}) {
+        for (bool sourceLast : {false, true}) { for (bool targetLast : {false, true}) {
+            for (auto sourceKind : {fs::PeriodicEventKind::Start, fs::PeriodicEventKind::Completion}) {
+                for (auto targetKind : {fs::PeriodicEventKind::Start, fs::PeriodicEventKind::Completion}) {
+                    fs::RegionalEvent a{sourceType, sourceLast ? last : zero, sourceKind};
+                    fs::RegionalEvent b{targetType, targetLast ? last : zero, targetKind};
+                    auto answer = fs::regionalReachability(region, a, b);
+                    if (!answer) { return false; }
+                    if (sourceType == targetType && !sourceLast && targetLast &&
+                        !(sourceKind == fs::PeriodicEventKind::Completion &&
+                          targetKind == fs::PeriodicEventKind::Start) &&
+                        *answer != e.land(region.presence(a).value(), region.presence(b).value())) { return false; }
+                    for (uint64_t trips = 0; trips < 5; ++trips) { for (bool active : {false, true}) {
+                        const uint64_t sa = sourceLast ? trips - 1 : 0, tb = targetLast ? trips - 1 : 0;
+                        const bool present = trips && (sourceType || active) && (targetType || active);
+                        const bool order = sa < tb || (sa == tb && sourceType <= targetType);
+                        const bool expected = present && order &&
+                            !(sourceKind == fs::PeriodicEventKind::Completion &&
+                          targetKind == fs::PeriodicEventKind::Start);
+                        fs::RegionExpressions::Substitution bindings({{n, e.constant(trips)}, {p, e.boolean(active)}});
+                        if (e.constantValue(e.substitute(*answer, bindings)) != expected) { return false; }
+                    } }
+                }
+            }
+        } }
+    } }
+    return generalQueries && e.error().empty();
+}
+bool checkCrossChildNative(func::FuncOp function)
+{
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto& e = *arena;
+    fs::SequenceAnalysisState state(function, arena);
+    const auto zero = e.constant(0), p = e.input(function.getArgument(1));
+    const auto q = e.lt(e.input(function.getArgument(0)), e.constant(5));
+    pto::CompoundInstanceElement phase(0, {}, {}, pto::PipelineType::PIPE_MTE1, function->getName());
+    unsigned queried = 0;
+    for (auto presence : {p, q}) {
+        fs::Child child;
+        child.regional.expressions = arena;
+        child.anchors.push_back({&phase, {}, {}, {}});
+        child.regional.anchors = child.anchors;
+        child.regional.occurrenceLoops.push_back({});
+        child.regional.presence = [presence](fs::RegionalEvent) { return presence; };
+        child.regional.reachability = [arena, presence, &queried](fs::RegionalEvent a, fs::RegionalEvent b) {
+            ++queried;
+            return arena->land(presence, arena->boolean(a.kind == fs::PeriodicEventKind::Start ||
+                                                       b.kind == fs::PeriodicEventKind::Completion));
+        };
+        state.children.push_back(std::move(child));
+    }
+    const auto a = state.port(0, 0, zero), b = state.port(1, 0, zero);
+    SmallVector<fs::Expr> answers;
+    for (auto [x, y] : {std::pair<unsigned, unsigned>{0, 0}, {0, 1}, {1, 1}}) {
+        auto answer = state.eventReachability(2 * a + x, 2 * b + y);
+        if (!answer) { return false; }
+        answers.push_back(*answer);
+    }
+    if (queried) { return false; }
+    auto absentCompletionRequirement = state.eventReachability(2 * a + 1, 2 * b);
+    auto backward = state.eventReachability(2 * b, 2 * a + 1);
+    if (!absentCompletionRequirement || e.constantValue(*absentCompletionRequirement) != 0 ||
+        !backward || e.constantValue(*backward) != 0) { return false; }
+    state.incoming[1].push_back({2 * a + 1, 2 * b, e.boolean(true)});
+    state.reachabilityCache.clear();
+    auto completionRequirement = state.eventReachability(2 * a + 1, 2 * b);
+    if (!completionRequirement || !queried) { return false; }
+    answers.push_back(*completionRequirement);
+    for (unsigned valuation = 0; valuation < 4; ++valuation) {
+        const bool pv = valuation & 1, qv = valuation & 2;
+        fs::RegionExpressions::Substitution bindings({{p, e.boolean(pv)}, {q, e.boolean(qv)}});
+        for (auto answer : answers) {
+            if (e.constantValue(e.substitute(answer, bindings)) != (pv && qv)) { return false; }
+        }
+    }
+    return e.error().empty();
+}
+bool checkIncompatibleCrossings(func::FuncOp function)
+{
+    for (bool exclusive : {false, true}) {
+        auto arena = std::make_shared<fs::RegionExpressions>();
+        auto& e = *arena;
+        fs::SequenceAnalysisState state(function, arena);
+        const auto zero = e.constant(0), p = e.input(function.getArgument(1));
+        const auto q = e.lt(e.input(function.getArgument(0)), e.constant(5));
+        const auto other = exclusive ? e.lnot(p) : q;
+        std::vector<pto::CompoundInstanceElement> phases;
+        for (auto pipe : {pto::PipelineType::PIPE_MTE1, pto::PipelineType::PIPE_MTE2,
+                          pto::PipelineType::PIPE_M, pto::PipelineType::PIPE_V}) {
+            phases.emplace_back(phases.size(), SmallVector<const pto::BaseMemInfo*>{},
+                SmallVector<const pto::BaseMemInfo*>{}, pipe, function->getName());
+        }
+        unsigned queried = 0;
+        for (unsigned childId = 0; childId < 2; ++childId) {
+            fs::Child child;
+            child.regional.expressions = arena;
+            for (unsigned type = 0; type < 2; ++type) {
+                child.anchors.push_back({&phases[2 * childId + type], {}, {}, {}});
+                child.regional.anchors.push_back(child.anchors.back());
+                child.regional.occurrenceLoops.push_back({});
+            }
+            child.regional.presence = [arena](fs::RegionalEvent) { return arena->boolean(true); };
+            child.regional.reachability = [arena, &queried](fs::RegionalEvent a, fs::RegionalEvent b)
+                -> std::optional<fs::Expr> {
+                ++queried;
+                return arena->boolean(a.type < b.type || (a.type == b.type &&
+                    (a.kind == fs::PeriodicEventKind::Start || b.kind == fs::PeriodicEventKind::Completion)));
+            };
+            state.children.push_back(std::move(child));
+        }
+        state.nativeFirst.resize(2); state.nativeLast.resize(2);
+        const auto a = state.port(0, 0, zero), b = state.port(0, 1, zero);
+        const auto c = state.port(1, 0, zero), d = state.port(1, 1, zero);
+        state.crossings = {{a, d, p}, {b, c, other}};
+        if (!state.closure() || state.crossings.size() != 2 || (exclusive && queried)) { return false; }
+        if (!exclusive && !queried) { return false; }
+        // a->d has an alternative exactly when b->c is active. Disjoint
+        // guards must avoid backend queries; overlapping guards must still
+        // delete the redundant demand under their shared valuation.
+        for (unsigned valuation = 0; valuation < 4; ++valuation) {
+            const bool pv = valuation & 1, qv = valuation & 2;
+            fs::RegionExpressions::Substitution bindings({{p, e.boolean(pv)}, {q, e.boolean(qv)}});
+            const bool ov = exclusive ? !pv : qv;
+            if (e.constantValue(e.substitute(state.crossings[0].guard, bindings)) != (pv && !ov) ||
+                e.constantValue(e.substitute(state.crossings[1].guard, bindings)) != ov) { return false; }
+        }
+    }
+    return true;
+}
+bool checkConsolidatedCandidateExclusion(func::FuncOp function)
+{
+    for (bool nativeMiddle : {false, true}) {
+        auto arena = std::make_shared<fs::RegionExpressions>();
+        auto& e = *arena;
+        fs::SequenceAnalysisState state(function, arena);
+        const auto zero = e.constant(0), x = e.input(function.getArgument(0));
+        SmallVector<fs::Expr> guards{e.input(function.getArgument(1))};
+        for (uint64_t divisor : {uint64_t(1), uint64_t(2), uint64_t(4)}) {
+            guards.push_back(e.eq(e.rem(e.div(x, e.constant(divisor)), e.constant(2)), e.constant(1)));
+        }
+        pto::CompoundInstanceElement source(0, {}, {}, pto::PipelineType::PIPE_MTE1, function->getName());
+        pto::CompoundInstanceElement target(1, {}, {}, pto::PipelineType::PIPE_V, function->getName());
+        for (auto* phase : {&source, &target}) {
+            fs::Child child;
+            child.regional.expressions = arena;
+            for (unsigned type = 0; type < 2; ++type) {
+                child.anchors.push_back({phase, {}, {}, {}});
+                child.regional.anchors.push_back(child.anchors.back());
+                child.regional.occurrenceLoops.push_back({});
+            }
+            child.regional.presence = [arena](fs::RegionalEvent) { return arena->boolean(true); };
+            child.regional.reachability = [arena](fs::RegionalEvent a, fs::RegionalEvent b) {
+                const bool same = a.type == b.type && (a.kind == fs::PeriodicEventKind::Start ||
+                                                     b.kind == fs::PeriodicEventKind::Completion);
+                const bool forward = a.type < b.type && !(a.kind == fs::PeriodicEventKind::Completion &&
+                                                          b.kind == fs::PeriodicEventKind::Start);
+                return arena->boolean(same || forward);
+            };
+            state.children.push_back(std::move(child));
+        }
+        state.nativeFirst.resize(2); state.nativeLast.resize(2);
+        const auto a = state.port(0, 0, zero), b = state.port(0, 1, zero);
+        const auto c = state.port(1, 0, zero), d = state.port(1, 1, zero);
+        const std::array<std::pair<uint32_t, uint32_t>, 4> endpoints{{{a,c}, {b,c}, {a,d}, {b,d}}};
+        for (unsigned i = 0; i < endpoints.size(); ++i) {
+            auto [s, t] = endpoints[i];
+            if (nativeMiddle && i == 1) { state.nativeValueCrossings.push_back({s, t, guards[i]}); }
+            else { state.crossings.push_back({s, t, guards[i]}); }
+        }
+        if (!state.closure()) { return false; }
+        // Independent occurrence graph: two native chains and four guarded
+        // crossings. Removing each candidate and recomputing closure decides
+        // whether it is indispensable, without using consolidation rules.
+        for (unsigned mask = 0; mask < 16; ++mask) {
+            SmallVector<std::pair<fs::Expr, fs::Expr>> bindings;
+            for (unsigned i = 0; i < guards.size(); ++i) {
+                bindings.push_back({guards[i], e.boolean(mask & (1U << i))});
+            }
+            fs::RegionExpressions::Substitution valuation(bindings);
+            for (const auto& edge : state.crossings) {
+                std::array<std::array<bool, 8>, 8> graph{};
+                for (unsigned i = 0; i < 4; ++i) { graph[2*i][2*i+1] = true; }
+                for (unsigned start : {0U, 4U}) {
+                    graph[start][start+2] = graph[start+1][start+3] = true;
+                }
+                bool active = false;
+                for (unsigned i = 0; i < endpoints.size(); ++i) {
+                    const auto [s, t] = endpoints[i];
+                    if (s == edge.source && t == edge.target) { active = mask & (1U << i); }
+                    else if (mask & (1U << i)) { graph[2*s+1][2*t] = true; }
+                }
+                for (unsigned k = 0; k < 8; ++k) { for (unsigned i = 0; i < 8; ++i) {
+                    for (unsigned j = 0; j < 8; ++j) { graph[i][j] |= graph[i][k] && graph[k][j]; }
+                } }
+                const bool expected = active && !graph[2*edge.source+1][2*edge.target];
+                if (e.constantValue(e.substitute(edge.guard, valuation)) != expected) {
+                    llvm::errs() << "consolidated crossing mismatch: native=" << nativeMiddle
+                        << " mask=" << mask << " source=" << edge.source << " target=" << edge.target << "\n";
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
 }
 bool checkSubstitution(Value index, Value predicate)
 {
@@ -323,8 +813,8 @@ bool checkImplicationTruthTables(Value index, Value predicate)
 {
     fs::RegionExpressions expressions;
     const auto p = expressions.input(predicate), x = expressions.input(index);
-    const auto q = expressions.lt(x, expressions.constant(5));
-    const auto r = expressions.lt(x, expressions.constant(6));
+    const auto q = expressions.eq(x, expressions.constant(5));
+    const auto r = expressions.eq(x, expressions.constant(6));
     using Formula = std::pair<fs::RegionExpressions::Id, unsigned>;
     // Eight valuations of three abstract atoms. Arithmetic correlations are
     // deliberately omitted, matching the proof engine's conservative contract.
@@ -394,6 +884,17 @@ bool checkPlacementRetry(func::FuncOp function, ArrayRef<Operation*> cuts)
         !earlyMemo.empty() || !expressions.constructionError().empty() || expressions.lastEmissionError().empty()) {
         return false;
     }
+    const auto failedPlacement = expressions.lastEmissionError();
+    {
+        fs::RegionExpressions::Transaction transaction(expressions);
+        fs::PreparedLogicalPlan speculative(0);
+        auto& available = speculative.addPreparation(cuts[1]);
+        builder.setInsertionPointToEnd(&available);
+        llvm::DenseMap<fs::RegionExpressions::Id, Value> memo;
+        if (failed(expressions.emit(root, builder, cuts[1], memo)) ||
+            !expressions.lastEmissionError().empty()) { return false; }
+    }
+    if (expressions.lastEmissionError() != failedPlacement) { return false; }
     // Exact queries and new expressions remain usable after a placement failure.
     auto predicate = expressions.lt(late, root);
     if (!expressions.implies(predicate, predicate)) { return false; }
@@ -429,6 +930,16 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
     }
     const auto before = render(function);
     if (!checkAlgebra(function.getArgument(0), function.getArgument(1)) || !checkEmission(function, cuts) ||
+        !checkTransaction(function.getArgument(0)) ||
+        !checkPortProvenance(function) ||
+        !checkIncompatibleCrossings(function) ||
+        !checkRegionalNativeOrder(function) ||
+        !checkCrossChildNative(function) ||
+        !checkConsolidatedCandidateExclusion(function) ||
+        !checkDistanceAlgebra(function.getArgument(0), function.getArgument(1)) ||
+        !checkGuardedMinimum(function.getArgument(0), function.getArgument(1)) ||
+        !checkBoundedZeroEdges(function.getArgument(0), function.getArgument(1)) ||
+        !checkThresholdAlgebra(function.getArgument(0)) ||
         !checkImplicationTruthTables(function.getArgument(0), function.getArgument(1)) ||
         !checkIntegerAdapters(function.getArgument(0), function.getArgument(1)) ||
         !checkPartialIntegerAdapters(function.getArgument(0), function.getArgument(1)) ||

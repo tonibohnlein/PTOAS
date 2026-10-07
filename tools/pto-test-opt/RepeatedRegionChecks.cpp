@@ -23,11 +23,13 @@ void closure(Matrix& graph)
     }
 }
 bool check(func::FuncOp function, Operation* anchor, scf::ForOp outer, scf::ForOp inner,
-           unsigned trips, unsigned steps, unsigned mask, uint64_t& checked)
+           unsigned trips, unsigned steps, unsigned mask, uint64_t& checked, bool symbolicEnable = false)
 {
     auto arena = std::make_shared<fs::RegionExpressions>();
     auto& e = *arena;
     const auto zero = e.constant(0);
+    const auto enabled = symbolicEnable ? e.input(function.getArgument(1)) : e.boolean(true);
+    auto present = [&](bool active) { return e.land(enabled, e.boolean(active)); };
     std::vector<pto::CompoundInstanceElement> phases;
     for (auto pipe : {pto::PipelineType::PIPE_MTE1, pto::PipelineType::PIPE_M, pto::PipelineType::PIPE_V}) {
         phases.emplace_back(phases.size(), SmallVector<const pto::BaseMemInfo*>{},
@@ -40,7 +42,7 @@ bool check(func::FuncOp function, Operation* anchor, scf::ForOp outer, scf::ForO
         body.anchors.push_back({&phases[t], {}, {anchor->getBlock(), anchor},
                                 {anchor->getBlock(), anchor->getNextNode()}});
         body.occurrenceLoops.push_back({});
-        fs::RegionalSelector selected{{uint32_t(t), zero, fs::PeriodicEventKind::Start}, e.boolean(mask & (1U << t))};
+        fs::RegionalSelector selected{{uint32_t(t), zero, fs::PeriodicEventKind::Start}, present(mask & (1U << t))};
         body.firstPayloads[t].push_back(selected); body.lastPayloads[t].push_back(selected);
     }
     Matrix local(6, std::vector<bool>(6));
@@ -49,9 +51,10 @@ bool check(func::FuncOp function, Operation* anchor, scf::ForOp outer, scf::ForO
         local[2*t][2*t] = local[2*t+1][2*t+1] = local[2*t][2*t+1] = true;
     }
     local[1][2] = (mask & 3) == 3; closure(local);
-    body.presence = [arena, zero, mask](fs::RegionalEvent a) -> std::optional<fs::RegionExpressions::Id> {
+    body.presence = [arena, zero, mask, enabled](fs::RegionalEvent a) -> std::optional<fs::RegionExpressions::Id> {
         if (a.type >= 3 || !a.visits.empty()) { return std::nullopt; }
-        return arena->land(arena->boolean(mask & (1U << a.type)), arena->eq(a.ordinal, zero));
+        return arena->land(enabled,
+            arena->land(arena->boolean(mask & (1U << a.type)), arena->eq(a.ordinal, zero)));
     };
     body.reachability = [arena, local, present = body.presence](fs::RegionalEvent a, fs::RegionalEvent b)
         -> std::optional<fs::RegionExpressions::Id> {
@@ -63,10 +66,10 @@ bool check(func::FuncOp function, Operation* anchor, scf::ForOp outer, scf::ForO
     };
     fs::RegionalStorageBoundary cell;
     cell.cell = {pto::AddressSpace::LEFT, 0, 8};
-    cell.firstWriters.push_back({{0, zero, fs::PeriodicEventKind::Start}, e.boolean(mask & 1)});
+    cell.firstWriters.push_back({{0, zero, fs::PeriodicEventKind::Start}, present(mask & 1)});
     cell.lastWriters = cell.firstWriters;
-    cell.lastReaders[1].push_back({{1, zero, fs::PeriodicEventKind::Start}, e.boolean(mask & 2)});
-    cell.firstReaders[1].push_back({{1, zero, fs::PeriodicEventKind::Start}, e.boolean((mask & 3) == 2)});
+    cell.lastReaders[1].push_back({{1, zero, fs::PeriodicEventKind::Start}, present(mask & 2)});
+    cell.firstReaders[1].push_back({{1, zero, fs::PeriodicEventKind::Start}, present((mask & 3) == 2)});
     body.storageBoundary.push_back(cell);
     auto once = fs::repeatInvariantRegion(function, inner, body, e.constant(steps));
     if (!once.error.empty()) { llvm::errs() << once.error << "\n"; return false; }
@@ -89,10 +92,18 @@ bool check(func::FuncOp function, Operation* anchor, scf::ForOp outer, scf::ForO
         return fs::RegionalEvent{occurrence % 3, zero, vertex % 2 ? fs::PeriodicEventKind::Completion :
             fs::PeriodicEventKind::Start, {e.constant(visit / steps), e.constant(visit % steps)}};
     };
+    // Construct the symbolic repeated graph once, then compare both enable
+    // valuations with the independently unfolded concrete graph. Factoring
+    // the common enable must not make an inactive across-visit path reachable.
+    fs::RegionExpressions::Substitution active({{enabled, e.boolean(true)}});
+    fs::RegionExpressions::Substitution inactive({{enabled, e.boolean(false)}});
     for (unsigned i = 0; i < 2*count; ++i) {
         for (unsigned j = 0; j < 2*count; ++j) {
             auto got = fs::regionalReachability(twice.regional, event(i), event(j));
-            if (!got || e.constantValue(*got) != uint64_t(graph[i][j])) {
+            if (!got) { return false; }
+            auto concrete = symbolicEnable ? e.substitute(*got, active) : *got;
+            if (e.constantValue(concrete) != uint64_t(graph[i][j]) ||
+                (symbolicEnable && e.constantValue(e.substitute(*got, inactive)) != 0)) {
                 llvm::errs() << "repeat mismatch " << trips << "," << steps << ":" << i << "," << j << "\n";
                 return false;
             }
@@ -118,6 +129,9 @@ bool runRepeatedRegionChecks(func::FuncOp function)
             if (!check(function, anchor, outer, inner, t, k, mask, checked)) { return false; }
         } }
     }
+    if (function.getNumArguments() < 2 || !function.getArgument(1).getType().isInteger(1) ||
+        !check(function, anchor, outer, inner, 2, 3, 7, checked, true) ||
+        !check(function, anchor, outer, inner, 2, 3, 3, checked, true)) { return false; }
     llvm::outs() << "repeated region checked " << checked << " event pairs\n";
     return true;
 }

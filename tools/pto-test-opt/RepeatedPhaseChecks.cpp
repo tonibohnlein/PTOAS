@@ -29,22 +29,25 @@ unsigned mask(unsigned phase, unsigned profile)
     return profile == 3 ? 0 : 3;
 }
 bool selected(fs::RegionExpressions& e, const std::vector<fs::RegionalSelector>& values,
-              unsigned q, std::optional<unsigned> expected)
+              unsigned q, std::optional<unsigned> expected,
+              fs::RegionExpressions::Substitution* bindings = nullptr)
 {
     std::optional<unsigned> found;
     for (const auto& value : values) {
-        auto enabled = e.constantValue(value.present);
+        auto enabled = e.constantValue(bindings ? e.substitute(value.present, *bindings) : value.present);
         if (!enabled || *enabled > 1) { return false; }
         if (!*enabled) { continue; }
         if (found || value.event.visits.size() != 1) { return false; }
-        auto n = e.constantValue(value.event.visits.front());
+        auto coordinate = value.event.visits.front();
+        auto n = e.constantValue(bindings ? e.substitute(coordinate, *bindings) : coordinate);
         if (!n) { return false; }
         found = 2 * (*n * q + value.event.type / 2) + value.event.type % 2;
     }
     return found == expected;
 }
 bool check(func::FuncOp function, Operation* anchor, scf::ForOp loop,
-           unsigned q, unsigned trips, unsigned profile, uint64_t& checked)
+           unsigned q, unsigned trips, unsigned begin, unsigned profile, uint64_t& checked,
+           bool singleton = false, bool symbolicTail = false)
 {
     auto arena = std::make_shared<fs::RegionExpressions>();
     auto& e = *arena;
@@ -67,6 +70,7 @@ bool check(func::FuncOp function, Operation* anchor, scf::ForOp loop,
             fs::RegionalSelector selector{{type, zero, fs::PeriodicEventKind::Start}, e.boolean(active & (1U << type))};
             auto pipe = static_cast<uint32_t>(payloads[type].kPipeValue);
             view.firstPayloads[pipe].push_back(selector); view.lastPayloads[pipe].push_back(selector);
+            view.firstSitePayloads[type].push_back(selector);
         }
         view.presence = [arena, active, zero](fs::RegionalEvent event) -> std::optional<fs::RegionExpressions::Id> {
             if (event.type >= 2 || !event.visits.empty()) { return std::nullopt; }
@@ -90,11 +94,18 @@ bool check(func::FuncOp function, Operation* anchor, scf::ForOp loop,
         view.storageBoundary.push_back(cell);
         phases.push_back(std::move(view));
     }
-    auto repeated = fs::repeatPhasedRegions(function, loop, std::move(phases), e.constant(trips));
+    auto endExpression = symbolicTail ? e.input(loop.getInductionVar()) : e.constant(trips);
+    auto beginExpression = symbolicTail ? e.select(e.lt(endExpression, e.constant(1)), zero,
+        e.sub(endExpression, e.constant(1))) : e.constant(begin);
+    fs::RegionExpressions::Substitution bindings({{endExpression, e.constant(trips)}});
+    auto repeated = fs::repeatPhasedRegions(function, loop, std::move(phases), endExpression, {}, beginExpression,
+        singleton ? std::optional<uint64_t>(1) : std::nullopt);
     if (!repeated.error.empty()) { llvm::errs() << repeated.error << "\n"; return false; }
     if (repeated.regional.capabilities.endpointRecipes || repeated.regional.prepare ||
         repeated.regional.prepareWithVisits) { return false; }
-    auto active = [&](unsigned occurrence) { return mask((occurrence / 2) % q, profile) & (1U << (occurrence % 2)); };
+    auto active = [&](unsigned occurrence) {
+        return occurrence / 2 >= begin && (mask((occurrence / 2) % q, profile) & (1U << (occurrence % 2)));
+    };
     const unsigned count = 2 * trips;
     Matrix graph(2 * count, std::vector<bool>(2 * count));
     for (unsigned i = 0; i < count; ++i) {
@@ -115,9 +126,9 @@ bool check(func::FuncOp function, Operation* anchor, scf::ForOp loop,
     for (unsigned i = 0; i < 2*count; ++i) {
         for (unsigned j = 0; j < 2*count; ++j) {
             auto value = fs::regionalReachability(repeated.regional, event(i), event(j));
-            if (!value || e.constantValue(*value) != uint64_t(graph[i][j])) {
+            if (!value || e.constantValue(e.substitute(*value, bindings)) != uint64_t(graph[i][j])) {
                 llvm::errs() << "phase mismatch q=" << q << " T="
-                             << trips << " profile=" << profile << " " << i << "," << j << "\n";
+                             << trips << " begin=" << begin << " profile=" << profile << " " << i << "," << j << "\n";
                 return false;
             }
             ++checked;
@@ -140,13 +151,21 @@ bool check(func::FuncOp function, Operation* anchor, scf::ForOp loop,
             auto found = table.find(pipe);
             return found == table.end() ? std::vector<fs::RegionalSelector>{} : found->second;
         };
-        if (!selected(e, cell.firstWriters, q, firstWriter) || !selected(e, cell.lastWriters, q, lastWriter) ||
-            !selected(e, readers(cell.firstReaders), q, firstReader) ||
-            !selected(e, readers(cell.lastReaders), q, lastReader)) {
+        if (!selected(e, cell.firstWriters, q, firstWriter, &bindings) ||
+            !selected(e, cell.lastWriters, q, lastWriter, &bindings) ||
+            !selected(e, readers(cell.firstReaders), q, firstReader, &bindings) ||
+            !selected(e, readers(cell.lastReaders), q, lastReader, &bindings)) {
             llvm::errs() << "phase selector mismatch q=" << q << " T="
-                             << trips << " profile=" << profile << "\n";
+                             << trips << " begin=" << begin << " profile=" << profile << "\n";
             return false;
         }
+    }
+    for (unsigned type = 0; type < 2*q; ++type) {
+        std::optional<unsigned> expected;
+        for (unsigned i = 0; i < count; ++i) {
+            if (active(i) && 2*((i/2)%q)+i%2 == type) { expected = i; break; }
+        }
+        if (!selected(e, repeated.regional.firstSitePayloads.at(type), q, expected, &bindings)) { return false; }
     }
     return e.constructionError().empty();
 }
@@ -161,7 +180,15 @@ bool runRepeatedPhaseChecks(func::FuncOp function)
     for (unsigned q : {2U, 3U}) {
         for (unsigned trips : std::set<unsigned>{0, 1, q-1, q, q+1}) {
             for (unsigned profile = 0; profile < 4; ++profile) {
-                if (!check(function, anchor, loop, q, trips, profile, checked)) { return false; }
+                const auto begin = trips ? trips - 1 : 0;
+                if (!check(function, anchor, loop, q, trips, begin, profile, checked, true, true)) { return false; }
+            }
+            for (unsigned begin = 0; begin <= trips+1; ++begin) {
+                for (unsigned profile = 0; profile < 4; ++profile) {
+                    if (!check(function, anchor, loop, q, trips, begin, profile, checked)) { return false; }
+                    const auto end = std::min(begin + 1, trips);
+                    if (!check(function, anchor, loop, q, end, begin, profile, checked, true)) { return false; }
+                }
             }
         }
     }

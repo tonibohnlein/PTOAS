@@ -35,6 +35,18 @@ std::optional<RegionExpressions::Id> regionalReachability(
     if (!validRegionalEvent(region, source) || !validRegionalEvent(region, target) || !region.reachability) {
         return std::nullopt;
     }
+    // A completion can reach a payload start only at a later reference
+    // occurrence. Discharge absent or backward endpoints before asking a
+    // compact child to construct its full reachability circuit.
+    if (region.capabilities.exactQueries) {
+        auto ps = regionalPresence(region, source), pt = regionalPresence(region, target);
+        auto& e = *region.expressions;
+        if (ps && pt && e.constantValue(e.land(*ps, *pt)) == 0) { return e.boolean(false); }
+        if (source.kind == PeriodicEventKind::Completion && target.kind == PeriodicEventKind::Start) {
+            auto before = regionalReferenceBefore(region, source, target);
+            if (before && e.constantValue(*before) == 0) { return e.boolean(false); }
+        }
+    }
     // Ordered starts/completions and forward-only modeled demands already
     // decide these native event-kind pairs. C->S still needs the full query.
     if (region.capabilities.exactQueries && source.type < region.anchors.size() &&
@@ -42,18 +54,16 @@ std::optional<RegionExpressions::Id> regionalReachability(
         region.anchors[source.type].phase && region.anchors[target.type].phase &&
         region.anchors[source.type].phase->kPipeValue == region.anchors[target.type].phase->kPipeValue &&
         !(source.kind == PeriodicEventKind::Completion && target.kind == PeriodicEventKind::Start)) {
-        auto before = regionalReferenceBefore(region, source, target);
+        auto reverse = regionalReferenceBefore(region, target, source);
         auto ps = regionalPresence(region, source), pt = regionalPresence(region, target);
-        if (before && ps && pt) {
+        if (reverse && ps && pt) {
+            // Present occurrences have a total reference order. Non-strict
+            // forward order is therefore the absence of strict reverse order;
+            // this includes equal occurrences for S->S, C->C and S->C. Keeping
+            // it as one comparison also recognizes a first occurrence before
+            // any symbolic later ordinal without a separate equality circuit.
             auto& e = *region.expressions;
-            auto identical = e.boolean(source.type == target.type && source.visits.size() == target.visits.size());
-            identical = e.land(identical, e.eq(source.ordinal, target.ordinal));
-            if (source.visits.size() == target.visits.size()) {
-                for (std::size_t coordinate = 0; coordinate < source.visits.size(); ++coordinate) {
-                    identical = e.land(identical, e.eq(source.visits[coordinate], target.visits[coordinate]));
-                }
-            }
-            return e.land(e.land(*ps, *pt), e.lor(*before, identical));
+            return e.land(e.land(*ps, *pt), e.lnot(*reverse));
         }
     }
     return region.reachability(std::move(source), std::move(target));

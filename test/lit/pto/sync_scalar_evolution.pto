@@ -20,6 +20,7 @@
 // CHECK: scalar-evolution bounded_clamps: 4 passed
 // CHECK: scalar-evolution unsafe_clamps: 2 passed
 // CHECK: scalar-evolution inferred_operation_range: 2 passed
+// CHECK: scalar-evolution loaded_integer_bound: 3 passed
 module {
   func.func @carried_reset(%n: index) attributes {test.no_region} {
     %c0 = arith.constant 0 : index
@@ -157,4 +158,22 @@ module {
     %unsafe = arith.addi %id, %huge {test.scalar_opaque} : i64
     return
   }
+  // The source type bounds a load even without value or metadata-order facts.
+  func.func @loaded_integer_bound(%metadata: !pto.ptr<i32, gm>) attributes {test.no_region} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %four = arith.constant 4 : index
+    %loaded = pto.load %metadata[%zero] {test.scalar_input} : !pto.ptr<i32, gm> -> i32
+    %upper = arith.index_cast %loaded {test.scalar_external_input,
+      test.scalar_samples = array<i64: -2147483648,-2147483648, -1,-1, 0,0, 2147483647,2147483647>} : i32 to index
+    scf.for %i = %zero to %upper step %one {
+      %scaled = arith.muli %i, %four {
+        test.scalar_samples = array<i64: 0,0, 1,4, 2147483646,8589934584>} : index
+    }
+    // Truncation still wraps. Having a range does not justify substituting
+    // the original load through a value-changing cast.
+    %narrow = arith.trunci %loaded {test.scalar_opaque} : i32 to i8
+    return
+  }
+
 }

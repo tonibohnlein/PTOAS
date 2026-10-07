@@ -205,7 +205,7 @@ void clearExports(ArithmeticProgram& output)
 } // namespace
 ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, const PhaseIndex& index,
                                              const SyncInput& input, const SyncStorageEffects& effects,
-                                             const ArithmeticLimits& limits)
+                                             const ArithmeticLimits& limits, ArithmeticEntryConstant entryConstant)
 {
     ArithmeticProgram output;
     output.context = region;
@@ -232,11 +232,26 @@ ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, con
         output.extraction.note(RecognitionIssue::ArithmeticDimension, function, true);
         return output;
     }
-    detail::ProgramBuilder builder{output, limits, function.getContext(), index, DenseMap<Value, unsigned>()};
+    detail::ProgramBuilder builder{output, limits, function.getContext(), index, DenseMap<Value, unsigned>(),
+                                   std::move(entryConstant)};
     collect(index, builder);
     if (output.extraction.state != RecognitionState::Applicable) {
         clearExports(output);
         return output;
+    }
+    // An independent read cannot generate a requirement under any regional
+    // re-entry. Apply the shared whole-input proof to every regional root,
+    // including conditional/explicit phase siblings. Keep the effect identity
+    // as a deferred export; consumers need not invent a symbolic byte domain
+    // solely for an access that has no possible writer in the supplied input.
+    if (region.root != function.getOperation()) {
+        for (const auto& site : output.sites) {
+            for (auto id : effects.effectsFor(site.phase)) {
+                if (detail::dischargeGlobalReadOnlyEffect(id, effects)) {
+                    output.extraction.dischargedEffects.push_back(id);
+                }
+            }
+        }
     }
     // Reuse the same whole-input GM discharge as rotating extraction. Only
     // a single visit of the root loop is covered here: nested writer loops
@@ -246,7 +261,8 @@ ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, con
         for (const auto& site : output.sites) {
             if (site.loops.size() != 1 || site.loops.front() != loop) { continue; }
             for (auto id : effects.effectsFor(site.phase)) {
-                if (detail::dischargeGlobalEffect(id, loop, input, index)) {
+                if (!llvm::is_contained(output.extraction.dischargedEffects, id) &&
+                    detail::dischargeGlobalEffect(id, loop, input, index)) {
                     output.extraction.dischargedEffects.push_back(id);
                 }
             }

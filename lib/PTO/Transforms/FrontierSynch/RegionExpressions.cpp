@@ -16,6 +16,21 @@
 #include "llvm/ADT/STLExtras.h"
 #include <algorithm>
 namespace mlir::pto::frontiersynch {
+RegionExpressions::Transaction::Transaction(RegionExpressions& arena)
+    : arena(arena), count(arena.nodes.size()), constructionMessage(arena.constructionMessage),
+      emissionMessage(arena.emissionMessage) {}
+RegionExpressions::Transaction::~Transaction()
+{
+    if (committed) { return; }
+    while (arena.nodes.size() > count) {
+        arena.interned.erase(arena.nodes.back());
+        arena.nodes.pop_back();
+    }
+    arena.constructionMessage = std::move(constructionMessage);
+    arena.emissionMessage = std::move(emissionMessage);
+    // Forbidden recomputation is monotone source safety information. Keep it,
+    // together with dominance of the unchanged original IR, across attempts.
+}
 bool RegionExpressions::Node::operator==(const Node& other) const
 {
     return kind == other.kind && boolean == other.boolean && a == other.a && b == other.b &&
@@ -112,11 +127,12 @@ bool RegionExpressions::isBoolean(Id expression) const
 {
     return valid(expression) && nodes[expression].boolean;
 }
-RegionExpressions::Truth RegionExpressions::evaluateBoolean(const Node& node, ArrayRef<Truth> values) const
+RegionExpressions::Truth RegionExpressions::evaluateBoolean(
+    const Node& node, const llvm::DenseMap<Id, Truth>& values) const
 {
     auto known = [](bool value) { return value ? Truth::True : Truth::False; };
-    Truth a = node.a == invalid ? Truth::Unknown : values[node.a];
-    Truth b = node.b == invalid ? Truth::Unknown : values[node.b];
+    Truth a = node.a == invalid ? Truth::Unknown : values.lookup(node.a);
+    Truth b = node.b == invalid ? Truth::Unknown : values.lookup(node.b);
     switch (node.kind) {
         case Kind::Constant: return known(node.literal != 0);
         case Kind::Not: return a == Truth::Unknown ? a : known(a == Truth::False);
@@ -129,7 +145,7 @@ RegionExpressions::Truth RegionExpressions::evaluateBoolean(const Node& node, Ar
         case Kind::Eq:
             return a != Truth::Unknown && b != Truth::Unknown ? known(a == b) : Truth::Unknown;
         case Kind::Select: {
-            Truth c = values[node.c];
+            Truth c = values.lookup(node.c);
             if (a != Truth::Unknown) { return a == Truth::True ? b : c; }
             return b == c ? b : Truth::Unknown;
         }
@@ -141,16 +157,15 @@ bool RegionExpressions::refutesNegation(Id premise, Id consequence) const
     // These bindings are necessary if premise AND NOT consequence holds.
     // Propagate only forced facts, never choose a Boolean valuation. Keeping
     // comparisons as independent atoms enlarges the possible valuation set.
-    const auto count = static_cast<std::size_t>(std::max(premise, consequence)) + 1;
-    SmallVector<Truth> bindings(count, Truth::Unknown);
+    llvm::DenseMap<Id, Truth> bindings;
     SmallVector<std::pair<Id, Truth>> pending{{premise, Truth::True}, {consequence, Truth::False}};
     while (!pending.empty()) {
         const auto [id, required] = pending.pop_back_val();
-        if (bindings[id] != Truth::Unknown) {
-            if (bindings[id] != required) { return true; }
+        auto [entry, added] = bindings.try_emplace(id, required);
+        if (!added) {
+            if (entry->second != required) { return true; }
             continue;
         }
-        bindings[id] = required;
         const Node& node = nodes[id];
         if (node.kind == Kind::Not) {
             pending.push_back({node.a, required == Truth::True ? Truth::False : Truth::True});
@@ -175,11 +190,26 @@ bool RegionExpressions::refutesNegation(Id premise, Id consequence) const
             }
         }
     }
-    SmallVector<Truth> values(count, Truth::Unknown);
-    for (std::size_t id = 0; id < count; ++id) {
-        if (!nodes[id].boolean) { continue; }
+    // Only Boolean ancestors of the two formulas can contribute to this
+    // proof. Other region queries share the arena but are irrelevant here.
+    // A postorder walk visits shared gates once; comparisons remain atoms.
+    SmallVector<std::pair<Id, bool>> walk{{premise, false}, {consequence, false}};
+    SmallVector<Id> order;
+    llvm::DenseSet<Id> seen;
+    while (!walk.empty()) {
+        const auto [id, expanded] = walk.pop_back_val();
+        if (expanded) { order.push_back(id); continue; }
+        if (!seen.insert(id).second) { continue; }
+        walk.push_back({id, true});
+        const auto& node = nodes[id];
+        for (Id operand : {node.a, node.b, node.c}) {
+            if (isBoolean(operand)) { walk.push_back({operand, false}); }
+        }
+    }
+    llvm::DenseMap<Id, Truth> values;
+    for (Id id : order) {
         const auto evaluated = evaluateBoolean(nodes[id], values);
-        const auto required = bindings[id];
+        const auto required = bindings.lookup(id);
         if (required != Truth::Unknown && evaluated != Truth::Unknown && required != evaluated) {
             return true;
         }
@@ -204,6 +234,36 @@ bool RegionExpressions::implies(Id premise, Id consequence) const
     }
     return true;
 }
+SmallVector<RegionExpressions::Id> RegionExpressions::commonBooleanConjuncts(ArrayRef<Id> predicates) const
+{
+    SmallVector<Id> common;
+    bool initialized = false;
+    for (Id predicate : predicates) {
+        if (!isBoolean(predicate)) { return {}; }
+        if (constantValue(predicate) == 0) { continue; }
+        llvm::DenseSet<Id> conjuncts, seen;
+        SmallVector<Id> pending{predicate};
+        while (!pending.empty()) {
+            const auto id = pending.pop_back_val();
+            if (!seen.insert(id).second) { continue; }
+            const auto& node = nodes[id];
+            if (node.kind == Kind::And) {
+                pending.push_back(node.a); pending.push_back(node.b);
+            } else if (constantValue(id) != 1) {
+                conjuncts.insert(id);
+            }
+        }
+        if (!initialized) {
+            common.assign(conjuncts.begin(), conjuncts.end());
+            initialized = true;
+        } else {
+            llvm::erase_if(common, [&](Id id) { return !conjuncts.count(id); });
+        }
+        if (common.empty()) { break; }
+    }
+    llvm::sort(common);
+    return common;
+}
 std::optional<uint64_t> RegionExpressions::fold(Kind kind, uint64_t a, uint64_t b) const
 {
     // Unsigned wrap is deliberate: these are the same bits emitted by index
@@ -225,6 +285,27 @@ std::optional<uint64_t> RegionExpressions::fold(Kind kind, uint64_t a, uint64_t 
 }
 RegionExpressions::Id RegionExpressions::absorbBoolean(Kind kind, Id a, Id b) const
 {
+    // Ordered unsigned thresholds on one expression absorb each other. The
+    // returned atom already exists; inspecting two comparison nodes is O(1).
+    struct Threshold { Id operand; uint64_t bound; bool lower; };
+    auto threshold = [&](Id id) -> std::optional<Threshold> {
+        const Node& node = nodes[id];
+        if (node.kind != Kind::Lt && node.kind != Kind::Le) { return std::nullopt; }
+        if (auto left = constantValue(node.a)) {
+            if (node.kind == Kind::Lt && *left == UINT64_MAX) { return std::nullopt; }
+            return Threshold{node.b, *left + (node.kind == Kind::Lt), true};
+        }
+        if (auto right = constantValue(node.b)) {
+            if (node.kind == Kind::Lt && *right == 0) { return std::nullopt; }
+            return Threshold{node.a, *right - (node.kind == Kind::Lt), false};
+        }
+        return std::nullopt;
+    };
+    auto left = threshold(a), right = threshold(b);
+    if (left && right && left->operand == right->operand && left->lower == right->lower) {
+        const bool chooseLarger = (kind == Kind::And) == left->lower;
+        return (chooseLarger ? left->bound >= right->bound : left->bound <= right->bound) ? a : b;
+    }
     Kind opposite = kind == Kind::And ? Kind::Or : Kind::And;
     // Inspect only immediate children: absorption and repeated-factor removal
     // add constant work per gate, regardless of the circuit's depth or sharing.
@@ -291,6 +372,15 @@ RegionExpressions::Id RegionExpressions::binary(Kind kind, Id a, Id b)
     if ((kind == Kind::Add || kind == Kind::Sub) && bv == 0) { return a; }
     if (kind == Kind::Add && av == 0) { return b; }
     if (kind == Kind::Div && bv == 1) { return a; }
+    if (kind == Kind::Div && bv && nodes[a].kind == Kind::Select) {
+        const auto choice = nodes[a];
+        const auto comparison = nodes[choice.a];
+        if (comparison.kind == Kind::Lt && comparison.a == choice.b && comparison.b == choice.c) {
+            // A literal cap below the divisor bounds both outcomes of min.
+            auto yes = constantValue(choice.b), no = constantValue(choice.c);
+            if ((yes && *yes < *bv) || (no && *no < *bv)) { return constant(0); }
+        }
+    }
     if (kind == Kind::Rem && bv == 1) { return constant(0); }
     if ((kind == Kind::Add || kind == Kind::Eq || logic) && b < a) {
         std::swap(a, b);
@@ -301,6 +391,98 @@ RegionExpressions::Id RegionExpressions::binary(Kind kind, Id a, Id b)
     node.a = a;
     node.b = b;
     return intern(node);
+}
+RegionExpressions::Id RegionExpressions::minimum(Id a, Id b)
+{
+    if (!valid(a) || !valid(b) || isBoolean(a) || isBoolean(b)) {
+        return reject("regional minimum requires index operands");
+    }
+    if (a == b) { return a; }
+    auto av = constantValue(a), bv = constantValue(b);
+    if (av && bv) { return constant(std::min(*av, *bv)); }
+    if (av == 0 || bv == 0) { return constant(0); }
+    // Clamp two literal alternatives without distributing over a general DAG.
+    for (unsigned swap = 0; swap < 2; ++swap) {
+        Id fixed = swap ? b : a, choice = swap ? a : b;
+        auto value = constantValue(fixed);
+        const Node node = nodes[choice];
+        if (!value || node.kind != Kind::Select) { continue; }
+        auto yes = constantValue(node.b), no = constantValue(node.c);
+        if (yes && no) {
+            return select(node.a, constant(std::min(*value, *yes)), constant(std::min(*value, *no)));
+        }
+    }
+    const Node left = nodes[a], right = nodes[b];
+    if (left.kind == Kind::Select && right.kind == Kind::Select && left.b == right.b && left.c == right.c) {
+        auto yes = constantValue(left.b), no = constantValue(left.c);
+        if (yes && no) {
+            auto guard = *yes < *no ? lor(left.a, right.a) : land(left.a, right.a);
+            return select(guard, left.b, left.c);
+        }
+    }
+    // With a shared literal infinity, the cheaper active edge always wins.
+    // Keep the inactive edge's choice intact instead of comparing two guarded
+    // distances. Inspect only these two nodes; do not distribute larger DAGs.
+    if (left.kind == Kind::Select && right.kind == Kind::Select && left.c == right.c) {
+        const auto x = constantValue(left.b), y = constantValue(right.b), cap = constantValue(left.c);
+        if (x && y && cap && *x <= *cap && *y <= *cap) {
+            if (*x < *y) { return select(left.a, left.b, b); }
+            if (*y < *x) { return select(right.a, right.b, a); }
+        }
+    }
+    if (b < a) { std::swap(a, b); }
+    return select(lt(a, b), a, b);
+}
+RegionExpressions::Id RegionExpressions::boundedMinPlus(Id current, Id a, Id b, uint64_t cap)
+{
+    if (!valid(current) || !valid(a) || !valid(b) || isBoolean(current) ||
+        isBoolean(a) || isBoolean(b) || cap > UINT64_MAX / 2) {
+        return reject("regional bounded sum requires bounded index operands");
+    }
+    const auto absent = constant(cap);
+    if (a == absent || b == absent) { return current; }
+    auto av = constantValue(a), bv = constantValue(b);
+    if (av && bv) {
+        if (*av > cap || *bv > cap) { return reject("regional bounded sum exceeds its operand bound"); }
+        return minimum(current, constant(std::min(*av + *bv, cap)));
+    }
+    auto zeroChoice = [&](Id value) -> std::optional<Id> {
+        if (constantValue(value) == 0) { return boolean(true); }
+        const auto node = nodes[value];
+        if (node.kind == Kind::Select && constantValue(node.b) == 0 && node.c == absent) { return node.a; }
+        return std::nullopt;
+    };
+    auto boundedMinimum = [&](Id x, Id y) {
+        // Both arguments are within [0,cap]. A disabled zero-cost edge is
+        // infinity and cannot improve the other argument. Keep its select:
+        // inactive predicates must not lose their original poison masking.
+        if (auto guard = zeroChoice(x)) { return select(*guard, constant(0), y); }
+        if (auto guard = zeroChoice(y)) { return select(*guard, constant(0), x); }
+        return minimum(x, y);
+    };
+    if (auto guard = zeroChoice(a)) { return select(*guard, boundedMinimum(current, b), current); }
+    if (auto guard = zeroChoice(b)) { return select(*guard, boundedMinimum(current, a), current); }
+    struct Choice { Id guard; uint64_t value; };
+    auto choice = [&](Id value) -> std::optional<Choice> {
+        if (auto literal = constantValue(value)) {
+            if (*literal <= cap) { return Choice{boolean(true), *literal}; }
+            return std::nullopt;
+        }
+        const Node node = nodes[value];
+        if (node.kind != Kind::Select) { return std::nullopt; }
+        auto finite = constantValue(node.b), fallback = constantValue(node.c);
+        if (finite && *finite <= cap && fallback == cap) { return Choice{node.a, *finite}; }
+        return std::nullopt;
+    };
+    auto left = choice(a), right = choice(b);
+    if (left && right) {
+        auto candidate = select(land(left->guard, right->guard),
+            constant(std::min(left->value + right->value, cap)), absent);
+        return boundedMinimum(current, candidate);
+    }
+    // current<=cap already saturates the candidate: do not build a second
+    // minimum that would duplicate work at every closure relaxation.
+    return minimum(add(a, b), current);
 }
 RegionExpressions::Id RegionExpressions::add(Id a, Id b) { return binary(Kind::Add, a, b); }
 RegionExpressions::Id RegionExpressions::sub(Id a, Id b) { return binary(Kind::Sub, a, b); }
@@ -331,6 +513,10 @@ RegionExpressions::Id RegionExpressions::select(Id condition, Id yes, Id no)
     }
     if (yes == no) { return yes; }
     if (auto value = constantValue(condition)) { return *value ? yes : no; }
+    if (isBoolean(yes)) {
+        const auto y = constantValue(yes), n = constantValue(no);
+        if (y && n) { return *y ? condition : lnot(condition); }
+    }
     // Selecting the same condition twice cannot visit the opposite inner arm.
     // Preserve the outer select so inactive poison remains masked.
     if (nodes[yes].kind == Kind::Select && nodes[yes].a == condition) { yes = nodes[yes].b; }

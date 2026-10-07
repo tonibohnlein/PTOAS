@@ -13,8 +13,14 @@ namespace mlir::pto::frontiersynch {
 // Callers certify period-invariant control/effects and internal prerequisites.
 // Each view retains original cuts. The result's first enclosing coordinate is
 // the period ordinal; the payload type identifies its static phase.
+// Optional begin restricts the original ordinal interval to [begin, trips).
+// Endpoint identities remain absolute; both ends of each handoff are filtered.
+// maximumLength, when supplied, is a caller-certified bound on the interval's
+// executed visits. A bound <=1 removes the inter-period query/recipe graph.
 RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loop,
     std::vector<RegionalAnalysis> phases, RegionExpressions::Id trips,
-    ArrayRef<scf::ForOp> enclosing = {});
+    ArrayRef<scf::ForOp> enclosing = {},
+    RegionExpressions::Id begin = RegionExpressions::invalid,
+    std::optional<uint64_t> maximumLength = std::nullopt);
 } // namespace mlir::pto::frontiersynch
 #endif

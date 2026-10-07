@@ -36,21 +36,25 @@ bool invariantScalar(Value value, scf::ForOp loop, DenseMap<Value, bool>& cache,
     return invariant;
 }
 } // namespace
-AffineExpr TemplateBuilder::scalar(Value value, SmallVectorImpl<Value>* invariants) const
+AffineExpr TemplateBuilder::scalar(Value value, SmallVectorImpl<Value>* invariants, bool control) const
 {
     // ScalarEvolution caches by Value: a fresh instance is required for each
     // coordinate environment, rather than carrying the first visit's constants.
     mlir::pto::detail::ScalarEvolution evolution(context(), output.outer);
     DenseMap<Value, bool> invariantCache;
     auto expression = evolution.value(value, [&](Value symbol) -> AffineExpr {
+        // Concrete inner occurrences always take precedence over parameter
+        // specialization. Control never sees the representative outer phase.
+        if (auto found = coordinates.find(symbol); found != coordinates.end()) {
+            return getAffineConstantExpr(found->second, context());
+        }
+        if (!control && geometryConstant) {
+            if (auto bound = geometryConstant(symbol)) { return getAffineConstantExpr(*bound, context()); }
+        }
         if (symbol == output.outer.getInductionVar()) {
             return mlir::pto::detail::checkedAdd(getAffineConstantExpr(output.lower, context()),
                 mlir::pto::detail::checkedMul(getAffineSymbolExpr(0, context()),
                                              getAffineConstantExpr(output.step, context())));
-        }
-        auto found = coordinates.find(symbol);
-        if (found != coordinates.end()) {
-            return getAffineConstantExpr(found->second, context());
         }
         if (!invariants || !invariantScalar(symbol, output.outer, invariantCache)) {
             return {};
@@ -66,7 +70,7 @@ AffineExpr TemplateBuilder::scalar(Value value, SmallVectorImpl<Value>* invarian
 }
 std::optional<int64_t> TemplateBuilder::integer(Value value) const
 {
-    auto constant = dyn_cast_or_null<AffineConstantExpr>(scalar(value));
+    auto constant = dyn_cast_or_null<AffineConstantExpr>(scalar(value, nullptr, true));
     return constant ? std::optional<int64_t>(constant.getValue()) : std::nullopt;
 }
 namespace {
@@ -77,6 +81,9 @@ std::optional<bool> buildGuard(const TemplateBuilder& builder, Value value, unsi
 {
     if (!value || depth > builder.output.limits.depth) {
         return std::nullopt;
+    }
+    if (builder.controlConstant) {
+        if (auto bound = builder.controlConstant(value)) { return bound; }
     }
     APInt constant;
     if (matchPattern(value, m_ConstantInt(&constant)) && value.getType().isInteger(1)) {
@@ -102,10 +109,10 @@ std::optional<bool> buildGuard(const TemplateBuilder& builder, Value value, unsi
         return std::nullopt;
     }
     auto a = evaluateGuard(builder, op->getOperand(0), depth + 1, cache);
+    if (a && ((isa<arith::AndIOp>(op) && !*a) || (isa<arith::OrIOp>(op) && *a))) { return a; }
     auto b = evaluateGuard(builder, op->getOperand(1), depth + 1, cache);
-    if (!a || !b) {
-        return std::nullopt;
-    }
+    if (b && ((isa<arith::AndIOp>(op) && !*b) || (isa<arith::OrIOp>(op) && *b))) { return b; }
+    if (!a || !b) { return std::nullopt; }
     return isa<arith::AndIOp>(op) ? *a && *b : (isa<arith::OrIOp>(op) ? *a || *b : *a != *b);
 }
 std::optional<bool> evaluateGuard(const TemplateBuilder& builder, Value value, unsigned depth,

@@ -55,16 +55,23 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
             return failure();
         }
         auto prepared = std::move(*supplied);
-        if (child.regional.endpointSiteGuard) {
+        if (child.regional.endpointSiteGuard || child.regional.endpointInvocationGuard) {
+            auto active = yes();
+            if (child.regional.endpointSiteGuard) { active = both(active, *child.regional.endpointSiteGuard); }
+            if (child.regional.endpointInvocationGuard) {
+                active = both(active, *child.regional.endpointInvocationGuard);
+            }
             std::map<Operation*, RegionExpressions::CutEmission> contexts;
             for (auto& endpoint : prepared->endpoints) {
                 auto& block = prepared->addPreparation(endpoint.before);
                 OpBuilder builder(function.getContext());
                 builder.setInsertionPointToEnd(&block);
-                auto predicate = expressions.emitContextual(*child.regional.endpointSiteGuard,
+                auto predicate = expressions.emitContextual(active,
                     builder, endpoint.before, contexts[endpoint.before]);
                 if (failed(predicate)) { fail("phase site predicate unavailable at original cut"); return failure(); }
-                endpoint.guard = builder.create<arith::AndIOp>(endpoint.before->getLoc(), endpoint.guard, *predicate);
+                auto no = builder.create<arith::ConstantIntOp>(endpoint.before->getLoc(), 0, 1);
+                endpoint.guard = builder.create<arith::SelectOp>(
+                    endpoint.before->getLoc(), *predicate, endpoint.guard, no);
             }
         }
         for (const auto& stage : prepared->preparation) {

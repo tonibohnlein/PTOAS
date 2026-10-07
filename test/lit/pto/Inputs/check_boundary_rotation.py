@@ -21,12 +21,13 @@ def invoke(tool, mode, path):
     return result.stdout
 
 
-def validate(document, trips, inclusive):
+def validate(document, trips, inclusive, parity=False):
     assert document["accepted"], document
     assert not document["trace"]["error"], document
     effects = [(set(), {0})]
     for i in range(max(0, trips)):
-        if i + 1 < trips or inclusive:
+        active = i % 2 == 0 if parity else (i + 1 < trips or inclusive)
+        if active:
             effects.append((set(), {(i + 1) % 2}))
         effects.append(({i % 2}, set()))
     events = document["trace"]["events"]
@@ -89,12 +90,15 @@ def main():
         path.write_text(huge)
         rejected = json.loads(invoke(tool, "--sequence-analysis", path))
         assert rejected["error"] and rejected["unchanged"], rejected
-        # Iteration-varying participation cannot silently use a periodic slice.
+        # Parity-dependent participation is outside the constant boundary-slice
+        # route, but the arithmetic route now supports it. Check its actual
+        # selected route and command closure rather than demanding rejection.
         invalid = source.replace("%more = arith.cmpi ult, %next, %n : index",
             "%odd = arith.remui %i, %two : index\n      %more = arith.cmpi eq, %odd, %zero : index")
         path.write_text(invalid)
-        rejected = json.loads(invoke(tool, "--sequence-analysis", path))
-        assert rejected["error"], rejected
+        report = json.loads(invoke(tool, "--sequence-analysis", path))
+        assert not report["error"] and report["arithmetic_regions"] == 1, report
+        validate(json.loads(invoke(tool, "--structured-trace", path)), 5, False, parity=True)
     print(f"boundary rotation: {checked} unfolded physical-order checks and compact emission passed")
 
 

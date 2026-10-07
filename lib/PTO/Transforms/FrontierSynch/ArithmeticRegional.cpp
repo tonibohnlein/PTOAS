@@ -433,18 +433,35 @@ bool finiteBoundaries(State& state, RegionalAnalysis& out)
 } // namespace
 FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
-    std::string& error)
+    std::string& error, std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding)
 {
     if (!context.function || !context.root || !expressions || !expressions->constructionError().empty()) {
         error = "arithmetic region requires a valid original root and expression arena";
         return failure();
     }
     auto state = std::make_shared<State>(); state->arena = std::move(expressions);
+    // Specialize certified entry constants before constructing relations. A
+    // large bank stride times a known phase becomes a physical constant, not
+    // an artificial variable coefficient that fails the arithmetic class.
+    // Original sites/cuts remain, and their enclosing provider enforces the
+    // phase/interval context for both queries and prepared endpoint recipes.
+    ArithmeticEntryConstant entryConstant;
+    if (parameterBinding) {
+        entryConstant = [&](Value value) -> std::optional<int64_t> {
+            auto expression = parameterBinding(value);
+            if (!expression) { return std::nullopt; }
+            auto fixed = state->arena->constantValue(*expression);
+            if (!fixed) { return std::nullopt; }
+            return APInt(64, *fixed).getSExtValue();
+        };
+    }
     // Fixed compiler input class; the bounds are not inferred from a kernel.
-    state->program = recognizeArithmeticProgram(context, index, input, input.accesses(), {8, 8, 1, 4096});
+    state->program = recognizeArithmeticProgram(
+        context, index, input, input.accesses(), {8, 8, 1, 4096}, entryConstant);
     if (state->program.extraction.state != RecognitionState::Applicable ||
         state->program.recognition.state != RecognitionState::Applicable) {
-        state->program = recognizeArithmeticProgram(context, index, input, input.accesses(), {8, 8, 2, 4096});
+        state->program = recognizeArithmeticProgram(
+            context, index, input, input.accesses(), {8, 8, 2, 4096}, entryConstant);
     }
     if (state->program.extraction.state != RecognitionState::Applicable ||
         state->program.recognition.state != RecognitionState::Applicable) {
@@ -468,7 +485,15 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext cont
     if (failed(imported)) { error = "regional arithmetic primitive import failed"; return failure(); }
     state->primitives = std::move(*imported);
     if (!collectFiniteStorage(*state)) { error = state->error; return failure(); }
-    for (Value parameter : state->program.parameters) { state->parameters.push_back(state->arena->input(parameter)); }
+    for (Value parameter : state->program.parameters) {
+        auto binding = parameterBinding ? parameterBinding(parameter) :
+            std::optional<Id>(state->arena->input(parameter));
+        if (!binding || *binding >= state->arena->size()) {
+            error = "regional arithmetic phase parameter has no exact binding";
+            return failure();
+        }
+        state->parameters.push_back(*binding);
+    }
     for (const auto& site : state->program.sites) {
         state->pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue));
     }

@@ -239,9 +239,20 @@ class RepeatedPreparation
                     auto type = publish ? crossing.target.type : crossing.source.type;
                     auto full = e().div(state.originalTrips, e().constant(state.phaseCount));
                     auto tail = e().rem(state.originalTrips, e().constant(state.phaseCount));
-                    auto exists = e().lor(e().lt(other, full), e().land(e().eq(other, full),
-                        e().lt(e().constant(state.typePhases[type]), tail)));
-                    boundary = e().land(boundary, exists);
+                    auto below = [&](Id visit, uint32_t kind) {
+                        return e().lor(e().lt(visit, full), e().land(e().eq(visit, full),
+                            e().lt(e().constant(state.typePhases[kind]), tail)));
+                    };
+                    boundary = e().land(boundary, e().land(below(other, type), below(*current, event.type)));
+                    if (state.originalBegin != RegionExpressions::invalid) {
+                        auto first = e().div(state.originalBegin, e().constant(state.phaseCount));
+                        auto head = e().rem(state.originalBegin, e().constant(state.phaseCount));
+                        auto above = [&](Id visit, uint32_t kind) {
+                            return e().lor(e().lt(first, visit), e().land(e().eq(visit, first),
+                                e().le(head, e().constant(state.typePhases[kind]))));
+                        };
+                        boundary = e().land(boundary, e().land(above(other, type), above(*current, event.type)));
+                    }
                 }
                 auto guard = at(event, e().land(crossing.guard, boundary));
                 if (!guard)
