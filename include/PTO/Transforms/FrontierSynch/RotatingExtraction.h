@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ROTATINGEXTRACTION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ROTATINGEXTRACTION_H
 #include "PTO/Transforms/FrontierSynch/PeriodicAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/LifetimeScan.h"
 namespace mlir::pto::frontiersynch {
 struct RotatingFragment {
     uint32_t payload = 0;
@@ -39,6 +40,7 @@ struct RotatingExtraction {
 // modular inverse work per family; integer costs depend on encoded bit lengths.
 // No partial result is returned on invalid input or identity overflow.
 RotatingExtraction extractRotatingGenerators(llvm::ArrayRef<PeriodicPayload> payloads,
-                                             llvm::ArrayRef<RotatingFragment> fragments);
+                                             llvm::ArrayRef<RotatingFragment> fragments,
+                                             StorageProtectionPolicy protection = {});
 } // namespace mlir::pto::frontiersynch
 #endif

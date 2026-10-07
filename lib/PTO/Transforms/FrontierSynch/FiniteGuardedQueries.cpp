@@ -29,7 +29,8 @@ void FiniteGuardedState::closeAndReduce()
             for (std::size_t b = a+1; b < uses.size(); ++b) {
                 auto [j, y] = uses[b];
                 ++cost.crossingCandidates;
-                if (!(x.write || y.write) || hardwareProtectsConflict(pipe(i), x.protectionGroup,
+                if (!(x.write || y.write) || ptoStorageProtection().protectsScalar(pipe(i), pipe(j)) ||
+                    hardwareProtectsConflict(pipe(i), x.protectionGroup,
                                                                      pipe(j), y.protectionGroup)) { continue; }
                 demands[i][j] = either(demands[i][j], both(presence[i], presence[j]));
             }

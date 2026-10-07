@@ -21,6 +21,10 @@ class SyncInput;
 class SyncStorageEffects;
 class CompoundInstanceElement;
 namespace frontiersynch {
+// Same PIPE_S storage hazards are hardware protected (RAW, WAR and WAW).
+// This is not a universal scalar completion-at-issue guarantee. Supplied
+// prerequisites and all cross-pipe hazards remain separate requirements.
+StorageProtectionPolicy ptoStorageProtection();
 inline constexpr uint64_t invocationProtectionBit = uint64_t{1} << 63;
 // An initializer publishes protected output, but never consumes protection.
 inline constexpr uint64_t protectionResetBit = uint64_t{1} << 62;

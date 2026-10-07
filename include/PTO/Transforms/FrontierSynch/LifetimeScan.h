@@ -10,9 +10,19 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_LIFETIMESCAN_H
 #include "llvm/ADT/ArrayRef.h"
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 namespace mlir::pto::frontiersynch {
+// Target-independent helpers opt in explicitly; arbitrary pipe labels carry no
+// hardware semantics. Protection discharges storage hazards, not C/I edges.
+struct StorageProtectionPolicy {
+    std::optional<uint32_t> scalarPipe;
+    bool protectsScalar(uint32_t source, uint32_t target) const
+    {
+        return scalarPipe && source == *scalarPipe && target == *scalarPipe;
+    }
+};
 struct CellAccess {
     uint32_t atom = 0;
     bool read = false;
@@ -49,6 +59,7 @@ struct StorageScanResult {
 // not an arbitrary pairwise exemption. IDs are local to one scan: remap them
 // before merging independently built inputs or repeating a dynamic scope.
 StorageScanResult scanStorageLifetimes(llvm::ArrayRef<ExplicitEffects> occurrences,
-                                      llvm::ArrayRef<StorageGenerator> prerequisites = {});
+                                      llvm::ArrayRef<StorageGenerator> prerequisites = {},
+                                      StorageProtectionPolicy protection = {});
 } // namespace mlir::pto::frontiersynch
 #endif

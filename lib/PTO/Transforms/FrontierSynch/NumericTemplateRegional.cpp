@@ -25,11 +25,16 @@ FailureOr<RegionalAnalysis> numericBodyRegionalResult(func::FuncOp function,
     analysis->occurrences = std::move(*word);
     std::vector<StorageGenerator> supplied, native;
     for (auto [a, b] : body.uniformConflicts) {
+        if (a >= analysis->occurrences.size() || b >= analysis->occurrences.size()) {
+            error = "finite body conflict has invalid payload reference"; return failure();
+        }
+        if (ptoStorageProtection().protectsScalar(analysis->occurrences[a].pipe,
+                                                  analysis->occurrences[b].pipe)) { continue; }
         if (a != b) { supplied.push_back({std::min(a, b), std::max(a, b)}); }
     }
     for (auto [a, b] : body.valueDemands) { supplied.push_back({a, b}); }
     for (auto [a, b] : body.nativePrerequisites) { native.push_back({a, b}); }
-    analysis->scan = scanStorageLifetimes(analysis->occurrences, supplied);
+    analysis->scan = scanStorageLifetimes(analysis->occurrences, supplied, ptoStorageProtection());
     if (!analysis->scan.error.empty()) { error = analysis->scan.error; return failure(); }
     analysis->reduction = reduceExplicitDemands(analysis->occurrences, analysis->scan.generators, native);
     if (!analysis->reduction.error.empty()) { error = analysis->reduction.error; return failure(); }

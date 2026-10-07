@@ -69,6 +69,8 @@ public:
         if (input.accesses().hasUniformRelationships(result.phases)) {
             for (uint32_t a = 0; a < result.phases.size(); ++a) {
                 for (uint32_t b = 0; b < result.phases.size(); ++b) {
+                    if (ptoStorageProtection().protectsScalar(result.payloads[a].pipe,
+                                                             result.payloads[b].pipe)) { continue; }
                     bool conflict = false;
                     for (auto x : input.accesses().effectsFor(result.phases[a])) {
                         for (auto y : input.accesses().effectsFor(result.phases[b])) {
@@ -359,6 +361,10 @@ private:
         auto targetActive = following ? dag().land(target.read, dag().lnot(target.write)) :
                                        dag().lor(target.read, target.write);
         for (const auto& candidate : candidates) {
+            const auto source = following ? target.payload : fragments[candidate.writer].payload;
+            const auto destination = following ? fragments[candidate.writer].payload : target.payload;
+            if (ptoStorageProtection().protectsScalar(result.payloads[source].pipe,
+                                                      result.payloads[destination].pipe)) { continue; }
             auto active = dag().land(candidate.active,
                 dag().land(targetActive, dag().land(bestPresent, dag().eq(bestId, c(candidate.writer)))));
             // A self predecessor at refresh R certifies that no compatible
@@ -370,8 +376,6 @@ private:
             if (!following && candidate.writer == targetId) {
                 active = dag().land(active, dag().lnot(selfRefreshWitness(targetId)));
             }
-            const auto source = following ? target.payload : fragments[candidate.writer].payload;
-            const auto destination = following ? fragments[candidate.writer].payload : target.payload;
             const auto& writer = fragments[candidate.writer];
             if (!following && hardwareProtectsConflict(result.payloads[source].pipe, writer.protectionGroup,
                                                        result.payloads[destination].pipe, target.protectionGroup)) {

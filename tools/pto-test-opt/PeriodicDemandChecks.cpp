@@ -127,6 +127,14 @@ llvm::json::Object dumpReduction(const fs::ExplicitReduction& reduction)
         {"columns", unsignedArray(reduction.pipeColumns)}, {"ranks", unsignedArray(reduction.localRanks)},
         {"starts", std::move(starts)}, {"completions", std::move(completions)}};
 }
+bool storagePolicy(const llvm::json::Object& input, fs::StorageProtectionPolicy& policy)
+{
+    if (!input.get("scalar_pipe")) { return true; }
+    auto pipe = number(input, "scalar_pipe");
+    if (!pipe || *pipe > UINT32_MAX) { return false; }
+    policy.scalarPipe = static_cast<uint32_t>(*pipe);
+    return true;
+}
 bool scanCase(const llvm::json::Object& input, llvm::json::Object& output)
 {
     std::vector<fs::ExplicitEffects> effects;
@@ -144,7 +152,9 @@ bool scanCase(const llvm::json::Object& input, llvm::json::Object& output)
             extra.push_back({record.source, record.target});
         }
     }
-    const auto scan = fs::scanStorageLifetimes(effects, extra);
+    fs::StorageProtectionPolicy policy;
+    if (!storagePolicy(input, policy)) { return false; }
+    const auto scan = fs::scanStorageLifetimes(effects, extra, policy);
     output = dumpScan(scan);
     if (input.getBoolean("reduce").value_or(false)) {
         auto generators = scan.generators;
@@ -331,13 +341,14 @@ bool rotatingFragments(const llvm::json::Array& array, std::vector<fs::RotatingF
     return true;
 }
 bool extractRotating(const llvm::json::Array& input, llvm::ArrayRef<fs::PeriodicPayload> payloads,
-                     std::vector<fs::PeriodicRecord>& generators, llvm::json::Object& output)
+                     std::vector<fs::PeriodicRecord>& generators, llvm::json::Object& output,
+                     fs::StorageProtectionPolicy policy)
 {
     std::vector<fs::RotatingFragment> fragments;
     if (!rotatingFragments(input, fragments)) {
         return false;
     }
-    const auto extracted = fs::extractRotatingGenerators(payloads, fragments);
+    const auto extracted = fs::extractRotatingGenerators(payloads, fragments, policy);
     output["extraction_error"] = extracted.error;
     output["refresh"] = extracted.refreshBound;
     output["protected_hazards"] = extracted.protectedHazards;
@@ -351,6 +362,8 @@ bool extractRotating(const llvm::json::Array& input, llvm::ArrayRef<fs::Periodic
 }
 bool graphCase(const llvm::json::Object& input, llvm::json::Object& output)
 {
+    fs::StorageProtectionPolicy policy;
+    if (!storagePolicy(input, policy)) { return false; }
     const auto* pipes = input.getArray("pipes");
     if (!pipes || pipes->size() > 512) {
         return false;
@@ -365,7 +378,7 @@ bool graphCase(const llvm::json::Object& input, llvm::json::Object& output)
     }
     std::vector<fs::PeriodicRecord> generators;
     if (const auto* rotating = input.getArray("rotating")) {
-        if (!extractRotating(*rotating, payloads, generators, output)) {
+        if (!extractRotating(*rotating, payloads, generators, output, policy)) {
             return false;
         }
         if (!output.getString("extraction_error")->empty()) {
@@ -386,7 +399,7 @@ bool graphCase(const llvm::json::Object& input, llvm::json::Object& output)
             }
             visits.push_back(std::move(occurrence));
         }
-        const auto scanned = fs::scanStorageLifetimes(visits);
+        const auto scanned = fs::scanStorageLifetimes(visits, {}, policy);
         output["scan"] = dumpScan(scanned);
         if (!scanned.error.empty()) {
             output["error"] = scanned.error;

@@ -412,6 +412,14 @@ private:
         if (failed(domain)) { fail("hardware protection scope projection failed"); return std::nullopt; }
         return std::move(*domain);
     }
+    bool scalarPair(uint32_t source, uint32_t target) const
+    {
+        if (source >= program.sites.size() || target >= program.sites.size()) { return false; }
+        const auto* a = program.sites[source].phase;
+        const auto* b = program.sites[target].phase;
+        return a && b && ptoStorageProtection().protectsScalar(static_cast<uint32_t>(a->kPipeValue),
+                                                              static_cast<uint32_t>(b->kPipeValue));
+    }
     bool buildConflicts()
     {
         Relation conflicts;
@@ -434,6 +442,7 @@ private:
                     *a.schema->sourceSite >= program.sites.size() || *b.schema->sourceSite >= program.sites.size()) {
                     fail("access primitive has unsupported storage/endpoint schema"); return false;
                 }
+                if (scalarPair(*a.schema->sourceSite, *b.schema->sourceSite)) { continue; }
                 const auto x = a.schema->sourceDimensions, y = b.schema->sourceDimensions;
                 if (a.residues[x] != b.residues[y]) { continue; }
                 const unsigned joinedDimensions = x + y + 1 + result.parameterCount;
@@ -471,6 +480,7 @@ private:
         }
         auto forward = intersect(conflicts, order);
         for (const auto& [key, values] : order) {
+            if (scalarPair(key.source.site, key.target.site)) { continue; }
             const auto pair = std::minmax(key.source.site, key.target.site);
             if (llvm::any_of(program.uniformConflicts, [&](const auto& conflict) {
                     return conflict.first == pair.first && conflict.second == pair.second;

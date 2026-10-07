@@ -52,7 +52,7 @@ def validate(report, labels):
     # turns their two ranges into a single storage class.
     for a, x in enumerate(labels):
         for b in range(a + 1, len(labels)):
-            if x == labels[b] or "U" in (x, labels[b]):
+            if (pipes[a] != 0 or pipes[b] != 0) and (x == labels[b] or "U" in (x, labels[b])):
                 edges.add((2 * a + 1, 2 * b))
     required, _ = closure(2 * len(labels), edges)
     commands = []

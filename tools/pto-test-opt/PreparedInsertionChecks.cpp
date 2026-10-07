@@ -49,6 +49,12 @@ LogicalResult runPreparedInsertionChecks(func::FuncOp function)
     // Exercise both an unavailable value and a detached preparation dependency
     // whose definition would be inserted after its use. Neither may mutate IR.
     fs::PreparedLogicalPlan bad(7);
+    const auto scalar = static_cast<uint32_t>(pto::PIPE::PIPE_S);
+    bad.endpoints = {{cuts[0], Kind::Barrier, scalar, scalar, 0, guard, {}}};
+    if (!rejectedUnchanged(function, bad)) {
+        return function.emitError("forbidden scalar barrier was accepted or rejection changed IR");
+    }
+    bad.endpoints.clear();
     bad.endpoints.push_back({cuts[0], Kind::Set, mte2, vector, 0, guard, cuts[0]->getResult(0)});
     if (!rejectedUnchanged(function, bad)) {
         return function.emitError("unavailable identity was accepted or rejection changed IR");

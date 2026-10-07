@@ -26,6 +26,7 @@ def check(tool, path, order, modes):
              if (order[a] == "U" or order[b] == "U") and
              (modes[order[a]] or modes[order[b]])}
     occurrences = [occurrence(i, item["pipe"], []) for i, item in enumerate(report["occurrences"])]
+    edges = {(a, b) for a, b in edges if occurrences[a]["pipe"] != 0 or occurrences[b]["pipe"] != 0}
     reach = closure(occurrences, edges)
     for source, row in enumerate(report["event_reachable"]):
         require(row == [source == target or target in reach[source] for target in range(6)], report)

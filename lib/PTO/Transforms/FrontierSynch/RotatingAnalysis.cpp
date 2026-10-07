@@ -66,7 +66,7 @@ RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
                                      access.reads, access.writes, 0});
     }
     protection(result, input, recognized);
-    result.extraction = extractRotatingGenerators(payloads, result.fragments);
+    result.extraction = extractRotatingGenerators(payloads, result.fragments, ptoStorageProtection());
     if (!result.extraction.error.empty()) {
         result.error = result.extraction.error;
         return result;
@@ -74,6 +74,8 @@ RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
     if (input.accesses().hasUniformRelationships(result.phases)) {
         for (uint32_t a = 0; a < result.phases.size(); ++a) {
             for (uint32_t b = 0; b < result.phases.size(); ++b) {
+                if (ptoStorageProtection().protectsScalar(payloads[a].pipe,
+                                                         payloads[b].pipe)) { continue; }
                 bool conflict = false;
                 for (auto x : input.accesses().effectsFor(result.phases[a])) {
                     for (auto y : input.accesses().effectsFor(result.phases[b])) {

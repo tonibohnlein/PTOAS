@@ -63,7 +63,9 @@ def reference(case):
     for source in range(count):
         for target in range(source + 1, count):
             same_scope = source // types == target // types and pipes[source] == pipes[target]
-            if conflicting(accesses[source], accesses[target], same_scope):
+            scalar = case.get("scalar_pipe")
+            protected = scalar is not None and pipes[source] == scalar and pipes[target] == scalar
+            if not protected and conflicting(accesses[source], accesses[target], same_scope):
                 edges.add((2 * source + 1, 2 * target))
     return pipes, closure(2 * count, edges)
 

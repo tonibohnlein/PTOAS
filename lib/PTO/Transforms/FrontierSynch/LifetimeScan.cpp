@@ -24,6 +24,7 @@ struct CellState {
 };
 class Scanner {
 public:
+    explicit Scanner(StorageProtectionPolicy policy) : protection(policy) {}
     StorageScanResult output;
     bool run(llvm::ArrayRef<ExplicitEffects> input, llvm::ArrayRef<StorageGenerator> prerequisites)
     {
@@ -71,6 +72,7 @@ public:
         return true;
     }
 private:
+    StorageProtectionPolicy protection;
     std::unordered_map<uint32_t, std::size_t> positions;
     std::unordered_map<uint32_t, CellState> cells;
     std::unordered_map<uint64_t, uint32_t> emitted;
@@ -102,8 +104,9 @@ private:
         // retained software edge and I/I order after it. An entirely protected
         // chain has protected endpoints by group membership. Thus the sparse
         // scan remains complete without adding fictitious C/I hardware edges.
-        if (state.writer && hardwareProtectsConflict(state.writer->pipe, state.writer->protectionGroup,
-                                                    occurrence.pipe, access.protectionGroup)) {
+        if (state.writer && (protection.protectsScalar(state.writer->pipe, occurrence.pipe) ||
+            hardwareProtectsConflict(state.writer->pipe, state.writer->protectionGroup,
+                                     occurrence.pipe, access.protectionGroup))) {
             output.protectedHazards += unsigned(access.read) + unsigned(access.write);
         } else if (state.writer) {
             if (access.read && !emit(state.writer->payload, occurrence.payload, atom, StorageHazard::RAW)) {
@@ -115,6 +118,10 @@ private:
         }
         if (access.write) {
             for (const auto& reader : state.readers) {
+                if (protection.protectsScalar(reader.first, occurrence.pipe)) {
+                    ++output.protectedHazards;
+                    continue;
+                }
                 if (!emit(reader.second, occurrence.payload, atom, StorageHazard::WAR)) {
                     return false;
                 }
@@ -131,9 +138,10 @@ private:
 };
 } // namespace
 StorageScanResult scanStorageLifetimes(llvm::ArrayRef<ExplicitEffects> occurrences,
-                                      llvm::ArrayRef<StorageGenerator> prerequisites)
+                                      llvm::ArrayRef<StorageGenerator> prerequisites,
+                                      StorageProtectionPolicy protection)
 {
-    Scanner scanner;
+    Scanner scanner(protection);
     if (!scanner.run(occurrences, prerequisites)) {
         StorageScanResult failure;
         failure.error = scanner.output.error;

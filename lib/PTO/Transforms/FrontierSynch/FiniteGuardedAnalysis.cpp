@@ -50,6 +50,7 @@ bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recogni
     const auto modeledGroups = modeledProtectionGroups(input, phases, invocation);
     for (uint32_t a = 0; a < recognized.phases.size(); ++a) {
         for (uint32_t b = a + 1; b < recognized.phases.size(); ++b) {
+            if (ptoStorageProtection().protectsScalar(state.effects[a].pipe, state.effects[b].pipe)) { continue; }
             bool conflict = false;
             for (auto x : input.accesses().effectsFor(recognized.phases[a].phase)) {
                 for (auto y : input.accesses().effectsFor(recognized.phases[b].phase)) {
