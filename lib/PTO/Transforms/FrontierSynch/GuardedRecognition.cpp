@@ -9,6 +9,8 @@
 // loop requires predicates defined before that loop, so participation repeats.
 #include "RecognitionInternal.h"
 #include "llvm/ADT/STLExtras.h"
+#include <map>
+#include <tuple>
 
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -138,5 +140,75 @@ GuardedRecognition recognizeGuardedRotating(scf::ForOp loop, const PhaseIndex& i
                                             const SyncInput& input, const SyncStorageEffects& effects)
 {
     return detail::recognizeRotatingSlice(loop, index, input, DenseMap<Value, bool>());
+}
+BoundedLifetimeRecognition recognizeBoundedLifetime(scf::ForOp loop, const PhaseIndex& index, const SyncInput& input)
+{
+    BoundedLifetimeRecognition out;
+    auto& skeleton = out.skeleton;
+    if (!detail::checkRotatingDomain(loop, index, skeleton.result)) {
+        return out;
+    }
+    SmallVector<Operation*> roots;
+    for (Operation& operation : *loop.getBody()) {
+        roots.push_back(&operation);
+    }
+    collect(roots, loop, index, skeleton, false);
+    if (skeleton.result.state != RecognitionState::Applicable) {
+        return out;
+    }
+    SmallVector<const CompoundInstanceElement*> phases;
+    DenseMap<const CompoundInstanceElement*, uint32_t> positions;
+    std::vector<PeriodicPayload> payloads;
+    std::vector<uint8_t> unconditional;
+    for (const auto& item : skeleton.phases) {
+        positions[item.phase] = phases.size();
+        phases.push_back(item.phase);
+        payloads.push_back({static_cast<uint32_t>(item.phase->kPipeValue)});
+        unconditional.push_back(!item.guard);
+    }
+    detail::inspectRotatingPhases(loop, phases, input, input.accesses(), skeleton.result, index);
+    if (skeleton.result.state != RecognitionState::Applicable) {
+        return out;
+    }
+    if (input.accesses().hasUniformRelationships(phases)) {
+        out.refresh.error = "bounded refresh needs a uniform-relationship adapter";
+        skeleton.result.note(RecognitionIssue::RefreshBound, loop);
+        return out;
+    }
+    auto prerequisites = index.mapPrerequisites(phases);
+    if (!prerequisites.error.empty()) {
+        out.refresh.error = prerequisites.error;
+        skeleton.result.note(RecognitionIssue::AdditionalPrerequisite, loop);
+        return out;
+    }
+    DenseMap<Value, uint32_t> families;
+    std::map<std::tuple<uint32_t, uint64_t, uint64_t>, uint32_t> atoms;
+    std::vector<RotatingFragment> fragments;
+    for (const auto& access : skeleton.result.accesses) {
+        if (!access.atom || access.parameterOffset) {
+            out.refresh.error = "refresh orbit producer requires numerical normalized fragments";
+            skeleton.result.note(RecognitionIssue::RefreshBound, loop);
+            return out;
+        }
+        auto found = positions.find(input.accesses().effects()[access.effect].phase);
+        if (found == positions.end()) {
+            out.refresh.error = "refresh access has no payload";
+            skeleton.result.note(RecognitionIssue::RefreshBound, loop);
+            return out;
+        }
+        auto family = families.try_emplace(access.family, families.size()).first->second;
+        auto atom =
+            atoms.emplace(std::make_tuple(family, access.atom->first, access.atom->second), atoms.size()).first->second;
+        fragments.push_back(
+            {found->second, family, atom, access.slots, access.stride, access.offset, access.reads, access.writes, 0});
+    }
+    out.refresh = certifyRotatingRefresh(payloads, fragments, unconditional);
+    if (!out.refresh.error.empty()) {
+        // This producer is sufficient, not a decision procedure for refresh:
+        // complementary guarded writers can cover an orbit without either
+        // static writer being unconditional.
+        skeleton.result.note(RecognitionIssue::RefreshBound, loop);
+    }
+    return out;
 }
 } // namespace mlir::pto::frontiersynch

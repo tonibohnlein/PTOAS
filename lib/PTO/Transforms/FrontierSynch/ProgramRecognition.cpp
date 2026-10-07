@@ -163,6 +163,8 @@ FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const Sync
             node.finiteGuardedResult = recognizeFiniteGuarded(*node.region, index, input.accesses());
         } else if (node.kind == StructureKind::Loop) {
             auto loop = cast<scf::ForOp>(node.anchor);
+            node.boundedLifetime = recognizeBoundedLifetime(loop, index, input);
+            node.varyingRotating = recognizeVaryingRotating(loop, index, input);
             node.rotatingResult = recognizeRotating(loop, index, input, input.accesses());
             node.guardedRotatingResult = recognizeGuardedRotating(loop, index, input, input.accesses());
         }

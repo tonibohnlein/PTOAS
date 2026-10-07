@@ -471,6 +471,7 @@ StringRef recognitionName(RecognitionIssue issue)
     case RecognitionIssue::TemplateExpansionLimit: return "template-expansion-limit";
     case RecognitionIssue::TemplateContext: return "template-context";
     case RecognitionIssue::GMDischarge: return "gm-discharge";
+    case RecognitionIssue::RefreshBound: return "refresh-bound";
     default: return "invalid";
     }
 }

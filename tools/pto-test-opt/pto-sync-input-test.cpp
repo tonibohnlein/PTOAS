@@ -332,8 +332,12 @@ int runGeneralArithmeticSelectorChecks();
 int runArithmeticStorageSelectorChecks();
 int runGeneralArithmeticDemandChecks();
 int runFiniteOverlayChecks();
+int runRotatingBoundaryChecks();
+int runGuardedRankChecks();
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
 int main(int argc, char **argv) {
+  if (argc == 2 && StringRef(argv[1]) == "--guarded-rank-checks") { return runGuardedRankChecks(); }
+  if (argc == 2 && StringRef(argv[1]) == "--rotating-boundary-checks") { return runRotatingBoundaryChecks(); }
   if (argc == 2 && StringRef(argv[1]) == "--finite-overlay-checks") {
     return runFiniteOverlayChecks();
   }

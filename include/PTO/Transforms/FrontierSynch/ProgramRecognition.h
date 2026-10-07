@@ -10,6 +10,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_PROGRAMRECOGNITION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_PROGRAMRECOGNITION_H
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
+#include "PTO/Transforms/FrontierSynch/VaryingRotatingRecognition.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateEndpoints.h"
@@ -33,6 +34,9 @@ struct StructureNode {
     std::optional<RecognitionResult> rotatingResult;
     std::optional<GuardedRecognition> finiteGuardedResult;
     std::optional<GuardedRecognition> guardedRotatingResult;
+    std::optional<BoundedLifetimeRecognition> boundedLifetime;
+    std::optional<VaryingRotatingRecognition> varyingRotating;
+    std::optional<AffineRotatingVisits> varyingDemands;
     std::optional<NumericTemplate> numericTemplate;
     std::optional<PeriodicAnalysis> periodicAnalysis;
     std::optional<NumericTemplateEndpoints> logicalEndpoints;

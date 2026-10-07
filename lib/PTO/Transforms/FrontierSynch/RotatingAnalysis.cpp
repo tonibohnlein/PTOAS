@@ -26,7 +26,7 @@ void protection(RotatingAnalysis& result, const SyncInput& input, const Recognit
 }
 } // namespace
 RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
-    const SyncInput& input, const RecognitionResult& recognized)
+    const SyncInput& input, const RecognitionResult& recognized, bool prepareEndpoints)
 {
     RotatingAnalysis result;
     result.loop = loop;
@@ -104,6 +104,7 @@ RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
     if (!result.error.empty()) {
         return result;
     }
+    if (!prepareEndpoints) { return result; }
     SmallVector<TemplateEndpointAnchor> anchors;
     for (auto* phase : result.phases) {
         auto* op = phase->elementOp;

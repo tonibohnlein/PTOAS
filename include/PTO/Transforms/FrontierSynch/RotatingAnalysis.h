@@ -23,7 +23,7 @@ struct RotatingAnalysis {
 // This exports completion-origin queries and endpoint recipes, not a regional
 // storage selector or physical-allocation certificate.
 RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
-    const SyncInput& input, const RecognitionResult& recognition);
+    const SyncInput& input, const RecognitionResult& recognition, bool prepareEndpoints = true);
 // Select only one whole-function fixed-body loop. No boundary obligations may
 // be omitted. Not applicable returns failure without emitting a diagnostic.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareRotatingInsertion(
