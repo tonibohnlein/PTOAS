@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Serialize the analysis certificate; allocate IDs within each directed event domain.
+// Serialize allocation evidence for the shared numeric event-ID pool.
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/ExecutionContexts.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
@@ -34,7 +34,7 @@ DictionaryAttr encodeCyclicAllocation(const PeriodicAllocation& allocation, int6
             builder.getNamedAttr("budget", builder.getI64IntegerAttr(budget)),
             builder.getNamedAttr("records", builder.getDenseI64ArrayAttr(records))}));
     }
-    return builder.getDictionaryAttr({builder.getNamedAttr("version", builder.getI64IntegerAttr(1)),
+    return builder.getDictionaryAttr({builder.getNamedAttr("version", builder.getI64IntegerAttr(2)),
         builder.getNamedAttr("plan", builder.getI64IntegerAttr(planId)),
         builder.getNamedAttr("directions", builder.getArrayAttr(directions))});
 }
@@ -108,13 +108,14 @@ FailureOr<PhysicalAllocationPlan> decodeCyclicAllocation(func::FuncOp function, 
     }
     auto version = number(certificate, "version"), plan = number(certificate, "plan");
     auto directions = certificate.getAs<ArrayAttr>("directions");
-    if (!version || *version != 1 || !plan || *plan < 0 || !directions) {
+    if (!version || *version != 2 || !plan || *plan < 0 || !directions) {
         return function.emitError("malformed cyclic allocation certificate"), failure();
     }
     PhysicalAllocationPlan result;
     result.planId = *plan;
     llvm::DenseSet<uint64_t> directionKeys;
     llvm::DenseSet<int64_t> recordKeys;
+    std::size_t used = 0;
     for (auto attr : directions) {
         auto direction = decodeDirection(function, attr);
         if (failed(direction)) {
@@ -126,22 +127,22 @@ FailureOr<PhysicalAllocationPlan> decodeCyclicAllocation(func::FuncOp function, 
             return function.emitError("duplicate cyclic allocation direction"), failure();
         }
         const auto budget = static_cast<uint64_t>(d.budget);
-        if (budget > eligibleIds.size()) {
+        if (budget > eligibleIds.size() - used) {
             if (auto strategy = certificate.getAs<StringAttr>("strategy")) {
                 return function.emitError("sufficient compact assignment does not fit supplied capacity: ")
                     << strategy.getValue() << " direction " << d.source << " -> " << d.target
                     << " uses " << budget
                     << "; no minimum-capacity claim; scarcity repair not implemented yet", failure();
             }
-            return function.emitError("directed event-ID allocation does not fit: direction ")
+            return function.emitError("devoted shared-pool assignment does not fit: direction ")
                 << d.source << " -> " << d.target << " certified cyclic strategy needs " << budget << ", only "
-                << eligibleIds.size() << " eligible IDs are available per direction; "
+                << eligibleIds.size() << " eligible IDs are available in the shared pool; "
                 << "scarcity repair not implemented yet", failure();
         }
-        // The hardware event is identified by (source, destination, numeric ID).
-        // Equal numbers in different directions are distinct events, so budgets
-        // are checked independently; they must not be summed against this list.
-        auto ids = eligibleIds.take_front(budget);
+        // This certificate devotes disjoint palettes to directions. Cross-direction
+        // sharing requires a shared reuse certificate, supplied by another route.
+        auto ids = eligibleIds.slice(used, budget);
+        used += budget;
         for (auto [phase, record] : llvm::enumerate(d.records.asArrayRef())) {
             if (record < 0 || !recordKeys.insert(record).second) {
                 return function.emitError("invalid or duplicate cyclic allocation record"), failure();
@@ -184,87 +185,6 @@ FailureOr<PhysicalAllocationPlan> decodePhysicalAllocation(func::FuncOp function
         return empty;
     }
     if (certificate.get("groups")) { return decodeRegionalAllocation(function, certificate, eligibleIds); }
-    auto version = number(certificate,"version"), id = number(certificate,"plan");
-    auto directions = certificate.getAs<ArrayAttr>("directions");
-    if (!version || *version != 1 || !id || *id < 0 || !directions) {
-        return function.emitError("malformed finite allocation certificate"), failure();
-    }
-    PhysicalAllocationPlan result;
-    result.planId = *id;
-    llvm::DenseSet<int64_t> recordsSeen;
-    llvm::DenseSet<uint64_t> domainsSeen;
-    for (auto attr : directions) {
-        auto d = dyn_cast<DictionaryAttr>(attr);
-        auto p = d ? number(d,"source") : std::nullopt, q = d ? number(d,"target") : std::nullopt;
-        auto mode = d ? d.getAs<StringAttr>("mode") : StringAttr{};
-        auto records = d ? d.getAs<DenseI64ArrayAttr>("records") : DenseI64ArrayAttr{};
-        auto evidence = d ? d.getAs<ArrayAttr>("evidence") : ArrayAttr{};
-        if (!p || !q || !concretePipe(*p) || !concretePipe(*q) || *p == *q || !mode ||
-            (mode.getValue() != "intervals" && mode.getValue() != "compatibility") ||
-            !records || records.empty() || !evidence || evidence.size() != static_cast<std::size_t>(records.size())) {
-            return function.emitError("malformed finite allocation direction"), failure();
-        }
-        auto key = (static_cast<uint64_t>(*p) << 32) | static_cast<uint64_t>(*q);
-        if (!domainsSeen.insert(key).second) {
-            return function.emitError("duplicate finite allocation direction"), failure();
-        }
-        const auto count = static_cast<std::size_t>(records.size());
-        SmallVector<uint64_t> colors(count,0);
-        uint64_t budget = 0;
-        const bool intervals = mode.getValue() == "intervals";
-        std::vector<std::vector<uint64_t>> releases(intervals ? count+1 : 0);
-        std::vector<uint64_t> available;
-        int64_t previousRelease = 0;
-        for (std::size_t i = 0; i < count; ++i) {
-            if (records[i] < 0 || !recordsSeen.insert(records[i]).second) {
-                return function.emitError("invalid or duplicate finite allocation record"), failure();
-            }
-            if (intervals) {
-                auto release = dyn_cast<IntegerAttr>(evidence[i]);
-                if (!release || !release.getType().isInteger(64) || release.getInt() <= static_cast<int64_t>(i) ||
-                    static_cast<uint64_t>(release.getInt()) > count || release.getInt() < previousRelease) {
-                    return function.emitError("invalid ordered handoff release index"), failure();
-                }
-                previousRelease = release.getInt();
-                for (auto color : releases[i]) { available.push_back(color); }
-                if (available.empty()) { colors[i] = budget++; }
-                else { colors[i] = available.back(); available.pop_back(); }
-                releases[release.getInt()].push_back(colors[i]);
-            } else {
-                auto conflicts = dyn_cast<DenseI64ArrayAttr>(evidence[i]);
-                if (!conflicts) { return function.emitError("invalid guarded compatibility row"), failure(); }
-                // The palette has at most six entries. Checking every prior
-                // incompatible user also covers paths that skip intervening users.
-                SmallVector<bool> used(eligibleIds.size(),false);
-                int64_t previous = -1;
-                for (auto j : conflicts.asArrayRef()) {
-                    if (j <= previous || j < 0 || static_cast<uint64_t>(j) >= i) {
-                        return function.emitError("invalid guarded compatibility index"), failure();
-                    }
-                    previous = j;
-                    if (colors[j] < used.size()) { used[colors[j]] = true; }
-                }
-                uint64_t color = 0;
-                while (color < used.size() && used[color]) { ++color; }
-                colors[i] = color;
-                budget = std::max(budget,color+1);
-            }
-            if (budget > eligibleIds.size()) {
-                return function.emitError(intervals ?
-                    "finite interval assignment exceeds supplied capacity: direction " :
-                    "finite guarded assignment not certified within supplied capacity: direction ")
-                    << *p << " -> " << *q
-                    << "; no minimum-capacity claim; scarcity repair not implemented yet", failure();
-            }
-        }
-        auto ids = eligibleIds.take_front(budget);
-        for (std::size_t i = 0; i < count; ++i) {
-            PhysicalRecordAllocation item{records[i],static_cast<uint32_t>(*p),
-                                           static_cast<uint32_t>(*q),0,colors[i],{}};
-            item.ids.append(ids.begin(),ids.end());
-            result.records.push_back(std::move(item));
-        }
-    }
-    return result;
+    return decodeFiniteAllocation(function, certificate, eligibleIds);
 }
 } // namespace mlir::pto::frontiersynch

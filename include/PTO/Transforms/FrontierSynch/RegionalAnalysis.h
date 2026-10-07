@@ -137,6 +137,10 @@ bool validRegionalEvent(const RegionalAnalysis& region, const RegionalEvent& eve
 std::optional<RegionExpressions::Id> regionalPresence(const RegionalAnalysis& region, RegionalEvent event);
 std::optional<RegionExpressions::Id> regionalReachability(
     const RegionalAnalysis& region, RegionalEvent source, RegionalEvent target);
+// Reuse from WAIT before consumer to SET after producer. Same-pipe command
+// order is sufficient; other directions require completion-before-start order.
+std::optional<RegionExpressions::Id> regionalHandoffReuse(
+    const RegionalAnalysis& region, RegionalEvent consumer, RegionalEvent producer);
 std::optional<RegionExpressions::Id> regionalReferenceBefore(
     const RegionalAnalysis& region, RegionalEvent source, RegionalEvent target);
 } // namespace mlir::pto::frontiersynch
