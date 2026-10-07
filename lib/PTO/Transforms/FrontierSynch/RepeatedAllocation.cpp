@@ -8,6 +8,7 @@
 #include "RepeatedAllocation.h"
 #include "RepeatedLaneAllocation.h"
 #include "RepeatedRegionInternal.h"
+#include "PTO/Transforms/FrontierSynch/RegionalLaneExports.h"
 #include <algorithm>
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -43,12 +44,22 @@ std::optional<std::pair<Selectors, Selectors>> extrema(
 {
     Selectors first, last;
     auto& e = *body.expressions;
+    const bool mixed = llvm::any_of(group.members, [&](const auto& member) {
+        return regionalAllocationDirection(group, member) != std::make_pair(group.sourcePipe, group.targetPipe);
+    });
     for (const auto& member : group.members) {
         auto ps = regionalPresence(body, member.firstSource), pt = regionalPresence(body, member.lastTarget);
         if (!ps || !pt) { return std::nullopt; }
         auto active = e.select(member.active,
             e.select(*ps, *pt, e.boolean(false)), e.boolean(false));
         if (e.constantValue(active) == 0) { continue; }
+        // Across directions, reference-last completion need not causally
+        // dominate other completions. Keep every active bound for the proof.
+        if (mixed) {
+            first.push_back({member.firstSource, active});
+            last.push_back({member.lastTarget, active});
+            continue;
+        }
         if (!addExtremum(body, first, {member.firstSource, active}, true) ||
             !addExtremum(body, last, {member.lastTarget, active}, false)) { return std::nullopt; }
     }
@@ -134,6 +145,9 @@ bool completePeriods(RepeatedRegionState& state)
 std::optional<RegionalAllocationGroup> liftGroup(
     RepeatedRegionState& state, RegionalAllocationGroup group, uint64_t delay, bool child)
 {
+    // Banking changes both source coordinates and local lane meanings. The
+    // member envelopes below are lifted; old lane selectors are not reusable.
+    group.lanes.clear();
     if (child && llvm::any_of(group.members, [&](const auto& member) {
         return !canRestrictRepeatedAllocationMember(state, member);
     })) {

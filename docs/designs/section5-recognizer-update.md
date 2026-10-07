@@ -163,3 +163,67 @@ interfaces; family emission passed 23 independent ordering checks; six logical i
 checks passed. Two independent reviewers accepted the implementation. The two-slot
 readiness/release test uses two shared IDs rather than four devoted IDs, with static IDs
 where the selected cycles permit them. No device measurements were run.
+
+### Milestone 3
+
+Regional summaries now export guarded first/last handoffs per certified ID lane,
+while retaining each endpoint record and its original modulo formula once. The
+sequence and conditional adapters remap these selectors together with the payload
+identities and guards. Numerical periodic children use the shared cycle-cover
+assignment; mixed-direction cycles retain the actual pipes on each record.
+Physical allocation matches lanes globally when the proved relation is a strict
+order, and otherwise uses pairwise guarded compatibility. It never closes a
+conditional relation through a possibly absent intermediate lane. Hidden-ID
+exclusions apply to every member of a shared chain.
+
+Repeated unit lanes use the same numerical cycle-cover solver across directions.
+The same-pipe WAIT-before-SET query uses native start order; other pipe pairs use
+the required completion-to-start query. Equal activity, finite-prefix closure and
+partial-period phase restrictions remain part of the certificate. An unavailable
+reuse proof remains distinct from a capacity lower bound.
+
+Storage exports can lift outer-invariant readers disjoint from every body writer.
+A finite symbolic support can alternatively supply exact per-byte selectors for
+the repeated crossing computation, with its expansion charged explicitly and
+bounded by the existing regional representation limit. Residual and uniform
+relationships remain in the shared access boundary; omitted conflicting extrema
+are an unavailable interface. This is not a new precision gate on shared effects.
+General symbolic phased intervals still need a selector-clipping adapter; the
+ordinary invariant lift is not silently reused for those intervals.
+
+For L exported lanes, the current regional assignment uses O(L²) boundary-pair
+checks and O(L³) worst-case relation validation/matching. Each boundary check also
+pays for its guarded selector pairs and regional reachability queries. The exact
+shared minimum theorem is not claimed for the guarded compatibility fallback or
+for an incomplete sufficient reuse relation. No payload ordering is added.
+
+Constant child lanes can still coalesce before repetition. The adapter remaps
+only coordinate-independent formulas, proves compatibility against every user
+of the chosen lane, preserves each record's direction and tuple arity, and
+rebuilds its selectors. Dynamic formulas keep their original mapping.
+
+A historical test correction is necessary: the multi-phase nested allocation
+fixture predates the shared numeric-ID contract and formerly ignored conflicts
+between different directions. The current period-two proof graph has six
+internal lanes plus one epilogue lane with no proved sharing; this does not prove
+that the payload plan needs seven hardware IDs. Readiness and release have
+different activity predicates (positive versus at least two inner trips), so
+the unconditional cycle certificate cannot simply join them. The guarded
+uniform-query/allocation adapter remains an explicit follow-up obligation.
+The test continues to check all logical command closures and requires allocation
+failure to be transactional; it does not accept an incorrect reused numeric ID.
+
+M3 validation: 15 independent regional command-reuse traces passed (including
+adjacent loops within six IDs and a guarded one-ID case); family emission checked
+259 phase evaluations and rejected 22 malformed interfaces. Symbolic storage
+checks cover invariant readers, finite persistent writers, zero trips, aliased
+ordinary/deferred writers, and missing extrema. Repeated storage passed seven
+production closures; phased composition passed 32 exact command closures and
+compact-size checks. Nested allocation passed nine physical traces and twelve
+transactional unavailable-certificate cases, all retaining independent logical
+closure checks. Both code reviewers accepted the corrected implementation and
+the historical test correction. Serial incremental compilation/linking passed.
+The compliance prefilter's 43 nested-parenthesis brace matches were inspected;
+every body is braced. Line-length findings were fixed, and git diff --check is
+clean. Full static-analyzer metrics, corpus and device measurements were not run
+for this milestone.

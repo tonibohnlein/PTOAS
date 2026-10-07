@@ -87,6 +87,7 @@ add_llvm_executable(pto-sync-input-test
   FiniteOverlayChecks.cpp
   IntegerRelationChecks.cpp
   GeneralArithmeticSelectorChecks.cpp
+  RepeatedReadOnlyStorageChecks.cpp
   PeriodicSharedAllocationChecks.cpp
   SharedHandoffAllocationChecks.cpp
   GeneralArithmeticAllocationChecks.cpp

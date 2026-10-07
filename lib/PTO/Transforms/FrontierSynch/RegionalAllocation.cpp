@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Compose certified cyclic palettes using required-order lifetime envelopes.
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/RegionalLaneExports.h"
+#include "PTO/Transforms/FrontierSynch/RegionalLaneCertificate.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "mlir/IR/Builders.h"
 #include "PTO/IR/PTO.h"
@@ -24,25 +26,7 @@ bool hasNestedFrame(const RegionalAnalysis& region)
 std::shared_ptr<RegionalAllocationSummary> periodicRegionalAllocation(
     const RegionalAnalysis& region, const PeriodicAnalysis& periodic, RegionExpressions::Id trips)
 {
-    if (hasNestedFrame(region)) { return {}; }
-    auto allocation = buildPeriodicAllocation(periodic);
-    if (!allocation.error.empty() || !region.expressions || region.anchors.size() != periodic.payloads.size()) {
-        return {};
-    }
-    auto result = std::make_shared<RegionalAllocationSummary>();
-    auto& a = *region.expressions;
-    for (const auto& direction : allocation.directions) {
-        if (!direction.uniformBudget || !*direction.uniformBudget) { return {}; }
-        RegionalAllocationGroup group{direction.sourcePipe, direction.targetPipe, *direction.uniformBudget, {}};
-        for (auto [phase, handoff] : llvm::enumerate(direction.handoffs)) {
-            auto active = a.lt(a.constant(handoff.displacement), trips);
-            group.members.push_back({handoff.record, direction.handoffs.size(), phase,
-                {handoff.source, a.constant(0), PeriodicEventKind::Start},
-                {handoff.target, a.sub(trips, a.constant(1)), PeriodicEventKind::Completion}, active});
-        }
-        result->groups.push_back(std::move(group));
-    }
-    return result;
+    return exportPeriodicSharedLanes(region, periodic, trips);
 }
 std::shared_ptr<RegionalAllocationSummary> finiteRegionalAllocation(
     const RegionalAnalysis& region, const PreparedLogicalPlan& plan)
@@ -98,6 +82,18 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
     auto& a = *region.expressions;
     Builder b(region.anchors.front().before.before->getContext());
     SmallVector<Attribute> groups;
+    std::map<std::pair<RegionExpressions::Id, RegionExpressions::Id>, bool> implications;
+    auto implies = [&](RegionExpressions::Id premise, RegionExpressions::Id consequence) {
+        auto key = std::make_pair(premise, consequence);
+        auto found = implications.find(key);
+        if (found != implications.end()) { return found->second; }
+        // Rank predicates contain integer selects. Fold them under forced
+        // guard facts before treating the remaining comparisons as atoms.
+        bool proved = a.implies(premise, consequence) ||
+            a.constantUnder(premise, premise) == 0 || a.constantUnder(premise, consequence) == 1;
+        implications.emplace(key, proved);
+        return proved;
+    };
     using EventKey = std::tuple<uint32_t, RegionExpressions::Id, PeriodicEventKind,
                                 std::vector<RegionExpressions::Id>>;
     using Query = std::pair<EventKey, EventKey>;
@@ -159,7 +155,7 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
     for (std::size_t i = 0; i < palettes.size(); ++i) {
         const auto& x = palettes[i];
         if (!x.budget || x.budget > INT64_MAX) { return {}; }
-        SmallVector<int64_t> conflicts, records, strides, phases;
+        SmallVector<int64_t> conflicts, records, strides, phases, sources, targets;
         std::set<int64_t> forbidden;
         SmallVector<Attribute> tupleRules;
         for (const auto& member : x.members) {
@@ -169,6 +165,8 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
                 member.active >= a.size() || !a.isBoolean(member.active) ||
                 (member.tupleRule && !validPhysicalTupleRule(*member.tupleRule, x.budget))) { return {}; }
             records.push_back(member.record); strides.push_back(member.stride); phases.push_back(member.phase);
+            auto direction = regionalAllocationDirection(x, member);
+            sources.push_back(direction.first); targets.push_back(direction.second);
             if (!member.tupleRule) {
                 tupleRules.push_back(b.getDictionaryAttr({}));
                 continue;
@@ -195,7 +193,7 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
                     auto xy = reaches(xm.lastTarget, ym.firstSource, true);
                     auto yx = reaches(ym.lastTarget, xm.firstSource, true);
                     if (!xy || !yx) { return {}; }
-                    if (!a.implies(active, a.lor(*xy, *yx))) { compatible = false; break; }
+                    if (!implies(active, a.lor(*xy, *yx))) { compatible = false; break; }
                 }
                 if (!compatible) { break; }
             }
@@ -209,7 +207,7 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
                 auto before = reaches(member.lastTarget, hidden.first);
                 auto after = reaches(hidden.last, member.firstSource);
                 if (!before || !after) { return {}; }
-                if (!a.implies(active, a.lor(*before, *after))) { disjoint = false; break; }
+                if (!implies(active, a.lor(*before, *after))) { disjoint = false; break; }
             }
             if (!disjoint) { forbidden.insert(hidden.ids.begin(), hidden.ids.end()); }
         }
@@ -219,18 +217,25 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
             b.getNamedAttr("target", b.getI64IntegerAttr(x.targetPipe)),
             b.getNamedAttr("budget", b.getI64IntegerAttr(x.budget)),
             b.getNamedAttr("records", b.getDenseI64ArrayAttr(records)),
+            b.getNamedAttr("sources", b.getDenseI64ArrayAttr(sources)),
+            b.getNamedAttr("targets", b.getDenseI64ArrayAttr(targets)),
             b.getNamedAttr("strides", b.getDenseI64ArrayAttr(strides)),
             b.getNamedAttr("phases", b.getDenseI64ArrayAttr(phases)),
             b.getNamedAttr("tuple_rules", b.getArrayAttr(tupleRules)),
             b.getNamedAttr("conflicts", b.getDenseI64ArrayAttr(conflicts)),
             b.getNamedAttr("forbidden_ids", b.getDenseI64ArrayAttr(forbiddenIds))}));
     }
-    return b.getDictionaryAttr({b.getNamedAttr("version", b.getI64IntegerAttr(2)),
+    auto serializedGroups = b.getArrayAttr(groups);
+    NamedAttrList certificate({b.getNamedAttr("version", b.getI64IntegerAttr(2)),
         b.getNamedAttr("kind", b.getStringAttr("finite")),
         b.getNamedAttr("plan", b.getI64IntegerAttr(plan.planId)),
         b.getNamedAttr("strategy", b.getStringAttr("regional-palettes")),
         b.getNamedAttr("macro_reservations", b.getUnitAttr()),
-        b.getNamedAttr("groups", b.getArrayAttr(groups))});
+        b.getNamedAttr("groups", serializedGroups)});
+    if (auto lanes = regionalLaneEvidence(region, *plan.regionalAllocation, serializedGroups)) {
+        certificate.set("lane_evidence", lanes);
+    }
+    return certificate.getDictionary(b.getContext());
 }
 namespace {
 struct Palette {
@@ -240,6 +245,7 @@ struct Palette {
     SmallVector<int64_t> ids;
     std::vector<std::optional<PhysicalTupleRule>> tupleRules;
     SmallVector<int64_t> forbidden;
+    DenseI64ArrayAttr sources, targets;
 };
 std::optional<int64_t> integer(DictionaryAttr attr, StringRef key)
 {
@@ -295,7 +301,15 @@ FailureOr<PhysicalAllocationPlan> decodeRegionalAllocation(func::FuncOp function
             !conflicts || strides.size() != records.size() || phases.size() != records.size()) {
             return function.emitError("malformed allocation palette"), failure();
         }
+        auto sources = attr.getAs<DenseI64ArrayAttr>("sources"), targets = attr.getAs<DenseI64ArrayAttr>("targets");
+        if ((sources && sources.size() != records.size()) || (targets && targets.size() != records.size()) ||
+            bool(sources) != bool(targets)) {
+            return function.emitError("invalid per-record allocation directions"), failure();
+        }
         for (std::size_t i = 0; i < static_cast<std::size_t>(records.size()); ++i) {
+            if (sources && (!validPipe(sources[i]) || !validPipe(targets[i]) || sources[i] == targets[i])) {
+                return function.emitError("invalid per-record allocation direction"), failure();
+            }
             if (records[i] < 0 || strides[i] < 0 || phases[i] < 0 || !recordsSeen.insert(records[i]).second) {
                 return function.emitError("invalid or duplicate regional allocation record"), failure();
             }
@@ -331,37 +345,45 @@ FailureOr<PhysicalAllocationPlan> decodeRegionalAllocation(func::FuncOp function
         }
         palettes.push_back({static_cast<uint32_t>(*source), static_cast<uint32_t>(*target),
             static_cast<uint64_t>(*budget), records, strides, phases, conflicts, {},
-            std::move(tupleRules), std::move(forbiddenIds)});
+            std::move(tupleRules), std::move(forbiddenIds), sources, targets});
     }
-    // Preserve every child cycle. Coloring only chooses its palette, never adds
-    // ordering or changes the logical endpoints. Largest palettes go first.
-    SmallVector<std::size_t> order(palettes.size());
-    std::iota(order.begin(), order.end(), 0);
-    llvm::stable_sort(order, [&](std::size_t x, std::size_t y) { return palettes[x].budget > palettes[y].budget; });
-    for (auto i : order) {
-        auto& palette = palettes[i];
-        std::set<int64_t> unavailable(palette.forbidden.begin(), palette.forbidden.end());
-        for (std::size_t j = 0; j < palettes.size(); ++j) {
-            if (j == i || palettes[j].ids.empty()) { continue; }
-            const auto& later = palettes[std::max(i, j)];
-            if (llvm::is_contained(later.conflicts.asArrayRef(), static_cast<int64_t>(std::min(i, j)))) {
-                unavailable.insert(palettes[j].ids.begin(), palettes[j].ids.end());
+    if (auto evidence = certificate.getAs<DictionaryAttr>("lane_evidence")) {
+        auto assignment = allocateRegionalLanes(function, evidence, groups, eligibleIds);
+        if (failed(assignment)) { return failure(); }
+        for (std::size_t i = 0; i < palettes.size(); ++i) { palettes[i].ids = std::move((*assignment)[i]); }
+    } else {
+        // Preserve every child cycle. Coloring only chooses its palette, never adds
+        // ordering or changes the logical endpoints. Largest palettes go first.
+        SmallVector<std::size_t> order(palettes.size());
+        std::iota(order.begin(), order.end(), 0);
+        llvm::stable_sort(order, [&](std::size_t x, std::size_t y) { return palettes[x].budget > palettes[y].budget; });
+        for (auto i : order) {
+            auto& palette = palettes[i];
+            std::set<int64_t> unavailable(palette.forbidden.begin(), palette.forbidden.end());
+            for (std::size_t j = 0; j < palettes.size(); ++j) {
+                if (j == i || palettes[j].ids.empty()) { continue; }
+                const auto& later = palettes[std::max(i, j)];
+                if (llvm::is_contained(later.conflicts.asArrayRef(), static_cast<int64_t>(std::min(i, j)))) {
+                    unavailable.insert(palettes[j].ids.begin(), palettes[j].ids.end());
+                }
             }
-        }
-        for (auto id : eligibleIds) {
-            if (!unavailable.count(id) && palette.ids.size() < palette.budget) { palette.ids.push_back(id); }
-        }
-        if (palette.ids.size() != palette.budget) {
-            return function.emitError("regional allocation not certified within supplied capacity: direction ")
-                << palette.source << " -> " << palette.target << "; sufficient palette needs " << palette.budget
-                << " IDs; no minimum-capacity claim; scarcity repair not implemented yet", failure();
+            for (auto id : eligibleIds) {
+                if (!unavailable.count(id) && palette.ids.size() < palette.budget) { palette.ids.push_back(id); }
+            }
+            if (palette.ids.size() != palette.budget) {
+                return function.emitError("regional allocation not certified within supplied capacity: direction ")
+                    << palette.source << " -> " << palette.target << "; sufficient palette needs " << palette.budget
+                    << " IDs; no minimum-capacity claim; scarcity repair not implemented yet", failure();
+            }
         }
     }
     PhysicalAllocationPlan result;
     result.planId = *plan;
     for (const auto& palette : palettes) {
         for (std::size_t i = 0; i < static_cast<std::size_t>(palette.records.size()); ++i) {
-            PhysicalRecordAllocation record{palette.records[i], palette.source, palette.target,
+            PhysicalRecordAllocation record{palette.records[i],
+                palette.sources ? static_cast<uint32_t>(palette.sources[i]) : palette.source,
+                palette.targets ? static_cast<uint32_t>(palette.targets[i]) : palette.target,
                 static_cast<uint64_t>(palette.strides[i]), static_cast<uint64_t>(palette.phases[i]), {}};
             record.ids.append(palette.ids.begin(), palette.ids.end());
             record.tupleRule = palette.tupleRules[i];

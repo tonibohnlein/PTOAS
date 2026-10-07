@@ -41,33 +41,25 @@ def main():
             assert run.returncode == 0, run.stderr
             report = json.loads(run.stdout)
             validate(report, trips)
-            if len(trips) == 1:
-                physical_check(report, set(range(6)))
-            else:
-                # Whole-child devoted palettes currently exceed the shared
-                # pool. Lane-level composition must establish more reuse;
-                # independent per-direction reuse was not a valid assignment.
-                assert not report["allocated"] and report["allocation_unchanged_on_failure"]
-                assert "no minimum-capacity claim" in run.stderr
+            physical_check(report, set(range(6)))
         # L->D is retained only when the optional C is absent; endpoint
         # presence alone misses that it is exclusive with L->C. One ID suffices
-        # semantically; current rank-circuit compatibility needs two palettes
-        # until its integer guards are simplified by the regional adapter.
+        # because the regional adapter simplifies the integer rank guards.
         guarded = (Path(fixture).parent / "sync_finite_guarded_analysis.pto").read_text()
         body = load("L") + "\nscf.if %g {\n" + compute("C") + "\n}\n" + compute("D")
         for guard in [0, 1]:
             text = render(guarded, body, guard, 0).replace(
-                "test.trace_arguments =", "test.eligible_ids = array<i64: 0, 1>, test.trace_arguments =")
+                "test.trace_arguments =", "test.eligible_ids = array<i64: 0>, test.trace_arguments =")
             path.write_text(text)
             run = invoke(tool, ["--structured-trace"], path)
             assert run.returncode == 0, run.stderr
-            physical_check(json.loads(run.stdout), {0, 1})
+            physical_check(json.loads(run.stdout), {0})
         path.write_text(source)
         logical = invoke(opt, ["--mlir-disable-threading", "--pto-frontier-analysis"], path)
         assert logical.returncode == 0, logical.stderr
         assert 'strategy = "regional-palettes"' in logical.stdout
         path.write_text(logical.stdout)
-        args = ["--mlir-disable-threading", "--pto-frontier-allocate=eligible-ids=0,1,2,3,5"]
+        args = ["--mlir-disable-threading", "--pto-frontier-allocate=eligible-ids=0,3,5"]
         physical = invoke(opt, args, path)
         assert physical.returncode == 0, physical.stderr
         assert "pto.logical_" not in physical.stdout and physical.stdout.count("scf.for") == 1
@@ -76,8 +68,11 @@ def main():
                          ('budget = 2 : i64', 'budget = 0 : i64'),
                          ('conflicts = array<i64>', 'conflicts = array<i64: 999999>'),
                          ('phases = array<i64: 0>', 'phases = array<i64: -1>'),
-                         ('strides = array<i64: 1>', 'strides = array<i64: -1>'),
-                         ('strides = array<i64: 1>', 'strides = array<i64>')]:
+                         ('strides = array<i64: 1, 1>', 'strides = array<i64: -1, 1>'),
+                         ('strides = array<i64: 1, 1>', 'strides = array<i64>'),
+                         ('local = 1 : i64', 'local = 0 : i64'),
+                         ('successors = array<i64>', 'successors = array<i64: 999999>'),
+                         ('sources = array<i64: 3, 2>', 'sources = array<i64: 3>')]:
             assert old in logical.stdout, old
             path.write_text(logical.stdout.replace(old, new, 1))
             broken = invoke(opt, args, path)

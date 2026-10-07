@@ -185,6 +185,11 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/SharedHandoffAllocation.cpp
   FrontierSynch/FiniteAllocationDecode.cpp
   FrontierSynch/FiniteAllocation.cpp
+  FrontierSynch/RegionalLaneCertificate.cpp
+  FrontierSynch/RegionalLaneExports.cpp
+  FrontierSynch/RegionalConstantPalette.cpp
+  FrontierSynch/RepeatedReadOnlyStorage.cpp
+  FrontierSynch/RepeatedFiniteStorage.cpp
   FrontierSynch/RegionalAllocation.cpp
   FrontierSynch/RegionalPalette.cpp
   FrontierSynch/RepeatedAllocation.cpp
