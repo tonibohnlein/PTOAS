@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 from check_logical_insertion import closure_with_commands
+from check_finite_allocation import physical_check
 from check_periodic_demands import closure, native
 
 
@@ -144,7 +145,8 @@ def main():
         outer_access = "    pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%first : !left)\n"
         window = window.replace(outer_access, "")
         window = window.replace("attributes {test.trace_arguments",
-                                "attributes {test.bounded_lifetime_insertion, test.trace_arguments")
+                                "attributes {test.bounded_lifetime_insertion, "
+                                "test.eligible_ids = array<i64: 0, 1, 2, 3, 4, 5>, test.trace_arguments")
         compute = "      pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)"
         optional = ("\n      %take = arith.cmpi eq, %slot, %zero : index\n"
                     "      scf.if %take {\n"
@@ -153,13 +155,17 @@ def main():
         window = window.replace(compute, compute + optional)
         for count in (0, 1, 2, 3, 5, 9):
             path.write_text(window.replace("array<i64: 2, 3>", f"array<i64: {count}, 3>"))
-            check_commands(run(tool, "--structured-trace", path), True)
+            report = run(tool, "--structured-trace", path)
+            check_commands(report, True)
+            physical_check(report, set(range(6)))
             tests += 1
         for bound in (1, 4, 100):
             threshold = window.replace("%take = arith.cmpi eq, %slot, %zero : index",
                                        "%take = arith.cmpi ult, %i, %m : index")
             path.write_text(threshold.replace("array<i64: 2, 3>", f"array<i64: 7, {bound}>"))
-            check_commands(run(tool, "--structured-trace", path), True)
+            report = run(tool, "--structured-trace", path)
+            check_commands(report, True)
+            physical_check(report, set(range(6)))
             tests += 1
         narrow = window.replace("%take = arith.cmpi eq, %slot, %zero : index",
                                 "%small = arith.index_cast %i : index to i8\n"
@@ -168,8 +174,15 @@ def main():
                                 "      %wrapped = arith.addi %small, %bias : i8\n"
                                 "      %take = arith.cmpi slt, %wrapped, %smallzero : i8")
         path.write_text(narrow.replace("array<i64: 2, 3>", "array<i64: 6, 3>"))
-        check_commands(run(tool, "--structured-trace", path), True)
+        report = run(tool, "--structured-trace", path)
+        check_commands(report, True)
+        physical_check(report, set(range(6)))
         tests += 1
+        constrained = window.replace("test.eligible_ids = array<i64: 0, 1, 2, 3, 4, 5>",
+                                     "test.eligible_ids = array<i64: 0>")
+        path.write_text(constrained.replace("array<i64: 2, 3>", "array<i64: 9, 3>"))
+        report = run(tool, "--structured-trace", path)
+        assert report["accepted"] and not report["allocated"] and report["allocation_unchanged_on_failure"], report
         unsafe = window.replace("%take = arith.cmpi eq, %slot, %zero : index",
                                 "%quot = arith.divsi %i, %m : index\n"
                                 "      %take = arith.cmpi eq, %quot, %zero : index")

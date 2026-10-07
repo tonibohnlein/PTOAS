@@ -40,7 +40,7 @@ Numerical residue, boundary-cell and startup enumeration are explicit representa
 - Existing repeated-region checks: 14 nested command closures, zero trips and compact representation size passed.
 - `git diff --check` passed. Changed-code prefilter reports only 44 `G.FMT.11-CPP` matches: its regex stops at nested condition parentheses. Each flagged statement was inspected with balanced-parenthesis parsing and has a braced body. The line-length findings were corrected. No warning suppression was added. Full EChecker/duplication metrics and device performance were not run.
 
-No full corpus campaign, external reviewer acceptance, commit, or push is claimed by this update.
+The measurements above preceded the independent reviews below. No full corpus campaign or push was performed.
 
 ## Endpoint/export completion
 
@@ -77,3 +77,15 @@ Two independent code reviews accepted the implementation after these corrections
 The review is static; the focused regression results are recorded separately. Allocation and complete end-to-end coverage remain separate from recognition and logical preparation. The six-ID limit does not turn a missing reuse proof into a proven scarcity result.
 
 After those corrections, the serial incremental rebuild and both test-tool links passed. The independent checks passed 720 rotating-boundary comparisons, 320 guarded valuations, 960 anchored bounded windows (including simultaneous macro envelopes), and 30 actual endpoint/query cases. The lit expectation was updated to the expanded boundary count. Both reviewers accepted the corrected code; the allocation extensions are a separate change.
+
+## Allocation adapters
+
+Whole-function general arithmetic now checks reuse between every earlier/later pair in each retained endpoint family. Both handoffs share the same parameter context; exact integer projection preserves congruences, and exact union subtraction proves the required completion-to-next-start relation. A dedicated ID per family is a sufficient assignment, not a minimum-pool theorem. Failure to establish reuse leaves the allocation certificate absent. The dispatcher may use this whole-function certificate when regional allocation is unavailable.
+
+Whole-loop bounded-lifetime insertion now certifies cyclic source-ordinal palettes using paths through guaranteed-present occurrences. An optional target attaches to the mandatory periodic graph, which supplies a return threshold to the next source. Alternative retained partners of one source and destination pipe share a palette; different sources reserve disjoint palettes. Shared hardware protection, simultaneous macro envelopes, and merged RMW modes are preserved. Hidden macro IDs are excluded. This certificate applies to one whole-loop invocation; it is not exported as a nested-region allocation summary.
+
+Both use the existing allocation-only pass and IDs 0 through 5. Failure of a sufficient palette strategy is reported without claiming that no six-ID assignment exists. Neither adapter inserts scarcity repairs or extra payload ordering.
+
+Remaining end-to-end gaps include allocation for varying-length repetition, typed arithmetic allocation summaries for regional composition, and global-query/profile exports for general bounded lifetimes. Arithmetic recognition and endpoint emission also retain their configured dimensional, residue and machine-integer contracts. Recognizer acceptance alone does not imply full end-to-end support for every theorem class.
+
+Two independent reviewers accepted these allocation adapters and their integration on static review. Serial incremental compilation and linking passed. General arithmetic checks cover exact union coverage, residue transitions, shared parameter contexts, nested coordinates, and rejection of a witness that holds only for a short prefix. Bounded checks cover optional endpoints, absent mandatory return paths, palette grouping, empty demands, and split/merged RMW equivalence. The 30-case compact endpoint suite now checks physical reuse on its ten bounded cases and transactional failure with one eligible ID. Ten nested arithmetic command traces also passed physical reuse checks with six eligible IDs. The changed-code prefilter's 27 nested-parenthesis brace matches were inspected; every body is braced. No full corpus campaign, full static-analyzer metrics, or device run was performed for this change.
