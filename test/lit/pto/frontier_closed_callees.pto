@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_closed_callees.py pto-test-opt pto-sync-input-test %s
+// Corpus matmul_tpush_tpop_print: retain the cube/vector FIFO protocol and calls.
+module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
+  func.func @matmul_tpush_tpop_print(%arg0: !pto.ptr<f32, gm>, %arg1: !pto.ptr<f32, gm>, %arg2: !pto.ptr<f32, gm>) attributes {pto.entry} {
+    call @matmul_tpush_tpop_print_cube(%arg0, %arg1, %arg2) : (!pto.ptr<f32, gm>, !pto.ptr<f32, gm>, !pto.ptr<f32, gm>) -> ()
+    call @matmul_tpush_tpop_print_vector(%arg2) : (!pto.ptr<f32, gm>) -> ()
+    return
+  }
+  func.func private @matmul_tpush_tpop_print_cube(%arg0: !pto.ptr<f32, gm>, %arg1: !pto.ptr<f32, gm>, %arg2: !pto.ptr<f32, gm>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c1024_i64 = arith.constant 1024 : i64
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c1024_i32 = arith.constant 1024 : i32
+    %0 = pto.initialize_l2g2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, local_slot_num = 8, flag_base = 0, nosplit = true} (%arg2 : !pto.ptr<f32, gm>, %c1024_i32 : i32) {__pto.frontend_id = 0 : i32} -> !pto.pipe
+    %1 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<mat, 16x16xf32, blayout=col_major, slayout=row_major>
+    %2 = pto.alloc_tile addr = %c1024_i64 : !pto.tile_buf<mat, 16x16xf32, blayout=col_major, slayout=row_major>
+    %3 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<left, 16x16xf32, slayout=row_major>
+    %4 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<right, 16x16xf32, slayout=col_major>
+    %5 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+    %6 = pto.make_tensor_view %arg0, shape = [%c16, %c16], strides = [%c16, %c1] {layout = #pto.layout<nd>, pto.inferred_layout = true} : !pto.tensor_view<?x?xf32>
+    %7 = pto.make_tensor_view %arg1, shape = [%c16, %c16], strides = [%c16, %c1] {layout = #pto.layout<nd>, pto.inferred_layout = true} : !pto.tensor_view<?x?xf32>
+    %8 = pto.partition_view %6, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32>
+    %9 = pto.partition_view %7, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32>
+    pto.tload ins(%8 : !pto.partition_tensor_view<16x16xf32>) outs(%1 : !pto.tile_buf<mat, 16x16xf32, blayout=col_major, slayout=row_major>) {layout = #pto.layout<nd>, pto.inferred_layout = true}
+    pto.tload ins(%9 : !pto.partition_tensor_view<16x16xf32>) outs(%2 : !pto.tile_buf<mat, 16x16xf32, blayout=col_major, slayout=row_major>) {layout = #pto.layout<nd>, pto.inferred_layout = true}
+    pto.tmov ins(%1 : !pto.tile_buf<mat, 16x16xf32, blayout=col_major, slayout=row_major>) outs(%3 : !pto.tile_buf<left, 16x16xf32, slayout=row_major>)
+    pto.tmov ins(%2 : !pto.tile_buf<mat, 16x16xf32, blayout=col_major, slayout=row_major>) outs(%4 : !pto.tile_buf<right, 16x16xf32, slayout=col_major>)
+    pto.tmatmul ins(%3, %4 : !pto.tile_buf<left, 16x16xf32, slayout=row_major>, !pto.tile_buf<right, 16x16xf32, slayout=col_major>) outs(%5 : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+    pto.tpush(%5, %0 : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>, !pto.pipe) {split = 0}
+    return
+  }
+  func.func private @matmul_tpush_tpop_print_vector(%arg0: !pto.ptr<f32, gm>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c1024_i32 = arith.constant 1024 : i32
+    %0 = pto.initialize_l2g2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, local_slot_num = 8, flag_base = 0, nosplit = true} (%arg0 : !pto.ptr<f32, gm>, %c1024_i32 : i32) {__pto.frontend_id = 0 : i32} -> !pto.pipe
+    %1 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 16x16xf32>
+    %2 = pto.declare_tile -> !pto.tile_buf<vec, 16x16xf32>
+    pto.tpop(%2, %0 : !pto.tile_buf<vec, 16x16xf32>, !pto.pipe) {split = 0}
+    pto.tmov ins(%2 : !pto.tile_buf<vec, 16x16xf32>) outs(%1 : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tprint ins(%1 : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tfree(%0 : !pto.pipe) {split = 0}
+    return
+  }
+}

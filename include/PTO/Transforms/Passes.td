@@ -24,10 +24,11 @@
 include "mlir/Pass/PassBase.td"
 
 // Integrated analysis and logical synchronization insertion.
-def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "func::FuncOp"> {
+def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
   let summary = "Compute frontier demands and insert logical synchronization";
   let description = [{
-    Computes exact minimum demands for supported numerical periodic templates
+    Coordinates closed-callee analysis across a module, then computes demands
+    for supported numerical periodic templates
     and inserts guarded logical SET/WAIT pairs and same-pipe barriers at their
     original cuts, with a terminal completion barrier for whole-function plans.
     Preserves payloads and loop structure. Unsupported inputs

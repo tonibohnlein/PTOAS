@@ -1851,7 +1851,7 @@ at their original positions. They contribute no new reachability credit. Soft
 completion records its GM workspace accesses. These changes do not synthesize
 or rewrite cross-core protocols.
 
-Asynchronous prefetch remains an input-contract gap. Its external SDMA read
+Asynchronous prefetch is a separately deferred SDMA extension. Its external SDMA read
 outlives submission, and a polling return may indicate timeout rather than
 completion. Its hidden local scratch and event use also need explicit shared
 records. It must not be treated as an ordinary local pipe payload or silently
@@ -1892,3 +1892,46 @@ coefficient limits and unresolved iteration-dependent expressions still apply.
 The regression directly invokes arithmetic insertion and compares the emitted
 order with physical conflicts, including negative division, empty iterations
 and signed overflow.
+
+## Closed-callee composition
+
+`pto-frontier-analysis` now owns a module transaction. A read-only call-graph
+recognizer accepts straight-line delegation wrappers with pure scalar argument
+preparation, direct void calls and a return. Callees must be defined in the same
+symbol scope, acyclic and free of manual on-core synchronization. Participation
+is checked per physical core: at most one invoked leaf is active on each core.
+Unknown participation occupies both cores. This is a structural contract, with
+no function-name or instruction-footprint registry. Nested module scopes are
+processed separately with normal symbol resolution.
+
+Recognition produces a candidate; successful callee demand analysis and logical
+insertion establish closure. The module is cloned once for the transaction and
+ordinary function plans are prepared before any body is edited. Each called
+function uses the shared may-alias policy, since different formal parameters
+can receive the same address or overlapping actual arguments. Completion is
+inserted at called-function returns. Wrappers keep their calls and core guards
+and add no cross-core ordering. Their empty allocation certificate consumes no
+IDs. Every callee must subsequently pass the ordinary allocation pass; failure
+is reported, with no scarcity repair.
+
+This is not general interprocedural event allocation. An ordinary caller may
+hold an event across a call; an independently synchronized callee must not reuse
+that live event. Such calls require an event-lifetime composition contract when
+the callee emits handoffs, is a delegation wrapper, or carries manual events.
+Event-free helper bodies continue through the shared call interpretation. Section
+projections retain defined helper bodies so that interpretation can inspect them.
+
+The three prepared corpus wrappers (straight-line cube/vector FIFO, looped
+cube/vector FIFO and vector round-trip) pass logical insertion and six-ID
+allocation. Regression variants check symbol order, renamed functions, argument
+aliasing, nested symbol scopes, recursive calls, duplicate core participation,
+manual callee protocols and callee compilation failure.
+
+## Deferred external SDMA extension
+
+SDMA submission is not SDMA completion. The extension needs records for the
+submission's local scratch and event use, session/control storage, and the
+external transfer lifetime. Polling may return false on timeout and cannot
+unconditionally establish completion. This work does not model or rewrite that
+protocol; its diagnostic remains an unmet external-engine contract, rather than
+an address-precision rejection or a claimed tractable-class mismatch.
