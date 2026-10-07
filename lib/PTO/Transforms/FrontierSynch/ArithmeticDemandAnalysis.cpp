@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include <algorithm>
 #include <numeric>
 #include <tuple>
@@ -131,7 +132,8 @@ class Analysis {
     using Relation = TypedArithmeticRelation<System>;
     using Piece = ImportedPiece<System>;
 public:
-    explicit Analysis(const ArithmeticProgram& program) : program(program)
+    explicit Analysis(const ArithmeticProgram& program, const StructuredProtection* facts)
+        : program(program), protection(facts)
     {
         result.period = program.primitives.period;
         result.parameterCount = program.primitives.parameters.size();
@@ -198,6 +200,7 @@ public:
     }
 private:
     const ArithmeticProgram& program;
+    const StructuredProtection* protection;
     std::vector<Piece> pieces;
     Relation identity, order, samePipeOrder;
     void fail(const char* message) { if (result.error.empty()) { result.error = message; } }
@@ -371,6 +374,44 @@ private:
         unite(result.nativeOrder, identity);
         return true;
     }
+    std::optional<System> protectionDomain(const Piece& a, const Piece& b, unsigned dimensions)
+    {
+        if (!protection || a.schema->storageSpace != AddressSpace::ACC || b.schema->storageSpace != AddressSpace::ACC ||
+            !a.schema->sourceSite || !b.schema->sourceSite || *a.schema->sourceSite >= program.sites.size() ||
+            *b.schema->sourceSite >= program.sites.size()) { return std::nullopt; }
+        const auto& left = program.sites[*a.schema->sourceSite];
+        const auto& right = program.sites[*b.schema->sourceSite];
+        auto x = protection->facts.find(left.phase), y = protection->facts.find(right.phase);
+        if (!left.phase || !right.phase || x == protection->facts.end() || y == protection->facts.end() ||
+            x->second.scope != y->second.scope || !hardwareProtectsConflict(
+                static_cast<uint32_t>(left.phase->kPipeValue), x->second.group,
+                static_cast<uint32_t>(right.phase->kPipeValue), y->second.group)) { return std::nullopt; }
+        SmallVector<LinearRow> rows;
+        // A scoped chain can be used only within the same visit of its scope
+        // and every enclosing represented loop. The remaining inner indices
+        // may differ. Equal residues reduce original-coordinate equality to
+        // quotient-coordinate equality, in both supported arithmetic domains.
+        if (auto* scope = x->second.scope) {
+            for (unsigned i = 0; i < left.loops.size(); ++i) {
+                auto loop = left.loops[i];
+                if (loop.getOperation() != scope && !loop->isProperAncestor(scope)) { continue; }
+                auto match = llvm::find(right.loops, loop);
+                if (match == right.loops.end()) { return std::nullopt; }
+                const auto j = static_cast<unsigned>(match - right.loops.begin());
+                if (a.residues[i] != b.residues[j]) { return std::nullopt; }
+                LinearRow row;
+                row.coefficients.assign(dimensions, 0);
+                row.coefficients[i] = 1;
+                row.coefficients[a.schema->sourceDimensions + j] = -1;
+                row.constant = 0;
+                row.equality = true;
+                rows.push_back(std::move(row));
+            }
+        }
+        auto domain = Policy::create(dimensions, rows);
+        if (failed(domain)) { fail("hardware protection scope projection failed"); return std::nullopt; }
+        return std::move(*domain);
+    }
     bool buildConflicts()
     {
         Relation conflicts;
@@ -413,6 +454,14 @@ private:
                 auto projected = Policy::project(*joined, keep);
                 ++result.cost.projections;
                 if (failed(projected)) { fail("physical-byte witness projection failed"); return false; }
+                auto protectedRegion = protectionDomain(a, b, keep.size());
+                if (!result.error.empty()) { return false; }
+                if (protectedRegion) {
+                    const std::vector<System> protectedPieces{std::move(*protectedRegion)};
+                    projected = Policy::subtract(keep.size(), *projected, protectedPieces);
+                    ++result.cost.differences;
+                    if (failed(projected)) { fail("hardware protection subtraction failed"); return false; }
+                }
                 ArithmeticRelationKey key{
                     {*a.schema->sourceSite, ArithmeticEvent::Payload, {a.residues.begin(), a.residues.begin() + x}},
                     {*b.schema->sourceSite, ArithmeticEvent::Payload, {b.residues.begin(), b.residues.begin() + y}},
@@ -513,9 +562,9 @@ private:
     }
 };
 template<class Policy>
-auto analyze(const ArithmeticProgram& program)
+auto analyze(const ArithmeticProgram& program, const StructuredProtection* protection = nullptr)
 {
-    Analysis<Policy> analysis(program);
+    Analysis<Policy> analysis(program, protection);
     analysis.run();
     if (!analysis.result.error.empty()) {
         analysis.result.generators.clear();
@@ -528,6 +577,16 @@ auto analyze(const ArithmeticProgram& program)
     return std::move(analysis.result);
 }
 } // namespace
+ArithmeticDemandAnalysis analyzeArithmeticDemandsWithProtection(const ArithmeticProgram& program,
+                                                               const StructuredProtection& protection)
+{
+    return analyze<DifferencePolicy>(program, &protection);
+}
+GeneralArithmeticDemandAnalysis analyzeGeneralArithmeticDemandsWithProtection(const ArithmeticProgram& program,
+                                                                             const StructuredProtection& protection)
+{
+    return analyze<IntegerPolicy>(program, &protection);
+}
 ArithmeticDemandAnalysis analyzeArithmeticDemands(const ArithmeticProgram& program)
 {
     return analyze<DifferencePolicy>(program);

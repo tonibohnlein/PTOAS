@@ -36,6 +36,7 @@ struct Fragment : GuardedRotatingFragment {
     uint32_t family = 0, atom = 0;
     Expr active = RegionExpressions::invalid;
     bool reads = false, writes = false;
+    uint64_t protectionGroup = 0;
 };
 class Extractor {
 public:
@@ -59,9 +60,6 @@ public:
         }
         if (!prepareGuards() || !prepareFragments()) { return; }
         maskOffsets();
-        if (mayHaveHardwareProtectedPair(input, result.phases)) {
-            fail("guarded conditional accumulator protection is not supported"); return;
-        }
         normalize();
         for (const auto& fragment : fragments) { result.fragments.push_back(fragment); }
         for (std::size_t target = 0; target < fragments.size(); ++target) {
@@ -219,6 +217,7 @@ private:
     bool prepareFragments()
     {
         result.dischargedEffects = recognized.result.dischargedEffects;
+        const auto protection = structuredProtection(input.accesses());
         DenseMap<const CompoundInstanceElement*, uint32_t> positions;
         DenseMap<Value, uint32_t> families;
         struct Family { uint64_t slots, stride, divisor, refresh, inverseStride; };
@@ -267,6 +266,9 @@ private:
             fragment.active = result.payloads[fragment.payload].presence;
             if (access.guard) { fragment.active = dag().land(fragment.active, guards[*access.guard]); }
             fragment.reads = access.reads; fragment.writes = access.writes;
+            if (effect.memory->scope == AddressSpace::ACC && stride == 0) {
+                fragment.protectionGroup = protection.inLoop(effect.phase, result.loop);
+            }
             fragments.push_back(fragment);
             result.refreshBound = std::max(result.refreshBound, fragment.refresh);
         }
@@ -370,6 +372,13 @@ private:
             }
             const auto source = following ? target.payload : fragments[candidate.writer].payload;
             const auto destination = following ? fragments[candidate.writer].payload : target.payload;
+            const auto& writer = fragments[candidate.writer];
+            if (!following && hardwareProtectsConflict(result.payloads[source].pipe, writer.protectionGroup,
+                                                       result.payloads[destination].pipe, target.protectionGroup)) {
+                const auto sameScope = writer.protectionGroup & invocationProtectionBit ? yes() :
+                    dag().eq(candidate.distance, c(0));
+                active = dag().land(active, dag().lnot(dag().land(target.write, sameScope)));
+            }
             if (dag().constantValue(active) == std::optional<uint64_t>(0)) { continue; }
             result.generators.push_back({source, destination, candidate.distance, active, target.refresh});
         }

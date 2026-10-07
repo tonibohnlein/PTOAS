@@ -19,14 +19,15 @@ void SequenceAnalysisState::bridges()
         for (const auto& access : child.regional.accessBoundary) { residual |= !access.representedByCells; }
     }
     residual |= model && model->hasUniformRelationships(phases);
-    const auto protection = model ? invocationProtectionGroups(*model) : InvocationProtection{};
+    const auto protection = model ? structuredProtection(*model) : StructuredProtection{};
     auto storageCrossing = [&](uint32_t cell, Selected source, Selected target) {
         const auto& a = ports[source.port];
         const auto& b = ports[target.port];
         auto x = children[a.child].anchors[a.type].phase;
         auto y = children[b.child].anchors[b.type].phase;
         if (cells[cell].space == AddressSpace::ACC && hardwareProtectsConflict(
-                pipe(source.port), protection.lookup(x), pipe(target.port), protection.lookup(y))) { return; }
+                pipe(source.port), protection.within(x, requiredOuterLoops),
+                pipe(target.port), protection.within(y, requiredOuterLoops))) { return; }
         crossing(source, target);
     };
     if (residual) {
@@ -38,6 +39,14 @@ void SequenceAnalysisState::bridges()
                 for (const auto& x : left.accessBoundary) {
                     for (const auto& y : right.accessBoundary) {
                         const auto& model = *left.accessModel;
+                        const auto& source = model.effects()[x.effect];
+                        const auto& target = model.effects()[y.effect];
+                        if (source.memory && target.memory && source.memory->scope == AddressSpace::ACC &&
+                            target.memory->scope == AddressSpace::ACC && hardwareProtectsConflict(
+                                static_cast<uint32_t>(source.phase->kPipeValue),
+                                protection.within(source.phase, requiredOuterLoops),
+                                static_cast<uint32_t>(target.phase->kPipeValue),
+                                protection.within(target.phase, requiredOuterLoops))) { continue; }
                         bool conflict = model.uniformConflict(x.effect, y.effect);
                         if (!conflict && (!x.representedByCells || !y.representedByCells) &&
                             model.residualConflict(x.effect, y.effect)) {
