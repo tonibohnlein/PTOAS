@@ -21,6 +21,7 @@ void SequenceAnalysisState::bridges()
     residual |= model && model->hasUniformRelationships(phases);
     const auto protection = model ? structuredProtection(*model) : StructuredProtection{};
     auto storageCrossing = [&](uint32_t cell, Selected source, Selected target) {
+        if (ptoStorageProtection().protectsScalar(pipe(source.port), pipe(target.port))) { return; }
         const auto& a = ports[source.port];
         const auto& b = ports[target.port];
         auto x = children[a.child].anchors[a.type].phase;
@@ -41,6 +42,8 @@ void SequenceAnalysisState::bridges()
                         const auto& model = *left.accessModel;
                         const auto& source = model.effects()[x.effect];
                         const auto& target = model.effects()[y.effect];
+                        if (ptoStorageProtection().protectsScalar(static_cast<uint32_t>(source.phase->kPipeValue),
+                            static_cast<uint32_t>(target.phase->kPipeValue))) { continue; }
                         if (source.memory && target.memory && source.memory->scope == AddressSpace::ACC &&
                             target.memory->scope == AddressSpace::ACC && hardwareProtectsConflict(
                                 static_cast<uint32_t>(source.phase->kPipeValue),

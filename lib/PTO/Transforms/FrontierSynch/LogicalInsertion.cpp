@@ -207,6 +207,10 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
     }
     for (const auto& endpoint : plan.endpoints) {
         const bool barrier = endpoint.kind == LogicalCommandKind::Barrier;
+        if (barrier && endpoint.sourcePipe == static_cast<uint32_t>(PIPE::PIPE_S)) {
+            return function.emitError("invalid logical plan: PIPE_S barrier is forbidden; "
+                                      "same-scalar storage hazards must be hardware protected before reduction");
+        }
         const bool kind = barrier || endpoint.kind == LogicalCommandKind::Set ||
             endpoint.kind == LogicalCommandKind::Wait;
         if (!kind || !available.cut(endpoint.before) || endpoint.record < 0 ||

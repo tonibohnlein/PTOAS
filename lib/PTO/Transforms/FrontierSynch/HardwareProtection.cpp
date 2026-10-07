@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// A2/A3 MMAD accumulator access ordering; physical effects remain unchanged.
+// Target storage-hazard protection; physical effects remain unchanged.
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
@@ -14,6 +14,14 @@
 #include <limits>
 #include <optional>
 namespace mlir::pto::frontiersynch {
+StorageProtectionPolicy ptoStorageProtection()
+{
+    // CANN 9.0 PipeBarrier restrictions: hardware guarantees same-scalar
+    // synchronization; PIPE_S barriers cause a hardware error. This is also
+    // the rule used by existing InsertSyncAnalysis::IsNoNeedToInsertSync.
+    // https://www.hiascend.com/doc_center/source/zh/canncommercial/900/API/ascendcopapi/atlasascendc_api_07_0271.html
+    return {static_cast<uint32_t>(PipelineType::PIPE_S)};
+}
 std::optional<MatrixProtectionInfo> matrixProtectionInfo(Operation* operation)
 {
     if (!operation || !isTargetArchA3(operation)) {
