@@ -11,6 +11,8 @@
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticStorageSelectors.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticHandoffAllocation.h"
+#include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/MapVector.h"
@@ -24,6 +26,7 @@ struct State {
     ArithmeticProgram program;
     GeneralArithmeticDemandAnalysis analysis;
     ArithmeticStorageSelectors selectors;
+    std::optional<ArithmeticHandoffAllocation> handoffAllocation;
     std::vector<ArithmeticIntegerPiece> primitives;
     using StorageKey = std::pair<AddressSpace, Value>;
     using Interval = std::pair<uint64_t, uint64_t>;
@@ -197,7 +200,7 @@ struct State {
         }
         return arena->land(arena->land(coordinateDomain(a), coordinateDomain(b)), result);
     }
-    std::vector<RegionalSelector> selected(const ArithmeticBoundarySelector& boundary,
+    std::vector<RegionalSelector> selected(const GeneralArithmeticEndpointSelector& selector,
                                            std::optional<Id> byte = std::nullopt)
     {
         std::vector<Id> values;
@@ -206,7 +209,7 @@ struct State {
         std::map<std::size_t, RegionalSelector> selected;
         // The exact extremum is unique. Overlapping pieces therefore select
         // the same tagged tuple; priority masks would only duplicate guards.
-        for (const auto& piece : boundary.selector.pieces) {
+        for (const auto& piece : selector.pieces) {
             auto residues = piece.inputResidues;
             llvm::append_range(residues, piece.parameterResidues);
             auto guard = arena->integerPredicate(piece.domain, values, selectors.period, residues);
@@ -241,6 +244,40 @@ struct State {
         }
         std::vector<RegionalSelector> result;
         for (const auto& [site, choice] : selected) { result.push_back(choice); }
+        return result;
+    }
+    std::vector<RegionalSelector> selected(const ArithmeticBoundarySelector& boundary,
+                                           std::optional<Id> byte = std::nullopt)
+    {
+        return selected(boundary.selector, byte);
+    }
+    std::shared_ptr<RegionalAllocationSummary> allocation(const PreparedLogicalPlan& plan)
+    {
+        if (!handoffAllocation) { handoffAllocation = buildArithmeticHandoffAllocation(analysis, pipes, 1); }
+        if (!handoffAllocation->error.empty()) { return {}; }
+        std::map<std::pair<std::size_t, std::size_t>, uint32_t> records;
+        for (const auto& family : plan.families) {
+            for (const auto& member : family.members) {
+                records[{member.source, member.target}] = member.record;
+            }
+        }
+        auto result = std::make_shared<RegionalAllocationSummary>();
+        for (const auto& family : handoffAllocation->families) {
+            auto record = records.find({family.sourceSite, family.targetSite});
+            auto first = selected(family.firstSource), last = selected(family.lastTarget);
+            if (record == records.end() || first.size() != 1 || last.size() != 1) { return {}; }
+            RegionalAllocationGroup group;
+            group.sourcePipe = pipes[family.sourceSite]; group.targetPipe = pipes[family.targetSite]; group.budget = 1;
+            RegionalAllocationMember member;
+            member.record = record->second; member.firstSource = first.front().event;
+            member.lastTarget = last.front().event; member.lastTarget.kind = PeriodicEventKind::Completion;
+            member.active = arena->land(first.front().present, last.front().present);
+            member.sourcePipe = group.sourcePipe; member.targetPipe = group.targetPipe;
+            member.tupleRule = PhysicalTupleRule{1 + program.sites[family.sourceSite].loops.size(), 0, {}};
+            last.front().event.kind = PeriodicEventKind::Completion;
+            group.members.push_back(std::move(member)); group.lanes.push_back({std::move(first), std::move(last)});
+            result->groups.push_back(std::move(group));
+        }
         return result;
     }
     RegionalStorageSelectors storage(AddressSpace space, Value base, Id byte)
@@ -585,7 +622,10 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext cont
         }
         auto plan = prepareGeneralArithmeticRegionalInsertion(state->program.context.function, state->program,
                                                        state->analysis, state->error);
-        if (succeeded(plan)) { (*plan)->completeInvocation = false; }
+        if (succeeded(plan)) {
+            (*plan)->completeInvocation = false;
+            (*plan)->regionalAllocation = state->allocation(**plan);
+        }
         return plan;
     };
     out.prepare = [prepare = out.prepareWithVisits]() { return prepare({}); };

@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Execute inserted arith/scf control, never regenerate commands from recipes.
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
+#include "PTO/Transforms/FrontierSynch/MixedStrideAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/VaryingRotatingRegional.h"
 #include "SyncLogicalInsertionChecks.h"
 #include "PTO/IR/PTO.h"
@@ -475,7 +476,15 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
         return verify(function);
     }
     bool accepted = false;
-    if (function->hasAttr("test.bounded_lifetime_insertion")) {
+    if (function->hasAttr("test.mixed_stride_insertion")) {
+        auto program = fs::recognizeProgram(function, input);
+        std::string error;
+        if (succeeded(program)) {
+            auto prepared = fs::prepareMixedStrideInsertion(function, input, *program, error);
+            accepted = succeeded(prepared) && succeeded(fs::insertLogicalSynchronization(function, **prepared));
+        }
+        if (!accepted) { llvm::errs() << error << "\n"; }
+    } else if (function->hasAttr("test.bounded_lifetime_insertion")) {
         auto program = fs::recognizeProgram(function,input);
         std::string error;
         if (succeeded(program)) {
@@ -535,7 +544,14 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
         bool allocated = succeeded(fs::allocatePhysicalEventIds(function,ids.asArrayRef()));
         report["allocated"] = allocated;
         report["allocation_unchanged_on_failure"] = allocated || logicalIR == render();
-        if (allocated) { report["physical"] = Interpreter(input.instructions()).run(function); }
+        if (allocated) {
+            // Counter allocation may replace the function body transactionally.
+            // Recover anchors from the resulting IR rather than retaining
+            // preallocation pointers to cloned or erased payload operations.
+            pto::SyncInput physicalInput(policy);
+            if (failed(physicalInput.build(function))) { return failure(); }
+            report["physical"] = Interpreter(physicalInput.instructions()).run(function);
+        }
     }
     report["trace"] = std::move(trace);
     llvm::outs() << llvm::json::Value(std::move(report)) << "\n";

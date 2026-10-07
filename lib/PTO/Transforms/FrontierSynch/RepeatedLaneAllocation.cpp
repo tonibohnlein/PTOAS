@@ -17,7 +17,6 @@ constexpr uint64_t maximumPaletteWidth = 6;
 struct Lane {
     RegionalAllocationGroup group;
     RepeatedAllocationExtrema bounds;
-    Id active = RegionExpressions::invalid;
     uint64_t delay = 0;
     bool child = true;
 };
@@ -29,11 +28,17 @@ bool addLane(RepeatedRegionState& state, std::vector<Lane>& lanes,
         if (child && (!member.tupleRule || !validPhysicalTupleRule(*member.tupleRule, 1) ||
                       !canRestrictRepeatedAllocationMember(state, member))) { return false; }
     }
+    // Intersect each member's invocation with the retained phase interval
+    // before constructing the reuse graph. A clipped-away handoff still needs
+    // a record mapping, but must not become a phantom vertex in a cycle.
+    for (auto& member : group.members) {
+        auto clipped = member;
+        if (!liftRepeatedAllocationEnvelope(state, clipped, delay)) { return false; }
+        member.active = clipped.active;
+    }
     auto bounds = repeatedAllocationExtrema(state.body, group);
-    if (!bounds || bounds->first.empty() || bounds->second.empty()) { return false; }
-    auto active = state.e().boolean(false);
-    for (const auto& selector : bounds->first) { active = state.e().lor(active, selector.present); }
-    lanes.push_back({std::move(group), std::move(*bounds), active, delay, child});
+    if (!bounds || bounds->first.empty() != bounds->second.empty()) { return false; }
+    lanes.push_back({std::move(group), std::move(*bounds), delay, child});
     return true;
 }
 
@@ -60,43 +65,11 @@ bool addCrossings(RepeatedRegionState& state, std::vector<Lane>& lanes,
     return true;
 }
 
-bool completePeriods(RepeatedRegionState& state)
+std::optional<uint64_t> reuseCost(RepeatedRegionState& state, const Lane& from, const Lane& to)
 {
     auto& e = state.e();
-    if (!state.phaseCount) { return false; }
-    auto begin = state.originalBegin == RegionExpressions::invalid ? e.constant(0) : state.originalBegin;
-    auto end = state.originalTrips == RegionExpressions::invalid ? state.trips : state.originalTrips;
-    auto modulus = e.constant(state.phaseCount);
-    return e.constantValue(e.rem(begin, modulus)) == 0 && e.constantValue(e.rem(end, modulus)) == 0;
-}
-
-bool samePhase(const RepeatedRegionState& state, const Lane& from, const Lane& to)
-{
-    if (state.typePhases.empty()) { return true; }
-    std::optional<uint32_t> phase;
-    for (const auto* lane : {&from, &to}) {
-        for (const auto* selectors : {&lane->bounds.first, &lane->bounds.second}) {
-            for (const auto& selector : *selectors) {
-                if (selector.event.type >= state.typePhases.size()) { return false; }
-                auto next = state.typePhases[selector.event.type];
-                if (phase && *phase != next) { return false; }
-                phase = next;
-            }
-        }
-    }
-    return true;
-}
-
-std::optional<uint64_t> reuseCost(RepeatedRegionState& state, const Lane& from,
-                                const Lane& to, bool wholePeriods)
-{
-    auto& e = state.e();
-    // A cycle must be wholly present or wholly absent in each parameter case.
-    // Pairwise conditional edges alone do not justify skipping a middle lane.
-    if (!e.implies(from.active, to.active) || !e.implies(to.active, from.active)) { return std::nullopt; }
-    // A partial period can omit one phase while retaining another. Without a
-    // clipped-chain proof, share only lanes with identical phase boundaries.
-    if (!wholePeriods && !samePhase(state, from, to)) { return std::nullopt; }
+    // Costs propose an assignment only. A separate all-pair check below
+    // certifies reuse when intervening handoffs have different activity.
     // Restrict to certified nonnegative source displacements. This is a
     // sufficient matrix, not the set of every possible hardware assignment.
     for (uint64_t gap = from.delay; gap <= maximumPaletteWidth; ++gap) {
@@ -104,7 +77,7 @@ std::optional<uint64_t> reuseCost(RepeatedRegionState& state, const Lane& from,
         for (const auto& end : from.bounds.second) {
             for (const auto& begin : to.bounds.first) {
                 auto active = e.land(end.present, begin.present);
-                if (e.constantValue(active) == 0) { continue; }
+                if (e.implies(active, e.boolean(false))) { continue; }
                 auto consumer = end.event, producer = begin.event;
                 const auto& anchors = state.body.anchors;
                 if (consumer.type >= anchors.size() || producer.type >= anchors.size() ||
@@ -120,13 +93,47 @@ std::optional<uint64_t> reuseCost(RepeatedRegionState& state, const Lane& from,
                 // The WAIT endpoint of an outer handoff is already one period
                 // later than its SET. Subtract that consumer delay exactly once.
                 auto query = state.relativeQuery(consumer, producer, gap - from.delay);
-                if (!query || !e.implies(active, *query)) { proven = false; break; }
+                if (!query || !(e.implies(active, *query) || e.constantUnder(active, active) == 0 ||
+                                e.constantUnder(active, *query) == 1)) { proven = false; break; }
             }
             if (!proven) { break; }
         }
         if (proven) { return gap; }
     }
     return std::nullopt;
+}
+
+// Export each physical label's actual first/last member occurrences after
+// clipping. A member's source visits form one interval; its consumer is delayed
+// by a fixed number of repeats. Only the at-most-six physical labels expand.
+void appendBounds(RepeatedRegionState& state, RegionalAllocationGroup& result,
+                  const RegionalAllocationMember& member, uint64_t delay,
+                  uint64_t base, uint64_t width, uint64_t offset)
+{
+    if (width == 1) {
+        result.lanes[base].firstSources.push_back({member.firstSource, member.active});
+        result.lanes[base].lastTargets.push_back({member.lastTarget, member.active});
+        return;
+    }
+    auto& e = state.e();
+    const auto first = member.firstSource.visits.front();
+    const auto last = e.sub(member.lastTarget.visits.front(), e.constant(delay));
+    for (uint64_t lane = 0; lane < width; ++lane) {
+        const auto residue = (lane + width - offset) % width;
+        const auto shift = e.rem(e.add(e.constant(residue),
+            e.sub(e.constant(width), e.rem(first, e.constant(width)))), e.constant(width));
+        // Compare the shift before adding it, so an absent first+shift cannot
+        // wrap into the live interval near the machine integer limit.
+        const auto room = e.sub(last, first);
+        const auto active = e.land(member.active, e.le(shift, room));
+        const auto begin = e.select(active, e.add(first, shift), first);
+        const auto end = e.sub(last, e.rem(e.sub(last, begin), e.constant(width)));
+        auto source = member.firstSource, target = member.lastTarget;
+        source.visits.front() = begin;
+        target.visits.front() = e.add(end, e.constant(delay));
+        result.lanes[base + lane].firstSources.push_back({std::move(source), active});
+        result.lanes[base + lane].lastTargets.push_back({std::move(target), active});
+    }
 }
 
 bool appendLane(RepeatedRegionState& state, RegionalAllocationGroup& result,
@@ -144,41 +151,169 @@ bool appendLane(RepeatedRegionState& state, RegionalAllocationGroup& result,
         member.stride = 0;
         member.phase = 0;
         if (!liftRepeatedAllocationEnvelope(state, member, lane.delay)) { return false; }
+        appendBounds(state, result, member, lane.delay, base, width, offset);
         result.members.push_back(std::move(member));
     }
     return true;
 }
 
+// The formula (visit+offset)%width collides first at this positive gap.
+// Larger collisions are safe through native start order at the destination
+// source site. Its activity is immutable across repeats, and a witness between
+// two retained occurrences stays inside the contiguous clipped interval.
+bool compatible(const PeriodicReuseMatrix& costs, std::size_t from, std::size_t to,
+                uint64_t fromOffset, uint64_t toOffset, uint64_t width)
+{
+    if (!costs[from][to]) { return false; }
+    auto gap = (fromOffset + width - toOffset) % width;
+    if (!gap) {
+        // Distinct phases using one label in the same visit require an actual
+        // command ordering; unrelated absent intermediates cannot supply it.
+        if (from != to && *costs[from][to] != 0 && (!costs[to][from] || *costs[to][from] != 0)) {
+            return false;
+        }
+        gap = width;
+    }
+    return *costs[from][to] <= gap;
+}
+
+bool certifyAssignment(const PeriodicReuseMatrix& costs, const PeriodicSharedAllocation& assignment)
+{
+    if (assignment.status != PeriodicSharedAllocationStatus::Success ||
+        !assignment.budget || assignment.budget > maximumPaletteWidth ||
+        assignment.phases.size() != costs.size()) { return false; }
+    for (std::size_t i = 0; i < costs.size(); ++i) {
+        const auto& from = assignment.phases[i];
+        for (std::size_t j = 0; j < costs.size(); ++j) {
+            const auto& to = assignment.phases[j];
+            if (from.cycle != to.cycle) { continue; }
+            if (from.laneCount != to.laneCount || !from.laneCount ||
+                from.offset >= from.laneCount || to.offset >= to.laneCount ||
+                !compatible(costs, i, j, from.offset, to.offset, from.laneCount)) { return false; }
+        }
+    }
+    return true;
+}
+
+// A deterministic polynomial fallback when the cheapest cycle cover has an
+// uncertified skipped phase (or conditional zero edges form a candidate cycle).
+// Try at most six widths and six offsets; this is sufficient, not a minimum.
+std::optional<std::pair<uint64_t, std::vector<uint64_t>>> greedyAssignment(const PeriodicReuseMatrix& costs)
+{
+    for (uint64_t width = 1; width <= maximumPaletteWidth; ++width) {
+        std::vector<uint64_t> offsets;
+        for (std::size_t i = 0; i < costs.size(); ++i) {
+            std::optional<uint64_t> selected;
+            for (uint64_t offset = 0; offset < width; ++offset) {
+                bool valid = compatible(costs, i, i, offset, offset, width);
+                for (std::size_t j = 0; valid && j < i; ++j) {
+                    valid = compatible(costs, i, j, offset, offsets[j], width) &&
+                            compatible(costs, j, i, offsets[j], offset, width);
+                }
+                if (valid) { selected = offset; break; }
+            }
+            if (!selected) { break; }
+            offsets.push_back(*selected);
+        }
+        if (offsets.size() == costs.size()) { return std::make_pair(width, std::move(offsets)); }
+    }
+    return std::nullopt;
+}
+
+// Keep independent palettes when some pairs have no certified order. Each
+// insertion reruns the direct all-pair proof; a missing intermediate is never
+// used as a witness. The bounded offset search costs O(6^2 n^3) in total.
+std::optional<PeriodicSharedAllocation> partitionAssignment(const PeriodicReuseMatrix& costs)
+{
+    if (auto together = greedyAssignment(costs)) {
+        PeriodicSharedAllocation result;
+        result.budget = together->first;
+        result.phases.resize(costs.size());
+        for (std::size_t i = 0; i < costs.size(); ++i) {
+            result.phases[i].laneCount = result.budget;
+            result.phases[i].offset = together->second[i];
+        }
+        return result;
+    }
+    struct Palette {
+        std::vector<std::size_t> members;
+        uint64_t width = 0;
+        std::vector<uint64_t> offsets;
+    };
+    std::vector<Palette> palettes;
+    for (std::size_t i = 0; i < costs.size(); ++i) {
+        if (!costs[i][i]) { return std::nullopt; }
+        auto increase = std::max(uint64_t(1), *costs[i][i]);
+        if (increase > maximumPaletteWidth) { return std::nullopt; }
+        std::optional<std::size_t> chosen;
+        Palette next{{i}, increase, {0}};
+        for (std::size_t g = 0; g < palettes.size(); ++g) {
+            auto members = palettes[g].members; members.push_back(i);
+            PeriodicReuseMatrix subset(members.size(), std::vector<std::optional<uint64_t>>(members.size()));
+            for (std::size_t a = 0; a < members.size(); ++a) {
+                for (std::size_t b = 0; b < members.size(); ++b) { subset[a][b] = costs[members[a]][members[b]]; }
+            }
+            auto placed = greedyAssignment(subset);
+            if (!placed || placed->first < palettes[g].width ||
+                placed->first - palettes[g].width >= increase) { continue; }
+            increase = placed->first - palettes[g].width;
+            chosen = g;
+            next = {std::move(members), placed->first, std::move(placed->second)};
+        }
+        if (chosen) { palettes[*chosen] = std::move(next); }
+        else { palettes.push_back(std::move(next)); }
+    }
+    PeriodicSharedAllocation result;
+    result.phases.resize(costs.size());
+    for (std::size_t g = 0; g < palettes.size(); ++g) {
+        const auto& palette = palettes[g];
+        if (palette.width > maximumPaletteWidth - result.budget) { return std::nullopt; }
+        for (std::size_t i = 0; i < palette.members.size(); ++i) {
+            auto& phase = result.phases[palette.members[i]];
+            phase.cycle = g; phase.laneBegin = result.budget;
+            phase.laneCount = palette.width; phase.offset = palette.offsets[i];
+        }
+        result.budget += palette.width;
+    }
+    return result;
+}
+
 std::optional<RegionalAllocationGroup> allocateLanes(RepeatedRegionState& state, ArrayRef<Lane> lanes)
 {
-    const auto n = lanes.size();
-    if (!n || n > UINT32_MAX || n > std::vector<std::optional<uint64_t>>().max_size() / n) {
+    std::vector<std::size_t> live;
+    for (std::size_t i = 0; i < lanes.size(); ++i) {
+        if (!lanes[i].bounds.first.empty()) { live.push_back(i); }
+    }
+    const auto n = live.size();
+    if (n > UINT32_MAX || (n && n > std::vector<std::optional<uint64_t>>().max_size() / n)) {
         return std::nullopt;
     }
     PeriodicReuseMatrix costs(n, std::vector<std::optional<uint64_t>>(n));
-    const bool wholePeriods = completePeriods(state);
     for (std::size_t i = 0; i < n; ++i) {
         for (std::size_t j = 0; j < n; ++j) {
-            costs[i][j] = reuseCost(state, lanes[i], lanes[j], wholePeriods);
+            costs[i][j] = reuseCost(state, lanes[live[i]], lanes[live[j]]);
         }
     }
     auto assignment = allocatePeriodicShared(costs);
-    if (assignment.status != PeriodicSharedAllocationStatus::Success ||
-        !assignment.budget || assignment.budget > maximumPaletteWidth) { return std::nullopt; }
-    RegionalAllocationGroup result{lanes.front().group.sourcePipe, lanes.front().group.targetPipe,
-                                   assignment.budget, {}};
-    // Equal activity and nonnegative displacements make each cycle a chain.
-    // Every intermediate consumer command precedes the next publication.
-    // With gap >= delay, between retained publications all intermediate handoffs remain
-    // inside the finite interval; missing terminal crossings cannot break reuse.
-    // The phase check above gives all lanes the same interval boundaries.
-    // Retain each original record once and index its cycle by the outer source
-    // coordinate. This exports conservative envelopes, never stale lane data.
+    if (!certifyAssignment(costs, assignment)) {
+        auto partitioned = partitionAssignment(costs);
+        if (!partitioned || (n && !certifyAssignment(costs, *partitioned))) { return std::nullopt; }
+        assignment = std::move(*partitioned);
+    }
+    // The existing typed record mapping requires a positive placeholder budget
+    // even when every guarded record is absent; no command uses that label.
+    const auto budget = std::max(uint64_t(1), assignment.budget);
+    RegionalAllocationGroup result{lanes.front().group.sourcePipe, lanes.front().group.targetPipe, budget, {}};
+    result.lanes.resize(budget);
     for (std::size_t i = 0; i < n; ++i) {
         const auto& phase = assignment.phases[i];
-        if (!appendLane(state, result, lanes[i], phase.laneBegin, phase.laneCount, phase.offset)) {
+        if (!appendLane(state, result, lanes[live[i]], phase.laneBegin, phase.laneCount, phase.offset)) {
             return std::nullopt;
         }
+    }
+    // Absent records execute no commands and consume no additional lane.
+    for (const auto& lane : lanes) {
+        if (lane.bounds.first.empty() && !appendLane(state, result, lane, 0, 1, 0)) { return std::nullopt; }
     }
     return result;
 }

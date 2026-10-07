@@ -390,7 +390,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticInsertion(
 {
     const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
     if (!analysis.error.empty() || !analysis.exactMinimum ||
-        bits.isScalable() || bits.getFixedValue() != 64 || analysis.period > 2 ||
+        bits.isScalable() || bits.getFixedValue() != 64 || !analysis.period || analysis.period > INT64_MAX ||
         analysis.parameterCount != program.parameters.size()) {
         error = "arithmetic insertion requires reduced demands and a supported index representation";
         return failure();
@@ -411,6 +411,11 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticInsertion(
     }
     plan->allocationCertificate = arithmeticAllocationCertificate(analysis, pipes, preparer.recordMap(),
                                                                   plan->planId, function.getContext());
+    if (!plan->allocationCertificate && program.context.root == function.getOperation()) {
+        auto proof = buildArithmeticHandoffAllocation(analysis, pipes);
+        plan->allocationCertificate = encodeGeneralArithmeticAllocationCertificate(
+            proof, pipes, preparer.recordMap(), plan->planId, function.getContext());
+    }
     return plan;
 }
 namespace {
@@ -420,7 +425,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneral(
 {
     const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
     if (!analysis.error.empty() || !analysis.exactMinimum ||
-        bits.isScalable() || bits.getFixedValue() != 64 || analysis.period > 2 ||
+        bits.isScalable() || bits.getFixedValue() != 64 || !analysis.period || analysis.period > INT64_MAX ||
         analysis.parameterCount != program.parameters.size()) {
         error = "arithmetic insertion requires reduced demands and a supported index representation";
         return failure();
@@ -439,7 +444,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneral(
         if (error.empty()) { error = "arithmetic selector cannot be emitted at its original cut"; }
         return failure();
     }
-    if (!regional) {
+    if (!regional && program.context.root == function.getOperation()) {
         plan->allocationCertificate = generalArithmeticAllocationCertificate(
             analysis, pipes, preparer.recordMap(), plan->planId, function.getContext());
     }

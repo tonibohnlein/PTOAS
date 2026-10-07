@@ -14,23 +14,23 @@
 #include <tuple>
 namespace mlir::pto::frontiersynch {
 namespace {
-void protection(RotatingAnalysis& result, const SyncInput& input, const RecognitionResult& recognized)
+void protection(RotatingPrimitives& result, scf::ForOp loop,
+                const SyncInput& input, const RecognitionResult& recognized)
 {
     const auto shared = structuredProtection(input.accesses());
     for (std::size_t i = 0; i < result.fragments.size(); ++i) {
         auto& fragment = result.fragments[i];
         const auto& effect = input.accesses().effects()[recognized.accesses[i].effect];
         if (effect.memory->scope == AddressSpace::ACC && fragment.stride == 0) {
-            fragment.protectionGroup = shared.inLoop(effect.phase, result.loop);
+            fragment.protectionGroup = shared.inLoop(effect.phase, loop);
         }
     }
 }
 } // namespace
-RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
-    const SyncInput& input, const RecognitionResult& recognized, bool prepareEndpoints)
+RotatingPrimitives collectRotatingPrimitives(scf::ForOp loop, const PhaseIndex& index,
+    const SyncInput& input, const RecognitionResult& recognized)
 {
-    RotatingAnalysis result;
-    result.loop = loop;
+    RotatingPrimitives result;
     if (!loop || recognized.state != RecognitionState::Applicable) {
         result.error = "rotating route requires a certified fixed-body footprint contract";
         return result;
@@ -44,7 +44,7 @@ RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
     DenseMap<const CompoundInstanceElement*, uint32_t> positions;
     DenseMap<Value, uint32_t> families;
     std::map<std::tuple<uint32_t, uint64_t, uint64_t>, uint32_t> atoms;
-    std::vector<PeriodicPayload> payloads;
+    auto& payloads = result.payloads;
     for (auto* phase : result.phases) {
         positions[phase] = payloads.size();
         payloads.push_back({static_cast<uint32_t>(phase->kPipeValue)});
@@ -66,12 +66,7 @@ RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
         result.fragments.push_back({found->second, family, atom, access.slots, access.stride, access.offset,
                                      access.reads, access.writes, 0});
     }
-    protection(result, input, recognized);
-    result.extraction = extractRotatingGenerators(payloads, result.fragments, ptoStorageProtection());
-    if (!result.extraction.error.empty()) {
-        result.error = result.extraction.error;
-        return result;
-    }
+    protection(result, loop, input, recognized);
     if (input.accesses().hasUniformRelationships(result.phases)) {
         for (uint32_t a = 0; a < result.phases.size(); ++a) {
             for (uint32_t b = 0; b < result.phases.size(); ++b) {
@@ -87,20 +82,39 @@ RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
                     }
                 }
                 if (conflict) {
-                    result.extraction.generators.push_back({a, b, a < b ? 0U : 1U});
-                    result.extraction.refreshBound = std::max<uint64_t>(result.extraction.refreshBound, 1);
+                    result.prerequisites.push_back({a, b, a < b ? 0U : 1U});
                 }
             }
         }
     }
     const auto prerequisites = index.mapPrerequisites(result.phases);
     if (!prerequisites.error.empty()) { result.error = prerequisites.error; return result; }
-    std::vector<PeriodicRecord> native;
-    for (const auto& edge : prerequisites.native) { native.push_back({edge.source, edge.target, 0}); }
-    for (const auto& edge : prerequisites.demands) {
-        result.extraction.generators.push_back({edge.source, edge.target, 0});
+    for (const auto& edge : prerequisites.native) {
+        result.nativePrerequisites.push_back({edge.source, edge.target, 0});
     }
-    result.periodic = analyzePeriodicDemands(payloads, result.extraction.generators, native);
+    for (const auto& edge : prerequisites.demands) {
+        result.prerequisites.push_back({edge.source, edge.target, 0});
+    }
+    return result;
+}
+RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
+    const SyncInput& input, const RecognitionResult& recognized, bool prepareEndpoints)
+{
+    RotatingAnalysis result;
+    result.loop = loop;
+    auto primitives = collectRotatingPrimitives(loop, index, input, recognized);
+    result.error = primitives.error;
+    if (!result.error.empty()) { return result; }
+    result.phases = primitives.phases;
+    result.fragments = std::move(primitives.fragments);
+    result.extraction = extractRotatingGenerators(primitives.payloads, result.fragments, ptoStorageProtection());
+    if (!result.extraction.error.empty()) { result.error = result.extraction.error; return result; }
+    for (const auto& edge : primitives.prerequisites) {
+        result.extraction.generators.push_back(edge);
+        result.extraction.refreshBound = std::max(result.extraction.refreshBound, edge.displacement);
+    }
+    result.periodic = analyzePeriodicDemands(primitives.payloads, result.extraction.generators,
+                                           primitives.nativePrerequisites);
     result.error = result.periodic.error;
     if (!result.error.empty()) {
         return result;

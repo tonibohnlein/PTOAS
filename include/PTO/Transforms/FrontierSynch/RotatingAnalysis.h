@@ -10,6 +10,17 @@
 #include "PTO/Transforms/FrontierSynch/RotatingExtraction.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
 namespace mlir::pto::frontiersynch {
+// Exact original-body input shared by common-stride and phase-expanded adapters.
+// Relationships retain original iteration distances and protection scope.
+struct RotatingPrimitives {
+    std::string error;
+    SmallVector<const CompoundInstanceElement*> phases;
+    std::vector<PeriodicPayload> payloads;
+    std::vector<RotatingFragment> fragments;
+    std::vector<PeriodicRecord> prerequisites, nativePrerequisites;
+};
+RotatingPrimitives collectRotatingPrimitives(scf::ForOp loop, const PhaseIndex& index,
+    const SyncInput& input, const RecognitionResult& recognition);
 struct RotatingAnalysis {
     std::string error;
     scf::ForOp loop;

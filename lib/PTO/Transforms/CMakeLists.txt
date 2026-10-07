@@ -197,6 +197,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/CompactAllocation.cpp
   FrontierSynch/AllocationCertificate.cpp
   FrontierSynch/PhysicalAllocation.cpp
+  FrontierSynch/PhysicalExecutedCounters.cpp
   FrontierSynch/GuardedPeriodicQuotient.cpp
   FrontierSynch/IntegerRelations.cpp
   FrontierSynch/GeneralArithmeticSelectors.cpp
@@ -207,12 +208,15 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/ArithmeticSelectors.cpp
   FrontierSynch/ArithmeticInsertion.cpp
   FrontierSynch/GeneralArithmeticAllocation.cpp
+  FrontierSynch/ArithmeticHandoffAllocation.cpp
   FrontierSynch/GuardedRotatingAnalysis.cpp
   FrontierSynch/GuardedRotatingInsertion.cpp
   FrontierSynch/GuardedRotatingRegional.cpp
   FrontierSynch/FiniteOverlay.cpp
   FrontierSynch/FiniteOverlayInsertion.cpp
   FrontierSynch/RotatingAnalysis.cpp
+  FrontierSynch/MixedStrideAnalysis.cpp
+  FrontierSynch/MixedStrideInsertion.cpp
   FrontierSynch/VaryingRotatingRecognition.cpp
   FrontierSynch/VaryingRotatingAllocation.cpp
   FrontierSynch/VaryingBoundaryQuery.cpp

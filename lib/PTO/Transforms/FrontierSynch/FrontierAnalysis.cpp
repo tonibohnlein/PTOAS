@@ -13,6 +13,7 @@
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/MixedStrideAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
 #include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
@@ -211,6 +212,12 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
         }
         if (failed(prepared) && numerical) {
             prepared = frontiersynch::prepareNumericTemplateInsertion(function, *analysis.result());
+        }
+        if (failed(prepared)) {
+            std::string mixedError;
+            prepared = frontiersynch::prepareMixedStrideInsertion(
+                function, *analysis.input(), *analysis.result(), mixedError);
+            if (failed(prepared) && !mixedError.empty()) { routeError += "; " + mixedError; }
         }
         if (failed(prepared)) {
             prepared = frontiersynch::prepareGuardedRotatingInsertion(

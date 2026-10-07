@@ -11,6 +11,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/RepeatedAllocation.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/RepeatedLaneAllocation.h"
 #include <map>
+#include <set>
 #include <tuple>
 #include <algorithm>
 #include "llvm/Support/raw_ostream.h"
@@ -278,6 +279,7 @@ bool allocationCheck(func::FuncOp function, Operation* anchor, scf::ForOp loop,
     for (const auto& palette : summary->groups) {
         if (!palette.budget || palette.budget > 6) { return false; }
         std::vector<Handoff> handoffs;
+        std::vector<std::set<unsigned>> firstByLane(palette.budget), lastByLane(palette.budget);
         for (const auto& member : palette.members) {
             auto spec = std::find_if(specs.begin(), specs.end(), [&](const Spec& s) {
                 return s.record == member.record;
@@ -311,8 +313,40 @@ bool allocationCheck(func::FuncOp function, Operation* anchor, scf::ForOp loop,
                 if (!first || !last || *first*q + spec->source/2 != actual.front().source/2+begin ||
                     *last*q + spec->target/2 != actual.back().target/2+begin) { return false; }
             }
+            std::map<uint64_t, std::pair<unsigned, unsigned>> memberBounds;
+            for (const auto& handoff : actual) {
+                auto [entry, added] = memberBounds.try_emplace(handoff.id, handoff.source, handoff.target);
+                if (!added) { entry->second.second = handoff.target; }
+            }
+            for (const auto& [lane, bounds] : memberBounds) {
+                firstByLane[lane].insert(bounds.first);
+                lastByLane[lane].insert(bounds.second);
+            }
             handoffs.insert(handoffs.end(), actual.begin(), actual.end());
             ++checked;
+        }
+        if (cyclePolicy && palette.lanes.empty()) { return false; }
+        if (!palette.lanes.empty()) {
+            if (palette.lanes.size() != palette.budget) { return false; }
+            auto checkSelectors = [&](const auto& selectors, const std::set<unsigned>& expected) {
+                std::set<unsigned> actual;
+                for (const auto& selector : selectors) {
+                    auto present = evaluate(selector.present);
+                    if (!present) { return false; }
+                    if (!*present) { continue; }
+                    if (selector.event.visits.empty()) { return false; }
+                    auto visit = evaluate(selector.event.visits.front());
+                    if (!visit) { return false; }
+                    const auto phase = *visit*q + selector.event.type/2;
+                    if (phase < begin || phase >= end) { return false; }
+                    actual.insert(2*(phase-begin) + selector.event.type%2);
+                }
+                return actual == expected;
+            };
+            for (std::size_t lane = 0; lane < palette.lanes.size(); ++lane) {
+                if (!checkSelectors(palette.lanes[lane].firstSources, firstByLane[lane]) ||
+                    !checkSelectors(palette.lanes[lane].lastTargets, lastByLane[lane])) { return false; }
+            }
         }
         std::sort(handoffs.begin(), handoffs.end(), [](const Handoff& a, const Handoff& b) {
             return std::tie(a.source, a.target) < std::tie(b.source, b.target);
@@ -379,6 +413,17 @@ bool runRepeatedRegionChecks(func::FuncOp function)
     for (unsigned guardMode : {1U, 2U}) {
         if (!allocationCheck(function, anchor, inner, 2, 1, 6, true, false,
                              allocations, true, guardMode)) { return false; }
+    }
+    // Exercise a positive wrap even if a sufficient assignment uses all six
+    // labels. Short/partial intervals above separately check missing phases;
+    // these longer finite graphs check repeated collisions under both guards.
+    for (unsigned q = 1; q <= 3; ++q) {
+        for (unsigned begin : {0U, 1U}) {
+            for (unsigned guardMode : {1U, 2U}) {
+                if (!allocationCheck(function, anchor, inner, q, begin, 8*q, true, false,
+                                     allocations, true, guardMode)) { return false; }
+            }
+        }
     }
     llvm::outs() << "repeated allocation checked " << allocations << " member envelopes and reuse chains\n";
     llvm::outs() << "repeated region checked " << checked << " event pairs\n";

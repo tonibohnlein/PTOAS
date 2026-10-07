@@ -335,12 +335,18 @@ int runFiniteOverlayChecks();
 int runRotatingBoundaryChecks();
 int runGuardedRankChecks();
 int runGeneralArithmeticAllocationChecks();
+int runMixedStrideChecks();
+int runPhysicalExecutedCounterChecks();
 int runBoundedLifetimeAllocationChecks();
 int runSharedHandoffAllocationChecks();
 int runPeriodicSharedAllocationChecks();
 bool runRepeatedReadOnlyStorageChecks(MLIRContext*);
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
 int main(int argc, char **argv) {
+  if (argc == 2 && StringRef(argv[1]) == "--physical-executed-counter-checks") {
+    return runPhysicalExecutedCounterChecks();
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--mixed-stride-checks") { return runMixedStrideChecks(); }
   if (argc == 2 && StringRef(argv[1]) == "--periodic-shared-allocation-checks") {
     return runPeriodicSharedAllocationChecks();
   }
