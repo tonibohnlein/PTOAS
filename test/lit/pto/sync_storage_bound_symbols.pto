@@ -1,0 +1,64 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --storage-effects %s | FileCheck %s
+// A dynamic valid width belongs to the descriptor, but disappears from the
+// enclosing allocation bound supplied when no narrower access is available.
+// Actual symbolic address/selection dependencies must survive normalization.
+// CHECK-LABEL: storage fixed_base:
+// CHECK: cell 0 space=6 [512,1536)
+// CHECK: effect 0 pto.tfillpad read intervals
+// CHECK: descriptor base=absolute bytes=4 map={{.*}}[s0]{{.*}}extents=8, s0 loops=1
+// CHECK: access base=absolute bytes=1 map=(d0) -> (d0 + 512) extents=1024 loops=1
+// CHECK-LABEL: storage moving_base:
+// CHECK: effect 0 pto.tfillpad read symbolic
+// CHECK: access base=absolute bytes=1 map=(d0)[s0] -> (d0 + s0) extents=1024 loops=1
+// CHECK-LABEL: storage selected_element:
+// CHECK: effect 0 pto.tgetval read symbolic
+// CHECK: access base=absolute bytes=4 map=()[s0] -> ((s0 mod 4294967296) * 4 + 512) extents= loops=0
+!partial = !pto.tile_buf<vec, 8x32xf32, valid=?x?>
+!padded = !pto.tile_buf<vec, 8x32xf32, valid=?x?, pad=3>
+module attributes {pto.target_arch = "a3"} {
+  func.func @fixed_base(%n: index, %width: index) {
+    %base = arith.constant 512 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %rows = arith.constant 8 : index
+    %cols = arith.constant 32 : index
+    scf.for %i = %zero to %n step %one {
+      %offset = arith.muli %i, %cols : index
+      %remaining = arith.subi %width, %offset : index
+      %valid = arith.minsi %remaining, %cols : index
+      %a = pto.alloc_tile addr = %base valid_row = %rows valid_col = %valid : !partial
+      %b = pto.alloc_tile addr = %base valid_row = %rows valid_col = %cols : !padded
+      pto.tfillpad ins(%a : !partial) outs(%b : !padded)
+    }
+    return
+  }
+  func.func @moving_base(%n: index, %width: index, %base: i64) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %rows = arith.constant 8 : index
+    %cols = arith.constant 32 : index
+    scf.for %i = %zero to %n step %one {
+      %offset = arith.muli %i, %cols : index
+      %remaining = arith.subi %width, %offset : index
+      %valid = arith.minsi %remaining, %cols : index
+      %a = pto.alloc_tile addr = %base valid_row = %rows valid_col = %valid : !partial
+      %b = pto.alloc_tile addr = %base valid_row = %rows valid_col = %cols : !padded
+      pto.tfillpad ins(%a : !partial) outs(%b : !padded)
+    }
+    return
+  }
+  func.func @selected_element(%width: index, %position: index) {
+    %base = arith.constant 512 : i64
+    %rows = arith.constant 8 : index
+    %a = pto.alloc_tile addr = %base valid_row = %rows valid_col = %width : !partial
+    %v = pto.tgetval ins(%a, %position : !partial, index) outs : f32
+    return
+  }
+}

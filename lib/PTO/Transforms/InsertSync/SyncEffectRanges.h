@@ -12,6 +12,9 @@ namespace mlir::pto::detail {
 // Requires a nonnull root. Physical extents stay in slot order, without union
 // normalization. Empty means unknown.
 SmallVector<SyncStorageCell> physicalSlotRanges(const SyncInput& input, const BaseMemInfo& memory);
+// Remove unused symbols after changing a valid region map or its extents.
+// Byte identities, surviving symbols and enclosing iteration domains are unchanged.
+void compactRegionSymbols(SyncAccessRegion& region);
 bool materializeRegion(const SyncAccessRegion& region, AddressSpace space,
                        SmallVectorImpl<SyncStorageCell>& result);
 // Consume supplied interface declarations without consulting opcode semantics.

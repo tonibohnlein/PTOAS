@@ -98,16 +98,7 @@ void retainBufferBound(const SyncInput& input, SyncStorageEffect& effect)
                 origin->byteOffset = origin->byteOffset.replaceDims(zeros) + getAffineDimExpr(0, context);
                 origin->extents = {getAffineConstantExpr(bytes, context)};
                 origin->elementBytes = 1;
-                SmallVector<Value> symbols;
-                SmallVector<AffineExpr> replacements;
-                for (auto [position, symbol] : llvm::enumerate(origin->symbols)) {
-                    if (origin->byteOffset.isFunctionOfSymbol(position)) {
-                        replacements.push_back(getAffineSymbolExpr(symbols.size(), context));
-                        symbols.push_back(symbol);
-                    } else { replacements.push_back(getAffineConstantExpr(0, context)); }
-                }
-                origin->byteOffset = origin->byteOffset.replaceSymbols(replacements);
-                origin->symbols = std::move(symbols);
+                compactRegionSymbols(*origin);
                 effect.regions.push_back(*origin);
                 effect.region = *origin;
                 effect.ranges.clear();
@@ -137,6 +128,7 @@ void retainBufferBound(const SyncInput& input, SyncStorageEffect& effect)
                 origin->byteOffset = origin->byteOffset.replaceDims(zeros) + getAffineDimExpr(0, context);
                 origin->extents = {getAffineConstantExpr(found->second.front()->allocateSize, context)};
                 origin->elementBytes = 1;
+                compactRegionSymbols(*origin);
                 effect.regions.push_back(*origin);
                 effect.region = *origin;
                 effect.rangesMaterialized = materializeRegion(*origin, effect.memory->scope, effect.ranges);
