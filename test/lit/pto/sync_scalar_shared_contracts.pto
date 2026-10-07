@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_scalar_shared_contracts.py pto-sync-input-test %s
+// Reduced from communication remote-offset helpers and local array polling in
+// the prepared PyPTO corpus. The helper name carries no semantic annotation.
+module attributes {pto.target_arch = "a3"} {
+  func.func private @offset_from_table(%table: !pto.ptr<i64, gm>, %i: index) -> index {
+    %base = pto.load %table[%i] : !pto.ptr<i64, gm> -> i64
+    %offset = arith.index_cast %base : i64 to index
+    return %offset : index
+  }
+  // This untrusted effect hint must not suppress the inferred write.
+  func.func private @store_table(%table: !pto.ptr<i64, gm>, %value: i64)
+      attributes {pto.tileop.effects = ["read", "none"]} {
+    %zero = arith.constant 0 : index
+    pto.store %value, %table[%zero] : !pto.ptr<i64, gm>, i64
+    return
+  }
+  func.func @scalar_protocol(%table: !pto.ptr<i64, gm>, %signal: !pto.ptr<i32, gm>) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %v = arith.constant 1 : i32
+    %a = pto.declare_local_array -> !pto.local_array<2xi32>
+    pto.local_array_set %a[%zero], %v : !pto.local_array<2xi32>, i32
+    %snapshot = pto.local_array_get %a[%zero] : !pto.local_array<2xi32> -> i32
+    %offset = call @offset_from_table(%table, %zero) : (!pto.ptr<i64, gm>, index) -> index
+    %wide = arith.extsi %snapshot : i32 to i64
+    call @store_table(%table, %wide) : (!pto.ptr<i64, gm>, i64) -> ()
+    %view = pto.make_tensor_view %signal, shape = [%one], strides = [%one] : !pto.tensor_view<1xi32>
+    %part = pto.partition_view %view, offsets = [%zero], sizes = [%one] : !pto.tensor_view<1xi32> -> !pto.partition_tensor_view<1xi32>
+    pto.fence.barrier_all #pto.fence_scope<gm>
+    pto.comm.tnotify(%part, %snapshot : !pto.partition_tensor_view<1xi32>, i32) {notifyOp = #pto<notify_op set>}
+    pto.comm.twait(%part, %snapshot : !pto.partition_tensor_view<1xi32>, i32) {cmp = #pto<wait_cmp ge>}
+    pto.local_array_set %a[%one], %snapshot : !pto.local_array<2xi32>, i32
+    return
+  }
+  func.func private @not_available(!pto.ptr<i64, gm>) -> index
+  func.func @unresolved_call(%table: !pto.ptr<i64, gm>) {
+    %value = call @not_available(%table) : (!pto.ptr<i64, gm>) -> index
+    return
+  }
+  func.func private @tensor_store(%buffer: tensor<1x1xf32>) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    pto.tsetval ins(%zero, %one : index, f32) outs(%buffer : tensor<1x1xf32>)
+    return
+  }
+  func.func @unaccounted_storage(%buffer: tensor<1x1xf32>) {
+    call @tensor_store(%buffer) : (tensor<1x1xf32>) -> ()
+    return
+  }
+  // Prepared FIFO form used by the corpus: release invalidates the entry,
+  // including reads issued by a different pipe before the release.
+  func.func @fifo_release(%gm: !pto.ptr<f32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %addr = arith.constant 0 : i64
+    %pipe = pto.initialize_l2g2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8,
+        flag_base = 0, nosplit = true} (%gm : !pto.ptr<f32, gm>) -> !pto.pipe
+    %entry = pto.alloc_tile addr = %addr : !pto.tile_buf<vec, 16x16xf32>
+    pto.tpop(%entry, %pipe : !pto.tile_buf<vec, 16x16xf32>, !pto.pipe) {split = 0}
+    pto.tfree(%entry, %pipe : !pto.tile_buf<vec, 16x16xf32>, !pto.pipe) {split = 0}
+    return
+  }
+  func.func @completion_boundaries(%gm: !pto.ptr<i32, gm>) {
+    pto.syncall(%gm : !pto.ptr<i32, gm>) mode = #pto.sync_all_mode<soft>, core_type = #pto.sync_core_type<aiv_only>
+    pto.syncall() mode = #pto.sync_all_mode<hard>, core_type = #pto.sync_core_type<aiv_only>
+    return
+  }
+  // The scale tile remains live at the quantized transfer, not just its setter.
+  func.func @quantized_publication(%gm: !pto.ptr<f32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %addr = arith.constant 0 : i64
+    %pipe = pto.initialize_l2g2l_pipe{dir_mask = 1, slot_size = 512, slot_num = 8,
+        flag_base = 0, nosplit = true} (%gm : !pto.ptr<f32, gm>)
+        {__pto.frontend_id = 0 : i32,
+         acc_push_epilogue = #pto.acc_push_epilogue<layout = nz2nd, quant = deqf16_vec, relu = no_relu>} -> !pto.pipe
+    %scale = pto.alloc_tile addr = %addr : !pto.tile_buf<scaling, 1x32xui64>
+    %acc = pto.alloc_tile addr = %addr : !pto.tile_buf<acc, 16x16xi32>
+    pto.set_quant_vector(%scale : !pto.tile_buf<scaling, 1x32xui64>) {id = 0}
+    pto.tpush(%acc, %pipe : !pto.tile_buf<acc, 16x16xi32>, !pto.pipe) {split = 0}
+    return
+  }
+}

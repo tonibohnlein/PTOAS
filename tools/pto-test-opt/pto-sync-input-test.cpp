@@ -519,6 +519,7 @@ int main(int argc, char **argv) {
   }
   if (recognition || numericAnalysis) {
     for (auto function : module->getOps<func::FuncOp>()) {
+      if (function.isDeclaration()) { continue; }
       pto::frontiersynch::FrontierAnalysis analysis(function);
       if (failed(analysis.initialize(policy))) {
         return 1;

@@ -268,6 +268,7 @@ void TNotifyOp::getEffects(
 void TWaitOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
+  addEffect(effects, &getSignalMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getSignalMutable(), MemoryEffects::Write::get());
   addEffect(effects, &getCmpValueMutable(), MemoryEffects::Read::get());
 }
@@ -278,4 +279,46 @@ void TTestOp::getEffects(
   addEffect(effects, &getSignalMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getCmpValueMutable(), MemoryEffects::Read::get());
   addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Write::get());
+}
+
+// Ordinary side effects keep scalar stack snapshots and updates ordered in IR.
+// Their storage is owned by the C++ scalar frame, outside PTO tile planning.
+void mlir::pto::DeclareLocalArrayOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>& effects) {
+  addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Allocate::get());
+}
+
+void mlir::pto::LocalArrayGetOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>& effects) {
+  addEffect(effects, &getArrayMutable(), MemoryEffects::Read::get());
+}
+
+void mlir::pto::LocalArraySetOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>& effects) {
+  addEffect(effects, &getArrayMutable(), MemoryEffects::Write::get());
+}
+
+void mlir::pto::DeclareStructOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>& effects) {
+  addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Allocate::get());
+}
+
+void mlir::pto::StructGetOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>& effects) {
+  addEffect(effects, &getSMutable(), MemoryEffects::Read::get());
+}
+
+void mlir::pto::StructSetOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>& effects) {
+  addEffect(effects, &getSMutable(), MemoryEffects::Write::get());
+}
+
+// The GM-only SYNCALL ABI polls/updates its GM workspace through scalar atomics.
+// Its existing barriers and cross-core protocol remain in the instruction.
+void mlir::pto::SyncAllOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>& effects) {
+  // A hard barrier is effectful too; canonicalization must not erase it.
+  effects.emplace_back(MemoryEffects::Write::get(), SideEffects::DefaultResource::get());
+  auto workspace = getGmWorkspaceMutable();
+  addOptionalEffects(effects, workspace, true, true);
 }

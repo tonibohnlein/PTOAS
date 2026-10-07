@@ -13,6 +13,8 @@
 
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/IR/PTOMultiBuffer.h"
+#include "PTO/IR/PTOAccessRegion.h"
+#include "llvm/ADT/DenseSet.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
@@ -25,6 +27,7 @@
 // [P0 新增] 引入副作用接口和 PTO 接口
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
+#include <functional>
 #include <limits>
 #include <optional>
 
@@ -249,10 +252,6 @@ static func::FuncOp lookupSyncHelper(func::CallOp callOp) {
   }
   auto callee = module.lookupSymbol<func::FuncOp>(callOp.getCallee());
   if (!callee) {
-    return {};
-  }
-  if (!callee->hasAttr("pto.tileop.helper") &&
-      !callee->hasAttr("pto.ptodsl.subkernel_helper")) {
     return {};
   }
   return callee;
@@ -676,6 +675,10 @@ void PTOIRTranslator::UpdatePTOOpInfoWithPipeline(Operation *op,
     MemoryEffectVector effects;
     memEffect.getEffects(effects);
     for (auto &effect : effects) {
+      auto parameters = dyn_cast_or_null<DictionaryAttr>(effect.getParameters());
+      if (parameters && parameters.getAs<UnitAttr>("pto.descriptor_state")) {
+        continue;
+      }
       Value val = effect.getValue();
       if (!val) {
         continue;
@@ -685,7 +688,7 @@ void PTOIRTranslator::UpdatePTOOpInfoWithPipeline(Operation *op,
        // (过滤掉比如 Loop Iterator 或其他标量)
        if (isa<MemoryEffects::Read>(effect.getEffect())) {
           UpdateDefUseVec({val}, useVec);
-       } else if (isa<MemoryEffects::Write>(effect.getEffect())) {
+       } else if (isa<MemoryEffects::Write, MemoryEffects::Free>(effect.getEffect())) {
           UpdateDefUseVec({val}, defVec);
        }
      }
@@ -740,13 +743,111 @@ void PTOIRTranslator::UpdateMacroOpInfo(Operation *op) {
   }
 }
 
+// A scalar helper executes synchronously. Summarize its operand storage rather
+// than inlining it or recognizing a helper name. Calls with asynchronous work,
+// unresolved callees, recursion, or hidden storage remain unmodeled.
+std::optional<PipelineType> PTOIRTranslator::inferScalarHelperPipe(func::FuncOp callee) {
+  auto found = scalarHelperPipes_.find(callee);
+  if (found != scalarHelperPipes_.end()) {
+    return found->second;
+  }
+  scalarHelperPipes_[callee] = std::nullopt;
+  if (callee.isDeclaration() || llvm::any_of(callee.getResultTypes(), [](Type type) {
+        return !isa<IntegerType, IndexType, FloatType>(type);
+      })) { return std::nullopt; }
+  DenseMap<Value, bool> origins;
+  // Every accessed physical operand must descend from a memory argument.
+  // Scalar stack arrays/structs are private to PIPE_S and need no tile range.
+  std::function<bool(Value)> argumentStorage = [&](Value value) {
+    auto cached = origins.find(value);
+    if (cached != origins.end()) {
+      return cached->second;
+    }
+    origins[value] = false;
+    if (auto argument = dyn_cast<BlockArgument>(value)) {
+      return origins[value] = argument.getOwner() == &callee.getBody().front() &&
+          isSyncHelperMemoryOperand(value.getType());
+    }
+    auto* definition = value.getDefiningOp();
+    if (!definition || !isMemoryEffectFree(definition) || definition->getNumRegions()) {
+      return false;
+    }
+    bool hasMemoryOperand = false;
+    for (Value operand : definition->getOperands()) {
+      if (!isSyncHelperMemoryOperand(operand.getType())) {
+        continue;
+      }
+      hasMemoryOperand = true;
+      if (!argumentStorage(operand)) {
+        return false;
+      }
+    }
+    return origins[value] = hasMemoryOperand;
+  };
+  auto walk = callee.getBody().walk([&](Operation* op) {
+    if (isa<scf::ForOp, scf::IfOp, scf::WhileOp>(op) || op->hasTrait<OpTrait::IsTerminator>()) {
+      return WalkResult::advance();
+    }
+    if (auto call = dyn_cast<func::CallOp>(op)) {
+      auto nested = lookupSyncHelper(call);
+      if (!nested || inferScalarHelperPipe(nested) != PipelineType::PIPE_S) {
+        return WalkResult::interrupt();
+      }
+    } else if (auto pipe = dyn_cast<OpPipeInterface>(op)) {
+      if (pipe.getPipe() != PIPE::PIPE_S) {
+        return WalkResult::interrupt();
+      }
+    } else if (!isMemoryEffectFree(op) && !hasOnlyDescriptorEffects(op)) {
+      return WalkResult::interrupt();
+    }
+    if (op->getNumRegions()) {
+      return WalkResult::interrupt();
+    }
+    if (auto effects = dyn_cast<MemoryEffectOpInterface>(op)) {
+      SmallVector<MemoryEffects::EffectInstance> entries;
+      effects.getEffects(entries);
+      for (const auto& effect : entries) {
+        Value value = effect.getValue();
+        if (!value) {
+          return WalkResult::interrupt();
+        }
+        if (isSyncHelperMemoryOperand(value.getType())) {
+          if (!argumentStorage(value)) {
+            return WalkResult::interrupt();
+          }
+        } else if (!isa<IntegerType, IndexType, FloatType, LocalArrayType, StructType>(value.getType())) {
+          // Pipe/session handles and unclassified storage carry state outside
+          // the scalar frame; a scalar pipe label alone cannot summarize it.
+          return WalkResult::interrupt();
+        }
+      }
+    }
+    for (Value operand : op->getOperands()) {
+      if (isa<func::CallOp>(op) && isSyncHelperMemoryOperand(operand.getType()) && !argumentStorage(operand)) {
+        return WalkResult::interrupt();
+      }
+    }
+    return WalkResult::advance();
+  });
+  if (walk.wasInterrupted()) {
+    return std::nullopt;
+  }
+  return scalarHelperPipes_[callee] = PipelineType::PIPE_S;
+}
+
 void PTOIRTranslator::UpdateHelperCallInfo(func::CallOp callOp) {
   func::FuncOp callee = lookupSyncHelper(callOp);
   if (!callee) {
     return;
   }
 
-  std::optional<pto::PipelineType> pipe = getSyncHelperPipe(callee);
+  const bool annotated = callee->hasAttr("pto.tileop.helper") ||
+      callee->hasAttr("pto.ptodsl.subkernel_helper");
+  std::optional<pto::PipelineType> pipe = annotated ? getSyncHelperPipe(callee) : std::nullopt;
+  const bool inferred = !pipe;
+  if (inferred) {
+    pipe = inferScalarHelperPipe(callee);
+  }
   if (!pipe || *pipe == pto::PipelineType::PIPE_UNASSIGNED) {
     return;
   }
@@ -754,7 +855,7 @@ void PTOIRTranslator::UpdateHelperCallInfo(func::CallOp callOp) {
   SmallVector<const BaseMemInfo *> defVec;
   SmallVector<const BaseMemInfo *> useVec;
   auto effects = callee->getAttrOfType<ArrayAttr>(kTileOpEffectsAttr);
-  bool hasPreciseEffects = effects && effects.size() == callOp.getNumOperands();
+  bool hasPreciseEffects = !inferred && effects && effects.size() == callOp.getNumOperands();
   for (auto [operandIndex, operand] : llvm::enumerate(callOp.getOperands())) {
     if (!isSyncHelperMemoryOperand(operand.getType())) {
       continue;
@@ -774,7 +875,9 @@ void PTOIRTranslator::UpdateHelperCallInfo(func::CallOp callOp) {
     }
   }
 
-  if (defVec.empty() && useVec.empty()) {
+  // Retain scalar-only helpers as phases too: their results are synchronously
+  // available even when no PTO-managed storage is accessed.
+  if (defVec.empty() && useVec.empty() && *pipe != PipelineType::PIPE_S) {
     return;
   }
 

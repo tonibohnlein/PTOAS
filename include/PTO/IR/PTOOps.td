@@ -1776,7 +1776,7 @@ def TFreeFromAivOp : PTO_TOp<"tfree_from_aiv"> {
 //===----------------------------------------------------------------------===//
 
 def SetQuantScalarOp : PTO_Op<"set_quant_scalar", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    OpPipeInterface, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Set scalar quantization parameters for fixpipe producer";
 
@@ -1800,10 +1800,13 @@ def SetQuantScalarOp : PTO_Op<"set_quant_scalar", [
   let assemblyFormat = [{
     `(` $scale `:` type($scale) `)` `{` `id` `=` $id `}` attr-dict
   }];
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+  }];
 }
 
 def SetQuantVectorOp : PTO_Op<"set_quant_vector", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    OpPipeInterface, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Set vector quantization parameters for fixpipe producer";
 
@@ -1831,6 +1834,9 @@ def SetQuantVectorOp : PTO_Op<"set_quant_vector", [
   let assemblyFormat = [{
     `(` $scaling_tile `:` qualified(type($scaling_tile)) `)`
     `{` `id` `=` $id `}` attr-dict
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
   }];
 }
 
@@ -2024,7 +2030,7 @@ def TGetOp : PTO_Op<"comm.tget", [
 }
 
 def TNotifyOp : PTO_Op<"comm.tnotify", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    OpPipeInterface, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Send a signal notification to remote GM";
   let arguments = (ins
@@ -2038,10 +2044,13 @@ def TNotifyOp : PTO_Op<"comm.tnotify", [
     `(` $signal `,` $value `:` type($signal) `,` type($value) `)`
     attr-dict
   }];
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+  }];
 }
 
 def TWaitOp : PTO_Op<"comm.twait", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    OpPipeInterface, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Block until signal(s) satisfy a comparison";
   let arguments = (ins
@@ -2055,10 +2064,13 @@ def TWaitOp : PTO_Op<"comm.twait", [
     `(` $signal `,` $cmpValue `:` type($signal) `,` type($cmpValue) `)`
     attr-dict
   }];
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+  }];
 }
 
 def TTestOp : PTO_Op<"comm.ttest", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    OpPipeInterface, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Non-blocking signal comparison test";
   let arguments = (ins
@@ -2071,6 +2083,9 @@ def TTestOp : PTO_Op<"comm.ttest", [
   let assemblyFormat = [{
     `(` $signal `,` $cmpValue `:` type($signal) `,` type($cmpValue) `)`
     attr-dict `->` type($result)
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
   }];
 }
 
@@ -2235,26 +2250,7 @@ def TPushOp : PTO_TOp<"tpush", [
   }];
 
   let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() {
-      auto getAddressSpace = [](Type ty) -> std::optional<::mlir::pto::AddressSpace> {
-        if (auto tb = ::mlir::dyn_cast<::mlir::pto::TileBufType>(ty)) {
-          if (auto as = ::mlir::dyn_cast_or_null<::mlir::pto::AddressSpaceAttr>(
-                  tb.getMemorySpace()))
-            return as.getAddressSpace();
-          return std::nullopt;
-        }
-        return std::nullopt;
-      };
-
-      auto as = getAddressSpace(getTile().getType());
-      if (!as)
-        return ::mlir::pto::PIPE::PIPE_UNASSIGNED;
-      if (*as == ::mlir::pto::AddressSpace::ACC)
-        return ::mlir::pto::PIPE::PIPE_FIX;
-      if (*as == ::mlir::pto::AddressSpace::VEC)
-        return ::mlir::pto::PIPE::PIPE_MTE3;
-      return ::mlir::pto::PIPE::PIPE_UNASSIGNED;
-    }
+    ::mlir::pto::PIPE getPipe();
   }];
 }
 
@@ -2303,7 +2299,7 @@ def TAllocOp : PTO_TOp<"talloc", [
   }];
 
   let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE3; }
+    ::mlir::pto::PIPE getPipe();
   }];
 }
 
@@ -2383,7 +2379,8 @@ def EventIdArraySetOp : PTO_Op<"eventid_array_set"> {
 // memory world: the array is ordinary function-local stack storage, never PTO
 // memory-planned tile storage.
 
-def DeclareLocalArrayOp : PTO_Op<"declare_local_array"> {
+def DeclareLocalArrayOp : PTO_Op<"declare_local_array", [
+    OpPipeInterface, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "Declare a stack-local statically-shaped array";
   let description = [{
     Lowers to ordinary function-local stack storage, such as a C++ variable
@@ -2398,9 +2395,13 @@ def DeclareLocalArrayOp : PTO_Op<"declare_local_array"> {
   let assemblyFormat = [{
     attr-dict `->` qualified(type($array))
   }];
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+  }];
 }
 
-def LocalArrayGetOp : PTO_Op<"local_array_get"> {
+def LocalArrayGetOp : PTO_Op<"local_array_get", [
+    OpPipeInterface, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "Read one element from a stack-local array";
   let description = [{
     Lowers to a scalar snapshot initialized from `a[i0][i1]...[iN-1]` in the
@@ -2420,9 +2421,13 @@ def LocalArrayGetOp : PTO_Op<"local_array_get"> {
     $array `[` $indices `]` attr-dict
       `:` qualified(type($array)) `->` type($result)
   }];
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+  }];
 }
 
-def LocalArraySetOp : PTO_Op<"local_array_set"> {
+def LocalArraySetOp : PTO_Op<"local_array_set", [
+    OpPipeInterface, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "Write one element into a stack-local array";
   let description = [{
     Lowers to `a[i0][i1]...[iN-1] = v;` in the emitted C++. The number of
@@ -2442,6 +2447,9 @@ def LocalArraySetOp : PTO_Op<"local_array_set"> {
     $array `[` $indices `]` `,` $value attr-dict
       `:` qualified(type($array)) `,` type($value)
   }];
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+  }];
 }
 
 //===----------------------------------------------------------------------===//
@@ -2456,7 +2464,8 @@ def LocalArraySetOp : PTO_Op<"local_array_set"> {
 // through nested structs. The path always ends at a scalar; a nested struct is
 // traversed by a longer path, never handed back as a value.
 
-def DeclareStructOp : PTO_Op<"declare_struct"> {
+def DeclareStructOp : PTO_Op<"declare_struct", [
+    OpPipeInterface, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "Declare a stack-local heterogeneous aggregate";
   let description = [{
     Lowers to a plain C++ stack variable like `PtoStruct_X s;`. Field types are
@@ -2486,9 +2495,13 @@ def DeclareStructOp : PTO_Op<"declare_struct"> {
   let assemblyFormat = [{
     attr-dict `->` qualified(type($s))
   }];
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+  }];
 }
 
-def StructGetOp : PTO_Op<"struct_get"> {
+def StructGetOp : PTO_Op<"struct_get", [
+    OpPipeInterface, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "Read a field from a stack-local struct by constant path";
   let description = [{
     Reads the field reached by following the constant `path` of field indices
@@ -2513,9 +2526,13 @@ def StructGetOp : PTO_Op<"struct_get"> {
     $s custom<StructPath>($path) attr-dict
       `:` qualified(type($s)) `->` type($value)
   }];
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+  }];
 }
 
-def StructSetOp : PTO_Op<"struct_set"> {
+def StructSetOp : PTO_Op<"struct_set", [
+    OpPipeInterface, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "Write a field into a stack-local struct by constant path";
   let description = [{
     Writes `value` into the field reached by following the constant `path` of
@@ -2539,6 +2556,9 @@ def StructSetOp : PTO_Op<"struct_set"> {
   let assemblyFormat = [{
     $s custom<StructPath>($path) `,` $value attr-dict
       `:` qualified(type($s)) `,` type($value)
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
   }];
 }
 
@@ -2567,55 +2587,7 @@ def TPopOp : PTO_TOp<"tpop", [
   }];
 
   let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() {
-      auto getAddressSpace = [](Type ty) -> std::optional<::mlir::pto::AddressSpace> {
-        if (auto tb = ::mlir::dyn_cast<::mlir::pto::TileBufType>(ty)) {
-          if (auto as = ::mlir::dyn_cast_or_null<::mlir::pto::AddressSpaceAttr>(
-                  tb.getMemorySpace()))
-            return as.getAddressSpace();
-          return std::nullopt;
-        }
-        return std::nullopt;
-      };
-
-      auto isA5Target = [&]() -> bool {
-        auto moduleOp = getOperation()->getParentOfType<::mlir::ModuleOp>();
-        if (!moduleOp)
-          return false;
-
-        if (auto arch =
-                moduleOp->getAttrOfType<::mlir::StringAttr>("pto.target_arch")) {
-          if (arch.getValue().equals_insensitive("a5"))
-            return true;
-        }
-        return false;
-      };
-
-      auto as = getAddressSpace(getTile().getType());
-      if (!as)
-        return ::mlir::pto::PIPE::PIPE_UNASSIGNED;
-
-      const bool isA5DirectPipe =
-          isA5Target() && getPipeHandle().getDefiningOp<InitializeL2LPipeOp>();
-      switch (*as) {
-      case ::mlir::pto::AddressSpace::VEC:
-        // A5 direct C2V POP waits for the producer on PIPE_V before exposing UB.
-        // The scalar address binding alone does not make the payload ready.
-        if (isA5DirectPipe) {
-          return ::mlir::pto::PIPE::PIPE_V;
-        }
-        return ::mlir::pto::PIPE::PIPE_MTE2;
-      case ::mlir::pto::AddressSpace::MAT:
-        // Direct V2C POP waits on MTE1; GM-backed POP loads through MTE2.
-        if (isA5DirectPipe) {
-          return ::mlir::pto::PIPE::PIPE_MTE1;
-        }
-        return ::mlir::pto::PIPE::PIPE_MTE2;
-      default:
-        break;
-      }
-      return ::mlir::pto::PIPE::PIPE_UNASSIGNED;
-    }
+    ::mlir::pto::PIPE getPipe();
 
     ::mlir::MutableOperandRange getDpsInitsMutable() { return getTileMutable(); }
   }];
@@ -2638,7 +2610,7 @@ def TFreeOp : PTO_TOp<"tfree", [
   let hasCustomAssemblyFormat = 1;
 
   let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+    ::mlir::pto::PIPE getPipe();
   }];
 }
 
@@ -3016,7 +2988,8 @@ def TSyncOp : PTO_TOp<"tsync"> {
   }];
 }
 
-def SyncAllOp : PTO_Op<"syncall", [AttrSizedOperandSegments]> {
+def SyncAllOp : PTO_Op<"syncall", [AttrSizedOperandSegments, OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "Cross-core all-participant synchronization.";
   let description = [{
     Models `pto::SYNCALL`.
@@ -3043,6 +3016,11 @@ def SyncAllOp : PTO_Op<"syncall", [AttrSizedOperandSegments]> {
 
   let hasVerifier = 1;
   let hasCustomAssemblyFormat = 1;
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() {
+      return getGmWorkspace() ? ::mlir::pto::PIPE::PIPE_S : ::mlir::pto::PIPE::PIPE_UNASSIGNED;
+    }
+  }];
 }
 
 // ---------------------------------------------------------------------------

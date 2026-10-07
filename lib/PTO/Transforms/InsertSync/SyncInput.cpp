@@ -14,6 +14,10 @@
 #include <climits>
 namespace mlir::pto {
 bool isPreservedSyncProtocol(Operation* operation) {
+  // These explicit visibility boundaries remain in place. They confer no
+  // additional reachability credit to the demand reducer.
+  if (isa<CmoCacheInvalidOp, FenceBarrierAllOp>(operation)) { return true; }
+  if (auto sync = dyn_cast<SyncAllOp>(operation); sync && !sync.getGmWorkspace()) { return true; }
   return isa<BarrierOp, SyncSetOp, SyncWaitOp, SetCrossBlockOp, WaitCrossBlockOp,
              SetIntraBlockOp, WaitIntraBlockOp, GetBufOp, RlsBufOp, GetBufDynOp, RlsBufDynOp>(operation);
 }

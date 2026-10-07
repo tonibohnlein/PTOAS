@@ -1828,3 +1828,31 @@ is not a claim that construction, endpoint emission or allocation is ready.
 Backend regression tests request `--numeric-analysis` explicitly. This is a
 test-tool query, not another production compilation mode. Recognition verifies
 that no numeric backend fields were populated and leaves source IR unchanged.
+
+## Shared scalar, FIFO and completion contracts
+
+The ordinary operation interfaces now describe scalar signal polling, local
+array/struct state and soft cross-core completion. FIFO boundary pipes come from
+the target architecture, direction and physical core. Releasing an explicit FIFO
+entry invalidates its lifetime: shared dependency extraction treats that `Free`
+effect as a write, so outstanding readers precede release. Vector quantization
+reads its scaling tile at the consuming transfer; the setter only binds the
+descriptor. Both synchronization passes consume these contracts.
+
+Defined scalar helpers can be summarized without a name registry. The shared
+translator checks their bodies and recursively called scalar helpers, retaining
+read/write envelopes for memory arguments. It rejects recursion, unresolved
+callees, unclassified storage and hidden resources. Untrusted effect hints do
+not narrow inferred envelopes. A multi-pipe callee still needs an interprocedural
+summary; a scalar summary cannot represent it.
+
+Cache invalidation, fences and hard cross-core completion remain effectful and
+at their original positions. They contribute no new reachability credit. Soft
+completion records its GM workspace accesses. These changes do not synthesize
+or rewrite cross-core protocols.
+
+Asynchronous prefetch remains an input-contract gap. Its external SDMA read
+outlives submission, and a polling return may indicate timeout rather than
+completion. Its hidden local scratch and event use also need explicit shared
+records. It must not be treated as an ordinary local pipe payload or silently
+classified as a tractable-class mismatch.

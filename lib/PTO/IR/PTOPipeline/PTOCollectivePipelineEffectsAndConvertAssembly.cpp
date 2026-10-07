@@ -97,6 +97,22 @@ void mlir::pto::DeclareGlobalOp::getEffects(
                        makeDescriptorEffect(getContext()));
 }
 
+// Quant rematerialization selects the last setter in this block and clones it
+// immediately before each consuming push. Keep the tile live until that push,
+// rather than pretending that binding its address consumes its contents.
+static void addBoundVectorQuantRead(Operation* consumer, int32_t id, PTOEffectList& effects) {
+  for (Operation* previous = consumer->getPrevNode(); previous; previous = previous->getPrevNode()) {
+    if (auto scalar = dyn_cast<SetQuantScalarOp>(previous);
+        scalar && static_cast<int64_t>(scalar.getId()) == id) {
+      return;
+    }
+    if (auto vector = dyn_cast<SetQuantVectorOp>(previous); vector && static_cast<int64_t>(vector.getId()) == id) {
+      addEffect(effects, &vector.getScalingTileMutable(), MemoryEffects::Read::get());
+      return;
+    }
+  }
+}
+
 void TPushOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
@@ -121,6 +137,9 @@ void TPushOp::getEffects(
       effects.emplace_back(MemoryEffects::Read::get(),
                            getFixpipeQuantStateIdAttr(getOperation(), *pipeId),
                            FixpipeQuantStateResource::get());
+      if (isVectorFixpipeQuant(accPushEpilogue.getQuant())) {
+        addBoundVectorQuantRead(getOperation(), *pipeId, effects);
+      }
     }
   }
 }
@@ -159,6 +178,7 @@ void TPushToAivOp::getEffects(
     effects.emplace_back(MemoryEffects::Read::get(),
                          getFixpipeQuantStateIdAttr(getOperation(), getId()),
                          FixpipeQuantStateResource::get());
+    if (isVectorFixpipeQuant(quant)) { addBoundVectorQuantRead(getOperation(), getId(), effects); }
   }
 }
 
@@ -202,6 +222,9 @@ void TFreeOp::getEffects(
   auto entry = getEntryMutable();
   if (!entry.empty()) {
     addEffect(effects, &*entry.begin(), MemoryEffects::Read::get());
+    // Releasing the FIFO entry invalidates its local lifetime. In particular,
+    // an asynchronous reader must finish before the remote writer may reuse it.
+    addEffect(effects, &*entry.begin(), MemoryEffects::Free::get());
   }
   addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Write::get());
@@ -219,7 +242,8 @@ void SetQuantScalarOp::getEffects(
 void SetQuantVectorOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  addEffect(effects, &getScalingTileMutable(), MemoryEffects::Read::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getScalingTileMutable(),
+                       makeDescriptorEffect(getContext()), SideEffects::DefaultResource::get());
   effects.emplace_back(MemoryEffects::Write::get(),
                        getFixpipeQuantStateIdAttr(getOperation(), getId()),
                        FixpipeQuantStateResource::get());

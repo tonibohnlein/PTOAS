@@ -8,6 +8,73 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+// The unified FIFO handle fixes publication/acquisition/release pipes. GM
+// entries are descriptors, so their type alone does not identify that pipe.
+static pto::PIPE getFifoBoundaryPipe(Operation* op, Value handle, bool producer, bool release) {
+  Operation* init = handle.getDefiningOp();
+  int64_t mask = 0;
+  bool direct = false;
+  if (auto gm = dyn_cast_or_null<InitializeL2G2LPipeOp>(init)) {
+    mask = gm.getDirMask();
+  } else if (auto local = dyn_cast_or_null<InitializeL2LPipeOp>(init)) {
+    mask = local.getDirMask();
+    direct = getTargetArch(op) == PTOArch::A5;
+  } else { return pto::PIPE::PIPE_UNASSIGNED; }
+  bool c2v = mask == 1;
+  if (mask == 3) {
+    auto core = pto::recoverSyncPhysicalCore(op);
+    if (core != pto::SyncPhysicalCore::AIC && core != pto::SyncPhysicalCore::AIV) {
+      return pto::PIPE::PIPE_UNASSIGNED;
+    }
+    c2v = producer ? core == pto::SyncPhysicalCore::AIC : core == pto::SyncPhysicalCore::AIV;
+  } else if (mask != 1 && mask != 2) { return pto::PIPE::PIPE_UNASSIGNED; }
+  if (producer) {
+    return c2v ? pto::PIPE::PIPE_FIX : pto::PIPE::PIPE_MTE3;
+  }
+  if (release && !c2v && getTargetArch(op) == PTOArch::A5) {
+    return pto::PIPE::PIPE_MTE1;
+  }
+  if (!direct) {
+    return pto::PIPE::PIPE_MTE2;
+  }
+  return c2v ? pto::PIPE::PIPE_V : pto::PIPE::PIPE_MTE1;
+}
+
+pto::PIPE TPushOp::getPipe() {
+  if (auto tile = dyn_cast<TileBufType>(getTile().getType())) {
+    auto space = dyn_cast_or_null<AddressSpaceAttr>(tile.getMemorySpace());
+    if (space && space.getAddressSpace() == AddressSpace::ACC) {
+      return pto::PIPE::PIPE_FIX;
+    }
+    if (space && space.getAddressSpace() == AddressSpace::VEC) {
+      return pto::PIPE::PIPE_MTE3;
+    }
+    return pto::PIPE::PIPE_UNASSIGNED;
+  }
+  return getFifoBoundaryPipe(getOperation(), getPipeHandle(), true, false);
+}
+pto::PIPE TAllocOp::getPipe() {
+  if (getTargetArch(getOperation()) != PTOArch::A5) {
+    return pto::PIPE::PIPE_S;
+  }
+  return getFifoBoundaryPipe(getOperation(), getPipeHandle(), true, false);
+}
+pto::PIPE TPopOp::getPipe() {
+  if (isa<TensorViewType>(getTile().getType()) && getTargetArch(getOperation()) != PTOArch::A5) {
+    // A2/A3 GlobalTensor POP only waits via wait_flag_dev and binds its address.
+    return pto::PIPE::PIPE_S;
+  }
+  if (auto tile = dyn_cast<TileBufType>(getTile().getType())) {
+    auto space = dyn_cast_or_null<AddressSpaceAttr>(tile.getMemorySpace());
+    if (!space || (space.getAddressSpace() != AddressSpace::MAT &&
+                   space.getAddressSpace() != AddressSpace::VEC)) { return pto::PIPE::PIPE_UNASSIGNED; }
+  }
+  return getFifoBoundaryPipe(getOperation(), getPipeHandle(), false, false);
+}
+pto::PIPE TFreeOp::getPipe() {
+  return getFifoBoundaryPipe(getOperation(), getPipeHandle(), false, true);
+}
+
 static LogicalResult verifyInternalTileOp(
     Operation *op, Value pipeHandle, uint32_t split, bool producerSide,
     Value tile, Value aivSubblockId, pto::PIPE pipe, StringRef pipeError) {

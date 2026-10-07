@@ -60,6 +60,10 @@ private:
   SyncIRs &syncIR_;
   Buffer2MemInfoMap &buffer2MemInfoMap_;
   SyncAnalysisMode mode_;
+  // Null entries also mark in-progress calls, so recursive call graphs are
+  // rejected without recursive expansion. The cache belongs to one IR snapshot.
+  llvm::DenseMap<Operation *, std::optional<PipelineType>> scalarHelperPipes_;
+  std::optional<PipelineType> inferScalarHelperPipe(func::FuncOp callee);
  
   // --- 递归遍历逻辑 ---
   LogicalResult RecursionIR(Region *region);
