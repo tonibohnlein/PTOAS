@@ -24,10 +24,12 @@ bool checkScalarSamples(mlir::Operation* op, mlir::DenseI64ArrayAttr samples)
             }
         });
     }
-    if (!input || op->getNumResults() != 1 || samples.size() % 2 != 0) {
+    // A folded constant needs no input symbol. Nonconstant maps still must
+    // refer only to the selected loop/external input below.
+    if (op->getNumResults() != 1 || samples.size() % 2 != 0) {
         return false;
     }
-    pto::detail::ScalarEvolution scalars(op->getContext(), op);
+    pto::detail::ScalarEvolution scalars(op->getContext(), op->hasAttr("test.scalar_portable") ? nullptr : op);
     SmallVector<Value> symbols;
     auto expression = scalars.value(op->getResult(0), [&](Value v) {
         auto it = llvm::find(symbols, v);
@@ -64,7 +66,7 @@ bool checkOpaqueScalar(mlir::Operation* op)
     if (op->getNumResults() != 1) {
         return false;
     }
-    pto::detail::ScalarEvolution scalars(op->getContext(), op);
+    pto::detail::ScalarEvolution scalars(op->getContext(), op->hasAttr("test.scalar_portable") ? nullptr : op);
     SmallVector<Value> symbols;
     auto expression = scalars.value(op->getResult(0), [&](Value v) {
         symbols.push_back(v);

@@ -1,0 +1,106 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --region-contract-checks %s | FileCheck %s
+// Corpus slices: pypto-lib prefill_fwd attention_finalize_phase (lane-lane),
+// DeepseekV4DecodeA3/aiv/proj_b_act (self-subtract, multiply, clamp), and the
+// expert vector_add port (bank remui 2, then scale). Names and surrounding
+// payloads are omitted; these are shared scalar semantics, not kernel rules.
+// CHECK: scalar-evolution attention_offset: 1 passed
+// CHECK: scalar-evolution projection_offset: 3 passed
+// CHECK: scalar-evolution vector_bank: 2 passed
+// CHECK: scalar-evolution width_edges: 4 passed
+// CHECK: scalar-evolution signed_edges: 3 passed
+// CHECK: scalar-evolution identical_selection: 1 passed
+// CHECK: scalar-evolution portable_index: 4 passed
+// CHECK: scalar-evolution native_index: 2 passed
+// CHECK: source-unchanged
+module {
+  func.func @attention_offset(%lane: index) attributes {test.no_region} {
+    %zero = arith.subi %lane, %lane {test.scalar_samples = array<i64: 0,0>} : index
+    return
+  }
+  func.func @projection_offset(%index: index) attributes {test.no_region} {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %zero = arith.subi %index, %index {test.scalar_samples = array<i64: 0,0>} : index
+    %offset = arith.muli %zero, %c4 {test.scalar_samples = array<i64: 0,0>} : index
+    %clamp = arith.maxsi %offset, %c0 {test.scalar_samples = array<i64: 0,0>} : index
+    return
+  }
+  func.func @vector_bank(%n: index) attributes {test.no_region} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8192 = arith.constant 8192 : index
+    scf.for %i = %c0 to %n step %c1 {
+      %bank = arith.remui %i, %c2 {test.scalar_samples = array<i64: 0,0, 1,1, 2,0, 3,1>} : index
+      %address = arith.muli %bank, %c8192 {test.scalar_samples = array<i64: 0,0, 1,8192, 2,0, 3,8192>} : index
+    }
+    return
+  }
+  // Boundary checks for the same bank arithmetic: high-bit inputs differ
+  // between unsigned and signed remainder. Non-power-of-two stays opaque.
+  func.func @width_edges() attributes {test.no_region} {
+    %low = arith.constant -128 : i8
+    %high = arith.constant 127 : i8
+    %one = arith.constant 1 : i8
+    %two = arith.constant 2 : i8
+    %three = arith.constant 3 : i8
+    scf.for %i = %low to %high step %one : i8 {
+      %bank = arith.remui %i, %two {test.scalar_samples = array<i64: -128,0, -127,1, -1,1, 0,0, 126,0>} : i8
+      %signed = arith.remsi %i, %two {test.scalar_opaque} : i8
+      %other = arith.remui %i, %three {test.scalar_opaque} : i8
+      %division = arith.divui %i, %two {test.scalar_opaque} : i8
+    }
+    return
+  }
+  func.func @signed_edges() attributes {test.no_region} {
+    %low = arith.constant -9223372036854775808 : i64
+    %high = arith.constant 9223372036854775807 : i64
+    %one = arith.constant 1 : i64
+    %two = arith.constant 2 : i64
+    scf.for %i = %low to %high step %one : i64 {
+      %bank = arith.remui %i, %two {test.scalar_samples = array<i64: -9223372036854775808,0, -1,1, 0,0, 9223372036854775806,0>} : i64
+      %zero = arith.subi %i, %i {test.scalar_samples = array<i64: -9223372036854775808,0, 0,0, 9223372036854775806,0>} : i64
+      %unsafe = arith.muli %i, %two {test.scalar_opaque} : i64
+    }
+    return
+  }
+  // No identical-arm select survived the prepared corpus. Keep this as a
+  // semantic guard on the generic fold hook, not a claimed coverage gain.
+  func.func @identical_selection(%condition: i1) attributes {test.no_region} {
+    %base = arith.constant 512 : i64
+    %selected = arith.select %condition, %base, %base {test.scalar_samples = array<i64: 0,512>} : i64
+    return
+  }
+  // The no-anchor normalizer uses a portable 32-bit index proof. Index
+  // attributes still store 64-bit values: do not fold them at host width.
+  func.func @portable_index() attributes {test.no_region} {
+    %large = arith.constant 4294967295 : index
+    %zero = arith.constant 0 : index
+    %minimum = arith.minsi %large, %zero {test.scalar_portable, test.scalar_opaque} : index
+    %factor = arith.constant 65536 : index
+    %product = arith.muli %factor, %factor {test.scalar_portable, test.scalar_opaque} : index
+    // Both -1 and a wrong folded result fit signed32: a fit check alone is
+    // insufficient. Unsigned32(-1) % 7 is 3, whereas unsigned64(-1) % 7 is 1.
+    %negative = arith.constant -1 : index
+    %seven = arith.constant 7 : index
+    %remainder = arith.remui %negative, %seven {test.scalar_portable, test.scalar_opaque} : index
+    // Unsigned widening from index32 yields 4294967295, not int64(-1).
+    %widened = arith.index_castui %negative {test.scalar_portable, test.scalar_opaque} : index to i64
+    return
+  }
+  // With the default 64-bit index layout, the same folds are correct.
+  func.func @native_index() attributes {test.no_region} {
+    %negative = arith.constant -1 : index
+    %seven = arith.constant 7 : index
+    %remainder = arith.remui %negative, %seven {test.scalar_samples = array<i64: 0,1>} : index
+    %widened = arith.index_castui %negative {test.scalar_samples = array<i64: 0,-1>} : index to i64
+    return
+  }
+}
