@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Algebraic storage generators without expanding banks or loop iterations.
 // RUN: pto-sync-input-test --guarded-rank-checks
+// RUN: pto-sync-input-test --bounded-lifetime-allocation-checks
 // RUN: pto-sync-input-test --rotating-boundary-checks | FileCheck %s
 // CHECK: rotating boundary certificates: 720 unfolded comparisons passed
 module {}

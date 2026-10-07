@@ -216,6 +216,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/ArithmeticDemandAnalysis.cpp
   FrontierSynch/ArithmeticSelectors.cpp
   FrontierSynch/ArithmeticInsertion.cpp
+  FrontierSynch/GeneralArithmeticAllocation.cpp
   FrontierSynch/GuardedRotatingAnalysis.cpp
   FrontierSynch/GuardedRotatingInsertion.cpp
   FrontierSynch/GuardedRotatingRegional.cpp
@@ -228,6 +229,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/GuardedRanks.cpp
   FrontierSynch/BoundedLifetime.cpp
   FrontierSynch/BoundedLifetimeInsertion.cpp
+  FrontierSynch/BoundedLifetimeAllocation.cpp
   FrontierSynch/ChainInterface.cpp
   FrontierSynch/RotatingBoundary.cpp
   FrontierSynch/RotatingExtraction.cpp

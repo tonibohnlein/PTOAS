@@ -160,11 +160,13 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareWholeFunct
         }
         return prepared;
     }
-    // The existing general arithmetic producer has no allocation export.
-    if (requireAllocationCertificate) { return failure(); }
     auto demands = frontiersynch::analyzeGeneralArithmeticDemandsWithProtection(arithmetic, protection);
     if (!demands.error.empty()) { error += "; arithmetic: " + demands.error; return failure(); }
-    return frontiersynch::prepareGeneralArithmeticInsertion(function, arithmetic, demands, error);
+    auto prepared = frontiersynch::prepareGeneralArithmeticInsertion(function, arithmetic, demands, error);
+    if (succeeded(prepared) && requireAllocationCertificate && !(*prepared)->allocationCertificate) {
+        return failure();
+    }
+    return prepared;
 }
 FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     func::FuncOp function, GMAliasPolicy policy)
