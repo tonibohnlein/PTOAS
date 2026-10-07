@@ -424,10 +424,6 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
         return text;
     };
     const auto before = render();
-    PassManager manager(function.getContext(), func::FuncOp::getOperationName());
-    pto::PTOFrontierAnalysisOptions options;
-    options.gmAlias = policy == pto::GMAliasPolicy::MayAlias ? "may-alias" : "may-not-alias";
-    manager.addPass(pto::createPTOFrontierAnalysisPass(options));
     bool accepted = false;
     if (function->hasAttr("test.arithmetic_insertion")) {
         fs::FrontierAnalysis analysis(function);
@@ -467,7 +463,9 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
         auto prepared = fs::prepareSequenceInsertion(composed);
         accepted = succeeded(prepared) && succeeded(fs::insertLogicalSynchronization(function, **prepared));
     } else {
-        accepted = succeeded(manager.run(function));
+        auto prepared = fs::prepareFunctionSynchronization(function, policy);
+        accepted = succeeded(prepared) && succeeded(fs::insertLogicalSynchronization(function, **prepared));
+        if (accepted && failed(verify(function))) { return failure(); }
     }
     auto trace = accepted ? Interpreter(input.instructions()).run(function) : llvm::json::Object{};
     const bool valid = !accepted || trace.getString("error").value_or("missing trace status").empty();
