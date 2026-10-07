@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Whole-base GM discharges and a common partition of absolute local storage.
 #include "NumericTemplateInternal.h"
+#include "DisjointTranslations.h"
 #include "../InsertSync/SyncEffectRanges.h"
 #include "../InsertSync/SyncRegionArithmetic.h"
 #include <map>
@@ -15,7 +16,6 @@ namespace {
 using EffectRef = std::pair<std::size_t, std::size_t>;
 struct GlobalBase {
     SmallVector<EffectRef> effects;
-    DenseSet<std::size_t> payloads;
     bool writes = false;
 };
 bool collectGlobal(TemplateBuilder& builder, DenseMap<Value, GlobalBase>& bases)
@@ -41,7 +41,6 @@ bool collectGlobal(TemplateBuilder& builder, DenseMap<Value, GlobalBase>& bases)
             }
             auto& summary = bases[base];
             summary.effects.push_back({id, effectId});
-            summary.payloads.insert(id);
             summary.writes |= effect.mode == SyncAccessMode::Write;
         }
     }
@@ -71,6 +70,12 @@ bool relativeOrigin(const TemplateRegion& map, SyncAccessRegion& fixed,
     auto* context = map.byteOffset.getContext();
     SmallVector<AffineExpr> zeros(map.extents.size(), getAffineConstantExpr(0, context));
     auto origin = simplifyAffineExpr(fixed.byteOffset.replaceDims(zeros), 0, 1 + map.invariantSymbols.size());
+    // Keep each region's constant displacement. Only the common symbolic
+    // origin cancels; independent stores may cover different local columns.
+    SmallVector<AffineExpr> zeroSymbols(1 + map.invariantSymbols.size(), getAffineConstantExpr(0, context));
+    auto local = dyn_cast<AffineConstantExpr>(simplifyAffineExpr(origin.replaceSymbols(zeroSymbols), 0, 0));
+    if (!local || local.getValue() == INT64_MIN) { return false; }
+    origin = simplifyAffineExpr(origin - local.getValue(), 0, 1 + map.invariantSymbols.size());
     if (common && (*common != origin || ArrayRef<Value>(symbols) != ArrayRef<Value>(map.invariantSymbols))) {
         return false;
     }
@@ -93,9 +98,6 @@ bool relativeOrigin(const TemplateRegion& map, SyncAccessRegion& fixed,
 }
 bool discharge(TemplateBuilder& builder, const GlobalBase& base)
 {
-    if (base.writes && base.payloads.size() != 1) {
-        return false;
-    }
     std::optional<int64_t> commonStride;
     std::optional<AffineExpr> commonOrigin;
     SmallVector<Value> originSymbols;
@@ -103,7 +105,9 @@ bool discharge(TemplateBuilder& builder, const GlobalBase& base)
         return llvm::any_of(builder.output.payloads[ref.first].effects[ref.second].regions,
                            [](const TemplateRegion& map) { return !map.invariantSymbols.empty(); });
     });
-    uint64_t begin = UINT64_MAX, end = 0;
+    SmallVector<SyncStorageCell> unionRanges;
+    struct Access { SyncStorageCell range; std::size_t payload; bool writes; };
+    SmallVector<Access> accesses;
     for (auto [payloadId, effectId] : base.effects) {
         auto& effect = builder.output.payloads[payloadId].effects[effectId];
         if (!base.writes) {
@@ -123,8 +127,8 @@ bool discharge(TemplateBuilder& builder, const GlobalBase& base)
             }
             commonStride = stride;
             for (const auto& range : ranges) {
-                begin = std::min(begin, range.begin);
-                end = std::max(end, range.end);
+                unionRanges.push_back(range);
+                accesses.push_back({range, payloadId, effect.mode == SyncAccessMode::Write});
             }
             effect.ranges.append(ranges);
         }
@@ -136,7 +140,27 @@ bool discharge(TemplateBuilder& builder, const GlobalBase& base)
     }
     const auto stride = commonStride.value_or(0);
     const uint64_t distance = stride < 0 ? static_cast<uint64_t>(-(stride + 1)) + 1 : static_cast<uint64_t>(stride);
-    return begin == UINT64_MAX || distance >= end - begin;
+    // Discharging this base removes it from the internal scan as well. Prove
+    // that distinct payloads have no within-visit conflicts before doing so.
+    const bool multiplePayloads = !accesses.empty() && llvm::any_of(accesses, [&](const Access& access) {
+        return access.payload != accesses.front().payload;
+    });
+    for (std::size_t i = 0; multiplePayloads && i < accesses.size(); ++i) {
+        const auto& a = accesses[i];
+        for (std::size_t j = 0; j < i; ++j) {
+            const auto& b = accesses[j];
+            if (a.payload != b.payload && (a.writes || b.writes) &&
+                a.range.begin < b.range.end && b.range.begin < a.range.end) { return false; }
+        }
+    }
+    uint64_t trips = UINT64_MAX;
+    APInt upper;
+    if (matchPattern(builder.output.outer.getUpperBound(), m_ConstantInt(&upper)) && upper.isSignedIntN(64)) {
+        auto span = upper.sextOrTrunc(128) - APInt(128, builder.output.lower, true);
+        trips = span.isStrictlyPositive() ?
+            ((span - 1).udiv(APInt(128, builder.output.step)) + 1).getZExtValue() : 0;
+    }
+    return disjointTranslations(unionRanges, APInt(128, distance), trips);
 }
 bool partition(TemplateBuilder& builder)
 {
