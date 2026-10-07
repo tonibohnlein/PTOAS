@@ -34,7 +34,7 @@ SourceContext contextAt(Region* region, func::FuncOp function)
             context.loops.push_back(loop);
         } else if (isa<scf::IfOp>(owner)) {
             context.branches.push_back(region);
-        } else {
+        } else if (!isa<pto::SectionCubeOp, pto::SectionVectorOp>(owner)) {
             context.unsupported = true;
         }
     }
@@ -49,6 +49,9 @@ fs::StructureKind controlKind(Operation* operation)
     }
     if (isa<scf::IfOp>(operation)) {
         return fs::StructureKind::Conditional;
+    }
+    if (isa<pto::SectionCubeOp, pto::SectionVectorOp>(operation)) {
+        return fs::StructureKind::Section;
     }
     return fs::StructureKind::Unsupported;
 }
