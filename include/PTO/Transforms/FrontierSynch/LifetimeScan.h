@@ -44,7 +44,8 @@ struct StorageScanResult {
 // are consolidated before reading old state, including read-modify-write.
 // Native completion order on each pipe justifies retaining its latest reader.
 // Nonzero protection groups must certify hardware protection for EVERY ordered
-// pair of their writers to each grouped atom. This is a caller-supplied proof,
+// pair of their writers to each grouped atom, except reset targets (the shared
+// hardware contract marks these explicitly). This is a caller-supplied proof,
 // not an arbitrary pairwise exemption. IDs are local to one scan: remap them
 // before merging independently built inputs or repeating a dynamic scope.
 StorageScanResult scanStorageLifetimes(llvm::ArrayRef<ExplicitEffects> occurrences,

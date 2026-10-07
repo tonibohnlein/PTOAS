@@ -5,131 +5,248 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Prove a fixed accumulator chain once over structured control, without
-// unfolding trips. Region analysis consumes the proof before demand reduction.
+// Shared structured accumulator analysis. Summaries describe one body visit;
+// uniform children preserve a chain, while nonuniform loops scope local facts
+// to a single visit. No loop iterations or branch valuations are enumerated.
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "PTO/IR/PTO.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include <algorithm>
 namespace mlir::pto::frontiersynch {
+uint64_t StructuredProtection::lookup(const CompoundInstanceElement* phase) const
+{
+    auto found = facts.find(phase);
+    return found != facts.end() && !found->second.scope ? found->second.group | invocationProtectionBit : 0;
+}
+uint64_t StructuredProtection::within(const CompoundInstanceElement* phase,
+                                     ArrayRef<scf::ForOp> enclosing) const
+{
+    auto found = facts.find(phase);
+    if (found == facts.end()) { return 0; }
+    if (found->second.scope && !llvm::any_of(enclosing, [&](scf::ForOp loop) {
+            return loop.getOperation() == found->second.scope;
+        })) { return 0; }
+    return found->second.group | invocationProtectionBit;
+}
+uint64_t StructuredProtection::at(const CompoundInstanceElement* phase) const
+{
+    SmallVector<scf::ForOp> enclosing;
+    for (auto* parent = phase->elementOp->getParentOp(); parent; parent = parent->getParentOp()) {
+        if (auto loop = dyn_cast<scf::ForOp>(parent)) { enclosing.push_back(loop); }
+    }
+    return within(phase, enclosing);
+}
+uint64_t StructuredProtection::inLoop(const CompoundInstanceElement* phase, scf::ForOp loop) const
+{
+    auto found = facts.find(phase);
+    if (found == facts.end()) { return 0; }
+    const auto fact = found->second;
+    if (!fact.scope || fact.scope->isProperAncestor(loop)) { return fact.group | invocationProtectionBit; }
+    return fact.scope == loop.getOperation() ? fact.group : 0;
+}
 namespace {
-class InvocationBuilder {
+struct Summary {
+    bool valid = true;
+    Type type;
+    SmallVector<uint32_t> atoms;
+    std::optional<std::size_t> matrixEffect;
+    Value symbolicBuffer;
+    SmallVector<std::size_t> otherEffects;
+};
+struct Leaf {
+    const CompoundInstanceElement* phase = nullptr;
+    ExplicitEffects occurrence;
+    SmallVector<uint32_t> atoms;
+    Value symbolicBuffer;
+};
+class StructuredBuilder {
 public:
-    explicit InvocationBuilder(const SyncStorageEffects& model) : storage(model)
+    explicit StructuredBuilder(const SyncStorageEffects& model) : storage(model)
     {
         for (const auto& effect : storage.effects()) {
             auto& list = phases[effect.phase->elementOp];
             if (!llvm::is_contained(list, effect.phase)) { list.push_back(effect.phase); }
         }
     }
-    InvocationProtection run(func::FuncOp function)
+    StructuredProtection run(func::FuncOp function)
     {
-        HardwareProtectionBuilder state;
-        InvocationProtection groups;
-        for (auto& op : function.front()) {
-            if (op.getNumRegions()) {
-                InvocationProtection pending;
-                if (state.currentGroup() && preserve(op, state, pending, 0)) {
-                    for (const auto& entry : pending) { groups.insert(entry); }
-                } else { state.endScope(); }
-            } else {
-                observe(op, state, groups);
-            }
-        }
-        return groups;
+        summarize(*function.getOperation());
+        walk(function.front(), nullptr);
+        return std::move(result);
     }
 private:
     const SyncStorageEffects& storage;
     DenseMap<Operation*, SmallVector<const CompoundInstanceElement*>> phases;
+    DenseMap<Operation*, Leaf> leaves;
+    DenseMap<Operation*, Summary> summaries;
+    DenseMap<Value, uint32_t> symbolicAtoms;
+    HardwareProtectionBuilder state;
+    StructuredProtection result;
+    std::optional<std::size_t> activeEffect;
 
     bool metadata(Operation& op) const
     {
-        // Descriptor construction has no physical access; mutations are not
-        // transparent. Reuse the same metadata distinction as recognition.
         if (isa<SetValidShapeOp>(op)) { return false; }
         return isa<AllocTileOp, AllocMultiTileOp, MultiTileGetOp, SubViewOp>(op) ||
             op.hasTrait<OpTrait::IsTerminator>() || isMemoryEffectFree(&op);
     }
-    bool accesses(const CompoundInstanceElement* phase, ExplicitEffects& occurrence,
-                  SmallVectorImpl<uint32_t>& atoms) const
+    bool accesses(Leaf& leaf)
     {
-        occurrence.pipe = static_cast<uint32_t>(phase->kPipeValue);
-        for (auto id : storage.effectsFor(phase)) {
-            const auto& effect = storage.effects()[id];
+        const auto effects = storage.effects();
+        for (auto id : storage.effectsFor(leaf.phase)) {
+            const auto& effect = effects[id];
             if (!effect.memory || effect.memory->scope == AddressSpace::Zero) { return false; }
             if (effect.memory->scope != AddressSpace::ACC) { continue; }
-            // A finite union of possible banks is not a fixed accumulator.
-            // Require materialized maps with no runtime symbols or selections.
-            if (!effect.rangesMaterialized || effect.regions.empty() || effect.selection ||
-                llvm::any_of(effect.regions, [](const auto& region) {
-                    return region.base || !region.symbols.empty();
-                })) { return false; }
-            for (auto cell : effect.cells) {
-                if (cell > UINT32_MAX) { return false; }
-                auto atom = static_cast<uint32_t>(cell);
+            SmallVector<uint32_t> atoms;
+            if (effect.rangesMaterialized && !effect.regions.empty() && !effect.selection &&
+                llvm::all_of(effect.regions, [](const auto& region) {
+                    return !region.base && region.symbols.empty();
+                })) {
+                for (auto cell : effect.cells) {
+                    if (cell > UINT32_MAX) { return false; }
+                    atoms.push_back(static_cast<uint32_t>(cell));
+                }
+            } else {
+                if (!effect.sharedProvenanceComplete || effect.selection || !effect.memory->baseBuffer ||
+                    storage.cells().size() + symbolicAtoms.size() >= UINT32_MAX) { return false; }
+                leaf.symbolicBuffer = effect.memory->baseBuffer;
+                auto atom = symbolicAtoms.try_emplace(effect.memory->baseBuffer,
+                    static_cast<uint32_t>(storage.cells().size() + symbolicAtoms.size())).first->second;
                 atoms.push_back(atom);
-                occurrence.accesses.push_back({atom, effect.mode == SyncAccessMode::Read,
-                                               effect.mode == SyncAccessMode::Write});
+            }
+            for (auto atom : atoms) {
+                leaf.atoms.push_back(atom);
+                leaf.occurrence.accesses.push_back({atom, effect.mode == SyncAccessMode::Read,
+                                                    effect.mode == SyncAccessMode::Write});
             }
         }
+        llvm::sort(leaf.atoms);
+        leaf.atoms.erase(std::unique(leaf.atoms.begin(), leaf.atoms.end()), leaf.atoms.end());
         return true;
     }
-    void observe(Operation& op, HardwareProtectionBuilder& state, InvocationProtection& groups)
+    Summary leafSummary(Operation& op)
     {
+        Summary summary;
         auto found = phases.find(&op);
-        if (found == phases.end()) {
+        if (found == phases.end()) { summary.valid = metadata(op); return summary; }
+        if (found->second.size() != 1) { summary.valid = false; return summary; }
+        Leaf leaf;
+        leaf.phase = found->second.front();
+        leaf.occurrence.pipe = static_cast<uint32_t>(leaf.phase->kPipeValue);
+        summary.valid = accesses(leaf);
+        auto matrix = matrixProtectionInfo(&op);
+        if (matrix && summary.valid && !leaf.atoms.empty() &&
+            leaf.occurrence.pipe == static_cast<uint32_t>(PipelineType::PIPE_M)) {
+            summary.type = matrix->accumulator;
+            summary.atoms = leaf.atoms;
+            summary.symbolicBuffer = leaf.symbolicBuffer;
+            for (auto id : storage.effectsFor(leaf.phase)) {
+                if (storage.effects()[id].memory->scope == AddressSpace::ACC) { summary.matrixEffect = id; break; }
+            }
+        } else {
+            if (leaf.occurrence.pipe == static_cast<uint32_t>(PipelineType::PIPE_M)) { summary.valid = false; }
+            for (auto id : storage.effectsFor(leaf.phase)) { summary.otherEffects.push_back(id); }
+        }
+        leaves[&op] = std::move(leaf);
+        return summary;
+    }
+    void merge(Summary& into, const Summary& child)
+    {
+        into.valid &= child.valid;
+        if (child.type) {
+            if (into.type && (into.type != child.type || into.atoms != child.atoms)) { into.valid = false; }
+            if (!into.type) { into.type = child.type; into.atoms = child.atoms; into.matrixEffect = child.matrixEffect;
+                into.symbolicBuffer = child.symbolicBuffer; }
+        }
+        llvm::append_range(into.otherEffects, child.otherEffects);
+    }
+    Summary summarize(Operation& op)
+    {
+        Summary summary;
+        if (!op.getNumRegions()) { summary = leafSummary(op); }
+        else if (!isa<scf::ForOp, scf::IfOp, func::FuncOp>(op)) { summary.valid = false; }
+        else {
+            for (auto& region : op.getRegions()) {
+                if (!region.empty() && !region.hasOneBlock()) { summary.valid = false; continue; }
+                for (auto& block : region) {
+                    for (auto& child : block) { merge(summary, summarize(child)); }
+                }
+            }
+            // A symbolic buffer defined inside a repeated body may select a
+            // different physical resource on each visit. Its SSA identity only
+            // proves equality within that visit, even without a selection map.
+            if (isa<scf::ForOp>(op) && summary.symbolicBuffer) {
+                auto* owner = summary.symbolicBuffer.getDefiningOp();
+                if (auto arg = dyn_cast<BlockArgument>(summary.symbolicBuffer)) {
+                    owner = arg.getOwner()->getParentOp();
+                }
+                if (!owner || owner == &op || op.isProperAncestor(owner)) { summary.valid = false; }
+            }
+            if (summary.matrixEffect && llvm::any_of(summary.otherEffects, [&](auto id) {
+                    return storage.mayOverlap(*summary.matrixEffect, id);
+                })) { summary.valid = false; }
+        }
+        summaries[&op] = summary;
+        return summary;
+    }
+    void observe(Operation& op, Operation* scope)
+    {
+        auto found = leaves.find(&op);
+        if (found == leaves.end()) {
             if (!metadata(op)) { state.endScope(); }
             return;
         }
-        // Macro operations with several phases need a phase-specific hardware
-        // contract; do not interpret the enclosing operation as one MMAD.
-        if (found->second.size() != 1) { state.endScope(); return; }
-        const auto* phase = found->second.front();
-        ExplicitEffects occurrence;
-        SmallVector<uint32_t> atoms;
-        if (!accesses(phase, occurrence, atoms)) { state.endScope(); return; }
-        state.observe(&op, occurrence, atoms);
-        if (!occurrence.accesses.empty() && occurrence.accesses.front().protectionGroup) {
-            groups[phase] = invocationProtectionBit | occurrence.accesses.front().protectionGroup;
+        auto& leaf = found->second;
+        if (!summaries.lookup(&op).valid) { state.endScope(); return; }
+        // An unresolved alias to the active resource must also break a chain.
+        // Uniform summaries discharge such interference before flattening.
+        if (activeEffect && !matrixProtectionInfo(&op) &&
+            llvm::any_of(storage.effectsFor(leaf.phase), [&](auto id) {
+                return storage.mayOverlap(*activeEffect, id);
+            })) { state.endScope(); activeEffect.reset(); }
+        state.observe(&op, leaf.occurrence, leaf.atoms);
+        if (auto effect = summaries.lookup(&op).matrixEffect) { activeEffect = effect; }
+        else if (!state.currentGroup()) { activeEffect.reset(); }
+        if (!leaf.occurrence.accesses.empty() && leaf.occurrence.accesses.front().protectionGroup) {
+            result.facts[leaf.phase] = {leaf.occurrence.accesses.front().protectionGroup, scope};
         }
     }
-    bool preserve(Operation& op, const HardwareProtectionBuilder& entry,
-                  InvocationProtection& groups, unsigned depth)
+    void uniform(Operation& op, Operation* scope)
     {
-        // Every arm/body must be the identity on the incoming protected chain.
-        // This proves zero trips, arbitrarily many visits and either branch.
-        // Do not establish a new invocation-wide group inside repeated control.
-        constexpr unsigned maxDepth = 64;
-        if (depth >= maxDepth || !isa<scf::ForOp, scf::IfOp>(op)) { return false; }
+        if (!op.getNumRegions()) { observe(op, scope); return; }
         for (auto& region : op.getRegions()) {
-            if (region.empty()) { continue; }
-            if (!region.hasOneBlock()) { return false; }
-            auto state = entry;
-            for (auto& child : region.front()) {
-                if (child.getNumRegions()) {
-                    if (!preserve(child, state, groups, depth + 1)) { return false; }
-                } else {
-                    observe(child, state, groups);
-                    if (state.currentGroup() != entry.currentGroup()) { return false; }
+            for (auto& block : region) {
+                for (auto& child : block) { uniform(child, scope); }
+            }
+        }
+    }
+    void walk(Block& block, Operation* scope)
+    {
+        for (auto& op : block) {
+            if (!op.getNumRegions()) { observe(op, scope); continue; }
+            const auto summary = summaries.lookup(&op);
+            if (summary.valid) { uniform(op, scope); continue; }
+            state.endScope();
+            if (isa<scf::ForOp, scf::IfOp>(op)) {
+                for (auto& region : op.getRegions()) {
+                    if (region.empty() || !region.hasOneBlock()) { continue; }
+                    walk(region.front(), isa<scf::ForOp>(op) ? &op : scope);
+                    state.endScope();
                 }
             }
         }
-        return true;
     }
 };
 } // namespace
-InvocationProtection invocationProtectionGroups(const SyncStorageEffects& storage)
+StructuredProtection structuredProtection(const SyncStorageEffects& storage)
 {
-    if (storage.effects().empty()) { return InvocationProtection{}; }
+    if (storage.effects().empty()) { return {}; }
     auto function = storage.effects().front().phase->elementOp->getParentOfType<func::FuncOp>();
-    if (!function || function.isDeclaration() || !function.getBody().hasOneBlock()) { return InvocationProtection{}; }
-    // TASSIGN mutates the original descriptor even when later uses retain its
-    // old SSA identity. Until shared geometry models rebinding, no initializer
-    // in this function can certify a fixed physical accumulator.
+    if (!function || function.isDeclaration() || !function.getBody().hasOneBlock()) { return {}; }
     bool rebound = false;
     function.walk([&](TAssignOp) { rebound = true; });
-    if (rebound) { return InvocationProtection{}; }
-    return InvocationBuilder(storage).run(function);
+    if (rebound) { return {}; }
+    return StructuredBuilder(storage).run(function);
 }
 } // namespace mlir::pto::frontiersynch

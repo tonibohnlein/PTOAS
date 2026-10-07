@@ -169,7 +169,9 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
     bool endpoints = llvm::all_of(phases, [](const RegionalAnalysis& phase) {
         return phase.capabilities.endpointRecipes && (phase.prepare || phase.prepareWithVisits);
     });
-    auto composed = composeRegionalSequence(function, arena, phases, false, false);
+    SmallVector<scf::ForOp> protectionContext(enclosing.begin(), enclosing.end());
+    protectionContext.push_back(loop);
+    auto composed = composeRegionalSequenceWithin(function, arena, phases, false, false, protectionContext);
     if (!composed.error.empty()) { failure.error = composed.error; return failure; }
     composed.state->completeInvocation = false;
     composed.state->requiredOuterLoops.assign(enclosing.begin(), enclosing.end());

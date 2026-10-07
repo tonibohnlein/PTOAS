@@ -147,6 +147,13 @@ SequenceAnalysis composeRegionalSequence(func::FuncOp function,
     std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
     bool reconstructPrerequisites, bool requireEndpoints)
 {
+    return composeRegionalSequenceWithin(function, std::move(expressions), std::move(children),
+                                        reconstructPrerequisites, requireEndpoints, {});
+}
+SequenceAnalysis composeRegionalSequenceWithin(func::FuncOp function,
+    std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
+    bool reconstructPrerequisites, bool requireEndpoints, ArrayRef<scf::ForOp> enclosing)
+{
     SequenceAnalysis result;
     if (!function || function.isDeclaration() || !function.getBody().hasOneBlock() || !expressions ||
         !expressions->constructionError().empty()) {
@@ -157,6 +164,7 @@ SequenceAnalysis composeRegionalSequence(func::FuncOp function,
         result.error = "sequence endpoint arithmetic requires a 64-bit index representation"; return result;
     }
     auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions));
+    state->requiredOuterLoops.assign(enclosing.begin(), enclosing.end());
     state->reconstructPrerequisites = reconstructPrerequisites;
     state->requireEndpoints = requireEndpoints;
     SmallVector<const CompoundInstanceElement*> phases;

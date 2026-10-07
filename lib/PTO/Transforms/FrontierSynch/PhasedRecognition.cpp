@@ -298,7 +298,8 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                             childParts.push_back(std::move(*view));
                         }
                         if (childParts.empty()) { return true; }
-                        auto composed = composeRegionalSequence(function, arena, std::move(childParts), true, false);
+                        auto composed = composeRegionalSequenceWithin(
+                            function, arena, std::move(childParts), true, false, child.loops);
                         if (!composed.error.empty()) {
                             return unavailable("nested slice composition: " + composed.error);
                         }
@@ -400,7 +401,10 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                     }
                 }
                 // Empty selected arms still export exact absent selectors.
-                auto composed = composeRegionalSequence(function, arena, std::move(parts), true, false);
+                SmallVector<scf::ForOp> protectionContext(node.loops.begin(), node.loops.end());
+                protectionContext.push_back(outer);
+                auto composed = composeRegionalSequenceWithin(function, arena, std::move(parts), true, false,
+                                                               protectionContext);
                 if (!composed.error.empty()) {
                     compactFailure = "phase body composition: " + composed.error;
                     invalidExpression = !expressions.constructionError().empty();
@@ -471,7 +475,8 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
         // inside one visit cannot feed a different visit/interval. Repeating
         // those original-site edges here would invent cross-visit uses. Storage
         // and native boundary crossings are still constructed and reduced.
-        auto composed = composeRegionalSequence(function, arena, std::move(intervalViews), false, false);
+        auto composed = composeRegionalSequenceWithin(
+            function, arena, std::move(intervalViews), false, false, node.loops);
         if (!composed.error.empty()) { return unavailable("outer slice composition: " + composed.error); }
         composed.state->completeInvocation = false;
         composed.state->requiredOuterLoops.assign(node.loops.begin(), node.loops.end());

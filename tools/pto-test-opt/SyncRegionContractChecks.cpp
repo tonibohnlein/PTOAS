@@ -50,18 +50,18 @@ int runSyncRegionContractChecks(func::FuncOp function, const SyncInput& input)
     if (dimensions.wasInterrupted()) {
         return 1;
     }
-    const auto groups = frontiersynch::invocationProtectionGroups(input.accesses());
+    const auto groups = frontiersynch::structuredProtection(input.accesses());
     DenseMap<int64_t, uint64_t> expectedGroups;
     DenseMap<uint64_t, int64_t> actualGroups;
     for (auto* phase : input.instructions()) {
         auto expected = phase->elementOp->getAttrOfType<IntegerAttr>("test.protection_group");
         if (!expected) { continue; }
         const auto label = expected.getInt();
-        const auto group = groups.lookup(phase);
+        const auto group = groups.at(phase) & ~frontiersynch::protectionResetBit;
         if (label < 0 || bool(label) != bool(group) ||
             expectedGroups.try_emplace(label, group).first->second != group ||
             actualGroups.try_emplace(group, label).first->second != label) {
-            phase->elementOp->emitError("unexpected invocation protection group");
+            phase->elementOp->emitError("unexpected structured protection group");
             return 1;
         }
     }

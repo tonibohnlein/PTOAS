@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/LifetimeScan.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include <limits>
+#include <map>
 namespace mlir::pto::frontiersynch {
 namespace {
 PeriodicAnalysis reject(const char* reason)
@@ -66,23 +67,19 @@ FailureOr<std::vector<ExplicitEffects>> numericTemplateOccurrences(const Numeric
     }
     std::vector<ExplicitEffects> output;
     output.reserve(word.size() * copies);
-    HardwareProtectionBuilder protection;
+    std::map<std::pair<unsigned, uint64_t>, uint64_t> scopes;
     for (unsigned visit = 0; visit < copies; ++visit) {
-        protection.endScope();
         for (std::size_t i = 0; i < word.size(); ++i) {
             auto occurrence = word[i];
             occurrence.payload = static_cast<uint32_t>(output.size());
-            SmallVector<uint32_t> accumulatorAtoms;
-            for (const auto& access : occurrence.accesses) {
-                if (input.atoms[access.atom].space == AddressSpace::ACC) {
-                    accumulatorAtoms.push_back(access.atom);
-                }
+            auto group = input.payloads[i].invocationProtection;
+            if (group && !(group & invocationProtectionBit)) {
+                const auto reset = group & protectionResetBit;
+                const auto key = std::make_pair(visit, group & ~protectionResetBit);
+                group = scopes.emplace(key, scopes.size() + 1).first->second | reset;
             }
-            protection.observe(input.payloads[i].phase->elementOp, occurrence, accumulatorAtoms);
-            if (auto group = input.payloads[i].invocationProtection) {
-                for (auto& access : occurrence.accesses) {
-                    if (input.atoms[access.atom].space == AddressSpace::ACC) { access.protectionGroup = group; }
-                }
+            for (auto& access : occurrence.accesses) {
+                if (input.atoms[access.atom].space == AddressSpace::ACC) { access.protectionGroup = group; }
             }
             output.push_back(std::move(occurrence));
         }

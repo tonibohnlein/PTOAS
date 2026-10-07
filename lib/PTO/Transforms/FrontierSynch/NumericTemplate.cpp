@@ -9,6 +9,7 @@
 #include "NumericTemplateInternal.h"
 #include "RecognitionInternal.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
+#include <map>
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseSet.h"
 namespace mlir::pto::frontiersynch {
@@ -159,9 +160,29 @@ NumericTemplate recognizeTemplate(scf::ForOp outer, const PhaseIndex& index,
     }
     output.period = output.specializedBody ? 0 : 1;
     output.refresh = output.specializedBody ? 0 : 1;
-    const auto protection = invocationProtectionGroups(input.accesses());
+    const auto protection = structuredProtection(input.accesses());
+    // Expanded inner coordinates distinguish visits of nonuniform scopes.
+    // These local identities are remapped again for each outer template visit.
+    std::map<std::pair<uint64_t, std::vector<int64_t>>, uint64_t> localGroups;
     for (auto& payload : output.payloads) {
-        payload.invocationProtection = protection.lookup(payload.phase);
+        auto found = protection.facts.find(payload.phase);
+        if (found == protection.facts.end()) { continue; }
+        const auto fact = found->second;
+        if (!fact.scope || fact.scope->isProperAncestor(outer)) {
+            payload.invocationProtection = fact.group | invocationProtectionBit;
+            continue;
+        }
+        std::vector<int64_t> visits;
+        bool covered = fact.scope == outer.getOperation();
+        for (auto coordinate : payload.coordinates) {
+            visits.push_back(coordinate.induction);
+            if (coordinate.loop.getOperation() == fact.scope) { covered = true; break; }
+        }
+        if (!covered) { continue; }
+        if (fact.scope == outer.getOperation()) { visits.clear(); }
+        const auto key = std::make_pair(fact.group & ~protectionResetBit, std::move(visits));
+        const auto id = localGroups.emplace(key, localGroups.size() + 1).first->second;
+        payload.invocationProtection = id | (fact.group & protectionResetBit);
     }
     return output;
 }

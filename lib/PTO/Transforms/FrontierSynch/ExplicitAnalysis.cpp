@@ -59,13 +59,11 @@ ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, co
     result.phases.assign(phases.begin(), phases.end());
     result.dischargedEffects.assign(discharged.begin(), discharged.end());
     llvm::DenseSet<std::size_t> omitted(discharged.begin(), discharged.end());
-    HardwareProtectionBuilder protection;
-    const auto invocation = invocationProtectionGroups(input.accesses());
+    const auto invocation = structuredProtection(input.accesses());
     for (const auto* phase : result.phases) {
         ExplicitEffects occurrence;
         occurrence.payload = static_cast<uint32_t>(result.occurrences.size());
         occurrence.pipe = static_cast<uint32_t>(phase->kPipeValue);
-        SmallVector<uint32_t> accumulatorAtoms;
         for (auto id : input.accesses().effectsFor(phase)) {
             if (omitted.contains(id)) {
                 continue;
@@ -75,13 +73,9 @@ ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, co
                 const auto atom = static_cast<uint32_t>(cell);
                 occurrence.accesses.push_back({atom, effect.mode == SyncAccessMode::Read,
                                                effect.mode == SyncAccessMode::Write});
-                if (input.accesses().cells()[cell].space == AddressSpace::ACC) {
-                    accumulatorAtoms.push_back(atom);
-                }
             }
         }
-        protection.observe(phase->elementOp, occurrence, accumulatorAtoms);
-        if (auto group = invocation.lookup(phase)) {
+        if (auto group = invocation.at(phase)) {
             for (auto& access : occurrence.accesses) {
                 if (input.accesses().cells()[access.atom].space == AddressSpace::ACC) {
                     access.protectionGroup = group;
@@ -90,7 +84,7 @@ ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, co
         }
         result.occurrences.push_back(std::move(occurrence));
     }
-    const auto modeledProtection = modeledProtectionGroups(input, phases);
+    const auto modeledProtection = modeledProtectionGroups(input, phases, invocation);
     const bool unresolvedBases = input.accesses().hasUniformRelationships(phases);
     std::vector<StorageGenerator> residual;
     for (uint32_t a = 0; a < phases.size(); ++a) {

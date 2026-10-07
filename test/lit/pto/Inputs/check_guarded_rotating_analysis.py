@@ -24,7 +24,7 @@ def invoke(tool, path, mode="--structured-trace"):
     return run.stdout if mode == "--insert-logical" else json.loads(run.stdout)
 
 
-def validate(report, g, h, n, offset):
+def validate(report, g, h, n, offset, protected=False):
     assert report["accepted"], report
     trace = report["trace"]
     assert not trace["error"], trace
@@ -41,7 +41,8 @@ def validate(report, g, h, n, offset):
     for a, (reads, writes) in enumerate(effects):
         for b in range(a + 1, len(effects)):
             later_reads, later_writes = effects[b]
-            if writes & (later_reads | later_writes) or reads & later_writes:
+            protected_pair = protected and payloads[a]['label'] == payloads[b]['label'] == 'C'
+            if not protected_pair and (writes & (later_reads | later_writes) or reads & later_writes):
                 edges.add((2 * a + 1, 2 * b))
     required = closure(2 * len(payloads), edges)[0]
     commands = []
@@ -75,6 +76,17 @@ def main():
             program = source.replace("array<i64: 1, 1, 3, 0>", f"array<i64: {g}, {h}, {n}, {offset}>")
             path.write_text(program)
             validate(invoke(tool, path), g, h, n, offset)
+            count += 1
+        # The same guarded route consumes the shared hardware facts. The
+        # oracle removes only ACC interactions between qualified accumulations;
+        # rotating operand readiness and overwrite requirements remain.
+        accumulation = source.replace('mat, 16x16', 'mat, 32x16').replace('left, 16x16', 'left, 32x16')
+        accumulation = accumulation.replace('right, 16x16', 'right, 16x80').replace('acc, 16x16', 'acc, 32x80')
+        accumulation = accumulation.replace('pto.tmatmul ins(%readleft, %right : !left, !right)',
+                                            'pto.tmatmul.acc ins(%acc, %readleft, %right : !acc, !left, !right)')
+        for g, h, n, offset in itertools.product((0, 1), (0, 1), (0, 1, 3), (0, 1)):
+            path.write_text(accumulation.replace('array<i64: 1, 1, 3, 0>', f'array<i64: {g}, {h}, {n}, {offset}>'))
+            validate(invoke(tool, path), g, h, n, offset, protected=True)
             count += 1
         # A branch-local deterministic guard must be replayed/masked at the entry
         # cut, while each endpoint stays in its original arm.

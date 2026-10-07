@@ -15,54 +15,12 @@ namespace mlir::pto::frontiersynch {
 namespace {
 void protection(RotatingAnalysis& result, const SyncInput& input, const RecognitionResult& recognized)
 {
-    // Local groups are confined to this body visit; certified invocation
-    // groups are applied below to extend protection across visits. Only stationary accumulator
-    // fragments can share a physical identity across sites here; rotating
-    // accumulators retain ordinary software demands.
-    HardwareProtectionBuilder builder;
-    std::vector<ExplicitEffects> word(result.phases.size());
-    for (uint32_t i = 0; i < word.size(); ++i) {
-        word[i].payload = i;
-        word[i].pipe = static_cast<uint32_t>(result.phases[i]->kPipeValue);
-    }
-    std::map<std::tuple<uint32_t, uint32_t, uint64_t>, uint32_t> identities;
-    std::vector<uint32_t> atoms;
-    for (const auto& fragment : result.fragments) {
-        auto key = std::make_tuple(fragment.family, fragment.atom, fragment.offset);
-        auto atom = identities.emplace(key, identities.size()).first->second;
-        atoms.push_back(atom);
-        word[fragment.payload].accesses.push_back({atom, fragment.read, fragment.write});
-    }
-    std::vector<SmallVector<uint32_t>> accumulatorAtoms(word.size());
-    std::vector<bool> stationary(word.size(), true);
-    for (std::size_t i = 0; i < result.fragments.size(); ++i) {
-        const auto& fragment = result.fragments[i];
-        const auto& effect = input.accesses().effects()[recognized.accesses[i].effect];
-        if (effect.memory->scope == AddressSpace::ACC) {
-            accumulatorAtoms[fragment.payload].push_back(atoms[i]);
-            stationary[fragment.payload] = stationary[fragment.payload] && fragment.stride == 0;
-        }
-    }
-    for (uint32_t i = 0; i < word.size(); ++i) {
-        if (!stationary[i]) {
-            builder.endScope();
-        } else {
-            builder.observe(result.phases[i]->elementOp, word[i], accumulatorAtoms[i]);
-        }
-    }
-    std::vector<std::map<uint32_t, uint64_t>> groups(word.size());
-    const auto invocation = invocationProtectionGroups(input.accesses());
-    for (const auto& occurrence : word) {
-        for (const auto& access : occurrence.accesses) {
-            groups[occurrence.payload][access.atom] = access.protectionGroup;
-        }
-    }
+    const auto shared = structuredProtection(input.accesses());
     for (std::size_t i = 0; i < result.fragments.size(); ++i) {
         auto& fragment = result.fragments[i];
-        fragment.protectionGroup = groups[fragment.payload][atoms[i]];
         const auto& effect = input.accesses().effects()[recognized.accesses[i].effect];
-        if (effect.memory->scope == AddressSpace::ACC && invocation.lookup(effect.phase)) {
-            fragment.protectionGroup = invocation.lookup(effect.phase);
+        if (effect.memory->scope == AddressSpace::ACC && fragment.stride == 0) {
+            fragment.protectionGroup = shared.inLoop(effect.phase, result.loop);
         }
     }
 }
