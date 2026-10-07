@@ -16,17 +16,22 @@ namespace mlir::pto::frontiersynch {
 class FrontierAnalysis {
 public:
     explicit FrontierAnalysis(Operation* operation) : function(dyn_cast<func::FuncOp>(operation)) {}
-    LogicalResult initialize(GMAliasPolicy policy = GMAliasPolicy::MayNotAlias);
+    // Callers needing structural diagnostics retain the default. The logical
+    // pass may defer recognition when the whole-function native proof succeeds.
+    LogicalResult initialize(GMAliasPolicy policy = GMAliasPolicy::MayNotAlias, bool requireStructure = true);
     // Build and cache the whole-function arithmetic candidate only on request.
     // Requires successful initialization; uses fixed class limits, not input-derived limits.
     LogicalResult recognizeArithmetic();
+    bool hasOnlyNativeScalarRequirements() const { return nativeScalarOnly; }
     LogicalResult analyzeExplicitFunction();
     const ExplicitAnalysis* explicitResult() const { return explicitAnalysis ? &*explicitAnalysis : nullptr; }
-    const SyncInput* input() const { return program ? storage.get() : nullptr; }
+    const SyncInput* input() const { return storage.get(); }
     const ProgramRecognition* result() const { return program ? &*program : nullptr; }
 private:
+    LogicalResult recognizeStructure();
     func::FuncOp function;
     bool initialized = false;
+    bool nativeScalarOnly = false;
     GMAliasPolicy policy = GMAliasPolicy::MayNotAlias;
     std::unique_ptr<SyncInput> storage;
     std::optional<ProgramRecognition> program;
