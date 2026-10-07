@@ -101,6 +101,16 @@ int main()
     }
     auto x = getAffineDimExpr(0, &context), y = getAffineDimExpr(1, &context), z = getAffineDimExpr(2, &context);
     auto n = getAffineSymbolExpr(0, &context);
+    // A proved exclusion must not erase a separate unresolved input obligation.
+    auto mixed = bundle(x);
+    mixed.pipeCount = 4;
+    mixed.relations.pop_back();
+    const auto classified = fs::recognizeArithmetic(mixed, {3, 4, 1, 7});
+    if (classified.state != fs::RecognitionState::NotApplicable ||
+        !llvm::any_of(classified.diagnostics, [](const auto& d) { return d.outsideClass; }) ||
+        !llvm::any_of(classified.diagnostics, [](const auto& d) { return !d.outsideClass; })) {
+        return 1;
+    }
     dump("difference", bundle(n - x));
     dump("octagon", bundle(x + y - 5));
     dump("three-coordinates", bundle(n - x - y));
@@ -159,6 +169,11 @@ int main()
         return 1;
     }
     const auto& effects = shared.accesses();
+    auto invalid = fs::recognizeArithmeticProgram(*function, index, shared, effects, {8, 8, 0, 8});
+    if (invalid.extraction.state != fs::RecognitionState::MissingPremise ||
+        invalid.extraction.diagnostics.size() != 1 || invalid.extraction.diagnostics.front().outsideClass) {
+        return 1;
+    }
     for (auto limits : {fs::ArithmeticLimits{8, 8, INT64_MAX, 8}, fs::ArithmeticLimits{8, 100, 2, 8}}) {
         auto program = fs::recognizeArithmeticProgram(*function, index, shared, effects, limits);
         llvm::outs() << "producer-limit: " << fs::recognitionName(program.extraction.state)

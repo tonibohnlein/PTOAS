@@ -520,6 +520,10 @@ int main(int argc, char **argv) {
   if (recognition || numericAnalysis) {
     for (auto function : module->getOps<func::FuncOp>()) {
       if (function.isDeclaration()) { continue; }
+      if (pto::hasManualOnCoreSynchronization(function)) {
+        llvm::outs() << "recognition-skipped " << function.getSymName() << ": manual-on-core-synchronization\n";
+        continue;
+      }
       pto::frontiersynch::FrontierAnalysis analysis(function);
       if (failed(analysis.initialize(policy))) {
         return 1;

@@ -17,7 +17,7 @@ namespace {
 void reject(ArithmeticRecognition& output, ArithmeticIssue issue, std::size_t relation = 0, std::size_t piece = 0,
             bool missing = false)
 {
-    output.diagnostics.push_back({issue, relation, piece});
+    output.diagnostics.push_back({issue, !missing, relation, piece});
     if (!missing || output.state == RecognitionState::NotApplicable) {
         output.state = RecognitionState::NotApplicable;
     } else {
@@ -78,7 +78,8 @@ void inspectPiece(const ResiduePiece& source, const ArithmeticLimits& limits, No
         row.equality = system.isEq(rowId);
         if (auto issue = detail::collectRow(system.getConstraint(rowId), system.getNumDims(),
                                             system.getNumSymbols(), row)) {
-            reject(output, *issue, normalized.relation, normalized.piece);
+            reject(output, *issue, normalized.relation, normalized.piece,
+                   *issue != ArithmeticIssue::UnsupportedExpression);
             continue;
         }
         const bool contradiction = detail::normalizeRow(row);
@@ -107,7 +108,7 @@ ArithmeticRecognition recognizeArithmetic(const ArithmeticPrimitives& input, con
 {
     ArithmeticRecognition output;
     if (!limits.pipes || !limits.period || !limits.coefficient) {
-        reject(output, ArithmeticIssue::InvalidConfiguration);
+        reject(output, ArithmeticIssue::InvalidConfiguration, 0, 0, true);
         return output;
     }
     if (input.relations.empty()) {
@@ -118,19 +119,19 @@ ArithmeticRecognition recognizeArithmetic(const ArithmeticPrimitives& input, con
         reject(output, ArithmeticIssue::PipeLimit);
     }
     if (!input.period || input.period != limits.period) {
-        reject(output, ArithmeticIssue::PeriodMismatch);
+        reject(output, ArithmeticIssue::PeriodMismatch, 0, 0, !input.period);
     }
     llvm::StringSet<> parameterNames;
     for (const auto& parameter : input.parameters) {
         if (parameter.empty() || !parameterNames.insert(parameter).second) {
-            reject(output, ArithmeticIssue::InvalidCoordinate);
+            reject(output, ArithmeticIssue::InvalidCoordinate, 0, 0, true);
         }
     }
     std::array<bool, 7> roles{};
     for (auto [id, relation] : llvm::enumerate(input.relations)) {
         const auto role = static_cast<unsigned>(relation.kind);
         if (role >= roles.size()) {
-            reject(output, ArithmeticIssue::MissingRole, id);
+            reject(output, ArithmeticIssue::MissingRole, id, 0, true);
         } else {
             roles[role] = true;
         }
@@ -139,14 +140,14 @@ ArithmeticRecognition recognizeArithmetic(const ArithmeticPrimitives& input, con
             continue;
         }
         if (!schema(relation, input, limits)) {
-            reject(output, ArithmeticIssue::InvalidCoordinate, id);
+            reject(output, ArithmeticIssue::InvalidCoordinate, id, 0, true);
             continue;
         }
         output.observedDimensions = std::max(output.observedDimensions,
                                              static_cast<unsigned>(relation.coordinates.size()));
         for (auto [pieceId, piece] : llvm::enumerate(relation.pieces)) {
             if (!validPiece(piece, relation, input.period)) {
-                reject(output, ArithmeticIssue::InvalidResidue, id, pieceId);
+                reject(output, ArithmeticIssue::InvalidResidue, id, pieceId, true);
                 continue;
             }
             if (piece.system.getNumInputs() > limits.dimensions) {

@@ -43,12 +43,19 @@ bool supportedDomain(scf::ForOp loop, detail::ProgramBuilder& builder)
 {
     APInt step;
     if (!matchPattern(loop.getStep(), m_ConstantInt(&step)) || !step.isSignedIntN(64) ||
-        step.getSExtValue() <= 0) { return false; }
+        step.getSExtValue() <= 0) {
+        builder.output.extraction.note(RecognitionIssue::LoopDomain, loop, true);
+        return false;
+    }
     // The relation retains original IVs. Congruence is represented by the
     // exact local-quotient importer, not by expanding the configured period.
     ArithmeticSite context{nullptr, enclosing(loop, builder.output.context.root), {}};
-    return builder.prepareValue(loop.getLowerBound(), context) &&
-           builder.prepareValue(loop.getUpperBound(), context);
+    if (!builder.prepareValue(loop.getLowerBound(), context) ||
+        !builder.prepareValue(loop.getUpperBound(), context)) {
+        builder.output.extraction.note(RecognitionIssue::LoopDomain, loop);
+        return false;
+    }
+    return true;
 }
 void collect(const PhaseIndex& index, detail::ProgramBuilder& builder)
 {
@@ -69,9 +76,7 @@ void collect(const PhaseIndex& index, detail::ProgramBuilder& builder)
             output.extraction.note(RecognitionIssue::AdditionalPrerequisite, op);
         }
         if (auto loop = dyn_cast<scf::ForOp>(op)) {
-            if (!supportedDomain(loop, builder)) {
-                output.extraction.note(RecognitionIssue::LoopDomain, op, true);
-            }
+            supportedDomain(loop, builder);
             auto bodyLoops = enclosing(loop, builder.output.context.root);
             bodyLoops.push_back(loop);
             // Retain the original recurrence. The shared scalar semantics must
@@ -79,7 +84,7 @@ void collect(const PhaseIndex& index, detail::ProgramBuilder& builder)
             // unrecognized state never becomes a free execution parameter.
             for (Value argument : loop.getRegionIterArgs()) {
                 if (index.isRelevant(argument) && !builder.prepareValue(argument, {nullptr, bodyLoops, {}})) {
-                    output.extraction.note(RecognitionIssue::LoopCarriedState, op, true);
+                    output.extraction.note(RecognitionIssue::LoopCarriedState, op);
                 }
             }
             return;
@@ -87,7 +92,7 @@ void collect(const PhaseIndex& index, detail::ProgramBuilder& builder)
         if (auto branch = dyn_cast<scf::IfOp>(op)) {
             ArithmeticSite context{nullptr, enclosing(op, root), {}};
             if (!builder.prepareGuard(branch.getCondition(), context)) {
-                output.extraction.note(RecognitionIssue::UnsupportedControl, op, true);
+                output.extraction.note(RecognitionIssue::UnsupportedControl, op);
             }
             return;
         }
@@ -215,11 +220,11 @@ ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, con
         output.extraction.note(RecognitionIssue::UnsupportedControl, function, true);
         return output;
     }
-    if (!limits.pipes || !limits.coefficient) {
-        output.extraction.note(RecognitionIssue::ArithmeticConfiguration, function, true);
+    if (!limits.pipes || !limits.coefficient || !limits.period) {
+        output.extraction.note(RecognitionIssue::ArithmeticConfiguration, function);
         return output;
     }
-    if (!limits.period || limits.period > 2) {
+    if (limits.period > 2) {
         output.extraction.note(RecognitionIssue::ArithmeticPeriod, function, true);
         return output;
     }
