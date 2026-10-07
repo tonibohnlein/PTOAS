@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 #include "RotationPattern.h"
 #include "PTO/IR/PTOMultiBuffer.h"
+#include "PTO/IR/PTOAccessRegion.h"
 #include "RecognitionInternal.h"
 #include "../InsertSync/SyncEffectRanges.h"
 #include "../InsertSync/SyncRegionArithmetic.h"
@@ -32,7 +33,7 @@ namespace {
 bool metadata(Operation& op)
 {
     return isa<AllocTileOp, AllocMultiTileOp, MultiTileGetOp, SubViewOp>(op) ||
-           op.hasTrait<OpTrait::IsTerminator>() || isMemoryEffectFree(&op);
+           op.hasTrait<OpTrait::IsTerminator>() || isMemoryEffectFree(&op) || hasOnlyDescriptorEffects(&op);
 }
 bool fixedBody(Block& block, const PhaseIndex& index, RecognitionResult& result)
 {
