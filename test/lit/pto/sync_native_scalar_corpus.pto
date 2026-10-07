@@ -1,0 +1,144 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_native_scalar_corpus.py pto-test-opt %s
+// Original corpus metadata/top-k programs retain data-dependent scalar control.
+module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
+  func.func @decode_build_swa_scalar_metadata(%arg0: !pto.ptr<i32, gm>, %arg1: !pto.ptr<i32, gm>, %arg2: !pto.ptr<i64, gm>, %arg3: !pto.ptr<i32, gm>, %arg4: i32, %arg5: index, %arg6: i32, %arg7: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c8 = arith.constant 8 : index
+    %c1 = arith.constant 1 : index
+    %c128 = arith.constant 128 : index
+    %c2 = arith.constant 2 : index
+    %0 = arith.index_cast %arg6 : i32 to index
+    %1:2 = scf.for %arg8 = %0 to %c8 step %c1 iter_args(%arg9 = %arg4, %arg10 = %arg5) -> (i32, index) {
+      %2 = arith.divsi %arg8, %c2 : index
+      %3 = pto.load %arg0[%arg8] : !pto.ptr<i32, gm> -> i32
+      %4 = arith.index_cast %3 : i32 to index
+      %5 = arith.divsi %4, %c128 : index
+      %6 = arith.index_cast %3 : i32 to index
+      %7 = arith.remsi %6, %c128 : index
+      %8 = arith.muli %2, %c128 : index
+      %9 = arith.addi %8, %5 : index
+      %10 = pto.load %arg1[%9] : !pto.ptr<i32, gm> -> i32
+      %11 = arith.index_cast %10 : i32 to index
+      %12 = arith.muli %11, %c128 : index
+      %13 = arith.addi %12, %7 : index
+      %14 = arith.index_cast %13 : index to i64
+      pto.store %14, %arg2[%arg8] : !pto.ptr<i64, gm>, i64
+      %15 = arith.index_cast %3 : i32 to index
+      %16 = arith.addi %15, %c1 : index
+      %17 = arith.minsi %16, %c128 : index
+      %18 = arith.index_cast %17 : index to i32
+      pto.store %18, %arg3[%arg8] : !pto.ptr<i32, gm>, i32
+      scf.yield %3, %2 : i32, index
+    }
+    return
+  }
+}
+
+
+// -----
+module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
+  func.func @hca_cache_topk(%arg0: !pto.ptr<i32, gm>, %arg1: !pto.ptr<i32, gm>, %arg2: !pto.ptr<i32, gm>, %arg3: i32, %arg4: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c-1_i32 = arith.constant -1 : i32
+    %c8 = arith.constant 8 : index
+    %c1 = arith.constant 1 : index
+    %c128 = arith.constant 128 : index
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %0 = arith.index_cast %arg3 : i32 to index
+    %1 = arith.muli %0, %c8 : index
+    scf.for %arg5 = %c0 to %c8 step %c1 {
+      %2 = arith.addi %1, %arg5 : index
+      %3 = arith.cmpi slt, %2, %c8 : index
+      scf.if %3 {
+        %4 = arith.divsi %2, %c2 : index
+        %5 = pto.load %arg0[%2] : !pto.ptr<i32, gm> -> i32
+        %6 = pto.load %arg1[%4] : !pto.ptr<i32, gm> -> i32
+        %7 = arith.index_cast %5 : i32 to index
+        %8 = arith.addi %7, %c1 : index
+        %9 = arith.index_cast %6 : i32 to index
+        %10 = arith.minsi %8, %9 : index
+        %11 = arith.divsi %10, %c128 : index
+        %12 = arith.minsi %11, %c128 : index
+        scf.for %arg6 = %c0 to %c128 step %c1 {
+          %13 = arith.cmpi slt, %arg6, %12 : index
+          scf.if %13 {
+            %14 = arith.index_cast %arg6 : index to i32
+            %15 = arith.muli %2, %c128 : index
+            %16 = arith.addi %15, %arg6 : index
+            pto.store %14, %arg2[%16] : !pto.ptr<i32, gm>, i32
+          } else {
+            %14 = arith.muli %2, %c128 : index
+            %15 = arith.addi %14, %arg6 : index
+            pto.store %c-1_i32, %arg2[%15] : !pto.ptr<i32, gm>, i32
+          }
+        }
+      }
+    }
+    return
+  }
+}
+
+
+// -----
+module attributes {pto.backend = "emitc", pto.target_arch = "a5"} {
+  func.func @mtp_verify_and_pack_mtp_verify_and_pack(%arg0: !pto.ptr<i32, gm>, %arg1: !pto.ptr<i64, gm>, %arg2: !pto.ptr<i32, gm>, %arg3: !pto.ptr<i64, gm>, %arg4: !pto.ptr<i32, gm>, %arg5: !pto.ptr<i32, gm>, %arg6: !pto.ptr<i32, gm>, %arg7: !pto.ptr<i64, gm>, %arg8: !pto.ptr<i32, gm>, %arg9: i32, %arg10: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c2_i32 = arith.constant 2 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c16 = arith.constant 16 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c2 = arith.constant 2 : index
+    %c0 = arith.constant 0 : index
+    %0 = arith.index_cast %arg9 : i32 to index
+    scf.for %arg11 = %0 to %c16 step %c1 {
+      %1 = arith.muli %arg11, %c2 : index
+      %2 = arith.addi %1, %c1 : index
+      %3 = pto.load %arg0[%arg11] : !pto.ptr<i32, gm> -> i32
+      %4 = arith.index_cast %3 : i32 to index
+      %5 = arith.cmpi sge, %4, %c0 : index
+      scf.if %5 {
+        %6 = pto.load %arg1[%2] : !pto.ptr<i64, gm> -> i64
+        %7 = arith.muli %1, %c8 : index
+        %8 = pto.load %arg2[%7] : !pto.ptr<i32, gm> -> i32
+        %9 = arith.extsi %8 : i32 to i64
+        %10 = arith.muli %2, %c8 : index
+        %11 = pto.load %arg2[%10] : !pto.ptr<i32, gm> -> i32
+        %12 = arith.extsi %11 : i32 to i64
+        %13 = pto.load %arg3[%arg11] : !pto.ptr<i64, gm> -> i64
+        %14 = pto.load %arg4[%arg11] : !pto.ptr<i32, gm> -> i32
+        %15 = pto.load %arg5[%1] : !pto.ptr<i32, gm> -> i32
+        %16 = arith.cmpi eq, %6, %9 : i64
+        %17:5 = scf.if %16 -> (i32, i64, i64, i32, i32) {
+          %18 = pto.load %arg5[%1] : !pto.ptr<i32, gm> -> i32
+          %19 = pto.load %arg5[%2] : !pto.ptr<i32, gm> -> i32
+          scf.yield %c2_i32, %9, %12, %18, %19 : i32, i64, i64, i32, i32
+        } else {
+          scf.yield %c1_i32, %13, %9, %14, %15 : i32, i64, i64, i32, i32
+        }
+        pto.store %17#0, %arg6[%arg11] : !pto.ptr<i32, gm>, i32
+        pto.store %17#1, %arg7[%1] : !pto.ptr<i64, gm>, i64
+        pto.store %17#2, %arg7[%2] : !pto.ptr<i64, gm>, i64
+        pto.store %17#3, %arg8[%1] : !pto.ptr<i32, gm>, i32
+        pto.store %17#4, %arg8[%2] : !pto.ptr<i32, gm>, i32
+      } else {
+        pto.store %c1_i32, %arg6[%arg11] : !pto.ptr<i32, gm>, i32
+        %6 = pto.load %arg1[%1] : !pto.ptr<i64, gm> -> i64
+        pto.store %6, %arg7[%1] : !pto.ptr<i64, gm>, i64
+        %7 = pto.load %arg1[%2] : !pto.ptr<i64, gm> -> i64
+        pto.store %7, %arg7[%2] : !pto.ptr<i64, gm>, i64
+        %8 = pto.load %arg5[%1] : !pto.ptr<i32, gm> -> i32
+        pto.store %8, %arg8[%1] : !pto.ptr<i32, gm>, i32
+        %9 = pto.load %arg5[%2] : !pto.ptr<i32, gm> -> i32
+        pto.store %9, %arg8[%2] : !pto.ptr<i32, gm>, i32
+      }
+    }
+    return
+  }
+}
+

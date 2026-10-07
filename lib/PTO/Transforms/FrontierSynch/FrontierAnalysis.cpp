@@ -15,11 +15,50 @@
 #include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "RecognitionInternal.h"
+#include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 namespace mlir::pto::frontiersynch {
-LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy) {
+namespace {
+// Whole-invocation shortcut only: every payload uses the protected scalar
+// pipe, and every other effect is accounted for by the shared leaf contract.
+// No storage geometry, visit enumeration or regional selector is required.
+bool nativeScalarRequirements(func::FuncOp function, const SyncInput& input)
+{
+    auto scalar = ptoStorageProtection().scalarPipe;
+    if (!scalar || function.isDeclaration() || !llvm::hasSingleElement(function.getBody()) ||
+        llvm::any_of(input.instructions(), [&](const auto* phase) {
+            return static_cast<uint32_t>(phase->kPipeValue) != *scalar ||
+                llvm::any_of(phase->elementOp->getResults(), [&](Value value) {
+                    return resultAvailability(*phase, value) == SyncResultAvailability::RequiresCompletion;
+                });
+        })) { return false; }
+    PhaseIndex index;
+    if (failed(index.build(function, input))) { return false; }
+    RecognitionResult checked;
+    function.walk([&](Operation* op) {
+        if (op == function.getOperation()) { return; }
+        if (llvm::any_of(index.prerequisitesFor(op), [](const auto& prerequisite) {
+                return !prerequisite.native;
+            })) {
+            checked.note(RecognitionIssue::AdditionalPrerequisite, op);
+        }
+        if (op->getNumRegions()) {
+            if (!isa<scf::ForOp, scf::IfOp, scf::WhileOp>(op)) {
+                checked.note(RecognitionIssue::UnsupportedControl, op, true);
+            }
+            return;
+        }
+        detail::inspectLeaf(*op, index, checked);
+    });
+    return checked.state == RecognitionState::Applicable;
+}
+} // namespace
+LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy, bool requireStructure) {
     if (initialized && policy == requestedPolicy) {
-        return success(program.has_value());
+        if (!storage) { return failure(); }
+        return nativeScalarOnly && !requireStructure ? success() : recognizeStructure();
     }
+    nativeScalarOnly = false;
     explicitAnalysis.reset();
     program.reset();
     storage.reset();
@@ -32,16 +71,20 @@ LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy) {
     if (failed(pending->build(function))) {
         return failure();
     }
-    auto recognized = recognizeProgram(function, *pending);
-    if (failed(recognized)) {
-        return failure();
-    }
+    nativeScalarOnly = nativeScalarRequirements(function, *pending);
     storage = std::move(pending);
+    return nativeScalarOnly && !requireStructure ? success() : recognizeStructure();
+}
+LogicalResult FrontierAnalysis::recognizeStructure() {
+    if (program) { return success(); }
+    if (!storage) { return failure(); }
+    auto recognized = recognizeProgram(function, *storage);
+    if (failed(recognized)) { return failure(); }
     program = std::move(*recognized);
     return success();
 }
 LogicalResult FrontierAnalysis::analyzeExplicitFunction() {
-    if (!program || !storage || function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
+    if (!storage || function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
         return failure();
     }
     if (!explicitAnalysis) {
@@ -54,9 +97,7 @@ LogicalResult FrontierAnalysis::analyzeExplicitFunction() {
     return success(explicitAnalysis->error.empty());
 }
 LogicalResult FrontierAnalysis::recognizeArithmetic() {
-    if (!program || !storage) {
-        return failure();
-    }
+    if (failed(recognizeStructure())) { return failure(); }
     if (program->arithmetic || function.isDeclaration()) {
         return success();
     }
@@ -115,7 +156,7 @@ public:
         }
         auto policy = gmAlias == "may-alias" ? GMAliasPolicy::MayAlias : GMAliasPolicy::MayNotAlias;
         auto& analysis = getAnalysis<frontiersynch::FrontierAnalysis>();
-        if (failed(analysis.initialize(policy))) {
+        if (failed(analysis.initialize(policy, /*requireStructure=*/false))) {
             signalPassFailure();
             return;
         }
@@ -125,7 +166,16 @@ public:
         bool sequencePrepared = false;
         const bool straight = !function.isDeclaration() && llvm::hasSingleElement(function.getBody()) &&
             llvm::all_of(function.front(), [](Operation& op) { return op.getNumRegions() == 0; });
-        if (straight) {
+        if (analysis.hasOnlyNativeScalarRequirements()) {
+            auto scalar = std::make_unique<frontiersynch::PreparedLogicalPlan>(0);
+            // Protected scalar accesses need no internal demands. Keep the
+            // invocation drain: protection is not completion at issue.
+            scalar->completeInvocation = !analysis.input()->instructions().empty();
+            frontiersynch::ExplicitAnalysis empty;
+            scalar->allocationCertificate = frontiersynch::explicitAllocationCertificate(
+                empty, scalar->planId, function.getContext());
+            prepared = std::move(scalar);
+        } else if (straight) {
             if (succeeded(analysis.analyzeExplicitFunction())) {
                 prepared = frontiersynch::prepareExplicitInsertion(function, *analysis.explicitResult());
             } else {
