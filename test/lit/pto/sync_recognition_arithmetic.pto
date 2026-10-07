@@ -43,21 +43,21 @@
 // CHECK-LABEL: period-mismatch: not-applicable
 // CHECK-NEXT: issue period-mismatch
 // CHECK-LABEL: residue-valid: applicable class=differences
-// CHECK-LABEL: residue-invalid: not-applicable
+// CHECK-LABEL: residue-invalid: missing-premise
 // CHECK-NEXT: issue invalid-residue
-// CHECK-LABEL: missing-parameter: not-applicable
+// CHECK-LABEL: missing-parameter: missing-premise
 // CHECK: issue invalid-coordinate
-// CHECK-LABEL: coefficient-overflow: not-applicable
+// CHECK-LABEL: coefficient-overflow: missing-premise
 // CHECK-NEXT: issue coefficient-overflow
 
 // CHECK: minimum-coefficient: applicable class=differences
 // CHECK: row -1, 0, 0, 0 constant=-1 equality=0
-// CHECK: duplicate-coordinate: not-applicable
+// CHECK: duplicate-coordinate: missing-premise
 // CHECK: issue invalid-coordinate
-// CHECK: missing-residue: not-applicable
+// CHECK: missing-residue: missing-premise
 // CHECK: issue invalid-residue
 // CHECK: union-class: applicable class=octagons
 // CHECK: producer-limit: not-applicable exports=0
 // CHECK: producer-limit: not-applicable exports=0
-// CHECK: invalid-tags: not-applicable
+// CHECK: invalid-tags: missing-premise
 // CHECK: issue invalid-coordinate

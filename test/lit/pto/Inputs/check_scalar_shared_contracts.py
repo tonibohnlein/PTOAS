@@ -33,6 +33,8 @@ def main():
     assert all(a["state"] == "applicable" for n in report["nodes"] for a in n["attempts"])
     assert any(i["issue"] == "unmodeled-operation" for n in reports["unresolved_call"]["nodes"]
                for a in n["attempts"] for i in a["issues"])
+    assert all(i["category"] == "unmet-obligation" for n in reports["unresolved_call"]["nodes"]
+               for a in n["attempts"] for i in a["issues"] if i["issue"] == "unmodeled-operation")
     release = next(p for p in reports["fifo_release"]["payloads"] if p["operation"] == "pto.tfree")
     assert {e["mode"] for e in release["effects"]} == {"read", "write"}, release
     boundaries = reports["completion_boundaries"]["payloads"]

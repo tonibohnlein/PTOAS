@@ -106,7 +106,7 @@ bool localRanges(const TemplateRegion& map, AddressSpace space, SmallVectorImpl<
 bool TemplateBuilder::payload(const CompoundInstanceElement* phase)
 {
     if (phase->macroOpInstanceId >= 0) {
-        output.result.note(RecognitionIssue::MultiplePhases, phase->elementOp);
+        output.result.note(RecognitionIssue::MultiplePhases, phase->elementOp, true);
         return false;
     }
     TemplatePayload payload;

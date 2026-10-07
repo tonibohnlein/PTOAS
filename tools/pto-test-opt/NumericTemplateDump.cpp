@@ -38,6 +38,7 @@ llvm::json::Object dumpNumericTemplate(const fs::NumericTemplate& result, AsmSta
     llvm::json::Array issues, payloads, atoms;
     for (const auto& diagnostic : result.result.diagnostics) {
         issues.push_back(llvm::json::Object{{"issue", fs::recognitionName(diagnostic.issue)},
+            {"category", diagnostic.outsideClass ? "class-mismatch" : "unmet-obligation"},
             {"operation", diagnostic.anchor ? diagnostic.anchor->getName().getStringRef() : StringRef()}});
     }
     auto occurrences = fs::numericTemplateOccurrences(result);

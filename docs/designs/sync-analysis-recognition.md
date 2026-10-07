@@ -1856,3 +1856,19 @@ outlives submission, and a polling return may indicate timeout rather than
 completion. Its hidden local scratch and event use also need explicit shared
 records. It must not be treated as an ordinary local pipe payload or silently
 classified as a tractable-class mismatch.
+
+## Recognition outcome evidence
+
+Each diagnostic records whether it proves a class mismatch or names an unmet
+input/normalization obligation. The recognition JSON `category` retains that distinction
+even when another diagnostic independently excludes the same route. An aggregate
+`not-applicable` result therefore does not imply that every reported issue is a
+class mismatch. Corpus audits inspect individual categories.
+
+Known finite-envelope exclusions, whole-function template scope restrictions
+and configured arithmetic dimension limits are class mismatches. Failed bound,
+guard or carried-state normalization remains an unmet obligation. Invalid
+arithmetic schemas and coefficient overflow likewise do not prove that the
+program is outside the class. Neither category changes route order or runs a
+backend. Recognition probes use the same manual on-core SET/WAIT skip as the
+production pass; existing cross-core protocols do not trigger it.
