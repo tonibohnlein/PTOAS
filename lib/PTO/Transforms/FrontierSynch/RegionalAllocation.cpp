@@ -46,6 +46,11 @@ std::shared_ptr<RegionalAllocationSummary> periodicRegionalAllocation(
 std::shared_ptr<RegionalAllocationSummary> finiteRegionalAllocation(
     const RegionalAnalysis& region, const PreparedLogicalPlan& plan)
 {
+    // No notification lifetime exists when every emitted family is local.
+    // This remains true for arbitrarily nested payload/barrier occurrences.
+    if (llvm::all_of(plan.families, [](const EndpointFamily& family) { return family.local; })) {
+        return std::make_shared<RegionalAllocationSummary>();
+    }
     if (hasNestedFrame(region) || !region.expressions || !region.presence ||
         region.anchors.size() != region.occurrenceLoops.size()) {
         return {};
@@ -69,26 +74,32 @@ std::shared_ptr<RegionalAllocationSummary> finiteRegionalAllocation(
         auto sp = region.presence(first), tp = region.presence(last);
         if (!sp || !tp) { return {}; }
         result->groups.push_back({family.sourcePipe, family.targetPipe, 1,
-            {{family.members.front().record, 0, 0, first, last, a.land(*sp, *tp)}}});
+            {{family.members.front().record, 0, 0, first, last, a.land(*sp, *tp), {}, true}}});
     }
     return result;
 }
 DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, const PreparedLogicalPlan& plan)
 {
-    if (hasNestedFrame(region) || !plan.regionalAllocation || !region.expressions ||
+    // A supplied summary certifies its own internal reuse. Nested coordinates
+    // are supported for its selected span endpoints, without inferring an
+    // allocation for arbitrary repeated handoff families.
+    if (!plan.regionalAllocation || !region.expressions || !region.capabilities.exactQueries ||
         !region.reachability || region.anchors.empty()) {
         return {};
     }
     auto& a = *region.expressions;
     Builder b(region.anchors.front().before.before->getContext());
     SmallVector<Attribute> groups;
-    using Query = std::tuple<uint32_t, RegionExpressions::Id, uint32_t, RegionExpressions::Id>;
+    using EventKey = std::tuple<uint32_t, RegionExpressions::Id, PeriodicEventKind,
+                                std::vector<RegionExpressions::Id>>;
+    using Query = std::pair<EventKey, EventKey>;
     std::map<Query, RegionExpressions::Id> queries;
     auto reaches = [&](RegionalEvent source, RegionalEvent target) -> std::optional<RegionExpressions::Id> {
-        auto key = Query{source.type, source.ordinal, target.type, target.ordinal};
+        auto key = Query{{source.type, source.ordinal, source.kind, source.visits},
+                         {target.type, target.ordinal, target.kind, target.visits}};
         auto found = queries.find(key);
         if (found != queries.end()) { return found->second; }
-        auto answer = region.reachability(source, target);
+        auto answer = regionalReachability(region, source, target);
         if (answer) { queries.emplace(key, *answer); }
         return answer;
     };
@@ -97,9 +108,29 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
         const auto& x = palettes[i];
         if (!x.budget || x.budget > INT64_MAX) { return {}; }
         SmallVector<int64_t> conflicts, records, strides, phases;
+        SmallVector<Attribute> tupleRules;
         for (const auto& member : x.members) {
-            if (member.stride > INT64_MAX || member.phase > INT64_MAX) { return {}; }
+            if (member.stride > INT64_MAX || member.phase > INT64_MAX ||
+                !validRegionalEvent(region, member.firstSource) ||
+                !validRegionalEvent(region, member.lastTarget) ||
+                member.active >= a.size() || !a.isBoolean(member.active) ||
+                (member.tupleRule && !validPhysicalTupleRule(*member.tupleRule, x.budget))) { return {}; }
             records.push_back(member.record); strides.push_back(member.stride); phases.push_back(member.phase);
+            if (!member.tupleRule) {
+                tupleRules.push_back(b.getDictionaryAttr({}));
+                continue;
+            }
+            const auto& rule = *member.tupleRule;
+            SmallVector<Attribute> terms;
+            for (const auto& term : rule.terms) {
+                terms.push_back(b.getDenseI64ArrayAttr({static_cast<int64_t>(term.coordinate),
+                    static_cast<int64_t>(term.stride), static_cast<int64_t>(term.phase),
+                    static_cast<int64_t>(term.modulus), static_cast<int64_t>(term.scale)}));
+            }
+            tupleRules.push_back(b.getDictionaryAttr({
+                b.getNamedAttr("coordinate_count", b.getI64IntegerAttr(rule.coordinateCount)),
+                b.getNamedAttr("base", b.getI64IntegerAttr(rule.base)),
+                b.getNamedAttr("terms", b.getArrayAttr(terms))}));
         }
         for (std::size_t j = 0; j < i; ++j) {
             const auto& y = palettes[j];
@@ -125,6 +156,7 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
             b.getNamedAttr("records", b.getDenseI64ArrayAttr(records)),
             b.getNamedAttr("strides", b.getDenseI64ArrayAttr(strides)),
             b.getNamedAttr("phases", b.getDenseI64ArrayAttr(phases)),
+            b.getNamedAttr("tuple_rules", b.getArrayAttr(tupleRules)),
             b.getNamedAttr("conflicts", b.getDenseI64ArrayAttr(conflicts))}));
     }
     return b.getDictionaryAttr({b.getNamedAttr("version", b.getI64IntegerAttr(1)),
@@ -139,12 +171,33 @@ struct Palette {
     uint64_t budget = 0;
     DenseI64ArrayAttr records, strides, phases, conflicts;
     SmallVector<int64_t> ids;
+    std::vector<std::optional<PhysicalTupleRule>> tupleRules;
 };
 std::optional<int64_t> integer(DictionaryAttr attr, StringRef key)
 {
     auto value = attr.getAs<IntegerAttr>(key);
     if (!value || !value.getType().isInteger(64)) { return std::nullopt; }
     return value.getInt();
+}
+bool decodeTupleRule(Attribute attr, uint64_t budget, std::optional<PhysicalTupleRule>& result)
+{
+    auto entry = dyn_cast<DictionaryAttr>(attr);
+    if (!entry) { return false; }
+    if (entry.empty()) { return true; }
+    auto count = integer(entry, "coordinate_count"), base = integer(entry, "base");
+    auto terms = entry.getAs<ArrayAttr>("terms");
+    if (!count || *count <= 0 || !base || *base < 0 || !terms) { return false; }
+    PhysicalTupleRule rule{static_cast<uint64_t>(*count), static_cast<uint64_t>(*base), {}};
+    for (auto value : terms) {
+        auto term = dyn_cast<DenseI64ArrayAttr>(value);
+        if (!term || term.size() != 5 ||
+            llvm::any_of(term.asArrayRef(), [](int64_t item) { return item < 0; })) { return false; }
+        rule.terms.push_back({static_cast<uint64_t>(term[0]), static_cast<uint64_t>(term[1]),
+            static_cast<uint64_t>(term[2]), static_cast<uint64_t>(term[3]), static_cast<uint64_t>(term[4])});
+    }
+    if (!validPhysicalTupleRule(rule, budget)) { return false; }
+    result = std::move(rule);
+    return true;
 }
 } // namespace
 FailureOr<PhysicalAllocationPlan> decodeRegionalAllocation(func::FuncOp function,
@@ -179,6 +232,18 @@ FailureOr<PhysicalAllocationPlan> decodeRegionalAllocation(func::FuncOp function
                 return function.emitError("invalid or duplicate regional allocation record"), failure();
             }
         }
+        std::vector<std::optional<PhysicalTupleRule>> tupleRules(records.size());
+        if (auto raw = attr.get("tuple_rules")) {
+            auto rules = dyn_cast<ArrayAttr>(raw);
+            if (!rules || rules.size() != static_cast<std::size_t>(records.size())) {
+                return function.emitError("malformed regional tuple-rule list"), failure();
+            }
+            for (std::size_t i = 0; i < rules.size(); ++i) {
+                if (!decodeTupleRule(rules[i], static_cast<uint64_t>(*budget), tupleRules[i])) {
+                    return function.emitError("invalid or out-of-palette regional tuple rule"), failure();
+                }
+            }
+        }
         int64_t previous = -1;
         for (auto conflict : conflicts.asArrayRef()) {
             if (conflict <= previous || conflict < 0 || static_cast<uint64_t>(conflict) >= palettes.size() ||
@@ -188,7 +253,7 @@ FailureOr<PhysicalAllocationPlan> decodeRegionalAllocation(func::FuncOp function
             previous = conflict;
         }
         palettes.push_back({static_cast<uint32_t>(*source), static_cast<uint32_t>(*target),
-            static_cast<uint64_t>(*budget), records, strides, phases, conflicts, {}});
+            static_cast<uint64_t>(*budget), records, strides, phases, conflicts, {}, std::move(tupleRules)});
     }
     // Preserve every child cycle. Coloring only chooses its palette, never adds
     // ordering or changes the logical endpoints. Largest palettes go first.
@@ -221,6 +286,7 @@ FailureOr<PhysicalAllocationPlan> decodeRegionalAllocation(func::FuncOp function
             PhysicalRecordAllocation record{palette.records[i], palette.source, palette.target,
                 static_cast<uint64_t>(palette.strides[i]), static_cast<uint64_t>(palette.phases[i]), {}};
             record.ids.append(palette.ids.begin(), palette.ids.end());
+            record.tupleRule = palette.tupleRules[i];
             result.records.push_back(std::move(record));
         }
     }

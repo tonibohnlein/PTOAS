@@ -283,6 +283,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
         if (expressions.constantValue(retained) == 0) { return true; }
         const auto& ca = children[a.child];
         const auto& cb = children[b.child];
+        // Keep the uniform semantic guard in allocation summaries. The
+        // invocation masks below bind executable endpoints to the current
+        // outer visit; repeated allocation clips its lifetime spans separately.
+        const auto allocationActive = retained;
         if (ca.regional.endpointInvocationGuard) { retained = both(retained, *ca.regional.endpointInvocationGuard); }
         if (cb.regional.endpointInvocationGuard) { retained = both(retained, *cb.regional.endpointInvocationGuard); }
         const auto& aa = ca.anchors[a.type];
@@ -309,9 +313,13 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
             result->endpoints.push_back(std::move(endpoint));
             return true;
         }
+        // Each crossing selects one source and one consumer occurrence in
+        // this region invocation. Guarded port choices change that pair, never
+        // its multiplicity; enclosing repetition must drop this certificate.
         result->regionalAllocation->groups.push_back({p, q, 1, {{record, 0, 0,
-            {typeOffsets[a.child] + a.type, a.ordinal, PeriodicEventKind::Start},
-            {typeOffsets[b.child] + b.type, b.ordinal, PeriodicEventKind::Completion}, retained}}});
+            {typeOffsets[a.child] + a.type, a.ordinal, PeriodicEventKind::Start, a.visits},
+            {typeOffsets[b.child] + b.type, b.ordinal, PeriodicEventKind::Completion, b.visits},
+            allocationActive, {}, true}}});
         auto sourceGuard = emit(endpointGuard(a, retained), aa.after.before);
         auto sourceIdentity = emit(c(0), aa.after.before);
         auto targetIdentity = emit(c(0), ab.before.before);
@@ -348,7 +356,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
         endpoint.record = namespaces.at(recordNamespace.at(endpoint.records.front()));
     }
     if (!expressions.error().empty()) { fail(expressions.error()); return failure(); }
-    if (!allocationAvailable || result->nestedIdentities) { result->regionalAllocation.reset(); }
+    if (!allocationAvailable) { result->regionalAllocation.reset(); }
     uint64_t preparationOperations = 0;
     for (const auto& stage : result->preparation) {
         preparationOperations += stage.code->getOperations().size();
