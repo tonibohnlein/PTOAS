@@ -24,7 +24,7 @@ documents = [json.loads(line.removeprefix("arithmetic-json ")) for line in resul
 if len(documents) != 7:
     raise RuntimeError("expected all seven arithmetic fixtures")
 accepted = {"nested_reset": (3, 2), "triangular": (2, 1), "siblings": (4, 2), "empty_minimum": (1, 0),
-            "ssa_prerequisite": (2, 0), "opaque_bound": (1, 2)}
+            "ssa_prerequisite": (2, 0), "opaque_bound": (1, 2), "existing_sync": (0, 0)}
 for document in documents:
     name = document["function"]
     if name in accepted:
@@ -97,4 +97,4 @@ for document in documents:
                     actual = contains((3, site, b[0], source, target), values)
                     assert actual == expected, (name, "native", a, b, bounds, source, target)
                     checks += 1
-print("arithmetic exports: 6 accepted, 1 rejected; finite semantic checks:", checks)
+print("arithmetic exports: 7 accepted; finite semantic checks:", checks)

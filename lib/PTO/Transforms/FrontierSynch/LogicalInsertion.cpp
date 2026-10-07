@@ -461,6 +461,8 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
     }
     if (plan.completeInvocation) {
         function.walk([&](func::ReturnOp ret) {
+            auto existing = dyn_cast_or_null<BarrierOp>(ret->getPrevNode());
+            if (existing && existing.getPipe() == PipeAttr::get(function.getContext(), PIPE::PIPE_ALL)) { return; }
             builder.setInsertionPoint(ret);
             builder.create<BarrierOp>(ret.getLoc(), PipeAttr::get(function.getContext(), PIPE::PIPE_ALL));
         });
