@@ -112,7 +112,9 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
     repeatedAttempt.clear();
     Child child;
     child.loop = dyn_cast<scf::ForOp>(node.anchor);
-    if (!child.loop || child.loop.getNumResults()) { return fail("sequence loop interface has carried results"); }
+    if (!child.loop || index.hasRelevantCarriedState(child.loop)) {
+        return fail("sequence loop interface has relevant carried state");
+    }
     auto lower = sequenceInteger(child.loop.getLowerBound()), step = sequenceInteger(child.loop.getStep());
     if (!lower || *lower < 0 || !step || *step <= 0 || !child.loop.getInductionVar().getType().isIndex()) {
         return fail("sequence loop requires a nonnegative constant lower bound and positive step");
