@@ -30,9 +30,8 @@
 // CHECK: recognize explicit: applicable
 // CHECK: recognize finite-guarded: applicable
 // CHECK-LABEL: recognition existing_barrier
-// CHECK: recognize explicit: missing-premise
-// CHECK: issue additional-prerequisite
-// CHECK: recognize finite-guarded: missing-premise
+// CHECK: recognize explicit: applicable
+// CHECK: recognize finite-guarded: applicable
 // CHECK-LABEL: recognition explicit_exact
 // CHECK: recognize explicit: applicable
 // CHECK: recognize finite-guarded: applicable

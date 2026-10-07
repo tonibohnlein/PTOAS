@@ -2258,7 +2258,9 @@ def TPushOp : PTO_TOp<"tpush", [
   }];
 }
 
-def DeclareTileOp : PTO_Op<"declare_tile"> {
+def DeclareTileOp : PTO_Op<"declare_tile", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
   let summary = "Declare a tile value whose address will be assigned later";
 
   let results = (outs PTODpsType:$tile);
@@ -2268,7 +2270,9 @@ def DeclareTileOp : PTO_Op<"declare_tile"> {
   }];
 }
 
-def DeclareGlobalOp : PTO_Op<"declare_global"> {
+def DeclareGlobalOp : PTO_Op<"declare_global", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
   let summary = "Declare a GlobalTensor descriptor whose address is assigned later";
 
   let results = (outs TensorViewType:$entry);

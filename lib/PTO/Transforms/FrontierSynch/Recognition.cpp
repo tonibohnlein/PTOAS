@@ -369,7 +369,7 @@ void detail::inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResu
 {
     auto phases = index.phasesFor(&op);
     const bool extra = index.needsValuePrerequisite(&op) ||
-        isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp, RecordEventOp, WaitEventOp, BarrierOp>(op);
+        isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp, RecordEventOp, WaitEventOp>(op);
     if (extra) {
         result.note(RecognitionIssue::AdditionalPrerequisite, &op);
     }

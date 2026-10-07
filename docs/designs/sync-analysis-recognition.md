@@ -1796,3 +1796,19 @@ accesses, scalar/vector writer envelopes across guards and physical sections,
 hidden pipes without memory effects, fixed internal ID exclusions, and capacity
 failure. The finite closure uses the existing cubic guarded algorithm; ordinary
 explicit regions retain the sparse scan and rank reducer.
+
+## Existing boundaries and descriptor initialization
+
+The shared MLIR effect interface marks pipe initialization and tile/global
+handle declaration as descriptor-state effects. Their address operands describe
+storage; initialization does not access that storage. Ordinary read/write
+declarations and scalar prerequisites remain, so these operations are not pure
+and stay at their original positions. Both synchronization passes consume the
+same declarations and retain existing unresolved storage for later users.
+
+Existing pipe/all-pipe barriers are retained by every analysis route, including
+numeric insertion. They do not trigger the manual SET/WAIT skip. The current
+analysis gives these existing boundaries no additional reachability credit;
+this can retain redundant demands but cannot remove a required dependency.
+An existing terminal ALL barrier satisfies the invocation drain without inserting
+a duplicate. Barrier-aware demand reduction remains separate optimization work.

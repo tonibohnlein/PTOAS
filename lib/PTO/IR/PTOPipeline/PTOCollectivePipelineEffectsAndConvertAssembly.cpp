@@ -57,26 +57,44 @@ void TestAsyncEventOp::getEffects(
   addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Write::get());
 }
 
+// Pipe construction initializes pointer/counter descriptors, not the storage
+// those addresses name. Keep read/write effects so protocol state is not pure.
 void InitializeL2G2LPipeOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
-        &effects) {
-  addEffect(effects, &getGmAddrMutable(), MemoryEffects::Read::get());
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>& effects) {
+  auto descriptor = makeDescriptorEffect(getContext());
+  addAccessRegion(effects, getGmAddrMutable(), MemoryEffects::Read::get(), descriptor);
   auto localAddr = getLocalAddrMutable();
   if (!localAddr.empty()) {
-    addEffect(effects, &*localAddr.begin(), MemoryEffects::Read::get());
+    addAccessRegion(effects, *localAddr.begin(), MemoryEffects::Read::get(), descriptor);
   }
   auto peerLocalAddr = getPeerLocalAddrMutable();
   if (!peerLocalAddr.empty()) {
-    addEffect(effects, &*peerLocalAddr.begin(), MemoryEffects::Read::get());
+    addAccessRegion(effects, *peerLocalAddr.begin(), MemoryEffects::Read::get(), descriptor);
   }
-  addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Write::get());
+  effects.emplace_back(MemoryEffects::Write::get(), getOperation()->getOpResult(0), descriptor);
 }
 
 void InitializeL2LPipeOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
-        &effects) {
-  addEffect(effects, &getLocalAddrMutable(), MemoryEffects::Read::get());
-  addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Write::get());
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>& effects) {
+  auto descriptor = makeDescriptorEffect(getContext());
+  addAccessRegion(effects, getLocalAddrMutable(), MemoryEffects::Read::get(), descriptor);
+  auto peerLocalAddr = getPeerLocalAddrMutable();
+  if (!peerLocalAddr.empty()) {
+    addAccessRegion(effects, *peerLocalAddr.begin(), MemoryEffects::Read::get(), descriptor);
+  }
+  effects.emplace_back(MemoryEffects::Write::get(), getOperation()->getOpResult(0), descriptor);
+}
+
+void DeclareTileOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>& effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), getOperation()->getOpResult(0),
+                       makeDescriptorEffect(getContext()));
+}
+
+void mlir::pto::DeclareGlobalOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>& effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), getOperation()->getOpResult(0),
+                       makeDescriptorEffect(getContext()));
 }
 
 void TPushOp::getEffects(

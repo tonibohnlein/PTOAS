@@ -136,7 +136,7 @@ bool freshScope(func::FuncOp function, const ProgramRecognition& program, const 
     bool clean = true;
     function.walk([&](Operation* operation) {
         if (isa<LogicalSetOp, LogicalWaitOp, SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp,
-                RecordEventOp, WaitEventOp, BarrierOp>(operation)) {
+                RecordEventOp, WaitEventOp>(operation)) {
             clean = false;
         }
     });
