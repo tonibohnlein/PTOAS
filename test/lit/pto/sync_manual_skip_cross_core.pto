@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-test-opt --pto-insert-sync %s | FileCheck %s --check-prefix=PRESERVE
+// RUN: not pto-test-opt --pto-frontier-analysis %s 2>&1 | FileCheck %s --check-prefix=ANALYZE
+// Derived from the corpus SyncAll sample. Cross-core sync must not trigger
+// the manual on-core skip. Until its analysis adapter exists, it must report
+// the unsupported obligation rather than silently pass the function through.
+module {
+  func.func @cross_core(%ptr: !pto.ptr<i32, gm>) {
+    pto.syncall(%ptr : !pto.ptr<i32, gm>) mode = #pto.sync_all_mode<soft>, core_type = #pto.sync_core_type<aiv_only>
+    return
+  }
+}
+// PRESERVE: pto.syncall
+// ANALYZE: error: explicit route requires resolved control and shared modeled effects

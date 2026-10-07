@@ -33,6 +33,9 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "func::FuncOp"> {
     Preserves payloads and loop structure. Unsupported inputs
     fail before insertion. Physical event-ID allocation is a separate pass;
     logical commands cannot be lowered to hardware synchronization directly.
+    Functions with manual on-core SET/WAIT or record/wait events are left
+    unchanged, including dynamic event IDs. Cross-core commands and barriers
+    alone do not trigger this skip, matching the shared InsertSync policy.
   }];
   let constructor = "mlir::pto::createPTOFrontierAnalysisPass()";
   let options = [
@@ -50,6 +53,8 @@ def PTOFrontierAllocate : Pass<"pto-frontier-allocate", "func::FuncOp"> {
     SET/WAIT commands. Fails before mutation if the certificate is unavailable,
     invalid, or its budgets do not fit. No shared-pool optimization or repair.
     Run directly after frontier analysis, before changing its certified plan.
+    Manual on-core synchronized functions without logical endpoints are left
+    unchanged, as they were by the analysis pass.
   }];
   let constructor = "mlir::pto::createPTOFrontierAllocatePass()";
   let options = [ListOption<"eligibleIds", "eligible-ids", "int64_t",
@@ -64,6 +69,9 @@ def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
   let description = [{
     Analyzes data dependencies between Cube, Vector and MTE pipelines
     and inserts explicit synchronization instructions.
+    Leaves functions containing manual on-core SET/WAIT or record/wait events
+    unchanged, including dynamic event IDs. Cross-core commands and barriers
+    alone do not trigger this skip.
   }];
  
   let options = [

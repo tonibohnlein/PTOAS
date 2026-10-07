@@ -154,6 +154,10 @@ public:
             signalPassFailure();
             return;
         }
+        auto function = getOperation();
+        if (function.isDeclaration() || hasManualOnCoreSynchronization(function)) {
+            return;
+        }
         auto policy = gmAlias == "may-alias" ? GMAliasPolicy::MayAlias : GMAliasPolicy::MayNotAlias;
         auto& analysis = getAnalysis<frontiersynch::FrontierAnalysis>();
         if (failed(analysis.initialize(policy, /*requireStructure=*/false))) {
@@ -161,7 +165,6 @@ public:
             return;
         }
         FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepared = failure();
-        auto function = getOperation();
         std::string routeError;
         bool sequencePrepared = false;
         const bool straight = !function.isDeclaration() && llvm::hasSingleElement(function.getBody()) &&

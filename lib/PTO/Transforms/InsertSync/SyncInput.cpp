@@ -6,9 +6,21 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/InsertSync/SyncInput.h"
+#include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 namespace mlir::pto {
+bool hasManualOnCoreSynchronization(func::FuncOp function) {
+  if (!function) {
+    return false;
+  }
+  return function.walk([](Operation* op) {
+    return isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp,
+               RecordEventOp, WaitEventOp>(op)
+        ? WalkResult::interrupt() : WalkResult::advance();
+  }).wasInterrupted();
+}
+
 SyncResultAvailability resultAvailability(const CompoundInstanceElement& phase, Value result) {
   if (!result || result.getDefiningOp() != phase.elementOp ||
       !isa<IntegerType, IndexType, FloatType>(result.getType())) {
