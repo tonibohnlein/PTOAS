@@ -36,6 +36,9 @@ std::shared_ptr<RegionalAllocationSummary> finiteRegionalAllocation(
     if (llvm::all_of(plan.families, [](const EndpointFamily& family) { return family.local; })) {
         return std::make_shared<RegionalAllocationSummary>();
     }
+    if (llvm::any_of(plan.families, [](const EndpointFamily& family) {
+            return family.targetChoices && !family.targetChoices->loop();
+        })) { return {}; }
     if (hasNestedFrame(region) || !region.expressions || !region.presence ||
         region.anchors.size() != region.occurrenceLoops.size()) {
         return {};

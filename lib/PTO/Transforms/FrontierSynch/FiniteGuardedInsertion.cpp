@@ -11,6 +11,7 @@ namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(const RegionalDemandFilter& filter)
 {
     insertionError.clear();
+    bool terminalCleanup = false;
     auto plan = std::make_unique<PreparedLogicalPlan>(0);
     plan->regionalAllocation = std::make_shared<RegionalAllocationSummary>();
     plan->groupedFamilies = true;
@@ -62,6 +63,27 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
             {demand.source, zero, PeriodicEventKind::Start},
             {demand.target, zero, PeriodicEventKind::Completion}, demand.guard}}});
         auto sourceGuard = emit(demand.guard,a.after.before);
+        std::optional<Expr> cleanupGuard;
+        Operation* terminal = function.front().getTerminator();
+        if (failed(sourceGuard)) {
+            // Publish once when the source executes. Exactly one of the
+            // consumer predicate and its source-qualified complement consumes
+            // the notification. Never put cleanup at the conditional join.
+            SmallVector<TemplateEndpointCut> alternatives{
+                b.before, {terminal->getBlock(), terminal}};
+            auto choices = qualifyTerminalCleanupCuts(alternatives);
+            bool finiteSource = true;
+            for (auto* parent = a.after.before->getParentOp(); parent != function; parent = parent->getParentOp()) {
+                if (!isa<scf::IfOp>(parent)) { finiteSource = false; break; }
+            }
+            if (!choices || !finiteSource) {
+                insertionError = "late SET guard needs a finite terminal cleanup interface"; return failure();
+            }
+            sourceGuard = emit(presence[demand.source], a.after.before);
+            cleanupGuard = both(presence[demand.source], negate(demand.guard));
+            plan->families.back().targetChoices = std::move(choices);
+            terminalCleanup = true;
+        }
         auto sourceIdentity = emit(arena->constant(0),a.after.before);
         auto targetIdentity = emit(arena->constant(0),b.before.before);
         auto sourceMember = emit(arena->constant(record),a.after.before);
@@ -78,7 +100,23 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
         wait.memberCoordinates.push_back(*targetMember);
         wait.records.push_back(record); wait.piece = plan->endpoints.size();
         plan->endpoints.push_back(std::move(wait));
+        if (cleanupGuard) {
+            auto guard = emit(*cleanupGuard, terminal);
+            auto identity = emit(arena->constant(0), terminal);
+            auto member = emit(arena->constant(record), terminal);
+            if (failed(guard) || failed(identity) || failed(member)) {
+                insertionError = "terminal cleanup predicate is unavailable: " + arena->lastEmissionError();
+                return failure();
+            }
+            PreparedLogicalEndpoint cleanup{terminal, LogicalCommandKind::Wait, p, q, record, *guard, *identity};
+            cleanup.memberCoordinates.push_back(*member);
+            cleanup.records.push_back(record); cleanup.piece = plan->endpoints.size();
+            plan->endpoints.push_back(std::move(cleanup));
+        }
     }
+    // The ordinary envelope ends at the consumer and would allow premature
+    // reuse. Finite allocation recognizes the terminal alternative explicitly.
+    if (terminalCleanup) { plan->regionalAllocation.reset(); }
     return plan;
 }
 } // namespace mlir::pto::frontiersynch

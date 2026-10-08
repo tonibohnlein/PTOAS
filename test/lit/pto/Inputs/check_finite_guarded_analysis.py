@@ -236,26 +236,29 @@ def main():
             re.search(r"arith.select %arg0, " + re.escape(predicate) + r", %false", emitted)
             for predicate in comparisons
         ), emitted
-        # Replay must be deterministic: Pure/speculatable LLVM freeze is not duplicable.
+        # A nondeterministic predicate is used in place, never replayed at SET.
         body = (
             f"{load()}\n%poison = llvm.mlir.poison : i1\n%frozen = llvm.freeze %poison : i1\n"
             f"scf.if %frozen {{\n{compute()}\n}}\n{load('E')}"
         )
         path.write_text(render(source, body, 1, 0))
         report = invoke(tool, "--finite-guarded-analysis", path)
-        assert not report["error"] and not report["prepared"] and report["queries_available"], report
+        assert not report["error"] and report["prepared"] and report["queries_available"], report
         assert report["unchanged"], report
+        emitted = invoke(tool, "--insert-logical", path)
+        assert len(re.findall(r"= llvm\.freeze ", emitted)) == 1, "the source predicate must not be replayed"
         # A future region-valued condition is analyzable but is not speculated at an early SET.
         body = (
             f"{load()}\n%choice = scf.if %g -> i1 {{\nscf.yield %h : i1\n}} else {{\n"
             f"scf.yield %g : i1\n}}\nscf.if %choice {{\n{compute()}\n}}\n{load('E')}"
         )
-        path.write_text(render(source, body, 1, 1))
-        result = invoke(tool, "--structured-trace", path)
-        assert not result["accepted"] and result["unchanged_on_failure"], result
-        report = invoke(tool, "--sequence-analysis", path)
-        assert not report["error"] and not report["prepared"] and report["queries_available"], report
-    print(f"finite guarded: {checked} concrete valuations and late-barrier insertion and two transactional rejections passed")
+        for g, h in itertools.product((0, 1), repeat=2):
+            path.write_text(render(source, body, g, h))
+            result = invoke(tool, "--structured-trace", path)
+            validate(result, ["L"] + (["C"] if g and h else []) + ["E"], effects)
+            report = invoke(tool, "--sequence-analysis", path)
+            assert not report["error"] and report["prepared"] and report["queries_available"], report
+    print(f"finite guarded: {checked} concrete valuations, late barriers and terminal cleanup passed")
 
 
 if __name__ == "__main__":

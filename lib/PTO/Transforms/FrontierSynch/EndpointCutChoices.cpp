@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/EndpointCutChoices.h"
 #include "llvm/ADT/DenseSet.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include <algorithm>
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -62,6 +63,55 @@ std::shared_ptr<const EndpointCutChoices> qualifyEndpointCutChoices(
     }
     if (!validate(loop, operations, false)) { return nullptr; }
     return std::shared_ptr<const EndpointCutChoices>(new EndpointCutChoices(loop, cuts));
+}
+std::shared_ptr<const EndpointCutChoices> qualifyTerminalCleanupCuts(ArrayRef<TemplateEndpointCut> cuts)
+{
+    if (cuts.size() != 2 || !cuts[0].before || !cuts[1].before || cuts[0].before == cuts[1].before) {
+        return nullptr;
+    }
+    auto function = cuts[1].before->getParentOfType<func::FuncOp>();
+    if (!function || !function.getBody().hasOneBlock() ||
+        cuts[1].before != function.front().getTerminator() || !isa<func::ReturnOp>(cuts[1].before)) {
+        return nullptr;
+    }
+    for (const auto& cut : cuts) {
+        if (cut.block != cut.before->getBlock() || cut.before->getParentOfType<func::FuncOp>() != function) {
+            return nullptr;
+        }
+        for (auto* parent = cut.before->getParentOp(); parent != function; parent = parent->getParentOp()) {
+            if (!isa<scf::IfOp>(parent)) { return nullptr; }
+        }
+    }
+    return std::shared_ptr<const EndpointCutChoices>(new EndpointCutChoices({}, cuts));
+}
+bool validateTerminalCleanupCommands(func::FuncOp function, ArrayRef<Operation*> commands)
+{
+    if (commands.size() != 2 || !function.getBody().hasOneBlock()) { return false; }
+    unsigned terminal = 0;
+    for (auto* command : commands) {
+        auto wrapper = dyn_cast_or_null<scf::IfOp>(command->getParentOp());
+        if (!wrapper || !wrapper->hasAttr("pto.endpoint_cut") ||
+            command->getParentRegion() != &wrapper.getThenRegion()) { return false; }
+        for (auto* parent = wrapper->getParentOp(); parent != function; parent = parent->getParentOp()) {
+            if (!isa<scf::IfOp>(parent)) { return false; }
+        }
+        if (wrapper->getBlock() != &function.front()) { continue; }
+        bool suffix = true;
+        for (auto* next = wrapper->getNextNode(); next; next = next->getNextNode()) {
+            if (isa<func::ReturnOp>(next) || isMemoryEffectFree(next)) { continue; }
+            // Other epilogue WAITs and the invocation drain are permitted;
+            // no publication or original payload may follow cleanup.
+            bool harmless = true;
+            next->walk([&](Operation* op) {
+                if (isa<scf::IfOp, scf::YieldOp>(op) || isMemoryEffectFree(op)) { return; }
+                auto name = op->getName().getStringRef();
+                harmless &= name == "pto.logical_wait" || name == "pto.barrier";
+            });
+            suffix &= harmless;
+        }
+        terminal += suffix;
+    }
+    return terminal >= 1;
 }
 bool validateEndpointCommandChoices(scf::ForOp loop, ArrayRef<Operation*> commands)
 {

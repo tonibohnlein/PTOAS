@@ -316,10 +316,9 @@ bool checkMachineBoundary(func::FuncOp function, const pto::SyncInput& input)
     }
     return true;
 }
-// An unavailable export must not change the mathematical result or trigger
-// a different selected order. This guard is deliberately defined after its SET
-// cut and cannot be speculated because division may be undefined.
-bool checkUnmetExports(func::FuncOp function, const pto::SyncInput& input)
+// A late division cannot be speculated at SET. Terminal cleanup must
+// realize the existing exact result without changing the selected demands.
+bool checkLateGuard(func::FuncOp function, const pto::SyncInput& input)
 {
     const auto before = render(function);
     fs::FrontierAnalysis analysis(function);
@@ -334,24 +333,25 @@ bool checkUnmetExports(func::FuncOp function, const pto::SyncInput& input)
     fs::RegionalEvent reader{1, region.expressions->constant(0), fs::PeriodicEventKind::Start};
     const auto query = fs::regionalReachability(region, writer, reader);
     if (!query || region.expressions->constantValue(*query) == 0 ||
-        succeeded(fs::prepareSequenceInsertion(*demands)) ||
+        failed(fs::prepareSequenceInsertion(*demands)) ||
         !analysis.hasWholeFunctionMinimumDemands() || analysis.analyzeSequenceFunction() != demands ||
         fs::regionalReachability(region, writer, reader) != query) { return false; }
-    std::string diagnostic;
-    llvm::raw_string_ostream stream(diagnostic);
-    ScopedDiagnosticHandler capture(function.getContext(), [&](Diagnostic& message) {
-        message.print(stream); return success();
-    });
-    const auto prepared = fs::prepareFunctionSynchronization(function, input.memory().gmPolicy());
-    stream.flush();
-    return failed(prepared) && before == render(function) &&
-        diagnostic.find("unmet-exports: exact whole-function demands retained") != std::string::npos &&
-        diagnostic.find("compact bounding:") == std::string::npos;
+    auto prepared = fs::prepareFunctionSynchronization(function, input.memory().gmPolicy());
+    if (failed(prepared) || before != render(function) || (*prepared)->compactBoundingOwner) { return false; }
+    unsigned sets = 0, waits = 0, terminalWaits = 0;
+    for (const auto& endpoint : (*prepared)->endpoints) {
+        sets += endpoint.kind == fs::LogicalCommandKind::Set;
+        waits += endpoint.kind == fs::LogicalCommandKind::Wait;
+        terminalWaits += endpoint.kind == fs::LogicalCommandKind::Wait &&
+                         endpoint.before == function.front().getTerminator();
+    }
+    return sets == 1 && waits == 2 && terminalWaits == 1 &&
+           succeeded(fs::insertLogicalSynchronization(function, **prepared)) && succeeded(verify(function));
 }
 bool check(func::FuncOp function, const pto::SyncInput& input)
 {
     if (function->hasAttr("test.machine_boundary")) { return checkMachineBoundary(function, input); }
-    if (function->hasAttr("test.unmet_exports")) { return checkUnmetExports(function, input); }
+    if (function->hasAttr("test.late_guard")) { return checkLateGuard(function, input); }
     if (function->hasAttr("test.exact_priority")) {
         fs::FrontierAnalysis analysis(function);
         if (failed(analysis.initialize(input.memory().gmPolicy())) ||
