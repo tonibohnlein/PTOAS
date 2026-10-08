@@ -10,7 +10,7 @@ two independent accepting reviews, and its own commit before proceeding.
 | Milestone | Integration work | Status |
 |---|---|---|
 | 1 | Lazy arithmetic dispatch, preserve difference-bound routing, and retain bounded demand results after endpoint failure | Accepted |
-| 2 | Constraint import for piecewise bounds and shared positive-step ordinal normalization | Pending |
+| 2 | Constraint import for piecewise bounds and shared positive-step ordinal normalization | Accepted |
 | 3 | Shared symbolic storage certificates and crossings between symbolic siblings | Pending |
 | 4 | Reuse ownership/phase/boundary certificates in varying repetition and whole-visit type extraction | Pending |
 | 5 | Collective guarded refresh and reusable bounded-lifetime regional results | Pending |
@@ -103,8 +103,10 @@ an explicitly unmet adapter obligation.
 | An endpoint guard is unavailable at its command cut | Emission obligation; retain recognized class and computed demands. |
 | No supported reuse certificate assigns the physical IDs | Allocation failure; not proof of minimum ID scarcity. |
 
-The original-IR arithmetic-to-periodic adapter currently handles one common
-mandatory loop with zero origin and unit step. The generic interval constructor
+The original-IR arithmetic-to-periodic adapter handles one common mandatory
+counted loop with a positive constant step and an affine origin in its existing
+parameter bindings. Its ordinal must fit the shared signed-64 representation.
+The generic interval constructor
 has a broader supplied-input contract. Other original-loop forms can retain the
 ordinary arithmetic route; their adapter limitation must not become an interval
 class rejection.
@@ -156,3 +158,25 @@ the final code. The changed-code checker reports four false brace findings in
 compound test conditions; all four bodies have explicit braces. Line-width and
 whitespace checks are clean. Validation logs are in the local milestone ledger;
 this does not constitute a full corpus or device run.
+
+## Integration milestone 2 validation
+
+Arithmetic loop domains now import signed-index `min`, `max` and supported
+`select` bounds as exact constraint alternatives. A selected lower bound also
+selects the origin of the step congruence. Existing machine-safe scalar
+normalization remains responsible for the leaves; unsigned comparisons are not
+reinterpreted as signed. Expansion limits report producer limitations.
+
+Arithmetic-to-periodic import substitutes original-IV quotient coordinates into
+counted-loop ordinal coordinates, retaining inequalities and congruences.
+Negative and parameter-dependent origins and noncoprime stride/period pairs
+retain their distinct ordinal phases. Endpoint emission uses the shared
+`CountedLoop` implementation.
+
+Serial incremental compilation and both tool links passed. Independent
+occurrence/order membership checks passed 139,968 comparisons; 42 original-IR
+origin/step variants passed exact adjacent-demand and paired-endpoint checks.
+Existing arithmetic dispatch/conversion and guarded periodic/rotating checks
+also passed. Two independent code reviewers accepted the changes.
+The style prefilter's compound-condition brace findings were inspected; their
+bodies are braced. No line-width or whitespace findings remain.

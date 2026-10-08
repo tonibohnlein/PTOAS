@@ -50,8 +50,8 @@ bool supportedDomain(scf::ForOp loop, detail::ProgramBuilder& builder)
     // The relation retains original IVs. Congruence is represented by the
     // exact local-quotient importer, not by expanding the configured period.
     ArithmeticSite context{nullptr, enclosing(loop, builder.output.context.root), {}};
-    if (!builder.prepareValue(loop.getLowerBound(), context) ||
-        !builder.prepareValue(loop.getUpperBound(), context)) {
+    if (!builder.prepareBound(loop.getLowerBound(), context) ||
+        !builder.prepareBound(loop.getUpperBound(), context)) {
         builder.output.extraction.note(RecognitionIssue::LoopDomain, loop);
         return false;
     }

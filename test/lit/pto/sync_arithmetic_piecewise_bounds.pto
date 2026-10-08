@@ -1,0 +1,75 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_arithmetic_piecewise_bounds.py pto-sync-input-test %s
+// Clipped signed bounds occur in corpus pypto-lib prefill_fwd/aic/lm_head.pto (case 40).
+// These reduced cases exercise that expression family on loop bounds, including
+// selected lower origins: they are semantic tests, not claims about full-kernel coverage.
+!tile = !pto.tile_buf<vec, 1x8xf32>
+module {
+  func.func @minimum(%n: index, %k: index) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %end = arith.constant 4 : index
+    %address = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %address : !tile
+    scf.for %i = %zero to %n step %one {
+      %bound = arith.minsi %i, %k : index
+      scf.for %j = %zero to %bound step %one {
+        %v = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+  func.func @maximum(%n: index, %k: index) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %end = arith.constant 4 : index
+    %address = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %address : !tile
+    scf.for %i = %zero to %n step %one {
+      %bound = arith.maxsi %i, %k : index
+      scf.for %j = %bound to %end step %two {
+        %v = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+  func.func @selected(%n: index, %k: index) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %end = arith.constant 4 : index
+    %address = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %address : !tile
+    scf.for %i = %zero to %n step %one {
+      %which = arith.cmpi slt, %i, %k : index
+      %bound = arith.select %which, %i, %k : index
+      scf.for %j = %bound to %end step %two {
+        %v = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+  func.func @unsigned_unproved(%n: index, %k: index) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %end = arith.constant 4 : index
+    %address = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %address : !tile
+    scf.for %i = %zero to %n step %one {
+      %bound = arith.minui %i, %k : index
+      scf.for %j = %zero to %bound step %one {
+        %v = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+}
