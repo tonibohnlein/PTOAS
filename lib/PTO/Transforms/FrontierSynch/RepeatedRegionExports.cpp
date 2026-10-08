@@ -83,6 +83,8 @@ RepeatedRegionAnalysis exportRepeatedRegion(std::shared_ptr<RepeatedRegionState>
     auto& out = result.regional;
     out = state->body;
     out.numerical.reset();
+    out.arithmeticRelations.reset();
+    out.symbolicStorage.reset();
     out.prepare = {}; out.prepareFiltered = {}; out.prepareWithVisits = {};
     out.capabilities.endpointRecipes = false;
     out.firstOrdinal.reset();

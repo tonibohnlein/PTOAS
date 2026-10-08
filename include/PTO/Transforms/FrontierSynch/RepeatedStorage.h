@@ -19,9 +19,15 @@ struct RepeatedStorageFamily {
     uint64_t stride = 0;
     std::vector<std::size_t> effects;
 };
-struct RepeatedStorageOwner {
-    RegionExpressions::Id present, visit, localByte;
+// One non-enumerated inner coordinate. Geometry proves each selected local
+// fragment fits in one stride and maxTrips bounds its complete reservation.
+struct RepeatedStorageInnerRun {
+    uint64_t stride = 0, maxTrips = 0;
+    RegionExpressions::Id trips = RegionExpressions::invalid;
+    // visits[index], or the event ordinal when index equals visits.size().
+    unsigned coordinate = 0;
 };
+using RepeatedStorageOwner = RegionalStorageOwner;
 class RepeatedStorage {
 public:
     struct State;
@@ -35,6 +41,7 @@ public:
     scf::ForOp loop() const;
     RegionExpressions::Id trips() const;
     ArrayRef<std::size_t> effects() const;
+    std::shared_ptr<const RegionalSymbolicStorageCertificate> certificate() const;
 private:
     std::shared_ptr<State> state;
 };
@@ -44,10 +51,10 @@ struct RepeatedStorageResult {
 };
 // Validate supplied modeled maps, not inferred instruction footprints. Each
 // selected effect's complete union must equal a+t*S+local; local maps must have
-// finite constant ranges after projecting supported finite inner coordinates.
-// Every projected piece retains its original occurrence and presence, so byte
-// selectors use the child's actual first/last accesses. Unbounded inner geometry
-// requires a separate projection adapter and is never replaced by a hull.
+// finite local ranges or a bounded affine inner run with exact byte inversion.
+// A run retains its symbolic trip count and original occurrence presence; its
+// reservation bound is used only for disjointness, never as an access footprint.
+// Other inner geometry requires a separate adapter and is not replaced by a hull.
 RepeatedStorageResult buildRepeatedStorage(const RegionalAnalysis& body, scf::ForOp loop,
     RegionExpressions::Id trips, ArrayRef<RepeatedStorageFamily> families);
 // Propose and validate the constant-stride subclass directly from shared maps.

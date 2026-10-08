@@ -336,6 +336,8 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
     out.lastPayloads = std::move(full.lastPayloads);
     appendPartial(out, phases, starts, periods, remainder);
     out.numerical.reset();
+    out.arithmeticRelations.reset();
+    out.symbolicStorage.reset();
     auto originalPresence = out.presence;
     auto originalQuery = out.reachability;
     auto actual = [arena, periods, remainder, firstPeriod, firstPhase, typePhases](RegionalEvent event)

@@ -8,6 +8,7 @@
 // Symbolic reader lifting preserves inner ownership and rejects every write alias.
 #include "PTO/Transforms/FrontierSynch/RepeatedStorage.h"
 #include "PTO/Transforms/FrontierSynch/RepeatedPhases.h"
+#include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/STLExtras.h"
@@ -504,9 +505,182 @@ module attributes {pto.target_arch = "a3"} {
     fs::RegionExpressions::Substitution bindings({{count, arena->constant(1)}});
     return reaches && arena->constantValue(arena->substitute(*reaches, bindings)) == 1;
 }
+bool symbolicSequence(MLIRContext* context, unsigned mode)
+{
+    // Ordinary scalar memory instructions provide the shared modeled ranges.
+    // This checks the region/storage API independently of scalar protection.
+    std::string source = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @siblings(%p: !pto.ptr<f32, gm>, %q: !pto.ptr<f32, gm>, %n: index) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %value = arith.constant 1.0 : f32
+    scf.for %i = %zero to %n step %one {
+      pto.store %value, %p[%i] : !pto.ptr<f32, gm>, f32
+    }
+    scf.for %j = %zero to %n step %one {
+      %read = pto.load %q[%j] : !pto.ptr<f32, gm> -> f32
+    }
+    return
+  }
+})mlir";
+    if (mode != 0) {
+        auto position = source.find("%q[%j]");
+        source.replace(position, 6, "%p[%j]");
+    }
+    if (mode == 1) {
+        auto position = source.find("pto.store %value, %p[%i] : !pto.ptr<f32, gm>, f32");
+        source.replace(position, std::string("pto.store %value, %p[%i] : !pto.ptr<f32, gm>, f32").size(),
+            "%first = pto.load %p[%i] : !pto.ptr<f32, gm> -> f32");
+    }
+    if (mode == 3) {
+        for (const char* index : {"%p[%i]", "%p[%j]"}) {
+            auto position = source.find(index);
+            source.replace(position, std::string(index).size(), "%p[%zero]");
+        }
+    }
+    auto module = parseSourceString<ModuleOp>(source, context);
+    if (!module) { return false; }
+    auto function = *module->getOps<func::FuncOp>().begin();
+    pto::SyncInput input(pto::GMAliasPolicy::MayNotAlias);
+    if (failed(input.build(function))) { return false; }
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto& e = *arena;
+    auto count = e.input(function.getArgument(2));
+    std::vector<fs::RegionalAnalysis> children;
+    for (const auto* phase : input.instructions()) {
+        const auto ids = input.accesses().effectsFor(phase);
+        if (ids.empty()) { continue; }
+        auto loop = phase->elementOp->getParentOfType<scf::ForOp>();
+        if (!loop || ids.size() != 1) { return false; }
+        const auto effect = ids.front();
+        const bool writer = input.accesses().effects()[effect].mode == pto::SyncAccessMode::Write;
+        const auto pipe = static_cast<uint32_t>(phase->kPipeValue);
+        fs::RegionalAnalysis child;
+        child.expressions = arena; child.accessModel = &input.accesses();
+        child.gmAliasPolicy = pto::GMAliasPolicy::MayNotAlias;
+        child.capabilities = {true, true, true, false};
+        auto* op = phase->elementOp;
+        child.anchors.push_back({phase, {}, {op->getBlock(), op}, {op->getBlock(), op->getNextNode()}});
+        child.occurrenceLoops.push_back(loop);
+        fs::RegionalSelector first{{0, e.constant(0), fs::PeriodicEventKind::Start}, e.lt(e.constant(0), count)};
+        auto last = first; last.event.ordinal = e.sub(count, e.constant(1));
+        child.firstPayloads[pipe] = {first}; child.lastPayloads[pipe] = {last};
+        child.accessBoundary.push_back({effect, first, last, false});
+        child.symbolicStorageEffects = {effect};
+        child.presence = [arena, count](fs::RegionalEvent event) -> std::optional<fs::RegionExpressions::Id> {
+            if (event.type || !event.visits.empty()) { return std::nullopt; }
+            return arena->lt(event.ordinal, count);
+        };
+        child.reachability = [arena, count](fs::RegionalEvent a, fs::RegionalEvent b)
+            -> std::optional<fs::RegionExpressions::Id> {
+            if (a.type || b.type || !a.visits.empty() || !b.visits.empty()) { return std::nullopt; }
+            auto native = a.kind == fs::PeriodicEventKind::Completion && b.kind == fs::PeriodicEventKind::Start ?
+                arena->boolean(false) : arena->le(a.ordinal, b.ordinal);
+            return arena->land(native, arena->land(arena->lt(a.ordinal, count), arena->lt(b.ordinal, count)));
+        };
+        const auto base = mode == 0 && !writer ? function.getArgument(1) : function.getArgument(0);
+        child.storageSelectors = [arena, count, pipe, writer, base, mode](fs::RegionalByteAddress address)
+            -> std::optional<fs::RegionalStorageSelectors> {
+            fs::RegionalStorageSelectors out;
+            if (address.space != pto::AddressSpace::GM || address.base != base) { return out; }
+            auto ordinal = arena->div(address.offset, arena->constant(4));
+            fs::RegionalSelector value{{0, ordinal, fs::PeriodicEventKind::Start}, arena->lt(ordinal, count)};
+            auto lastValue = value;
+            if (mode == 3) {
+                value.event.ordinal = arena->constant(0);
+                value.present = arena->land(arena->lt(address.offset, arena->constant(4)),
+                    arena->lt(arena->constant(0), count));
+                lastValue = value;
+                lastValue.event.ordinal = arena->sub(count, arena->constant(1));
+            }
+            if (writer) { out.firstWriters = {value}; out.lastWriters = {lastValue}; }
+            else { out.firstReaders[pipe] = {value}; out.lastReaders[pipe] = {lastValue}; }
+            return out;
+        };
+        if (mode == 3) {
+            // Fixed four-byte accesses have a single uniform selector atom;
+            // its proof uses the exact operand map, not per-byte sampling.
+            auto certificate = std::make_shared<fs::RegionalSymbolicStorageCertificate>();
+            certificate->expressions = arena; certificate->accessModel = child.accessModel;
+            certificate->gmAliasPolicy = child.gmAliasPolicy; certificate->uniformEffects = {effect};
+            fs::RegionalStorageBoundary atom;
+            atom.cell = {pto::AddressSpace::GM, 0, 4, base};
+            if (writer) { atom.firstWriters = {first}; atom.lastWriters = {last}; }
+            else { atom.firstReaders[pipe] = {first}; atom.lastReaders[pipe] = {last}; }
+            certificate->uniformBoundaries.push_back(std::move(atom));
+            child.symbolicStorage = std::move(certificate);
+        }
+        children.push_back(std::move(child));
+    }
+    if (children.size() != 2) { return false; }
+    auto composed = fs::composeRegionalSequence(function, arena, children, false, false);
+    if (mode == 2) { return !composed.error.empty(); } // Truly parameterized crossing needs a relation adapter.
+    if (!composed.error.empty()) { llvm::errs() << composed.error; return false; }
+    auto out = fs::sequenceRegionalResult(composed);
+    if (!out.storageSelectors || out.symbolicStorageEffects.size() != (mode == 3 ? 0 : 2) ||
+        out.storageBoundary.size() != (mode == 3 ? 1 : 0)) { return false; }
+    if (mode == 3) {
+        for (uint64_t trips : {0U, 1U, 5U}) {
+            fs::RegionExpressions::Substitution bind({{count, e.constant(trips)}});
+            for (uint64_t byte : {0U, 3U, 4U}) {
+                auto selected = out.storageSelectors({pto::AddressSpace::GM, function.getArgument(0),
+                    e.constant(byte)});
+                if (!selected) { return false; }
+                unsigned active = 0;
+                for (const auto& value : selected->lastWriters) {
+                    auto present = e.constantValue(e.substitute(value.present, bind));
+                    if (!present) { return false; }
+                    if (*present) {
+                        ++active;
+                        if (value.event.type != 0 ||
+                            e.constantValue(e.substitute(value.event.ordinal, bind)) != trips - 1) { return false; }
+                    }
+                }
+                if (active != unsigned(trips && byte < 4)) { return false; }
+            }
+        }
+        return true;
+    }
+    for (uint64_t trips : {0U, 1U, 5U}) {
+        fs::RegionExpressions::Substitution bind({{count, e.constant(trips)}});
+        for (uint64_t ordinal = 0; ordinal <= trips; ++ordinal) {
+            auto selected = out.storageSelectors({pto::AddressSpace::GM, function.getArgument(0),
+                e.constant(4*ordinal)});
+            if (!selected) { return false; }
+            auto check = [&](const std::vector<fs::RegionalSelector>& values, uint32_t type) {
+                unsigned active = 0;
+                for (const auto& value : values) {
+                    auto present = e.constantValue(e.substitute(value.present, bind));
+                    if (!present) { return false; }
+                    if (*present) {
+                        ++active;
+                        if (value.event.type != type ||
+                            e.constantValue(value.event.ordinal) != ordinal) { return false; }
+                    }
+                }
+                return active == unsigned(ordinal < trips);
+            };
+            if (mode == 0) {
+                if (!check(selected->firstWriters, 0) || !check(selected->lastWriters, 0)) { return false; }
+            } else {
+                if (selected->firstReaders.size() != 1 || selected->lastReaders.size() != 1 ||
+                    !check(selected->firstReaders.begin()->second, 0) ||
+                    !check(selected->lastReaders.begin()->second, 1)) { return false; }
+            }
+        }
+    }
+    return true;
+}
 } // namespace
 bool runRepeatedReadOnlyStorageChecks(MLIRContext* context)
 {
+    for (unsigned mode = 0; mode < 4; ++mode) {
+        if (!symbolicSequence(context, mode)) {
+            llvm::errs() << "symbolic sibling storage scenario " << mode << " failed\n";
+            return false;
+        }
+    }
     if (!distinctPhaseScenario(context)) {
         llvm::errs() << "distinct phased symbolic storage failed\n";
         return false;

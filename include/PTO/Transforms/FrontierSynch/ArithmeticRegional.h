@@ -8,8 +8,21 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICREGIONAL_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICREGIONAL_H
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticStorageSelectors.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAnalysis.h"
 namespace mlir::pto::frontiersynch {
+// Owned symbolic export. Original IR/shared input are borrowed as in the
+// regional contract; all imported relations and parameter bindings are owned.
+// Composition consumes these relations without reconstructing child accesses.
+struct ArithmeticRegionalRelations {
+    const SyncInput* input = nullptr;
+    ArithmeticProgram program;
+    GeneralArithmeticDemandAnalysis analysis;
+    ArithmeticStorageSelectors selectors;
+    std::vector<ArithmeticOccurrenceDomain> occurrences;
+    std::vector<RegionExpressions::Id> parameters;
+    std::vector<scf::ForOp> enclosing;
+};
 // Analyze one original region with shared entry bindings. The finite-boundary
 // adapter enumerates bounded physical bytes, never dynamic payload occurrences;
 // adjacent bytes with identical selector tuples share one exported cell.
@@ -20,5 +33,9 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext cont
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
     std::string& error,
     std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding = {});
+// Compose compatible symbolic arithmetic exports. An unsupported parameter or
+// coordinate adapter leaves the child results intact and reports an obligation.
+FailureOr<RegionalAnalysis> composeArithmeticRegionalSequence(ArrayRef<RegionalAnalysis> children,
+    func::FuncOp function, std::string& error);
 }
 #endif

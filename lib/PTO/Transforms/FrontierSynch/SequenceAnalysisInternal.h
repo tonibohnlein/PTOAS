@@ -83,6 +83,9 @@ struct SequenceAnalysisState {
     std::string error;
     std::string repeatedAttempt;
     std::vector<Child> children;
+    // A symbolic crossing relation cannot be represented as a sampled finite
+    // port graph. Retain its exact regional adapter as a separate result.
+    std::optional<RegionalAnalysis> relationalResult;
     std::vector<SyncStorageCell> cells;
     std::vector<Port> ports;
     std::map<std::tuple<uint32_t, uint32_t, Expr, std::vector<Expr>>, uint32_t> portIds;

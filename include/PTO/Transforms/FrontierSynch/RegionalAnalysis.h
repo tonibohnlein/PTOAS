@@ -68,6 +68,32 @@ struct RegionalStorageSelectors {
     std::vector<RegionalSelector> firstWriters, lastWriters;
     std::map<uint32_t, std::vector<RegionalSelector>> firstReaders, lastReaders;
 };
+// Optional algebraic storage evidence. Family reservation ownership and actual
+// access membership are separate: unused holes have no storage selectors.
+struct RegionalStorageOwner {
+    RegionExpressions::Id present, visit, localByte;
+};
+enum class RegionalStorageFamilyKind { General, VisitOwned, SharedReadOnly };
+struct RegionalStorageFamily {
+    AddressSpace space = AddressSpace::GM;
+    Value base;
+    std::vector<std::size_t> effects;
+    RegionalStorageFamilyKind kind = RegionalStorageFamilyKind::General;
+    std::function<std::optional<RegionExpressions::Id>(RegionalByteAddress)> membership;
+    std::function<std::optional<RegionalStorageOwner>(RegionalByteAddress)> owner;
+};
+struct RegionalSymbolicStorageCertificate {
+    std::shared_ptr<RegionExpressions> expressions;
+    const SyncStorageEffects* accessModel = nullptr;
+    GMAliasPolicy gmAliasPolicy = GMAliasPolicy::MayAlias;
+    std::vector<RegionalStorageFamily> families;
+    // Complete uniform-selector atoms for the named effects. These are proved
+    // for every byte of each atom, not sampled at a representative address.
+    // Symbolic support not covered here keeps its per-cell query interface.
+    std::vector<std::size_t> uniformEffects;
+    std::vector<RegionalStorageBoundary> uniformBoundaries;
+};
+struct ArithmeticRegionalRelations;
 struct RegionalCapabilities {
     bool completeStorageModel = false, exactQueries = false, exactSelectors = false, endpointRecipes = false;
     bool contextualGuards = false; // Endpoint circuits may contain branch-local predicates.
@@ -107,6 +133,10 @@ struct RegionalAnalysis {
     // nullopt is unavailable; an empty selector set proves absence.
     std::function<std::optional<RegionalStorageSelectors>(RegionalByteAddress)> storageSelectors;
     std::vector<std::size_t> symbolicStorageEffects;
+    std::shared_ptr<const RegionalSymbolicStorageCertificate> symbolicStorage;
+    // Exact relational export is separate from callable query circuits. An
+    // identity/presence/order transformation must remap it or clear it.
+    std::shared_ptr<const ArithmeticRegionalRelations> arithmeticRelations;
     std::map<uint32_t, std::vector<RegionalSelector>> firstPayloads, lastPayloads;
     // Optional first executed occurrence of each payload type. A present key
     // with an empty vector proves absence; a missing key means unavailable.

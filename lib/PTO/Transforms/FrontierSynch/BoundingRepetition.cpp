@@ -151,6 +151,8 @@ bool selectCrossings(BoundingRepetitionSign& result, const BoundingRepetitionSpe
     };
     auto& out = result.repeated->regional;
     out.numerical.reset();
+    out.arithmeticRelations.reset();
+    out.symbolicStorage.reset();
     out.cost.ports += ports.size(); out.cost.implicationChecks += result.constructionCost.deletionTests;
     out.cost.expressionNodes = arena.size();
     if (specification.bridges == BoundingSequenceBridges::SuppliedCrossings) {

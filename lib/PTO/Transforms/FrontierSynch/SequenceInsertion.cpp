@@ -17,6 +17,14 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
     if (ArrayRef<scf::ForOp>(requiredOuterLoops) != enclosing) {
         fail("subregion endpoint binding requires its enclosing repeat coordinates"); return failure();
     }
+    if (relationalResult) {
+        FailureOr<std::unique_ptr<PreparedLogicalPlan>> result = failure();
+        if (relationalResult->prepareWithVisits) { result = relationalResult->prepareWithVisits(enclosing); }
+        else if (enclosing.empty() && relationalResult->prepare) { result = relationalResult->prepare(); }
+        if (failed(result)) { fail("symbolic sequence endpoint adapter unavailable at the requested cuts"); }
+        else { (*result)->completeInvocation = completeInvocation; }
+        return result;
+    }
     for (const auto& child : children) {
         if (!child.regional.capabilities.endpointRecipes ||
             (!child.regional.prepare && !child.regional.prepareWithVisits)) {

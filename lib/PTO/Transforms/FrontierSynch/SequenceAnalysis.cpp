@@ -8,6 +8,7 @@
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
@@ -37,7 +38,35 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
         composer.costs.numericalMerges += cost.numericalMerges;
         composer.costs.numericalReusedChildren += cost.numericalReusedChildren;
     }
-    if (!composer.importSummaries(composer.requireEndpoints)) { result.error = composer.error; return result; }
+    if (!composer.importSummaries(composer.requireEndpoints)) {
+        const bool symbolic = llvm::any_of(composer.children, [](const Child& child) {
+            return !child.regional.symbolicStorageEffects.empty();
+        });
+        const bool relations = llvm::all_of(composer.children, [](const Child& child) {
+            return bool(child.regional.arithmeticRelations);
+        });
+        if (symbolic && relations && !composer.children.empty()) {
+            std::vector<RegionalAnalysis> children;
+            for (const auto& child : composer.children) { children.push_back(child.regional); }
+            std::string diagnostic;
+            auto composed = composeArithmeticRegionalSequence(children, composer.function, diagnostic);
+            if (succeeded(composed) && composer.requireEndpoints &&
+                (!composed->capabilities.endpointRecipes || (!composed->prepare && !composed->prepareWithVisits))) {
+                result.error = "symbolic sequence demands are available but endpoint recipes are unavailable";
+                return result;
+            }
+            if (succeeded(composed)) {
+                composer.error.clear();
+                composer.relationalResult = std::move(*composed);
+                result.cost = composer.relationalResult->cost;
+                result.state = std::move(state);
+                return result;
+            }
+            if (!diagnostic.empty()) { composer.error += "; " + diagnostic; }
+        }
+        result.error = composer.error;
+        return result;
+    }
     composer.bridges();
     if (composer.reconstructPrerequisites && !composer.valueBridges()) { result.error = composer.error; return result; }
     if (!composer.closure()) { result.error = composer.error; return result; }
@@ -266,6 +295,14 @@ std::optional<RegionExpressions::Id> sequenceEventReachability(SequenceAnalysis&
                    {event.type, event.ordinal, event.kind, event.visits});
     };
     if (!valid(source) || !valid(target)) { return std::nullopt; }
+    if (state.relationalResult) {
+        auto map = [&](const SequenceEvent& event) {
+            uint32_t type = event.type;
+            for (uint32_t i = 0; i < event.child; ++i) { type += state.children[i].regional.anchors.size(); }
+            return RegionalEvent{type, event.ordinal, event.kind, event.visits};
+        };
+        return regionalReachability(*state.relationalResult, map(source), map(target));
+    }
     return state.eventReachability(std::move(source), std::move(target));
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceInsertion(SequenceAnalysis& analysis)
@@ -274,7 +311,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceInsertion(Sequenc
     analysis.insertionError.clear();
     auto result = analysis.state->prepare();
     if (failed(result)) { analysis.insertionError = analysis.state->error; }
-    else {
+    else if (!(*result)->allocationCertificate) {
         (*result)->allocationCertificate = regionalAllocationCertificate(sequenceRegionalResult(analysis), **result);
         if (!(*result)->allocationCertificate) {
             (*result)->allocationCertificate =

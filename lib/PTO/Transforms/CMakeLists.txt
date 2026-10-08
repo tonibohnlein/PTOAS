@@ -203,6 +203,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/GeneralArithmeticSelectors.cpp
   FrontierSynch/ArithmeticStorageSelectors.cpp
   FrontierSynch/ArithmeticRegional.cpp
+  FrontierSynch/ArithmeticRegionalComposition.cpp
   FrontierSynch/DifferenceBoundRelations.cpp
   FrontierSynch/ArithmeticDemandAnalysis.cpp
   FrontierSynch/GuardedPeriodicInsertion.cpp

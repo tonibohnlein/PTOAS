@@ -242,9 +242,19 @@ bool addFamily(State& state, const RepeatedStorageFamily& spec, llvm::DenseSet<s
                 state.body.anchors[access.last.event.type].phase != effect.phase) { return false; }
             for (auto range : *ranges) {
                 if (range.begin > range.end) { return false; }
-                family.extent = std::max(family.extent, range.end);
+                uint64_t extent = range.end;
+                if (projection.inner) {
+                    const auto& inner = *projection.inner;
+                    if (!inner.stride || !inner.maxTrips || range.end - range.begin > inner.stride ||
+                        inner.maxTrips - 1 > (UINT64_MAX - extent) / inner.stride) { return false; }
+                    extent += (inner.maxTrips - 1) * inner.stride;
+                    // Dynamic runs use one disjoint reservation per outer visit.
+                    // Wider strided reservations need a separate inverse proof.
+                    if (spec.kind == RepeatedStorageKind::VisitOwned && extent > spec.stride) { return false; }
+                }
+                family.extent = std::max(family.extent, extent);
                 family.pieces.push_back({range.begin, range.end, access, effect.mode,
-                                        static_cast<uint32_t>(effect.phase->kPipeValue)});
+                                        static_cast<uint32_t>(effect.phase->kPipeValue), projection.inner});
             }
             state.body.cost.physicalFragments += ranges->size();
         }
@@ -252,7 +262,10 @@ bool addFamily(State& state, const RepeatedStorageFamily& spec, llvm::DenseSet<s
     }
     if (spec.kind == RepeatedStorageKind::VisitOwned) {
         SmallVector<SyncStorageCell> ranges;
-        for (const auto& piece : family.pieces) { ranges.push_back({spec.space, piece.begin, piece.end}); }
+        for (const auto& piece : family.pieces) {
+            const auto end = piece.inner ? piece.end + (piece.inner->maxTrips - 1) * piece.inner->stride : piece.end;
+            ranges.push_back({spec.space, piece.begin, end});
+        }
         auto trips = state.expressions().constantValue(state.trips).value_or(UINT64_MAX);
         if (!detail::disjointTranslations(ranges, APInt(128, spec.stride), trips)) { return false; }
     }

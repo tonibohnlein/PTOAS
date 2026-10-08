@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "CountedLoop.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticRegionalComposition.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticStorageSelectors.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticHandoffAllocation.h"
@@ -22,22 +23,17 @@
 namespace mlir::pto::frontiersynch {
 namespace {
 using Id = RegionExpressions::Id;
-struct State {
-    ArithmeticProgram program;
-    GeneralArithmeticDemandAnalysis analysis;
-    ArithmeticStorageSelectors selectors;
+struct State : ArithmeticRegionalRelations {
     std::optional<ArithmeticHandoffAllocation> handoffAllocation;
     std::vector<ArithmeticIntegerPiece> primitives;
     using StorageKey = std::pair<AddressSpace, Value>;
     using Interval = std::pair<uint64_t, uint64_t>;
     llvm::MapVector<StorageKey, std::vector<Interval>> finiteStorage;
     std::shared_ptr<RegionExpressions> arena;
-    std::vector<Id> parameters;
     std::vector<uint32_t> pipes;
-    std::vector<scf::ForOp> enclosing;
     struct LoopGeometry { Id lower; int64_t step; uint64_t maximumOrdinal; };
     std::map<Operation*, LoopGeometry> geometry;
-    std::string error;
+    std::string error, emissionError;
     Id no() { return arena->boolean(false); }
     Id yes() { return arena->boolean(true); }
     Id c(uint64_t value) { return arena->constant(value); }
@@ -132,12 +128,13 @@ struct State {
         Id valid = coordinateDomain(a);
         if (b) { valid = arena->land(valid, coordinateDomain(*b)); }
         Id result = no();
-        for (const auto& piece : primitives) {
-            const auto& schema = *piece.schema;
-            if (schema.kind != kind || schema.sourceSite != a.type ||
-                (b && schema.targetSite != b->type)) { continue; }
+        if (kind != PrimitiveKind::Occurrences || b) { return RegionExpressions::invalid; }
+        for (const auto& piece : occurrences) {
+            if (piece.site != a.type) { continue; }
+            auto residues = piece.residues;
+            llvm::append_range(residues, piece.parameterResidues);
             result = arena->lor(result, arena->integerPredicate(piece.system, values,
-                program.primitives.period, piece.residues));
+                program.primitives.period, residues));
         }
         return arena->land(valid, result);
     }
@@ -459,6 +456,10 @@ bool finiteBoundaries(State& state, RegionalAnalysis& out)
             out.cost.boundaryBytes += bytes;
             uint64_t byte = interval.first;
             while (byte < interval.second) {
+                if (out.storageBoundary.size() >= maxRegionalSlotVisits) {
+                    state.error = "arithmetic finite boundary atom adapter limit";
+                    return false;
+                }
                 const auto begin = byte;
                 byte = atoms.next(begin, interval.second);
                 auto boundary = state.storage(key.first, key.second, state.c(begin));
@@ -484,6 +485,146 @@ bool finiteBoundaries(State& state, RegionalAnalysis& out)
     out.cost.cells = out.storageBoundary.size();
     return true;
 }
+FailureOr<RegionalAnalysis> exportState(const std::shared_ptr<State>& state,
+    const SyncInput& input, std::string& error, bool finite)
+{
+    RegionalAnalysis out; out.expressions = state->arena;
+    out.accessModel = &input.accesses(); out.gmAliasPolicy = input.memory().gmPolicy();
+    for (const auto& site : state->program.sites) {
+        auto* operation = site.phase->elementOp;
+        auto* next = operation->getNextNode();
+        if (!next) { error = "arithmetic payload has no legal after cut"; return failure(); }
+        out.anchors.push_back({site.phase, {}, {operation->getBlock(), operation}, {operation->getBlock(), next}});
+        out.occurrenceLoops.push_back(site.loops.empty() ? scf::ForOp{} : site.loops.back());
+        out.outerLoops.emplace_back(site.loops.begin(), site.loops.empty() ? site.loops.end() : site.loops.end()-1);
+        state->arena->forbidRecomputation(site.phase->elementOp);
+    }
+    out.presence = [state](RegionalEvent a) -> std::optional<Id> {
+        auto value = state->primitive(PrimitiveKind::Occurrences, a);
+        return value == RegionExpressions::invalid ? std::nullopt : std::optional<Id>(value);
+    };
+    out.referenceBefore = [state](RegionalEvent a, RegionalEvent b) -> std::optional<Id> {
+        auto value = state->referenceOrder(a, b);
+        return value == RegionExpressions::invalid ? std::nullopt : std::optional<Id>(value);
+    };
+    out.reachability = [state](RegionalEvent a, RegionalEvent b) -> std::optional<Id> {
+        auto value = state->reach(a,b);
+        return value == RegionExpressions::invalid ? std::nullopt : std::optional<Id>(value);
+    };
+    out.storageSelectors = [state](RegionalByteAddress byte) -> std::optional<RegionalStorageSelectors> {
+        auto selected = state->storage(byte.space, byte.base, byte.offset);
+        if (!state->error.empty() || !state->arena->constructionError().empty()) { return std::nullopt; }
+        return selected;
+    };
+    std::map<std::size_t, std::vector<RegionalSelector>> first, last;
+    for (const auto& boundary : state->selectors.boundaries) {
+        if (boundary.storageSpace) { continue; }
+        auto selected = state->selected(boundary);
+        switch (boundary.kind) {
+        case ArithmeticBoundaryKind::FirstPayload:
+            llvm::append_range(out.firstPayloads[*boundary.pipe], selected);
+            break;
+        case ArithmeticBoundaryKind::LastPayload: llvm::append_range(out.lastPayloads[*boundary.pipe], selected); break;
+        case ArithmeticBoundaryKind::FirstSite: first[*boundary.site] = std::move(selected); break;
+        case ArithmeticBoundaryKind::LastSite: last[*boundary.site] = std::move(selected); break;
+        default: break;
+        }
+    }
+    if (finite && !finiteBoundaries(*state, out)) {
+        if (state->error != "arithmetic finite boundary atom adapter limit") {
+            error = state->error; return failure();
+        }
+        // Keep the exact relations and selector maps. The finite-port adapter
+        // is optional; its size limit is not a storage-precision condition.
+        finite = false; state->error.clear();
+        out.storageBoundary.clear(); out.cost.cells = 0;
+    }
+    out.arithmeticRelations = state;
+    for (unsigned type = 0; type < state->program.sites.size(); ++type) {
+        out.firstSitePayloads[type] = first[type];
+        if (first[type].empty() && last[type].empty()) { continue; }
+        if (first[type].size() != 1 || last[type].size() != 1) {
+            error = "arithmetic site extrema lack a single guarded tuple"; return failure();
+        }
+        for (auto effect : input.accesses().effectsFor(state->program.sites[type].phase)) {
+            if (llvm::is_contained(state->program.extraction.dischargedEffects, effect)) {
+                out.deferredAccessBoundary.push_back({effect, first[type].front(), last[type].front(), false});
+                continue;
+            }
+            bool geometric = finite && !input.accesses().effects()[effect].regions.empty();
+            if (!finite) { out.symbolicStorageEffects.push_back(effect); }
+            out.accessBoundary.push_back({effect, first[type].front(), last[type].front(), geometric});
+        }
+    }
+    if (!out.symbolicStorageEffects.empty()) {
+        auto certificate = std::make_shared<RegionalSymbolicStorageCertificate>();
+        certificate->expressions = state->arena; certificate->accessModel = &input.accesses();
+        certificate->gmAliasPolicy = out.gmAliasPolicy;
+        llvm::MapVector<State::StorageKey, bool> families;
+        for (const auto& piece : state->selectors.support) { families[{piece.space, piece.base}] = true; }
+        for (const auto& entry : families) {
+            const auto key = entry.first;
+            RegionalStorageFamily family;
+            family.space = key.first; family.base = key.second;
+            // Effects retain their original shared identities. Membership is
+            // defined by the complete exact support union for this family.
+            for (auto id : out.symbolicStorageEffects) {
+                const auto& effect = input.accesses().effects()[id];
+                const bool belongs = llvm::any_of(effect.regions, [&](const auto& region) {
+                    return region.base == key.second;
+                }) || llvm::any_of(effect.ranges, [&](const auto& range) {
+                    return range.base == key.second && range.space == key.first;
+                });
+                if (effect.memory && effect.memory->scope == key.first && belongs) { family.effects.push_back(id); }
+            }
+            family.membership = [state, key](RegionalByteAddress address) -> std::optional<Id> {
+                if (address.offset >= state->arena->size() || state->arena->isBoolean(address.offset)) {
+                    return std::nullopt;
+                }
+                if (address.space != key.first) { return state->no(); }
+                if (address.base != key.second) {
+                    SmallVector<SyncStorageCell> domains{{key.first, 0, 1, key.second},
+                                                        {address.space, 0, 1, address.base}};
+                    if (storageBasesAreComparable(domains, state->input->memory().gmPolicy())) { return state->no(); }
+                    return std::nullopt;
+                }
+                std::vector<Id> values{address.offset}; llvm::append_range(values, state->parameters);
+                auto present = state->no();
+                for (const auto& piece : state->selectors.support) {
+                    if (piece.space != key.first || piece.base != key.second) { continue; }
+                    std::vector<uint64_t> residues{piece.byteResidue};
+                    llvm::append_range(residues, piece.parameterResidues);
+                    present = state->arena->lor(present, state->arena->integerPredicate(
+                        piece.domain, values, state->selectors.period, residues));
+                }
+                return present;
+            };
+            certificate->families.push_back(std::move(family));
+        }
+        out.symbolicStorage = std::move(certificate);
+    }
+    out.prepareWithVisits = [state](ArrayRef<scf::ForOp> enclosing)
+        -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
+        if (enclosing != ArrayRef<scf::ForOp>(state->enclosing)) {
+            state->emissionError = "arithmetic regional endpoint requires its original enclosing visit context";
+            return failure();
+        }
+        auto plan = prepareGeneralArithmeticRegionalInsertion(state->program.context.function, state->program,
+                                                       state->analysis, state->emissionError);
+        if (succeeded(plan)) {
+            (*plan)->completeInvocation = false;
+            (*plan)->regionalAllocation = state->allocation(**plan);
+        }
+        return plan;
+    };
+    out.prepare = [prepare = out.prepareWithVisits]() { return prepare({}); };
+    out.capabilities = {true, true, true, true, true};
+    out.cost.children = 1; out.cost.arithmeticRegions = 1;
+    out.cost.expressionNodes = state->arena->size();
+    if (!state->error.empty()) { error = state->error; return failure(); }
+    if (!state->arena->constructionError().empty()) { error = state->arena->constructionError(); return failure(); }
+    return out;
+}
 } // namespace
 FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
@@ -494,6 +635,7 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext cont
         return failure();
     }
     auto state = std::make_shared<State>(); state->arena = std::move(expressions);
+    state->input = &input;
     // Specialize certified entry constants before constructing relations. A
     // large bank stride times a known phase becomes a physical constant, not
     // an artificial variable coefficient that fails the arithmetic class.
@@ -538,7 +680,21 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext cont
     auto imported = importArithmeticIntegerPieces(state->program);
     if (failed(imported)) { error = "regional arithmetic primitive import failed"; return failure(); }
     state->primitives = std::move(*imported);
-    if (!collectFiniteStorage(*state)) { error = state->error; return failure(); }
+    bool finite = collectFiniteStorage(*state);
+    if (!finite) {
+        if (state->error != "arithmetic region needs a finite storage boundary or a symbolic crossing adapter" &&
+            state->error != "arithmetic storage boundary is outside representable physical offsets") {
+            error = state->error; return failure();
+        }
+        state->finiteStorage.clear(); state->error.clear();
+    }
+    for (const auto& piece : state->primitives) {
+        if (piece.schema->kind != PrimitiveKind::Occurrences || !piece.schema->sourceSite) { continue; }
+        const auto dimensions = piece.schema->sourceDimensions;
+        state->occurrences.push_back({*piece.schema->sourceSite,
+            {piece.residues.begin(), piece.residues.begin() + dimensions},
+            {piece.residues.begin() + dimensions, piece.residues.end()}, piece.system});
+    }
     for (Value parameter : state->program.parameters) {
         auto binding = parameterBinding ? parameterBinding(parameter) :
             std::optional<Id>(state->arena->input(parameter));
@@ -556,84 +712,109 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext cont
     if (!state->analysis.error.empty()) { error = state->analysis.error; return failure(); }
     state->selectors = buildArithmeticStorageSelectors(state->program, state->pipes);
     if (!state->selectors.error.empty()) { error = state->selectors.error; return failure(); }
-    RegionalAnalysis out; out.expressions = state->arena;
-    out.accessModel = &input.accesses(); out.gmAliasPolicy = input.memory().gmPolicy();
-    for (const auto& site : state->program.sites) {
-        auto* operation = site.phase->elementOp;
-        auto* next = operation->getNextNode();
-        if (!next) { error = "arithmetic payload has no legal after cut"; return failure(); }
-        out.anchors.push_back({site.phase, {}, {operation->getBlock(), operation}, {operation->getBlock(), next}});
-        out.occurrenceLoops.push_back(site.loops.empty() ? scf::ForOp{} : site.loops.back());
-        out.outerLoops.emplace_back(site.loops.begin(), site.loops.empty() ? site.loops.end() : site.loops.end()-1);
-        state->arena->forbidRecomputation(site.phase->elementOp);
+    return exportState(state, input, error, finite);
+
+}
+FailureOr<RegionalAnalysis> composeArithmeticRegionalSequence(ArrayRef<RegionalAnalysis> children,
+    func::FuncOp function, std::string& error)
+{
+    if (children.empty()) { error = "symbolic sequence has no child interfaces"; return failure(); }
+    if (children.size() == 1) { return children.front(); }
+    const auto& first = children.front();
+    if (!first.arithmeticRelations || !first.arithmeticRelations->input) {
+        error = "symbolic sequence requires owned arithmetic exports"; return failure();
     }
-    out.presence = [state](RegionalEvent a) -> std::optional<Id> {
-        auto value = state->primitive(PrimitiveKind::Occurrences, a);
-        return value == RegionExpressions::invalid ? std::nullopt : std::optional<Id>(value);
-    };
-    out.referenceBefore = [state](RegionalEvent a, RegionalEvent b) -> std::optional<Id> {
-        auto value = state->referenceOrder(a, b);
-        return value == RegionExpressions::invalid ? std::nullopt : std::optional<Id>(value);
-    };
-    out.reachability = [state](RegionalEvent a, RegionalEvent b) -> std::optional<Id> {
-        auto value = state->reach(a,b);
-        return value == RegionExpressions::invalid ? std::nullopt : std::optional<Id>(value);
-    };
-    out.storageSelectors = [state](RegionalByteAddress byte) -> std::optional<RegionalStorageSelectors> {
-        auto selected = state->storage(byte.space, byte.base, byte.offset);
-        if (!state->error.empty() || !state->arena->constructionError().empty()) { return std::nullopt; }
-        return selected;
-    };
-    std::map<std::size_t, std::vector<RegionalSelector>> first, last;
-    for (const auto& boundary : state->selectors.boundaries) {
-        if (boundary.storageSpace) { continue; }
-        auto selected = state->selected(boundary);
-        switch (boundary.kind) {
-        case ArithmeticBoundaryKind::FirstPayload:
-            llvm::append_range(out.firstPayloads[*boundary.pipe], selected);
-            break;
-        case ArithmeticBoundaryKind::LastPayload: llvm::append_range(out.lastPayloads[*boundary.pipe], selected); break;
-        case ArithmeticBoundaryKind::FirstSite: first[*boundary.site] = std::move(selected); break;
-        case ArithmeticBoundaryKind::LastSite: last[*boundary.site] = std::move(selected); break;
-        default: break;
+    const auto& input = *first.arithmeticRelations->input;
+    DenseSet<const CompoundInstanceElement*> seen;
+    Operation* root = first.arithmeticRelations->program.context.root;
+    for (const auto& child : children) {
+        if (!child.arithmeticRelations || child.expressions != first.expressions ||
+            child.accessModel != &input.accesses() || child.gmAliasPolicy != input.memory().gmPolicy() ||
+            child.anchors.size() != child.arithmeticRelations->program.sites.size() ||
+            child.arithmeticRelations->input != &input) {
+            error = "symbolic sequence children have incompatible query or input contexts"; return failure();
         }
-    }
-    if (!finiteBoundaries(*state, out)) { error = state->error; return failure(); }
-    for (unsigned type = 0; type < state->program.sites.size(); ++type) {
-        out.firstSitePayloads[type] = first[type];
-        if (first[type].empty() && last[type].empty()) { continue; }
-        if (first[type].size() != 1 || last[type].size() != 1) {
-            error = "arithmetic site extrema lack a single guarded tuple"; return failure();
-        }
-        for (auto effect : input.accesses().effectsFor(state->program.sites[type].phase)) {
-            if (llvm::is_contained(state->program.extraction.dischargedEffects, effect)) {
-                out.deferredAccessBoundary.push_back({effect, first[type].front(), last[type].front(), false});
-                continue;
+        for (const auto& anchor : child.anchors) {
+            if (!anchor.phase || !seen.insert(anchor.phase).second) {
+                error = "symbolic sequence requires disjoint original child occurrences"; return failure();
             }
-            bool geometric = !input.accesses().effects()[effect].regions.empty();
-            out.accessBoundary.push_back({effect, first[type].front(), last[type].front(), geometric});
+        }
+        auto* childRoot = child.arithmeticRelations->program.context.root;
+        if (!childRoot) { error = "symbolic child has no original region"; return failure(); }
+        while (root && root != childRoot && !root->isProperAncestor(childRoot)) { root = root->getParentOp(); }
+    }
+    if (!root) { error = "symbolic sibling regions have no common original context"; return failure(); }
+    // Discharged accesses still belong to the parent's storage interface.
+    // Without a relation for a newly conflicting pair, retain the children and
+    // report an adapter obligation rather than silently omitting that pair.
+    for (unsigned a = 0; a < children.size(); ++a) {
+        for (unsigned b = a + 1; b < children.size(); ++b) {
+            for (const auto& x : children[a].accessBoundary) {
+                for (const auto& y : children[b].accessBoundary) {
+                    if (input.accesses().uniformConflict(x.effect, y.effect)) {
+                        error = "symbolic sibling uniform-relationship adapter unavailable"; return failure();
+                    }
+                }
+            }
+            for (const auto& x : children[a].deferredAccessBoundary) {
+                for (const auto& y : children[b].accessBoundary) {
+                    if (input.accesses().mayConflict(x.effect, y.effect)) {
+                        error = "symbolic sibling deferred-access relation adapter unavailable"; return failure();
+                    }
+                }
+                for (const auto& y : children[b].deferredAccessBoundary) {
+                    if (input.accesses().mayConflict(x.effect, y.effect)) {
+                        error = "symbolic sibling deferred-access relation adapter unavailable"; return failure();
+                    }
+                }
+            }
+            for (const auto& x : children[a].accessBoundary) {
+                for (const auto& y : children[b].deferredAccessBoundary) {
+                    if (input.accesses().mayConflict(x.effect, y.effect)) {
+                        error = "symbolic sibling deferred-access relation adapter unavailable"; return failure();
+                    }
+                }
+            }
         }
     }
-    out.prepareWithVisits = [state](ArrayRef<scf::ForOp> enclosing)
-        -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
-        if (enclosing != ArrayRef<scf::ForOp>(state->enclosing)) {
-            state->error = "arithmetic regional endpoint requires its original enclosing visit context";
-            return failure();
+    auto combined = *first.arithmeticRelations;
+    for (const auto& child : children.drop_front()) {
+        auto next = composeArithmeticRegionalRelations(combined, *child.arithmeticRelations, {function, root}, error);
+        if (failed(next)) { return failure(); }
+        combined = std::move(*next);
+    }
+    auto state = std::make_shared<State>();
+    static_cast<ArithmeticRegionalRelations&>(*state) = std::move(combined);
+    state->arena = first.expressions;
+    auto enclosing = state->enclosing;
+    state->enclosing.clear();
+    if (!state->initialize()) { error = state->error; return failure(); }
+    state->enclosing = std::move(enclosing);
+    for (const auto& site : state->program.sites) {
+        state->pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue));
+    }
+    auto out = exportState(state, input, error, false);
+    if (failed(out)) { return failure(); }
+    // Preserve child construction work through every fold. Shared expression
+    // nodes describe one arena, so report its final size instead of summing it.
+    auto& cost = out->cost;
+    for (auto member : {&RegionalCost::repeatedRegions, &RegionalCost::phaseDescriptions,
+        &RegionalCost::cells, &RegionalCost::ports, &RegionalCost::crossings,
+        &RegionalCost::physicalFragments, &RegionalCost::rotatingResidues, &RegionalCost::numericVisits,
+        &RegionalCost::arithmeticRegions, &RegionalCost::boundaryBytes, &RegionalCost::selectorComparisons,
+        &RegionalCost::crossingCandidates, &RegionalCost::implicationChecks, &RegionalCost::numericalLeafQueries,
+        &RegionalCost::numericalIndexOperations, &RegionalCost::numericalMerges,
+        &RegionalCost::numericalReusedChildren}) {
+        cost.*member = 0;
+        for (const auto& child : children) {
+            if (child.cost.*member > UINT64_MAX - cost.*member) {
+                error = "symbolic composition cost exceeds representation"; return failure();
+            }
+            cost.*member += child.cost.*member;
         }
-        auto plan = prepareGeneralArithmeticRegionalInsertion(state->program.context.function, state->program,
-                                                       state->analysis, state->error);
-        if (succeeded(plan)) {
-            (*plan)->completeInvocation = false;
-            (*plan)->regionalAllocation = state->allocation(**plan);
-        }
-        return plan;
-    };
-    out.prepare = [prepare = out.prepareWithVisits]() { return prepare({}); };
-    out.capabilities = {true, true, true, true, true};
-    out.cost.children = 1; out.cost.arithmeticRegions = 1;
-    out.cost.expressionNodes = state->arena->size();
-    if (!state->error.empty()) { error = state->error; return failure(); }
-    if (!state->arena->constructionError().empty()) { error = state->arena->constructionError(); return failure(); }
+    }
+    cost.children = children.size();
+    cost.expressionNodes = state->arena->size();
     return out;
 }
 } // namespace mlir::pto::frontiersynch
