@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/ChainInterface.h"
 #include "PTO/Transforms/FrontierSynch/RegionalNumericalInterface.h"
 #include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/FiniteOverlay.h"
 #include "llvm/Support/raw_ostream.h"
 #include <array>
 using namespace mlir;
@@ -101,6 +102,9 @@ bool hierarchy(func::FuncOp function, uint64_t& checked)
         }
         if (a % types == 0) { graph[2*a+1][2*(a+1)] = true; }
     }
+    auto noSkip = graph; close(noSkip);
+    // A storage bridge skips two complete children.
+    graph[2 * (types + 1) + 1][2 * (3 * trips * types + types)] = true;
     close(graph);
     auto arena = std::make_shared<fs::RegionExpressions>();
     std::vector<pto::CompoundInstanceElement> phases;
@@ -134,6 +138,18 @@ bool hierarchy(func::FuncOp function, uint64_t& checked)
             auto bi = 2 * (leaf * trips * types + *bv * types + b.type) + (b.kind == fs::PeriodicEventKind::Completion);
             return arena->boolean(graph[ai][bi]);
         };
+        if (leaf == 0 || leaf == 3) {
+            fs::RegionalStorageBoundary storage;
+            storage.cell = {pto::AddressSpace::VEC, 0, 4};
+            fs::RegionalSelector occurrence{{leaf == 0 ? 1U : 0U, arena->constant(1),
+                                             fs::PeriodicEventKind::Start}, arena->boolean(true)};
+            if (leaf == 0) { storage.firstWriters = storage.lastWriters = {occurrence}; }
+            else {
+                const auto pipe = static_cast<uint32_t>(pto::PipelineType::PIPE_MTE1);
+                storage.firstReaders[pipe] = storage.lastReaders[pipe] = {occurrence};
+            }
+            region.storageBoundary.push_back(std::move(storage));
+        }
         regions.push_back(std::move(region));
     }
     auto a = fs::composeRegionalSequence(function, arena, {regions[0], regions[1]}, false, false);
@@ -156,6 +172,72 @@ bool hierarchy(func::FuncOp function, uint64_t& checked)
             auto actual = exported.reachability(event(x), event(y));
             if (!actual || arena->constantValue(*actual) != uint64_t(graph[x][y])) { return false; }
             ++checked;
+        }
+    }
+    for (unsigned variant = 0; variant < 3; ++variant) {
+        auto flat = regions;
+        unsigned instances = leaves;
+        if (variant == 0) { flat.resize(3); instances = 3; }
+        if (variant == 2) {
+            fs::RegionalAnalysis empty;
+            empty.expressions = arena; empty.capabilities = {true, true, true, false};
+            empty.presence = [arena](fs::RegionalEvent) { return std::optional(arena->boolean(false)); };
+            empty.reachability = [arena](fs::RegionalEvent, fs::RegionalEvent) {
+                return std::optional(arena->boolean(false));
+            };
+            flat.insert(flat.begin() + 2, std::move(empty));
+        }
+        auto joined = fs::composeRegionalSequence(function, arena, flat, false, false);
+        auto view = fs::sequenceRegionalResult(joined);
+        if (!joined.error.empty() || !view.numerical || joined.cost.numericalMerges != flat.size() - 1) {
+            return false;
+        }
+        for (uint32_t x = 0; x < 2 * instances * trips * types; ++x) {
+            for (uint32_t y = 0; y < 2 * instances * trips * types; ++y) {
+                auto actual = view.reachability(event(x), event(y));
+                if (!actual || arena->constantValue(*actual) != uint64_t(graph[x][y])) { return false; }
+                ++checked;
+            }
+        }
+    }
+    // The optional index is a snapshot: an overlay must use its own live query.
+    auto order = [arena](fs::RegionalEvent a, fs::RegionalEvent b) -> std::optional<fs::RegionExpressions::Id> {
+        auto x = arena->constantValue(a.ordinal), y = arena->constantValue(b.ordinal);
+        if (!x || !y) { return {}; }
+        return arena->boolean(std::make_tuple(a.type / types, *x, a.type % types) <
+                              std::make_tuple(b.type / types, *y, b.type % types));
+    };
+    const uint32_t extraSource = 3, extraTarget = 2 * trips * types;
+    auto overlay = fs::analyzeFiniteOverlay(exported,
+        {{event(extraSource), event(extraTarget), arena->boolean(true)}}, order);
+    auto overlaid = graph; overlaid[extraSource][extraTarget] = true; close(overlaid);
+    if (!overlay.error.empty() || overlay.regional.numerical) { return false; }
+    for (uint32_t x = 0; x < graph.size(); ++x) {
+        for (uint32_t y = 0; y < graph.size(); ++y) {
+            auto actual = overlay.regional.reachability(event(x), event(y));
+            if (!actual || arena->constantValue(*actual) != uint64_t(overlaid[x][y])) { return false; }
+            ++checked;
+        }
+    }
+    // A symbolic crossing declines the numerical tree without changing guards.
+    Block symbols;
+    auto predicate = arena->input(symbols.addArgument(IntegerType::get(function.getContext(), 1), function.getLoc()));
+    auto guarded = regions;
+    guarded[0].storageBoundary[0].firstWriters[0].present = predicate;
+    guarded[0].storageBoundary[0].lastWriters[0].present = predicate;
+    auto symbolic = fs::composeRegionalSequence(function, arena, guarded, false, false);
+    auto symbolicView = fs::sequenceRegionalResult(symbolic);
+    if (!symbolic.error.empty() || symbolicView.numerical) { return false; }
+    for (uint32_t x = 0; x < graph.size(); ++x) {
+        for (uint32_t y = 0; y < graph.size(); ++y) {
+            auto actual = symbolicView.reachability(event(x), event(y));
+            if (!actual) { return false; }
+            for (bool enabled : {false, true}) {
+                fs::RegionExpressions::Substitution binding({{predicate, arena->boolean(enabled)}});
+                if (arena->constantValue(arena->substitute(*actual, binding)) !=
+                    uint64_t((enabled ? graph : noSkip)[x][y])) { return false; }
+                ++checked;
+            }
         }
     }
     auto counts = fs::sequenceNumericalQueryCounts(root);

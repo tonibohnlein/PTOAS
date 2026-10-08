@@ -61,6 +61,7 @@ struct CellBoundary {
     std::map<uint32_t, std::vector<Selected>> firstReaders, lastReaders;
 };
 struct Crossing { uint32_t source = 0, target = 0; Expr guard = 0; };
+struct SequenceNumericalNode;
 struct SequenceAnalysisState {
     func::FuncOp function;
     const SyncInput* input = nullptr;
@@ -76,8 +77,7 @@ struct SequenceAnalysisState {
     RegionExpressions& expressions;
     SequenceCost costs;
     std::shared_ptr<NumericalChainMerge> numerical;
-    std::array<std::shared_ptr<const RegionalNumericalInterface>, 2> numericalChildren;
-    std::vector<NumericalChainSelection> numericalSelection;
+    std::shared_ptr<SequenceNumericalNode> numericalTree;
     std::vector<std::pair<uint32_t, PeriodicEventKind>> numericalChainKeys;
     NumericalChainQueryCost numericalQueryCost;
     std::string error;
