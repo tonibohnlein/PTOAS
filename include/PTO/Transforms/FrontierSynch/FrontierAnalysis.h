@@ -12,6 +12,7 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_FRONTIERANALYSIS_H
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
 namespace mlir::pto::frontiersynch {
@@ -33,6 +34,16 @@ public:
     bool hasOnlyNativeScalarRequirements() const { return nativeScalarOnly; }
     LogicalResult analyzeExplicitFunction();
     SequenceAnalysis* analyzeSequenceFunction();
+    LogicalResult analyzeArithmeticFunction();
+    const ArithmeticDemandAnalysis* arithmeticDemands() const {
+        return arithmeticAnalysis ? &*arithmeticAnalysis : nullptr;
+    }
+    const GeneralArithmeticDemandAnalysis* generalArithmeticDemands() const {
+        return generalArithmeticAnalysis ? &*generalArithmeticAnalysis : nullptr;
+    }
+    // Whole-invocation evidence only. Endpoint preparation cannot revoke it;
+    // success for a proper child does not establish this property.
+    bool hasWholeFunctionMinimumDemands() const;
     void noteSequenceEndpointOutcome(StringRef error);
     const ExplicitAnalysis* explicitResult() const { return explicitAnalysis ? &*explicitAnalysis : nullptr; }
     const SyncInput* input() const { return storage.get(); }
@@ -48,6 +59,8 @@ private:
     std::optional<ProgramRecognition> program;
     std::optional<ExplicitAnalysis> explicitAnalysis;
     std::optional<SequenceAnalysis> sequenceAnalysis;
+    std::optional<ArithmeticDemandAnalysis> arithmeticAnalysis;
+    std::optional<GeneralArithmeticDemandAnalysis> generalArithmeticAnalysis;
 };
 } // namespace mlir::pto::frontiersynch
 #endif

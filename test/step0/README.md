@@ -326,3 +326,18 @@ independent unfolded executions, varying branch choice independently of trip
 counts. `sync_regional_arithmetic_context.pto` includes an unsigned tail reduced
 from the prefill benchmark and verifies rejection of an unjustified affine
 interpretation.
+
+### Exact demands with unavailable exports
+
+The logical dispatcher retains successful whole-function explicit, numerical,
+sequence and arithmetic demand results independently of endpoint preparation.
+It may try another exact route, but cannot replace known exact demands with
+compact bounding demands merely because endpoint code is unavailable. That
+case reports `unmet-exports`. A successful proper child does not block fallback
+for its parent. Arithmetic results are cached with the shared input and cleared
+when its GM alias policy changes.
+
+`sync_compact_bounding_pipeline.pto` checks a guard computed after the source
+cut: exact guarded reachability survives failed endpoint preparation, the IR
+stays unchanged, and the dispatcher reports the missing export. The same test
+also checks arithmetic cache reuse and alias-policy invalidation.
