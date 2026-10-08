@@ -215,8 +215,59 @@ bool missingAllocation(func::FuncOp function)
                         "allocation adapter not implemented yet") != std::string::npos &&
         diagnostic.find("supplied capacity") == std::string::npos;
 }
+// An unavailable export must not change the mathematical result or trigger
+// a different selected order. This guard is deliberately defined after its SET
+// cut and cannot be speculated because division may be undefined.
+bool checkUnmetExports(func::FuncOp function, const pto::SyncInput& input)
+{
+    const auto before = render(function);
+    fs::FrontierAnalysis analysis(function);
+    if (analysis.hasWholeFunctionMinimumDemands() || failed(analysis.initialize(input.memory().gmPolicy()))) {
+        return false;
+    }
+    auto* demands = analysis.analyzeSequenceFunction();
+    if (!demands || !demands->error.empty() || !analysis.hasWholeFunctionMinimumDemands()) { return false; }
+    auto region = fs::sequenceRegionalResult(*demands);
+    if (region.anchors.size() != 2) { return false; }
+    fs::RegionalEvent writer{0, region.expressions->constant(0), fs::PeriodicEventKind::Completion};
+    fs::RegionalEvent reader{1, region.expressions->constant(0), fs::PeriodicEventKind::Start};
+    const auto query = fs::regionalReachability(region, writer, reader);
+    if (!query || region.expressions->constantValue(*query) == 0 ||
+        succeeded(fs::prepareSequenceInsertion(*demands)) ||
+        !analysis.hasWholeFunctionMinimumDemands() || analysis.analyzeSequenceFunction() != demands ||
+        fs::regionalReachability(region, writer, reader) != query) { return false; }
+    std::string diagnostic;
+    llvm::raw_string_ostream stream(diagnostic);
+    ScopedDiagnosticHandler capture(function.getContext(), [&](Diagnostic& message) {
+        message.print(stream); return success();
+    });
+    const auto prepared = fs::prepareFunctionSynchronization(function, input.memory().gmPolicy());
+    stream.flush();
+    return failed(prepared) && before == render(function) &&
+        diagnostic.find("unmet-exports: exact whole-function demands retained") != std::string::npos &&
+        diagnostic.find("compact bounding:") == std::string::npos;
+}
 bool check(func::FuncOp function, const pto::SyncInput& input)
 {
+    if (function->hasAttr("test.unmet_exports")) { return checkUnmetExports(function, input); }
+    if (function->hasAttr("test.exact_priority")) {
+        fs::FrontierAnalysis analysis(function);
+        if (failed(analysis.initialize(input.memory().gmPolicy())) ||
+            failed(analysis.analyzeArithmeticFunction()) || !analysis.hasWholeFunctionMinimumDemands()) {
+            return false;
+        }
+        const auto* exact = analysis.arithmeticDemands();
+        const auto* general = analysis.generalArithmeticDemands();
+        if (failed(analysis.analyzeArithmeticFunction()) || exact != analysis.arithmeticDemands() ||
+            general != analysis.generalArithmeticDemands()) { return false; }
+        const auto changedPolicy = input.memory().gmPolicy() == pto::GMAliasPolicy::MayAlias ?
+            pto::GMAliasPolicy::MayNotAlias : pto::GMAliasPolicy::MayAlias;
+        if (failed(analysis.initialize(changedPolicy)) || analysis.arithmeticDemands() ||
+            analysis.generalArithmeticDemands() || analysis.hasWholeFunctionMinimumDemands() ||
+            failed(analysis.analyzeArithmeticFunction()) || !analysis.hasWholeFunctionMinimumDemands()) {
+            return false;
+        }
+    }
     auto original = traces(function, input, false);
     const auto before = render(function);
     FailureOr<std::unique_ptr<fs::PreparedLogicalPlan>> prepared = failure();

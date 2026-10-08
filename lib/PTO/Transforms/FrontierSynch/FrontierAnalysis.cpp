@@ -65,6 +65,8 @@ LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy, bool r
         return nativeScalarOnly && !requireStructure ? success() : recognizeStructure();
     }
     nativeScalarOnly = false;
+    arithmeticAnalysis.reset();
+    generalArithmeticAnalysis.reset();
     explicitAnalysis.reset();
     sequenceAnalysis.reset();
     program.reset();
@@ -131,6 +133,46 @@ SequenceAnalysis* FrontierAnalysis::analyzeSequenceFunction() {
         refreshProgramContractAudit(*program);
     }
     return &*sequenceAnalysis;
+}
+LogicalResult FrontierAnalysis::analyzeArithmeticFunction()
+{
+    if (failed(recognizeArithmetic()) || !program->arithmetic) { return failure(); }
+    const auto& arithmetic = *program->arithmetic;
+    const auto protection = structuredProtection(storage->accesses());
+    if (arithmetic.recognition.arithmeticClass == ArithmeticClass::Differences) {
+        if (!arithmeticAnalysis) {
+            arithmeticAnalysis = analyzeArithmeticDemandsWithProtection(arithmetic, protection);
+        }
+        return success(arithmeticAnalysis->error.empty() && arithmeticAnalysis->exactMinimum);
+    }
+    if (!generalArithmeticAnalysis) {
+        generalArithmeticAnalysis = analyzeGeneralArithmeticDemandsWithProtection(arithmetic, protection);
+    }
+    return success(generalArithmeticAnalysis->error.empty() && generalArithmeticAnalysis->exactMinimum);
+}
+bool FrontierAnalysis::hasWholeFunctionMinimumDemands() const
+{
+    if (explicitAnalysis && explicitAnalysis->error.empty()) { return true; }
+    if ((arithmeticAnalysis && arithmeticAnalysis->error.empty() && arithmeticAnalysis->exactMinimum) ||
+        (generalArithmeticAnalysis && generalArithmeticAnalysis->error.empty() &&
+         generalArithmeticAnalysis->exactMinimum)) { return true; }
+    if (!program) { return false; }
+    // This snapshot is recorded before preparation and verifies original input,
+    // root coverage and prerequisites. Preparation may set the state's error.
+    if (program->sequenceContract && program->sequenceContract->membership == ContractStatus::Established &&
+        program->sequenceContract->demands == ContractImplementation::Available) { return true; }
+    for (const auto& node : program->nodes) {
+        if (node.unsupportedContext || !node.numericTemplate || !node.periodicAnalysis ||
+            !node.periodicAnalysis->error.empty()) { continue; }
+        const auto& numeric = *node.numericTemplate;
+        if (numeric.result.state != RecognitionState::Applicable || numeric.specializedBody ||
+            !numeric.outer || numeric.outer->getParentOp() != function.operator->()) { continue; }
+        const bool complete = llvm::all_of(program->payloads, [&](const auto& payload) {
+            return numeric.outer->isProperAncestor(payload.phase->elementOp);
+        });
+        if (complete) { return true; }
+    }
+    return false;
 }
 void FrontierAnalysis::noteSequenceEndpointOutcome(StringRef error) {
     if (!program) { return; }
@@ -234,19 +276,18 @@ DictionaryAttr contractReport(const frontiersynch::ProgramRecognition& program, 
 FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareWholeFunctionArithmetic(
     func::FuncOp function, frontiersynch::FrontierAnalysis& analysis, std::string& error)
 {
-    if (failed(analysis.recognizeArithmetic()) || !analysis.result()->arithmetic) { return failure(); }
+    const bool analyzed = succeeded(analysis.analyzeArithmeticFunction());
+    if (!analysis.result() || !analysis.result()->arithmetic) { return failure(); }
     const auto& arithmetic = *analysis.result()->arithmetic;
-    const auto protection = frontiersynch::structuredProtection(analysis.input()->accesses());
-    if (arithmetic.recognition.arithmeticClass == frontiersynch::ArithmeticClass::Differences) {
-        auto demands = frontiersynch::analyzeArithmeticDemandsWithProtection(arithmetic, protection);
-        if (!demands.error.empty()) { error += "; arithmetic: " + demands.error; return failure(); }
-        auto prepared = frontiersynch::prepareArithmeticInsertion(function, arithmetic, demands, error);
-        return prepared;
+    if (const auto* demands = analysis.arithmeticDemands()) {
+        if (!analyzed) { error += "; arithmetic: " + demands->error; return failure(); }
+        return frontiersynch::prepareArithmeticInsertion(function, arithmetic, *demands, error);
     }
-    auto demands = frontiersynch::analyzeGeneralArithmeticDemandsWithProtection(arithmetic, protection);
-    if (!demands.error.empty()) { error += "; arithmetic: " + demands.error; return failure(); }
-    auto prepared = frontiersynch::prepareGeneralArithmeticInsertion(function, arithmetic, demands, error);
-    return prepared;
+    if (const auto* demands = analysis.generalArithmeticDemands()) {
+        if (!analyzed) { error += "; arithmetic: " + demands->error; return failure(); }
+        return frontiersynch::prepareGeneralArithmeticInsertion(function, arithmetic, *demands, error);
+    }
+    return failure();
 }
 FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     func::FuncOp function, GMAliasPolicy policy)
@@ -344,7 +385,9 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
         prepared = prepareWholeFunctionArithmetic(function, analysis, routeError);
         if (succeeded(prepared)) { logicalBackend = "arithmetic"; }
     }
-    if (failed(prepared)) {
+    if (failed(prepared) && analysis.hasWholeFunctionMinimumDemands()) {
+        routeError = "unmet-exports: exact whole-function demands retained; " + routeError;
+    } else if (failed(prepared)) {
         auto compact = frontiersynch::prepareCompactBoundingInsertion(function, analysis.sharedInput());
         if (compact.prepared) { prepared = std::move(compact.prepared); logicalBackend = "compact-bounding"; }
         else {
