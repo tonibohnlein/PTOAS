@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Check hierarchical identities through two sequence exports, without insertion.
 #include "PTO/Transforms/FrontierSynch/RepeatedRegion.h"
+#include "PTO/Transforms/FrontierSynch/RegionalNumericalInterface.h"
+#include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/RepeatedRegionInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/RepeatedAllocation.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/RepeatedLaneAllocation.h"
@@ -82,6 +84,10 @@ bool check(func::FuncOp function, Operation* anchor, scf::ForOp outer, scf::ForO
     if (!once.error.empty()) { llvm::errs() << once.error << "\n"; return false; }
     auto twice = fs::repeatInvariantRegion(function, outer, once.regional, e.constant(trips));
     if (!twice.error.empty()) { llvm::errs() << twice.error << "\n"; return false; }
+    if (!symbolicEnable && steps && trips && mask &&
+        (!once.regional.numerical || !twice.regional.numerical)) {
+        llvm::errs() << "numerical invariant repetition did not export its shared index\n"; return false;
+    }
     const unsigned count = 3 * trips * steps;
     Matrix graph(2 * count, std::vector<bool>(2 * count));
     for (unsigned i = 0; i < count; ++i) {
@@ -108,6 +114,13 @@ bool check(func::FuncOp function, Operation* anchor, scf::ForOp outer, scf::ForO
         for (unsigned j = 0; j < 2*count; ++j) {
             auto got = fs::regionalReachability(twice.regional, event(i), event(j));
             if (!got) { return false; }
+            if (twice.regional.numerical) {
+                fs::NumericalChainQueryCost work;
+                auto indexed = twice.regional.numerical->query(event(i), event(j), work);
+                if (!indexed || *indexed != graph[i][j]) {
+                    llvm::errs() << "squared regional query mismatch\n"; return false;
+                }
+            }
             auto concrete = symbolicEnable ? e.substitute(*got, active) : *got;
             if (e.constantValue(concrete) != uint64_t(graph[i][j]) ||
                 (symbolicEnable && e.constantValue(e.substitute(*got, inactive)) != 0)) {
@@ -131,6 +144,40 @@ bool check(func::FuncOp function, Operation* anchor, scf::ForOp outer, scf::ForO
                 }
             }
             ++checked;
+        }
+    }
+    if (!symbolicEnable && trips == 2 && steps == 2 && mask == 7) {
+        auto joined = fs::composeRegionalSequence(function, arena,
+            {twice.regional, twice.regional}, false, false);
+        auto region = fs::sequenceRegionalResult(joined);
+        if (!joined.error.empty() || !region.numerical) {
+            llvm::errs() << "squared children were not reused by numerical composition: " << joined.error << "\n";
+            return false;
+        }
+        Matrix doubled(4 * count, std::vector<bool>(4 * count));
+        for (unsigned a = 0; a < 2 * count; ++a) {
+            doubled[2*a][2*a] = doubled[2*a+1][2*a+1] = doubled[2*a][2*a+1] = true;
+            for (unsigned b = a+1; b < 2 * count; ++b) {
+                if (a%3 == b%3) { doubled[2*a][2*b] = doubled[2*a+1][2*b+1] = true; }
+                if (a%3 < 2 && b%3 < 2 && (a%3 == 0 || b%3 == 0)) { doubled[2*a+1][2*b] = true; }
+            }
+        }
+        closure(doubled);
+        auto translated = [&](unsigned vertex) {
+            auto result = event(vertex % (2 * count));
+            result.type += vertex >= 2 * count ? 3 : 0;
+            return result;
+        };
+        for (unsigned a = 0; a < doubled.size(); ++a) {
+            for (unsigned b = 0; b < doubled.size(); ++b) {
+                fs::NumericalChainQueryCost work;
+                auto answer = region.numerical->query(translated(a), translated(b), work);
+                if (!answer || *answer != doubled[a][b]) {
+                    llvm::errs() << "numerical composition of squared children differs from unfolded graph\n";
+                    return false;
+                }
+                ++checked;
+            }
         }
     }
     auto absent = fs::regionalPresence(twice.regional,

@@ -231,6 +231,8 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/ChainInterface.cpp
   FrontierSynch/NumericalWeightedRepetition.cpp
   FrontierSynch/NumericalRepeatedBinding.cpp
+  FrontierSynch/NumericalRepeatedSquaring.cpp
+  FrontierSynch/NumericalRepeatedExports.cpp
   FrontierSynch/ChainComposition.cpp
   FrontierSynch/ChainMergeQueries.cpp
   FrontierSynch/BoundingRegionalAnalysis.cpp

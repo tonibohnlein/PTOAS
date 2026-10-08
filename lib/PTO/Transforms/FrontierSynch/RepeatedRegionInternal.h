@@ -67,6 +67,7 @@ struct RepeatedRegionState {
     std::optional<Id> portDistance(std::size_t source, std::size_t target);
     std::optional<Id> bodyPortQuery(const RegionalEvent& source, const RegionalEvent& target);
 };
+void attachNumericalRepeatedExports(const std::shared_ptr<RepeatedRegionState>& state, RegionalAnalysis& out);
 // Export a validated state's body, coordinates, selectors and recipes. Callers
 // establish its crossing graph (possibly empty for a certified singleton).
 RepeatedRegionAnalysis exportRepeatedRegion(std::shared_ptr<RepeatedRegionState> state);

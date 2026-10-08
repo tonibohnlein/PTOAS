@@ -96,7 +96,8 @@ struct BoundingRepeatedQuery::State {
                 const auto& work = bindingWork.index;
                 if (!charge(cost.bodyQueries, bindingWork.bodyQueries) ||
                     !charge(cost.deletionTests, work.coverQueries)) { return {}; }
-                for (auto amount : {bindingWork.orderingQueries, work.validation, work.internalEdges,
+                for (auto amount : {bindingWork.orderingQueries, bindingWork.nestedIndexOperations,
+                                    work.validation, work.internalEdges,
                                     work.crossingEdges, work.heapPushes, work.heapPops, work.relaxations,
                                     work.prefixEntries}) {
                     if (!charge(cost.relaxations, amount)) { return {}; }
