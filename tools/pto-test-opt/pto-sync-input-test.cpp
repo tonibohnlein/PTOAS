@@ -335,6 +335,7 @@ int runArithmeticStorageSelectorChecks();
 int runGeneralArithmeticDemandChecks();
 int runFiniteOverlayChecks();
 int runRotatingBoundaryChecks();
+int runNumericalWeightedRepetitionChecks();
 int runGuardedRankChecks();
 int runGeneralArithmeticAllocationChecks();
 int runMixedStrideChecks();
@@ -417,6 +418,9 @@ int main(int argc, char **argv) {
   }
   if (argc == 2 && StringRef(argv[1]) == "--bounded-lifetime-allocation-checks") {
     return runBoundedLifetimeAllocationChecks();
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--numerical-weighted-repetition-checks") {
+    return runNumericalWeightedRepetitionChecks();
   }
   if (argc == 2 && StringRef(argv[1]) == "--rotating-boundary-checks") { return runRotatingBoundaryChecks(); }
   if (argc == 2 && StringRef(argv[1]) == "--finite-overlay-checks") {

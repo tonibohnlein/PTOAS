@@ -115,16 +115,16 @@ std::vector<RegionalEvent> commonPorts(const BoundingRepetitionSign& lower, cons
     for (const auto& item : events) { result.push_back(item.second); }
     return result;
 }
-bool addCost(BoundingRepetitionSign& result, const BoundingRepetitionCost& cost, bool deletion)
+bool addCost(BoundingRepetitionSign& result, const BoundingRepetitionCost& cost)
 {
     auto& total = result.constructionCost;
     if (cost.bodyQueries > UINT64_MAX-total.bodyQueries || cost.relaxations > UINT64_MAX-total.relaxations ||
-        (deletion && total.deletionTests == UINT64_MAX)) {
+        cost.deletionTests > UINT64_MAX-total.deletionTests) {
         result.exportError = "weighted repeated construction counter overflow";
         result.repeated.reset(); return false;
     }
     total.bodyQueries += cost.bodyQueries; total.relaxations += cost.relaxations;
-    total.deletionTests += deletion;
+    total.deletionTests += cost.deletionTests;
     return true;
 }
 bool selectCrossings(BoundingRepetitionSign& result, const BoundingRepetitionSpecification& specification,
@@ -136,29 +136,14 @@ bool selectCrossings(BoundingRepetitionSign& result, const BoundingRepetitionSpe
     auto& arena = state.e();
     auto frame = buildBoundingRepeatedQuery(state.body, ports, records, result.exportError);
     if (!frame) { result.repeated.reset(); return false; }
-    uint64_t deletions = 0;
-    for (std::size_t candidate = 0; candidate < records.size(); ++candidate) {
-        if (records[candidate].native || arena.constantValue(records[candidate].guard) == 0) { continue; }
-        // Remove the whole edge template from the alternative graph. Sequential
-        // guard refinement preserves closure even when distinct descriptions
-        // denote one event under a parameter valuation (e.g. first==last at K=1).
-        auto alternatives = records;
-        alternatives[candidate].guard = arena.boolean(false);
-        auto query = frame->withCrossings(std::move(alternatives), result.exportError);
-        if (!query) { result.repeated.reset(); return false; }
-        auto implied = query->across(records[candidate].source, records[candidate].target,
-                                      arena.constant(records[candidate].displacement));
-        if (!implied) {
-            result.exportError = "weighted repeated alternative-path query unavailable";
-            result.repeated.reset(); return false;
-        }
-        ++deletions;
-        if (!addCost(result, query->cost(), true)) { return false; }
-        records[candidate].guard = arena.land(records[candidate].guard, arena.lnot(*implied));
+    auto reduced = frame->covers();
+    if (!reduced) {
+        result.exportError = "weighted repeated last-crossing reduction unavailable";
+        result.repeated.reset(); return false;
     }
-    result.query = frame->withCrossings(records, result.exportError);
-    if (!result.query) { result.repeated.reset(); return false; }
-    if (!addCost(result, result.query->cost(), false)) { result.query.reset(); return false; }
+    records = std::move(*reduced);
+    result.query = std::move(frame);
+    if (!addCost(result, result.query->cost())) { result.query.reset(); return false; }
     state.crossings = records; state.queryCrossings = std::move(records);
     state.queryMemo.clear(); state.bodyPortMemo.clear(); state.sourceDistances.clear(); state.distanceMemo.clear();
     state.weightedAcross = [query = result.query](const RegionalEvent& a, const RegionalEvent& b, Id gap) {
@@ -166,7 +151,7 @@ bool selectCrossings(BoundingRepetitionSign& result, const BoundingRepetitionSpe
     };
     auto& out = result.repeated->regional;
     out.numerical.reset();
-    out.cost.ports += ports.size(); out.cost.implicationChecks += deletions;
+    out.cost.ports += ports.size(); out.cost.implicationChecks += result.constructionCost.deletionTests;
     out.cost.expressionNodes = arena.size();
     if (specification.bridges == BoundingSequenceBridges::SuppliedCrossings) {
         clearStorage(out); out.capabilities.completeStorageModel = false; out.capabilities.exactSelectors = false;
@@ -211,7 +196,7 @@ BoundingRepetitionResult repeatBoundingRegion(func::FuncOp function, scf::ForOp 
     auto context = captureRegionalOrderContext(input, *domain, result.error);
     if (failed(context)) { return result; }
     result.bounds.context = *context; result.bounds.guarantee = original.guarantee;
-    result.bounds.reduction = ReductionQuality::Partial;
+    result.bounds.reduction = ReductionQuality::Covers;
     result.placementMayStrengthen = false;
     for (const auto& phase : original.phases) {
         result.placementMayStrengthen |= phase.placementMayStrengthen;
@@ -220,6 +205,9 @@ BoundingRepetitionResult repeatBoundingRegion(func::FuncOp function, scf::ForOp 
         }
         if (phase.bounds.reduction == ReductionQuality::Generators) {
             result.bounds.reduction = ReductionQuality::Generators;
+        } else if (phase.bounds.reduction == ReductionQuality::Partial &&
+                   result.bounds.reduction == ReductionQuality::Covers) {
+            result.bounds.reduction = ReductionQuality::Partial;
         }
     }
     auto exportView = [&](BoundingRepetitionSign& sign, std::optional<RegionalOrderView>& destination) {

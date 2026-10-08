@@ -54,6 +54,10 @@ public:
     // are shared; crossing-dependent caches belong to the returned snapshot.
     std::shared_ptr<BoundingRepeatedQuery> withCrossings(
         std::vector<RepeatedCrossing> crossings, std::string& error) const;
+    // Deduplicate actual endpoint pairs with native priority, then compute all
+    // crossing covers from one distance index using the last-crossing test.
+    // The returned records preserve input order/identity and refine their guards.
+    std::optional<std::vector<RepeatedCrossing>> covers();
     // Minimum period displacement, including zero when the body path exists.
     std::optional<BoundingPeriodDistance> distance(RegionalEvent source, RegionalEvent target);
     std::optional<RegionExpressions::Id> across(
@@ -80,7 +84,7 @@ struct BoundingRepetitionSign {
     std::string exportError;
     std::optional<RepeatedRegionAnalysis> repeated;
     std::shared_ptr<BoundingRepeatedQuery> query;
-    // Includes all temporary deletion snapshots and initial final-index build.
+    // Single shared index construction and all last-crossing tests.
     // Later arbitrary queries are additionally charged by query->cost().
     BoundingRepetitionCost constructionCost;
 };
@@ -92,17 +96,13 @@ struct BoundingRepetitionResult {
     // Separate from mathematical closure/reduction, as for BoundingSequence.
     bool placementMayStrengthen = true;
 };
-// Sequential guarded deletion excludes each whole candidate template. Every
-// accepted deletion preserves closure even with coincident endpoint aliases;
-// the general route reports Partial rather than claiming unique pointwise covers.
-// With C crossing templates and P common ports: O((C+1)*P^3+C^2*P)
-// circuit work in the general case; unit-only deletion uses O(C*(P+C))
-// validation/circuit operations. Ordered memo/directory lookups add logarithmic
-// factors; per-trial body and port snapshot copy costs are charged separately.
-// All trial/final snapshots share at most O(P^2) distinct body-pair queries.
-// Body backend cost and all retained arena gates are charged separately.
-// Original records and schema owners survive unavailable exports. Existing
-// repeated preparation preserves source tuples; nonunit allocation is unavailable.
+// Guarded semantic deduplication gives native records priority. One distance
+// index and the exact last-crossing criterion select crossing covers; child
+// reduction quality is preserved. With C crossing templates, P common ports
+// and endpoint identity size d: O(P^3+C^2*(d+1)) shared circuit work plus child
+// queries. Unit-distance-only tests use child queries without a distance table.
+// No crossing distance or visit count is expanded. Integer bit costs and child
+// backend costs are additional. Original records/owners survive export failure.
 BoundingRepetitionResult repeatBoundingRegion(func::FuncOp function, scf::ForOp loop,
     const SyncInput& input, BoundingRepetitionInput specification);
 } // namespace mlir::pto::frontiersynch

@@ -229,6 +229,8 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/StorageLaneAllocation.cpp
   FrontierSynch/BoundedLifetimeAllocation.cpp
   FrontierSynch/ChainInterface.cpp
+  FrontierSynch/NumericalWeightedRepetition.cpp
+  FrontierSynch/NumericalRepeatedBinding.cpp
   FrontierSynch/ChainComposition.cpp
   FrontierSynch/ChainMergeQueries.cpp
   FrontierSynch/BoundingRegionalAnalysis.cpp

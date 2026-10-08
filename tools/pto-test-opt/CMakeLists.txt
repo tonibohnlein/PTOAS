@@ -138,6 +138,7 @@ add_llvm_executable(pto-sync-input-test
   ExplicitAnalysisDump.cpp
   RotatingAnalysisDump.cpp
   RotatingBoundaryChecks.cpp
+  NumericalWeightedRepetitionChecks.cpp
   GuardedRankChecks.cpp
   RepeatedRegionChecks.cpp
   RepeatedStorageChecks.cpp
