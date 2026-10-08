@@ -5,13 +5,14 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-#include "PTO/Transforms/FrontierSynch/CompactWriterReaderInput.h"
+#include "CompactWriterReaderInputInternal.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "llvm/ADT/DenseSet.h"
 #include <algorithm>
 #include <map>
+#include <set>
 #include <utility>
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -38,8 +39,9 @@ void include(OriginDistanceInterval& aggregate, const OriginDistanceInterval& va
 class Builder {
 public:
     Builder(scf::ForOp loop, const SyncInput& input, const PhaseIndex& index,
+            llvm::ArrayRef<std::vector<const CompoundInstanceElement*>> slots,
             const CompactWriterReaderBindings& bindings)
-        : loop(loop), input(input), index(index), bindings(bindings), model(input.accesses()),
+        : loop(loop), input(input), index(index), slots(slots), bindings(bindings), model(input.accesses()),
           protection(structuredProtection(model)) {}
     CompactWriterReaderInput result;
     bool run();
@@ -60,42 +62,53 @@ private:
     scf::ForOp loop;
     const SyncInput& input;
     const PhaseIndex& index;
+    llvm::ArrayRef<std::vector<const CompoundInstanceElement*>> slots;
     const CompactWriterReaderBindings& bindings;
     const SyncStorageEffects& model;
     StructuredProtection protection;
     llvm::DenseSet<const CompoundInstanceElement*> members;
+    llvm::DenseMap<const CompoundInstanceElement*, uint32_t> phaseSlots, phaseIds;
     std::vector<std::size_t> effects, parents;
     std::vector<uint32_t> sites;
 };
 bool Builder::skeleton()
 {
-    if (!loop) { return fail(CompactInputIssue::InvalidBinding, "compact input requires an original loop"); }
-    const auto contract = recognizeExplicit(*loop.getBody(), index, model);
-    for (const auto& diagnostic : contract.diagnostics) {
-        // Value prerequisites are mapped separately below. All other shared
-        // leaf/structure obligations remain required; geometry is not inspected.
-        if (diagnostic.issue != RecognitionIssue::AdditionalPrerequisite) {
-            return fail(CompactInputIssue::FixedSkeleton, "compact body has an unsupported shared leaf contract");
-        }
-    }
-    auto phases = index.explicitSequence(*loop.getBody());
-    if (failed(phases)) {
-        return fail(CompactInputIssue::FixedSkeleton, "compact input needs a fixed executed single-phase body");
-    }
-    if (phases->size() > UINT32_MAX) {
-        return fail(CompactInputIssue::InvalidBinding, "compact site count exceeds representation");
+    if (!loop || slots.size() > UINT32_MAX) {
+        return fail(CompactInputIssue::InvalidBinding, "compact input needs a representable original loop slot word");
     }
     llvm::DenseSet<const CompoundInstanceElement*> shared(input.instructions().begin(), input.instructions().end());
-    for (const auto* phase : *phases) {
-        if (!phase || !shared.contains(phase) || !members.insert(phase).second) {
-            return fail(CompactInputIssue::InvalidBinding, "compact phases do not belong to the shared input");
+    bool singleton = true;
+    for (uint32_t slot = 0; slot < slots.size(); ++slot) {
+        const auto& alternatives = slots[slot];
+        if (alternatives.empty()) {
+            return fail(CompactInputIssue::InvalidBinding, "compact slot has no executed alternative");
         }
-        result.phases.push_back(phase);
-        result.payloads.push_back({static_cast<uint32_t>(phase->kPipeValue)});
+        std::optional<uint32_t> pipe;
+        for (const auto* phase : alternatives) {
+            if (!phase || !shared.contains(phase) || !phase->elementOp ||
+                !loop->isProperAncestor(phase->elementOp) || !members.insert(phase).second ||
+                phaseIds.size() == UINT32_MAX) {
+                return fail(CompactInputIssue::InvalidBinding,
+                            "compact slot alternatives do not partition shared phases");
+            }
+            const auto current = static_cast<uint32_t>(phase->kPipeValue);
+            if (pipe && *pipe != current) {
+                return fail(CompactInputIssue::InvalidBinding, "compact slot alternatives have different pipes");
+            }
+            pipe = current;
+            phaseSlots[phase] = slot;
+            phaseIds.try_emplace(phase, static_cast<uint32_t>(phaseIds.size()));
+        }
+        singleton &= alternatives.size() == 1;
+        result.phaseAlternatives.push_back(alternatives);
+        result.payloads.push_back({*pipe});
+    }
+    if (singleton) {
+        for (const auto& alternatives : slots) { result.phases.push_back(alternatives.front()); }
     }
     for (const auto* phase : input.instructions()) {
-        if (phase->elementOp->getBlock() == loop.getBody() && !members.contains(phase)) {
-            return fail(CompactInputIssue::InvalidBinding, "compact fixed body omitted a shared phase");
+        if (loop->isProperAncestor(phase->elementOp) && !members.contains(phase)) {
+            return fail(CompactInputIssue::InvalidBinding, "compact body omitted a shared phase");
         }
     }
     return true;
@@ -121,12 +134,36 @@ bool Builder::prerequisites()
         if (index.hasRelevantCarriedState(loop)) {
             return fail(CompactInputIssue::PrerequisiteMapping, "compact carried prerequisites need supplied maps");
         }
-        auto mapped = index.mapPrerequisites(result.phases);
-        if (!mapped.error.empty()) {
-            return fail(CompactInputIssue::PrerequisiteMapping, "compact internal prerequisites need supplied maps");
+        struct Requirement {
+            std::set<std::pair<uint32_t, uint32_t>> nativePairs;
+        };
+        std::map<std::pair<uint32_t, uint32_t>, Requirement> requirements;
+        for (uint32_t target = 0; target < slots.size(); ++target) {
+            for (const auto* alternative : slots[target]) {
+                for (const auto& edge : index.prerequisitesFor(alternative->elementOp)) {
+                    auto source = phaseSlots.find(edge.producer);
+                    if (source == phaseSlots.end()) { continue; }
+                    if (source->second >= target) {
+                        return fail(CompactInputIssue::PrerequisiteMapping,
+                                    "compact internal prerequisites need forward occurrence maps");
+                    }
+                    auto& requirement = requirements[{source->second, target}];
+                    if (edge.native) {
+                        requirement.nativePairs.insert({phaseIds.lookup(edge.producer), phaseIds.lookup(alternative)});
+                    }
+                }
+            }
         }
-        for (auto edge : mapped.demands) { result.additional.push_back({edge.source, edge.target, {true, 0, 0}}); }
-        for (auto edge : mapped.native) { result.native.push_back({edge.source, edge.target, 0}); }
+        for (const auto& [edge, requirement] : requirements) {
+            // A native fact must hold for every alternative pair. Missing or
+            // arm-specific facts remain software upper demands; they are never
+            // promoted into the common native lower graph. No path enumeration.
+            const auto sources = slots[edge.first].size(), targets = slots[edge.second].size();
+            const auto covered = requirement.nativePairs.size();
+            const bool universalNative = covered / sources == targets && covered % sources == 0;
+            if (universalNative) { result.native.push_back({edge.first, edge.second, 0}); }
+            else { result.additional.push_back({edge.first, edge.second, {true, 0, 0}}); }
+        }
     }
     for (auto& edge : result.additional) {
         if (edge.source >= result.payloads.size() || edge.target >= result.payloads.size() || !interval(edge.bounds)) {
@@ -145,17 +182,19 @@ bool Builder::prerequisites()
 }
 bool Builder::collect()
 {
-    for (uint32_t site = 0; site < result.phases.size(); ++site) {
-        for (auto id : model.effectsFor(result.phases[site])) {
-            if (id >= model.effects().size() || !model.effects()[id].memory) {
-                return fail(CompactInputIssue::InvalidBinding, "invalid compact shared effect binding");
+    for (uint32_t site = 0; site < slots.size(); ++site) {
+        for (const auto* phase : slots[site]) {
+            for (auto id : model.effectsFor(phase)) {
+                if (id >= model.effects().size() || !model.effects()[id].memory) {
+                    return fail(CompactInputIssue::InvalidBinding, "invalid compact shared effect binding");
+                }
+                const auto& effect = model.effects()[id];
+                if (effect.rangesMaterialized && effect.ranges.empty()) { continue; }
+                if (effects.size() == UINT32_MAX) {
+                    return fail(CompactInputIssue::InvalidBinding, "compact incidence count exceeds representation");
+                }
+                parents.push_back(parents.size()); effects.push_back(id); sites.push_back(site);
             }
-            const auto& effect = model.effects()[id];
-            if (effect.rangesMaterialized && effect.ranges.empty()) { continue; }
-            if (effects.size() == UINT32_MAX) {
-                return fail(CompactInputIssue::InvalidBinding, "compact incidence count exceeds representation");
-            }
-            parents.push_back(parents.size()); effects.push_back(id); sites.push_back(site);
         }
     }
     // Each original incidence belongs to one access. Across all hazards there
@@ -279,11 +318,35 @@ bool Builder::run()
     return skeleton() && prerequisites() && collect() && classes() && queries();
 }
 } // namespace
+CompactWriterReaderInput detail::buildCompactWriterReaderSlotInput(scf::ForOp loop,
+    const SyncInput& input, const PhaseIndex& index,
+    llvm::ArrayRef<std::vector<const CompoundInstanceElement*>> slots,
+    const CompactWriterReaderBindings& bindings)
+{
+    Builder builder(loop, input, index, slots, bindings);
+    builder.run();
+    return std::move(builder.result);
+}
 CompactWriterReaderInput buildCompactWriterReaderInput(scf::ForOp loop,
     const SyncInput& input, const PhaseIndex& index, const CompactWriterReaderBindings& bindings)
 {
-    Builder builder(loop, input, index, bindings);
-    builder.run();
-    return std::move(builder.result);
+    CompactWriterReaderInput result;
+    auto fail = [&](CompactInputIssue issue, const char* message) {
+        result.issue = issue; result.error = message; return result;
+    };
+    if (!loop) { return fail(CompactInputIssue::InvalidBinding, "compact input requires an original loop"); }
+    const auto contract = recognizeExplicit(*loop.getBody(), index, input.accesses());
+    for (const auto& diagnostic : contract.diagnostics) {
+        if (diagnostic.issue != RecognitionIssue::AdditionalPrerequisite) {
+            return fail(CompactInputIssue::FixedSkeleton, "compact body has an unsupported shared leaf contract");
+        }
+    }
+    auto phases = index.explicitSequence(*loop.getBody());
+    if (failed(phases)) {
+        return fail(CompactInputIssue::FixedSkeleton, "compact input needs a fixed executed single-phase body");
+    }
+    std::vector<std::vector<const CompoundInstanceElement*>> slots;
+    for (const auto* phase : *phases) { slots.push_back({phase}); }
+    return detail::buildCompactWriterReaderSlotInput(loop, input, index, slots, bindings);
 }
 } // namespace mlir::pto::frontiersynch

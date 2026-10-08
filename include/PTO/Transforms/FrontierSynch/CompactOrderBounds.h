@@ -15,7 +15,7 @@ namespace mlir::pto::frontiersynch {
 // Only the factory can establish this fixed, all-sites-present occurrence frame.
 // The arena/context are owned. Original loop, phases and SyncInput are borrowed
 // unchanged, as in OrderContext. One invocation has no enclosing visit tuple;
-// a future composition adapter must preserve its own outer coordinates.
+// enclosing loops require a future composition adapter with outer coordinates.
 class CompactFixedBodyContext {
 public:
     const OrderContext& context() const { return owner; }
@@ -27,6 +27,9 @@ private:
     OrderContext owner;
     std::vector<PeriodicPayload> word;
     RegionExpressions::Id count;
+    friend std::shared_ptr<const CompactFixedBodyContext> captureBalancedCompactFixedBodyContext(
+        scf::ForOp, const SyncInput&, const PhaseIndex&, std::shared_ptr<RegionExpressions>,
+        RegionExpressions::Id, std::string&);
     friend std::shared_ptr<const CompactFixedBodyContext> captureCompactFixedBodyContext(
         scf::ForOp, const SyncInput&, const PhaseIndex&, std::shared_ptr<RegionExpressions>,
         RegionExpressions::Id, std::string&);
@@ -38,6 +41,16 @@ private:
 // and reference callbacks itself. Guarded/nested/macro bodies need another
 // adapter; failure leaves every supplied mathematical analysis untouched.
 std::shared_ptr<const CompactFixedBodyContext> captureCompactFixedBodyContext(
+    scf::ForOp loop, const SyncInput& input, const PhaseIndex& index,
+    std::shared_ptr<RegionExpressions> arena, RegionExpressions::Id exactTrips, std::string& error);
+
+// Balanced branches retain the same all-slots-present word on every visit.
+// The structural recognizer establishes this bijection to executed alternatives.
+// Multi-alternative slots have null concrete anchors/cuts: these views describe
+// abstract slot order only; distributed endpoint preparation is separate.
+// As above, exactTrips is a supplied uniform domain binding. All numerical
+// upper/lower/native facts must hold for EVERY alternative in the same slot.
+std::shared_ptr<const CompactFixedBodyContext> captureBalancedCompactFixedBodyContext(
     scf::ForOp loop, const SyncInput& input, const PhaseIndex& index,
     std::shared_ptr<RegionExpressions> arena, RegionExpressions::Id exactTrips, std::string& error);
 
