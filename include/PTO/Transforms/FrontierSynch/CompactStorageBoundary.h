@@ -21,6 +21,7 @@ struct CompactClassAccessBoundary {
 class CompactClassBoundary;
 using CompactClasses = std::shared_ptr<const CompactClassBoundary>;
 struct CompactClassComposition;
+struct CompactClassRepetition;
 // This upper specification retains EVERY site, without treating uncertain
 // writers as kills. Class IDs are local to this immutable owner; identity across
 // children is established by comparing their ORIGINAL shared effect unions.
@@ -32,6 +33,7 @@ public:
     llvm::ArrayRef<std::vector<std::size_t>> classes() const { return effects; }
     llvm::ArrayRef<CompactClassAccessBoundary> accesses() const { return sites; }
     const std::string& exportError() const { return unavailable; }
+    Block* invocationBlock() const { return invocation; }
     const std::shared_ptr<const CompactOrderBounds>& compact() const { return compactOrders; }
 private:
     CompactClassBoundary() = default;
@@ -40,6 +42,7 @@ private:
     std::vector<std::vector<std::size_t>> effects;
     std::vector<CompactClassAccessBoundary> sites;
     std::string unavailable;
+    Block* invocation = nullptr;
     Operation* firstAnchor = nullptr;
     Operation* lastAnchor = nullptr;
     std::vector<const CompoundInstanceElement*> originalPhases;
@@ -48,9 +51,13 @@ private:
     FiniteRequirements finite;
     FiniteSelection selectedFinite;
     std::shared_ptr<const BoundingSequenceResult> composition;
+    std::shared_ptr<const void> repetition;
     friend CompactClasses captureCompactClassBoundary(scf::ForOp, const PhaseIndex&,
         std::shared_ptr<const CompactFixedBodyContext>, const CompactWriterReaderBindings&, std::string&);
     friend CompactClasses captureFiniteClassBoundary(FiniteRequirements, FiniteSelection, std::string&);
+    friend CompactClassRepetition repeatCompactClassBoundary(func::FuncOp, scf::ForOp, CompactClasses);
+    friend CompactClassComposition composeCompactClassBoundariesInBlock(
+        func::FuncOp, Block&, const SyncInput&, std::vector<CompactClasses>);
     friend CompactClassComposition composeCompactClassBoundaries(
         func::FuncOp, const SyncInput&, std::vector<CompactClasses>);
 };
@@ -91,5 +98,10 @@ struct CompactClassComposition {
 // is asserted, and no endpoint/allocation/realized-excess claim is manufactured.
 CompactClassComposition composeCompactClassBoundaries(
     func::FuncOp function, const SyncInput& input, std::vector<CompactClasses> children);
+// Explicit relative invocation variant. The children must cover an ordered
+// contiguous span of invocation, and every child carries the identical block.
+// No invariance across repeated invocations is implied by this composition.
+CompactClassComposition composeCompactClassBoundariesInBlock(
+    func::FuncOp function, Block& invocation, const SyncInput& input, std::vector<CompactClasses> children);
 } // namespace mlir::pto::frontiersynch
 #endif

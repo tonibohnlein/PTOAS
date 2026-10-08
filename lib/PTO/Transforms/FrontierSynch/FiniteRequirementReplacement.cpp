@@ -52,13 +52,16 @@ bool sameOrigin(const RequirementSnapshot& original, const RequirementSnapshot& 
         snapshot->groups().size() == original->groups().size();
 }
 } // namespace
-FiniteRequirements captureFiniteRequirements(func::FuncOp function, const SyncInput& input,
+FiniteRequirements captureFiniteRequirementsInBlock(func::FuncOp function, Block& invocation, const SyncInput& input,
     llvm::ArrayRef<const CompoundInstanceElement*> phases, std::shared_ptr<RegionExpressions> expressions,
     uint64_t producer, llvm::ArrayRef<RequirementGroupId> atomGroups,
     RequirementGroupId prerequisiteGroup, std::string& error)
 {
     error.clear();
-    if (!function || !expressions || !expressions->constructionError().empty() ||
+    if (!function || function.isDeclaration() || !invocation.getParentOp() ||
+        (invocation.getParentOp() != function.getOperation() &&
+         !function->isProperAncestor(invocation.getParentOp())) ||
+        !expressions || !expressions->constructionError().empty() ||
         atomGroups.size() != input.accesses().cells().size()) {
         error = "finite requirements need a valid arena and a group for every shared cell";
         return {};
@@ -68,12 +71,8 @@ FiniteRequirements captureFiniteRequirements(func::FuncOp function, const SyncIn
             error = "finite requirement occurrence is outside the supplied function";
             return {};
         }
-        for (auto* parent = phase->elementOp->getParentOp(); parent && parent != function.getOperation();
-             parent = parent->getParentOp()) {
-            if (isa<LoopLikeOpInterface>(parent)) {
-                error = "finite requirement frame needs an enclosing-visit adapter for repeated occurrences";
-                return {};
-            }
+        if (phase->elementOp->getBlock() != &invocation) {
+            error = "finite phase is outside its relative invocation block"; return {};
         }
     }
     PhaseIndex index;
@@ -82,6 +81,7 @@ FiniteRequirements captureFiniteRequirements(func::FuncOp function, const SyncIn
         return {};
     }
     auto result = std::shared_ptr<FiniteRequirementFrame>(new FiniteRequirementFrame());
+    result->invocation = &invocation;
     result->analyzed = analyzeExplicit(phases, index, input);
     if (!result->analyzed.error.empty()) { error = result->analyzed.error; return {}; }
     const auto mapped = index.mapPrerequisites(phases);
@@ -115,6 +115,26 @@ FiniteRequirements captureFiniteRequirements(func::FuncOp function, const SyncIn
     result->provenance = captureStorageRequirementProvenance(*owner, producer, result->analyzed.scan,
         atomGroups, prerequisiteGroup, error);
     return result->provenance ? result : FiniteRequirements{};
+}
+FiniteRequirements captureFiniteRequirements(func::FuncOp function, const SyncInput& input,
+    llvm::ArrayRef<const CompoundInstanceElement*> phases, std::shared_ptr<RegionExpressions> expressions,
+    uint64_t producer, llvm::ArrayRef<RequirementGroupId> atomGroups,
+    RequirementGroupId prerequisiteGroup, std::string& error)
+{
+    error.clear();
+    if (!function || function.isDeclaration()) { error = "finite requirements need a defined function"; return {}; }
+    for (const auto* phase : phases) {
+        if (!phase || !phase->elementOp) { error = "finite requirement phase has no original anchor"; return {}; }
+        for (auto* parent = phase->elementOp->getParentOp(); parent; parent = parent->getParentOp()) {
+            if (isa<LoopLikeOpInterface>(parent)) {
+                error = "finite requirement frame needs an enclosing-visit adapter for repeated occurrences";
+                return {};
+            }
+        }
+    }
+    Block* invocation = phases.empty() ? &function.front() : phases.front()->elementOp->getBlock();
+    return captureFiniteRequirementsInBlock(function, *invocation, input, phases, std::move(expressions),
+        producer, atomGroups, prerequisiteGroup, error);
 }
 FiniteReplacementProof certifyFiniteRequirementReplacement(FiniteRequirements frame,
     RequirementSnapshot snapshot, RequirementGroupId group, Expr beta,

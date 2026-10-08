@@ -28,6 +28,9 @@ struct RepeatedRegionState {
     std::vector<RepeatedCrossing> crossings;
     // Raw bridge generators define Q; reduced guards are only endpoint recipes.
     std::vector<RepeatedCrossing> queryCrossings;
+    // Optional certified weighted quotient, owned by its producing adapter.
+    // The callback answers positive-gap body queries in this same arena/domain.
+    std::function<std::optional<Id>(const RegionalEvent&, const RegionalEvent&, Id)> weightedAcross;
     // Only crossing targets are quotient vertices. A unit edge contracts one
     // complete within-body path followed by one crossing; no zero-edge body
     // closure is repeated in the quotient.
