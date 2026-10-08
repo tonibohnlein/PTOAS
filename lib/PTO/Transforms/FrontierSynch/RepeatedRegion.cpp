@@ -71,8 +71,8 @@ bool RepeatedRegionState::closePorts()
     };
     for (const auto& crossing : queryCrossings) { port(crossing.target); }
     const auto count = slots.size();
-    if (count >= UINT32_MAX || (count && count > distances.max_size() / count)) {
-        error = "repeated port matrix size overflow"; return false;
+    if (count >= UINT32_MAX) {
+        error = "repeated port count exceeds representation"; return false;
     }
     // A shortest path after its first crossing visits at most R distinct
     // crossing targets. Thus every finite minimum needs at most R crossings.
@@ -92,7 +92,6 @@ bool RepeatedRegionState::closePorts()
         bindings.emplace_back(conjunct, e().boolean(true));
     }
     if (!bindings.empty()) { portCondition = std::make_unique<RegionExpressions::Substitution>(bindings); }
-    distances.assign(count * count, RegionExpressions::invalid);
     targetCrossings.resize(count);
     for (std::size_t i = 0; i < queryCrossings.size(); ++i) {
         targetCrossings[port(queryCrossings[i].target)].push_back(i);
@@ -117,13 +116,9 @@ std::optional<RepeatedRegionState::Id> RepeatedRegionState::portDistance(std::si
         auto finish = [&](Id answer) { distanceMemo.emplace(key, answer); pending.pop_back(); };
         if (a == b) { finish(zero); continue; }
         if (level == 0) {
-            auto& base = distances[a * count + b];
-            if (base == RegionExpressions::invalid) {
-                auto reachable = crossingStep(slots[a], b);
-                if (!reachable) { error = "repeated body port query unavailable"; return std::nullopt; }
-                base = *reachable;
-            }
-            finish(base); continue;
+            auto reachable = crossingStep(slots[a], b);
+            if (!reachable) { error = "repeated body port query unavailable"; return std::nullopt; }
+            finish(*reachable); continue;
         }
         const auto via = level - 1;
         const Key direct{a, b, via};

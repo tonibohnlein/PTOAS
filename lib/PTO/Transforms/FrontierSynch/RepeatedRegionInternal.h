@@ -36,7 +36,8 @@ struct RepeatedRegionState {
     // closure is repeated in the quotient.
     std::vector<RegionalEvent> slots;
     std::vector<std::vector<std::size_t>> targetCrossings;
-    std::vector<Id> distances;
+    // Base distances and higher recurrence levels are memoized only on demand.
+    // Initializing the interface must not allocate a quadratic port table.
     std::map<std::tuple<std::size_t, std::size_t, std::size_t>, Id> distanceMemo;
     // Every across-visit path uses a boundary port. Factor Boolean conditions
     // necessary for any live port once, and restore them on across queries.

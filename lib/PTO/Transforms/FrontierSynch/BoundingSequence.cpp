@@ -115,8 +115,8 @@ BoundingSequenceSign composeSign(func::FuncOp function, const BoundingSequenceIn
         // Existing reduction preserves closure. It is safe to add requirements
         // to its retained generators and reduce again, before exporting queries.
         // No cached index/query for the old graph may survive this mutation.
-        state.numerical.reset(); state.numericalChildren = {};
-        state.numericalSelection.clear(); state.numericalChainKeys.clear();
+        state.numerical.reset(); state.numericalTree.reset();
+        state.numericalChainKeys.clear();
         state.numericalQueryCost = {}; state.reachabilityCache.clear();
         state.crossingIds.clear();
         if (state.crossings.size() > UINT32_MAX) {
