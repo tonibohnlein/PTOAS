@@ -32,6 +32,7 @@ struct RotatingBoundaryType {
     uint64_t representative = 0;
     std::vector<BoundaryCellSelectors> cells;
     std::map<uint32_t, BoundaryOccurrence> firstPayloads, lastPayloads;
+    std::vector<BoundaryOccurrence> relationshipPorts;
     NumericalChainInterface index;
     std::map<std::tuple<uint32_t, uint64_t, PeriodicEventKind>, uint32_t> eventIds;
 };
@@ -45,6 +46,8 @@ struct RotatingBoundaryCertificate {
     StorageProtectionPolicy storageProtection;
     std::vector<RotatingFragment> fragments;
     std::vector<RotatingBoundaryCell> cells;
+    // Uniform conflict pairs across visits; these are not child prerequisites.
+    std::vector<std::pair<uint32_t, uint32_t>> uniformCrossings;
     // Long types indexed by length modulo period. Construction charges this
     // explicit expansion; it is not polynomial in the encoded period.
     std::vector<RotatingBoundaryType> types;
@@ -59,6 +62,14 @@ struct RotatingBoundaryCertificate {
 RotatingBoundaryCertificate buildRotatingBoundaryCertificate(
     llvm::ArrayRef<PeriodicPayload> payloads, llvm::ArrayRef<RotatingFragment> fragments,
     llvm::ArrayRef<RotatingBoundaryCell> cells, llvm::ArrayRef<PeriodicRecord> prerequisites = {},
+    uint64_t maximumTypes = 256, StorageProtectionPolicy protection = {});
+// Preserve the child's analyzed native and demand relations. The caller proves
+// uniformCrossings from shared effects and supplies fragments whose protection
+// groups describe the enclosing visit scope, independently of the child index.
+RotatingBoundaryCertificate buildRotatingBoundaryCertificate(
+    PeriodicAnalysis quotient, llvm::ArrayRef<RotatingFragment> fragments,
+    llvm::ArrayRef<RotatingBoundaryCell> cells,
+    llvm::ArrayRef<std::pair<uint32_t, uint32_t>> uniformCrossings,
     uint64_t maximumTypes = 256, StorageProtectionPolicy protection = {});
 struct AffineRotatingVisits {
     std::string error;

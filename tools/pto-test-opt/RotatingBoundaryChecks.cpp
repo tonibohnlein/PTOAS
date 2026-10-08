@@ -9,12 +9,14 @@
 // Independent unfolded all-conflict graph, including cross-visit buffer reuse.
 #include "PTO/Transforms/FrontierSynch/RotatingBoundary.h"
 #include "llvm/Support/raw_ostream.h"
+#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include <set>
 #include <tuple>
 namespace fs = mlir::pto::frontiersynch;
 namespace {
 using Pair = std::pair<unsigned, unsigned>;
-bool check(unsigned slots, unsigned stride, unsigned slope, unsigned intercept, unsigned trips, bool scalar)
+bool check(unsigned slots, unsigned stride, unsigned slope, unsigned intercept, unsigned trips,
+           bool scalar, bool relationships = false)
 {
     std::vector<fs::PeriodicPayload> payloads{{0}, {1}, {2}};
     fs::StorageProtectionPolicy protection;
@@ -31,6 +33,14 @@ bool check(unsigned slots, unsigned stride, unsigned slope, unsigned intercept, 
         cells.push_back({0, 0, slot});
     }
     auto certificate = fs::buildRotatingBoundaryCertificate(payloads, effects, cells, {}, 256, protection);
+    if (relationships) {
+        auto extracted = fs::extractRotatingGenerators(payloads, effects, protection);
+        extracted.generators.push_back({1, 2, 0});
+        extracted.generators.push_back({2, 1, 1});
+        auto quotient = fs::analyzePeriodicDemands(payloads, extracted.generators, {{0, 1, 0}});
+        certificate = fs::buildRotatingBoundaryCertificate(
+            std::move(quotient), effects, cells, {{1, 2}, {2, 1}}, 256, protection);
+    }
     if (!certificate.error.empty()) {
         llvm::errs() << certificate.error << "\n";
         return false;
@@ -45,6 +55,7 @@ bool check(unsigned slots, unsigned stride, unsigned slope, unsigned intercept, 
         bool write;
     };
     std::vector<Event> events;
+    std::set<Pair> nativeRequirements;
     std::vector<unsigned> starts, lengths;
     for (unsigned t = 0; t < trips; ++t) {
         starts.push_back(events.size());
@@ -63,6 +74,15 @@ bool check(unsigned slots, unsigned stride, unsigned slope, unsigned intercept, 
             const auto p = payloads[events[i].type].pipe, q = payloads[events[j].type].pipe;
             if (p == q) {
                 graph[2 * i][2 * j] = graph[2 * i + 1][2 * j + 1] = true;
+            }
+            if (relationships && events[i].type == 0 && events[j].type == 1 && j == i + 1) {
+                graph[2 * i + 1][2 * j] = true;
+                nativeRequirements.emplace(i, j);
+            }
+            if (relationships && !protection.protectsScalar(p, q) &&
+                ((events[i].type == 1 && events[j].type == 2) ||
+                 (events[i].type == 2 && events[j].type == 1))) {
+                graph[2 * i + 1][2 * j] = true;
             }
             if (!protection.protectsScalar(p, q) && events[i].slot == events[j].slot &&
                 (events[i].write || events[j].write)) {
@@ -90,7 +110,7 @@ bool check(unsigned slots, unsigned stride, unsigned slope, unsigned intercept, 
             for (unsigned z = 2 * a + 2; z < 2 * b; ++z) {
                 redundant |= graph[2 * a + 1][z] && graph[z][2 * b];
             }
-            if (!redundant) {
+            if (!redundant && !nativeRequirements.count({a, b})) {
                 expected.emplace(a, b);
             }
         }
@@ -117,9 +137,55 @@ bool check(unsigned slots, unsigned stride, unsigned slope, unsigned intercept, 
     }
     return true;
 }
+bool checkRelationshipPorts()
+{
+    // Sites 1 and 2 are neither pipe extrema nor storage extrema.
+    std::vector<fs::PeriodicPayload> payloads{{0}, {0}, {0}, {0}};
+    auto quotient = fs::analyzePeriodicDemands(payloads, {{1, 2, 0}, {2, 1, 1}});
+    auto certificate = fs::buildRotatingBoundaryCertificate(
+        std::move(quotient), {}, {}, {{1, 2}, {2, 1}});
+    if (!certificate.error.empty()) { return false; }
+    auto left = certificate.select(3), right = certificate.select(5);
+    auto crossings = certificate.crossings(left, right);
+    return crossings && crossings->size() == 1 &&
+        crossings->front().source.type == 2 && crossings->front().target.type == 1;
+}
+bool checkProtectionScope()
+{
+    std::vector<fs::PeriodicPayload> payloads{{0}, {0}};
+    auto quotient = fs::analyzePeriodicDemands(payloads, {});
+    const std::vector<fs::RotatingFragment> inconsistent{
+        {0, 0, 0, 2, 1, 0, false, true, 0}, {0, 0, 0, 2, 0, 0, false, true, 0}};
+    if (fs::buildRotatingBoundaryCertificate(quotient, inconsistent, {{0, 0, 0}, {0, 0, 1}}, {}).error.empty()) {
+        return false;
+    }
+    for (unsigned mode = 0; mode < 4; ++mode) {
+        const uint64_t group = 1 | (mode == 0 ? 0 : fs::invocationProtectionBit);
+        std::vector<fs::RotatingFragment> effects{
+            {0, 0, 0, 1, 0, 0, false, true, group},
+            {1, 0, 0, 1, 0, 0, false, true, group}};
+        std::vector<fs::RotatingBoundaryCell> cells{{0, 0, 0}};
+        if (mode == 2) { effects[0].protectionGroup |= fs::protectionResetBit; }
+        if (mode == 3) {
+            // Same endpoints also conflict on an unprotected physical atom.
+            effects.push_back({0, 0, 1, 1, 0, 0, false, true, 0});
+            effects.push_back({1, 0, 1, 1, 0, 0, false, true, 0});
+            cells.push_back({0, 1, 0});
+        }
+        auto certificate = fs::buildRotatingBoundaryCertificate(quotient, effects, cells, {});
+        if (!certificate.error.empty()) { return false; }
+        auto crossings = certificate.crossings(certificate.select(2), certificate.select(3));
+        if (!crossings || crossings->size() != (mode == 1 ? 0U : 1U)) { return false; }
+    }
+    return true;
+}
 } // namespace
 int runRotatingBoundaryChecks()
 {
+    if (!checkRelationshipPorts() || !checkProtectionScope()) {
+        llvm::errs() << "boundary relationship or protection adapter failed\n";
+        return 1;
+    }
     unsigned checked = 0;
     for (unsigned slots = 1; slots <= 3; ++slots) {
         for (unsigned stride = 0; stride <= slots; ++stride) {
@@ -130,7 +196,10 @@ int runRotatingBoundaryChecks()
                             if (!check(slots, stride, slope, intercept, trips, scalar)) {
                                 return 1;
                             }
-                            ++checked;
+                            if (!check(slots, stride, slope, intercept, trips, scalar, true)) {
+                                return 1;
+                            }
+                            checked += 2;
                         }
                     }
                 }

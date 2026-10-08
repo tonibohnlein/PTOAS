@@ -8,6 +8,7 @@
 // Algebraic storage generators without expanding banks or loop iterations.
 #include "PTO/Transforms/FrontierSynch/RotatingBoundary.h"
 #include "PeriodicAnalysisInternal.h"
+#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "llvm/ADT/APInt.h"
 #include <algorithm>
 #include <numeric>
@@ -95,6 +96,9 @@ void indexBoundary(RotatingBoundaryType& type, const PeriodicAnalysis& quotient)
             }
         }
     };
+    for (auto port : type.relationshipPorts) {
+        add(port);
+    }
     for (const auto& cell : type.cells) {
         if (cell.firstWriter) {
             add(*cell.firstWriter);
@@ -185,6 +189,15 @@ RotatingBoundaryType RotatingBoundaryCertificate::select(uint64_t length) const
             }
         }
     }
+    std::set<std::pair<uint32_t, bool>> relationshipSites;
+    for (const auto& [source, target] : uniformCrossings) {
+        if (relationshipSites.emplace(source, true).second) {
+            result.relationshipPorts.push_back({source, 1, true});
+        }
+        if (relationshipSites.emplace(target, false).second) {
+            result.relationshipPorts.push_back({target, 0, false});
+        }
+    }
     indexBoundary(result, quotient);
     return result;
 }
@@ -224,12 +237,45 @@ std::optional<std::vector<BoundaryDemand>> RotatingBoundaryCertificate::crossing
         add(last, first->second, start, start, true);
         add(last, first->second, finish, finish, true);
     }
+    for (const auto& [source, target] : uniformCrossings) {
+        add({source, 1, true}, {target, 0, false}, finish, start, false);
+    }
     for (std::size_t i = 0; i < cells.size(); ++i) {
         const auto& a = left.cells[i];
         const auto& b = right.cells[i];
         if (a.lastWriter) {
             if (b.firstWriter) {
-                add(*a.lastWriter, *b.firstWriter, finish, start, false);
+                // Check this cell's writer witnesses before endpoint deduplication:
+                // another cell may impose the same edge without protection.
+                auto groups = [&](Occ occurrence, uint64_t length) {
+                    std::vector<uint64_t> values;
+                    for (const auto& fragment : fragments) {
+                        if (!fragment.write || fragment.payload != occurrence.type ||
+                            fragment.family != cells[i].family || fragment.atom != cells[i].atom) {
+                            continue;
+                        }
+                        auto visits = progression(fragment, cells[i].slot);
+                        const auto ordinal = occurrence.at(length);
+                        if (visits && ordinal >= visits->first &&
+                            (ordinal - visits->first) % visits->second == 0) {
+                            values.push_back(fragment.protectionGroup);
+                        }
+                    }
+                    return values;
+                };
+                const auto sources = groups(*a.lastWriter, left.representative);
+                const auto targets = groups(*b.firstWriter, right.representative);
+                bool protectedPair = !sources.empty() && !targets.empty();
+                for (auto source : sources) {
+                    for (auto target : targets) {
+                        protectedPair &= (source & invocationProtectionBit) &&
+                            hardwareProtectsConflict(quotient.payloads[a.lastWriter->type].pipe, source,
+                                                     quotient.payloads[b.firstWriter->type].pipe, target);
+                    }
+                }
+                if (!protectedPair) {
+                    add(*a.lastWriter, *b.firstWriter, finish, start, false);
+                }
             }
             for (const auto& [pipe, read] : b.firstReaders) {
                 add(*a.lastWriter, read, finish, start, false);
@@ -267,20 +313,59 @@ RotatingBoundaryCertificate buildRotatingBoundaryCertificate(
     llvm::ArrayRef<RotatingBoundaryCell> cells, llvm::ArrayRef<PeriodicRecord> prerequisites, uint64_t maximumTypes,
     StorageProtectionPolicy protection)
 {
+    for (const auto& fragment : fragments) {
+        if (fragment.protectionGroup) {
+            RotatingBoundaryCertificate failure;
+            failure.error = "protected boundary needs a cross-visit protection adapter";
+            return failure;
+        }
+    }
+    auto extracted = extractRotatingGenerators(payloads, fragments, protection);
+    if (!extracted.error.empty()) {
+        RotatingBoundaryCertificate failure;
+        failure.error = extracted.error;
+        return failure;
+    }
+    extracted.generators.insert(extracted.generators.end(), prerequisites.begin(), prerequisites.end());
+    return buildRotatingBoundaryCertificate(
+        analyzePeriodicDemands(payloads, extracted.generators), fragments, cells, {}, maximumTypes, protection);
+}
+RotatingBoundaryCertificate buildRotatingBoundaryCertificate(
+    PeriodicAnalysis quotient, llvm::ArrayRef<RotatingFragment> fragments,
+    llvm::ArrayRef<RotatingBoundaryCell> cells,
+    llvm::ArrayRef<std::pair<uint32_t, uint32_t>> uniformCrossings,
+    uint64_t maximumTypes, StorageProtectionPolicy protection)
+{
     RotatingBoundaryCertificate out;
     out.storageProtection = protection;
+    out.quotient = std::move(quotient);
+    const auto& payloads = out.quotient.payloads;
     auto fail = [&](const char* message) {
         out.error = message;
         out.types.clear();
         return out;
     };
-    auto extracted = extractRotatingGenerators(payloads, fragments, protection);
-    if (!extracted.error.empty() || payloads.empty()) {
+    if (!out.quotient.error.empty() || payloads.empty()) {
         return fail("invalid rotating boundary input");
     }
+    for (const auto& [source, target] : uniformCrossings) {
+        if (source >= payloads.size() || target >= payloads.size()) {
+            return fail("boundary relationship outside child namespace");
+        }
+    }
+    out.uniformCrossings.assign(uniformCrossings.begin(), uniformCrossings.end());
+    std::map<uint32_t, std::pair<uint64_t, uint64_t>> families;
     for (const auto& f : fragments) {
-        if (f.protectionGroup) {
-            return fail("protected boundary needs a cross-visit protection adapter");
+        if (f.payload >= payloads.size() || !f.slots || (!f.read && !f.write)) {
+            return fail("boundary fragment outside child namespace");
+        }
+        const auto shape = std::make_pair(f.slots, f.stride % f.slots);
+        auto family = families.emplace(f.family, shape);
+        if (!family.second && family.first->second != shape) {
+            return fail("inconsistent rotating boundary family slots or stride");
+        }
+        if (f.protectionGroup && !f.write) {
+            return fail("rotating boundary protection requires writer effects");
         }
         const auto period = f.slots / std::gcd(f.slots, f.stride % f.slots);
         out.refresh = std::max(out.refresh, period);
@@ -301,11 +386,6 @@ RotatingBoundaryCertificate buildRotatingBoundaryCertificate(
         if (slots.size() != f.slots) {
             return fail("boundary cell list does not cover family");
         }
-    }
-    extracted.generators.insert(extracted.generators.end(), prerequisites.begin(), prerequisites.end());
-    out.quotient = analyzePeriodicDemands(payloads, extracted.generators);
-    if (!out.quotient.error.empty()) {
-        return fail("invalid boundary quotient");
     }
     uint64_t maximum = 0;
     for (const auto& row : out.quotient.frontiers) {

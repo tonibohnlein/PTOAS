@@ -126,6 +126,224 @@ bool checkSelectors(const fs::RegionalAnalysis& repeated, func::FuncOp function,
     }
     return !repeated.storageSelectors({pto::AddressSpace::GM, function.getArgument(1), e.constant(0)});
 }
+bool checkPhasedSelectors(const fs::RegionalAnalysis& body, func::FuncOp function, scf::ForOp loop, bool written)
+{
+    auto& e = *body.expressions;
+    using Occurrence = std::pair<uint64_t, uint64_t>; // Original outer visit, inner ordinal.
+    for (uint64_t q : {1U, 2U, 3U}) {
+        for (uint64_t begin = 0; begin <= q + 1; ++begin) {
+            for (uint64_t end = 0; end <= 2 * q + 2; ++end) {
+                auto repeated = fs::repeatPhasedRegions(function, loop,
+                    std::vector<fs::RegionalAnalysis>(q, body), e.constant(end), {}, e.constant(begin));
+                if (!repeated.error.empty() || !repeated.regional.storageSelectors ||
+                    repeated.regional.symbolicStorageEffects != body.symbolicStorageEffects) {
+                    llvm::errs() << "phased symbolic export: " << repeated.error << "\n";
+                    return false;
+                }
+                const auto& out = repeated.regional;
+                if (written && begin < end && out.storageBoundary.empty()) { return false; }
+                for (uint64_t inner : {0U, 1U, 4U}) {
+                    fs::RegionExpressions::Substitution bindings({
+                        {e.input(function.getArgument(3)), e.constant(inner)}});
+                    for (uint64_t byte : {0U, 1U, 3U, 4U, 17U}) {
+                        auto selectors = out.storageSelectors({pto::AddressSpace::GM, function.getArgument(0),
+                                                               e.constant(byte)});
+                        if (!selectors) { return false; }
+                        // Enumerate original visit occurrences independently of
+                        // the period coordinates and the production folds.
+                        std::vector<Occurrence> writers, readers;
+                        for (uint64_t visit = begin; visit < end; ++visit) {
+                            if (written ? byte < 4 && inner > 0 : byte / 4 < inner) {
+                                readers.emplace_back(visit, written ? 0 : byte / 4);
+                            }
+                            if (written && byte < 4) { writers.emplace_back(visit, 0); }
+                        }
+                        auto check = [&](const std::vector<fs::RegionalSelector>& values,
+                                         std::optional<Occurrence> expected, unsigned type) {
+                            std::optional<Occurrence> found;
+                            for (const auto& value : values) {
+                                auto active = e.constantValue(e.substitute(value.present, bindings));
+                                if (!active) { return false; }
+                                if (!*active) { continue; }
+                                if (found || value.event.visits.size() != 1 || value.event.type % 2 != type) {
+                                    return false;
+                                }
+                                auto period = e.constantValue(e.substitute(value.event.visits.front(), bindings));
+                                auto ordinal = e.constantValue(e.substitute(value.event.ordinal, bindings));
+                                if (!period || !ordinal) { return false; }
+                                found = Occurrence{*period * q + value.event.type / 2, *ordinal};
+                            }
+                            return found == expected;
+                        };
+                        auto first = [](const auto& values) -> std::optional<Occurrence> {
+                            return values.empty() ? std::nullopt : std::optional<Occurrence>(values.front());
+                        };
+                        auto last = [](const auto& values) -> std::optional<Occurrence> {
+                            return values.empty() ? std::nullopt : std::optional<Occurrence>(values.back());
+                        };
+                        auto prefix = first(readers), suffix = last(readers);
+                        // A visit's reader precedes its writer. Its prefix
+                        // survives the first writer; its suffix does not.
+                        if (prefix && !writers.empty() && prefix->first > writers.front().first) { prefix.reset(); }
+                        if (suffix && !writers.empty() && suffix->first <= writers.back().first) { suffix.reset(); }
+                        const auto pipe = static_cast<uint32_t>(body.anchors[0].phase->kPipeValue);
+                        if (!check(selectors->firstWriters, first(writers), 1) ||
+                            !check(selectors->lastWriters, last(writers), 1) ||
+                            !check(selectors->firstReaders[pipe], prefix, 0) ||
+                            !check(selectors->lastReaders[pipe], suffix, 0)) { return false; }
+                        if (written && byte < 4 && begin < end) {
+                            bool found = false;
+                            for (const auto& cell : out.storageBoundary) {
+                                if (cell.cell.base != function.getArgument(0) ||
+                                    cell.cell.begin > byte || cell.cell.end <= byte) { continue; }
+                                found = true;
+                                if (!check(cell.firstWriters, first(writers), 1) ||
+                                    !check(cell.lastWriters, last(writers), 1)) { return false; }
+                            }
+                            if (!found) { return false; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+bool distinctPhaseScenario(MLIRContext* context)
+{
+    auto fail = [](StringRef message) {
+        llvm::errs() << "distinct phases: " << message << "\n";
+        return false;
+    };
+    const char* text = R"mlir(module attributes {pto.target_arch = "a3"} {
+      func.func @alternating(%p: !pto.ptr<f32, gm>, %unused: !pto.ptr<f32, gm>, %n: index, %m: index) {
+        %zero = arith.constant 0 : index
+        %one = arith.constant 1 : index
+        %two = arith.constant 2 : index
+        %value = arith.constant 1.0 : f32
+        scf.for %t = %zero to %n step %one {
+          %phase = arith.remui %t, %two : index
+          %reader = arith.cmpi eq, %phase, %zero : index
+          scf.if %reader {
+            scf.for %i = %zero to %m step %one {
+              %read = pto.load %p[%zero] : !pto.ptr<f32, gm> -> f32
+            }
+          } else {
+            pto.store %value, %p[%zero] : !pto.ptr<f32, gm>, f32
+          }
+        }
+        return
+      }
+    })mlir";
+    auto module = parseSourceString<ModuleOp>(text, context);
+    if (!module) { return fail("fixture parse"); }
+    auto function = *module->getOps<func::FuncOp>().begin();
+    SmallVector<scf::ForOp> loops;
+    function.walk<WalkOrder::PreOrder>([&](scf::ForOp loop) { loops.push_back(loop); });
+    pto::SyncInput input(pto::GMAliasPolicy::MayNotAlias);
+    if (loops.size() != 2 || failed(input.build(function))) { return fail("shared input or loop count"); }
+    auto complete = makeBody(input, function, loops[0], loops[1]);
+    if (complete.anchors.size() != 2) { return fail("payload count"); }
+    if (complete.anchors[0].phase->elementOp->getName().getStringRef() != "pto.load" ||
+        complete.anchors[1].phase->elementOp->getName().getStringRef() != "pto.store") {
+        return fail("fixture payload order");
+    }
+    auto arena = complete.expressions;
+    auto& e = *arena;
+    const auto count = e.input(function.getArgument(3)), zero = e.constant(0);
+    std::vector<fs::RegionalAnalysis> phases;
+    for (unsigned which = 0; which < 2; ++which) {
+        fs::RegionalAnalysis phase;
+        phase.expressions = arena; phase.accessModel = &input.accesses();
+        phase.gmAliasPolicy = input.memory().gmPolicy(); phase.capabilities = {true, true, true, false};
+        phase.anchors.push_back(complete.anchors[which]);
+        phase.occurrenceLoops.push_back(complete.occurrenceLoops[which]);
+        const auto pipe = static_cast<uint32_t>(phase.anchors[0].phase->kPipeValue);
+        fs::RegionalSelector first{{0, zero, fs::PeriodicEventKind::Start},
+            which ? e.boolean(true) : e.lt(zero, count)};
+        auto last = first;
+        if (!which) { last.event.ordinal = e.sub(count, e.constant(1)); }
+        phase.firstPayloads[pipe] = {first}; phase.lastPayloads[pipe] = {last};
+        phase.firstSitePayloads[0] = {first};
+        for (auto effect : input.accesses().effectsFor(phase.anchors[0].phase)) {
+            phase.accessBoundary.push_back({effect, first, last, false});
+            phase.symbolicStorageEffects.push_back(effect);
+        }
+        phase.presence = [arena, count, which](fs::RegionalEvent event) -> std::optional<fs::RegionExpressions::Id> {
+            if (event.type || !event.visits.empty()) { return std::nullopt; }
+            return which ? arena->eq(event.ordinal, arena->constant(0)) : arena->lt(event.ordinal, count);
+        };
+        phase.reachability = [original = complete.reachability, which](fs::RegionalEvent a, fs::RegionalEvent b) {
+            if (a.type || b.type) { return std::optional<fs::RegionExpressions::Id>{}; }
+            a.type = which; b.type = which;
+            return original(a, b);
+        };
+        phase.storageSelectors = [arena, first, last, pipe, which, base = function.getArgument(0)]
+            (fs::RegionalByteAddress address) -> std::optional<fs::RegionalStorageSelectors> {
+            if (address.space != pto::AddressSpace::GM || address.base != base) { return std::nullopt; }
+            auto a = first, b = last;
+            const auto inside = arena->lt(address.offset, arena->constant(4));
+            a.present = arena->land(a.present, inside); b.present = arena->land(b.present, inside);
+            fs::RegionalStorageSelectors result;
+            if (which) { result.firstWriters = {a}; result.lastWriters = {b}; }
+            else { result.firstReaders[pipe] = {a}; result.lastReaders[pipe] = {b}; }
+            return result;
+        };
+        phases.push_back(std::move(phase));
+    }
+    for (uint64_t begin = 0; begin < 4; ++begin) {
+        for (uint64_t end = begin; end < 7; ++end) {
+            auto repeated = fs::repeatPhasedRegions(function, loops[0], phases, e.constant(end), {}, e.constant(begin));
+            if (!repeated.error.empty()) { llvm::errs() << repeated.error << "\n"; return false; }
+            auto values = repeated.regional.storageSelectors({pto::AddressSpace::GM, function.getArgument(0), zero});
+            if (!values) { return fail("byte callback unavailable"); }
+            std::optional<uint64_t> first, last;
+            for (uint64_t visit = begin; visit < end; ++visit) {
+                if (visit % 2) { if (!first) { first = visit; } last = visit; }
+            }
+            auto check = [&](const auto& selectors, std::optional<uint64_t> expected) {
+                std::optional<uint64_t> found;
+                for (const auto& selector : selectors) {
+                    auto active = e.constantValue(selector.present);
+                    if (!active) { return false; }
+                    if (!*active) { continue; }
+                    if (found || selector.event.visits.size() != 1) { return false; }
+                    auto period = e.constantValue(selector.event.visits.front());
+                    if (!period) { return false; }
+                    found = 2 * *period + selector.event.type;
+                }
+                return found == expected;
+            };
+            if (!check(values->firstWriters, first) || !check(values->lastWriters, last)) {
+                llvm::errs() << "distinct phases interval [" << begin << "," << end << ")\n";
+                return fail("first/last writer mismatch");
+            }
+            if (begin <= 1 && end > 2) {
+                // These actual load/store payloads share PIPE_S. Their
+                // protected memory hazard needs native issue order, not an
+                // additional completion-to-issue synchronization edge.
+                auto reaches = fs::regionalReachability(repeated.regional,
+                    {1, zero, fs::PeriodicEventKind::Start, {zero}},
+                    {0, zero, fs::PeriodicEventKind::Start, {e.constant(1)}});
+                fs::RegionExpressions::Substitution bindings({{count, e.constant(1)}});
+                if (!reaches || e.constantValue(e.substitute(*reaches, bindings)) != 1) {
+                    return fail("native issue-order wrap unavailable");
+                }
+            }
+        }
+    }
+    auto writerExtrema = phases[1].accessBoundary;
+    phases[1].accessBoundary.clear();
+    auto missing = fs::repeatPhasedRegions(function, loops[0], phases, e.constant(3));
+    if (missing.error.empty()) { return fail("missing writer extrema admitted"); }
+    phases[1].deferredAccessBoundary = std::move(writerExtrema);
+    phases[1].symbolicStorageEffects.clear(); phases[1].storageSelectors = {};
+    auto deferred = fs::repeatPhasedRegions(function, loops[0], phases, e.constant(3));
+    if (deferred.error.find("no exported or deferred effect extrema") == std::string::npos) {
+        return fail("unconsumed deferred sibling authorized coverage");
+    }
+    return true;
+}
 bool scenario(MLIRContext* context, unsigned kind)
 {
     std::string text(source);
@@ -183,11 +401,7 @@ bool scenario(MLIRContext* context, unsigned kind)
         };
     }
     if (kind == 0 || kind == 8) {
-        // Phased interval export needs separate clipping of the symbolic callback
-        // and finite atoms. A nonzero begin must not silently retain visit zero.
-        auto phased = fs::repeatPhasedRegions(function, loops[0], {body}, body.expressions->constant(5),
-            {}, body.expressions->constant(2));
-        if (phased.error.find("symbolic") == std::string::npos) { return false; }
+        if (!checkPhasedSelectors(body, function, loops[0], kind == 8)) { return false; }
     }
     for (uint64_t trips : {0U, 1U, 3U}) {
         auto repeated = fs::repeatInvariantRegion(function, loops[0], body, body.expressions->constant(trips));
@@ -293,6 +507,10 @@ module attributes {pto.target_arch = "a3"} {
 } // namespace
 bool runRepeatedReadOnlyStorageChecks(MLIRContext* context)
 {
+    if (!distinctPhaseScenario(context)) {
+        llvm::errs() << "distinct phased symbolic storage failed\n";
+        return false;
+    }
     for (unsigned kind = 0; kind < 10; ++kind) {
         if (!scenario(context, kind)) {
             llvm::errs() << "read-only symbolic repetition scenario " << kind << " failed\n";

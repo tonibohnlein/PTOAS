@@ -37,7 +37,7 @@ std::optional<SmallVector<SyncStorageCell>> support(const RegionalAnalysis& body
 }
 } // namespace
 std::string materializeRepeatedSymbolicStorage(
-    RegionalAnalysis& body, scf::ForOp loop, RegionExpressions::Id trips)
+    RegionalAnalysis& body, scf::ForOp loop, RegionExpressions::Id trips, ArrayRef<std::size_t> periodEffects)
 {
     if (!loop || !body.expressions || !body.storageSelectors || !body.accessModel ||
         trips >= body.expressions->size()) {
@@ -68,7 +68,8 @@ std::string materializeRepeatedSymbolicStorage(
             [&](std::size_t symbolic) { return body.accessModel->mayConflict(id, symbolic); });
         if (!relevant) { continue; }
         auto matches = [id](const RegionalAccessBoundary& access) { return access.effect == id; };
-        if (!llvm::any_of(body.accessBoundary, matches) && !llvm::any_of(body.deferredAccessBoundary, matches)) {
+        if (!llvm::any_of(body.accessBoundary, matches) && !llvm::any_of(body.deferredAccessBoundary, matches) &&
+            !llvm::is_contained(periodEffects, id)) {
             return "repeated symbolic conflict has no exported or deferred effect extrema";
         }
     }

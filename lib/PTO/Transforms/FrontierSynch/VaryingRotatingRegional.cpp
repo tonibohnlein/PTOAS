@@ -121,6 +121,9 @@ struct State : std::enable_shared_from_this<State> {
     }
     void collect(const RotatingBoundaryType& t)
     {
+        for (auto occurrence : t.relationshipPorts) {
+            add(occurrence);
+        }
         for (const auto& cell : t.cells) {
             if (cell.firstWriter) {
                 add(*cell.firstWriter);
