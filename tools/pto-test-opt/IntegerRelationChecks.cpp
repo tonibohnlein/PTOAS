@@ -137,6 +137,108 @@ bool feasibilityAndWitnessChecks()
     auto unbounded = System::create(1, {}, {congruence({3}, -1, 5)});
     return found && succeeded(unbounded) && !unbounded->isEmpty();
 }
+bool latticeWitnessOracle(const System& source, int64_t lower, int64_t upper, uint64_t& checked)
+{
+    auto witnesses = source.eliminateWithWitness(0);
+    if (failed(witnesses) || !boundedProjection(source, {1}, {{lower, upper}, {-8, 8}}, checked)) {
+        return false;
+    }
+    for (int64_t y = -9; y <= 9; ++y) {
+        bool expected = false, found = false;
+        for (int64_t x = lower; x <= upper; ++x) {
+            expected |= contains(source, {Integer(x), Integer(y)});
+        }
+        for (const auto& witness : *witnesses) {
+            if (!contains(witness.domain, {Integer(y)})) { continue; }
+            const auto numerator = evaluate(witness.numerator.coefficients, {Integer(y)}) +
+                                   witness.numerator.constant;
+            if (numerator % witness.denominator != 0 ||
+                !contains(source, {numerator / witness.denominator, Integer(y)})) { return false; }
+            found = true;
+        }
+        ++checked;
+        if (found != expected) { return false; }
+    }
+    return true;
+}
+bool unaryLatticeChecks(uint64_t& checked)
+{
+    const std::vector<std::vector<Congruence>> cases{
+        {congruence({1, 0}, -2, 7)},
+        {congruence({3, 0}, 2, 7)},
+        {congruence({6, 0}, 4, 10)},
+        {congruence({6, 0}, 3, 10)},
+        {congruence({1, 0}, 1, 4), congruence({1, 0}, 3, 6)},
+        {congruence({1, 0}, 0, 4), congruence({1, 0}, 1, 6)},
+        {congruence({-3, 0}, -2, 7), congruence({1, 1}, 1, 3)},
+        {congruence({1, 0}, 0, 1)}};
+    for (const auto& congruences : cases) {
+        auto source = System::create(2, {row({-1, 0}, 10), row({1, 0}, 8),
+            row({1, -2}, 3), row({0, -1}, 8), row({0, 1}, 8)}, congruences);
+        if (failed(source) || !latticeWitnessOracle(*source, -10, 8, checked)) { return false; }
+    }
+    // Actual normalization kernels use raw IVs in [0,4096) with steps 1024
+    // and 2048. Projection must keep symbolic retained bounds and produce only
+    // four/two candidate witnesses, rather than one candidate per byte step.
+    for (int64_t step : {1024, 2048}) {
+        auto source = System::create(2, {row({-1, 0}, 0), row({1, 0}, 4095),
+            row({1, -1}, 0)}, {congruence({1, 0}, 0, step)});
+        if (failed(source)) { return false; }
+        auto witnesses = source->eliminateWithWitness(0);
+        if (failed(witnesses) || witnesses->size() != static_cast<uint64_t>(4096 / step)) { return false; }
+        for (std::size_t i = 0; i < witnesses->size(); ++i) {
+            const auto& witness = (*witnesses)[i];
+            if (witness.denominator != 1 || witness.numerator.coefficients != Point{Integer(0)} ||
+                witness.numerator.constant != Integer(static_cast<int64_t>(i) * step)) { return false; }
+        }
+    }
+    // A huge finite interval must retain the cheaper Cooper construction.
+    Integer huge(1);
+    for (unsigned i = 0; i < 200; ++i) { huge *= 2; }
+    const auto origin = -huge + 7;
+    auto shifted = System::create(1, {{{Integer(-1)}, -origin}, {{Integer(1)}, origin + 4095}},
+                                  {{{Integer(1)}, origin, Integer(2048)}});
+    if (failed(shifted)) { return false; }
+    auto shiftedWitnesses = shifted->eliminateWithWitness(0);
+    if (failed(shiftedWitnesses) || shiftedWitnesses->size() != 2 ||
+        (*shiftedWitnesses)[0].numerator.constant != origin ||
+        (*shiftedWitnesses)[1].numerator.constant != origin + 2048) { return false; }
+    auto wide = System::create(1, {{{Integer(-1)}, huge}, {{Integer(1)}, huge}},
+                               {congruence({1}, 1, 3)});
+    if (failed(wide)) { return false; }
+    auto witnesses = wide->eliminateWithWitness(0);
+    return succeeded(witnesses) && witnesses->size() <= 3;
+}
+bool unaryResidueInclusionChecks()
+{
+    Integer huge(1);
+    for (unsigned i = 0; i < 100; ++i) { huge *= 2; }
+    auto point = System::create(2, {row({1, 0}, -7), row({-1, 0}, 7),
+                                   row({0, 1}, 2), row({0, -1}, -2)});
+    auto matching = System::create(2, {}, {{{Integer(-3), Integer(5)}, Integer(31), huge}});
+    auto different = System::create(2, {}, {{{Integer(-3), Integer(5)}, Integer(32), huge}});
+    if (failed(point) || failed(matching) || failed(different) ||
+        !point->isSubsetOf(*matching) || point->isSubsetOf(*different)) { return false; }
+    auto lattice = System::create(2, {}, {congruence({1, 0}, 1, 4096), congruence({0, 1}, 2, 2048)});
+    auto sum = System::create(2, {}, {congruence({1, -1}, -1, 1024)});
+    auto wrongSum = System::create(2, {}, {congruence({1, -1}, 0, 1024)});
+    if (failed(lattice) || failed(sum) || failed(wrongSum) ||
+        !lattice->isSubsetOf(*sum) || lattice->isSubsetOf(*wrongSum)) { return false; }
+    // The bounds do not fix x, but their intersection with its grid does.
+    auto singletonGrid = System::create(1, {row({-1}, 9), row({1}, -5)}, {congruence({1}, 1, 4)});
+    auto singletonResidue = System::create(1, {}, {{{Integer(1)}, Integer(-7), huge}});
+    if (failed(singletonGrid) || failed(singletonResidue) ||
+        !singletonGrid->isSubsetOf(*singletonResidue)) { return false; }
+    // Unary information cannot establish this coupled invariant: retain the
+    // complete solver, including both its positive and negative answers.
+    auto coupled = System::create(2, {row({1, -1}, 1), row({-1, 1}, -1)});
+    auto coupledResidue = System::create(2, {}, {congruence({1, -1}, 1, 3)});
+    auto coupledWrong = System::create(2, {}, {congruence({1, -1}, 0, 3)});
+    auto empty = System::create(2, {row({0, 0}, -1)});
+    return succeeded(coupled) && succeeded(coupledResidue) && succeeded(coupledWrong) && succeeded(empty) &&
+           coupled->isSubsetOf(*coupledResidue) && !coupled->isSubsetOf(*coupledWrong) &&
+           empty->isSubsetOf(*coupledWrong);
+}
 bool remapAndDifferenceChecks(uint64_t& checked)
 {
     auto different = System::create(2, {row({1, -1}, -1)});
@@ -171,6 +273,8 @@ int runIntegerRelationChecks()
     uint64_t checked = 0;
     if (!projectionChecks(checked)) { llvm::errs() << "integer projection oracle differs\n"; return 1; }
     if (!feasibilityAndWitnessChecks()) { llvm::errs() << "integer feasibility/witness check failed\n"; return 1; }
+    if (!unaryLatticeChecks(checked)) { llvm::errs() << "integer unary lattice check failed\n"; return 1; }
+    if (!unaryResidueInclusionChecks()) { llvm::errs() << "integer unary residue inclusion failed\n"; return 1; }
     if (!remapAndDifferenceChecks(checked)) { llvm::errs() << "integer remap/difference check failed\n"; return 1; }
     llvm::outs() << "integer relation exactness passed " << checked << " bounded points\n";
     return 0;
