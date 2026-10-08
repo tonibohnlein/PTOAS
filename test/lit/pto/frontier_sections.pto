@@ -7,7 +7,13 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-test-opt --pto-frontier-analysis %s | FileCheck %s --check-prefix=LOGICAL
 // RUN: pto-test-opt --pto-frontier-analysis --pto-frontier-allocate='eligible-ids=0,1,2,3,4,5' %s | FileCheck %s --check-prefix=PHYSICAL
+// RUN: pto-test-opt --pto-frontier-analysis %s > %t.logical
+// RUN: sed 's/vector = {/vector = {pto.test_metadata = "ignored", /' %t.logical > %t.metadata
+// RUN: pto-test-opt --pto-frontier-allocate='eligible-ids=0,1,2,3,4,5' %t.metadata | FileCheck %s --check-prefix=PHYSICAL --implicit-check-not=pto.test_metadata
+// RUN: sed 's/plan = 0 : i64/plan = -1 : i64/' %t.metadata > %t.invalid
+// RUN: not pto-test-opt --pto-frontier-allocate='eligible-ids=0,1,2,3,4,5' %t.invalid 2>&1 | FileCheck %s --check-prefix=INVALID
 // Reduced shared-buffer sequence: section boundaries do not reset lifetimes.
+// Extra plan metadata is ignored; malformed allocation records still fail.
 module attributes {pto.target_arch = "a3"} {
   func.func @sections(%ptr: !pto.ptr<f32, gm>) {
     %zero = arith.constant 0 : index
@@ -43,3 +49,4 @@ module attributes {pto.target_arch = "a3"} {
 // PHYSICAL: pto.wait_flag
 // PHYSICAL: pto.tabs
 // PHYSICAL-NOT: pto.logical_
+// INVALID: unsupported endpoint-family metadata version or plan identity
