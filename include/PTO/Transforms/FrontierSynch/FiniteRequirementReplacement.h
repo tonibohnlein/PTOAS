@@ -26,11 +26,16 @@ public:
     const RequirementSnapshot& original() const { return provenance; }
     const ExplicitAnalysis& analysis() const { return analyzed; }
     llvm::ArrayRef<StorageGenerator> native() const { return nativeEdges; }
+    Block* invocationBlock() const { return invocation; }
 private:
     FiniteRequirementFrame() = default;
     RequirementSnapshot provenance;
+    Block* invocation = nullptr;
     ExplicitAnalysis analyzed;
     std::vector<StorageGenerator> nativeEdges;
+    friend FiniteRequirements captureFiniteRequirementsInBlock(func::FuncOp, Block&, const SyncInput&,
+        llvm::ArrayRef<const CompoundInstanceElement*>, std::shared_ptr<RegionExpressions>,
+        uint64_t, llvm::ArrayRef<RequirementGroupId>, RequirementGroupId, std::string&);
     friend FiniteRequirements captureFiniteRequirements(func::FuncOp, const SyncInput&,
         llvm::ArrayRef<const CompoundInstanceElement*>, std::shared_ptr<RegionExpressions>,
         uint64_t, llvm::ArrayRef<RequirementGroupId>, RequirementGroupId, std::string&);
@@ -42,6 +47,13 @@ private:
 // Phases form a complete contiguous explicit span, with no enclosing loop. This
 // is one invocation's frame; enclosing conditional presence belongs to its owner.
 FiniteRequirements captureFiniteRequirements(func::FuncOp function, const SyncInput& input,
+    llvm::ArrayRef<const CompoundInstanceElement*> phases, std::shared_ptr<RegionExpressions> expressions,
+    uint64_t producer, llvm::ArrayRef<RequirementGroupId> atomGroups,
+    RequirementGroupId prerequisiteGroup, std::string& error);
+// Explicit relative body invocation, for a separately qualified repetition.
+// Phases belong directly to invocation; no dynamic occurrences are unfolded.
+// Capturing this frame alone establishes no equality across invocations.
+FiniteRequirements captureFiniteRequirementsInBlock(func::FuncOp function, Block& invocation, const SyncInput& input,
     llvm::ArrayRef<const CompoundInstanceElement*> phases, std::shared_ptr<RegionExpressions> expressions,
     uint64_t producer, llvm::ArrayRef<RequirementGroupId> atomGroups,
     RequirementGroupId prerequisiteGroup, std::string& error);

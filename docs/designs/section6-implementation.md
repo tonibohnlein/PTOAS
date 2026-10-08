@@ -47,12 +47,13 @@ if needed for machine safety, is recorded separately from class rejection.
 
 Milestone 1 has passed two independent reviews, focused validation, and the
 complete paired corpus comparison. This milestone is complete; Section 6
-implementation continues with milestone 7. Milestone 1 is committed as
+implementation continues with milestone 8. Milestone 1 is committed as
 `3890123bb`; milestone 2 has passed validation and two independent reviews.
 Milestone 2 is committed as `b0d71f7a5`.
 Milestone 3 is committed as `ad83e6c2d`.
 Milestone 4 is committed as `a5d5af0db`.
 Milestone 5 is committed as `a213bf6ae`.
+Milestone 6 is committed as `a6c03f40b`.
 The previous six completed milestones are recorded in
 `section5-recognizer-update.md`.
 
@@ -314,3 +315,46 @@ rectangle and hierarchy cases, large-count arithmetic, compact rank oracles,
 and mixed finite/compact alias, unknown, disjoint and scalar-protected fixtures.
 The common fixed/conditional input regressions passed. The changed-code check's
 101 brace findings were confirmed as braced bodies; whitespace checks passed.
+
+## Milestone 7 implementation
+
+Bounding repetition retains the original phase and crossing records and builds
+both selected graphs on the same invariant period domain. A weighted min-plus
+query circuit accounts for positive crossings of arbitrary encoded distance and
+zero-distance aliases within the body. Checked distances distinguish unreachable
+paths from finite paths beyond the numerical coordinate range. Sequential
+whole-template exclusion preserves closure under guarded aliases; this general
+reducer reports partial reduction rather than claiming pointwise covers.
+Its ledger includes the temporary deletion solvers, not only the final index.
+
+Scoped factories capture a single invocation within its original lexical block.
+Root factories retain their scope restrictions. The automatic class producer
+composes explicit spans and counted children, proves invariant inner counts and
+control, and retains all original access sites and effect unions. Complete
+next-visit crossings cover later visits through native order without uncertain
+kills. Original inner coordinates remain in nested endpoint identities.
+Varying inner counts and missing phase-less or carried prerequisite interfaces
+retain completed relative-body mathematics and report the unmet qualification.
+
+The excess counter sweeps only supplied distance thresholds using an ordered
+skyline, in O(r log(r+2)) work per rectangle union. Its general and compressed
+chain interfaces include complete periods and partial prefixes, with checked
+256-bit counts. The compressed directory remains a qualified producer input;
+this milestone does not automatically synthesize it for arbitrary regions.
+Selected-order excess remains distinct from actual barrier placement order.
+
+Two independent peers accepted each subset and integration. Serial dependency
+compilation and both tool links passed. Independent checks passed 58,880 weighted
+nested event comparisons, two- and three-level class summaries, threshold/grid
+and finite graph excess oracles, zero trips, partial periods, binary distance
+2^40, UINT64_MAX counts, and malformed/foreign invocation frames. Existing
+regional regressions passed 123,552 event queries, 27,264 phased queries and
+1,583 allocation envelopes, alongside fixed/conditional bounds and boundary
+replacement tests. All 72 brace-check findings were confirmed as braced bodies;
+whitespace and other changed-code checks passed.
+
+These new checks validate mathematical queries, not inserted physical command
+traces. Repeated preparation preserves arbitrary-distance matching guards and
+source coordinates, but its existing allocation export is withheld for nonunit
+crossings. Missing endpoint or allocation exports preserve the computed graphs.
+Production fallback registration and physical integration remain milestone 8.

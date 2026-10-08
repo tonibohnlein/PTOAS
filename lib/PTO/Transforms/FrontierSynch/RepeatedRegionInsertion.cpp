@@ -54,7 +54,9 @@ class RepeatedPreparation
         {
             return failure();
         }
-        if (childAllocation) {
+        const bool unitCrossings = llvm::all_of(state.crossings,
+            [](const RepeatedCrossing& crossing) { return crossing.displacement == 1; });
+        if (childAllocation && unitCrossings) {
             plan->regionalAllocation = repeatedRegionalAllocation(state, *childAllocation, allocationCrossings);
         }
         renameFamilies();
@@ -225,7 +227,7 @@ class RepeatedPreparation
             family.sourcePipe = p;
             family.targetPipe = q;
             family.local = p == q;
-            family.displacement = 1;
+            family.displacement = crossing.displacement;
             family.sourceCut = a.after;
             family.targetCut = b.before;
             family.members.push_back(
@@ -239,11 +241,14 @@ class RepeatedPreparation
                 }
                 const auto &event = publish ? crossing.source : crossing.target;
                 auto cut = publish ? a.after.before : b.before.before;
-                auto boundary =
-                    publish ? e().lt(*current, e().sub(trips, e().constant(1))) : e().lt(e().constant(0), *current);
+                const auto distance = e().constant(crossing.displacement);
+                // Both guards prove the matching coordinate arithmetic is in
+                // range. Its total modular value off-guard is never executed.
+                auto boundary = publish ? e().land(e().lt(distance, trips),
+                    e().lt(*current, e().sub(trips, distance))) :
+                    e().land(e().le(distance, *current), e().lt(*current, trips));
                 if (!state.typePhases.empty()) {
-                    auto other = publish ? e().add(*current, e().constant(1)) :
-                                           e().sub(*current, e().constant(1));
+                    auto other = publish ? e().add(*current, distance) : e().sub(*current, distance);
                     auto type = publish ? crossing.target.type : crossing.source.type;
                     auto full = e().div(state.originalTrips, e().constant(state.phaseCount));
                     auto tail = e().rem(state.originalTrips, e().constant(state.phaseCount));
@@ -285,7 +290,7 @@ class RepeatedPreparation
                 endpoint.piece = plan->endpoints.size();
                 if (p != q)
                 {
-                    auto identity = emit(publish ? *current : e().sub(*current, e().constant(1)), cut);
+                    auto identity = emit(publish ? *current : e().sub(*current, distance), cut);
                     auto member = emit(e().constant(record), cut);
                     if (failed(identity) || failed(member))
                     {

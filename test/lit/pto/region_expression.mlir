@@ -12,6 +12,8 @@
 // RUN: pto-sync-input-test --control-origin-distance-checks
 // RUN: pto-sync-input-test --compact-writer-reader-checks
 // RUN: pto-sync-input-test --compact-lower-facts-checks
+// RUN: pto-sync-input-test --boundary-excess-checks
+// RUN: pto-sync-input-test --repeated-excess-checks
 // RUN: pto-sync-input-test --periodic-excess-checks
 // CHECK: regional expression checks passed
 

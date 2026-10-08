@@ -109,6 +109,9 @@ add_llvm_executable(pto-sync-input-test
   FiniteRequirementReplacementChecks.cpp
   CompactStorageBoundaryChecks.cpp
   CompactBoundaryRanksChecks.cpp
+  BoundingRepetitionChecks.cpp
+  RepeatedExcessChecks.cpp
+  CompactClassRepetitionChecks.cpp
   GeneralArithmeticAllocationChecks.cpp
   MixedStrideChecks.cpp
   PhysicalExecutedCounterChecks.cpp

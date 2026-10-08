@@ -100,8 +100,9 @@ CompactClasses captureCompactClassBoundary(scf::ForOp loop, const PhaseIndex& in
         result->originalPhases.insert(result->originalPhases.end(), alternatives.begin(), alternatives.end());
     }
     result->firstAnchor = result->lastAnchor = loop;
+    result->invocation = domain->invocationBlock();
     auto function = loop->getParentOfType<func::FuncOp>();
-    if (!function || loop->getBlock() != &function.front()) {
+    if (!function || loop->getBlock() != result->invocation) {
         result->unavailable = "class composition needs an enclosing conditional-presence adapter";
     }
     if (llvm::any_of(canonical.anchors, [](const auto& anchor) { return !anchor.phase; })) {
@@ -118,6 +119,7 @@ CompactClasses captureFiniteClassBoundary(FiniteRequirements frame, FiniteSelect
     }
     auto result = std::shared_ptr<CompactClassBoundary>(new CompactClassBoundary());
     result->finite = frame; result->selectedFinite = selection;
+    result->invocation = frame->invocationBlock();
     result->order.context = frame->original()->context();
     result->order.provenance = selection ? selection->snapshot() : frame->original();
     auto query = finiteView(frame, error);
@@ -154,7 +156,7 @@ CompactClasses captureFiniteClassBoundary(FiniteRequirements frame, FiniteSelect
         result->firstAnchor = analysis.phases.front()->elementOp;
         result->lastAnchor = analysis.phases.back()->elementOp;
         auto function = result->firstAnchor->getParentOfType<func::FuncOp>();
-        if (!function || result->firstAnchor->getBlock() != &function.front()) {
+        if (!function || result->firstAnchor->getBlock() != result->invocation) {
             result->unavailable = "finite class composition needs an enclosing conditional-presence adapter";
         }
     }
@@ -226,8 +228,8 @@ CompactClassCrossings collectCompactClassCrossings(llvm::ArrayRef<CompactClasses
     if (!arena.constructionError().empty()) { result.error = arena.constructionError(); }
     return result;
 }
-CompactClassComposition composeCompactClassBoundaries(
-    func::FuncOp function, const SyncInput& input, std::vector<CompactClasses> children)
+CompactClassComposition composeCompactClassBoundariesInBlock(
+    func::FuncOp function, Block& invocation, const SyncInput& input, std::vector<CompactClasses> children)
 {
     CompactClassComposition result;
     result.original = children;
@@ -237,6 +239,10 @@ CompactClassComposition composeCompactClassBoundaries(
     }
     specification.lower.bridges = specification.upper.bridges = BoundingSequenceBridges::SuppliedCrossings;
     specification.guarantee = InputOrderGuarantee::InputOrderCovering;
+    if (!invocation.getParentOp() || (function && invocation.getParentOp() != function.getOperation() &&
+        !function->isProperAncestor(invocation.getParentOp()))) {
+        result.error = "class invocation block is outside its original function";
+    }
     llvm::DenseSet<const CompoundInstanceElement*> members;
     Operation* first = nullptr; Operation* last = nullptr;
     uint64_t types = 0, classes = 0;
@@ -250,6 +256,7 @@ CompactClassComposition composeCompactClassBoundaries(
         selected.placementMayStrengthen = true;
         selected.lowerExports = selected.upperExports = child->nativeExports();
         specification.children.push_back(std::move(selected));
+        if (child->invocationBlock() != &invocation) { result.error = "class children have different invocations"; }
         if (!child->exportError().empty() && result.error.empty()) { result.error = child->exportError(); }
         types += child->bounds().context->domain().anchors.size(); classes += child->classes().size();
         if (types > UINT32_MAX || classes > UINT32_MAX) { result.error = "class composition identity overflow"; }
@@ -257,8 +264,8 @@ CompactClassComposition composeCompactClassBoundaries(
             if (!members.insert(phase).second) { result.error = "class composition repeats an original occurrence"; }
         }
         if (!child->firstAnchor) { continue; }
-        if (!function || function.isDeclaration() || child->firstAnchor->getBlock() != &function.front() ||
-            child->lastAnchor->getBlock() != &function.front() ||
+        if (!function || function.isDeclaration() || child->firstAnchor->getBlock() != &invocation ||
+            child->lastAnchor->getBlock() != &invocation ||
             (last && (last->getBlock() != child->firstAnchor->getBlock() ||
                       !last->isBeforeInBlock(child->firstAnchor)))) {
             result.error = "class composition requires ordered sibling spans in one original invocation";
@@ -268,7 +275,7 @@ CompactClassComposition composeCompactClassBoundaries(
     }
     if (result.error.empty() && function && !function.isDeclaration() && first && last) {
         for (const auto* phase : input.instructions()) {
-            auto* root = rootAnchor(phase->elementOp, &function.front());
+            auto* root = rootAnchor(phase->elementOp, &invocation);
             if (root && (root == first || first->isBeforeInBlock(root)) &&
                 (root == last || root->isBeforeInBlock(last)) && !members.contains(phase)) {
                 result.error = "class composition omitted an intervening original payload";
@@ -293,6 +300,7 @@ CompactClassComposition composeCompactClassBoundaries(
     }
     auto out = std::shared_ptr<CompactClassBoundary>(new CompactClassBoundary());
     out->composition = result.mathematical; out->order = result.mathematical->bounds;
+    out->invocation = &invocation;
     out->selectors = *result.mathematical->upper.regional;
     out->firstAnchor = first; out->lastAnchor = last;
     uint32_t typeOffset = 0, classOffset = 0;
@@ -309,5 +317,15 @@ CompactClassComposition composeCompactClassBoundaries(
     }
     result.boundary = std::move(out);
     return result;
+}
+CompactClassComposition composeCompactClassBoundaries(
+    func::FuncOp function, const SyncInput& input, std::vector<CompactClasses> children)
+{
+    if (!function || function.isDeclaration()) {
+        CompactClassComposition result;
+        result.original = std::move(children); result.error = "class composition needs a defined function";
+        return result;
+    }
+    return composeCompactClassBoundariesInBlock(function, function.front(), input, std::move(children));
 }
 } // namespace mlir::pto::frontiersynch

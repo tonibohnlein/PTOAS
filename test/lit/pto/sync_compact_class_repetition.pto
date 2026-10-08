@@ -1,0 +1,63 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --compact-class-repetition-checks %s
+!tile = !pto.tile_buf<vec, 4x8xf32>
+module {
+  func.func @scope_other() { return }
+  func.func @nested_uniform(%m: index, %n: index) attributes {test.class_repeat, test.repeat_early} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %base = arith.constant 0 : i64
+    %far = arith.constant 4096 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    %b = pto.alloc_tile addr = %far : !tile
+    scf.for %i = %c0 to %m step %c1 {
+      %v0 = pto.tgetval ins(%a, %c0 : !tile, index) outs : f32
+      %limit = arith.addi %n, %c0 : index
+      scf.for %j = %c0 to %limit step %c2 {
+        pto.texpands ins(%one : f32) outs(%a : !tile)
+        %v1 = pto.tgetval ins(%a, %c0 : !tile, index) outs : f32
+      }
+      pto.texpands ins(%one : f32) outs(%b : !tile)
+    }
+    return
+  }
+  func.func @three_levels(%m: index, %n: index) attributes {test.class_repeat} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %base = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %c0 to %m step %c1 {
+      %v0 = pto.tgetval ins(%a, %c0 : !tile, index) outs : f32
+      scf.for %j = %c0 to %n step %c1 {
+        %v1 = pto.tgetval ins(%a, %c0 : !tile, index) outs : f32
+        scf.for %k = %c0 to %n step %c1 {
+          pto.texpands ins(%one : f32) outs(%a : !tile)
+        }
+      }
+    }
+    return
+  }
+  func.func @varying_inner(%m: index, %n: index) attributes {test.class_repeat, test.repeat_reject} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %base = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    scf.for %i = %c0 to %m step %c1 {
+      %limit = arith.addi %i, %c1 : index
+      scf.for %j = %c0 to %limit step %c1 {
+        pto.texpands ins(%one : f32) outs(%a : !tile)
+      }
+    }
+    return
+  }
+}

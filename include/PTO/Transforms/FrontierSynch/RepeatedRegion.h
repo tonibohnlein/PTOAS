@@ -11,9 +11,10 @@
 #include "PTO/Transforms/FrontierSynch/RegionalAnalysis.h"
 namespace mlir::pto::frontiersynch {
 struct RepeatedCrossing {
-    RegionalEvent source, target; // Body coordinates; target is in the next visit.
+    RegionalEvent source, target; // Body coordinates; target is displacement periods later.
     RegionExpressions::Id guard = RegionExpressions::invalid;
     bool native = false;
+    uint64_t displacement = 1; // Positive body-period distance; legacy producers use one.
 };
 struct RepeatedRegionState;
 struct RepeatedRegionAnalysis {
