@@ -199,6 +199,94 @@ IntegerSystem substitute(const IntegerSystem& system, unsigned coordinate,
 }
 }
 namespace {
+bool unary(llvm::ArrayRef<BoundInteger> coefficients, unsigned coordinate)
+{
+    if (coefficients[coordinate] == 0) { return false; }
+    for (unsigned i = 0; i < coefficients.size(); ++i) {
+        if (i != coordinate && coefficients[i] != 0) { return false; }
+    }
+    return true;
+}
+// The callers divide by the gcd first, so the reduced coefficient is a unit.
+BoundInteger inverseUnit(const BoundInteger& coefficient, const BoundInteger& modulus)
+{
+    BoundInteger remainder = mod(coefficient, modulus), next = modulus;
+    BoundInteger inverse(1), nextInverse(0);
+    while (next != 0) {
+        const auto quotient = remainder / next;
+        auto difference = remainder - quotient * next;
+        remainder = next;
+        next = std::move(difference);
+        difference = inverse - quotient * nextInverse;
+        inverse = nextInverse;
+        nextInverse = std::move(difference);
+    }
+    return mod(inverse, modulus);
+}
+struct UnaryLattice {
+    std::optional<BoundInteger> lower, upper;
+    BoundInteger residue{0}, modulus{1};
+    bool empty = false;
+    void intersect(const IntegerCongruence& atom, unsigned coordinate)
+    {
+        const auto& coefficient = atom.coefficients[coordinate];
+        const auto divisor = gcd(magnitude(coefficient), atom.modulus);
+        if (mod(atom.residue, divisor) != 0) { empty = true; return; }
+        const auto incomingModulus = atom.modulus / divisor;
+        const auto incomingResidue = mod((atom.residue / divisor) *
+            inverseUnit(coefficient / divisor, incomingModulus), incomingModulus);
+        const auto common = gcd(modulus, incomingModulus);
+        const auto difference = incomingResidue - residue;
+        if (mod(difference, common) != 0) { empty = true; return; }
+        const auto quotientModulus = incomingModulus / common;
+        const auto multiplier = mod((difference / common) *
+            inverseUnit(modulus / common, quotientModulus), quotientModulus);
+        residue += modulus * multiplier;
+        modulus *= quotientModulus;
+        residue = mod(residue, modulus);
+    }
+};
+UnaryLattice unaryLattice(const IntegerSystem& system, unsigned coordinate)
+{
+    UnaryLattice result;
+    for (const auto& row : system.constraints()) {
+        if (!unary(row.coefficients, coordinate)) { continue; }
+        const auto& coefficient = row.coefficients[coordinate];
+        if (coefficient > 0) {
+            const auto bound = floorDiv(row.bound, coefficient);
+            if (!result.upper || bound < *result.upper) { result.upper = bound; }
+        } else {
+            const auto bound = -floorDiv(row.bound, -coefficient);
+            if (!result.lower || bound > *result.lower) { result.lower = bound; }
+        }
+    }
+    for (const auto& atom : system.congruences()) {
+        if (unary(atom.coefficients, coordinate)) { result.intersect(atom, coordinate); }
+        if (result.empty) { break; }
+    }
+    return result;
+}
+std::optional<BoundInteger> fixedResidue(const IntegerSystem& system, const IntegerCongruence& atom)
+{
+    BoundInteger residue(0);
+    for (unsigned coordinate = 0; coordinate < system.dimensions(); ++coordinate) {
+        const auto& coefficient = atom.coefficients[coordinate];
+        if (coefficient == 0) { continue; }
+        const auto lattice = unaryLattice(system, coordinate);
+        if (lattice.empty) { return std::nullopt; }
+        if (lattice.lower && lattice.upper) {
+            const auto first = *lattice.lower + mod(lattice.residue - *lattice.lower, lattice.modulus);
+            if (first > *lattice.upper) { return std::nullopt; }
+            if (first + lattice.modulus > *lattice.upper) {
+                residue += coefficient * first;
+                continue;
+            }
+        }
+        if (mod(coefficient * lattice.modulus, atom.modulus) != 0) { return std::nullopt; }
+        residue += coefficient * lattice.residue;
+    }
+    return mod(residue, atom.modulus);
+}
 // Projection collects every candidate. Feasibility can stop at its first
 // satisfying candidate without allocating the rest of the residue family.
 template<class Visitor>
@@ -233,6 +321,26 @@ bool visitEliminationCandidates(const IntegerSystem& system, unsigned coordinate
     const bool fromLower = !bounds.lower.empty();
     auto endpoints = fromLower ? bounds.lower : bounds.upper;
     if (endpoints.empty()) { endpoints.push_back({Coefficients(system.dimensions() - 1), BoundInteger(0)}); }
+    // Raw loop coordinates may have a large step but only a few admissible
+    // values. Compare exact candidate counts; never expand a larger interval
+    // than the Cooper endpoint/residue enumeration would already inspect.
+    const auto lattice = unaryLattice(system, coordinate);
+    if (lattice.empty) { return true; }
+    if (lattice.lower && lattice.upper) {
+        const auto first = *lattice.lower + mod(lattice.residue - *lattice.lower, lattice.modulus);
+        if (first > *lattice.upper) { return true; }
+        const auto count = (*lattice.upper - first) / lattice.modulus + 1;
+        BoundInteger existingCount(0);
+        for (std::size_t i = 0; i < endpoints.size(); ++i) { existingCount += period; }
+        if (count < existingCount) {
+            for (auto value = first; value <= *lattice.upper; value += lattice.modulus) {
+                IntegerAffine numerator{Coefficients(system.dimensions() - 1), value};
+                auto domain = substitute(system, coordinate, numerator, BoundInteger(1));
+                if (!visit(std::move(domain), std::move(numerator), BoundInteger(1))) { return false; }
+            }
+            return true;
+        }
+    }
     // Put t=scale*y. All inequalities on t have unit coefficients, and all
     // divisibilities are periodic in t with this period. Any nonempty bounded
     // interval has a satisfying t within one period above its maximal lower
@@ -400,6 +508,15 @@ bool IntegerSystem::isSubsetOf(const IntegerSystem& other) const
                 return known.coefficients == atom.coefficients && known.modulus == atom.modulus &&
                        known.residue == atom.residue;
             })) { continue; }
+        // Projection can encode a grid coordinate by a fixed value instead
+        // of retaining its congruence row. Unary lattice facts can establish
+        // the affine residue without testing every other residue separately.
+        // isEmpty() above established that this source has a witness, so a
+        // different fixed residue also disproves inclusion immediately.
+        if (const auto residue = fixedResidue(*this, atom)) {
+            if (*residue != atom.residue) { return false; }
+            continue;
+        }
         for (BoundInteger residue(0); residue < atom.modulus; ++residue) {
             if (residue == atom.residue) { continue; }
             const auto complement = validSystem(dimensionCount, {}, {{atom.coefficients, residue, atom.modulus}});

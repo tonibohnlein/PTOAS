@@ -112,6 +112,16 @@ std::string prepareRepeatedSymbolicStorage(RegionalAnalysis& body, scf::ForOp lo
     if (!loop || !body.expressions || trips >= body.expressions->size() || body.expressions->isBoolean(trips)) {
         return "symbolic repetition requires an original loop and integer trip expression";
     }
+    if (body.symbolicStorageEffects.empty()) {
+        // A byte-query callback can describe an already complete finite
+        // boundary. It is an additional export, not a symbolic-storage debt.
+        // The caller retains the original callback and lifts it after ordinary
+        // repetition validates and composes this finite crossing view.
+        body.storageSelectors = {};
+        body.symbolicStorage.reset();
+        body.arithmeticRelations.reset();
+        return {};
+    }
     llvm::DenseSet<std::size_t> readers;
     auto error = validate(body, loop, readers);
     if (!error.empty()) { return error; }
