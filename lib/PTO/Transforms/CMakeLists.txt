@@ -234,6 +234,9 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/BoundingRegionalAnalysis.cpp
   FrontierSynch/RequirementProvenance.cpp
   FrontierSynch/CertifiedPartialReduction.cpp
+  FrontierSynch/ControlOriginDistances.cpp
+  FrontierSynch/CompactWriterReader.cpp
+  FrontierSynch/CompactWriterReaderInput.cpp
   FrontierSynch/RotatingBoundary.cpp
   FrontierSynch/RotatingExtraction.cpp
   FrontierSynch/ExplicitAnalysis.cpp

@@ -95,6 +95,9 @@ add_llvm_executable(pto-sync-input-test
   BoundingRegionalChecks.cpp
   RequirementProvenanceChecks.cpp
   CertifiedPartialReductionChecks.cpp
+  ControlOriginDistancesChecks.cpp
+  CompactWriterReaderChecks.cpp
+  CompactWriterReaderInputChecks.cpp
   GeneralArithmeticAllocationChecks.cpp
   MixedStrideChecks.cpp
   PhysicalExecutedCounterChecks.cpp

@@ -47,8 +47,9 @@ if needed for machine safety, is recorded separately from class rejection.
 
 Milestone 1 has passed two independent reviews, focused validation, and the
 complete paired corpus comparison. This milestone is complete; Section 6
-implementation continues with milestone 3. Milestone 1 is committed as
+implementation continues with milestone 4. Milestone 1 is committed as
 `3890123bb`; milestone 2 has passed validation and two independent reviews.
+Milestone 2 is committed as `b0d71f7a5`.
 The previous six completed milestones are recorded in
 `section5-recognizer-update.md`.
 
@@ -159,3 +160,38 @@ binding and ownership cases, and 2,144 independent partial-reduction graph
 valuations. The compliance check's 92 brace findings were regex false positives;
 balanced-parenthesis inspection confirmed braced bodies. Whitespace checks
 passed. These components are not yet a dispatched Section 6 fallback.
+
+## Milestone 3 implementation
+
+The fixed-body constructor indexes the next definite overwrite in expected
+`O(m+z)` work. It intersects explicit source-specific distance bounds, keeps
+the latest selected source per consumer and source pipe, reduces those records,
+replaces only surviving local sources by the consumer's immediate pipe
+predecessor, and reduces again. It exports the final selected-order quotient,
+constant-shift logical endpoint recipes, original candidate ownership and local
+replacement mappings. The separate two-sweep entry point is qualified only
+when no source-specific filtering applies.
+
+The control-origin backend computes exact interval bounds in its finite
+abstraction using 0/1 shortest paths, reachable SCCs and condensation longest
+paths. Definite overwrites remove through edges while preserving input queries.
+Positive-cycle descendants have infinite upper distance. This backend does not
+by itself prove source presence or executable matching for skipped payloads.
+
+The fixed-body input adapter consumes shared modeled effects and existing
+protection/prerequisite analysis. Uniform numeric ranges preserve disjointness;
+unknown geometry and unresolved cross-visit relationships join wider classes.
+No range is promoted to a definite overwrite. Native scalar prerequisites stay
+native, and crossing prerequisites remain separate boundary obligations.
+Effect-pair comparisons are charged explicitly; shared protection and original
+syntax traversal are separate prepasses.
+
+Serial compilation and both tool links passed. Independent oracles passed
+667 control-distance cases and 2,056 finite graph envelopes, including zero
+trips, kills, filtered sources, delayed local replacement, startup loss,
+permanent native prerequisites and binary distance `2^40`. Shared-input checks
+passed five fixtures covering numeric disjointness, cross-visit aliasing,
+unresolved geometry, scalar prerequisites and structural rejection. Two static
+reviewers accepted production and integration. The compliance checker's 73
+brace findings were confirmed to have braced bodies; whitespace checks passed.
+These constructors are not yet connected to the production fallback dispatcher.

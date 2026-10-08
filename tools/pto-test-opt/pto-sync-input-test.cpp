@@ -346,10 +346,19 @@ int runNumericalHierarchyChecks(func::FuncOp function);
 int runBoundingRegionalChecks(func::FuncOp function, const pto::SyncInput& input);
 int runRequirementProvenanceChecks(func::FuncOp function, const pto::SyncInput& input);
 int runCertifiedPartialReductionChecks();
+int runControlOriginDistanceChecks();
+int runCompactWriterReaderChecks();
+int runCompactWriterReaderInputChecks(func::FuncOp function, const pto::SyncInput& input);
 int runPeriodicSharedAllocationChecks();
 bool runRepeatedReadOnlyStorageChecks(MLIRContext*);
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
 int main(int argc, char **argv) {
+  if (argc == 2 && StringRef(argv[1]) == "--control-origin-distance-checks") {
+    return runControlOriginDistanceChecks();
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--compact-writer-reader-checks") {
+    return runCompactWriterReaderChecks();
+  }
   if (argc == 2 && StringRef(argv[1]) == "--certified-partial-reduction-checks") {
     return runCertifiedPartialReductionChecks();
   }
@@ -443,6 +452,7 @@ int main(int argc, char **argv) {
   const bool expressionChecks = argc == 3 && StringRef(argv[1]) == "--region-expression-checks";
   const bool hierarchyChecks = argc == 3 && StringRef(argv[1]) == "--numerical-hierarchy-checks";
   const bool boundingChecks = argc == 3 && StringRef(argv[1]) == "--bounding-contract-checks";
+  const bool compactInputChecks = argc == 3 && StringRef(argv[1]) == "--compact-input-checks";
   const bool finiteOverlayInsertion = argc == 3 && StringRef(argv[1]) == "--finite-overlay-insertion";
   const bool finiteGuardedAnalysis = argc == 3 && StringRef(argv[1]) == "--finite-guarded-analysis";
   const bool sequenceAnalysis = argc == 3 && StringRef(argv[1]) == "--sequence-analysis";
@@ -451,7 +461,8 @@ int main(int argc, char **argv) {
   if (argc != 2 && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !recognition &&
       !numericAnalysis && !insertLogical &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
-      !expressionChecks && !hierarchyChecks && !boundingChecks && !preparedInsertion && !finiteOverlayInsertion &&
+      !expressionChecks && !hierarchyChecks && !boundingChecks && !compactInputChecks &&
+      !preparedInsertion && !finiteOverlayInsertion &&
       !expectFailure && !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip &&
       !regionChecks && !phaseCopies && !step0 && !existing) {
     llvm::errs() << "usage: pto-sync-input-test "
@@ -460,6 +471,7 @@ int main(int argc, char **argv) {
                  "--recognize|--numeric-analysis|--insert-logical|--prepared-insertion-checks|--insertion-trace|"
                  "--finite-guarded-analysis|--finite-overlay-insertion|--region-expression-checks|--sequence-analysis|"
                  "--structured-trace|--physical-trace|--numerical-hierarchy-checks|--bounding-contract-checks|"
+                 "--compact-input-checks|"
                  "--arithmetic|--explicit-analysis|--rotating-analysis|--roundtrip|"
                  "--region-contract-checks|"
                  "--step0-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
@@ -477,7 +489,7 @@ int main(int argc, char **argv) {
                          storageEffects || recognition || numericAnalysis || insertLogical ||
                          insertionTrace || physicalTrace ||
                          structuredTrace || sequenceAnalysis || finiteGuardedAnalysis || finiteOverlayInsertion ||
-                         expressionChecks || hierarchyChecks || boundingChecks ||
+                         expressionChecks || hierarchyChecks || boundingChecks || compactInputChecks ||
                          preparedInsertion || arithmetic ||
                          aliasChecks || roundtrip || regionChecks || phaseCopies || step0 || existing;
   const auto filename = argv[hasOption ? 2 : 1];
@@ -647,6 +659,10 @@ int main(int argc, char **argv) {
       if (runBoundingRegionalChecks(function, input) || runRequirementProvenanceChecks(function, input)) {
         return 1;
       }
+      continue;
+    }
+    if (compactInputChecks) {
+      if (runCompactWriterReaderInputChecks(function, input)) { return 1; }
       continue;
     }
     if (rotatingAnalysis) {
