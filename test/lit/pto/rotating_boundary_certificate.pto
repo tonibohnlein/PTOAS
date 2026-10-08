@@ -12,5 +12,5 @@
 // RUN: pto-sync-input-test --resolved-lifetime-stream-checks
 // RUN: pto-sync-input-test --bounded-lifetime-allocation-checks
 // RUN: pto-sync-input-test --rotating-boundary-checks | FileCheck %s
-// CHECK: rotating boundary certificates: 720 unfolded comparisons passed
+// CHECK: rotating boundary certificates: 1440 unfolded comparisons passed
 module {}

@@ -9,6 +9,7 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_REPEATEDPHASES_H
 #include "PTO/Transforms/FrontierSynch/RepeatedRegion.h"
 namespace mlir::pto::frontiersynch {
+struct RepeatedStorageTypesResult;
 // Explicit phase views are charged descriptions, not unfolded loop iterations.
 // Callers certify period-invariant control/effects and internal prerequisites.
 // Each view retains original cuts. The result's first enclosing coordinate is
@@ -17,10 +18,13 @@ namespace mlir::pto::frontiersynch {
 // Endpoint identities remain absolute; both ends of each handoff are filtered.
 // maximumLength, when supplied, is a caller-certified bound on the interval's
 // executed visits. A bound <=1 removes the inter-period query/recipe graph.
+// Optional joint storage evidence preserves actual visit-owned maps while only
+// their inter-visit conflicts are projected out of the periodic crossing graph.
 RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loop,
     std::vector<RegionalAnalysis> phases, RegionExpressions::Id trips,
     ArrayRef<scf::ForOp> enclosing = {},
     RegionExpressions::Id begin = RegionExpressions::invalid,
-    std::optional<uint64_t> maximumLength = std::nullopt);
+    std::optional<uint64_t> maximumLength = std::nullopt,
+    std::shared_ptr<const RepeatedStorageTypesResult> storage = {});
 } // namespace mlir::pto::frontiersynch
 #endif

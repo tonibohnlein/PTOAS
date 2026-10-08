@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Byte-level owner oracle with overlapping read/write footprints and holes.
 #include "PTO/Transforms/FrontierSynch/RepeatedStorage.h"
+#include "PTO/Transforms/FrontierSynch/RepeatedPhases.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/DisjointTranslations.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
@@ -345,6 +346,181 @@ module attributes {pto.target_arch = "a3"} {
     }
     return true;
 }
+// Individually owned alternatives can still alias different visits. Exercise
+// the joint proof with equal owners, a one-visit shift, and unequal strides.
+bool alternativeOwners(MLIRContext* context)
+{
+    for (unsigned kind = 0; kind < 3; ++kind) {
+        std::string text = R"mlir(module attributes {pto.target_arch = "a3"} {
+          func.func @alternatives(%p: !pto.ptr<f32, gm>, %n: index) {
+            %z = arith.constant 0 : index
+            %one = arith.constant 1 : index
+            %four = arith.constant 4 : index
+            %two = arith.constant 2 : index
+            %v = arith.constant 1.0 : f32
+            scf.for %t = %z to %n step %one {
+              %a = arith.muli %t, %four overflow<nsw> : index
+              SECOND
+              pto.store %v, %p[%a] : !pto.ptr<f32, gm>, f32
+              pto.store %v, %p[%b] : !pto.ptr<f32, gm>, f32
+            }
+            return
+          }
+        })mlir";
+        const std::string second = kind == 0 ? "%b = arith.addi %a, %z overflow<nsw> : index" :
+            kind == 1 ? "%b = arith.addi %a, %four overflow<nsw> : index" :
+                        "%b = arith.muli %t, %two overflow<nsw> : index";
+        text.replace(text.find("SECOND"), 6, second);
+        auto module = parseSourceString<ModuleOp>(text, context);
+        if (!module) { return false; }
+        auto function = module->lookupSymbol<func::FuncOp>("alternatives");
+        scf::ForOp loop;
+        function.walk([&](scf::ForOp found) { loop = found; });
+        pto::SyncInput input(pto::GMAliasPolicy::MayNotAlias);
+        if (failed(input.build(function))) { return false; }
+        auto full = bodyFor(input, loop);
+        if (full.anchors.size() != 2) { return false; }
+        std::vector<fs::RegionalAnalysis> types;
+        for (unsigned i = 0; i < 2; ++i) {
+            auto body = full;
+            body.anchors = {full.anchors[i]}; body.occurrenceLoops = {{}};
+            body.accessBoundary.clear(); body.firstPayloads.clear(); body.lastPayloads.clear();
+            for (auto access : full.accessBoundary) {
+                if (access.first.event.type != i) { continue; }
+                access.first.event.type = access.last.event.type = 0;
+                body.accessBoundary.push_back(access);
+                auto pipe = static_cast<uint32_t>(body.anchors.front().phase->kPipeValue);
+                body.firstPayloads[pipe] = {access.first}; body.lastPayloads[pipe] = {access.last};
+            }
+            // Both separate proofs must succeed, including the unsafe unions.
+            if (!fs::recognizeRepeatedStorage(body, loop, full.expressions->constant(4)).storage) { return false; }
+            types.push_back(std::move(body));
+        }
+        auto joint = fs::recognizeRepeatedStorageTypes(types, loop, full.expressions->constant(4));
+        if (joint.error.empty() != (kind == 0)) { llvm::errs() << joint.error << "\n"; return false; }
+    }
+    return true;
+}
+// One finite reader and one omitted shared reader overlap on the same pipe.
+// Their union must export exactly one extremum, also across partial periods.
+bool phasedReadOnlyOverlap(MLIRContext* context)
+{
+    constexpr const char* text = R"mlir(module attributes {pto.target_arch = "a3"} {
+      func.func @readers(%p: !pto.ptr<f32, gm>, %n: index) {
+        %z = arith.constant 0 : index
+        %one = arith.constant 1 : index
+        scf.for %t = %z to %n step %one {
+          %a = pto.load %p[%z] : !pto.ptr<f32, gm> -> f32
+          %b = pto.load %p[%z] : !pto.ptr<f32, gm> -> f32
+        }
+        return
+      }
+    })mlir";
+    auto module = parseSourceString<ModuleOp>(text, context);
+    if (!module) { return false; }
+    auto function = module->lookupSymbol<func::FuncOp>("readers");
+    scf::ForOp loop;
+    function.walk([&](scf::ForOp found) { loop = found; });
+    pto::SyncInput input(pto::GMAliasPolicy::MayNotAlias);
+    if (failed(input.build(function))) { return false; }
+    auto body = bodyFor(input, loop);
+    if (body.anchors.size() != 2 || body.accessBoundary.size() != 2) {
+        llvm::errs() << "readonly phase test shape: " << body.anchors.size() << "/" << body.accessBoundary.size() << "\n";
+        return false;
+    }
+    auto& e = *body.expressions;
+    const auto pipe = static_cast<uint32_t>(body.anchors.front().phase->kPipeValue);
+    body.accessBoundary.front().representedByCells = true;
+    fs::RegionalStorageBoundary cell;
+    cell.cell = {pto::AddressSpace::GM, 0, 4, function.getArgument(0)};
+    cell.firstReaders[pipe] = {body.accessBoundary.front().first};
+    cell.lastReaders[pipe] = {body.accessBoundary.front().last};
+    body.storageBoundary.push_back(cell);
+    for (uint64_t trips : {0U, 1U, 2U, 3U, 5U}) {
+        for (uint64_t begin = 0; begin <= trips; ++begin) {
+            std::vector<fs::RegionalAnalysis> phases{body, body};
+            auto proof = std::make_shared<fs::RepeatedStorageTypesResult>(
+                fs::recognizeRepeatedStorageTypes(phases, loop, e.constant(trips)));
+            if (!proof->error.empty()) { llvm::errs() << proof->error << "\n"; return false; }
+            auto repeated = fs::repeatPhasedRegions(function, loop, phases, e.constant(trips), {},
+                e.constant(begin), std::nullopt, proof);
+            if (!repeated.error.empty() || !repeated.regional.storageSelectors) {
+                llvm::errs() << repeated.error << "\n"; return false;
+            }
+            for (uint64_t byte : {0U, 3U, 4U}) {
+                auto result = repeated.regional.storageSelectors(
+                    {pto::AddressSpace::GM, function.getArgument(0), e.constant(byte)});
+                auto expected = [&](bool first) -> std::optional<std::pair<uint32_t, uint64_t>> {
+                    if (byte >= 4 || begin == trips) { return std::nullopt; }
+                    const auto visit = first ? begin : trips - 1;
+                    return std::make_pair(uint32_t(2 * (visit % 2) + (first ? 0 : 1)), visit / 2);
+                };
+                if (!result || !readers(result->firstReaders, e, expected(true)) ||
+                    !readers(result->lastReaders, e, expected(false))) {
+                    llvm::errs() << "readonly phase selectors: trips=" << trips << " begin=" << begin
+                                 << " byte=" << byte << " query=" << bool(result) << "\n";
+                    if (result) {
+                        for (auto* side : {&result->firstReaders, &result->lastReaders}) {
+                            for (const auto& [pipe, values] : *side) {
+                                for (const auto& value : values) {
+                                    llvm::errs() << " type=" << value.event.type << " present="
+                                        << e.constantValue(value.present).value_or(99) << " visits="
+                                        << value.event.visits.size();
+                                    for (auto visit : value.event.visits) {
+                                        llvm::errs() << ":" << e.constantValue(visit).value_or(99);
+                                    }
+                                    llvm::errs() << "\n";
+                                }
+                            }
+                        }
+                    }
+                    return false;
+                }
+            }
+            // Equal type counts do not authorize a certificate for reordered
+            // anchor identities or a different access/alias context.
+            // An empty domain can discard every omitted family and needs no
+            // ownership projection. Identity binding applies to retained proof.
+            for (unsigned mismatch = 0; proof->storage.front() && mismatch < 3; ++mismatch) {
+                auto invalid = phases;
+                if (mismatch == 0) { std::swap(invalid[0].anchors[0], invalid[0].anchors[1]); }
+                if (mismatch == 1) { invalid[0].accessModel = nullptr; }
+                if (mismatch == 2) { invalid[0].gmAliasPolicy = pto::GMAliasPolicy::MayAlias; }
+                auto rejected = fs::repeatPhasedRegions(function, loop, std::move(invalid),
+                    e.constant(trips), {}, e.constant(begin), std::nullopt, proof);
+                if (rejected.error.empty()) {
+                    llvm::errs() << "readonly phase accepted mismatch=" << mismatch << " trips=" << trips << "\n";
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+bool residualProjection(MLIRContext* context)
+{
+    for (bool mixed : {false, true}) {
+        std::string text(source);
+        auto shared = text.find("      %shared =");
+        text.replace(shared, text.find('\n', shared) - shared,
+            "      pto.store %value, %q[%zero] : !pto.ptr<f32, gm>, f32");
+        if (!mixed) {
+            auto first = text.find("      %old =");
+            text.erase(first, text.find("      pto.store %value, %q", first) - first);
+        }
+        auto module = parseSourceString<ModuleOp>(text, context);
+        if (!module) { return false; }
+        auto function = module->lookupSymbol<func::FuncOp>("storage");
+        scf::ForOp loop;
+        function.walk([&](scf::ForOp found) { loop = found; });
+        pto::SyncInput input(pto::GMAliasPolicy::MayNotAlias);
+        if (failed(input.build(function))) { return false; }
+        auto body = bodyFor(input, loop);
+        auto result = fs::recognizeRepeatedStorageTypes({body, body}, loop, body.expressions->constant(4));
+        if (result.error.find("unclassified residual") == std::string::npos) { return false; }
+    }
+    return true;
+}
 // input_rmsnorm's 16 rows of 512 bf16 columns in a 7168-column tensor.
 // Check the exact translated union against pairwise concrete intervals, including
 // a fifteenth visit that collides with the next row and partial-column strides.
@@ -375,6 +551,9 @@ bool corpusColumns()
 } // namespace
 bool runRepeatedStorageChecks(MLIRContext* context)
 {
+    if (!residualProjection(context)) { llvm::errs() << "residual projection check failed\n"; return false; }
+    if (!alternativeOwners(context)) { llvm::errs() << "alternative owner check failed\n"; return false; }
+    if (!phasedReadOnlyOverlap(context)) { llvm::errs() << "phased read-only overlap check failed\n"; return false; }
     if (!symbolicInnerOwner(context)) { llvm::errs() << "symbolic inner owner check failed\n"; return false; }
     if (!corpusColumns()) { llvm::errs() << "corpus column union check failed\n"; return false; }
     if (!projectedCorpus(context)) { llvm::errs() << "corpus nested owner check failed\n"; return false; }

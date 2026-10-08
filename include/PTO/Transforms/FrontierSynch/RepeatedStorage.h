@@ -28,6 +28,7 @@ struct RepeatedStorageInnerRun {
     unsigned coordinate = 0;
 };
 using RepeatedStorageOwner = RegionalStorageOwner;
+struct RepeatedStorageTypesResult;
 class RepeatedStorage {
 public:
     struct State;
@@ -44,6 +45,8 @@ public:
     std::shared_ptr<const RegionalSymbolicStorageCertificate> certificate() const;
 private:
     std::shared_ptr<State> state;
+    friend RepeatedStorageTypesResult recognizeRepeatedStorageTypes(
+        ArrayRef<RegionalAnalysis>, scf::ForOp, RegionExpressions::Id, const PhaseIndex*, uint64_t);
 };
 struct RepeatedStorageResult {
     std::string error;
@@ -55,12 +58,27 @@ struct RepeatedStorageResult {
 // A run retains its symbolic trip count and original occurrence presence; its
 // reservation bound is used only for disjointness, never as an access footprint.
 // Other inner geometry requires a separate adapter and is not replaced by a hull.
+// For a phase-specialized body, phaseIndex/phasePeriod permit represented finite
+// residual cells only after proving their original maps periodic under that period.
+// The caller supplies the corresponding exact phase view; owned maps remain raw.
 RepeatedStorageResult buildRepeatedStorage(const RegionalAnalysis& body, scf::ForOp loop,
-    RegionExpressions::Id trips, ArrayRef<RepeatedStorageFamily> families);
+    RegionExpressions::Id trips, ArrayRef<RepeatedStorageFamily> families,
+    const PhaseIndex* phaseIndex = nullptr, uint64_t phasePeriod = 1);
 // Propose and validate the constant-stride subclass directly from shared maps.
 // Missing body effect selectors remain an error, distinct from geometric success.
 RepeatedStorageResult recognizeRepeatedStorage(const RegionalAnalysis& body, scf::ForOp loop,
-    RegionExpressions::Id trips);
+    RegionExpressions::Id trips, const PhaseIndex* phaseIndex = nullptr, uint64_t phasePeriod = 1);
+struct RepeatedStorageTypesResult {
+    std::string error;
+    // Null entries have a complete finite persistent-cell interface. Non-null
+    // entries retain the jointly checked omitted-storage geometry.
+    std::vector<std::shared_ptr<RepeatedStorage>> storage;
+};
+// Check omitted families against every type, including its persistent cells.
+// Same-visit aliasing between alternative owned families is permitted only when
+// their union is disjoint between distinct visits. A per-type proof is insufficient.
+RepeatedStorageTypesResult recognizeRepeatedStorageTypes(ArrayRef<RegionalAnalysis> bodies,
+    scf::ForOp loop, RegionExpressions::Id trips, const PhaseIndex* phaseIndex = nullptr, uint64_t phasePeriod = 1);
 // Uses the exact immutable body captured by the certificate. Only inter-visit
 // storage witnesses are projected; queries and internal recipes stay complete.
 RepeatedRegionAnalysis repeatEvolvingRegion(func::FuncOp function, std::shared_ptr<RepeatedStorage> storage);

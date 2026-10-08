@@ -9,6 +9,7 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_VARYINGROTATINGRECOGNITION_H
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 #include "PTO/Transforms/FrontierSynch/RotatingBoundary.h"
+#include <memory>
 namespace mlir::pto::frontiersynch {
 struct VaryingRotatingRecognition {
     RecognitionResult result;
@@ -19,6 +20,18 @@ struct VaryingRotatingRecognition {
 // A single rotating child with K(t)=a*t+b, unchanged effects across visits.
 // Uses shared machine-integer normalization; no IR mutation or demand backend.
 VaryingRotatingRecognition recognizeVaryingRotating(scf::ForOp outer, const PhaseIndex& index, const SyncInput& input);
+// Reusable child certificate, independent of an outer length schedule. The
+// producer checks invariant physical maps and re-entry protection in the supplied
+// outer scope. A consumer must separately prove its visit-length sequence and
+// refresh/pipe-presence requirements before composing repeated visits.
+struct RotatingAnalysis;
+struct RotatingChildBoundaryResult {
+    std::string error;
+    std::shared_ptr<const RotatingAnalysis> child;
+    RotatingBoundaryCertificate boundary;
+};
+RotatingChildBoundaryResult analyzeRotatingChildBoundary(scf::ForOp outer, scf::ForOp inner,
+    const RecognitionResult& child, const PhaseIndex& index, const SyncInput& input);
 // Produces child F* records and startup/seam/suffix crossing F* recipes.
 // Endpoint preparation and arbitrary-event regional queries are separate exports.
 AffineRotatingVisits analyzeVaryingRotating(

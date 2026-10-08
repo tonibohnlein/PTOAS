@@ -51,7 +51,8 @@ void SequenceAnalysisState::bridges()
                                 static_cast<uint32_t>(target.phase->kPipeValue),
                                 protection.within(target.phase, requiredOuterLoops))) { continue; }
                         bool conflict = model.uniformConflict(x.effect, y.effect);
-                        if (!conflict && (!x.representedByCells || !y.representedByCells) &&
+                        if (!conflict && !finiteCrossingPairs.count({a, x.effect, b, y.effect}) &&
+                            (!x.representedByCells || !y.representedByCells) &&
                             model.residualConflict(x.effect, y.effect)) {
                             if (left.occurrenceLoops[x.last.event.type] || right.occurrenceLoops[y.first.event.type] ||
                                 !x.last.event.visits.empty() || !y.first.event.visits.empty()) {

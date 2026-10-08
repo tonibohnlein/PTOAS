@@ -12,17 +12,22 @@
 #include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
 namespace mlir::pto::frontiersynch {
 struct FiniteVisitAlternative {
-    std::size_t node = 0;
+    std::vector<std::size_t> nodes; // Ordered original nodes forming one complete visit.
     std::vector<ArithmeticGuard> selection; // Original decision path; not a shared cross-visit predicate.
 };
 struct FiniteVisitRecognition {
     scf::ForOp loop;
     std::vector<FiniteVisitAlternative> alternatives;
+    // Explicit producer work, including intermediate choice-prefix descriptions.
+    uint64_t typeDescriptions = 0, nodeReferences = 0;
+    bool storageProjectionRequired = false;
     ProgramContractCandidate contract;
     std::string error;
 };
 struct FiniteVisitAnalysis {
     FiniteVisitRecognition recognition;
+    // Each original atomic node is analyzed once; whole types reuse these owners.
+    std::map<std::size_t, SequenceAnalysis> cachedNodes;
     std::vector<SequenceAnalysis> children;
     std::optional<FiniteVisitDemands> demands;
     // There is deliberately no whole-loop RegionalAnalysis, prepare callback,
@@ -30,11 +35,13 @@ struct FiniteVisitAnalysis {
 };
 // Read-only structural/invariance qualification. Class membership remains
 // unproved until exact common refresh/native-presence obligations are checked.
-// One exhaustive original decision tree selects the type; its predicates may
-// vary by visit. Every selected interior is invariant relative to that visit.
+// Exhaustive original choices select whole visits, including common prefix,
+// suffix and intervening nodes. Choice predicates may vary by visit; every
+// selected interior is invariant. Explicit type expansion has a producer limit.
 FiniteVisitRecognition recognizeFiniteVisitLoop(func::FuncOp function, const SyncInput& input,
     const ProgramRecognition& program, std::size_t node, const PhaseIndex& index);
-// Analyzes each unmasked original arm once, then the h^2 ordered pair reductions.
+// Analyzes each unmasked original node once, composes the whole-visit types,
+// then constructs the h^2 ordered pair reductions.
 // No runtime visit sequence is enumerated. Borrowed input/IR/program must remain
 // unchanged and outlive the result, as for the underlying regional analyses.
 FiniteVisitAnalysis analyzeFiniteVisitLoop(func::FuncOp function, const SyncInput& input,

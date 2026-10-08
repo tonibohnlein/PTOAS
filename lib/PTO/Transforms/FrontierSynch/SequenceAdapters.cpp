@@ -62,6 +62,116 @@ bool independentSymbolicStorage(ArrayRef<Child> children)
     }
     return true;
 }
+// A finite counterpart bounds the support of this crossing, not the whole
+// symbolic family. Keep complete per-byte selectors and all symbolic exports.
+// This optional byte adapter is charged and bounded like other finite exports.
+bool projectFiniteCrossings(std::vector<Child>& children,
+                           std::set<SequenceAnalysisState::StoragePair>& covered, RegionalCost& costs)
+{
+    for (const auto& child : children) {
+        if (llvm::any_of(child.regional.storageBoundary, [](const auto& boundary) {
+            return boundary.cell.begin > boundary.cell.end;
+        })) { return false; }
+    }
+    std::vector<SmallVector<SyncStorageCell>> support(children.size());
+    std::set<SequenceAnalysisState::StoragePair> pairs;
+    for (uint32_t i = 0; i < children.size(); ++i) {
+        const auto& source = children[i].regional;
+        for (auto effect : source.symbolicStorageEffects) {
+            if (!source.storageSelectors || !source.accessModel || !source.expressions ||
+                effect >= source.accessModel->effects().size()) { return false; }
+            const auto& modeled = source.accessModel->effects()[effect];
+            if (!modeled.memory || modeled.regions.empty()) { return false; }
+            for (uint32_t j = 0; j < children.size(); ++j) {
+                if (i == j) { continue; }
+                const auto& target = children[j].regional;
+                if (target.accessModel != source.accessModel || target.expressions != source.expressions ||
+                    target.gmAliasPolicy != source.gmAliasPolicy) { return false; }
+                for (const auto& anchor : target.anchors) {
+                    for (auto other : source.accessModel->effectsFor(anchor.phase)) {
+                        if (!source.accessModel->mayConflict(effect, other)) { continue; }
+                        const auto matches = [&](const auto& value) { return value.effect == other; };
+                        if (!llvm::any_of(target.accessBoundary, matches) ||
+                            llvm::any_of(target.accessBoundary, [&](const auto& value) {
+                                return matches(value) && !value.representedByCells;
+                            }) || llvm::any_of(target.deferredAccessBoundary, matches) ||
+                            llvm::is_contained(target.symbolicStorageEffects, other)) { return false; }
+                        bool found = false;
+                        for (const auto& boundary : target.storageBoundary) {
+                            const auto& cell = boundary.cell;
+                            if (cell.space != modeled.memory->scope) { continue; }
+                            SmallVector<SyncStorageCell> identities{cell};
+                            for (const auto& region : modeled.regions) {
+                                identities.push_back({cell.space, 0, 1, region.base});
+                            }
+                            if (!storageBasesAreComparable(identities, source.gmAliasPolicy)) { return false; }
+                            if (!llvm::any_of(modeled.regions,
+                                [&](const auto& region) { return region.base == cell.base; })) { continue; }
+                            if (cell.begin > cell.end || cell.end > uint64_t(INT64_MAX) ||
+                                cell.end - cell.begin > maxRegionalSlotVisits) { return false; }
+                            found = true;
+                            for (auto byte = cell.begin; byte < cell.end; ++byte) {
+                                if (llvm::any_of(support[i], [&](const auto& old) {
+                                    return sameStorageDomain(old, cell) && old.begin == byte;
+                                })) { continue; }
+                                if (support[i].size() == maxRegionalSlotVisits) { return false; }
+                                support[i].push_back({cell.space, byte, byte + 1, cell.base});
+                            }
+                        }
+                        if (!found) { return false; }
+                        pairs.insert(i < j ? SequenceAnalysisState::StoragePair{i, effect, j, other} :
+                                             SequenceAnalysisState::StoragePair{j, other, i, effect});
+                    }
+                }
+            }
+        }
+    }
+    std::vector<std::vector<RegionalStorageBoundary>> projected(children.size());
+    for (uint32_t i = 0; i < children.size(); ++i) {
+        const auto& source = children[i].regional;
+        if (support[i].empty()) { continue; }
+        for (const auto& original : source.storageBoundary) {
+            std::set<uint64_t> cuts{original.cell.begin, original.cell.end};
+            for (const auto& byte : support[i]) {
+                if (!sameStorageDomain(byte, original.cell) || byte.begin < original.cell.begin ||
+                    byte.end > original.cell.end) { continue; }
+                cuts.insert(byte.begin); cuts.insert(byte.end);
+            }
+            for (auto it = cuts.begin(); std::next(it) != cuts.end(); ++it) {
+                if (llvm::any_of(support[i], [&](const auto& byte) {
+                    return sameStorageDomain(byte, original.cell) && byte.begin == *it;
+                })) { continue; }
+                auto piece = original;
+                piece.cell.begin = *it; piece.cell.end = *std::next(it);
+                projected[i].push_back(std::move(piece));
+            }
+        }
+        for (const auto& byte : support[i]) {
+            auto selected = source.storageSelectors({byte.space, byte.base, source.expressions->constant(byte.begin)});
+            if (!selected) { return false; }
+            projected[i].push_back({byte, std::move(selected->firstWriters), std::move(selected->lastWriters),
+                std::move(selected->firstReaders), std::move(selected->lastReaders)});
+        }
+        if (source.cost.boundaryBytes > UINT64_MAX - support[i].size()) { return false; }
+    }
+    uint64_t addedBytes = 0;
+    for (const auto& bytes : support) {
+        if (bytes.size() > UINT64_MAX - addedBytes) { return false; }
+        addedBytes += bytes.size();
+    }
+    if (addedBytes > UINT64_MAX - costs.boundaryBytes) { return false; }
+    // Publish only after every pair and every point query succeeds. A failed
+    // attempt leaves original regional summaries available to relational routes.
+    for (uint32_t i = 0; i < children.size(); ++i) {
+        if (support[i].empty()) { continue; }
+        children[i].regional.storageBoundary = std::move(projected[i]);
+        children[i].regional.cost.cells = children[i].regional.storageBoundary.size();
+        children[i].regional.cost.boundaryBytes += support[i].size();
+    }
+    costs.boundaryBytes += addedBytes;
+    covered = std::move(pairs);
+    return true;
+}
 std::optional<RegionalStorageSelectors> finiteStorageSelectors(
     const RegionalAnalysis& region, RegionalByteAddress address)
 {
@@ -252,7 +362,8 @@ bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
             return fail("symbolic storage certificate belongs to a different arena or modeled input");
         }
     }
-    if (children.size() != 1 && !independentSymbolicStorage(children)) {
+    if (children.size() != 1 && !independentSymbolicStorage(children) &&
+        !projectFiniteCrossings(children, finiteCrossingPairs, costs)) {
         return fail("symbolic storage crossings require a constructed uniform-atom or relational adapter");
     }
     std::map<AddressSpace, llvm::MapVector<Value, std::set<uint64_t>>> points;

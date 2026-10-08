@@ -86,6 +86,9 @@ struct SequenceAnalysisState {
     // A symbolic crossing relation cannot be represented as a sampled finite
     // port graph. Retain its exact regional adapter as a separate result.
     std::optional<RegionalAnalysis> relationalResult;
+    // Pair-local finite crossing support does not cover the full symbolic effects.
+    using StoragePair = std::tuple<uint32_t, std::size_t, uint32_t, std::size_t>;
+    std::set<StoragePair> finiteCrossingPairs;
     std::vector<SyncStorageCell> cells;
     std::vector<Port> ports;
     std::map<std::tuple<uint32_t, uint32_t, Expr, std::vector<Expr>>, uint32_t> portIds;
