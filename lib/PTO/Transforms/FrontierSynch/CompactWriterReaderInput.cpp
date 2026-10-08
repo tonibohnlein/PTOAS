@@ -207,11 +207,7 @@ bool Builder::collect()
 bool Builder::mayMeet(std::size_t a, std::size_t b)
 {
     ++result.overlapQueries;
-    const auto& left = model.effects()[a]; const auto& right = model.effects()[b];
-    if (left.memory->scope != AddressSpace::Zero && right.memory->scope != AddressSpace::Zero &&
-        left.memory->scope != right.memory->scope) { return false; }
-    if (!uniformRanges(left) || !uniformRanges(right)) { return true; }
-    return model.mayOverlap(a, b);
+    return detail::compactEffectsMayMeet(model, a, b);
 }
 std::size_t Builder::root(std::size_t value)
 {
@@ -318,6 +314,16 @@ bool Builder::run()
     return skeleton() && prerequisites() && collect() && classes() && queries();
 }
 } // namespace
+bool detail::compactEffectsMayMeet(const SyncStorageEffects& model, std::size_t a, std::size_t b)
+{
+    if (a >= model.effects().size() || b >= model.effects().size()) { return true; }
+    const auto& left = model.effects()[a]; const auto& right = model.effects()[b];
+    if (!left.memory || !right.memory) { return true; }
+    if (left.memory->scope != AddressSpace::Zero && right.memory->scope != AddressSpace::Zero &&
+        left.memory->scope != right.memory->scope) { return false; }
+    if (!uniformRanges(left) || !uniformRanges(right)) { return true; }
+    return model.mayOverlap(a, b);
+}
 CompactWriterReaderInput detail::buildCompactWriterReaderSlotInput(scf::ForOp loop,
     const SyncInput& input, const PhaseIndex& index,
     llvm::ArrayRef<std::vector<const CompoundInstanceElement*>> slots,

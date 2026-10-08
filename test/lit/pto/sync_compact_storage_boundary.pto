@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --compact-storage-boundary-checks %s
+!tile = !pto.tile_buf<vec, 4x8xf32>
+module {
+  func.func @mixed_alias(%n: index) attributes {test.compact_boundary} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %base = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    pto.texpands ins(%one : f32) outs(%a : !tile)
+    %v0 = pto.tgetval ins(%a, %c0 : !tile, index) outs : f32
+    scf.for %i = %c0 to %n step %c1 {
+      pto.texpands ins(%one : f32) outs(%a : !tile)
+      %v1 = pto.tgetval ins(%a, %c0 : !tile, index) outs : f32
+    }
+    %v2 = pto.tgetval ins(%a, %c0 : !tile, index) outs : f32
+    return
+  }
+  func.func @mixed_unknown(%n: index, %address: i64) attributes {test.compact_boundary} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %base = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    %b = pto.alloc_tile addr = %address : !tile
+    pto.texpands ins(%one : f32) outs(%a : !tile)
+    %v0 = pto.tgetval ins(%a, %c0 : !tile, index) outs : f32
+    scf.for %i = %c0 to %n step %c1 {
+      pto.texpands ins(%one : f32) outs(%b : !tile)
+      %v1 = pto.tgetval ins(%b, %c0 : !tile, index) outs : f32
+    }
+    %v2 = pto.tgetval ins(%a, %c0 : !tile, index) outs : f32
+    return
+  }
+  func.func @mixed_disjoint(%n: index) attributes {test.compact_boundary, test.boundary_no_crossings} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %base = arith.constant 0 : i64
+    %far = arith.constant 4096 : i64
+    %end = arith.constant 8192 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    %b = pto.alloc_tile addr = %far : !tile
+    %c = pto.alloc_tile addr = %end : !tile
+    pto.texpands ins(%one : f32) outs(%a : !tile)
+    %v0 = pto.tgetval ins(%a, %c0 : !tile, index) outs : f32
+    scf.for %i = %c0 to %n step %c1 {
+      pto.texpands ins(%one : f32) outs(%b : !tile)
+      %v1 = pto.tgetval ins(%b, %c0 : !tile, index) outs : f32
+    }
+    %v2 = pto.tgetval ins(%c, %c0 : !tile, index) outs : f32
+    return
+  }
+  func.func @scalar_protected(%n: index, %p: !pto.ptr<f32, gm>)
+      attributes {test.compact_boundary, test.boundary_no_crossings} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    pto.store %one, %p[%c0] : !pto.ptr<f32, gm>, f32
+    scf.for %i = %c0 to %n step %c1 {
+      pto.store %one, %p[%c0] : !pto.ptr<f32, gm>, f32
+      %v1 = pto.load %p[%c0] : !pto.ptr<f32, gm> -> f32
+    }
+    %v2 = pto.load %p[%c0] : !pto.ptr<f32, gm> -> f32
+    return
+  }
+  func.func @conditional_scope(%n: index, %condition: i1)
+      attributes {test.compact_boundary, test.boundary_unavailable} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %base = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    scf.if %condition {
+      scf.for %i = %c0 to %n step %c1 {
+        pto.texpands ins(%one : f32) outs(%a : !tile)
+      }
+    }
+    return
+  }
+}
