@@ -11,7 +11,7 @@ two independent accepting reviews, and its own commit before proceeding.
 |---|---|---|
 | 1 | Lazy arithmetic dispatch, preserve difference-bound routing, and retain bounded demand results after endpoint failure | Accepted |
 | 2 | Constraint import for piecewise bounds and shared positive-step ordinal normalization | Accepted |
-| 3 | Shared symbolic storage certificates and crossings between symbolic siblings | Pending |
+| 3 | Shared symbolic storage certificates and crossings between symbolic siblings | Accepted |
 | 4 | Reuse ownership/phase/boundary certificates in varying repetition and whole-visit type extraction | Pending |
 | 5 | Collective guarded refresh and reusable bounded-lifetime regional results | Pending |
 | 6 | Numerical composition for general sequences without unnecessary dense port closure | Pending |
@@ -180,3 +180,41 @@ Existing arithmetic dispatch/conversion and guarded periodic/rotating checks
 also passed. Two independent code reviewers accepted the changes.
 The style prefilter's compound-condition brace findings were inspected; their
 bodies are braced. No line-width or whitespace findings remain.
+
+## Integration milestone 3 contracts
+
+Symbolic storage exports retain physical family membership, reservation owners,
+and per-cell selectors separately. Finite uniform-selector atoms require a
+certificate covering every byte; a sampled byte is insufficient. Disjoint and
+shared-read-only symbolic siblings preserve their selectors through composition.
+
+Compatible arithmetic siblings export their already computed occurrence, order
+and boundary-selector relations. Binary composition joins selectors on physical
+cell identity, projects the cell, and reduces crossings through the children's
+strict/reflexive order relations. Native pipe order across child boundaries is included.
+The parent retains the resulting symbolic storage selectors for another merge.
+No child instruction analysis or trip/byte enumeration is repeated.
+
+The initial algebraic adapter requires identical parameter bindings, periods and
+enclosing invocation contexts. Deferred conflicts, incoming scalar prerequisites
+and uniform relationships without crossing relations remain explicit adapter
+obligations; children are retained. Opaque per-cell callbacks alone do not
+provide a representation for a parameterized family of crossing demands.
+
+Visit-owned recovery now supports a bounded affine inner run with symbolic
+length, preserving holes and selecting its inner ordinal algebraically. Other
+coordinate shapes still need an ownership producer. Exact membership and owner
+queries remain distinct when a reservation contains untouched bytes.
+
+
+Milestone 3 validation: serial incremental compilation and both tool links
+passed. Symbolic arithmetic sibling composition matched independently unfolded
+all-event reachability and covers, including zero trips and overlapping and
+disjoint windows. Ownership, read-only symbolic siblings, ordinary sequence
+insertion/allocation, and phased three-level composition regressions passed.
+The phased oracle was corrected to honor existing same-scalar storage protection
+and to count loop operations without counting diagnostic strings. Two independent
+reviewers accepted the source and these test corrections. The style prefilter's
+56 compound-condition brace findings were inspected; bodies are braced. No
+line-width or whitespace findings remain. This is focused validation, not a new
+corpus or device campaign.

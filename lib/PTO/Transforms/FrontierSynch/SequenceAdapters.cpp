@@ -10,6 +10,136 @@
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 #include "llvm/ADT/MapVector.h"
 namespace mlir::pto::frontiersynch {
+namespace {
+// Promote only a supplied complete uniform-atom certificate. Querying one byte
+// of a family never establishes that its selected occurrences are uniform.
+bool promoteUniformStorage(RegionalAnalysis& region)
+{
+    const auto& certificate = region.symbolicStorage;
+    if (!certificate) { return true; }
+    if (certificate->expressions != region.expressions || certificate->accessModel != region.accessModel ||
+        certificate->gmAliasPolicy != region.gmAliasPolicy) { return false; }
+    for (auto effect : certificate->uniformEffects) {
+        if (!region.accessModel || effect >= region.accessModel->effects().size()) { return false; }
+    }
+    const bool needed = llvm::any_of(region.symbolicStorageEffects, [&](std::size_t effect) {
+        return llvm::is_contained(certificate->uniformEffects, effect);
+    });
+    if (!needed) { return true; }
+    llvm::append_range(region.storageBoundary, certificate->uniformBoundaries);
+    llvm::erase_if(region.symbolicStorageEffects, [&](std::size_t effect) {
+        return llvm::is_contained(certificate->uniformEffects, effect);
+    });
+    for (auto& access : region.accessBoundary) {
+        if (llvm::is_contained(certificate->uniformEffects, access.effect)) { access.representedByCells = true; }
+    }
+    return true;
+}
+// A symbolic child may pass through finite composition if every cross-child
+// storage pair involving it is provably conflict-free in the shared model.
+// Its storage interface is retained for later, possibly conflicting consumers.
+bool independentSymbolicStorage(ArrayRef<Child> children)
+{
+    for (std::size_t i = 0; i < children.size(); ++i) {
+        const auto& region = children[i].regional;
+        for (auto effect : region.symbolicStorageEffects) {
+            if (!region.storageSelectors || !region.accessModel ||
+                effect >= region.accessModel->effects().size()) { return false; }
+            for (std::size_t j = 0; j < children.size(); ++j) {
+                if (i == j) { continue; }
+                const auto& other = children[j].regional;
+                if (other.accessModel != region.accessModel) {
+                    if (!other.anchors.empty() || !other.storageBoundary.empty()) { return false; }
+                    continue;
+                }
+                for (const auto& anchor : other.anchors) {
+                    for (auto target : region.accessModel->effectsFor(anchor.phase)) {
+                        if (region.accessModel->mayConflict(effect, target)) { return false; }
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+std::optional<RegionalStorageSelectors> finiteStorageSelectors(
+    const RegionalAnalysis& region, RegionalByteAddress address)
+{
+    if (region.storageSelectors) { return region.storageSelectors(address); }
+    auto& e = *region.expressions;
+    if (address.offset >= e.size() || e.isBoolean(address.offset) || !region.symbolicStorageEffects.empty() ||
+        llvm::any_of(region.accessBoundary, [](const auto& access) { return !access.representedByCells; })) {
+        return std::nullopt;
+    }
+    RegionalStorageSelectors out;
+    auto append = [&](auto& destination, const auto& source, Expr guard) {
+        for (auto value : source) {
+            value.present = e.land(guard, value.present);
+            destination.push_back(std::move(value));
+        }
+    };
+    for (const auto& cell : region.storageBoundary) {
+        if (cell.cell.space != address.space) { continue; }
+        if (cell.cell.base != address.base) {
+            SmallVector<SyncStorageCell> identities{cell.cell, {address.space, 0, 1, address.base}};
+            if (!storageBasesAreComparable(identities, region.gmAliasPolicy)) { return std::nullopt; }
+            continue;
+        }
+        auto active = e.land(e.le(e.constant(cell.cell.begin), address.offset),
+                             e.lt(address.offset, e.constant(cell.cell.end)));
+        append(out.firstWriters, cell.firstWriters, active);
+        append(out.lastWriters, cell.lastWriters, active);
+        for (const auto& [pipe, values] : cell.firstReaders) { append(out.firstReaders[pipe], values, active); }
+        for (const auto& [pipe, values] : cell.lastReaders) { append(out.lastReaders[pipe], values, active); }
+    }
+    return out;
+}
+std::optional<RegionalStorageSelectors> sequenceStorageSelectors(const SequenceAnalysisState& state,
+    ArrayRef<uint32_t> starts, RegionalByteAddress address)
+{
+    auto& e = state.expressions;
+    RegionalStorageSelectors out;
+    auto present = [&](const auto& values) {
+        auto result = e.boolean(false);
+        for (const auto& value : values) { result = e.lor(result, value.present); }
+        return result;
+    };
+    auto append = [&](auto& destination, const auto& source, Expr guard, uint32_t start) {
+        for (auto value : source) {
+            value.event.type += start;
+            value.present = e.land(guard, value.present);
+            destination.push_back(std::move(value));
+        }
+    };
+    auto mask = [&](auto& values, Expr guard) {
+        for (auto& value : values) { value.present = e.land(guard, value.present); }
+    };
+    auto seenWriter = e.boolean(false);
+    for (uint32_t child = 0; child < state.children.size(); ++child) {
+        auto local = finiteStorageSelectors(state.children[child].regional, address);
+        if (!local) { return std::nullopt; }
+        const auto written = present(local->firstWriters);
+        append(out.firstWriters, local->firstWriters, e.lnot(seenWriter), starts[child]);
+        for (const auto& [pipe, readers] : local->firstReaders) {
+            auto guard = e.lnot(e.lor(seenWriter, present(out.firstReaders[pipe])));
+            append(out.firstReaders[pipe], readers, guard, starts[child]);
+        }
+        mask(out.lastWriters, e.lnot(written));
+        append(out.lastWriters, local->lastWriters, e.boolean(true), starts[child]);
+        for (auto& [pipe, readers] : out.lastReaders) {
+            auto replaced = written;
+            auto found = local->lastReaders.find(pipe);
+            if (found != local->lastReaders.end()) { replaced = e.lor(replaced, present(found->second)); }
+            mask(readers, e.lnot(replaced));
+        }
+        for (const auto& [pipe, readers] : local->lastReaders) {
+            append(out.lastReaders[pipe], readers, e.boolean(true), starts[child]);
+        }
+        seenWriter = e.lor(seenWriter, written);
+    }
+    return out;
+}
+} // namespace
 void SequenceAnalysisState::bindAdapters()
 {
     for (uint32_t id = 0; id < children.size(); ++id) {
@@ -117,14 +247,19 @@ void SequenceAnalysisState::bindAdapters()
 }
 bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
 {
+    for (auto& child : children) {
+        if (!promoteUniformStorage(child.regional)) {
+            return fail("symbolic storage certificate belongs to a different arena or modeled input");
+        }
+    }
+    if (children.size() != 1 && !independentSymbolicStorage(children)) {
+        return fail("symbolic storage crossings require a constructed uniform-atom or relational adapter");
+    }
     std::map<AddressSpace, llvm::MapVector<Value, std::set<uint64_t>>> points;
     SmallVector<SyncStorageCell> identities;
     std::optional<GMAliasPolicy> gmPolicy;
     for (const auto& child : children) {
         const auto& out = child.regional;
-        if (!out.symbolicStorageEffects.empty() && children.size() != 1) {
-            return fail("symbolic storage crossing requires a finite boundary adapter");
-        }
         if (out.expressions != arena || !out.capabilities.completeStorageModel || !out.capabilities.exactQueries ||
             !out.capabilities.exactSelectors || !out.presence ||
             (requireEndpoints && (!out.capabilities.endpointRecipes || (!out.prepare && !out.prepareWithVisits))) ||
@@ -296,6 +431,7 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
 {
     RegionalAnalysis out;
     if (!analysis.state || !analysis.error.empty()) { return out; }
+    if (analysis.state->relationalResult) { return *analysis.state->relationalResult; }
     auto owned = std::make_shared<SequenceAnalysis>(analysis);
     auto state = analysis.state;
     out.expressions = state->arena;
@@ -437,11 +573,44 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
         };
         out.numerical = std::move(numerical);
     }
+    const bool hasSymbolic = llvm::any_of(state->children, [](const Child& child) {
+        return child.regional.storageSelectors || !child.regional.symbolicStorageEffects.empty();
+    });
+    if (hasSymbolic) {
+        out.storageSelectors = [state, starts](RegionalByteAddress address) {
+            return sequenceStorageSelectors(*state, starts, address);
+        };
+        for (const auto& child : state->children) {
+            for (auto effect : child.regional.symbolicStorageEffects) {
+                if (!llvm::is_contained(out.symbolicStorageEffects, effect)) {
+                    out.symbolicStorageEffects.push_back(effect);
+                }
+            }
+        }
+        // Physical membership survives sequence composition. Owner/selector
+        // coordinates do not: retain the merged selector callback above, and
+        // clear owner maps unless a producer supplies a composed certificate.
+        auto certificate = std::make_shared<RegionalSymbolicStorageCertificate>();
+        certificate->expressions = out.expressions;
+        certificate->accessModel = out.accessModel;
+        certificate->gmAliasPolicy = out.gmAliasPolicy;
+        for (const auto& child : state->children) {
+            if (!child.regional.symbolicStorage) { continue; }
+            for (auto family : child.regional.symbolicStorage->families) {
+                family.kind = RegionalStorageFamilyKind::General;
+                family.owner = {};
+                certificate->families.push_back(std::move(family));
+            }
+        }
+        out.symbolicStorage = std::move(certificate);
+    }
     if (state->children.size() == 1) {
         // A unary sequence changes neither identities nor the selected graph.
         out.numerical = state->children.front().regional.numerical;
         if (out.numerical) { out.reachability = state->children.front().regional.reachability; }
         out.storageSelectors = state->children.front().regional.storageSelectors;
+        out.symbolicStorage = state->children.front().regional.symbolicStorage;
+        out.arithmeticRelations = state->children.front().regional.arithmeticRelations;
         out.symbolicStorageEffects = state->children.front().regional.symbolicStorageEffects;
     }
     return out;

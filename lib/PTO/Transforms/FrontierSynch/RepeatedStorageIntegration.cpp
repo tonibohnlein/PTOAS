@@ -24,6 +24,8 @@ RepeatedRegionAnalysis repeatEvolvingRegion(func::FuncOp function, std::shared_p
     }
     crossingView.storageSelectors = {};
     crossingView.symbolicStorageEffects.clear();
+    crossingView.symbolicStorage.reset();
+    crossingView.arithmeticRelations.reset();
     llvm::erase_if(crossingView.accessBoundary,
                    [&](const auto& access) { return storage->contains(access.effect); });
     // The unchanged query and preparation closures still contain every payload
@@ -44,6 +46,7 @@ RepeatedRegionAnalysis repeatEvolvingRegion(func::FuncOp function, std::shared_p
         out.accessBoundary.push_back(std::move(access));
     }
     out.symbolicStorageEffects.assign(storage->effects().begin(), storage->effects().end());
+    out.symbolicStorage = storage->certificate();
     out.storageSelectors = [storage](RegionalByteAddress address) { return storage->selectors(address); };
     return result;
 }

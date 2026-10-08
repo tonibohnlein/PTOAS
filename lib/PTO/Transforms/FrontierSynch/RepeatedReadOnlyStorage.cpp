@@ -122,6 +122,8 @@ std::string prepareRepeatedSymbolicStorage(RegionalAnalysis& body, scf::ForOp lo
         if (!error.empty()) { return error; }
     }
     crossingView.storageSelectors = {};
+    crossingView.symbolicStorage.reset();
+    crossingView.arithmeticRelations.reset();
     crossingView.symbolicStorageEffects.clear();
     if (conflictFree) {
         llvm::erase_if(crossingView.accessBoundary, [&](const auto& access) { return readers.count(access.effect); });

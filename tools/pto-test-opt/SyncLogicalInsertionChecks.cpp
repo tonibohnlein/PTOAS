@@ -590,6 +590,142 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
 }
 
 namespace {
+// Independent unfolded event graph for three original arithmetic siblings.
+// The IR fixture uses overlapping 32-byte UB windows at byte4*i. The middle
+// store also overwrites one fixed GM destination. Native edges order starts
+// and completions separately; they never serialize complete payload intervals.
+bool checkSymbolicArithmeticSiblings(func::FuncOp function, const pto::SyncInput& input)
+{
+    fs::PhaseIndex index;
+    if (failed(index.build(function, input))) { return false; }
+    SmallVector<scf::ForOp> loops;
+    for (auto& operation : function.front()) {
+        if (auto loop = dyn_cast<scf::ForOp>(operation)) { loops.push_back(loop); }
+    }
+    if (loops.size() != 3) { return false; }
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    std::vector<fs::RegionalAnalysis> children;
+    std::string error;
+    for (auto loop : loops) {
+        auto child = fs::analyzeArithmeticRegion({function, loop}, index, input, arena, error);
+        if (failed(child) || child->anchors.size() != 1 || !child->arithmeticRelations) {
+            llvm::errs() << "symbolic child: " << error << "\n"; return false;
+        }
+        children.push_back(std::move(*child));
+    }
+    auto first = fs::composeRegionalSequence(function, arena, {children[0], children[1]}, true, false);
+    if (!first.error.empty()) { llvm::errs() << first.error << "\n"; return false; }
+    auto pair = fs::sequenceRegionalResult(first);
+    if (!pair.arithmeticRelations || !pair.storageSelectors) { return false; }
+    auto whole = fs::composeRegionalSequence(function, arena, {pair, children[2]}, true, false);
+    if (!whole.error.empty()) { llvm::errs() << whole.error << "\n"; return false; }
+    auto regional = fs::sequenceRegionalResult(whole);
+    auto verify = [&](const fs::RegionalAnalysis& region, unsigned stages) {
+        if (!region.arithmeticRelations || region.anchors.size() != stages) { return false; }
+        const auto& relations = *region.arithmeticRelations;
+        if (relations.program.parameters.size() != 1 || relations.program.parameters[0] != function.getArgument(2)) {
+            return false;
+        }
+        auto& e = *arena;
+        for (unsigned trips : {0U, 1U, 2U, 4U, 9U}) {
+            const unsigned payloads = stages * trips, events = 2 * payloads;
+            std::vector<std::vector<bool>> native(events, std::vector<bool>(events));
+            std::vector<std::vector<bool>> required = native;
+            auto pipe = [&](unsigned occurrence) {
+                return region.anchors[occurrence / trips].phase->kPipeValue;
+            };
+            for (unsigned a = 0; a < payloads; ++a) {
+                native[2*a][2*a+1] = required[2*a][2*a+1] = true;
+                for (unsigned b = a + 1; b < payloads; ++b) {
+                    if (pipe(a) == pipe(b)) {
+                        native[2*a][2*b] = required[2*a][2*b] = true;
+                        native[2*a+1][2*b+1] = required[2*a+1][2*b+1] = true;
+                    }
+                    const unsigned sa = a / trips, sb = b / trips, ia = a % trips, ib = b % trips;
+                    const bool overlap = 4*ia < 4*ib + 32 && 4*ib < 4*ia + 32;
+                    const bool conflict = (overlap && (sa != 1 || sb != 1)) || (sa == 1 && sb == 1);
+                    if (conflict) { required[2*a+1][2*b] = true; }
+                }
+            }
+            auto close = [&](auto& graph) {
+                for (unsigned k = 0; k < events; ++k) {
+                    for (unsigned a = 0; a < events; ++a) {
+                        for (unsigned b = 0; b < events; ++b) {
+                            graph[a][b] = graph[a][b] || (graph[a][k] && graph[k][b]);
+                        }
+                    }
+                }
+            };
+            close(native); close(required);
+            fs::RegionExpressions::Substitution bindings({{e.input(function.getArgument(2)), e.constant(trips)}});
+            auto event = [&](unsigned type, unsigned ordinal, unsigned kind) {
+                return fs::RegionalEvent{type, e.constant(ordinal), kind ? fs::PeriodicEventKind::Completion :
+                                                                         fs::PeriodicEventKind::Start};
+            };
+            // Include absent coordinates and the zero-trip invocation.
+            for (unsigned sa = 0; sa < stages; ++sa) {
+                for (unsigned sb = 0; sb < stages; ++sb) {
+                    for (unsigned ia = 0; ia <= trips; ++ia) {
+                        for (unsigned ib = 0; ib <= trips; ++ib) {
+                            for (unsigned ka = 0; ka < 2; ++ka) {
+                                for (unsigned kb = 0; kb < 2; ++kb) {
+                                    auto query = fs::regionalReachability(region, event(sa, ia, ka), event(sb, ib, kb));
+                                    const unsigned a = 2*(sa*trips + ia)+ka, b = 2*(sb*trips + ib)+kb;
+                                    const bool expected = ia < trips && ib < trips && (a == b || required[a][b]);
+                                    if (!query || e.constantValue(e.substitute(*query, bindings)) !=
+                                                  uint64_t(expected)) {
+                                        llvm::errs() << "symbolic sibling query mismatch\n"; return false;
+                                    }
+                                }
+                            }
+                            bool minimum = false;
+                            for (const auto& [key, pieces] : relations.analysis.minimumDemands) {
+                                if (key.source.site != sa || key.target.site != sb) { continue; }
+                                SmallVector<uint64_t> residues(key.source.residues.begin(), key.source.residues.end());
+                                llvm::append_range(residues, key.target.residues);
+                                llvm::append_range(residues, key.parameterResidues);
+                                for (const auto& piece : pieces) {
+                                    auto member = e.integerPredicate(piece,
+                                        {e.constant(ia), e.constant(ib), e.constant(trips)},
+                                        relations.analysis.period, residues);
+                                    auto value = e.constantValue(member);
+                                    if (!value) { return false; }
+                                    minimum |= *value != 0;
+                                }
+                            }
+                            bool expected = false;
+                            if (ia < trips && ib < trips) {
+                                const unsigned a = 2*(sa*trips + ia)+1, b = 2*(sb*trips + ib);
+                                expected = required[a][b] && !native[a][b];
+                                for (unsigned k = 0; k < events; ++k) {
+                                    expected &= !(required[a][k] && required[k][b]);
+                                }
+                            }
+                            if (minimum != expected) {
+                                llvm::errs() << "symbolic sibling cover mismatch\n"; return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    };
+    if (!verify(pair, 2) || !verify(regional, 3)) { return false; }
+    auto prepared = fs::prepareSequenceInsertion(whole);
+    if (failed(prepared)) {
+        llvm::errs() << "symbolic endpoint export: " << whole.insertionError << "\n"; return false;
+    }
+    if (failed(fs::insertLogicalSynchronization(function, **prepared)) || failed(mlir::verify(function))) {
+        return false;
+    }
+    auto trace = Interpreter(input.instructions()).run(function);
+    if (!trace.getString("error").value_or("missing trace").empty()) {
+        llvm::errs() << llvm::json::Value(std::move(trace)); return false;
+    }
+    llvm::outs() << "symbolic arithmetic siblings: exact queries, covers, recursive exports, and endpoints passed\n";
+    return true;
+}
 // Incoming scalar ordering must target the first executed site occurrence,
 // including a guarded nonzero prefix inside a nested arithmetic child.
 bool checkArithmeticEntryPrerequisite(func::FuncOp function, const pto::SyncInput& input)
@@ -680,6 +816,9 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
 {
     pto::SyncInput input(policy);
     if (failed(input.build(function))) { return failure(); }
+    if (function->hasAttr("test.symbolic_arithmetic_siblings")) {
+        return success(checkSymbolicArithmeticSiblings(function, input));
+    }
     auto program = fs::recognizeProgram(function, input);
     if (failed(program)) { return failure(); }
     std::string before;
