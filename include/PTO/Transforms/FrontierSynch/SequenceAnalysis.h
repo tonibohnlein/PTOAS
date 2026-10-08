@@ -50,6 +50,12 @@ struct SequenceAnalysis {
 // effects, recognition input and original IR remain borrowed; invalidate after any IR change.
 SequenceAnalysis analyzeSequence(func::FuncOp function, const SyncInput& input,
                                  const ProgramRecognition& program);
+// Record immediately after original whole-function analysis, before preparing
+// endpoints. Only a successful state bound to these exact original inputs can
+// establish the sequence contract. Failed/unrelated results remain unproved;
+// no demand analysis is rerun and no endpoint or allocation proof is inferred.
+void recordSequenceContractAttempt(ProgramRecognition& program, const SyncInput& input,
+                                   const SequenceAnalysis& analysis);
 SequenceAnalysis composeRegionalSequence(func::FuncOp function,
     std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
     bool reconstructPrerequisites = true, bool requireEndpoints = true);

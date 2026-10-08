@@ -66,6 +66,7 @@ LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy, bool r
     }
     nativeScalarOnly = false;
     explicitAnalysis.reset();
+    sequenceAnalysis.reset();
     program.reset();
     storage.reset();
     initialized = true;
@@ -106,6 +107,7 @@ LogicalResult FrontierAnalysis::analyzeNumericCandidates() {
         if (!node.logicalEndpoints->logical.error.empty()) { continue; }
         node.periodicAllocation = buildPeriodicAllocation(*node.periodicAnalysis);
     }
+    refreshProgramContractAudit(*program);
     return success();
 }
 LogicalResult FrontierAnalysis::analyzeExplicitFunction() {
@@ -121,6 +123,20 @@ LogicalResult FrontierAnalysis::analyzeExplicitFunction() {
     }
     return success(explicitAnalysis->error.empty());
 }
+SequenceAnalysis* FrontierAnalysis::analyzeSequenceFunction() {
+    if (failed(recognizeStructure())) { return nullptr; }
+    if (!sequenceAnalysis) {
+        sequenceAnalysis = analyzeSequence(function, *storage, *program);
+        recordSequenceContractAttempt(*program, *storage, *sequenceAnalysis);
+        refreshProgramContractAudit(*program);
+    }
+    return &*sequenceAnalysis;
+}
+void FrontierAnalysis::noteSequenceEndpointOutcome(StringRef error) {
+    if (!program) { return; }
+    recordSequenceEndpointAttempt(*program, error);
+    refreshProgramContractAudit(*program);
+}
 LogicalResult FrontierAnalysis::recognizeArithmetic() {
     if (failed(recognizeStructure())) { return failure(); }
     if (program->arithmetic || function.isDeclaration()) {
@@ -130,15 +146,19 @@ LogicalResult FrontierAnalysis::recognizeArithmetic() {
     if (failed(index.build(function, *storage))) {
         return failure();
     }
-    // Try the smaller configured residue class first. Ordinary affine regions
-    // need no parity expansion; fixed-modulus/step-two inputs use the second
-    // class when the complete period-one primitive contract does not apply.
-    auto arithmetic = recognizeArithmeticProgram(function, index, *storage, storage->accesses(), {8, 8, 1, 8});
-    if (arithmetic.extraction.state != RecognitionState::Applicable ||
-        arithmetic.recognition.state != RecognitionState::Applicable) {
-        arithmetic = recognizeArithmeticProgram(function, index, *storage, storage->accesses(), {8, 8, 2, 8});
+    // Record every configured arithmetic contract before selecting a backend.
+    // A later profile never erases membership established by an earlier one.
+    std::optional<ArithmeticProgram> selected;
+    for (uint64_t period : {uint64_t{1}, uint64_t{2}}) {
+        const ArithmeticLimits limits{8, 8, period, 8};
+        auto candidate = recognizeArithmeticProgram(function, index, *storage, storage->accesses(), limits);
+        recordArithmeticContractAttempt(*program, limits, candidate);
+        const bool alreadyAccepted = selected && selected->extraction.state == RecognitionState::Applicable &&
+                                     selected->recognition.state == RecognitionState::Applicable;
+        if (!alreadyAccepted) { selected = std::move(candidate); }
     }
-    program->arithmetic = std::move(arithmetic);
+    program->arithmetic = std::move(selected);
+    refreshProgramContractAudit(*program);
     return success();
 }
 } // namespace mlir::pto::frontiersynch
@@ -146,9 +166,73 @@ namespace mlir::pto {
 #define GEN_PASS_DEF_PTOFRONTIERANALYSIS
 #include "PTO/Transforms/Passes.h.inc"
 namespace {
+// Persist recognition independently of which logical backend succeeds. The
+// report contains no borrowed operations or values and survives insertion.
+DictionaryAttr contractReport(const frontiersynch::ProgramRecognition& program, StringRef logicalBackend)
+{
+    MLIRContext* context = program.nodes.front().anchor->getContext();
+    Builder b(context);
+    SmallVector<Attribute> candidates;
+    for (const auto& candidate : program.contractAudit) {
+        NamedAttrList entry;
+        entry.set("class", b.getStringAttr(frontiersynch::contractName(candidate.kind)));
+        entry.set("membership", b.getStringAttr(frontiersynch::contractName(candidate.membership)));
+        entry.set("node", b.getI64IntegerAttr(candidate.node ? static_cast<int64_t>(*candidate.node) : -1));
+        entry.set("demands", b.getStringAttr(frontiersynch::contractName(candidate.demands)));
+        entry.set("endpoint_recipes", b.getStringAttr(frontiersynch::contractName(candidate.endpointRecipes)));
+        entry.set("allocation_analysis", b.getStringAttr(frontiersynch::contractName(candidate.allocation)));
+        entry.set("implementation_error", b.getStringAttr(candidate.implementationError));
+        SmallVector<Attribute> reasons;
+        for (const auto& diagnostic : candidate.diagnostics) {
+            NamedAttrList reason;
+            reason.set("criterion", b.getStringAttr(frontiersynch::recognitionName(diagnostic.issue)));
+            reason.set("category", b.getStringAttr(frontiersynch::contractName(
+                frontiersynch::contractDiagnosticKind(diagnostic))));
+            if (diagnostic.anchor) {
+                reason.set("operation", b.getStringAttr(diagnostic.anchor->getName().getStringRef()));
+                reason.set("location", diagnostic.anchor->getLoc());
+            }
+            reasons.push_back(reason.getDictionary(context));
+        }
+        for (const auto& diagnostic : candidate.arithmeticDiagnostics) {
+            NamedAttrList reason;
+            reason.set("criterion", b.getStringAttr(frontiersynch::recognitionName(diagnostic.issue)));
+            const auto category = diagnostic.issue == frontiersynch::ArithmeticIssue::InvalidConfiguration ?
+                "producer-limit" : (diagnostic.outsideClass ? "candidate-criterion-violation" : "unmet-obligation");
+            reason.set("category", b.getStringAttr(category));
+            reason.set("relation", b.getI64IntegerAttr(diagnostic.relation));
+            reason.set("piece", b.getI64IntegerAttr(diagnostic.piece));
+            reason.set("count", b.getI64IntegerAttr(diagnostic.count));
+            reason.set("witness", b.getStringAttr("first"));
+            reasons.push_back(reason.getDictionary(context));
+        }
+        for (const auto& obligation : candidate.obligations) {
+            NamedAttrList reason;
+            reason.set("criterion", b.getStringAttr(obligation.name));
+            reason.set("status", b.getStringAttr(frontiersynch::contractName(obligation.status)));
+            reasons.push_back(reason.getDictionary(context));
+        }
+        entry.set("criteria", b.getArrayAttr(reasons));
+        if (candidate.arithmeticProfile) {
+            const auto& limits = *candidate.arithmeticProfile;
+            entry.set("period", b.getI64IntegerAttr(limits.period));
+            entry.set("pipes", b.getI64IntegerAttr(limits.pipes));
+            entry.set("dimensions", b.getI64IntegerAttr(limits.dimensions));
+            entry.set("coefficient", b.getI64IntegerAttr(limits.coefficient));
+        }
+        candidates.push_back(entry.getDictionary(context));
+    }
+    NamedAttrList report;
+    report.set("version", b.getI64IntegerAttr(1));
+    report.set("stage", b.getStringAttr("recognition-before-insertion"));
+    report.set("contracts", b.getArrayAttr(candidates));
+    report.set("logical_plan", b.getStringAttr("ready"));
+    report.set("selected_logical_backend", b.getStringAttr(logicalBackend));
+    report.set("physical_allocation", b.getStringAttr("not-requested"));
+    return report.getDictionary(context);
+}
 FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareWholeFunctionArithmetic(
-    func::FuncOp function, frontiersynch::FrontierAnalysis& analysis, std::string& error,
-    bool requireAllocationCertificate)
+    func::FuncOp function, frontiersynch::FrontierAnalysis& analysis, std::string& error)
 {
     if (failed(analysis.recognizeArithmetic()) || !analysis.result()->arithmetic) { return failure(); }
     const auto& arithmetic = *analysis.result()->arithmetic;
@@ -157,29 +241,26 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareWholeFunct
         auto demands = frontiersynch::analyzeArithmeticDemandsWithProtection(arithmetic, protection);
         if (!demands.error.empty()) { error += "; arithmetic: " + demands.error; return failure(); }
         auto prepared = frontiersynch::prepareArithmeticInsertion(function, arithmetic, demands, error);
-        if (succeeded(prepared) && requireAllocationCertificate && !(*prepared)->allocationCertificate) {
-            return failure();
-        }
         return prepared;
     }
     auto demands = frontiersynch::analyzeGeneralArithmeticDemandsWithProtection(arithmetic, protection);
     if (!demands.error.empty()) { error += "; arithmetic: " + demands.error; return failure(); }
     auto prepared = frontiersynch::prepareGeneralArithmeticInsertion(function, arithmetic, demands, error);
-    if (succeeded(prepared) && requireAllocationCertificate && !(*prepared)->allocationCertificate) {
-        return failure();
-    }
     return prepared;
 }
 FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     func::FuncOp function, GMAliasPolicy policy)
 {
     frontiersynch::FrontierAnalysis analysis(function);
-    if (failed(analysis.initialize(policy, /*requireStructure=*/false))) {
+    if (failed(analysis.initialize(policy))) {
         return failure();
     }
+    // Contract checks precede analysis, endpoint generation and allocation.
+    // Retain all outcomes even when another route supplies the logical plan.
+    if (failed(analysis.recognizeArithmetic())) { return failure(); }
     FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepared = failure();
     std::string routeError;
-    bool sequencePrepared = false;
+    StringRef logicalBackend;
     const bool straight = !function.isDeclaration() && llvm::hasSingleElement(function.getBody()) &&
         llvm::all_of(function.front(), [](Operation& op) { return op.getNumRegions() == 0; });
     if (analysis.hasOnlyNativeScalarRequirements()) {
@@ -191,9 +272,11 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
         scalar->allocationCertificate = frontiersynch::explicitAllocationCertificate(
             empty, scalar->planId, function.getContext());
         prepared = std::move(scalar);
+        logicalBackend = "native-scalar";
     } else if (straight) {
         if (succeeded(analysis.analyzeExplicitFunction())) {
             prepared = frontiersynch::prepareExplicitInsertion(function, *analysis.explicitResult());
+            if (succeeded(prepared)) { logicalBackend = "explicit"; }
         } else {
             routeError = analysis.explicitResult() ? analysis.explicitResult()->error :
                          "explicit analysis unavailable";
@@ -210,58 +293,95 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
             });
             if (!numerical) {
                 prepared = frontiersynch::prepareRotatingInsertion(function, *analysis.input(), *analysis.result());
+                if (succeeded(prepared)) { logicalBackend = "rotating"; }
             }
             if (failed(prepared) && numerical) {
                 prepared = frontiersynch::prepareNumericTemplateInsertion(function, *analysis.result());
+                if (succeeded(prepared)) { logicalBackend = "numerical-periodic"; }
             }
             if (failed(prepared)) {
                 std::string mixedError;
                 prepared = frontiersynch::prepareMixedStrideInsertion(
                     function, *analysis.input(), *analysis.result(), mixedError);
+                if (succeeded(prepared)) { logicalBackend = "mixed-stride"; }
                 if (failed(prepared) && !mixedError.empty()) { routeError += "; " + mixedError; }
             }
             if (failed(prepared)) {
                 prepared = frontiersynch::prepareGuardedRotatingInsertion(
                     function, *analysis.input(), *analysis.result());
+                if (succeeded(prepared)) { logicalBackend = "guarded-rotating"; }
             }
             if (failed(prepared)) {
                 prepared = frontiersynch::prepareBoundedLifetimeInsertion(
                     function,*analysis.input(),*analysis.result(),routeError);
+                if (succeeded(prepared)) { logicalBackend = "bounded-lifetime"; }
             }
             if (failed(prepared)) {
-                prepared = frontiersynch::prepareSequenceInsertion(function, *analysis.input(),
-                                                                   *analysis.result(), routeError);
-                sequencePrepared = succeeded(prepared);
+                if (auto* sequence = analysis.analyzeSequenceFunction()) {
+                    prepared = frontiersynch::prepareSequenceInsertion(*sequence);
+                    if (sequence->error.empty()) {
+                        analysis.noteSequenceEndpointOutcome(failed(prepared) && sequence->insertionError.empty() ?
+                            "sequence endpoint preparation unavailable" : sequence->insertionError);
+                    }
+                    routeError += sequence->error.empty() ? sequence->insertionError : sequence->error;
+                    if (succeeded(prepared)) { logicalBackend = "sequence"; }
+                }
             }
         } else { routeError = "exact structured recognition unavailable"; }
     }
     if (failed(prepared) && straight && analysis.result()) {
-        prepared = frontiersynch::prepareSequenceInsertion(function, *analysis.input(),
-                                                           *analysis.result(), routeError);
-        sequencePrepared = succeeded(prepared);
+        if (auto* sequence = analysis.analyzeSequenceFunction()) {
+            prepared = frontiersynch::prepareSequenceInsertion(*sequence);
+            if (sequence->error.empty()) {
+                analysis.noteSequenceEndpointOutcome(failed(prepared) && sequence->insertionError.empty() ?
+                    "sequence endpoint preparation unavailable" : sequence->insertionError);
+            }
+            routeError += sequence->error.empty() ? sequence->insertionError : sequence->error;
+            if (succeeded(prepared)) { logicalBackend = "sequence"; }
+        }
     }
     if (failed(prepared)) {
-        prepared = prepareWholeFunctionArithmetic(function, analysis, routeError, false);
-    } else if (sequencePrepared && !(*prepared)->allocationCertificate && !(*prepared)->regionalAllocation &&
-               llvm::any_of((*prepared)->endpoints, [](const auto& endpoint) {
-                   return endpoint.kind != frontiersynch::LogicalCommandKind::Barrier;
-               })) {
-        // Keep the accepted logical plan unless another exact route also
-        // supplies the existing allocation interface. Both preparations
-        // remain detached; this neither assigns IDs nor repairs scarcity.
-        std::string allocationRouteError;
-        auto alternative = prepareWholeFunctionArithmetic(function, analysis, allocationRouteError, true);
-        if (succeeded(alternative)) { prepared = std::move(alternative); }
+        prepared = prepareWholeFunctionArithmetic(function, analysis, routeError);
+        if (succeeded(prepared)) { logicalBackend = "arithmetic"; }
     }
     if (failed(prepared)) {
         auto compact = frontiersynch::prepareCompactBoundingInsertion(function, analysis.sharedInput());
-        if (compact.prepared) { prepared = std::move(compact.prepared); }
+        if (compact.prepared) { prepared = std::move(compact.prepared); logicalBackend = "compact-bounding"; }
         else {
             const auto& reason = compact.error.empty() ? compact.exportError : compact.error;
             if (!reason.empty()) { routeError += "; compact bounding: " + reason; }
         }
     }
-    if (failed(prepared)) { function.emitError(routeError); }
+    if (succeeded(prepared)) { (*prepared)->recognitionReport = contractReport(*analysis.result(), logicalBackend); }
+    if (failed(prepared)) {
+        auto diagnostic = function.emitError("logical plan unavailable; Section 5 contract outcomes:");
+        for (const auto& candidate : analysis.result()->contractAudit) {
+            diagnostic << " " << frontiersynch::contractName(candidate.kind) << "[";
+            if (candidate.node) { diagnostic << *candidate.node; }
+            else {
+                diagnostic << "function";
+                if (candidate.arithmeticProfile) { diagnostic << ",period=" << candidate.arithmeticProfile->period; }
+            }
+            diagnostic << "]=" << frontiersynch::contractName(candidate.membership);
+            for (const auto& reason : candidate.diagnostics) {
+                diagnostic << "(" << frontiersynch::recognitionName(reason.issue) << ":"
+                           << frontiersynch::contractName(frontiersynch::contractDiagnosticKind(reason)) << ")";
+            }
+            for (const auto& reason : candidate.arithmeticDiagnostics) {
+                const auto category = reason.issue == frontiersynch::ArithmeticIssue::InvalidConfiguration ?
+                    "producer-limit" : (reason.outsideClass ? "candidate-criterion-violation" : "unmet-obligation");
+                diagnostic << "(" << frontiersynch::recognitionName(reason.issue) << ":" << category
+                           << ",count=" << reason.count << ")";
+            }
+            for (const auto& obligation : candidate.obligations) {
+                if (obligation.status != frontiersynch::ContractStatus::Established) {
+                    diagnostic << "(" << obligation.name << ":"
+                               << frontiersynch::contractName(obligation.status) << ")";
+                }
+            }
+        }
+        diagnostic << "; analysis/export/endpoint failure: " << routeError;
+    }
     return prepared;
 }
 class PTOFrontierAnalysisPass : public impl::PTOFrontierAnalysisBase<PTOFrontierAnalysisPass> {

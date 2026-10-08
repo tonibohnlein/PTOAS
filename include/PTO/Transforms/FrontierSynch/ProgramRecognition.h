@@ -17,6 +17,43 @@
 #include "PTO/Transforms/FrontierSynch/PeriodicAllocation.h"
 namespace mlir::pto::frontiersynch {
 enum class StructureKind { Sequence, ExplicitRun, Loop, Conditional, Unsupported, Section };
+enum class ContractClass {
+    Finite, FiniteGuarded, Periodic, GuardedPeriodic, BoundedLifetime,
+    VaryingPeriodic, NumericTemplate, Differences, Octagons, BoundedCoefficients,
+    Sequence, Repetition, FiniteOverlay
+};
+enum class ContractStatus { Established, Violated, Unproved, NotEvaluated };
+enum class ContractImplementation { NotRequested, Available, Unavailable };
+enum class ContractDiagnosticKind { CriterionViolation, UnmetObligation, ProducerLimit, AdapterGap };
+struct ContractObligation {
+    std::string name;
+    ContractStatus status = ContractStatus::NotEvaluated;
+};
+// Exact diagnostic multiplicity with the first source witness. Membership
+// does not depend on retaining a separate copy for every failing row/piece.
+struct ArithmeticContractDiagnostic {
+    ArithmeticIssue issue;
+    bool outsideClass = false;
+    std::size_t relation = 0;
+    std::size_t piece = 0;
+    uint64_t count = 0;
+};
+SmallVector<ArithmeticContractDiagnostic> summarizeArithmeticDiagnostics(ArrayRef<ArithmeticDiagnostic> diagnostics);
+struct ProgramContractCandidate {
+    ContractClass kind = ContractClass::Finite;
+    std::optional<std::size_t> node; // Absent for whole-function arithmetic profiles.
+    ContractStatus membership = ContractStatus::NotEvaluated;
+    SmallVector<RecognitionDiagnostic> diagnostics;
+    SmallVector<ArithmeticContractDiagnostic> arithmeticDiagnostics;
+    std::optional<ArithmeticLimits> arithmeticProfile;
+    SmallVector<ContractObligation> obligations;
+    // These describe observed pipeline stages only. Their failure never changes
+    // membership, and absent observations never mean a violated class contract.
+    ContractImplementation demands = ContractImplementation::NotRequested;
+    ContractImplementation endpointRecipes = ContractImplementation::NotRequested;
+    ContractImplementation allocation = ContractImplementation::NotRequested;
+    std::string implementationError;
+};
 struct StructureNode {
     StructureKind kind = StructureKind::Sequence;
     Operation* anchor = nullptr;
@@ -64,7 +101,27 @@ struct ProgramRecognition {
     // Filled on demand by FrontierAnalysis::recognizeArithmetic. The producer
     // accepts a whole function only; subtrees are not independent invocations.
     std::optional<ArithmeticProgram> arithmetic;
+    // Recognition-only snapshots for every requested fixed arithmetic profile.
+    // Preserve earlier successes even when a later profile or backend fails.
+    SmallVector<ProgramContractCandidate, 0> arithmeticContracts;
+    // Original whole-function sequence evidence, recorded before endpoint
+    // preparation. Generic selected/bounding compositions cannot supply it.
+    std::optional<ProgramContractCandidate> sequenceContract;
+    SmallVector<ProgramContractCandidate, 0> contractAudit;
 };
+// Rebuild only from existing recognition/backend observations; no extraction,
+// demands, regional preparation, emission or allocation is invoked here.
+void refreshProgramContractAudit(ProgramRecognition& program);
+void recordArithmeticContractAttempt(ProgramRecognition& program, const ArithmeticLimits& limits,
+                                     const ArithmeticProgram& arithmetic);
+// Update only endpoint availability on an existing sequence snapshot. An empty
+// error means successful detached preparation; membership is never changed.
+void recordSequenceEndpointAttempt(ProgramRecognition& program, StringRef error);
+ContractDiagnosticKind contractDiagnosticKind(const RecognitionDiagnostic& diagnostic);
+StringRef contractName(ContractClass kind);
+StringRef contractName(ContractStatus status);
+StringRef contractName(ContractImplementation status);
+StringRef contractName(ContractDiagnosticKind kind);
 // Visits all regions without unrolling, fuses adjacent leaves, and runs the
 // structural checks independently. Arithmetic extraction is requested separately.
 // Applicable certifies the input contract only. Backend fields remain absent

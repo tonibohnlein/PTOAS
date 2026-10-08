@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Structured test output for independent finite checks of derived relations.
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
+#include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
@@ -68,10 +69,15 @@ void dumpArithmeticJSON(func::FuncOp function, const fs::ArithmeticProgram& prog
         for (const auto& diagnostic : program.extraction.diagnostics) {
             issues.push_back(fs::recognitionName(diagnostic.issue));
         }
-        for (const auto& diagnostic : program.recognition.diagnostics) {
+        llvm::json::Array arithmeticIssues;
+        for (const auto& diagnostic : fs::summarizeArithmeticDiagnostics(program.recognition.diagnostics)) {
             issues.push_back(fs::recognitionName(diagnostic.issue));
+            arithmeticIssues.push_back(llvm::json::Object{{"issue", fs::recognitionName(diagnostic.issue)},
+                {"outside_class", diagnostic.outsideClass}, {"count", diagnostic.count},
+                {"relation", diagnostic.relation}, {"piece", diagnostic.piece}, {"witness", "first"}});
         }
         document["issues"] = std::move(issues);
+        document["arithmetic_issue_counts"] = std::move(arithmeticIssues);
         llvm::json::Array bindings;
         for (Value parameter : program.parameters) {
             auto argument = dyn_cast<BlockArgument>(parameter);
