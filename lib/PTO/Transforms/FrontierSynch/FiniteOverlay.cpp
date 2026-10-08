@@ -175,6 +175,8 @@ FiniteOverlayAnalysis analyzeFiniteOverlay(RegionalAnalysis base,
     result.retainBase = [state](RegionalEvent source, RegionalEvent target) { return state->retain(source, target); };
     result.regional = state->base;
     result.regional.numerical.reset();
+    result.regional.arithmeticRelations.reset();
+    result.regional.symbolicStorage.reset();
     result.regional.reachability = [state](RegionalEvent source, RegionalEvent target) {
         return state->query(source, target);
     };

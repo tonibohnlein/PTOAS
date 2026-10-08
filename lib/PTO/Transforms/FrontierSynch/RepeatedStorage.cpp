@@ -74,22 +74,44 @@ void append(std::vector<RegionalSelector>& out, ArrayRef<RegionalSelector> input
         out.push_back(std::move(selected));
     }
 }
-void appendPiece(RegionalStorageSelectors& out, const State::Piece& piece,
+bool appendPiece(RegionalStorageSelectors& out, const State::Piece& piece,
                  RepeatedStorageOwner owner, const State::Family& family, const State& state)
 {
     auto& e = state.expressions();
-    const auto guard = e.land(owner.present, e.land(e.le(e.constant(piece.begin), owner.localByte),
-                                                  e.lt(owner.localByte, e.constant(piece.end))));
-    if (e.constantValue(guard) == uint64_t(0)) { return; }
+    auto access = piece.access;
+    auto local = owner.localByte;
+    auto guard = owner.present;
+    if (piece.inner) {
+        const auto& inner = *piece.inner;
+        const auto start = e.constant(piece.begin);
+        const auto delta = e.sub(local, start);
+        const auto ordinal = e.div(delta, e.constant(inner.stride));
+        guard = e.land(guard, e.land(e.le(start, local), e.lt(ordinal, inner.trips)));
+        local = e.add(start, e.rem(delta, e.constant(inner.stride)));
+        auto bind = [&](RegionalSelector& selector) {
+            if (inner.coordinate < selector.event.visits.size()) {
+                selector.event.visits[inner.coordinate] = ordinal;
+            } else if (inner.coordinate == selector.event.visits.size()) { selector.event.ordinal = ordinal; }
+            else { return false; }
+            auto present = regionalPresence(state.body, selector.event);
+            if (!present) { return false; }
+            selector.present = *present;
+            return true;
+        };
+        if (!bind(access.first) || !bind(access.last)) { return false; }
+    }
+    guard = e.land(guard, e.land(e.le(e.constant(piece.begin), local), e.lt(local, e.constant(piece.end))));
+    if (e.constantValue(guard) == uint64_t(0)) { return true; }
     const auto finalVisit = family.spec.kind == RepeatedStorageKind::VisitOwned ? owner.visit :
         e.sub(state.trips, e.constant(1));
     if (piece.mode == SyncAccessMode::Write) {
-        append(out.firstWriters, {piece.access.first}, guard, owner.visit, e);
-        append(out.lastWriters, {piece.access.last}, guard, finalVisit, e);
+        append(out.firstWriters, {access.first}, guard, owner.visit, e);
+        append(out.lastWriters, {access.last}, guard, finalVisit, e);
     } else {
-        append(out.firstReaders[piece.pipe], {piece.access.first}, guard, owner.visit, e);
-        append(out.lastReaders[piece.pipe], {piece.access.last}, guard, finalVisit, e);
+        append(out.firstReaders[piece.pipe], {access.first}, guard, owner.visit, e);
+        append(out.lastReaders[piece.pipe], {access.last}, guard, finalVisit, e);
     }
+    return true;
 }
 std::optional<Id> before(const State& state, RegionalEvent a, RegionalEvent b)
 {
@@ -174,7 +196,7 @@ std::optional<RegionalStorageSelectors> RepeatedStorage::selectors(RegionalByteA
         if (!owned) { return std::nullopt; }
         if (e.constantValue(owned->present) == uint64_t(0)) { continue; }
         for (const auto& piece : state->families[id].pieces) {
-            appendPiece(result, piece, *owned, state->families[id], *state);
+            if (!appendPiece(result, piece, *owned, state->families[id], *state)) { return std::nullopt; }
         }
     }
     for (const auto& cell : state->body.storageBoundary) {
@@ -194,6 +216,38 @@ std::optional<RegionalStorageSelectors> RepeatedStorage::selectors(RegionalByteA
         }
     }
     return finish(*state, result) ? std::optional<RegionalStorageSelectors>(std::move(result)) : std::nullopt;
+}
+std::shared_ptr<const RegionalSymbolicStorageCertificate> RepeatedStorage::certificate() const
+{
+    auto result = std::make_shared<RegionalSymbolicStorageCertificate>();
+    result->expressions = state->body.expressions;
+    result->accessModel = state->body.accessModel;
+    result->gmAliasPolicy = state->body.gmAliasPolicy;
+    for (std::size_t id = 0; id < state->families.size(); ++id) {
+        const auto& source = state->families[id].spec;
+        RegionalStorageFamily family;
+        family.space = source.space; family.base = source.origin.base; family.effects = source.effects;
+        family.kind = source.kind == RepeatedStorageKind::VisitOwned ? RegionalStorageFamilyKind::VisitOwned :
+                                                                     RegionalStorageFamilyKind::SharedReadOnly;
+        family.owner = [owned = state, id](RegionalByteAddress address) { return lookupOwner(*owned, id, address); };
+        family.membership = [owned = state, id](RegionalByteAddress address) -> std::optional<Id> {
+            auto owner = lookupOwner(*owned, id, address);
+            if (!owner) { return std::nullopt; }
+            RegionalStorageSelectors selectors;
+            for (const auto& piece : owned->families[id].pieces) {
+                if (!appendPiece(selectors, piece, *owner, owned->families[id], *owned)) { return std::nullopt; }
+            }
+            auto& e = owned->expressions();
+            auto present = e.boolean(false);
+            for (const auto& writer : selectors.firstWriters) { present = e.lor(present, writer.present); }
+            for (const auto& [pipe, readers] : selectors.firstReaders) {
+                for (const auto& reader : readers) { present = e.lor(present, reader.present); }
+            }
+            return present;
+        };
+        result->families.push_back(std::move(family));
+    }
+    return result;
 }
 bool RepeatedStorage::contains(std::size_t effect) const { return llvm::is_contained(state->effectIds, effect); }
 ArrayRef<std::size_t> RepeatedStorage::effects() const { return state->effectIds; }

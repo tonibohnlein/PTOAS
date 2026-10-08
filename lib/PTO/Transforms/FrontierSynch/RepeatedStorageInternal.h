@@ -17,6 +17,7 @@ struct RepeatedStorage::State {
         RegionalAccessBoundary access;
         SyncAccessMode mode = SyncAccessMode::Read;
         uint32_t pipe = 0;
+        std::optional<RepeatedStorageInnerRun> inner;
     };
     struct Family {
         RepeatedStorageFamily spec;

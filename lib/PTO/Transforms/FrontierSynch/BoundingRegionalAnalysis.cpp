@@ -43,6 +43,8 @@ void clearSelectedGraph(RegionalAnalysis& domain)
 {
     domain.reachability = {};
     domain.numerical.reset();
+    domain.arithmeticRelations.reset();
+    domain.symbolicStorage.reset();
     domain.prepare = {};
     domain.prepareWithVisits = {};
     domain.prepareFiltered = {};

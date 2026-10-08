@@ -264,6 +264,87 @@ valid=?x?>
     malformed = body; malformed.occurrenceLoops.clear();
     return !fs::recognizeRepeatedStorage(malformed, loops[0], e.constant(1)).storage;
 }
+// Symbolic variant of the corpus tiled-output ownership pattern: preserve a
+// clipped inner count instead of enumerating its possible 1024 iterations.
+bool symbolicInnerOwner(MLIRContext* context)
+{
+    constexpr const char* text = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @symbolic_owned(%p: !pto.ptr<f32, gm>, %n: index, %trips: index) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %limit = arith.constant 1024 : index
+    %count = arith.minui %n, %limit : index
+    %value = arith.constant 1.0 : f32
+    scf.for %t = %zero to %trips step %one {
+      %base = arith.muli %t, %limit overflow<nsw> : index
+      scf.for %i = %zero to %count step %one {
+        %offset = arith.addi %base, %i overflow<nsw> : index
+        pto.store %value, %p[%offset] : !pto.ptr<f32, gm>, f32
+      }
+    }
+    return
+  }
+})mlir";
+    auto module = parseSourceString<ModuleOp>(text, context);
+    if (!module) { return false; }
+    auto function = module->lookupSymbol<func::FuncOp>("symbolic_owned");
+    SmallVector<scf::ForOp> loops;
+    function.walk<WalkOrder::PreOrder>([&](scf::ForOp loop) { loops.push_back(loop); });
+    if (loops.size() != 2) { return false; }
+    pto::SyncInput input(pto::GMAliasPolicy::MayNotAlias);
+    if (failed(input.build(function))) { return false; }
+    auto body = bodyFor(input, loops[0]);
+    if (body.anchors.size() != 1) { return false; }
+    auto& e = *body.expressions;
+    auto count = e.input(loops[1].getUpperBound());
+    body.occurrenceLoops[0] = loops[1];
+    body.presence = [arena = body.expressions, count](fs::RegionalEvent event)
+        -> std::optional<fs::RegionExpressions::Id> {
+        if (event.type || !event.visits.empty()) { return std::nullopt; }
+        return arena->lt(event.ordinal, count);
+    };
+    for (auto& access : body.accessBoundary) {
+        access.last.event.ordinal = e.sub(count, e.constant(1));
+        access.first.present = access.last.present = e.lt(e.constant(0), count);
+    }
+    auto result = fs::recognizeRepeatedStorage(body, loops[0], e.constant(2));
+    if (!result.storage) { llvm::errs() << result.error << "\n"; return false; }
+    auto certificate = result.storage->certificate();
+    if (!certificate || certificate->families.size() != 1) { return false; }
+    const auto& family = certificate->families.front();
+    if (!family.owner || !family.membership || family.kind != fs::RegionalStorageFamilyKind::VisitOwned) {
+        return false;
+    }
+    for (uint64_t n : {0U, 1U, 7U, 1024U}) {
+        for (uint64_t byte : {0U, 3U, 4U, 27U, 28U, 4095U, 4096U, 4100U, 8191U, 8192U}) {
+            fs::RegionalByteAddress address{pto::AddressSpace::GM, function.getArgument(0), e.constant(byte)};
+            auto selectors = result.storage->selectors(address);
+            auto owner = family.owner(address);
+            auto membership = family.membership(address);
+            if (!selectors || !owner || !membership) { return false; }
+            fs::RegionExpressions::Substitution binding({{count, e.constant(n)}});
+            auto evaluated = [&](fs::RegionExpressions::Id id) { return e.constantValue(e.substitute(id, binding)); };
+            const bool expected = byte < 8192 && byte % 4096 < 4 * n;
+            if (evaluated(*membership) != uint64_t(expected) ||
+                evaluated(owner->present) != uint64_t(byte < 8192)) { return false; }
+            for (auto* candidates : {&selectors->firstWriters, &selectors->lastWriters}) {
+                unsigned present = 0;
+                for (const auto& candidate : *candidates) {
+                    auto active = evaluated(candidate.present);
+                    if (!active) { return false; }
+                    if (!*active) { continue; }
+                    ++present;
+                    if (candidate.event.visits.size() != 1 ||
+                        evaluated(candidate.event.visits[0]) != byte / 4096 ||
+                        evaluated(candidate.event.ordinal) != (byte % 4096) / 4) { return false; }
+                }
+                if (present != unsigned(expected)) { return false; }
+            }
+        }
+    }
+    return true;
+}
 // input_rmsnorm's 16 rows of 512 bf16 columns in a 7168-column tensor.
 // Check the exact translated union against pairwise concrete intervals, including
 // a fifteenth visit that collides with the next row and partial-column strides.
@@ -294,6 +375,7 @@ bool corpusColumns()
 } // namespace
 bool runRepeatedStorageChecks(MLIRContext* context)
 {
+    if (!symbolicInnerOwner(context)) { llvm::errs() << "symbolic inner owner check failed\n"; return false; }
     if (!corpusColumns()) { llvm::errs() << "corpus column union check failed\n"; return false; }
     if (!projectedCorpus(context)) { llvm::errs() << "corpus nested owner check failed\n"; return false; }
     auto module = parseSourceString<ModuleOp>(source, context);

@@ -57,6 +57,10 @@ def check(document, n, m, repeats=1, bank_stride=32, initial_load=False, active_
     edges = native(pipes)
     for source, (_, _, reads, writes) in enumerate(expected):
         for target in range(source + 1, len(expected)):
+            # Same-scalar storage hazards are protected by hardware. Keep
+            # scalar SSA prerequisites below; they are a separate native rule.
+            if pipes[source] == 0 and pipes[target] == 0:
+                continue
             next_reads, next_writes = expected[target][2:]
             if writes & (next_reads | next_writes) or reads & next_writes:
                 edges.add((2 * source + 1, 2 * target))
@@ -256,7 +260,8 @@ def main():
         path.write_text(source.replace("array<i64: 3, 2>", "array<i64: 1000000000, 1000000001>"))
         large = invoke(tool, "--insert-logical", path)
         assert small == large.replace("1000000000, 1000000001", "3, 2")
-        assert small.count("scf.for") == 2
+        # Recognition diagnostics can name scf.for in string attributes.
+        assert sum(line.lstrip().startswith("scf.for ") for line in small.splitlines()) == 2
         triple = source.replace("    scf.for %visit",
                                 "    scf.for %outer = %zero to %two step %one {\n    scf.for %visit")
         triple = triple.replace("    return", "    }\n    return")

@@ -5,15 +5,21 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Finite coordinate projection for storage summaries. Payloads and their
-// reachability stay in the child; only footprint/selector alternatives expand.
+// Coordinate projection for storage summaries: invert certified bounded affine
+// inner runs symbolically, otherwise use the finite projection adapter. Payloads
+// and their reachability stay in the child.
 #ifndef PTO_FRONTIERSYNCH_REPEATEDSTORAGEPROJECTION_H
 #define PTO_FRONTIERSYNCH_REPEATEDSTORAGEPROJECTION_H
 #include "PTO/Transforms/FrontierSynch/RepeatedStorage.h"
 #include "../InsertSync/SyncScalarEvolution.h"
 #include "../InsertSync/SyncEffectRanges.h"
+#include "llvm/Support/MathExtras.h"
 namespace mlir::pto::frontiersynch::detail {
-struct ProjectedAccess { SyncAccessRegion region; RegionalAccessBoundary boundary; };
+struct ProjectedAccess {
+    SyncAccessRegion region;
+    RegionalAccessBoundary boundary;
+    std::optional<RepeatedStorageInnerRun> inner;
+};
 inline std::optional<SyncAccessRegion> projectMap(const SyncAccessRegion& source, scf::ForOp loop,
                                                  const DenseMap<Value, int64_t>& bindings)
 {
@@ -39,6 +45,63 @@ inline std::optional<SyncAccessRegion> projectMap(const SyncAccessRegion& source
     }
     mlir::pto::detail::compactRegionSymbols(out);
     return out;
+}
+// Recover an inner affine translation without unfolding its iteration domain.
+// The current adapter binds one coordinate; additional nonconstant coordinates
+// remain obligations, rather than being erased from the physical map.
+inline std::optional<SmallVector<ProjectedAccess, 0>> projectInnerRun(
+    const RegionalAnalysis& body, scf::ForOp outer, const SyncStorageEffect& effect,
+    const RegionalAccessBoundary& access, const DenseMap<Value, int64_t>& fixed,
+    ArrayRef<scf::ForOp> frames, bool leaf)
+{
+    if (frames.size() != 1 || !leaf) { return std::nullopt; }
+    auto loop = frames.front();
+    APInt lower, step;
+    if (!loop || !outer->isProperAncestor(loop) ||
+        !matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) || !lower.isSignedIntN(64) ||
+        lower.isNegative() || !matchPattern(loop.getStep(), m_ConstantInt(&step)) ||
+        !step.isSignedIntN(64) || !step.isStrictlyPositive()) { return std::nullopt; }
+    auto upper = loop.getUpperBound();
+    auto* owner = upper.getDefiningOp();
+    if (auto arg = dyn_cast<BlockArgument>(upper)) { owner = arg.getOwner()->getParentOp(); }
+    // The storage reservation and invocation selectors must repeat unchanged.
+    if (!owner || owner == outer || outer->isProperAncestor(owner)) { return std::nullopt; }
+    mlir::pto::detail::ScalarEvolution scalar(loop.getContext(), loop);
+    auto range = scalar.signedRange(upper);
+    if (!range || range->first < 0) { return std::nullopt; }
+    auto a = lower.sextOrTrunc(128), b = APInt(128, range->second, true), stride = step.sextOrTrunc(128);
+    const auto count = b.sgt(a) ? (b - a - 1).udiv(stride) + 1 : APInt(128, 0);
+    if (count.getActiveBits() > 63 || count.isZero()) { return std::nullopt; }
+    auto& e = *body.expressions;
+    auto low = e.constant(lower.getZExtValue()), high = e.input(upper);
+    // Divide (distance-1) only on nonempty domains; the circuits are total and
+    // the select masks empty domains. No upper+step expression can overflow.
+    auto trips = e.select(e.lt(low, high),
+        e.add(e.div(e.sub(e.sub(high, low), e.constant(1)), e.constant(step.getZExtValue())), e.constant(1)),
+        e.constant(0));
+    SmallVector<ProjectedAccess, 0> result;
+    for (const auto& region : effect.regions) {
+        auto map = projectMap(region, outer, fixed);
+        if (!map) { return std::nullopt; }
+        auto variable = llvm::find(map->symbols, loop.getInductionVar());
+        if (variable == map->symbols.end()) { return std::nullopt; }
+        auto split = mlir::pto::detail::splitTranslation(map->byteOffset, map->extents.size(),
+                                                       map->symbols.size(), variable - map->symbols.begin());
+        int64_t byteStride = 0;
+        if (!split || split->second <= 0 || llvm::MulOverflow(split->second, step.getSExtValue(), byteStride) ||
+            byteStride <= 0) { return std::nullopt; }
+        // Extent dependence cannot be replaced by a reservation hull.
+        for (auto extent : map->extents) {
+            if (extent.isFunctionOfSymbol(variable - map->symbols.begin())) { return std::nullopt; }
+        }
+        auto bindings = fixed;
+        bindings[loop.getInductionVar()] = lower.getSExtValue();
+        auto projected = projectMap(region, outer, bindings);
+        if (!projected) { return std::nullopt; }
+        result.push_back({std::move(*projected), access,
+                          RepeatedStorageInnerRun{uint64_t(byteStride), count.getZExtValue(), trips, 0}});
+    }
+    return result;
 }
 inline std::optional<SmallVector<ProjectedAccess, 0>> projectAccesses(
     const RegionalAnalysis& body, scf::ForOp loop, std::size_t effectId)
@@ -93,6 +156,10 @@ inline std::optional<SmallVector<ProjectedAccess, 0>> projectAccesses(
         const bool leaf = bool(body.occurrenceLoops[type]);
         if (leaf) { frames.push_back(body.occurrenceLoops[type]); }
         if (frames.empty()) { return std::nullopt; }
+        if (auto symbolic = projectInnerRun(body, loop, effect, access, fixed, frames, leaf)) {
+            llvm::append_range(out, std::move(*symbolic));
+            continue;
+        }
         if (frames.size() > 64) { return std::nullopt; }
         struct Domain { APInt lower, step; uint64_t trips; };
         SmallVector<Domain, 4> domains;
