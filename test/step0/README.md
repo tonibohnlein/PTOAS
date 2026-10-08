@@ -364,3 +364,9 @@ large ordinals. The affine-boundary test compares inserted command closures
 against independently unfolded accesses across signed wrap. These checks do
 not establish complete logical-plan support for the prefill benchmark: its
 remaining storage and endpoint exports are separate obligations.
+
+Rotating physical origins accept factored constant scales while retaining the
+modulo expression as an atom. This handles the prefill corpus's
+`(bank*4 + offset)*256` addresses without adding instruction footprint rules.
+The extended-rotation regression compares factored and distributed addresses
+and requires them to merge into the same physical slot family.
