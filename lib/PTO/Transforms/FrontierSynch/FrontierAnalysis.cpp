@@ -18,6 +18,8 @@
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
 #include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
+#include "PTO/Transforms/FrontierSynch/GuardedPeriodicInsertion.h"
+#include "PTO/Transforms/FrontierSynch/CompactAllocation.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "RecognitionInternal.h"
@@ -67,6 +69,9 @@ LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy, bool r
     nativeScalarOnly = false;
     arithmeticAnalysis.reset();
     generalArithmeticAnalysis.reset();
+    arithmeticGeneratorStage.reset();
+    arithmeticPeriodicAnalysis.reset();
+    periodicExports = {};
     explicitAnalysis.reset();
     sequenceAnalysis.reset();
     program.reset();
@@ -134,10 +139,55 @@ SequenceAnalysis* FrontierAnalysis::analyzeSequenceFunction() {
     }
     return &*sequenceAnalysis;
 }
+LogicalResult FrontierAnalysis::analyzeArithmeticPeriodicFunction()
+{
+    if (failed(recognizeArithmetic()) || !program->arithmetic) { return failure(); }
+    if (!arithmeticPeriodicAnalysis) {
+        if (!arithmeticGeneratorStage) {
+            const auto protection = structuredProtection(storage->accesses());
+            arithmeticGeneratorStage.emplace(analyzeGeneralArithmeticGenerators(*program->arithmetic, &protection));
+        }
+        arithmeticPeriodicAnalysis = convertArithmeticPeriodicProgram(*program->arithmetic, *arithmeticGeneratorStage);
+    }
+    const auto& conversion = arithmeticPeriodicAnalysis->conversion;
+    return success(conversion.status == ArithmeticPeriodicStatus::Applicable && conversion.guarded &&
+                   conversion.guarded->error.empty());
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareArithmeticPeriodicFunction()
+{
+    if (failed(analyzeArithmeticPeriodicFunction())) { return failure(); }
+    const auto& converted = *arithmeticPeriodicAnalysis;
+    const auto& conversion = converted.conversion;
+    std::vector<uint64_t> residues;
+    for (const auto& site : converted.sites) { residues.push_back(site.residue); }
+    GuardedPeriodicEndpointInput input{converted.loop, conversion.expressions, converted.phases,
+        conversion.payloads, conversion.generators, &*conversion.guarded, converted.period, residues};
+    periodicExports = {};
+    auto prepared = prepareGuardedPeriodicEndpoints(function, input, periodicExports.endpointError);
+    if (failed(prepared)) { return failure(); }
+    periodicExports.endpointsAvailable = true;
+    (*prepared)->allocationCertificate = guardedPeriodicAllocationCertificate(*conversion.expressions,
+        conversion.payloads, conversion.generators, *conversion.guarded, (*prepared)->planId, function.getContext());
+    periodicExports.allocationAvailable = static_cast<bool>((*prepared)->allocationCertificate);
+    if (!periodicExports.allocationAvailable) {
+        periodicExports.allocationError = "periodic source-identity allocation certificate unavailable";
+    }
+    return prepared;
+}
 LogicalResult FrontierAnalysis::analyzeArithmeticFunction()
 {
     if (failed(recognizeArithmetic()) || !program->arithmetic) { return failure(); }
     const auto& arithmetic = *program->arithmetic;
+    if (arithmeticGeneratorStage) {
+        if (!generalArithmeticAnalysis) {
+            generalArithmeticAnalysis = completeGeneralArithmeticDemands(std::move(*arithmeticGeneratorStage));
+        }
+        arithmeticGeneratorStage.reset();
+        return success(generalArithmeticAnalysis->error.empty() && generalArithmeticAnalysis->exactMinimum);
+    }
+    if (generalArithmeticAnalysis) {
+        return success(generalArithmeticAnalysis->error.empty() && generalArithmeticAnalysis->exactMinimum);
+    }
     const auto protection = structuredProtection(storage->accesses());
     if (arithmetic.recognition.arithmeticClass == ArithmeticClass::Differences) {
         if (!arithmeticAnalysis) {
@@ -153,6 +203,12 @@ LogicalResult FrontierAnalysis::analyzeArithmeticFunction()
 bool FrontierAnalysis::hasWholeFunctionMinimumDemands() const
 {
     if (explicitAnalysis && explicitAnalysis->error.empty()) { return true; }
+    if (arithmeticPeriodicAnalysis) {
+        const auto& converted = arithmeticPeriodicAnalysis->conversion;
+        if (converted.status == ArithmeticPeriodicStatus::Applicable &&
+            ((converted.guarded && converted.guarded->error.empty()) ||
+             (converted.numerical && converted.numerical->error.empty()))) { return true; }
+    }
     if ((arithmeticAnalysis && arithmeticAnalysis->error.empty() && arithmeticAnalysis->exactMinimum) ||
         (generalArithmeticAnalysis && generalArithmeticAnalysis->error.empty() &&
          generalArithmeticAnalysis->exactMinimum)) { return true; }
@@ -274,9 +330,24 @@ DictionaryAttr contractReport(const frontiersynch::ProgramRecognition& program, 
     return report.getDictionary(context);
 }
 FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareWholeFunctionArithmetic(
-    func::FuncOp function, frontiersynch::FrontierAnalysis& analysis, std::string& error)
+    func::FuncOp function, frontiersynch::FrontierAnalysis& analysis, std::string& error, StringRef& backend)
 {
+    auto periodic = analysis.prepareArithmeticPeriodicFunction();
+    const auto& exports = analysis.arithmeticPeriodicExports();
+    if (succeeded(periodic)) {
+        // Allocation is a separate request. Preserve a valid logical plan
+        // even when this query representation has not certified ID reuse.
+        backend = "arithmetic-periodic"; return periodic;
+    }
+    if (exports.endpointsAvailable) { error += "; arithmetic periodic allocation: " + exports.allocationError; }
+    else if (!exports.endpointError.empty()) { error += "; arithmetic periodic endpoints: " + exports.endpointError; }
+    if (const auto* converted = analysis.arithmeticPeriodicDemands()) {
+        const auto& conversion = converted->conversion;
+        if (!conversion.diagnostic.empty()) { error += "; arithmetic periodic adapter: " + conversion.diagnostic; }
+        if (!conversion.exportError.empty()) { error += "; arithmetic periodic export: " + conversion.exportError; }
+    }
     const bool analyzed = succeeded(analysis.analyzeArithmeticFunction());
+    backend = "arithmetic";
     if (!analysis.result() || !analysis.result()->arithmetic) { return failure(); }
     const auto& arithmetic = *analysis.result()->arithmetic;
     if (const auto* demands = analysis.arithmeticDemands()) {
@@ -382,8 +453,7 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
         }
     }
     if (failed(prepared)) {
-        prepared = prepareWholeFunctionArithmetic(function, analysis, routeError);
-        if (succeeded(prepared)) { logicalBackend = "arithmetic"; }
+        prepared = prepareWholeFunctionArithmetic(function, analysis, routeError, logicalBackend);
     }
     if (failed(prepared) && analysis.hasWholeFunctionMinimumDemands()) {
         routeError = "unmet-exports: exact whole-function demands retained; " + routeError;

@@ -9,6 +9,75 @@
 #include "PTO/Transforms/FrontierSynch/GuardedRanks.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
+GuardedRankFrontier initGuardedRankFrontier(RegionExpressions& e, uint32_t columns)
+{
+    GuardedRankFrontier result;
+    result.counters.assign(columns, e.constant(0));
+    result.starts.assign(columns, result.counters); result.completions = result.starts;
+    return result;
+}
+GuardedRankStep advanceGuardedRank(RegionExpressions& e, GuardedRankFrontier& frontier,
+    uint32_t column, RegionExpressions::Id present, llvm::ArrayRef<GuardedRankIncoming> candidates,
+    llvm::ArrayRef<GuardedRankIncoming> native)
+{
+    GuardedRankStep out;
+    const auto k = frontier.counters.size();
+    auto integer = [&](RegionExpressions::Id value) { return value < e.size() && !e.isBoolean(value); };
+    auto row = [&](llvm::ArrayRef<RegionExpressions::Id> values) {
+        return values.size() == k && llvm::all_of(values, integer);
+    };
+    if (column >= k || frontier.starts.size() != k || frontier.completions.size() != k ||
+        present >= e.size() || !e.isBoolean(present) || !integer(frontier.counters[column]) ||
+        !row(frontier.starts[column]) || !row(frontier.completions[column])) {
+        out.error = "invalid guarded frontier registers"; return out;
+    }
+    auto valid = [&](llvm::ArrayRef<GuardedRankIncoming> edges) {
+        return llvm::all_of(edges, [&](const auto& edge) {
+            return edge.column < k && integer(edge.rank) && edge.guard < e.size() && e.isBoolean(edge.guard) &&
+                   edge.completion.size() == k;
+        });
+    };
+    if (!valid(candidates) || !valid(native)) { out.error = "invalid guarded frontier source"; return out; }
+    if (e.constantValue(frontier.counters[column]) == UINT64_MAX && e.constantValue(present) == 1) {
+        out.error = "guarded frontier rank overflow"; return out;
+    }
+    auto join = [&](std::vector<RegionExpressions::Id>& to, llvm::ArrayRef<RegionExpressions::Id> from,
+                    RegionExpressions::Id guard) {
+        if (e.constantValue(guard) == 0) { return true; }
+        if (!row(from)) { return false; }
+        for (std::size_t p = 0; p < k; ++p) {
+            to[p] = e.select(e.land(guard, e.lt(to[p], from[p])), from[p], to[p]);
+        }
+        return true;
+    };
+    out.rank = e.add(frontier.counters[column], e.select(present, e.constant(1), e.constant(0)));
+    out.start = frontier.starts[column];
+    for (const auto& edge : native) {
+        if (!join(out.start, edge.completion, e.land(present, edge.guard))) {
+            out.error = "invalid native frontier row"; return out;
+        }
+    }
+    for (const auto& edge : candidates) {
+        auto keep = e.land(e.land(present, edge.guard), e.lt(out.start[edge.column], edge.rank));
+        out.retained.push_back(keep);
+        if (!join(out.start, edge.completion, keep)) {
+            out.error = "invalid candidate frontier row"; return out;
+        }
+    }
+    out.completion = out.start;
+    join(out.completion, frontier.completions[column], present);
+    out.completion[column] = out.rank;
+    if (!e.constructionError().empty()) { out.error = e.constructionError(); return out; }
+    auto nextStart = frontier.starts[column], nextCompletion = frontier.completions[column];
+    for (std::size_t p = 0; p < k; ++p) {
+        nextStart[p] = e.select(present, out.start[p], nextStart[p]);
+        nextCompletion[p] = e.select(present, out.completion[p], nextCompletion[p]);
+    }
+    if (!e.constructionError().empty()) { out.error = e.constructionError(); return out; }
+    frontier.starts[column] = std::move(nextStart); frontier.completions[column] = std::move(nextCompletion);
+    frontier.counters[column] = out.rank;
+    return out;
+}
 GuardedRanks reduceGuardedRanks(
     RegionExpressions& e, llvm::ArrayRef<GuardedRankPayload> payloads, llvm::ArrayRef<GuardedRankEdge> generators,
     llvm::ArrayRef<GuardedRankEdge> native)
@@ -47,39 +116,24 @@ GuardedRanks reduceGuardedRanks(
     if (!bucket(generators, incoming) || !bucket(native, fixed)) {
         return out;
     }
-    using Row = std::vector<RegionExpressions::Id>;
-    Row zero(pipes.size(), e.constant(0)), counters = zero;
-    std::vector<Row> runningStarts(pipes.size(), zero), runningCompletions(pipes.size(), zero);
-    auto join = [&](Row& to, const Row& from, RegionExpressions::Id guard) {
-        for (std::size_t p = 0; p < to.size(); ++p) {
-            to[p] = e.select(e.land(guard, e.lt(to[p], from[p])), from[p], to[p]);
-        }
-    };
+    auto frontier = initGuardedRankFrontier(e, pipes.size());
     for (uint32_t i = 0; i < payloads.size(); ++i) {
-        auto column = out.columns[i], present = payloads[i].present;
-        auto rank = e.add(counters[column], e.select(present, e.constant(1), e.constant(0)));
-        counters[column] = rank;
-        out.ranks.push_back(rank);
-        Row start = runningStarts[column];
-        for (auto [source, guard] : fixed[i]) {
-            join(start, out.completions[source], guard);
-        }
+        std::vector<GuardedRankIncoming> candidates, nativeSources;
         for (auto [source, guard] : incoming[i]) {
-            auto keep = e.land(guard, e.lt(start[out.columns[source]], out.ranks[source]));
-            if (e.constantValue(keep) != 0) {
-                out.retained.push_back({source, i, keep});
-            }
-            join(start, out.completions[source], keep);
+            candidates.push_back({out.columns[source], out.ranks[source], guard, out.completions[source]});
         }
-        Row completion = start;
-        join(completion, runningCompletions[column], present);
-        completion[column] = rank;
-        for (std::size_t p = 0; p < zero.size(); ++p) {
-            runningStarts[column][p] = e.select(present, start[p], runningStarts[column][p]);
-            runningCompletions[column][p] = e.select(present, completion[p], runningCompletions[column][p]);
+        for (auto [source, guard] : fixed[i]) {
+            nativeSources.push_back({out.columns[source], out.ranks[source], guard, out.completions[source]});
         }
-        out.starts.push_back(std::move(start));
-        out.completions.push_back(std::move(completion));
+        auto step = advanceGuardedRank(e, frontier, out.columns[i], payloads[i].present, candidates, nativeSources);
+        if (!step.error.empty()) { out.error = step.error; return out; }
+        std::size_t at = 0;
+        for (auto [source, guard] : incoming[i]) {
+            auto keep = step.retained[at++];
+            if (e.constantValue(keep) != 0) { out.retained.push_back({source, i, keep}); }
+        }
+        out.ranks.push_back(step.rank);
+        out.starts.push_back(std::move(step.start)); out.completions.push_back(std::move(step.completion));
     }
     out.error = e.constructionError();
     return out;

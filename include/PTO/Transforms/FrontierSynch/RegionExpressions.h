@@ -85,6 +85,12 @@ public:
     // over the entire input range before a node is accepted.
     Id integerPredicate(const IntegerSystem& system, llvm::ArrayRef<Id> inputs,
                         uint64_t period, llvm::ArrayRef<uint64_t> residues);
+    // Exact floor-affine value over the supplied original signed parameters.
+    // Uses the same checked i128 intermediates as integerWitness; final index
+    // bits are total even if the mathematical value is outside signed i64.
+    // Consumers requiring bounded natural values must prove that range.
+    Id integerFloor(const IntegerAffine& numerator, const BoundInteger& denominator,
+                    llvm::ArrayRef<Id> inputs, uint64_t period, llvm::ArrayRef<uint64_t> residues);
     // On the caller's domain numerator/denominator is an integral occurrence
     // coordinate. Off-domain floor division and final index truncation are
     // total; no unavailable value, division by zero or signed overflow occurs.

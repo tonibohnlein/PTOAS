@@ -337,6 +337,10 @@ int runFiniteOverlayChecks();
 int runRotatingBoundaryChecks();
 int runNumericalWeightedRepetitionChecks();
 int runNumericalRepeatedSquaringChecks();
+int runLifetimeStreamChecks();
+int runArithmeticPeriodicConversionChecks();
+int runArithmeticPeriodicInputChecks(func::FuncOp, const pto::SyncInput&);
+int runResolvedLifetimeStreamChecks();
 int runGuardedRankChecks();
 int runGeneralArithmeticAllocationChecks();
 int runMixedStrideChecks();
@@ -420,6 +424,13 @@ int main(int argc, char **argv) {
   if (argc == 2 && StringRef(argv[1]) == "--bounded-lifetime-allocation-checks") {
     return runBoundedLifetimeAllocationChecks();
   }
+  if (argc == 2 && StringRef(argv[1]) == "--resolved-lifetime-stream-checks") {
+    return runResolvedLifetimeStreamChecks();
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--arithmetic-periodic-checks") {
+    return runArithmeticPeriodicConversionChecks();
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--lifetime-stream-checks") { return runLifetimeStreamChecks(); }
   if (argc == 2 && StringRef(argv[1]) == "--numerical-repeated-squaring-checks") {
     return runNumericalRepeatedSquaringChecks();
   }
@@ -481,6 +492,7 @@ int main(int argc, char **argv) {
   const bool storageEffects = argc == 3 && StringRef(argv[1]) == "--storage-effects";
   const bool rotatingAnalysis = argc == 3 && StringRef(argv[1]) == "--rotating-analysis";
   const bool explicitAnalysis = argc == 3 && StringRef(argv[1]) == "--explicit-analysis";
+  const bool arithmeticPeriodicInput = argc == 3 && StringRef(argv[1]) == "--arithmetic-periodic-input-checks";
   const bool arithmetic = argc == 3 && StringRef(argv[1]) == "--arithmetic";
   const bool recognition = argc == 3 && StringRef(argv[1]) == "--recognize";
   const bool numericAnalysis = argc == 3 && StringRef(argv[1]) == "--numeric-analysis";
@@ -513,7 +525,8 @@ int main(int argc, char **argv) {
   if (argc != 2 && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !recognition &&
       !numericAnalysis && !insertLogical &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
-      !expressionChecks && !hierarchyChecks && !boundingChecks && !compactInputChecks && !compactBoundsChecks &&
+      !arithmeticPeriodicInput && !expressionChecks && !hierarchyChecks && !boundingChecks &&
+      !compactInputChecks && !compactBoundsChecks &&
       !balancedCompactChecks && !guardedCompactChecks && !conditionalCompactChecks && !finiteReplacementChecks &&
       !boundingSequenceChecks && !compactStorageBoundaryChecks && !compactBoundaryRanksChecks &&
       !boundingRepetitionChecks && !compactClassRepetitionChecks &&
@@ -533,7 +546,7 @@ int main(int argc, char **argv) {
                  "--compact-storage-boundary-checks|--compact-boundary-ranks-checks|"
                  "--bounding-repetition-checks|--compact-class-repetition-checks|"
                  "--compact-bounding-pipeline-checks|--compact-bounding-allocation-checks|"
-                 "--arithmetic|--explicit-analysis|--rotating-analysis|--roundtrip|"
+                 "--arithmetic|--arithmetic-periodic-input-checks|--explicit-analysis|--rotating-analysis|--roundtrip|"
                  "--region-contract-checks|"
                  "--step0-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
     return 1;
@@ -556,7 +569,7 @@ int main(int argc, char **argv) {
                          compactStorageBoundaryChecks || compactBoundaryRanksChecks ||
                          boundingRepetitionChecks || compactClassRepetitionChecks || compactBoundingPipelineChecks ||
                          compactBoundingAllocationChecks ||
-                         preparedInsertion || arithmetic ||
+                         preparedInsertion || arithmetic || arithmeticPeriodicInput ||
                          aliasChecks || roundtrip || regionChecks || phaseCopies || step0 || existing;
   const auto filename = argv[hasOption ? 2 : 1];
   auto module = parseSourceFile<ModuleOp>(filename, &context);
@@ -721,6 +734,10 @@ int main(int argc, char **argv) {
     if (!translated) {
       return 1;
     }
+    if (arithmeticPeriodicInput) {
+      if (runArithmeticPeriodicInputChecks(function, input)) { return 1; }
+      continue;
+    }
     if (boundingChecks) {
       if (runBoundingRegionalChecks(function, input) || runRequirementProvenanceChecks(function, input)) {
         return 1;
@@ -834,7 +851,7 @@ int main(int argc, char **argv) {
       }
     }
   }
-  if (rotatingAnalysis || balancedCompactChecks || guardedCompactChecks ||
+  if (arithmeticPeriodicInput || rotatingAnalysis || balancedCompactChecks || guardedCompactChecks ||
       compactBoundingPipelineChecks || compactBoundingAllocationChecks) {
     return 0;
   }
