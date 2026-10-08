@@ -79,17 +79,18 @@ struct ArithmeticPeriodicProgram {
     ArithmeticPeriodicConversion conversion;
     scf::ForOp loop;
     uint64_t period = 1;
-    std::vector<ArithmeticPeriodicSite> sites; // Periodic type -> original cut and IV residue.
+    std::vector<ArithmeticPeriodicSite> sites; // Periodic type -> original cut and loop-ordinal residue.
     std::vector<const CompoundInstanceElement*> phases;
 };
 // Cheap original-cut check before constructing arithmetic generator relations.
 // Failure is an adapter limitation, not a failed arithmetic class check.
 bool checkArithmeticPeriodicSkeleton(const ArithmeticProgram& program, std::string& diagnostic);
 // Original producer adapter; does not complete arithmetic closure/subtraction.
-// The stage must belong to this unchanged program. Current prefix binding uses
-// one root-relative loop, zero lower bound and unit step; other bindings retain
-// the arithmetic stage and explicitly report an adapter gap. Site/residue
-// grouping is charged; no fixed period cap, trip or distance expansion.
+// The stage must belong to this unchanged program. Prefix binding uses one
+// counted loop with a proved ordinal, a positive constant step and an affine
+// origin in the existing parameters. Exact substitution converts original IV
+// quotients to ordinal quotients before reduction, retaining congruences.
+// Site/residue grouping is charged; no trip or distance expansion.
 ArithmeticPeriodicProgram convertArithmeticPeriodicProgram(const ArithmeticProgram& program,
     const GeneralArithmeticGeneratorStage& stage, std::shared_ptr<RegionExpressions> expressions = {});
 } // namespace mlir::pto::frontiersynch
