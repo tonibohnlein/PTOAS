@@ -47,9 +47,10 @@ if needed for machine safety, is recorded separately from class rejection.
 
 Milestone 1 has passed two independent reviews, focused validation, and the
 complete paired corpus comparison. This milestone is complete; Section 6
-implementation continues with milestone 4. Milestone 1 is committed as
+implementation continues with milestone 5. Milestone 1 is committed as
 `3890123bb`; milestone 2 has passed validation and two independent reviews.
 Milestone 2 is committed as `b0d71f7a5`.
+Milestone 3 is committed as `ad83e6c2d`.
 The previous six completed milestones are recorded in
 `section5-recognizer-update.md`.
 
@@ -195,3 +196,31 @@ unresolved geometry, scalar prerequisites and structural rejection. Two static
 reviewers accepted production and integration. The compliance checker's 73
 brace findings were confirmed to have braced bodies; whitespace checks passed.
 These constructors are not yet connected to the production fallback dispatcher.
+
+## Milestone 4 implementation
+
+Lower-fact generation checks supplied completeness and identity-writer evidence and every
+mandatory read alternative, then emits the oldest certainly required source.
+Full-class and rotating full-write facts retain their explicit physical and
+protection premises. Missing proofs skip that lower candidate; they do not
+reject the upper construction. Original group and descriptor ownership survives.
+
+The numerical excess engine uses `O(mk)` frontier entries and `O(k^3)` work for
+positive-length pipe support. It computes exact wide-integer finite-prefix counts, the quadratic
+support coefficient, and Gamma/linear bounds when support agrees. It checks
+lower containment and common native prerequisites. No loop grows with a
+numerical trip count or distance, and no all-type-pair query table is built.
+
+The fixed-body adapter owns both graph snapshots and their query views. Uniform
+frontier equality can promote the selected upper covers to original-model
+minimum demands. A zero count on a short or empty execution cannot promote
+unequal frontiers. Unavailable exports preserve mathematical records.
+Contradicted lower certificates retain an already available upper view and
+withhold the invalid lower view.
+
+Two independent reviewers accepted production, tests and integration. Serial
+compilation and tool links passed. Lower-fact oracles, 972 independent finite
+excess/profile cases, huge trip counts, support/diagonal and malformed-index
+checks passed. Bounds queries and immutable-snapshot tests passed all five
+shared-input fixtures. This milestone exports quality certificates and queries;
+production fallback dispatch remains milestone 8.
