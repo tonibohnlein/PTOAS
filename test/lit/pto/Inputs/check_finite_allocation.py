@@ -37,7 +37,7 @@ def physical_check(report, eligible):
             identity = (old["plan"], old["record"], old["source_ordinal"], tuple(old.get("members", [])))
             command["identity"] = identity
             assert new["physical_id"] in eligible
-            event = new["physical_id"]
+            event = (new["source_pipe"], new["target_pipe"], new["physical_id"])
             identity += (new["source_pipe"], new["target_pipe"])
             uses.append((len(commands), new["kind"], event, identity))
         commands.append(command)

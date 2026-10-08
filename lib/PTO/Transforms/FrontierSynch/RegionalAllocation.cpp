@@ -188,6 +188,7 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
             bool compatible = true;
             for (const auto& xm : x.members) {
                 for (const auto& ym : y.members) {
+                    if (regionalAllocationDirection(x, xm) != regionalAllocationDirection(y, ym)) { continue; }
                     auto active = a.land(xm.active, ym.active);
                     if (a.constantValue(active) == 0) { continue; }
                     auto xy = reaches(xm.lastTarget, ym.firstSource, true);
@@ -202,6 +203,9 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
         for (const auto& hidden : reservations) {
             bool disjoint = true;
             for (const auto& member : x.members) {
+                if (regionalAllocationDirection(x, member) != std::make_pair(hidden.source, hidden.target)) {
+                    continue;
+                }
                 auto active = a.land(member.active, hidden.active);
                 if (a.constantValue(active) == 0) { continue; }
                 auto before = reaches(member.lastTarget, hidden.first);

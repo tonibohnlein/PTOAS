@@ -152,6 +152,20 @@ bool queryExamples()
     auto missing = fs::allocateSharedHandoffsByQuery(handoffs, {}, 2);
     return empty.error.empty() && empty.exactMinimum && !empty.budget && !missing.error.empty();
 }
+bool directedNamespaces()
+{
+    std::vector<fs::SharedHandoff> handoffs{{0, 1}, {1, 0}, {0, 1}};
+    auto separate = fs::allocateDirectedHandoffs(handoffs, {{2}, {}, {}}, 1);
+    auto scarce = fs::allocateDirectedHandoffs(handoffs, {{}, {}, {}}, 1);
+    unsigned queries = 0;
+    auto queried = fs::allocateDirectedHandoffsByQuery(handoffs, [&](uint32_t from, uint32_t to) {
+        ++queries; return from == 0 && to == 2;
+    }, 1);
+    return separate.error.empty() && separate.budget == 1 &&
+        separate.lanes == std::vector<uint32_t>({0, 0, 0}) &&
+        scarce.error.empty() && scarce.budget == 2 &&
+        queried.error.empty() && queried.budget == 1 && queries == 1;
+}
 bool invalid()
 {
     std::vector<fs::SharedHandoff> handoffs(3, {0, 1});
@@ -166,7 +180,7 @@ bool invalid()
 } // namespace
 int runSharedHandoffAllocationChecks()
 {
-    if (!examples() || !queryExamples() || !invalid() || !exhaustive()) {
+    if (!examples() || !queryExamples() || !invalid() || !exhaustive() || !directedNamespaces()) {
         llvm::errs() << "shared handoff allocation check failed\n";
         return 1;
     }

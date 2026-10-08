@@ -73,14 +73,14 @@ struct Compatibility {
 };
 std::optional<std::vector<RegionalAllocationGroup>> split(const RegionalAllocationGroup& group)
 {
-    std::map<uint64_t, RegionalAllocationGroup> lanes;
+    std::map<std::tuple<uint32_t, uint32_t, uint64_t>, RegionalAllocationGroup> lanes;
     for (const auto& member : group.members) {
         auto lane = constantLane(group, member);
         if (!lane) { return std::nullopt; }
-        auto [entry, added] = lanes.try_emplace(*lane);
-        if (added) { entry->second = {group.sourcePipe, group.targetPipe, 1, {}}; }
-        auto copy = member;
         const auto direction = regionalAllocationDirection(group, member);
+        auto [entry, added] = lanes.try_emplace(std::make_tuple(direction.first, direction.second, *lane));
+        if (added) { entry->second = {direction.first, direction.second, 1, {}}; }
+        auto copy = member;
         copy.sourcePipe = direction.first;
         copy.targetPipe = direction.second;
         copy.tupleRule = PhysicalTupleRule{member.tupleRule ? member.tupleRule->coordinateCount : 1, 0, {}};
@@ -118,7 +118,9 @@ std::shared_ptr<RegionalAllocationSummary> coalesceConstantRegionalAllocation(
             for (auto id : constants) {
                 // Check all original lifetimes against all existing users. A
                 // guarded compatibility relation is not assumed transitive.
-                if (proof.compatible(out->groups[id], lane)) { destination = id; break; }
+                const auto& candidate = out->groups[id];
+                if (candidate.sourcePipe != lane.sourcePipe || candidate.targetPipe != lane.targetPipe) { continue; }
+                if (proof.compatible(candidate, lane)) { destination = id; break; }
             }
             if (!destination) {
                 constants.push_back(out->groups.size());

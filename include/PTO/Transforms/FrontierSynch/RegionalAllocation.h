@@ -43,7 +43,7 @@ struct RegionalAllocationGroup {
 };
 struct RegionalAllocationSummary { std::vector<RegionalAllocationGroup> groups; };
 // Preserve certified child rules while combining compatible palette formulas.
-// These offsets are logical; physical IDs come from the single shared pool.
+// These offsets are logical; physical IDs are allocated independently within each directed pipe pair.
 // Null means no complete typed result was produced.
 std::shared_ptr<RegionalAllocationSummary> coalesceRegionalAllocation(
     const RegionalAnalysis& region, const RegionalAllocationSummary& allocation);

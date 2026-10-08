@@ -9,6 +9,7 @@
 #include "RepeatedRegionInternal.h"
 #include "PTO/Transforms/FrontierSynch/RegionalLaneExports.h"
 #include "PTO/Transforms/FrontierSynch/PeriodicSharedAllocation.h"
+#include <map>
 
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -332,9 +333,19 @@ std::shared_ptr<RegionalAllocationSummary> periodicLaneAllocation(
     if (!addCrossings(state, lanes, crossings)) { return {}; }
     auto result = std::make_shared<RegionalAllocationSummary>();
     if (lanes.empty()) { return result; }
-    auto allocated = allocateLanes(state, lanes);
-    if (!allocated) { return {}; }
-    result->groups.push_back(std::move(*allocated));
+    std::map<std::pair<uint32_t, uint32_t>, std::vector<Lane>> directions;
+    for (auto& lane : lanes) {
+        const auto direction = regionalAllocationDirection(lane.group, lane.group.members.front());
+        if (llvm::any_of(lane.group.members, [&](const auto& member) {
+            return regionalAllocationDirection(lane.group, member) != direction;
+        })) { return {}; }
+        directions[direction].push_back(std::move(lane));
+    }
+    for (auto& direction : directions) {
+        auto allocated = allocateLanes(state, direction.second);
+        if (!allocated) { return {}; }
+        result->groups.push_back(std::move(*allocated));
+    }
     return result;
 }
 } // namespace mlir::pto::frontiersynch
