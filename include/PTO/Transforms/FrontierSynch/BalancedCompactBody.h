@@ -55,12 +55,13 @@ BalancedCompactBody recognizeBalancedCompactBody(scf::ForOp loop, const SyncInpu
 // Every recipe is copied independently to all alternatives on each side, using
 // the SAME original record ID and source iteration ordinal. Original control
 // chooses one source and one target; future branch guards are never replayed.
-// The result intentionally has no family/allocation metadata: those interfaces
-// need a separate multiple-cut proof. Additional enclosing loops require a
-// separate invocation-identity adapter and return unavailable here. Enclosing
-// scf.if arms are allowed: that original arm chooses the whole loop invocation.
+// Grouped metadata qualifies exhaustive original cut choices structurally. An
+// explicit enclosing loop chain (outermost first) permits singleton fixed-body
+// slots; its invocation coordinates are added by the enclosing exporter.
+// Multi-arm bodies currently require no enclosing loops. Original enclosing
+// scf.if arms choose the whole invocation and require no predicate replay.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBalancedCompactInsertion(
     func::FuncOp function, const BalancedCompactBody& body, const PeriodicAnalysis& analysis,
-    int64_t planId, std::string& error);
+    int64_t planId, std::string& error, ArrayRef<scf::ForOp> enclosing = {});
 } // namespace mlir::pto::frontiersynch
 #endif

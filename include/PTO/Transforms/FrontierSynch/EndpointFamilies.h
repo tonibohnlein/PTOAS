@@ -8,7 +8,7 @@
 // Preserve finite endpoint families before logical IR is materialized.
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ENDPOINTFAMILIES_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ENDPOINTFAMILIES_H
-#include "PTO/Transforms/FrontierSynch/NumericTemplateEndpoints.h"
+#include "PTO/Transforms/FrontierSynch/EndpointCutChoices.h"
 namespace mlir::pto::frontiersynch {
 struct EndpointFamilyMember {
     uint32_t record = 0;
@@ -28,6 +28,7 @@ struct EndpointFamily {
     std::vector<EndpointFamilyMember> members; // Original-record order, not dynamic order.
     std::size_t sourceOrder = 0; // Order among pieces at sourceCut.
     std::size_t targetOrder = 0; // Order among pieces at targetCut.
+    std::shared_ptr<const EndpointCutChoices> sourceChoices, targetChoices;
 };
 struct EndpointFamilies {
     std::string error;

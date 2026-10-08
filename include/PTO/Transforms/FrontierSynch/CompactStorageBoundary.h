@@ -35,6 +35,8 @@ public:
     const std::string& exportError() const { return unavailable; }
     Block* invocationBlock() const { return invocation; }
     const std::shared_ptr<const CompactOrderBounds>& compact() const { return compactOrders; }
+    const FiniteRequirements& finiteFrame() const { return finite; }
+    const FiniteSelection& finiteSelection() const { return selectedFinite; }
 private:
     CompactClassBoundary() = default;
     BoundingRegionalResult order;
@@ -52,6 +54,8 @@ private:
     FiniteSelection selectedFinite;
     std::shared_ptr<const BoundingSequenceResult> composition;
     std::shared_ptr<const void> repetition;
+    friend CompactClasses withCompactClassPreparation(CompactClasses,
+        std::function<FailureOr<std::unique_ptr<PreparedLogicalPlan>>(ArrayRef<scf::ForOp>)>);
     friend CompactClasses captureCompactClassBoundary(scf::ForOp, const PhaseIndex&,
         std::shared_ptr<const CompactFixedBodyContext>, const CompactWriterReaderBindings&, std::string&);
     friend CompactClasses captureFiniteClassBoundary(FiniteRequirements, FiniteSelection, std::string&);
@@ -70,6 +74,10 @@ CompactClasses captureCompactClassBoundary(scf::ForOp loop, const PhaseIndex& in
     std::shared_ptr<const CompactFixedBodyContext> domain,
     const CompactWriterReaderBindings& bindings, std::string& error);
 CompactClasses captureFiniteClassBoundary(FiniteRequirements frame, FiniteSelection selection, std::string& error);
+// Attach recipes for exactly the immutable upper selected graph. This trusted
+// producer hook changes no graph/domain/storage claim; failures remain detached.
+CompactClasses withCompactClassPreparation(CompactClasses original,
+    std::function<FailureOr<std::unique_ptr<PreparedLogicalPlan>>(ArrayRef<scf::ForOp>)> preparation);
 struct CompactClassCrossings {
     std::string error;
     std::vector<BoundingSequenceCrossing> upper;

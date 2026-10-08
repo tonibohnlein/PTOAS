@@ -134,6 +134,8 @@ bool selectCrossings(BoundingRepetitionSign& result, const BoundingRepetitionSpe
     auto& state = *result.repeated->state;
     auto records = state.crossings;
     auto& arena = state.e();
+    auto frame = buildBoundingRepeatedQuery(state.body, ports, records, result.exportError);
+    if (!frame) { result.repeated.reset(); return false; }
     uint64_t deletions = 0;
     for (std::size_t candidate = 0; candidate < records.size(); ++candidate) {
         if (records[candidate].native || arena.constantValue(records[candidate].guard) == 0) { continue; }
@@ -142,7 +144,7 @@ bool selectCrossings(BoundingRepetitionSign& result, const BoundingRepetitionSpe
         // denote one event under a parameter valuation (e.g. first==last at K=1).
         auto alternatives = records;
         alternatives[candidate].guard = arena.boolean(false);
-        auto query = buildBoundingRepeatedQuery(state.body, ports, std::move(alternatives), result.exportError);
+        auto query = frame->withCrossings(std::move(alternatives), result.exportError);
         if (!query) { result.repeated.reset(); return false; }
         auto implied = query->across(records[candidate].source, records[candidate].target,
                                       arena.constant(records[candidate].displacement));
@@ -154,7 +156,7 @@ bool selectCrossings(BoundingRepetitionSign& result, const BoundingRepetitionSpe
         if (!addCost(result, query->cost(), true)) { return false; }
         records[candidate].guard = arena.land(records[candidate].guard, arena.lnot(*implied));
     }
-    result.query = buildBoundingRepeatedQuery(state.body, ports, records, result.exportError);
+    result.query = frame->withCrossings(records, result.exportError);
     if (!result.query) { result.repeated.reset(); return false; }
     if (!addCost(result, result.query->cost(), false)) { result.query.reset(); return false; }
     state.crossings = records; state.queryCrossings = std::move(records);

@@ -124,7 +124,7 @@ LogicalResult validatePieces(func::FuncOp function, const PreparedLogicalPlan& p
     for (const auto& [record, family] : owners) {
         namespaces.try_emplace({family->sourcePipe, family->targetPipe, family->displacement}, record);
     }
-    std::map<uint32_t, unsigned> kinds;
+    std::map<std::pair<uint32_t, unsigned>, std::set<Operation*>> coverage;
     std::map<uint32_t, std::size_t> arities;
     std::set<int64_t> pieces;
     for (const auto& endpoint : plan.endpoints) {
@@ -146,19 +146,27 @@ LogicalResult validatePieces(func::FuncOp function, const PreparedLogicalPlan& p
             }
             const auto& family = *found->second;
             const auto key = Namespace{family.sourcePipe, family.targetPipe, family.displacement};
-            const unsigned bit = 1U << static_cast<unsigned>(endpoint.kind);
-            if ((kinds[record] & bit) || family.local != local ||
+            const auto& choices = publish ? family.sourceChoices : family.targetChoices;
+            const auto primary = publish ? family.sourceCut.before : family.targetCut.before;
+            const bool validCut = choices ? llvm::any_of(choices->cuts(), [&](const auto& cut) {
+                return cut.before == endpoint.before;
+            }) : endpoint.before == primary;
+            auto& covered = coverage[{record, static_cast<unsigned>(endpoint.kind)}];
+            if (!covered.insert(endpoint.before).second || family.local != local ||
                 endpoint.sourcePipe != family.sourcePipe || endpoint.targetPipe != family.targetPipe ||
-                endpoint.before != (publish ? family.sourceCut.before : family.targetCut.before) ||
-                endpoint.record != namespaces.at(key)) {
+                !validCut || endpoint.record != namespaces.at(key)) {
                 return function.emitError("endpoint piece does not match its original record");
             }
-            kinds[record] |= bit;
         }
     }
     for (const auto& [record, family] : owners) {
-        if (kinds[record] != (family->local ? 2U : 5U)) {
-            return function.emitError("endpoint-piece partition is missing a record side");
+        for (unsigned kind = 0; kind < 3; ++kind) {
+            const auto& choices = kind == 0 ? family->sourceChoices : family->targetChoices;
+            const bool required = family->local ? kind == 1 : kind != 1;
+            const auto expected = required ? (choices ? choices->cuts().size() : 1U) : 0U;
+            if (coverage[{record, kind}].size() != expected) {
+                return function.emitError("endpoint-piece partition is missing a record side");
+            }
         }
     }
     return success();
@@ -247,6 +255,21 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
                 family.local != (family.sourcePipe == family.targetPipe)) {
                 return function.emitError("invalid endpoint-family cuts or identity");
             }
+            for (bool target : {false, true}) {
+                const auto& choices = target ? family.targetChoices : family.sourceChoices;
+                if (!choices) { continue; }
+                const auto primary = target ? family.targetCut : family.sourceCut;
+                if (!plan.independentPieces || choices->cuts().size() < 2 ||
+                    choices->cuts().front().before != primary.before ||
+                    !qualifyEndpointCutChoices(choices->loop(), choices->cuts())) {
+                    return function.emitError("invalid structural endpoint alternatives");
+                }
+                for (const auto& cut : choices->cuts()) {
+                    if (!available.cut(cut.before) || cut.block != cut.before->getBlock()) {
+                        return function.emitError("unavailable structural endpoint alternative");
+                    }
+                }
+            }
             if (plan.groupedFamilies) {
                 owners.emplace(family.id, &family);
             }
@@ -260,11 +283,16 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
                 }
                 for (auto side : {false, true}) {
                     const auto& tuple = side ? member.targetCoordinates : member.sourceCoordinates;
-                    auto* before = side ? family.targetCut.before : family.sourceCut.before;
-                    for (auto coordinate : tuple) {
-                        if (!coordinate.loop || !coordinate.loop->isProperAncestor(before) ||
-                            !available.value(coordinate.loop.getInductionVar(), before)) {
-                            return function.emitError("unavailable endpoint-family coordinate");
+                    const auto& choices = side ? family.targetChoices : family.sourceChoices;
+                    SmallVector<TemplateEndpointCut> cuts;
+                    if (choices) { cuts.append(choices->cuts().begin(), choices->cuts().end()); }
+                    else { cuts.push_back(side ? family.targetCut : family.sourceCut); }
+                    for (const auto& cut : cuts) {
+                        for (auto coordinate : tuple) {
+                            if (!coordinate.loop || !coordinate.loop->isProperAncestor(cut.before) ||
+                                !available.value(coordinate.loop.getInductionVar(), cut.before)) {
+                                return function.emitError("unavailable endpoint-family coordinate");
+                            }
                         }
                     }
                 }
@@ -314,17 +342,25 @@ void serializeFamilies(func::FuncOp function, const PreparedLogicalPlan& plan,
     for (const auto& entry : cuts) {
         cutIds[entry.first] = nextCut++;
     }
+    auto loopId = [&](scf::ForOp loop) {
+        auto [entry, added] = loopIds.try_emplace(loop.getOperation(), loopIds.size());
+        if (added) { loop->setAttr("pto.family_loop", builder.getI64IntegerAttr(entry->second)); }
+        return entry->second;
+    };
     auto coordinates = [&](ArrayRef<TemplateCoordinate> tuple) {
         SmallVector<Attribute> values;
         for (auto coordinate : tuple) {
-            auto* loop = coordinate.loop.getOperation();
-            auto [entry, added] = loopIds.try_emplace(loop, loopIds.size());
-            if (added) {
-                loop->setAttr("pto.family_loop", builder.getI64IntegerAttr(entry->second));
-            }
-            values.push_back(builder.getDenseI64ArrayAttr({entry->second, coordinate.induction}));
+            values.push_back(builder.getDenseI64ArrayAttr({loopId(coordinate.loop), coordinate.induction}));
         }
         return builder.getArrayAttr(values);
+    };
+    auto choices = [&](const std::shared_ptr<const EndpointCutChoices>& proof) {
+        SmallVector<int64_t> ids;
+        if (proof) {
+            ids.push_back(loopId(proof->loop()));
+            for (const auto& cut : proof->cuts()) { ids.push_back(cutIds.lookup(cut.before)); }
+        }
+        return builder.getDenseI64ArrayAttr(ids);
     };
     SmallVector<Attribute> families;
     for (const auto& family : plan.families) {
@@ -346,7 +382,9 @@ void serializeFamilies(func::FuncOp function, const PreparedLogicalPlan& plan,
             builder.getNamedAttr("source_cut", builder.getI64IntegerAttr(
                 family.local ? -1 : cutIds.lookup(family.sourceCut.before))),
             builder.getNamedAttr("target_cut", builder.getI64IntegerAttr(cutIds.lookup(family.targetCut.before))),
-            builder.getNamedAttr("members", builder.getArrayAttr(members))}));
+            builder.getNamedAttr("members", builder.getArrayAttr(members)),
+            builder.getNamedAttr("source_choices", choices(family.sourceChoices)),
+            builder.getNamedAttr("target_choices", choices(family.targetChoices))}));
     }
     SmallVector<Attribute> pieces;
     if (plan.independentPieces) {

@@ -359,6 +359,8 @@ int runBoundaryExcessChecks();
 int runRepeatedExcessChecks();
 int runBoundingRepetitionChecks(func::FuncOp function, const pto::SyncInput& input);
 int runCompactClassRepetitionChecks(func::FuncOp function, const pto::SyncInput& input);
+int runCompactBoundingPipelineChecks(func::FuncOp function, const pto::SyncInput& input);
+int runCompactBoundingAllocationChecks(func::FuncOp function, const pto::SyncInput& input);
 int runBoundingSequenceChecks(func::FuncOp function, const pto::SyncInput& input);
 int runCompactStorageBoundaryChecks(func::FuncOp function, const pto::SyncInput& input);
 int runCompactBoundaryRanksChecks(func::FuncOp function, const pto::SyncInput& input);
@@ -480,6 +482,9 @@ int main(int argc, char **argv) {
   const bool boundingChecks = argc == 3 && StringRef(argv[1]) == "--bounding-contract-checks";
   const bool compactInputChecks = argc == 3 && StringRef(argv[1]) == "--compact-input-checks";
   const bool boundingRepetitionChecks = argc == 3 && StringRef(argv[1]) == "--bounding-repetition-checks";
+  const bool compactBoundingAllocationChecks =
+      argc == 3 && StringRef(argv[1]) == "--compact-bounding-allocation-checks";
+  const bool compactBoundingPipelineChecks = argc == 3 && StringRef(argv[1]) == "--compact-bounding-pipeline-checks";
   const bool compactClassRepetitionChecks = argc == 3 && StringRef(argv[1]) == "--compact-class-repetition-checks";
   const bool compactBoundaryRanksChecks = argc == 3 && StringRef(argv[1]) == "--compact-boundary-ranks-checks";
   const bool compactStorageBoundaryChecks = argc == 3 &&
@@ -502,6 +507,7 @@ int main(int argc, char **argv) {
       !balancedCompactChecks && !guardedCompactChecks && !conditionalCompactChecks && !finiteReplacementChecks &&
       !boundingSequenceChecks && !compactStorageBoundaryChecks && !compactBoundaryRanksChecks &&
       !boundingRepetitionChecks && !compactClassRepetitionChecks &&
+      !compactBoundingPipelineChecks && !compactBoundingAllocationChecks &&
       !preparedInsertion && !finiteOverlayInsertion &&
       !expectFailure && !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip &&
       !regionChecks && !phaseCopies && !step0 && !existing) {
@@ -516,6 +522,7 @@ int main(int argc, char **argv) {
                  "--conditional-compact-input-checks|--finite-replacement-checks|--bounding-sequence-checks|"
                  "--compact-storage-boundary-checks|--compact-boundary-ranks-checks|"
                  "--bounding-repetition-checks|--compact-class-repetition-checks|"
+                 "--compact-bounding-pipeline-checks|--compact-bounding-allocation-checks|"
                  "--arithmetic|--explicit-analysis|--rotating-analysis|--roundtrip|"
                  "--region-contract-checks|"
                  "--step0-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
@@ -537,7 +544,8 @@ int main(int argc, char **argv) {
                          compactBoundsChecks || balancedCompactChecks || guardedCompactChecks ||
                          conditionalCompactChecks || finiteReplacementChecks || boundingSequenceChecks ||
                          compactStorageBoundaryChecks || compactBoundaryRanksChecks ||
-                         boundingRepetitionChecks || compactClassRepetitionChecks ||
+                         boundingRepetitionChecks || compactClassRepetitionChecks || compactBoundingPipelineChecks ||
+                         compactBoundingAllocationChecks ||
                          preparedInsertion || arithmetic ||
                          aliasChecks || roundtrip || regionChecks || phaseCopies || step0 || existing;
   const auto filename = argv[hasOption ? 2 : 1];
@@ -713,6 +721,14 @@ int main(int argc, char **argv) {
       if (runCompactWriterReaderInputChecks(function, input)) { return 1; }
       continue;
     }
+    if (compactBoundingAllocationChecks) {
+      if (runCompactBoundingAllocationChecks(function, input)) { return 1; }
+      continue;
+    }
+    if (compactBoundingPipelineChecks) {
+      if (runCompactBoundingPipelineChecks(function, input)) { return 1; }
+      continue;
+    }
     if (boundingRepetitionChecks) {
       if (runBoundingRepetitionChecks(function, input)) { return 1; }
       continue;
@@ -808,7 +824,8 @@ int main(int argc, char **argv) {
       }
     }
   }
-  if (rotatingAnalysis || balancedCompactChecks || guardedCompactChecks) {
+  if (rotatingAnalysis || balancedCompactChecks || guardedCompactChecks ||
+      compactBoundingPipelineChecks || compactBoundingAllocationChecks) {
     return 0;
   }
   if (before != render(module->getOperation())) {

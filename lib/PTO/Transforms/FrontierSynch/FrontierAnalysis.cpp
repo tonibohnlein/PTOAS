@@ -22,6 +22,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "RecognitionInternal.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
+#include "PTO/Transforms/FrontierSynch/CompactBoundingInsertion.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 // Whole-invocation shortcut only: every payload uses the protected scalar
@@ -72,7 +73,7 @@ LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy, bool r
     if (!function) {
         return failure();
     }
-    auto pending = std::make_unique<SyncInput>(policy);
+    auto pending = std::make_shared<SyncInput>(policy);
     if (failed(pending->build(function, SyncInstructionView::PipeEnvelopes))) {
         return failure();
     }
@@ -201,37 +202,38 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
         // Preserve the existing certified numerical route (including its
         // allocation export) when available. Direct rotating extraction
         // covers symbolic rotations which have no fixed local effect word.
-        if (failed(analysis.analyzeNumericCandidates())) { return failure(); }
-        const bool numerical = llvm::any_of(analysis.result()->nodes, [](const auto& node) {
-            return node.numericTemplate &&
-                node.numericTemplate->result.state == frontiersynch::RecognitionState::Applicable &&
-                node.logicalEndpoints && node.logicalEndpoints->logical.error.empty();
-        });
-        if (!numerical) {
-            prepared = frontiersynch::prepareRotatingInsertion(function, *analysis.input(), *analysis.result());
-        }
-        if (failed(prepared) && numerical) {
-            prepared = frontiersynch::prepareNumericTemplateInsertion(function, *analysis.result());
-        }
-        if (failed(prepared)) {
-            std::string mixedError;
-            prepared = frontiersynch::prepareMixedStrideInsertion(
-                function, *analysis.input(), *analysis.result(), mixedError);
-            if (failed(prepared) && !mixedError.empty()) { routeError += "; " + mixedError; }
-        }
-        if (failed(prepared)) {
-            prepared = frontiersynch::prepareGuardedRotatingInsertion(
-                function, *analysis.input(), *analysis.result());
-        }
-        if (failed(prepared)) {
-            prepared = frontiersynch::prepareBoundedLifetimeInsertion(
-                function,*analysis.input(),*analysis.result(),routeError);
-        }
-        if (failed(prepared)) {
-            prepared = frontiersynch::prepareSequenceInsertion(function, *analysis.input(),
-                                                               *analysis.result(), routeError);
-            sequencePrepared = succeeded(prepared);
-        }
+        if (succeeded(analysis.analyzeNumericCandidates())) {
+            const bool numerical = llvm::any_of(analysis.result()->nodes, [](const auto& node) {
+                return node.numericTemplate &&
+                    node.numericTemplate->result.state == frontiersynch::RecognitionState::Applicable &&
+                    node.logicalEndpoints && node.logicalEndpoints->logical.error.empty();
+            });
+            if (!numerical) {
+                prepared = frontiersynch::prepareRotatingInsertion(function, *analysis.input(), *analysis.result());
+            }
+            if (failed(prepared) && numerical) {
+                prepared = frontiersynch::prepareNumericTemplateInsertion(function, *analysis.result());
+            }
+            if (failed(prepared)) {
+                std::string mixedError;
+                prepared = frontiersynch::prepareMixedStrideInsertion(
+                    function, *analysis.input(), *analysis.result(), mixedError);
+                if (failed(prepared) && !mixedError.empty()) { routeError += "; " + mixedError; }
+            }
+            if (failed(prepared)) {
+                prepared = frontiersynch::prepareGuardedRotatingInsertion(
+                    function, *analysis.input(), *analysis.result());
+            }
+            if (failed(prepared)) {
+                prepared = frontiersynch::prepareBoundedLifetimeInsertion(
+                    function,*analysis.input(),*analysis.result(),routeError);
+            }
+            if (failed(prepared)) {
+                prepared = frontiersynch::prepareSequenceInsertion(function, *analysis.input(),
+                                                                   *analysis.result(), routeError);
+                sequencePrepared = succeeded(prepared);
+            }
+        } else { routeError = "exact structured recognition unavailable"; }
     }
     if (failed(prepared) && straight && analysis.result()) {
         prepared = frontiersynch::prepareSequenceInsertion(function, *analysis.input(),
@@ -250,6 +252,14 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
         std::string allocationRouteError;
         auto alternative = prepareWholeFunctionArithmetic(function, analysis, allocationRouteError, true);
         if (succeeded(alternative)) { prepared = std::move(alternative); }
+    }
+    if (failed(prepared)) {
+        auto compact = frontiersynch::prepareCompactBoundingInsertion(function, analysis.sharedInput());
+        if (compact.prepared) { prepared = std::move(compact.prepared); }
+        else {
+            const auto& reason = compact.error.empty() ? compact.exportError : compact.error;
+            if (!reason.empty()) { routeError += "; compact bounding: " + reason; }
+        }
     }
     if (failed(prepared)) { function.emitError(routeError); }
     return prepared;

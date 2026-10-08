@@ -14,6 +14,7 @@
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "llvm/ADT/DenseSet.h"
 #include <map>
+#include <tuple>
 namespace mlir::pto::frontiersynch {
 namespace {
 std::optional<int64_t> constant(Value value)
@@ -31,13 +32,18 @@ bool validPath(scf::ForOp loop, const BalancedCompactAlternative& alternative)
     }
     return region == &loop.getRegion();
 }
-bool validBody(func::FuncOp function, const BalancedCompactBody& body, const PeriodicAnalysis& analysis)
+bool validBody(func::FuncOp function, const BalancedCompactBody& body, const PeriodicAnalysis& analysis,
+               ArrayRef<scf::ForOp> enclosing)
 {
     if (!function || !body.error.empty() || !body.loop || !analysis.error.empty() ||
         body.slots.size() != analysis.payloads.size() || !function->isProperAncestor(body.loop)) { return false; }
+    SmallVector<scf::ForOp> actual;
     for (auto* parent = body.loop->getParentOp(); parent != function; parent = parent->getParentOp()) {
-        if (!parent || !isa<scf::IfOp>(parent)) { return false; }
+        if (auto loop = dyn_cast_or_null<scf::ForOp>(parent)) { actual.push_back(loop); }
+        else if (!parent || !isa<scf::IfOp>(parent)) { return false; }
     }
+    if (!llvm::equal(llvm::reverse(actual), enclosing) || (!actual.empty() &&
+        llvm::any_of(body.slots, [](const auto& slot) { return slot.alternatives.size() != 1; }))) { return false; }
     llvm::DenseSet<const CompoundInstanceElement*> seen;
     DominanceInfo dominance(function);
     auto loop = body.loop;
@@ -81,12 +87,15 @@ private:
         return builder.create<arith::CmpIOp>(body.loop->getLoc(), predicate, left, right);
     }
     void initialize();
+    bool families();
     void endpoint(const EndpointRecipe& recipe, const BalancedCompactAlternative& alternative);
     const BalancedCompactBody& body;
     const LogicalEndpointPlan& logical;
     OpBuilder builder;
     std::unique_ptr<PreparedLogicalPlan> plan;
     Value trips, ordinal, zero, one;
+    using Namespace = std::tuple<uint32_t, uint32_t, uint64_t>;
+    std::map<Namespace, uint32_t> namespaces;
     std::map<Operation*, Block*> blocks;
 };
 void Preparer::initialize()
@@ -132,10 +141,49 @@ void Preparer::endpoint(const EndpointRecipe& recipe, const BalancedCompactAlter
     // No source/target alternative pair is formed. The slot record, source
     // coordinate and pipes are identical at every copy of this one side.
     plan->endpoints.push_back({cut, kind, body.slots[recipe.source].pipe,
-                              body.slots[recipe.target].pipe, recipe.record, guard, identity});
+                              body.slots[recipe.target].pipe,
+                              namespaces.at({body.slots[recipe.source].pipe, body.slots[recipe.target].pipe,
+                                             recipe.displacement}), guard, identity});
+    auto& endpoint = plan->endpoints.back();
+    if (!local) { endpoint.memberCoordinates.push_back(number(recipe.record)); }
+    endpoint.records.push_back(recipe.record);
+    endpoint.piece = static_cast<int64_t>(plan->endpoints.size() - 1);
+}
+bool Preparer::families()
+{
+    plan->groupedFamilies = true;
+    plan->independentPieces = true;
+    std::map<uint32_t, const EndpointRecipe*> records;
+    for (const auto& recipe : logical.recipes) { records.try_emplace(recipe.record, &recipe); }
+    for (const auto& [record, recipe] : records) {
+        EndpointFamily family;
+        family.id = record;
+        family.sourcePipe = body.slots[recipe->source].pipe;
+        family.targetPipe = body.slots[recipe->target].pipe;
+        family.local = family.sourcePipe == family.targetPipe;
+        family.displacement = recipe->displacement;
+        SmallVector<TemplateEndpointCut> sources, targets;
+        for (const auto& alternative : body.slots[recipe->source].alternatives) {
+            sources.push_back(alternative.after);
+        }
+        for (const auto& alternative : body.slots[recipe->target].alternatives) {
+            targets.push_back(alternative.before);
+        }
+        auto sourceChoices = qualifyEndpointCutChoices(body.loop, sources);
+        auto targetChoices = qualifyEndpointCutChoices(body.loop, targets);
+        if (!sourceChoices || !targetChoices) { return false; }
+        family.sourceCut = sources.front(); family.targetCut = targets.front();
+        if (sources.size() > 1 && !family.local) { family.sourceChoices = std::move(sourceChoices); }
+        if (targets.size() > 1) { family.targetChoices = std::move(targetChoices); }
+        family.members.push_back({record, recipe->source, recipe->target, {}, {}});
+        namespaces.try_emplace({family.sourcePipe, family.targetPipe, family.displacement}, record);
+        plan->families.push_back(std::move(family));
+    }
+    return true;
 }
 std::unique_ptr<PreparedLogicalPlan> Preparer::run()
 {
+    if (!families()) { return nullptr; }
     if (logical.recipes.empty()) { return std::move(plan); }
     initialize();
     for (const auto& recipe : logical.recipes) {
@@ -147,10 +195,10 @@ std::unique_ptr<PreparedLogicalPlan> Preparer::run()
 } // namespace
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBalancedCompactInsertion(
     func::FuncOp function, const BalancedCompactBody& body, const PeriodicAnalysis& analysis,
-    int64_t planId, std::string& error)
+    int64_t planId, std::string& error, ArrayRef<scf::ForOp> enclosing)
 {
     error.clear();
-    if (planId < 0 || !validBody(function, body, analysis)) {
+    if (planId < 0 || !validBody(function, body, analysis, enclosing)) {
         error = "balanced endpoint preparation has a stale body, incompatible slot word or enclosing invocation";
         return failure();
     }
@@ -170,6 +218,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBalancedCompactInsertion(
             return failure();
         }
     }
-    return Preparer(body, logical, planId).run();
+    auto plan = Preparer(body, logical, planId).run();
+    if (!plan) { error = "balanced slot cuts do not exhaustively partition original branches"; return failure(); }
+    return std::move(plan);
 }
 } // namespace mlir::pto::frontiersynch

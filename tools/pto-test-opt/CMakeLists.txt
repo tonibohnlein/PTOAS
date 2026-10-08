@@ -112,6 +112,8 @@ add_llvm_executable(pto-sync-input-test
   BoundingRepetitionChecks.cpp
   RepeatedExcessChecks.cpp
   CompactClassRepetitionChecks.cpp
+  CompactBoundingPipelineChecks.cpp
+  CompactBoundingAllocationChecks.cpp
   GeneralArithmeticAllocationChecks.cpp
   MixedStrideChecks.cpp
   PhysicalExecutedCounterChecks.cpp

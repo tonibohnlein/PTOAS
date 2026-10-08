@@ -50,6 +50,10 @@ public:
     const RegionalAnalysis& body() const;
     llvm::ArrayRef<RegionalEvent> ports() const;
     const BoundingRepetitionCost& cost() const;
+    // Same immutable body/port frame, new crossings. Only body-query answers
+    // are shared; crossing-dependent caches belong to the returned snapshot.
+    std::shared_ptr<BoundingRepeatedQuery> withCrossings(
+        std::vector<RepeatedCrossing> crossings, std::string& error) const;
     // Minimum period displacement, including zero when the body path exists.
     std::optional<BoundingPeriodDistance> distance(RegionalEvent source, RegionalEvent target);
     std::optional<RegionExpressions::Id> across(
@@ -64,8 +68,11 @@ private:
 // Exact graph adapter, not an input-coverage recognizer. Ports include every
 // crossing endpoint, may contain semantically coincident guarded aliases, and
 // retain original body identities. The body and crossings include native wraps.
-// O(P^2) body queries and O(P^3) min-plus gates; each arbitrary-event query adds
-// O(P^2+C) shared circuit work. No trip count or distance range is enumerated.
+// Construction performs O(P+C) identity/guard validations. Ordered-directory
+// lookup and body/port snapshot copy costs are additional. Unit-gap queries scan C
+// crossings without a shortest-distance index. The first nonunit/distance
+// query builds O(P^2) body queries and O(P^3) min-plus gates; subsequent general
+// queries add O(P^2+C) circuit work. No trips or distance ranges are enumerated.
 std::shared_ptr<BoundingRepeatedQuery> buildBoundingRepeatedQuery(
     RegionalAnalysis body, std::vector<RegionalEvent> ports,
     std::vector<RepeatedCrossing> crossings, std::string& error);
@@ -89,7 +96,10 @@ struct BoundingRepetitionResult {
 // accepted deletion preserves closure even with coincident endpoint aliases;
 // the general route reports Partial rather than claiming unique pointwise covers.
 // With C crossing templates and P common ports: O((C+1)*P^3+C^2*P)
-// circuit work, O((C+1)*P^2+C^2) body-query requests before memo sharing.
+// circuit work in the general case; unit-only deletion uses O(C*(P+C))
+// validation/circuit operations. Ordered memo/directory lookups add logarithmic
+// factors; per-trial body and port snapshot copy costs are charged separately.
+// All trial/final snapshots share at most O(P^2) distinct body-pair queries.
 // Body backend cost and all retained arena gates are charged separately.
 // Original records and schema owners survive unavailable exports. Existing
 // repeated preparation preserves source tuples; nonunit allocation is unavailable.
