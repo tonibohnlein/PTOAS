@@ -7,6 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 """Unfold only in the oracle; compare the compact boundary plan with byte conflicts."""
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -80,8 +81,8 @@ def main():
         for trips in (5, 1000000000):
             path.write_text(source.replace("array<i64: 5>", f"array<i64: {trips}>"))
             text = invoke(tool, "--insert-logical", path)
-            assert text.count("scf.for") == 1
-            assert text.count("pto.texpands") == 2
+            assert len(re.findall(r"^\s*scf\.for\s", text, re.MULTILINE)) == 1
+            assert len(re.findall(r"^\s*pto\.texpands\s", text, re.MULTILINE)) == 2
             sizes.append(len(text.splitlines()))
         assert sizes[0] == sizes[1], sizes
         # Compact bank counts must not be expanded into billion-entry summaries.
