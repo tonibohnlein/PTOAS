@@ -11,9 +11,19 @@
 #include "PTO/Transforms/FrontierSynch/NumericalWeightedRepetition.h"
 namespace mlir::pto::frontiersynch {
 struct NumericalBindingWork {
-    uint64_t bodyQueries = 0, orderingQueries = 0;
+    uint64_t bodyQueries = 0, orderingQueries = 0, nestedIndexOperations = 0;
     NumericalWeightedRepetitionCost index;
 };
+struct NumericalRepeatedFrame {
+    NumericalChainInterface child;
+    std::vector<uint32_t> ports;
+    std::vector<RegionalEvent> events;
+    std::vector<NumericalWeightedCrossing> links;
+    std::vector<std::size_t> originals;
+};
+std::optional<NumericalRepeatedFrame> evaluateNumericalRepeatedFrame(
+    const RegionalAnalysis& body, const std::vector<RegionalEvent>& ports,
+    const std::vector<RepeatedCrossing>& crossings, NumericalBindingWork& work);
 struct NumericalRepeatedBinding {
     NumericalWeightedRepetition analysis;
     std::vector<uint32_t> ports;

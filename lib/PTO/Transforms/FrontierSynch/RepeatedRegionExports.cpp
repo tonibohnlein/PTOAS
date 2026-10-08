@@ -66,7 +66,9 @@ RepeatedRegionAnalysis repeatInvariantRegion(func::FuncOp function, scf::ForOp l
         result.error = state->error.empty() ? state->e().constructionError() : state->error;
         return result;
     }
-    return exportRepeatedRegion(std::move(state));
+    auto exported = exportRepeatedRegion(state);
+    if (exported.error.empty()) { attachNumericalRepeatedExports(state, exported.regional); }
+    return exported;
 }
 RepeatedRegionAnalysis exportRepeatedRegion(std::shared_ptr<RepeatedRegionState> state)
 {

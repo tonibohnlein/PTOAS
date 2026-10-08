@@ -10,7 +10,7 @@
 #include "ChainInterfaceInternal.h"
 namespace mlir::pto::frontiersynch {
 namespace {
-using EventIdentity = std::tuple<uint32_t, RegionExpressions::Id, PeriodicEventKind>;
+using EventIdentity = std::tuple<uint32_t, uint64_t, PeriodicEventKind, std::vector<uint64_t>>;
 using ChainKey = std::pair<uint32_t, PeriodicEventKind>;
 std::shared_ptr<const RegionalNumericalInterface> leafInterface(const RegionalAnalysis& region,
     const std::vector<RegionalEvent>& events)
@@ -65,19 +65,30 @@ std::shared_ptr<const RegionalNumericalInterface> leafInterface(const RegionalAn
     return result;
 }
 bool childSelection(const RegionalNumericalInterface& index, const std::vector<RegionalEvent>& events,
-                    std::vector<uint32_t>& selected)
+                    std::vector<uint32_t>& selected, RegionExpressions& expressions)
 {
     if (!index.index || !index.index->error.empty() || index.events.size() != index.index->chain.size() ||
         index.chainKeys.size() != index.index->chains.size() || !index.thresholds || !index.query) { return false; }
+    auto identity = [&](const RegionalEvent& event) -> std::optional<EventIdentity> {
+        auto ordinal = expressions.constantValue(event.ordinal);
+        if (!ordinal) { return {}; }
+        std::vector<uint64_t> visits;
+        for (auto coordinate : event.visits) {
+            auto value = expressions.constantValue(coordinate);
+            if (!value) { return {}; }
+            visits.push_back(*value);
+        }
+        return EventIdentity{event.type, *ordinal, event.kind, std::move(visits)};
+    };
     std::map<EventIdentity, uint32_t> ids;
     for (uint32_t id = 0; id < index.events.size(); ++id) {
-        const auto& event = index.events[id];
-        if (!event.visits.empty() || !ids.emplace(EventIdentity{event.type, event.ordinal, event.kind}, id).second) {
-            return false;
-        }
+        auto key = identity(index.events[id]);
+        if (!key || !ids.emplace(*key, id).second) { return false; }
     }
     for (const auto& event : events) {
-        auto found = ids.find({event.type, event.ordinal, event.kind});
+        auto key = identity(event);
+        if (!key) { return false; }
+        auto found = ids.find(*key);
         if (found == ids.end()) { return false; }
         selected.push_back(found->second);
     }
@@ -99,7 +110,8 @@ bool SequenceAnalysisState::numericalCrossingReduction()
     std::vector<NumericalChainSelection> selection;
     for (uint32_t p = 0; p < ports.size(); ++p) {
         const auto& port = ports[p];
-        if (port.child > 1 || !expressions.constantValue(port.ordinal) || !port.visits.empty() ||
+        if (port.child > 1 || !expressions.constantValue(port.ordinal) ||
+            (!port.visits.empty() && !children[port.child].regional.numerical) ||
             (!children[port.child].regional.numerical && expressions.constantValue(present(p)) != 1)) { return false; }
         for (auto kind : {PeriodicEventKind::Start, PeriodicEventKind::Completion}) {
             selection.push_back({port.child, static_cast<uint32_t>(events[port.child].size())});
@@ -115,7 +127,9 @@ bool SequenceAnalysisState::numericalCrossingReduction()
         else { indices[child] = leafInterface(children[child].regional, events[child]); }
         // A cached hierarchy missing a requested bridge endpoint declines; it
         // must not become a "leaf" that recursively expands semantic queries.
-        if (!indices[child] || !childSelection(*indices[child], events[child], selected[child])) { return false; }
+        if (!indices[child] || !childSelection(*indices[child], events[child], selected[child], expressions)) {
+            return false;
+        }
         if (!children[child].regional.numerical) {
             leafQueries += indices[child]->index->queries; leafOperations += indices[child]->index->operations;
         }
