@@ -131,4 +131,194 @@ module {
     }
     return
   }
+  // The prefill tail expression, with the unsigned trip computation supplied
+  // independently by the checker. Negative lengths exercise signed wrap cuts.
+  func.func @machine_tail(%length: index, %trips: index) attributes {test.machine_boundary} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %zero = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %c0 to %trips step %c1 {
+      %offset = arith.muli %i, %c4 : index
+      %remaining = arith.subi %length, %offset : index
+      %slt = arith.cmpi slt, %remaining, %c1 : index
+      scf.if %slt {
+        %r_slt = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %sle = arith.cmpi sle, %remaining, %c1 : index
+      scf.if %sle {
+        %r_sle = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %sge = arith.cmpi sge, %remaining, %c1 : index
+      scf.if %sge {
+        %r_sge = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %sgt = arith.cmpi sgt, %remaining, %c1 : index
+      scf.if %sgt {
+        %r_sgt = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %eq = arith.cmpi eq, %remaining, %c1 : index
+      scf.if %eq {
+        %r_eq = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %ne = arith.cmpi ne, %remaining, %c1 : index
+      scf.if %ne {
+        %r_ne = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+  func.func @machine_positive_stride(%length: index, %trips: index) attributes {test.machine_boundary} {
+    %readIndex = arith.constant 0 : index
+    %c0 = arith.constant -3 : index
+    %c1 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %zero = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %c0 to %trips step %c1 {
+      %offset = arith.muli %i, %c4 : index
+      %remaining = arith.addi %length, %offset : index
+      %slt = arith.cmpi slt, %remaining, %c1 : index
+      scf.if %slt {
+        %r_slt = pto.tgetval ins(%tile, %readIndex : !tile, index) outs : f32
+      }
+      %sle = arith.cmpi sle, %remaining, %c1 : index
+      scf.if %sle {
+        %r_sle = pto.tgetval ins(%tile, %readIndex : !tile, index) outs : f32
+      }
+      %sge = arith.cmpi sge, %remaining, %c1 : index
+      scf.if %sge {
+        %r_sge = pto.tgetval ins(%tile, %readIndex : !tile, index) outs : f32
+      }
+      %sgt = arith.cmpi sgt, %remaining, %c1 : index
+      scf.if %sgt {
+        %r_sgt = pto.tgetval ins(%tile, %readIndex : !tile, index) outs : f32
+      }
+      %eq = arith.cmpi eq, %remaining, %c1 : index
+      scf.if %eq {
+        %r_eq = pto.tgetval ins(%tile, %readIndex : !tile, index) outs : f32
+      }
+      %ne = arith.cmpi ne, %remaining, %c1 : index
+      scf.if %ne {
+        %r_ne = pto.tgetval ins(%tile, %readIndex : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+  func.func @machine_minimum(%length: index, %trips: index) attributes {test.machine_boundary} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %bound = arith.constant -9223372036854775808 : index
+    %c4 = arith.constant 4 : index
+    %zero = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %c0 to %trips step %c1 {
+      %offset = arith.muli %i, %c4 : index
+      %remaining = arith.subi %length, %offset : index
+      %slt = arith.cmpi slt, %remaining, %bound : index
+      scf.if %slt {
+        %r_slt = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %sle = arith.cmpi sle, %remaining, %bound : index
+      scf.if %sle {
+        %r_sle = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %sge = arith.cmpi sge, %remaining, %bound : index
+      scf.if %sge {
+        %r_sge = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %sgt = arith.cmpi sgt, %remaining, %bound : index
+      scf.if %sgt {
+        %r_sgt = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %eq = arith.cmpi eq, %remaining, %bound : index
+      scf.if %eq {
+        %r_eq = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %ne = arith.cmpi ne, %remaining, %bound : index
+      scf.if %ne {
+        %r_ne = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+  func.func @machine_maximum(%length: index, %trips: index) attributes {test.machine_boundary} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %bound = arith.constant 9223372036854775807 : index
+    %c4 = arith.constant 4 : index
+    %zero = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %c0 to %trips step %c1 {
+      %offset = arith.muli %i, %c4 : index
+      %remaining = arith.subi %length, %offset : index
+      %slt = arith.cmpi slt, %remaining, %bound : index
+      scf.if %slt {
+        %r_slt = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %sle = arith.cmpi sle, %remaining, %bound : index
+      scf.if %sle {
+        %r_sle = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %sge = arith.cmpi sge, %remaining, %bound : index
+      scf.if %sge {
+        %r_sge = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %sgt = arith.cmpi sgt, %remaining, %bound : index
+      scf.if %sgt {
+        %r_sgt = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %eq = arith.cmpi eq, %remaining, %bound : index
+      scf.if %eq {
+        %r_eq = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %ne = arith.cmpi ne, %remaining, %bound : index
+      scf.if %ne {
+        %r_ne = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+  func.func @machine_folded_coefficients(%length: index, %trips: index) attributes {test.machine_boundary} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %zero = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %c0 to %trips step %c1 {
+      %offset = arith.muli %i, %c4 : index
+      %factor = arith.constant 4294967296 : index
+      %wide1 = arith.muli %i, %factor : index
+      %wide2 = arith.muli %wide1, %factor : index
+      %wide3 = arith.muli %wide2, %factor : index
+      %combined = arith.addi %offset, %wide3 : index
+      %remaining = arith.subi %length, %combined : index
+      %slt = arith.cmpi slt, %remaining, %c1 : index
+      scf.if %slt {
+        %r_slt = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %sle = arith.cmpi sle, %remaining, %c1 : index
+      scf.if %sle {
+        %r_sle = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %sge = arith.cmpi sge, %remaining, %c1 : index
+      scf.if %sge {
+        %r_sge = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %sgt = arith.cmpi sgt, %remaining, %c1 : index
+      scf.if %sgt {
+        %r_sgt = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %eq = arith.cmpi eq, %remaining, %c1 : index
+      scf.if %eq {
+        %r_eq = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+      %ne = arith.cmpi ne, %remaining, %c1 : index
+      scf.if %ne {
+        %r_ne = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+    }
+    return
+  }
 }

@@ -14,8 +14,10 @@
 #include "CountedLoop.h"
 #include "RecognitionInternal.h"
 #include "ArithmeticRows.h"
+#include "llvm/ADT/MapVector.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
 #include "../InsertSync/SyncScalarEvolution.h"
+#include "../InsertSync/SyncScalarCongruence.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 struct CutBounds {
@@ -31,17 +33,80 @@ std::optional<uint64_t> maximumBound(std::optional<uint64_t> a, std::optional<ui
 {
     return a && b ? std::optional<uint64_t>(std::max(*a, *b)) : std::nullopt;
 }
+// Local certificates for clipped affine cuts. Equal input/coefficient vectors
+// and divisors give a monotone family ordered by the numerator constant.
+// Certificates are confined to this partition; no assumptions enter the DAG.
+struct CutOrder {
+    struct Formula {
+        Expr cut;
+        IntegerAffine numerator;
+        BoundInteger divisor;
+        SmallVector<Expr> inputs;
+    };
+    SmallVector<Formula> formulas;
+    DenseMap<Expr, SmallVector<Expr>> successors;
+    void add(Expr a, Expr b)
+    {
+        if (a != b) { successors[a].push_back(b); }
+    }
+    bool le(Expr a, Expr b) const
+    {
+        SmallVector<Expr> pending{a};
+        DenseSet<Expr> seen;
+        while (!pending.empty()) {
+            auto current = pending.pop_back_val();
+            if (current == b) { return true; }
+            if (!seen.insert(current).second) { continue; }
+            auto found = successors.find(current);
+            if (found != successors.end()) { pending.append(found->second); }
+        }
+        return false;
+    }
+    void record(Expr cut, const IntegerAffine& numerator, const BoundInteger& divisor,
+                ArrayRef<Expr> inputs, Expr zero, Expr trips)
+    {
+        add(zero, cut); add(cut, trips);
+        for (const auto& prior : formulas) {
+            if (prior.divisor != divisor || prior.numerator.coefficients != numerator.coefficients ||
+                ArrayRef<Expr>(prior.inputs) != inputs) { continue; }
+            if (prior.numerator.constant <= numerator.constant) { add(prior.cut, cut); }
+            if (numerator.constant <= prior.numerator.constant) { add(cut, prior.cut); }
+        }
+        formulas.push_back({cut, numerator, divisor, llvm::to_vector(inputs)});
+    }
+    void compareSwap(Expr& a, Expr& b, RegionExpressions& dag)
+    {
+        if (le(a, b)) { return; }
+        if (le(b, a)) { std::swap(a, b); return; }
+        auto before = a, after = b, ordered = dag.le(a, b);
+        a = dag.select(ordered, before, after);
+        b = dag.select(ordered, after, before);
+        add(a, before); add(a, after); add(before, b); add(after, b);
+    }
+};
 struct Split {
     Expr ordinal;
     bool prefixThen;
     std::optional<Expr> equalityEnd;
     CutBounds ordinalBounds, endBounds;
-    Expr predicate(Expr begin, RegionExpressions& dag) const
+    SmallVector<std::pair<Expr, Expr>> extraIntervals;
+    Expr predicate(Expr begin, Expr end, const CutOrder& order, RegionExpressions& dag) const
     {
-        auto value = equalityEnd ? dag.land(dag.le(ordinal, begin), dag.lt(begin, *equalityEnd)) :
-                                   dag.lt(begin, ordinal);
+        auto interval = [&](Expr first, Expr last) {
+            // All uses are restricted to the nonempty slice [begin,end).
+            if (order.le(end, first) || order.le(last, begin)) { return dag.boolean(false); }
+            if (order.le(first, begin) && order.le(end, last)) { return dag.boolean(true); }
+            return dag.land(dag.le(first, begin), dag.lt(begin, last));
+        };
+        Expr value;
+        if (equalityEnd) { value = interval(ordinal, *equalityEnd); }
+        else if (order.le(end, ordinal)) { value = dag.boolean(true); }
+        else if (order.le(ordinal, begin)) { value = dag.boolean(false); }
+        else { value = dag.lt(begin, ordinal); }
+        for (const auto& item : extraIntervals) { value = dag.lor(value, interval(item.first, item.second)); }
         return prefixThen ? value : dag.lnot(value);
     }
+
 };
 std::optional<Split> unitOffsetCondition(Value condition, scf::ForOp loop,
     const PhaseIndex& index, RegionExpressions& dag, Expr trips)
@@ -139,7 +204,7 @@ Expr signedEntry(Value value, RegionExpressions& dag)
 // low 64 bits as an ordinal. The wide integer circuit proves all intermediates
 // fit; its division is total even in an unselected branch.
 Expr clippedQuotient(const IntegerAffine& numerator, const BoundInteger& divisor,
-    ArrayRef<Expr> inputs, Expr trips, RegionExpressions& dag)
+    ArrayRef<Expr> inputs, Expr trips, RegionExpressions& dag, CutOrder& order)
 {
     SmallVector<uint64_t> residues(inputs.size(), 0);
     auto low = IntegerSystem::create(inputs.size(),
@@ -157,11 +222,13 @@ Expr clippedQuotient(const IntegerAffine& numerator, const BoundInteger& divisor
     auto below = dag.integerPredicate(*low, inputs, 1, residues);
     auto above = dag.integerPredicate(*high, highInputs, 1, SmallVector<uint64_t>(highInputs.size(), 0));
     auto quotient = dag.integerWitness(numerator, divisor, inputs, 1, residues, 0);
-    return dag.select(below, dag.constant(0), dag.select(above, trips, quotient));
+    auto result = dag.select(below, dag.constant(0), dag.select(above, trips, quotient));
+    order.record(result, numerator, divisor, inputs, dag.constant(0), trips);
+    return result;
 }
 
 std::optional<Split> affineCondition(Value condition, scf::ForOp loop,
-    const PhaseIndex& index, RegionExpressions& dag, Expr trips)
+    const PhaseIndex& index, RegionExpressions& dag, Expr trips, CutOrder& order)
 {
     auto compare = condition.getDefiningOp<arith::CmpIOp>();
     if (!compare || !compare.getLhs().getType().isIndex()) { return std::nullopt; }
@@ -232,22 +299,116 @@ std::optional<Split> affineCondition(Value condition, scf::ForOp loop,
     IntegerAffine numerator;
     numerator.constant = -difference.constant + slope - 1;
     for (const auto& coefficient : difference.coefficients) { numerator.coefficients.push_back(-coefficient); }
-    auto first = clippedQuotient(numerator, slope, inputs, trips, dag);
+    auto first = clippedQuotient(numerator, slope, inputs, trips, dag, order);
     if (inclusive || equality) { numerator.constant += 1; }
-    auto end = inclusive || equality ? clippedQuotient(numerator, slope, inputs, trips, dag) : first;
+    auto end = inclusive || equality ? clippedQuotient(numerator, slope, inputs, trips, dag, order) : first;
     if (!dag.constructionError().empty() || first == RegionExpressions::invalid || end == RegionExpressions::invalid) {
         return std::nullopt;
     }
     return equality ? Split{first, prefixThen, end} : Split{end, prefixThen, std::nullopt};
 }
 
+// A wrapped comparison is a union of integer truth intervals shifted by the
+// machine modulus. Turn their preimages into cuts in the loop ordinal.
+std::optional<Split> modularCondition(Value condition, scf::ForOp loop,
+    const PhaseIndex& index, RegionExpressions& dag, Expr trips, CutOrder& order)
+{
+    auto compare = condition.getDefiningOp<arith::CmpIOp>();
+    if (!compare || !compare.getLhs().getType().isIndex()) { return std::nullopt; }
+    const auto bits = DataLayout::closest(loop).getTypeSizeInBits(IndexType::get(loop.getContext()));
+    auto literal = sequenceInteger(compare.getRhs());
+    auto domain = CountedLoop::get(loop);
+    if (!literal || !domain || bits.isScalable() || bits.getFixedValue() != 64) { return std::nullopt; }
+    const BoundInteger half = BoundInteger(INT64_MAX) + 1, modulus = half * 2;
+    BoundInteger low = -half, high = half - 1;
+    bool positive = true;
+    switch (compare.getPredicate()) {
+    case arith::CmpIPredicate::slt: high = BoundInteger(*literal) - 1; break;
+    case arith::CmpIPredicate::sle: high = BoundInteger(*literal); break;
+    case arith::CmpIPredicate::sge: low = BoundInteger(*literal); break;
+    case arith::CmpIPredicate::sgt: low = BoundInteger(*literal) + 1; break;
+    case arith::CmpIPredicate::eq: low = high = BoundInteger(*literal); break;
+    case arith::CmpIPredicate::ne: low = high = BoundInteger(*literal); positive = false; break;
+    default: return std::nullopt;
+    }
+    mlir::pto::detail::ScalarCongruenceNormalizer normalize(64, [&](Value value) {
+        SmallVector<Operation*> recipe;
+        return value == loop.getInductionVar() || detail::entryExpression(value, loop, index, recipe);
+    });
+    auto linear = normalize.value(compare.getLhs());
+    if (!linear) { return std::nullopt; }
+    auto induction = linear->coefficients.find(loop.getInductionVar());
+    if (induction == linear->coefficients.end()) { return std::nullopt; }
+    BoundInteger slope(induction->second.getSExtValue());
+    linear->coefficients.erase(loop.getInductionVar());
+    llvm::MapVector<Value, BoundInteger> parameters;
+    for (const auto& term : linear->coefficients) { parameters[term.first] = BoundInteger(term.second.getSExtValue()); }
+    BoundInteger constant(linear->constant.getSExtValue());
+    // Substitute original iv = lower + step*ordinal, retaining modulo equality.
+    if (auto lower = sequenceInteger(loop.getLowerBound())) { constant += slope * *lower; }
+    else { parameters[loop.getLowerBound()] += slope; }
+    slope *= domain->step;
+    SmallVector<Expr> inputs;
+    IntegerAffine offset;
+    offset.constant = constant;
+    BoundInteger minimum = offset.constant, maximum = offset.constant;
+    for (const auto& [value, coefficient] : parameters) {
+        if (coefficient == 0) { continue; }
+        inputs.push_back(dag.input(value)); offset.coefficients.push_back(coefficient);
+        minimum += coefficient * (coefficient > 0 ? -half : half - 1);
+        maximum += coefficient * (coefficient > 0 ? half - 1 : -half);
+    }
+    // CountedLoop supplies nonnegative ordinals bounded by INT64_MAX.
+    const auto excursion = slope * BoundInteger(domain->maximumOrdinal);
+    if (excursion < 0) { minimum += excursion; } else { maximum += excursion; }
+    auto firstBand = ceilDiv(minimum - high, modulus), lastBand = floorDiv(maximum - low, modulus);
+    // This adapter emits an explicit list of cuts. Larger coefficient-induced
+    // lists remain an export obligation for a symbolic arithmetic route.
+    BoundInteger circuitMagnitude = llvm::abs(constant) + llvm::abs(slope) + 2;
+    for (const auto& coefficient : offset.coefficients) { circuitMagnitude += llvm::abs(coefficient) * half; }
+    circuitMagnitude += llvm::abs(slope) * half; // high clipping test's trip-count input
+    circuitMagnitude += llvm::abs(minimum) + llvm::abs(maximum) + modulus;
+    if (lastBand - firstBand > 63 || circuitMagnitude >= half * half) {
+        return std::nullopt;
+    }
+    Split result{dag.constant(0), positive, dag.constant(0)};
+    if (low > high) { return result; }
+    bool first = true;
+    for (auto band = firstBand; band <= lastBand; band += 1) {
+        auto lower = low + band * modulus, upper = high + band * modulus;
+        IntegerAffine begin = offset, end = offset;
+        BoundInteger divisor = llvm::abs(slope);
+        if (slope > 0) {
+            for (auto& coefficient : begin.coefficients) { coefficient = -coefficient; }
+            end.coefficients = begin.coefficients;
+            begin.constant = lower - offset.constant + divisor - 1;
+            end.constant = upper + 1 - offset.constant + divisor - 1;
+        } else {
+            begin.constant = offset.constant - upper + divisor - 1;
+            end.constant = offset.constant - lower + 1 + divisor - 1;
+        }
+        // Entire-domain bounds can identify endpoint cuts without creating
+        // integer circuits. They refer to every admitted parameter valuation.
+        auto start = (slope > 0 ? lower <= minimum : upper >= maximum) ? dag.constant(0) :
+            clippedQuotient(begin, divisor, inputs, trips, dag, order);
+        auto finish = (slope > 0 ? upper >= maximum : lower <= minimum) ? trips :
+            clippedQuotient(end, divisor, inputs, trips, dag, order);
+        if (start == RegionExpressions::invalid || finish == RegionExpressions::invalid ||
+            !dag.constructionError().empty()) { return std::nullopt; }
+        if (first) { result.ordinal = start; result.equalityEnd = finish; first = false; }
+        else { result.extraIntervals.push_back({start, finish}); }
+    }
+    return result;
+}
+
 std::optional<Split> splitCondition(Value condition, scf::ForOp loop,
-    const PhaseIndex& index, RegionExpressions& dag, Expr trips)
+    const PhaseIndex& index, RegionExpressions& dag, Expr trips, CutOrder& order)
 {
     if (sequenceInteger(loop.getLowerBound()) == 0 && sequenceInteger(loop.getStep()) == 1) {
         if (auto simple = unitOffsetCondition(condition, loop, index, dag, trips)) { return simple; }
     }
-    return affineCondition(condition, loop, index, dag, trips);
+    if (auto affine = affineCondition(condition, loop, index, dag, trips, order)) { return affine; }
+    return modularCondition(condition, loop, index, dag, trips, order);
 }
 
 } // namespace
@@ -289,6 +450,7 @@ std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
         return std::nullopt;
     }
     PhaseNormalization normalizer(loop, index, arena);
+    CutOrder order;
     SmallVector<std::pair<Value, Split>> predicates;
     SmallVector<Expr> cuts;
     std::map<Expr, CutBounds> bounds;
@@ -311,11 +473,14 @@ std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
         if (op && isa<arith::AndIOp, arith::OrIOp, arith::XOrIOp>(op)) {
             return collect(op->getOperand(0)) && collect(op->getOperand(1));
         }
-        auto split = splitCondition(value, loop, index, arena, trips);
+        auto split = splitCondition(value, loop, index, arena, trips, order);
         if (!split) { return false; }
         predicates.emplace_back(value, *split);
         addCut(split->ordinal, split->ordinalBounds);
         if (split->equalityEnd) { addCut(*split->equalityEnd, split->endBounds); }
+        for (const auto& interval : split->extraIntervals) {
+            addCut(interval.first, {}); addCut(interval.second, {});
+        }
         return true;
     };
     bool supported = true;
@@ -326,15 +491,14 @@ std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
     cuts.erase(std::remove_if(cuts.begin(), cuts.end(), [&](Expr cut) {
         return cut == arena.constant(0) || cut == trips;
     }), cuts.end());
+    for (auto cut : cuts) { order.add(arena.constant(0), cut); order.add(cut, trips); }
     llvm::sort(cuts);
     cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
     SmallVector<CutBounds> orderedBounds;
     for (auto cut : cuts) { orderedBounds.push_back(bounds[cut]); }
     for (std::size_t i = 1; i < cuts.size(); ++i) {
         for (std::size_t j = i; j; --j) {
-            auto a = cuts[j - 1], b = cuts[j], ordered = arena.le(a, b);
-            cuts[j - 1] = arena.select(ordered, a, b);
-            cuts[j] = arena.select(ordered, b, a);
+            order.compareSwap(cuts[j - 1], cuts[j], arena);
             auto left = orderedBounds[j - 1], right = orderedBounds[j];
             // min(a,b) inherits either upper bound from zero but needs both
             // lower bounds from T. max(a,b) has the dual certificates.
@@ -346,6 +510,7 @@ std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
     }
     cuts.insert(cuts.begin(), arena.constant(0));
     cuts.push_back(trips);
+    for (std::size_t i = 1; i < cuts.size(); ++i) { order.add(cuts[i - 1], cuts[i]); }
     orderedBounds.insert(orderedBounds.begin(), CutBounds{uint64_t{0}, std::nullopt});
     orderedBounds.push_back({std::nullopt, uint64_t{0}});
     std::vector<BoundarySlice> output;
@@ -357,7 +522,7 @@ std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
         auto nonempty = arena.lt(slice.interval.begin, slice.interval.end);
         if (arena.constantValue(nonempty) == 0) { continue; }
         for (const auto& [value, split] : predicates) {
-            auto guard = split.predicate(cuts[i], arena);
+            auto guard = split.predicate(cuts[i], cuts[i + 1], order, arena);
             // No payload or endpoint belongs to an empty slice. Constants
             // proved under its nonempty premise therefore preserve the exact
             // slice graph, and avoid analyzing mutually impossible arms.
@@ -374,46 +539,17 @@ bool SequenceAnalysisState::boundaryLoop(scf::ForOp loop)
     auto domain = CountedLoop::get(loop);
     if (!domain || index.hasRelevantCarriedState(loop)) { return false; }
     auto trips = domain->trips(expressions);
-    SmallVector<std::pair<Value, Split>> predicates;
-    SmallVector<Expr> cuts;
-    bool supported = true;
-    loop.getBody()->walk([&](scf::IfOp branch) {
-        SmallVector<Operation*> recipe;
-        if (detail::entryExpression(branch.getCondition(), loop, index, recipe)) { return; }
-        auto split = splitCondition(branch.getCondition(), loop, index, expressions, trips);
-        if (!split) { supported = false; return; }
-        predicates.emplace_back(branch.getCondition(), *split);
-        cuts.push_back(split->ordinal);
-        if (split->equalityEnd) { cuts.push_back(*split->equalityEnd); }
-    });
-    if (!supported || cuts.empty()) { return false; }
-    llvm::sort(cuts);
-    cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
-    const bool singleCut = cuts.size() == 1 &&
-        llvm::none_of(predicates, [](const auto& predicate) { return predicate.second.equalityEnd.has_value(); });
-    // A fixed insertion network sorts cut VALUES, not parameter valuations.
-    // There are O(h^2) select gates and h+1 slices for h distinct cut expressions.
-    for (std::size_t i = 1; i < cuts.size(); ++i) {
-        for (std::size_t j = i; j; --j) {
-            auto left = cuts[j - 1], right = cuts[j];
-            auto ordered = expressions.le(left, right);
-            cuts[j - 1] = expressions.select(ordered, left, right);
-            cuts[j] = expressions.select(ordered, right, left);
-        }
-    }
-    cuts.insert(cuts.begin(), c(0));
-    cuts.push_back(trips);
+    std::string partitionError;
+    auto partition = collectBoundarySlices(loop, index, expressions, trips, DenseMap<Value, Expr>{}, partitionError);
+    if (!partition || partition->empty() ||
+        (partition->size() == 1 && partition->front().bindings.empty())) { return false; }
     std::vector<Child> slices;
-    for (std::size_t part = 0; part + 1 < cuts.size(); ++part) {
-        PeriodicSlice interval{cuts[part], cuts[part + 1]};
-        if (interval.begin == interval.end) { continue; }
+    for (const auto& slice : *partition) {
         DenseMap<Value, bool> choices;
         DenseMap<Value, Expr> bindings;
         SmallVector<Value> sliceGuards;
-        for (const auto& [condition, split] : predicates) {
-            auto guard = split.predicate(interval.begin, expressions);
-            if (singleCut) { choices[condition] = part ? !split.prefixThen : split.prefixThen; }
-            else if (auto known = expressions.constantValue(guard)) { choices[condition] = *known != 0; }
+        for (const auto& [condition, guard] : slice.bindings) {
+            if (auto known = expressions.constantValue(guard)) { choices[condition] = *known != 0; }
             else { bindings[condition] = guard; sliceGuards.push_back(condition); }
         }
         auto recognized = detail::recognizeRotatingSlice(loop, index, *input, choices, sliceGuards);
@@ -427,7 +563,7 @@ bool SequenceAnalysisState::boundaryLoop(scf::ForOp loop)
         auto analyzed = analyzeGuardedRotating(loop, *input, recognized, arena, bindings);
         if (!analyzed.error.empty()) { repeatedAttempt += "; boundary slice: " + analyzed.error; return false; }
         std::string exportError;
-        auto regional = guardedRotatingRegionalResult(function, *input, analyzed, exportError, interval);
+        auto regional = guardedRotatingRegionalResult(function, *input, analyzed, exportError, slice.interval);
         if (failed(regional)) { repeatedAttempt += "; boundary export: " + exportError; return false; }
         Child child;
         child.loop = loop;
