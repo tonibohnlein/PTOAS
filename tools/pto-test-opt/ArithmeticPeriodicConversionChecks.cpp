@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/ArithmeticPeriodicConversion.h"
+#include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -194,6 +195,42 @@ int runArithmeticPeriodicConversionChecks()
 
 int runArithmeticPeriodicInputChecks(mlir::func::FuncOp function, const mlir::pto::SyncInput& input)
 {
+    if (function->hasAttr("test.lazy_arithmetic")) {
+        auto prepared = fs::prepareFunctionSynchronization(function, mlir::pto::GMAliasPolicy::MayNotAlias);
+        if (failed(prepared) || !(*prepared)->recognitionReport) { return 1; }
+        auto contracts = (*prepared)->recognitionReport.getAs<mlir::ArrayAttr>("contracts");
+        if (!contracts || llvm::any_of(contracts, [](mlir::Attribute value) {
+                return mlir::cast<mlir::DictionaryAttr>(value).contains("period");
+            })) {
+            llvm::errs() << "cheap logical route eagerly constructed arithmetic profiles\n"; return 1;
+        }
+        // Detached preparation leaves the input unchanged. Exhaustive clients
+        // must still be able to request all configured profiles explicitly.
+        fs::FrontierAnalysis exhaustive(function);
+        if (failed(exhaustive.initialize()) || failed(exhaustive.recognizeArithmetic())) { return 1; }
+        unsigned profiles = 0;
+        for (const auto& candidate : exhaustive.result()->contractAudit) {
+            if (candidate.arithmeticProfile) { ++profiles; }
+        }
+        if (profiles < 2) { return 1; }
+        llvm::outs() << "cheap dispatch is lazy; exhaustive arithmetic remains available\n";
+        return 0;
+    }
+    if (function->hasAttr("test.difference_routing")) {
+        fs::FrontierAnalysis analysis(function);
+        const auto expected = function->hasAttr("test.interval_rejection") ?
+            fs::ArithmeticPeriodicStatus::NotDistanceIntervals : fs::ArithmeticPeriodicStatus::AdapterUnavailable;
+        if (failed(analysis.initialize()) || succeeded(analysis.analyzeArithmeticPeriodicFunction()) ||
+            !analysis.arithmeticPeriodicDemands() ||
+            analysis.arithmeticPeriodicDemands()->conversion.status != expected ||
+            failed(analysis.analyzeArithmeticFunction()) || !analysis.arithmeticDemands() ||
+            analysis.generalArithmeticDemands()) {
+            llvm::errs() << "difference-bound fallback was displaced by periodic adapter\n";
+            return 1;
+        }
+        llvm::outs() << "difference-bound fallback retained\n";
+        return 0;
+    }
     fs::PhaseIndex index;
     if (failed(index.build(function, input))) { return 1; }
     auto program = fs::recognizeArithmeticProgram(function, index, input, input.accesses(), {8,8,2,4096});
