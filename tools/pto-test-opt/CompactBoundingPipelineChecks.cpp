@@ -13,6 +13,9 @@
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "SyncLogicalInsertionChecks.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/BoundarySlices.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/CountedLoop.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
@@ -215,6 +218,104 @@ bool missingAllocation(func::FuncOp function)
                         "allocation adapter not implemented yet") != std::string::npos &&
         diagnostic.find("supplied capacity") == std::string::npos;
 }
+// Sample each exact slice at both ends and its midpoint, including indices
+// near 2^61 in the corpus's unsigned-count tail pattern. APInt supplies an
+// independent machine-arithmetic oracle; no large loop is unfolded.
+bool checkMachineBoundary(func::FuncOp function, const pto::SyncInput& input)
+{
+    fs::PhaseIndex index;
+    if (failed(index.build(function, input))) { return false; }
+    auto loops = function.getOps<scf::ForOp>();
+    if (!llvm::hasSingleElement(loops)) { return false; }
+    auto loop = *loops.begin();
+    auto domain = fs::CountedLoop::get(loop);
+    if (!domain) { return false; }
+    fs::RegionExpressions arena;
+    std::string error;
+    const DenseMap<Value, fs::RegionExpressions::Id> inherited;
+    auto slices = fs::collectBoundarySlices(loop, index, arena, domain->trips(arena), inherited, error);
+    if (!slices || !error.empty() || slices->empty()) {
+        llvm::errs() << "machine boundary unavailable: " << error << " " << arena.constructionError() << "\n";
+        return false;
+    }
+    const int64_t lengths[] = {INT64_MIN, -4294967295LL, -5, -4, -3, -1, 0, 1, 4, 5, 4294967295LL, INT64_MAX};
+    for (auto length : lengths) {
+        const uint64_t upper = (static_cast<uint64_t>(length) + 3) / 4;
+        std::function<std::optional<APInt>(Value, std::optional<APInt>)> scalar;
+        scalar = [&](Value value, std::optional<APInt> induction) -> std::optional<APInt> {
+            if (value == function.getArgument(0)) { return APInt(64, static_cast<uint64_t>(length)); }
+            if (value == function.getArgument(1)) { return APInt(64, upper); }
+            if (value == loop.getInductionVar()) { return induction; }
+            APInt literal;
+            if (matchPattern(value, m_ConstantInt(&literal))) { return literal.sextOrTrunc(64); }
+            auto* op = value.getDefiningOp();
+            if (!op || !isa<arith::AddIOp, arith::SubIOp, arith::MulIOp>(op)) { return std::nullopt; }
+            auto a = scalar(op->getOperand(0), induction), b = scalar(op->getOperand(1), induction);
+            if (!a || !b) { return std::nullopt; }
+            if (isa<arith::AddIOp>(op)) { return *a + *b; }
+            if (isa<arith::SubIOp>(op)) { return *a - *b; }
+            return *a * *b;
+        };
+        auto lower = scalar(loop.getLowerBound(), std::nullopt);
+        if (!lower) { return false; }
+        const APInt distance = APInt(128, upper) - lower->sext(128);
+        const uint64_t trips = distance.isStrictlyPositive() ?
+            ((distance - 1).udiv(APInt(128, domain->step)) + 1).getZExtValue() : 0;
+        auto evaluate = [&](fs::RegionExpressions::Id expression) -> std::optional<uint64_t> {
+            SmallVector<std::pair<fs::RegionExpressions::Id, fs::RegionExpressions::Id>> values;
+            for (const auto& [id, value] : arena.referencedInputs(expression)) {
+                auto bits = scalar(value, std::nullopt);
+                if (!bits) { return std::nullopt; }
+                values.push_back({id, arena.constant(bits->getZExtValue())});
+            }
+            fs::RegionExpressions::Substitution substitution(values);
+            return arena.constantValue(arena.substitute(expression, substitution));
+        };
+        uint64_t previous = 0;
+        for (const auto& slice : *slices) {
+            auto begin = evaluate(slice.interval.begin), end = evaluate(slice.interval.end);
+            if (!begin || !end || *begin != previous || *end < *begin || *end > trips) {
+                llvm::errs() << "machine boundary coverage/evaluation failure: length=" << length << "\n";
+                return false;
+            }
+            previous = *end;
+            if (*begin == *end) { continue; }
+            const uint64_t samples[] = {*begin, *begin + (*end - *begin) / 2, *end - 1};
+            for (const auto& [condition, binding] : slice.bindings) {
+                auto compare = condition.getDefiningOp<arith::CmpIOp>();
+                auto actual = evaluate(binding);
+                if (!compare || !actual) {
+                    llvm::errs() << "machine boundary predicate evaluation unavailable\n"; return false;
+                }
+                for (auto ordinal : samples) {
+                    auto induction = *lower + APInt(64, ordinal) * APInt(64, domain->step);
+                    auto left = scalar(compare.getLhs(), induction), right = scalar(compare.getRhs(), induction);
+                    if (!left || !right) { return false; }
+                    const APInt remaining = *left, one = *right;
+                    bool expected = false;
+                    switch (compare.getPredicate()) {
+                    case arith::CmpIPredicate::slt: expected = remaining.slt(one); break;
+                    case arith::CmpIPredicate::sle: expected = remaining.sle(one); break;
+                    case arith::CmpIPredicate::sge: expected = remaining.sge(one); break;
+                    case arith::CmpIPredicate::sgt: expected = remaining.sgt(one); break;
+                    case arith::CmpIPredicate::eq: expected = remaining == one; break;
+                    case arith::CmpIPredicate::ne: expected = remaining != one; break;
+                    default: return false;
+                    }
+                    if ((*actual != 0) != expected) {
+                        llvm::errs() << "machine boundary mismatch: length=" << length << " ordinal=" << ordinal
+                            << " predicate=" << static_cast<unsigned>(compare.getPredicate()) << " actual="
+                            << *actual << " expected=" << expected << " begin=" << *begin << " end=" << *end
+                            << " constant=" << arena.constantValue(binding).value_or(2) << "\n";
+                        return false;
+                    }
+                }
+            }
+        }
+        if (previous != trips) { return false; }
+    }
+    return true;
+}
 // An unavailable export must not change the mathematical result or trigger
 // a different selected order. This guard is deliberately defined after its SET
 // cut and cannot be speculated because division may be undefined.
@@ -249,6 +350,7 @@ bool checkUnmetExports(func::FuncOp function, const pto::SyncInput& input)
 }
 bool check(func::FuncOp function, const pto::SyncInput& input)
 {
+    if (function->hasAttr("test.machine_boundary")) { return checkMachineBoundary(function, input); }
     if (function->hasAttr("test.unmet_exports")) { return checkUnmetExports(function, input); }
     if (function->hasAttr("test.exact_priority")) {
         fs::FrontierAnalysis analysis(function);

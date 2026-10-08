@@ -341,3 +341,26 @@ when its GM alias policy changes.
 cut: exact guarded reachability survives failed endpoint preparation, the IR
 stays unchanged, and the dispatcher reports the missing export. The same test
 also checks arithmetic cache reuse and alias-policy invalidation.
+
+### Machine-integer boundary partitions
+
+The shared scalar congruence normalizer preserves fixed-width addition,
+subtraction and constant multiplication modulo the data-layout width. Boundary
+composition uses its 64-bit index form to partition signed comparisons with a
+constant into modular truth intervals. Counted-loop ordinals and entry values
+remain symbolic; neither runtime iterations nor parameter valuations are
+expanded. Zero trips and signed wrap are included. Comparisons without this
+representation still report an adapter obligation.
+
+This cut-list adapter supports at most 64 modular bands and checked i128
+endpoint circuits. These are representation limits, not evidence that an input
+is outside every arithmetic class. Cuts with the same affine numerator
+coefficients and divisor retain their known order. Both boundary consumers use
+one partition builder, specializing branch predicates on nonempty slices.
+
+The compact-pipeline checks compare slice predicates against APInt evaluation,
+including signed extrema, negative metadata lengths, nonunit loop steps and
+large ordinals. The affine-boundary test compares inserted command closures
+against independently unfolded accesses across signed wrap. These checks do
+not establish complete logical-plan support for the prefill benchmark: its
+remaining storage and endpoint exports are separate obligations.

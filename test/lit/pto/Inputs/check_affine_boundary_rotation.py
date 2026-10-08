@@ -32,7 +32,8 @@ def validate(document, trips, cut, predicate, swapped, slope):
     for i in range(max(0, trips)):
         if i + 1 < trips:
             effects.append((set(), {(i + 1) % 2}))
-        left, right = cut + slope * i, 0
+        left = (cut + slope * i + (1 << 63)) % (1 << 64) - (1 << 63)
+        right = 0
         if swapped:
             left, right = right, left
         if compare(left, right, predicate):
@@ -109,19 +110,29 @@ def main():
                 require(result.returncode == 0, (result.stdout, result.stderr))
                 validate(json.loads(result.stdout), trips, cut, predicate, swapped, slope)
                 checked += 1
-        # Small sampled values do not prove the same formula safe for arbitrary
-        # index parameters. Reject unproved signed wrap; never assume metadata
-        # is sorted or constrain it using the trace's sample arguments.
+        # Full-width inputs use modular truth intervals, not an assumed no-wrap
+        # affine expression. Exercise both sides of the signed wrap with a
+        # short actual execution and compare its complete payload closure.
         unbounded = source.replace("%n32: i32, %cut32: i32,", "%n: index, %cut: index,")
         unbounded = unbounded.replace("    %n = arith.index_cast %n32 : i32 to index\n", "")
         unbounded = unbounded.replace("    %cut = arith.index_cast %cut32 : i32 to index\n", "")
         unbounded = unbounded.replace("PREDICATE", "sge").replace("LEFT", "%varying").replace("RIGHT", "%zero")
-        path.write_text(unbounded.replace("array<i64: 5>", "array<i64: 5, 8>"))
+        for cut in (8, -(1 << 63), -(1 << 63) + 7, (1 << 63) - 1):
+            path.write_text(unbounded.replace("array<i64: 5>", f"array<i64: 5, {cut}>"))
+            result = subprocess.run([tool, "--structured-trace", str(path)],
+                                    text=True, capture_output=True, check=False)
+            require(result.returncode == 0, (result.stdout, result.stderr))
+            validate(json.loads(result.stdout), 5, cut, "sge", False, -4)
+            checked += 1
         result = subprocess.run([tool, "--sequence-analysis", str(path)],
                                 text=True, capture_output=True, check=False)
         require(result.returncode == 0, (result.stdout, result.stderr))
-        rejected = json.loads(result.stdout)
-        require(rejected["error"] and rejected["unchanged"], rejected)
+        composed = json.loads(result.stdout)
+        require(not composed["error"] and composed["prepared"] and composed["unchanged"], composed)
+        # Retaining ordered cuts more than halves this composition's original
+        # 208003-expression baseline. This is a regression ceiling, not a pass
+        # limit or an asymptotic bound on arbitrary parameter-dependent cuts.
+        require(composed["expressions"] < 104000, composed)
     print(f"affine boundary cuts: {checked} independently unfolded closures passed")
 
 

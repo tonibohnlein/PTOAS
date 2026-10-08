@@ -7,6 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 """Check symbolic cut order and equality slices against unfolded byte conflicts."""
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -84,7 +85,7 @@ def main():
             path.write_text(source.replace("array<i64: 5>", f"array<i64: {trips}, 2>"))
             result = subprocess.run([tool, "--insert-logical", str(path)],
                                     text=True, capture_output=True, check=True)
-            assert result.stdout.count("scf.for") == 1
+            assert len(re.findall(r"^\s*scf\.for\s", result.stdout, re.MULTILINE)) == 1
             sizes.append(len(result.stdout.splitlines()))
         assert sizes[0] == sizes[1], sizes
     print(f"multiple boundary cuts: {checked} unfolded closures and compact-size checks passed")
