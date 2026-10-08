@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
 #include "CountedLoop.h"
+#include "PTO/Transforms/FrontierSynch/RotatingRegion.h"
 #include "PTO/Transforms/FrontierSynch/VaryingRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
@@ -203,6 +204,16 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         std::optional<NumericTemplate> cachedNumeric;
         if (staticInnerBounds) {
             cachedNumeric = recognizeRegionalNumericTemplate(child.loop, index, *input);
+        }
+        if (!cachedNumeric || cachedNumeric->result.state != RecognitionState::Applicable) {
+            auto rotating = recognizeRotatingRegion(function, *input, *program,
+                static_cast<std::size_t>(&node - program->nodes.data()), index, arena);
+            if (rotating.error.empty()) {
+                child.regional = std::move(rotating.regional); child.anchors = child.regional.anchors;
+                children.push_back(std::move(child)); return true;
+            }
+            if (!repeatedAttempt.empty()) { repeatedAttempt += "; "; }
+            repeatedAttempt += "rotating compact child: " + rotating.error;
         }
         if ((!cachedNumeric || cachedNumeric->result.state != RecognitionState::Applicable) &&
             repeatedChild(node, child.trips)) { return true; }

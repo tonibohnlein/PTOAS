@@ -165,6 +165,17 @@ std::optional<SlotPattern> matchRotatingSlot(Value slot, scf::ForOp loop, uint64
         return getAffineSymbolExpr(position, loop.getContext());
     };
     auto expression = evolution.value(slot, symbol);
+    // Shared scalar normalization may prove the entire selector constant,
+    // including a zero-stride modular expression. Keep that proof instead of
+    // requiring a syntactic remainder after it has already been folded away.
+    if (auto constant = dyn_cast<AffineConstantExpr>(expression)) {
+        if (constant.getValue() < 0 || static_cast<uint64_t>(constant.getValue()) >= count) {
+            return std::nullopt;
+        }
+        SlotPattern result;
+        result.offset = static_cast<uint64_t>(constant.getValue());
+        return result;
+    }
     auto mod = dyn_cast<AffineBinaryOpExpr>(expression);
     const bool modulo = mod && mod.getKind() == AffineExprKind::Mod;
     if (modulo) {

@@ -16,7 +16,7 @@ two independent accepting reviews, and its own commit before proceeding.
 | 5 | Collective guarded refresh and reusable bounded-lifetime regional results | Accepted |
 | 6 | Numerical composition for general sequences without unnecessary dense port closure | Accepted |
 | 7 | Original-IR contract audit and pinned corpus validation through available emission/allocation | Accepted |
-| 8 | Rotating compact children without common-period expansion | Pending |
+| 8 | Rotating compact children without common-period expansion | Accepted |
 | 9 | Structured symbolic crossing exports for mixed regional backends | Pending |
 | 10 | Compact guarded-periodic regional exports using shared counted domains | Pending |
 | 11 | Production bounded-lifetime evaluation and charged global profiles | Pending |
@@ -661,3 +661,47 @@ files. A full campaign of the final common binary remains scheduled after M12.
 Milestone 7 accepted by two independent source and audit reviewers after the
 completed checkpoint. Acceptance covers the fixes and evidence classification;
 the two documented cost regressions remain open.
+
+
+## Integration milestone 8: rotating compact children
+
+The governing statement is
+`prop:rotating-visit-footprints` in the current `paper/` manuscript, with its
+selector proof in `counted_region_composition.tex`. A family uses one selected
+bank `(s*t+c) mod b` per visit. Renaming that bank must preserve the complete
+child domain, control, pipes, local effects and prerequisites. Every accessed
+local cell of a written family is refreshed each visit. Other effects require
+complete disjoint ownership or read-only classification.
+
+Storage bridges have family-specific distance `b/gcd(s,b)`; native crossings
+retain distance one. All crossings are reduced together through the weighted
+query. The public storage selectors must refer to actual physical banks, not
+the canonical bank used to analyze the child. Endpoint availability and an
+allocation certificate are separate outputs; a unit-distance allocation proof
+cannot be attached to a weighted result.
+
+The original-IR acceptance fixture contains two independently rotating operand
+families, a mandatory computation and a compact inner loop. Its independent
+Python oracle enumerates physical conflicts only for testing and compares the
+complete required event relation with emitted-command reachability. Production
+recognition must be checked directly so that another successful backend cannot
+mask a missing rotating-family implementation.
+
+The implemented bank-map profile is numerical affine base/stride/count with a
+finite local cell partition. Shared residual proofs retain disjoint visit-owned
+and read-only storage, including their original effect identities. Unsupported
+bank inverses remain adapter obligations; this is not a general injective-map
+recognizer. Bank-count expansion and joint-period expansion are avoided.
+Selector modular multiplication uses reduced doubling/addition, with logarithmic
+expression size in the numerical multiplier and no overflowing intermediate.
+
+Focused validation includes 13 independently constructed command closures,
+zero/non-coprime strides, zero visits and empty inner loops, unchanged compact
+code for large trip values, a large-modulus selector regression, and missing
+refresh/context rejection. Original-IR residual ownership and read-only exports
+also pass recognition and endpoint preparation. Existing regional, repeated
+storage and read-only selector regressions pass. The shared interpretation check on phase-free fallback operations is preserved,
+with an opaque-call rejection regression. Serial incremental builds and both
+tool links passed. Two independent reviewers accepted the final source. The
+36 brace-prefilter findings were inspected: all affected control bodies are
+braced. No line-width warnings or whitespace findings remain.
