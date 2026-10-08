@@ -5,5 +5,13 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// RUN: pto-sync-input-test --shared-handoff-allocation-checks
-// RUN: pto-sync-input-test --finite-query-checks
+#ifndef PTO_FRONTIERSYNCH_CHAININTERFACEINTERNAL_H
+#define PTO_FRONTIERSYNCH_CHAININTERFACEINTERNAL_H
+#include "PTO/Transforms/FrontierSynch/ChainInterface.h"
+namespace mlir::pto::frontiersynch::chain {
+NumericalChainInterface initialize(std::vector<std::vector<uint32_t>> chains);
+void invert(NumericalChainInterface& index);
+std::optional<std::vector<bool>> reduce(const NumericalChainInterface& left,
+    const NumericalChainInterface& right, const std::vector<NumericalCrossing>& edges, uint64_t& operations);
+} // namespace mlir::pto::frontiersynch::chain
+#endif

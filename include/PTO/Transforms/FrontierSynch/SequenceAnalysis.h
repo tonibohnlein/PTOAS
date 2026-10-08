@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/ChainInterface.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
 using SequenceCost = RegionalCost;
@@ -63,6 +64,7 @@ SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& i
     std::shared_ptr<PhaseIndex> index = {});
 RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis);
 RegionExpressions* sequenceExpressions(SequenceAnalysis& analysis);
+NumericalChainQueryCost sequenceNumericalQueryCounts(const SequenceAnalysis& analysis);
 // Counts from the latest preparation, before shared emission CSE: imported
 // child code and newly prepared crossings (including identity adapters).
 std::pair<uint64_t, uint64_t> sequencePreparationCounts(const SequenceAnalysis& analysis);

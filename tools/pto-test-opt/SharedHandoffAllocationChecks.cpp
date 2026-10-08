@@ -75,6 +75,16 @@ bool exhaustive()
                 for (unsigned j = 0; j < count; ++j) { order[i][j] |= order[i][k] && order[k][j]; }
             }
         }
+        const auto queryWidth = bruteMinimum(order);
+        for (uint64_t capacity : {uint64_t(0), uint64_t(queryWidth), uint64_t(count)}) {
+            uint64_t queries = 0;
+            auto queried = fs::allocateSharedHandoffsByQuery(handoffs, [&](uint32_t from, uint32_t to) {
+                ++queries; return order[from][to] != 0;
+            }, capacity);
+            if (!valid(queried, order) || (queried.exactMinimum && queried.budget != queryWidth) ||
+                (capacity == queryWidth && queried.budget != queryWidth) ||
+                (!queried.exactMinimum && queries > capacity * count)) { return false; }
+        }
         // Reverse numerical IDs to exercise non-reference-ordered input too.
         Matrix reversed(count, std::vector<uint8_t>(count));
         for (unsigned i = 0; i < count; ++i) {
@@ -118,6 +128,30 @@ bool examples()
     return empty.error.empty() && empty.exactMinimum && !empty.budget && empty.lanes.empty() &&
            singleton.error.empty() && singleton.exactMinimum && singleton.budget == 1;
 }
+bool queryExamples()
+{
+    // A long causal chain must stay on the O(Eh) path: constructing its dense
+    // relation would require millions of queries, not one query per successor.
+    constexpr unsigned count = 4096;
+    std::vector<fs::SharedHandoff> chain(count, {0, 1});
+    uint64_t queries = 0;
+    auto simple = fs::allocateSharedHandoffsByQuery(chain, [&](uint32_t from, uint32_t to) {
+        ++queries; return from < to;
+    }, 6);
+    if (!simple.error.empty() || simple.exactMinimum || simple.budget != 1 || queries != count - 1) { return false; }
+    std::vector<fs::SharedHandoff> handoffs{{0, 1}, {2, 3}, {0, 1}, {3, 0}};
+    auto reuse = [](uint32_t from, uint32_t to) { return (from == 0 && to >= 2) || (from == 1 && to == 2); };
+    auto exact = fs::allocateSharedHandoffsByQuery(handoffs, reuse, 2);
+    if (!exact.error.empty() || !exact.exactMinimum || exact.budget != 2) { return false; }
+    queries = 0;
+    auto scarce = fs::allocateSharedHandoffsByQuery(std::vector<fs::SharedHandoff>(8, {0, 1}),
+        [&](uint32_t, uint32_t) { ++queries; return false; }, 6);
+    // Stop greedy at its seventh handoff (21 queries), then inspect 28 pairs.
+    if (!scarce.error.empty() || !scarce.exactMinimum || scarce.budget != 8 || queries != 49) { return false; }
+    auto empty = fs::allocateSharedHandoffsByQuery({}, reuse, 0);
+    auto missing = fs::allocateSharedHandoffsByQuery(handoffs, {}, 2);
+    return empty.error.empty() && empty.exactMinimum && !empty.budget && !missing.error.empty();
+}
 bool invalid()
 {
     std::vector<fs::SharedHandoff> handoffs(3, {0, 1});
@@ -132,7 +166,7 @@ bool invalid()
 } // namespace
 int runSharedHandoffAllocationChecks()
 {
-    if (!examples() || !invalid() || !exhaustive()) {
+    if (!examples() || !queryExamples() || !invalid() || !exhaustive()) {
         llvm::errs() << "shared handoff allocation check failed\n";
         return 1;
     }

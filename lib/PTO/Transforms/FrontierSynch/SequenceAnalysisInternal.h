@@ -9,6 +9,7 @@
 #ifndef PTO_FRONTIERSYNCH_SEQUENCEANALYSISINTERNAL_H
 #define PTO_FRONTIERSYNCH_SEQUENCEANALYSISINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/RegionalNumericalInterface.h"
 #include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/RegionExpressions.h"
@@ -74,6 +75,11 @@ struct SequenceAnalysisState {
     std::shared_ptr<RegionExpressions> arena;
     RegionExpressions& expressions;
     SequenceCost costs;
+    std::shared_ptr<NumericalChainMerge> numerical;
+    std::array<std::shared_ptr<const RegionalNumericalInterface>, 2> numericalChildren;
+    std::vector<NumericalChainSelection> numericalSelection;
+    std::vector<std::pair<uint32_t, PeriodicEventKind>> numericalChainKeys;
+    NumericalChainQueryCost numericalQueryCost;
     std::string error;
     std::string repeatedAttempt;
     std::vector<Child> children;
@@ -189,6 +195,10 @@ struct SequenceAnalysisState {
     std::optional<Expr> eventReachability(std::size_t source, std::size_t target);
     bool closure();
     bool numericalCrossingReduction();
+    std::optional<std::vector<uint32_t>> numericalThresholds(
+        SequenceEvent event, bool reverse, NumericalChainQueryCost& cost);
+    std::optional<Expr> numericalReachability(
+        SequenceEvent source, SequenceEvent target, NumericalChainQueryCost& cost);
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare(ArrayRef<scf::ForOp> enclosing = {});
 };
 std::optional<int64_t> sequenceInteger(Value value);

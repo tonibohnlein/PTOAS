@@ -26,6 +26,13 @@ struct GuardedPeriodicThreshold {
     RegionExpressions::Id reachable = RegionExpressions::invalid;
     RegionExpressions::Id distance = RegionExpressions::invalid;
 };
+struct GuardedPeriodicFrontier {
+    uint32_t pipe = 0, count = 0;
+    // Event 2*a is I_a and 2*a+1 is C_a. These are shifted scores
+    // rho(v)=min_a(count-rank(a)+count*dist(a,v)), not event distances.
+    // Separate seeds supply start-origin and completion-origin queries.
+    std::vector<GuardedPeriodicThreshold> starts, completions;
+};
 struct GuardedPeriodicQuotient {
     std::shared_ptr<RegionExpressions> expressions;
     std::string error;
@@ -35,10 +42,13 @@ struct GuardedPeriodicQuotient {
     // Parallel to original records. Coincident enabled records choose the first
     // minimum-distance representative; guards select exactly the lifted covers.
     std::vector<RegionExpressions::Id> retained;
-    // Row-major all-event thresholds; event 2*a is I_a, event 2*a+1 is C_a.
-    // Unreachable distances are zero and must be interpreted with reachable.
-    std::vector<GuardedPeriodicThreshold> thresholds;
+    // O(kV) entries. Potential ranks are fixed even when sites are absent.
+    std::vector<GuardedPeriodicFrontier> frontiers;
+    std::vector<uint32_t> sourceRows, localRanks;
     uint64_t graphEdges = 0;
+    uint64_t relaxationCandidates = 0, exclusionCandidates = 0, scalingAdditions = 0;
+    // Constructs only the requested scalar threshold. Exporting all pairs is
+    // an explicit consumer cost; this index never materializes a pair matrix.
     std::optional<GuardedPeriodicThreshold> eventThreshold(PeriodicEvent source, PeriodicEvent target) const;
 };
 // The caller certifies that guards and distances use immutable invocation
@@ -50,8 +60,11 @@ struct GuardedPeriodicQuotient {
 // presence and checks constant violations, but does not prove symbolic premises.
 // All arithmetic uses checked static bounds for uint64_t circuit intermediates.
 // No iterations, slots, distance values or guard valuations are enumerated.
-// Construction is O(g + h + m^3), with h fixed native prerequisites, beyond
-// the supplied expression DAG. Native prerequisites are not removable demands. No IR mutation.
+// With V=2m vertices, k pipes and E normalized/native edges, construction is
+// O(g+kVE) circuit gates beyond supplied expressions and endpoint grouping.
+// Grouping uses O(g log(g+1)) comparisons. The shared DAG retains O(g+kVE)
+// gates; its frontier outputs occupy O(kV) entries, not O(V^2) pair entries.
+// Native prerequisites are not removable demands. No IR mutation.
 // Threshold queries are reflexive on present types; finite-prefix clients also
 // check both occurrence domains and compare targetIteration-sourceIteration.
 GuardedPeriodicQuotient analyzeGuardedPeriodicQuotient(

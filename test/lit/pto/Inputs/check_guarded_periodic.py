@@ -16,6 +16,40 @@ import tempfile
 from check_periodic_demands import closure, native
 
 
+def dense_thresholds(case, sample):
+    """Independent old-style scalar Floyd oracle on actual present sites."""
+    m = len(case["pipes"])
+    distance = [[None] * (2 * m) for _ in range(2 * m)]
+
+    def edge(a, b, weight):
+        old = distance[a][b]
+        distance[a][b] = weight if old is None else min(old, weight)
+
+    for a in range(m):
+        if not sample[a]:
+            continue
+        edge(2 * a, 2 * a, 0)
+        edge(2 * a + 1, 2 * a + 1, 0)
+        edge(2 * a, 2 * a + 1, 0)
+        for b in range(m):
+            if sample[b] and case["pipes"][a] == case["pipes"][b]:
+                edge(2 * a, 2 * b, int(a >= b))
+                edge(2 * a + 1, 2 * b + 1, int(a >= b))
+    weighted = [(r, sample[m + 2 * i], sample[m + 2 * i + 1])
+                for i, r in enumerate(case["records"])]
+    weighted += [(r, 1, r["distance"]) for r in case.get("native_prerequisites", [])]
+    for record, enabled, weight in weighted:
+        a, b = record["source"], record["target"]
+        if enabled and sample[a] and sample[b]:
+            edge(2 * a + 1, 2 * b, weight)
+    for k in range(2 * m):
+        for a in range(2 * m):
+            for b in range(2 * m):
+                if distance[a][k] is not None and distance[k][b] is not None:
+                    edge(a, b, distance[a][k] + distance[k][b])
+    return distance
+
+
 def check(case, result, trips=7):
     assert not result["error"], result
     m = len(case["pipes"])
@@ -29,6 +63,13 @@ def check(case, result, trips=7):
                        for site in range(m) if present[site]]
         position = {occurrence: i for i, occurrence in enumerate(occurrences)}
         edges = native([case["pipes"][site] for _, site in occurrences])
+        fixed = set()
+        for record in case.get("native_prerequisites", []):
+            a, b, distance = record["source"], record["target"], record["distance"]
+            if present[a] and present[b]:
+                fixed.update((2 * position[i, a] + 1, 2 * position[i + distance, b])
+                             for i in range(trips - distance))
+        edges |= fixed
         identities = {}
         for ident, (record, enabled, distance) in enumerate(zip(records, active, distances)):
             assert distance <= record["bound"]
@@ -53,14 +94,16 @@ def check(case, result, trips=7):
                         2 * position[iteration + distance, record["target"]])
                 assert edge not in actual, "duplicate retained endpoint pair"
                 actual[edge] = ident
-        assert actual == {edge: identities[edge] for edge in covers}, (case, sample, actual, covers)
+        assert actual == {edge: identities[edge] for edge in covers - fixed}, (case, sample, actual, covers)
         thresholds = values[len(records):]
         assert len(thresholds) == 2 * (2 * m)**2
+        dense = dense_thresholds(case, sample)
         for a in range(2 * m):
             for b in range(2 * m):
                 index = 2 * (a * (2 * m) + b)
                 reachable, distance = thresholds[index:index + 2]
                 assert reachable in (0, 1)
+                assert (distance if reachable else None) == dense[a][b], (case, sample, a, b, distance, dense[a][b])
                 if not present[a // 2] or not present[b // 2]:
                     assert not reachable
                     continue
@@ -108,9 +151,32 @@ def main():
     for m in (4, 8, 12):
         cases.append({"pipes": [i % 3 for i in range(m)], "records": [
             {"source": a, "target": b, "bound": 3} for a in range(m) for b in range(m)], "samples": []})
+    # Native prerequisites participate in every exclusion, including ties with
+    # a removable record. All-presence valuations check latent skip wires.
+    cases.append({"pipes": [0, 1, 0], "records": [
+        {"source": 0, "target": 1, "bound": 1}, {"source": 1, "target": 2, "bound": 2}],
+        "native_prerequisites": [{"source": 0, "target": 1, "distance": 0}],
+        "samples": [list(p) + [a, 0, b, 1] for p in itertools.product((0, 1), repeat=3)
+                    for a, b in itertools.product((0, 1), repeat=2)]})
+    cases.append({"pipes": [], "records": [], "samples": [[]]})
+    # Largest accepted scaled-score bound: h=2, V=4, seed at most1.
+    # Evaluate the large distance itself, beyond every unfolded test prefix.
+    maximum_safe = (2**64 - 2) // 8
+    cases.append({"pipes": [0, 0], "records": [
+        {"source": 0, "target": 1, "bound": maximum_safe}],
+        "samples": [[1, 1, 1, maximum_safe], [0, 1, 1, maximum_safe]]})
+    for case in cases:
+        case["export_thresholds"] = True
+    sparse_begin = len(cases)
+    # Construction-only requests explicitly omit quadratic threshold export.
+    # Fixed three pipes and linear edges give quadratic relaxation work.
+    for m in (6, 12, 24):
+        cases.append({"pipes": [i % 3 for i in range(m)], "records": [
+            {"source": i, "target": (i + 1) % m, "bound": 3} for i in range(m)],
+            "samples": [], "export_thresholds": False})
     # Overflow is rejected statically rather than wrapping min-plus distances.
-    cases.append({"pipes": [0, 1], "records": [
-        {"source": 0, "target": 1, "bound": 2**64 - 1}], "samples": []})
+    cases.append({"pipes": [0, 0], "records": [
+        {"source": 0, "target": 1, "bound": maximum_safe + 1}], "samples": []})
     with tempfile.TemporaryDirectory(prefix="guarded-quotient-") as scratch:
         path = Path(scratch) / "request.json"
         path.write_text(json.dumps(cases))
@@ -129,6 +195,23 @@ def main():
         assert result["expressions"] < 200 * (2 * m)**3, result
         metrics = {key: result[key] for key in ("expressions", "emitted", "edges")}
         print("guarded quotient size:", {"sites": m, **metrics})
+    for case, result in zip(cases[9:sparse_begin], results[9:sparse_begin]):
+        check(case, result)
+    for case, result in zip(cases[:-1], results[:-1]):
+        m, k = len(case["pipes"]), len(set(case["pipes"]))
+        edges = result["edges"]
+        assert result["frontier_entries"] == 4 * m * k
+        assert result["relaxations"] == 2 * k * max(0, 2 * m - 1) * edges
+        assert result["exclusions"] == k * (edges - 2 * m)
+        assert result["threshold_queries"] == ((2 * m)**2 if case["export_thresholds"] else 0)
+        assert result["scaling_additions"] <= 2 * k * edges * max(1, m.bit_length())
+    for case, result in zip(cases[sparse_begin:-1], results[sparse_begin:-1]):
+        m = len(case["pipes"])
+        assert result["edges"] == 4 * m
+        assert result["expressions_after_queries"] == result["expressions"]
+        assert result["expressions"] < 200 * (len(case["records"]) + 3 * (2 * m) * result["edges"])
+        print("sparse guarded frontier:", {"sites": m, **{key: result[key] for key in
+              ("edges", "frontier_entries", "relaxations", "exclusions", "expressions")}})
     assert results[-1]["error"], results[-1]
     valuations = sum(len(case["samples"]) for case in cases)
     print("guarded quotient:", valuations, "valuations and all-event finite DAGs passed")

@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --region-expression-checks %s | FileCheck %s
+// RUN: pto-sync-input-test --numerical-hierarchy-checks %s
 // CHECK: regional expression checks passed
 
 module {

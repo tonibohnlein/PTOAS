@@ -10,6 +10,7 @@
 #define PTO_FRONTIERSYNCH_SHAREDHANDOFFALLOCATION_H
 #include "llvm/ADT/ArrayRef.h"
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 namespace mlir::pto::frontiersynch {
@@ -36,5 +37,14 @@ struct SharedHandoffAllocation {
 // a count; mapping lanes onto eligible physical IDs belongs to the caller.
 SharedHandoffAllocation allocateSharedHandoffs(
     llvm::ArrayRef<SharedHandoff> handoffs, llvm::ArrayRef<std::vector<uint32_t>> successors, uint64_t capacity);
+// Certified-query entry point: input indices are already a topological order
+// of an exact strict reuse relation. The supplier proves this contract; unlike
+// the matrix API, successful greedy allocation does not inspect unused pairs.
+// Greedy makes at most capacity tail queries per handoff and retains O(h+E)
+// words. On failure only, materialize the forward relation, validate it, and
+// compute the exact minimum by matching. An empty callback is rejected.
+SharedHandoffAllocation allocateSharedHandoffsByQuery(
+    llvm::ArrayRef<SharedHandoff> handoffs,
+    const std::function<bool(uint32_t, uint32_t)>& precedes, uint64_t capacity);
 } // namespace mlir::pto::frontiersynch
 #endif

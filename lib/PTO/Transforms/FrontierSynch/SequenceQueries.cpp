@@ -279,10 +279,18 @@ SequenceEvent SequenceAnalysisState::event(std::size_t id) const
 std::optional<Expr> SequenceAnalysisState::eventReachability(std::size_t source, std::size_t target)
 {
     if (source / 2 >= ports.size() || target / 2 >= ports.size()) { return std::nullopt; }
+    if (numerical) {
+        ++numericalQueryCost.indexOperations;
+        return expressions.boolean(numerical->index.reaches(source, target));
+    }
     return eventReachability(event(source), event(target));
 }
 std::optional<Expr> SequenceAnalysisState::eventReachability(SequenceEvent source, SequenceEvent target)
 {
+    if (numerical) {
+        auto answer = numericalReachability(source, target, numericalQueryCost);
+        if (answer) { return answer; }
+    }
     auto key = [](const SequenceEvent& value) -> EventKey {
         return {value.child, value.type, value.ordinal, value.kind, value.visits};
     };
@@ -464,7 +472,13 @@ bool SequenceAnalysisState::closure()
         }
     }
     for (const auto& edge : nativeValueCrossings) { add(2*edge.source+1, 2*edge.target, edge.guard); }
+    // The numerical specialization must precede symbolic endpoint folding and
+    // pairwise consolidation: its rank sweeps already deduplicate and reduce
+    // the fixed crossing graph without recursive semantic queries.
     auto reductionLinks = incoming;
+    for (const auto& edge : crossings) { add(2 * edge.source + 1, 2 * edge.target, edge.guard); }
+    if (numericalCrossingReduction()) { return error.empty(); }
+    incoming = reductionLinks;
     for (auto& edge : crossings) {
         auto native = no();
         for (const auto& fixed : nativeValueCrossings) {
@@ -491,7 +505,6 @@ bool SequenceAnalysisState::closure()
     }
     incoming = reductionLinks;
     reachabilityCache.clear();
-    if (numericalCrossingReduction()) { canonicalizeCrossings(); return error.empty(); }
     // Consolidation can make candidate descriptions mutually exclusive. Prove
     // those exclusions before constructing child reachability circuits. The
     // cache keys are immutable predicate IDs from the predeletion snapshot;

@@ -411,7 +411,36 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
     for (const auto& [pipe, values] : analysis.lastPayloads) {
         for (auto value : values) { out.lastPayloads[pipe].push_back(convert(value)); }
     }
+    if (state->numerical) {
+        auto numerical = std::make_shared<RegionalNumericalInterface>();
+        numerical->index = std::shared_ptr<const NumericalChainInterface>(state->numerical, &state->numerical->index);
+        numerical->chainKeys = state->numericalChainKeys;
+        for (const auto& port : state->ports) {
+            for (auto kind : {PeriodicEventKind::Start, PeriodicEventKind::Completion}) {
+                numerical->events.push_back({starts[port.child] + port.type, port.ordinal, kind, port.visits});
+            }
+        }
+        numerical->query = [state, coordinates](RegionalEvent a, RegionalEvent b, NumericalChainQueryCost& cost)
+            -> std::optional<bool> {
+            if (a.type >= coordinates->size() || b.type >= coordinates->size()) { return std::nullopt; }
+            auto [ac, at] = (*coordinates)[a.type]; auto [bc, bt] = (*coordinates)[b.type];
+            auto answer = state->numericalReachability({ac, at, a.ordinal, a.kind, a.visits},
+                {bc, bt, b.ordinal, b.kind, b.visits}, cost);
+            auto value = answer ? state->expressions.constantValue(*answer) : std::nullopt;
+            return value ? std::optional<bool>(*value != 0) : std::nullopt;
+        };
+        numerical->thresholds = [state, coordinates](RegionalEvent event, bool reverse, NumericalChainQueryCost& cost)
+            -> std::optional<std::vector<uint32_t>> {
+            if (event.type >= coordinates->size()) { return std::nullopt; }
+            auto [child, type] = (*coordinates)[event.type];
+            return state->numericalThresholds({child, type, event.ordinal, event.kind, event.visits}, reverse, cost);
+        };
+        out.numerical = std::move(numerical);
+    }
     if (state->children.size() == 1) {
+        // A unary sequence changes neither identities nor the selected graph.
+        out.numerical = state->children.front().regional.numerical;
+        if (out.numerical) { out.reachability = state->children.front().regional.reachability; }
         out.storageSelectors = state->children.front().regional.storageSelectors;
         out.symbolicStorageEffects = state->children.front().regional.symbolicStorageEffects;
     }
