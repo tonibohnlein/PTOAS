@@ -15,7 +15,7 @@ two independent accepting reviews, and its own commit before proceeding.
 | 4 | Reuse ownership/phase/boundary certificates in varying repetition and whole-visit type extraction | Accepted |
 | 5 | Collective guarded refresh and reusable bounded-lifetime regional results | Accepted |
 | 6 | Numerical composition for general sequences without unnecessary dense port closure | Accepted |
-| 7 | Original-IR contract audit and pinned corpus validation through available emission/allocation | Pending |
+| 7 | Original-IR contract audit and pinned corpus validation through available emission/allocation | Accepted |
 | 8 | Rotating compact children without common-period expansion | Pending |
 | 9 | Structured symbolic crossing exports for mixed regional backends | Pending |
 | 10 | Compact guarded-periodic regional exports using shared counted domains | Pending |
@@ -488,3 +488,176 @@ braced, with no warnings or whitespace findings.
 
 Two independent source reviews accepted the complete milestone, including
 crossing ownership, non-port queries, invalidation and the cost claims.
+
+## Integration milestone 7 audit conventions
+
+The checkpoint uses the same 786 prepared corpus inputs and eleven prepared
+expert ports as the prior campaign. Inputs and compiler binaries are hash-pinned.
+The current analysis/allocator and the pinned codegen-only emitter are recorded
+separately. Existing-success inputs, excluding manual synchronization pass-through,
+form the comparison denominator; this is an offline benchmark filter, not a new
+production admission check. Six eligible IDs and the existing GM may-not-alias
+policy are used. Compiler output does not constitute device validation.
+
+Each candidate retains its function, region node, scope, class, configured
+arithmetic profile, proof obligations, issues and implementation error. Recorded
+demand, endpoint and allocation availability are separate columns. Recognition-only
+`not-requested` means no construction was requested by that invocation. Query and
+selector availability not exposed by the schema is unobserved, not inferred.
+Whole-function fixed-profile arithmetic candidates use node -1; regional root
+candidates use node 0. An accepted child is not a whole-kernel plan. The selected
+logical backend distinguishes Section 5 results from Section 6 fallback plans.
+
+The audit classifies these implementation limits without treating them as
+exclusion from all draft classes:
+
+| Limitation | Interpretation |
+|---|---|
+| Root arithmetic k,D,C <= 8 and periods 1,2; regional coefficient limit 4096 | Profile/producer limit; retain the tested profile and scope |
+| Bounded slot/type enumeration | Representation or producer limit, not a theorem bound |
+| Guarded periodic constant-origin and materialized-slot exports | Regional export limit; milestone 10 |
+| Restricted varying-length schedule and body shape | Schedule producer limit |
+| Bounded refresh parameter-offset and relationship adapters | Certificate extraction obligation |
+| Bounded global queries supplied independently by arithmetic | Regional export limit; milestone 11 |
+| Finite-visit demand library without available type-word matching | Endpoint obligation; milestone 12 |
+| Mixed symbolic crossings lacking compatible structured exports | Composition adapter obligation; milestone 9 |
+
+A failed allocation certifier does not prove that the minimum ID requirement
+exceeds six. External watchdog cancellations, resource exhaustion and signals are
+inconclusive execution outcomes, never mathematical class rejections. Changes
+relative to ee26eec8a include the earlier metadata repair at 2075425c4 and must not
+all be attributed to milestones 1–6.
+
+The checkpoint exposed two regressions from richer storage exports. The finite
+arithmetic adapter discarded valid selectors after 256 atoms; it now keeps the
+explicit finite output and charges its bytes/atoms, retaining overflow checks.
+This adapter is output-sensitive and can be per-byte when atomization cannot
+prove larger equivalent cells. It is not a compact-in-address-size construction.
+Separately, repetition confused an optional byte-selector callback with remaining
+symbolic effects. A finite crossing view now retains its complete boundaries,
+passes ordinary repetition validation, and lifts the original callback afterward.
+Both fixes were independently accepted by two source reviewers.
+
+A third correction makes the requested export representation explicit. For
+varying storage with numerical nested domains, repetition first tries a finite
+whole-region arithmetic export. Symbolic support defers that optional request
+before demand and selector construction; the original symbolic-capable API and
+fallback remain available. This is one nonrecursive preflight, not occurrence
+expansion or a new polynomial-time claim. Primitive construction and support
+projection remain real work. It avoids expensive speculative inner selectors in
+the finite scalar-fill nest of lossless_block_cast.
+
+Focused validation passed: 272 distinct finite writer selectors and exact
+coordinates/cost accounting, normal sequence dispatch, symbolic siblings after
+finite deferral, repeated finite callbacks, zero trips and clipped phases.
+Regional oracles retained 27,776 phased and 125,856 repeated event comparisons.
+Two source reviewers accepted all three corrections. Separate pinned corrected
+runs restored all twelve A3/A5/Dspark/ProDecode sh_gate/sh_up/sh_w2 matmuls (about 1.2–3.2 seconds
+logical analysis) and lossless_block_cast (about 39 seconds), including allocation
+and C++ emission. These single-run local times are diagnostic, not device or
+controlled compiler performance results. Ten brace-prefilter findings in the
+multiline test conditions were inspected; all bodies have braces.
+
+Two independent original-input audits sampled remaining Existing-success logical
+failures. They do not establish exclusion from every Section 5 class:
+
+| Case | Kernel | Evidence and classification |
+|---|---|---|
+| 22 | ddr_split_k | Fixed two-trip loops and affine extraction offsets; symbolic-region/within-slot recovery is a representation gap. M9 only partly addresses it. |
+| 45 | attention_finalize_phase | Runtime origin, step 48, fixed divisions and guards; machine-integer normalization is unproved. M10 is partly relevant. |
+| 251 | dispatch_gather | Loaded inner count and a carried prefix sum affecting addresses; invariant repetition is not established. M8–12 do not automatically cover this recurrence. |
+| 252 | dispatch_meta | Accepted periodic/guarded/bounded children, missing mixed sibling exports; M9 applies, with additional remote-pointer/macro obligations. |
+| 275 | lm_head_combine_push | Nested multi-phase communication macro needs a regional hidden-event adapter; an implementation export gap, outside the explicit M8–12 contracts. |
+| benchmark 4 | causal_conv1d_prefill | Loaded entry bounds and iteration-dependent prefetch/tail guards fail plain immutable participation; arithmetic/domain normalization remains a distinct producer obligation. |
+| benchmark 9 | gated_delta_rule | Payload-derived floating predicate changes the computation; immutable periodic and affine-control premises fail for the full region. Finite-type common refresh remains unproved. |
+
+M11's evaluated-input executor does not infer a lifetime certificate from these
+examples. M12's executable selection does not remove the finite-type refresh
+premise. Group norm and convolution decode instead have logical plans with an
+unavailable allocation certificate; those failures are not class mismatches.
+
+The audit also found a solver-cost regression in the normalization kernels
+mtp_hidden_norm_quant and x_norm_quant: newly enabled regional arithmetic
+analysis reached the external watchdog before the formerly selected bounding
+route. A bounded stack sample located residue enumeration during exact relation
+composition. The shared integer projector now intersects constant unary bounds
+and congruences into an exact lattice and substitutes its admissible values when
+there are fewer than the ordinary endpoint/residue candidates. Coupled constraints
+and symbolic retained coordinates remain intact. Equality elimination and the
+original method remain available. This is an optional exact arithmetic
+optimization, not an IR expansion, analysis budget or new class restriction.
+
+Two independent source reviews accepted the solver change. The serial build and
+integer-relation oracle passed 3,026 bounded point checks, including witness
+reconstruction, noncoprime congruences, negative coordinates, 200-bit origins,
+large raw loop steps, and the cheaper original-method fallback.
+
+The same integer helper also proves congruence inclusion directly when unary
+lattices or bounded singleton coordinates fix the target affine residue. The
+source is known nonempty before a differing residue refutes inclusion; missing
+unary information retains the original complete solver. Both reviewers accepted
+this extension, including large-modulus and coupled-coordinate tests. These
+optimizations do not justify claiming that every newly enabled exact arithmetic
+route is economical: a formerly selected bounding plan and a new exact regional
+construction can have substantially different analysis costs. The checkpoint
+records unresolved watchdog outcomes separately from class membership.
+
+Final focused solver runs recovered x_norm_quant (case 455) through logical
+analysis, allocation and C++ emission in about 53.7 seconds of logical analysis;
+its previous bounding route took about 0.97 seconds. The ProDecode normalization
+variant (582) compiled in about 0.77 seconds. These are separate pinned,
+uncontrolled local observations. Case 392 remains an explicit open analysis-cost
+regression after both solver optimizations: its current exact regional route
+exceeds the 120-second watchdog, whereas its previous bounding route took about
+2.8 seconds. No logical plan, allocation or C++ success is claimed for that run.
+This is not a failed class premise or a scarcity result.
+
+The final changed-code prefilter reported 22 brace matches and no warnings.
+All 22 were inspected as multiline-condition false positives with braced bodies.
+Focused correction overlays replace only logical analysis, allocation and
+Frontier emission; recognition diagnostics and Existing measurements retain
+the original checkpoint compiler provenance.
+
+A later checkpoint input, hc_head_pre_fused (case 543), also exceeded the
+120-second logical-analysis watchdog. A focused run with all four corrections
+confirmed this second open analysis-cost regression; its previous successful
+logical run took about 0.77 seconds. Allocation and emission did not run.
+
+The full pinned checkpoint completed all 786 corpus inputs and 11 prepared
+TileLang expert ports; final input and executable hashes matched. Independent
+recognition diagnostics produced 33,289 corpus contract records and 598 benchmark
+records. A successful recognition process does not mean a whole-kernel class
+was established.
+
+| Evidence | Eligible inputs | Logical plans | Allocated and emitted C++ |
+|---|---:|---:|---:|
+| Original corpus checkpoint | 783 | 580 | 557 |
+| Corpus checkpoint with measured focused corrections | 783 | 593 | 570 |
+| Original TileLang checkpoint | 11 | 8 | 6 |
+| TileLang checkpoint with measured focused corrections | 11 | 9 | 7 |
+
+Eligibility here means Existing C++ success, excluding manual-sync pass-through
+case 651. The two corpus emitter failures are excluded from both denominators.
+The corrected corpus has 174 logical compiler failures, 16 watchdog outcomes,
+and 23 allocation failures after successful logical analysis. The corrected
+benchmark set has two logical and two allocation failures. Allocation failures
+are not claims that six IDs are mathematically insufficient. These are compiler
+checks, not device validation.
+
+Against the previous full ee26eec8a campaign on identical input hashes, the
+combined checkpoint/focused evidence has four newly successful logical plans
+and two lost logical successes (392 and 543); 13 newly successful C++ outputs
+and two lost outputs. The earlier metadata fix also contributes to this
+comparison. It does not isolate the benefit of milestones 1–6.
+
+Reproducible local evidence is in `.local/section5-m7-corpus-20261008/`:
+`REPORT.md` and `corpus/per-kernel.csv` retain the original campaign;
+`CORRECTED.md`, `corpus/corrected-kernels.csv` and the corresponding TileLang
+files retain each correction's evidence directory and compiler pins.
+`COMPLETE` records final input/tool hash verification. Focused artifacts are
+under `.local/section5-integration/m7/`; these generated artifacts are not source
+files. A full campaign of the final common binary remains scheduled after M12.
+
+Milestone 7 accepted by two independent source and audit reviewers after the
+completed checkpoint. Acceptance covers the fixes and evidence classification;
+the two documented cost regressions remain open.

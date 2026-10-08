@@ -452,6 +452,8 @@ bool finiteBoundaries(State& state, RegionalAnalysis& out)
         // Instantiate selectors once per certified access-equivalent atom.
         // Unsupported byte predicates retain the exact per-byte path. The
         // byte ledger counts represented storage; cells counts exported atoms.
+        // This finite adapter charges its output size, independently of the
+        // compact slot-table limit. It does not enumerate loop occurrences.
         for (const auto& interval : intervals) {
             const auto bytes = interval.second - interval.first;
             if (bytes > UINT64_MAX - out.cost.boundaryBytes) {
@@ -461,10 +463,6 @@ bool finiteBoundaries(State& state, RegionalAnalysis& out)
             out.cost.boundaryBytes += bytes;
             uint64_t byte = interval.first;
             while (byte < interval.second) {
-                if (out.storageBoundary.size() >= maxRegionalSlotVisits) {
-                    state.error = "arithmetic finite boundary atom adapter limit";
-                    return false;
-                }
                 const auto begin = byte;
                 byte = atoms.next(begin, interval.second);
                 auto boundary = state.storage(key.first, key.second, state.c(begin));
@@ -536,13 +534,7 @@ FailureOr<RegionalAnalysis> exportState(const std::shared_ptr<State>& state,
         }
     }
     if (!state->finiteStorage.empty() && !finiteBoundaries(*state, out)) {
-        if (state->error != "arithmetic finite boundary atom adapter limit") {
-            error = state->error; return failure();
-        }
-        // Keep the exact relations and selector maps. The finite-port adapter
-        // is optional; its size limit is not a storage-precision condition.
-        finite = false; state->error.clear();
-        out.storageBoundary.clear(); out.cost.cells = 0; state->finiteStorage.clear();
+        error = state->error; return failure();
     }
     out.arithmeticRelations = state;
     for (unsigned type = 0; type < state->program.sites.size(); ++type) {
@@ -635,9 +627,12 @@ FailureOr<RegionalAnalysis> exportState(const std::shared_ptr<State>& state,
     return out;
 }
 } // namespace
-FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext context,
+namespace {
+enum class StorageExportRequest { Finite, SymbolicAllowed };
+FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
-    std::string& error, std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding)
+    std::string& error, std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding,
+    StorageExportRequest request)
 {
     if (!context.function || !context.root || !expressions || !expressions->constructionError().empty()) {
         error = "arithmetic region requires a valid original root and expression arena";
@@ -691,6 +686,10 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext cont
     state->primitives = std::move(*imported);
     if (!collectFiniteStorage(*state)) { error = state->error; return failure(); }
     const bool finite = state->finiteStorageComplete;
+    if (request == StorageExportRequest::Finite && !finite) {
+        error = "finite regional export deferred: symbolic storage support remains available to other routes";
+        return failure();
+    }
     for (const auto& piece : state->primitives) {
         if (piece.schema->kind != PrimitiveKind::Occurrences || !piece.schema->sourceSite) { continue; }
         const auto dimensions = piece.schema->sourceDimensions;
@@ -717,6 +716,21 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext cont
     if (!state->selectors.error.empty()) { error = state->selectors.error; return failure(); }
     return exportState(state, input, error, finite);
 
+}
+} // namespace
+FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext context,
+    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
+    std::string& error, std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding)
+{
+    return analyzeArithmeticRegionImpl(context, index, input, std::move(expressions), error,
+                                      std::move(parameterBinding), StorageExportRequest::SymbolicAllowed);
+}
+FailureOr<RegionalAnalysis> analyzeFiniteArithmeticRegion(ArithmeticRegionContext context,
+    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
+    std::string& error)
+{
+    return analyzeArithmeticRegionImpl(context, index, input, std::move(expressions), error, {},
+                                      StorageExportRequest::Finite);
 }
 FailureOr<RegionalAnalysis> composeArithmeticRegionalSequence(ArrayRef<RegionalAnalysis> children,
     func::FuncOp function, std::string& error)

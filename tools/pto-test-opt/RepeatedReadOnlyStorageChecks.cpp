@@ -210,7 +210,7 @@ bool checkPhasedSelectors(const fs::RegionalAnalysis& body, func::FuncOp functio
     }
     return true;
 }
-bool distinctPhaseScenario(MLIRContext* context)
+bool distinctPhaseScenario(MLIRContext* context, bool finite = false)
 {
     auto fail = [](StringRef message) {
         llvm::errs() << "distinct phases: " << message << "\n";
@@ -290,7 +290,39 @@ bool distinctPhaseScenario(MLIRContext* context)
             else { result.firstReaders[pipe] = {a}; result.lastReaders[pipe] = {b}; }
             return result;
         };
+        if (finite) {
+            auto selected = phase.storageSelectors({pto::AddressSpace::GM, function.getArgument(0), zero});
+            if (!selected) { return fail("finite callback unavailable"); }
+            phase.storageBoundary.push_back({{pto::AddressSpace::GM, 0, 4, function.getArgument(0)},
+                selected->firstWriters, selected->lastWriters, selected->firstReaders, selected->lastReaders});
+            phase.symbolicStorageEffects.clear();
+            for (auto& access : phase.accessBoundary) { access.representedByCells = true; }
+        }
         phases.push_back(std::move(phase));
+    }
+    if (finite) {
+        // Adding an exact callback must preserve the ordinary finite route.
+        // Check both invariant repetition and the clipped phase path below.
+        for (uint64_t trips : {0U, 1U, 3U}) {
+            auto repeated = fs::repeatInvariantRegion(function, loops[0], phases[1], e.constant(trips));
+            if (!repeated.error.empty() || !repeated.regional.storageSelectors ||
+                !repeated.regional.symbolicStorageEffects.empty()) {
+                return fail("finite invariant callback rejected");
+            }
+            auto selected = repeated.regional.storageSelectors({pto::AddressSpace::GM, function.getArgument(0), zero});
+            if (!selected) { return fail("finite invariant callback lost"); }
+            if (!trips) {
+                if (!selected->firstWriters.empty() || !selected->lastWriters.empty()) { return false; }
+                continue;
+            }
+            if (selected->firstWriters.size() != 1 || selected->lastWriters.size() != 1 ||
+                selected->firstWriters[0].event.visits.size() != 1 ||
+                selected->lastWriters[0].event.visits.size() != 1 ||
+                e.constantValue(selected->firstWriters[0].present) != 1 ||
+                e.constantValue(selected->lastWriters[0].present) != 1 ||
+                e.constantValue(selected->firstWriters[0].event.visits.front()) != 0 ||
+                e.constantValue(selected->lastWriters[0].event.visits.front()) != trips - 1) { return false; }
+        }
     }
     for (uint64_t begin = 0; begin < 4; ++begin) {
         for (uint64_t end = begin; end < 7; ++end) {
@@ -333,6 +365,7 @@ bool distinctPhaseScenario(MLIRContext* context)
             }
         }
     }
+    if (finite) { return true; }
     auto writerExtrema = phases[1].accessBoundary;
     phases[1].accessBoundary.clear();
     auto missing = fs::repeatPhasedRegions(function, loops[0], phases, e.constant(3));
@@ -681,7 +714,7 @@ bool runRepeatedReadOnlyStorageChecks(MLIRContext* context)
             return false;
         }
     }
-    if (!distinctPhaseScenario(context)) {
+    if (!distinctPhaseScenario(context) || !distinctPhaseScenario(context, true)) {
         llvm::errs() << "distinct phased symbolic storage failed\n";
         return false;
     }

@@ -33,6 +33,12 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext cont
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
     std::string& error,
     std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding = {});
+// Request only the finite boundary representation. Symbolic support defers this
+// optional route before demand/selector construction; callers retain the ordinary
+// symbolic-capable analysis above as a fallback. No occurrence expansion occurs.
+FailureOr<RegionalAnalysis> analyzeFiniteArithmeticRegion(ArithmeticRegionContext context,
+    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
+    std::string& error);
 // Compose compatible symbolic arithmetic exports. An unsupported parameter or
 // coordinate adapter leaves the child results intact and reports an obligation.
 FailureOr<RegionalAnalysis> composeArithmeticRegionalSequence(ArrayRef<RegionalAnalysis> children,

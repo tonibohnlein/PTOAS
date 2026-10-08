@@ -607,6 +607,11 @@ bool checkSymbolicArithmeticSiblings(func::FuncOp function, const pto::SyncInput
     std::vector<fs::RegionalAnalysis> children;
     std::string error;
     for (auto loop : loops) {
+        std::string deferred;
+        auto finite = fs::analyzeFiniteArithmeticRegion({function, loop}, index, input, arena, deferred);
+        if (succeeded(finite) || deferred.find("finite regional export deferred") == std::string::npos) {
+            llvm::errs() << "symbolic sibling unexpectedly required a finite export\n"; return false;
+        }
         auto child = fs::analyzeArithmeticRegion({function, loop}, index, input, arena, error);
         if (failed(child) || child->anchors.size() != 1 || !child->arithmeticRelations) {
             llvm::errs() << "symbolic child: " << error << "\n"; return false;
@@ -738,6 +743,55 @@ bool checkSymbolicArithmeticSiblings(func::FuncOp function, const pto::SyncInput
     llvm::outs() << "symbolic arithmetic siblings: exact queries, covers, recursive exports, and endpoints passed\n";
     return true;
 }
+// Reduced from lossless_block_cast: a finite scalar fill feeds one vector
+// consumer. Different elements retain different last writers, so this tests
+// actual selector cardinality rather than a large uniform enclosing interval.
+bool checkFiniteArithmeticFill(func::FuncOp function, const pto::SyncInput& input)
+{
+    fs::PhaseIndex index;
+    if (failed(index.build(function, input))) { return false; }
+    scf::ForOp loop;
+    SmallVector<Operation*> suffix;
+    for (auto& operation : function.front()) {
+        if (auto candidate = dyn_cast<scf::ForOp>(operation)) { loop = candidate; }
+        else if (loop && !operation.hasTrait<OpTrait::IsTerminator>()) { suffix.push_back(&operation); }
+    }
+    if (!loop) { return false; }
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    std::string error;
+    auto child = fs::analyzeFiniteArithmeticRegion({function, loop}, index, input, arena, error);
+    constexpr uint64_t elements = 17 * 16;
+    if (failed(child) || !child->symbolicStorageEffects.empty() ||
+        child->storageBoundary.size() != elements || child->cost.cells != elements ||
+        child->cost.boundaryBytes != elements * 4) {
+        llvm::errs() << "finite arithmetic fill lost its charged selectors: " << error << "\n";
+        return false;
+    }
+    for (uint64_t element = 0; element < elements; ++element) {
+        const auto& boundary = child->storageBoundary[element];
+        if (boundary.cell.begin != 4 * element || boundary.cell.end != 4 * (element + 1) ||
+            boundary.lastWriters.size() != 1) { return false; }
+        const auto& writer = boundary.lastWriters.front();
+        if (writer.event.visits.size() != 1 || arena->constantValue(writer.present) != 1 ||
+            arena->constantValue(writer.event.ordinal) != element % 16 ||
+            arena->constantValue(writer.event.visits.front()) != element / 16) { return false; }
+    }
+    auto finite = fs::analyzeFiniteGuarded(function, suffix, index, input, arena);
+    if (!finite.error.empty()) { return false; }
+    auto composed = fs::composeRegionalSequence(function, arena,
+        {*child, fs::finiteGuardedRegionalResult(finite)}, true, false);
+    if (!composed.error.empty() || failed(fs::prepareSequenceInsertion(composed))) {
+        llvm::errs() << "finite arithmetic fill composition: " << composed.error << "\n";
+        return false;
+    }
+    auto program = fs::recognizeProgram(function, input);
+    if (failed(program)) { return false; }
+    auto dispatched = fs::analyzeSequence(function, input, *program);
+    if (!dispatched.error.empty() || dispatched.cost.arithmeticRegions == 0 ||
+        failed(fs::prepareSequenceInsertion(dispatched))) { return false; }
+    llvm::outs() << "finite arithmetic fill: 272 exact selectors and mixed sequence endpoints passed\n";
+    return true;
+}
 // Incoming scalar ordering must target the first executed site occurrence,
 // including a guarded nonzero prefix inside a nested arithmetic child.
 bool checkArithmeticEntryPrerequisite(func::FuncOp function, const pto::SyncInput& input)
@@ -828,6 +882,9 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
 {
     pto::SyncInput input(policy);
     if (failed(input.build(function))) { return failure(); }
+    if (function->hasAttr("test.finite_arithmetic_fill")) {
+        return success(checkFiniteArithmeticFill(function, input));
+    }
     if (function->hasAttr("test.symbolic_arithmetic_siblings")) {
         return success(checkSymbolicArithmeticSiblings(function, input));
     }

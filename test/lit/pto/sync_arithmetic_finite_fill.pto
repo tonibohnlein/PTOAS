@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --sequence-analysis %s | FileCheck %s
+// CHECK: finite arithmetic fill: 272 exact selectors and mixed sequence endpoints passed
+// The scalar-fill/vector-consumer shape comes from lossless_block_cast. Keep
+// more than 256 distinct writer selectors without the full benchmark's cost.
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=17, cols=16, v_row=17, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module attributes {pto.target_arch = "a3"} {
+  func.func @finite_fill() attributes {test.finite_arithmetic_fill} {
+    %base = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c17 = arith.constant 17 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    scf.for %row = %c0 to %c17 step %c1 {
+      scf.for %column = %c0 to %c16 step %c1 {
+        %start = arith.muli %row, %c16 : index
+        %index = arith.addi %start, %column : index
+        pto.tsetval ins(%index, %one : index, f32) outs(%tile : !tile)
+      }
+    }
+    pto.tadds ins(%tile, %one : !tile, f32) outs(%tile : !tile)
+    return
+  }
+}

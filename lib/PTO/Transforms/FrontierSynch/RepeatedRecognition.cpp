@@ -8,6 +8,8 @@
 // Common exact regional contract. All expressions belong to the supplied arena.
 // q=1 syntax check over shared effects. No instruction-specific footprint rules.
 #include "SequenceAnalysisInternal.h"
+#include "CountedLoop.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/RepeatedStorage.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 namespace mlir::pto::frontiersynch {
@@ -114,6 +116,28 @@ bool SequenceAnalysisState::repeatedChild(const StructureNode& node, Expr trips)
             return unavailable("q1 repeat recognition: storage selection varies with outer visit");
         }
         for (const auto& region : effect.regions) { evolving |= !invariant.region(region); }
+    }
+    if (evolving) {
+        bool numericalDomains = true;
+        loop.getBody()->walk([&](scf::ForOp inner) {
+            auto domain = CountedLoop::get(inner);
+            numericalDomains &= domain && expressions.constantValue(domain->trips(expressions)).has_value();
+        });
+        if (numericalDomains) {
+            // Prefer a finite whole-region representation over speculative
+            // symbolic child selectors. This is one nonrecursive request with
+            // the ordinary arithmetic class check and an explicit output cost.
+            // A deferred finite export leaves all compact/symbolic routes open.
+            std::string diagnostic;
+            auto finite = analyzeFiniteArithmeticRegion({function, loop}, index, *input, arena, diagnostic);
+            if (succeeded(finite)) {
+                Child child;
+                child.regional = std::move(*finite);
+                child.anchors = child.regional.anchors;
+                children.push_back(std::move(child));
+                return true;
+            }
+        }
     }
     auto analyzed = analyzeSequenceRegion(function, *input, *program, node.children.front(),
                                           arena, indexOwner, requireEndpoints);
