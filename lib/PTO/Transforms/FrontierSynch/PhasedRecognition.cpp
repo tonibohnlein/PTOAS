@@ -232,7 +232,8 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                             }
                         }
                         if (invariant) {
-                            auto analyzed = analyzeSequenceRegion(function, *input, *program, id, arena, indexOwner);
+                            auto analyzed = analyzeSequenceRegion(function, *input, *program, id,
+                                                                  arena, indexOwner, requireEndpoints);
                             if (!analyzed.error.empty()) {
                                 return unavailable("invariant nested phase: " + analyzed.error);
                             }
@@ -369,7 +370,8 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                             }
                         }
                         if (invariant) {
-                            auto analyzed = analyzeSequenceRegion(function, *input, *program, id, arena, indexOwner);
+                            auto analyzed = analyzeSequenceRegion(function, *input, *program, id,
+                                                                  arena, indexOwner, requireEndpoints);
                             if (!analyzed.error.empty()) {
                                 return unavailable("invariant explicit phase: " + analyzed.error);
                             }

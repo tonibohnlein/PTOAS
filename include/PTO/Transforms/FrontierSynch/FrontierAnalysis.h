@@ -24,6 +24,7 @@ struct ArithmeticPeriodicExports {
     bool endpointsAvailable = false, allocationAvailable = false;
     std::string endpointError, allocationError;
 };
+struct FiniteVisitAnalysis;
 class FrontierAnalysis {
 public:
     explicit FrontierAnalysis(Operation* operation) : function(dyn_cast<func::FuncOp>(operation)) {}
@@ -39,6 +40,12 @@ public:
     bool hasOnlyNativeScalarRequirements() const { return nativeScalarOnly; }
     LogicalResult analyzeExplicitFunction();
     SequenceAnalysis* analyzeSequenceFunction();
+    // Demand-only regional libraries; their success never implies a whole-loop
+    // query, executable type-selection recipe or physical allocation export.
+    LogicalResult analyzeFiniteVisitCandidates();
+    const std::map<std::size_t, std::shared_ptr<const FiniteVisitAnalysis>>& finiteVisitDemands() const {
+        return finiteVisitAnalyses;
+    }
     LogicalResult analyzeArithmeticFunction();
     // Pause at exact generators before attempting the distance-interval adapter.
     // Failed conversion/endpoint export can resume this stage without rebuilding.
@@ -77,6 +84,7 @@ private:
     std::optional<GeneralArithmeticGeneratorStage> arithmeticGeneratorStage;
     std::optional<ArithmeticPeriodicProgram> arithmeticPeriodicAnalysis;
     ArithmeticPeriodicExports periodicExports;
+    std::map<std::size_t, std::shared_ptr<const FiniteVisitAnalysis>> finiteVisitAnalyses;
 };
 } // namespace mlir::pto::frontiersynch
 #endif

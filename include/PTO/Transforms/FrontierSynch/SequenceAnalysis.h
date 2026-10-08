@@ -67,7 +67,7 @@ SequenceAnalysis composeRegionalSequenceWithin(func::FuncOp function,
 // The caller supplies a common arena; original cuts and access records remain borrowed.
 SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& input,
     const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions,
-    std::shared_ptr<PhaseIndex> index = {});
+    std::shared_ptr<PhaseIndex> index = {}, bool requireEndpoints = true);
 RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis);
 RegionExpressions* sequenceExpressions(SequenceAnalysis& analysis);
 NumericalChainQueryCost sequenceNumericalQueryCounts(const SequenceAnalysis& analysis);

@@ -337,6 +337,8 @@ int runFiniteOverlayChecks();
 int runRotatingBoundaryChecks();
 int runNumericalWeightedRepetitionChecks();
 int runNumericalRepeatedSquaringChecks();
+bool runFiniteVisitChecks(MLIRContext*);
+int runFiniteVisitInputChecks(func::FuncOp);
 int runLifetimeStreamChecks();
 int runArithmeticPeriodicConversionChecks();
 int runArithmeticPeriodicInputChecks(func::FuncOp, const pto::SyncInput&);
@@ -492,6 +494,7 @@ int main(int argc, char **argv) {
   const bool storageEffects = argc == 3 && StringRef(argv[1]) == "--storage-effects";
   const bool rotatingAnalysis = argc == 3 && StringRef(argv[1]) == "--rotating-analysis";
   const bool explicitAnalysis = argc == 3 && StringRef(argv[1]) == "--explicit-analysis";
+  const bool finiteVisitInput = argc == 3 && StringRef(argv[1]) == "--finite-visit-input-checks";
   const bool arithmeticPeriodicInput = argc == 3 && StringRef(argv[1]) == "--arithmetic-periodic-input-checks";
   const bool arithmetic = argc == 3 && StringRef(argv[1]) == "--arithmetic";
   const bool recognition = argc == 3 && StringRef(argv[1]) == "--recognize";
@@ -525,7 +528,7 @@ int main(int argc, char **argv) {
   if (argc != 2 && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !recognition &&
       !numericAnalysis && !insertLogical &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
-      !arithmeticPeriodicInput && !expressionChecks && !hierarchyChecks && !boundingChecks &&
+      !finiteVisitInput && !arithmeticPeriodicInput && !expressionChecks && !hierarchyChecks && !boundingChecks &&
       !compactInputChecks && !compactBoundsChecks &&
       !balancedCompactChecks && !guardedCompactChecks && !conditionalCompactChecks && !finiteReplacementChecks &&
       !boundingSequenceChecks && !compactStorageBoundaryChecks && !compactBoundaryRanksChecks &&
@@ -554,6 +557,10 @@ int main(int argc, char **argv) {
   DialectRegistry dialects;
   dialects.insert<pto::PTODialect, func::FuncDialect, arith::ArithDialect, scf::SCFDialect, LLVM::LLVMDialect>();
   MLIRContext context(dialects);
+  if (argc == 2 && StringRef(argv[1]) == "--finite-visit-checks") {
+    context.disableMultithreading();
+    return runFiniteVisitChecks(&context) ? 0 : 1;
+  }
   if (argc == 2 && StringRef(argv[1]) == "--repeated-readonly-storage-checks") {
     context.disableMultithreading();
     return runRepeatedReadOnlyStorageChecks(&context) ? 0 : 1;
@@ -569,7 +576,7 @@ int main(int argc, char **argv) {
                          compactStorageBoundaryChecks || compactBoundaryRanksChecks ||
                          boundingRepetitionChecks || compactClassRepetitionChecks || compactBoundingPipelineChecks ||
                          compactBoundingAllocationChecks ||
-                         preparedInsertion || arithmetic || arithmeticPeriodicInput ||
+                         preparedInsertion || arithmetic || arithmeticPeriodicInput || finiteVisitInput ||
                          aliasChecks || roundtrip || regionChecks || phaseCopies || step0 || existing;
   const auto filename = argv[hasOption ? 2 : 1];
   auto module = parseSourceFile<ModuleOp>(filename, &context);
@@ -605,6 +612,12 @@ int main(int argc, char **argv) {
   if (sequenceAnalysis) {
     for (auto function : module->getOps<func::FuncOp>()) {
       if (failed(runSequenceAnalysisChecks(function, policy))) { return 1; }
+    }
+    return 0;
+  }
+  if (finiteVisitInput) {
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (runFiniteVisitInputChecks(function)) { return 1; }
     }
     return 0;
   }

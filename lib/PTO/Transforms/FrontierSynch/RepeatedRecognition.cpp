@@ -115,7 +115,8 @@ bool SequenceAnalysisState::repeatedChild(const StructureNode& node, Expr trips)
         }
         for (const auto& region : effect.regions) { evolving |= !invariant.region(region); }
     }
-    auto analyzed = analyzeSequenceRegion(function, *input, *program, node.children.front(), arena, indexOwner);
+    auto analyzed = analyzeSequenceRegion(function, *input, *program, node.children.front(),
+                                          arena, indexOwner, requireEndpoints);
     if (!analyzed.error.empty()) {
         return unavailable("q1 repeat body interface: " + analyzed.error);
     }

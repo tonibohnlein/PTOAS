@@ -20,7 +20,7 @@ enum class StructureKind { Sequence, ExplicitRun, Loop, Conditional, Unsupported
 enum class ContractClass {
     Finite, FiniteGuarded, Periodic, GuardedPeriodic, BoundedLifetime,
     VaryingPeriodic, NumericTemplate, Differences, Octagons, BoundedCoefficients,
-    Sequence, Repetition, FiniteOverlay
+    Sequence, Repetition, FiniteOverlay, FiniteVisitTypes
 };
 enum class ContractStatus { Established, Violated, Unproved, NotEvaluated };
 enum class ContractImplementation { NotRequested, Available, Unavailable };
@@ -107,6 +107,7 @@ struct ProgramRecognition {
     // Original whole-function sequence evidence, recorded before endpoint
     // preparation. Generic selected/bounding compositions cannot supply it.
     std::optional<ProgramContractCandidate> sequenceContract;
+    SmallVector<ProgramContractCandidate, 0> finiteVisitContracts;
     SmallVector<ProgramContractCandidate, 0> contractAudit;
 };
 // Rebuild only from existing recognition/backend observations; no extraction,

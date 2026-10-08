@@ -227,6 +227,8 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/VaryingRotatingRegional.cpp
   FrontierSynch/SequenceNumerical.cpp
   FrontierSynch/GuardedRanks.cpp
+  FrontierSynch/FiniteVisitDemands.cpp
+  FrontierSynch/FiniteVisitRecognition.cpp
   FrontierSynch/LifetimeStream.cpp
   FrontierSynch/ResolvedLifetimeStream.cpp
   FrontierSynch/BoundedLifetime.cpp

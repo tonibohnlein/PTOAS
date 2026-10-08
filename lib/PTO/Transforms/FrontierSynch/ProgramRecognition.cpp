@@ -8,6 +8,7 @@
 // Connect source structure to recognizers without flattening nested control.
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "ArithmeticRows.h"
+#include "PTO/Transforms/FrontierSynch/FiniteVisitRecognition.h"
 #include "llvm/ADT/DenseSet.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
@@ -325,6 +326,7 @@ void refreshProgramContractAudit(ProgramRecognition& program)
             appendComposition(program, id, ContractClass::Repetition);
         }
     }
+    llvm::append_range(program.contractAudit, program.finiteVisitContracts);
     llvm::append_range(program.contractAudit, program.arithmeticContracts);
     if (program.arithmeticContracts.empty()) {
         for (auto kind : {ContractClass::Differences, ContractClass::Octagons, ContractClass::BoundedCoefficients}) {
@@ -392,6 +394,12 @@ FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const Sync
             node.numericTemplate = recognizeNumericTemplate(cast<scf::ForOp>(node.anchor), index, input);
         }
     }
+    for (std::size_t id = 0; id < result.nodes.size(); ++id) {
+        if (result.nodes[id].kind == StructureKind::Loop) {
+            auto finite = recognizeFiniteVisitLoop(function, input, result, id, index);
+            result.finiteVisitContracts.push_back(std::move(finite.contract));
+        }
+    }
     refreshProgramContractAudit(result);
     return result;
 }
@@ -411,6 +419,7 @@ StringRef contractName(ContractClass kind)
     case ContractClass::Sequence: return "regional-sequence";
     case ContractClass::Repetition: return "regional-repetition";
     case ContractClass::FiniteOverlay: return "finite-overlay";
+    case ContractClass::FiniteVisitTypes: return "finite-visit-types";
     }
     return "invalid";
 }

@@ -1,0 +1,106 @@
+# Section 5 construction contracts
+
+This records the five completion milestones after the original recognizer
+implementation. Analysis is relative to the shared modeled accesses, including
+conservative ranges. An unresolved real address is not a separate admission
+condition. Recognizing a mathematical input class, constructing its demands,
+exporting executable endpoints and assigning physical event IDs are separate
+results.
+
+## Implemented construction stages
+
+| Construction | Implementation | Required input / result |
+|---|---|---|
+| Phased and varying regions | `RepeatedPhases`, rotating boundary and varying-region adapters | Preserve the analyzed child graph, native prerequisites and storage selectors. An enclosing ownership or phase proof is still required for outer-dependent maps. |
+| Weighted repetition | `BoundingRepetition`, `NumericalWeightedRepetition` | Shared last-crossing reduction, with semantic record deduplication and native priority. Numerical chain frontiers answer displacement queries without expanding trips. |
+| Numerical repeated squaring | `NumericalRepeatedSquaring`, `NumericalRepeatedExports` | A shared logarithmic-depth composition DAG. Its immutable numerical snapshot describes the selected graph; graph overlays must invalidate it. |
+| Bounded-lifetime streaming | `LifetimeStream`, `ResolvedLifetimeStream`, `GuardedRanks` | Certified bounded-span generators and ordered pipe fronts. The symbolic executor uses current register inputs; the resolved executor uses stamped ring slots. Both decide retention at the consumer. |
+| Finite visit types | `FiniteVisitDemands`, `FiniteVisitRecognition` | Exact child and ordered-pair demand libraries, with cached original-IR alternatives. No arbitrary-word global query or allocation is asserted. |
+| Arithmetic distance intervals | `ArithmeticPeriodicConversion`, `ArithmeticPeriodicImport` | Exact distance-interval pieces become periodic records before general closure. A paused arithmetic generator stage can resume if the adapter cannot supply the requested exports. |
+
+The streaming interface is an analysis transition. It does not make future
+branch outcomes available at an earlier SET. Existing stateless window recipes
+or the draft's executable-guard conditions remain necessary for endpoint code.
+
+Arithmetic conversion separates mathematical integers from executable integer
+expressions. A correct interval result survives an unavailable bounded-integer
+export. Signed floor/ceiling and fixed residues preserve integer semantics.
+Native completion-to-start edges remain native during reduction.
+
+## Finite visit types
+
+The draft's finite-visit proposition assumes a fixed list of exact child types.
+For each immutable parameter valuation, every type refreshes the same
+persistent written cells and contains every common present pipe. A pipe or
+written cell may be absent from every type under the same parameter condition;
+its guarded records then disappear without enumerating parameter cases. Other effects must be shared read-only and disjoint from every type's writers,
+or certified visit-owned. Supplied inter-visit prerequisites must have exact adjacent-visit
+templates.
+
+Analyze each type once and each ordered pair of types once. Retain each child's
+internal demands and the pair's reduced crossings. A word of visit types selects
+these records; neither the table nor its construction expands the word length.
+A refresh or pipe present in some types but absent in another under the same
+parameter valuation invalidates this adjacent-visit contract: the next relevant
+access may lie beyond the next visit.
+
+This is a demand result. An arbitrary type word does not imply a compact
+whole-loop query, endpoint implementation or allocation certificate. The
+implementation must retain its child owners and pair records without pretending
+that they satisfy the richer `RegionalAnalysis` interface. In particular, a
+parent needing global reachability cannot consume the table as a complete
+regional summary.
+
+Branch-arm analysis must be independent of the outer selection predicate.
+Adjacent visits may choose different arms. Reusing one symbolic Boolean for both
+visits would incorrectly make opposite-arm crossings impossible. Invariant
+parameters may be shared; visit-dependent values require separate bindings or
+an explicitly unmet adapter obligation.
+
+## Limits and diagnostics
+
+| Situation | Meaning |
+|---|---|
+| One type omits a refresh or pipe used by another under the same parameters | Violated finite-visit criterion. |
+| A boundary predicate cannot be proved under the supplied parameter context | Unproved contract obligation. |
+| Symbolic effects lack a common-cell or ownership adapter | Missing regional export; not proof that no tractable class applies. |
+| Slot/phase enumeration exceeds `maxRegionalSlotVisits` | Limit of the enumerating producer, not the quotient theorem. |
+| A configured arithmetic profile admits only selected fixed periods | Profile/producer restriction, not exclusion from all fixed-period arithmetic. |
+| A numerical ordinal, count or displacement cannot fit its representation | Representation limit; retain any independently established mathematical result. |
+| An endpoint guard is unavailable at its command cut | Emission obligation; retain recognized class and computed demands. |
+| No supported reuse certificate assigns the physical IDs | Allocation failure; not proof of minimum ID scarcity. |
+
+The original-IR arithmetic-to-periodic adapter currently handles one common
+mandatory loop with zero origin and unit step. The generic interval constructor
+has a broader supplied-input contract. Other original-loop forms can retain the
+ordinary arithmetic route; their adapter limitation must not become an interval
+class rejection.
+
+## Cost accounting
+
+Count normalized effects, generated records, ports, explicit phases, expression
+nodes and queried interfaces. Charge every deliberately materialized phase or
+slot. Arithmetic-operation bounds do not include arbitrary-precision integer bit
+cost for free. Shared DAG nodes and cached child results are counted once; the
+cost of constructing a child or answering its query remains in the ledger.
+
+All these routes use the existing synchronization and allocation interfaces.
+Consumer-adjacent same-pipe barriers follow the implementation policy. For a
+nonadjacent demand this placement can strengthen payload order, so accepting the
+plan does not assert the draft's adjacent-demand order-equality premise.
+
+## Verification of the finite-visit implementation
+
+The independent finite-graph oracle checks 121 type words and 56,808 event pairs
+against all raw ordered storage conflicts, including exact cover membership.
+Additional cases cover native and nonnative prerequisites, different physical
+partitions, absent refresh/pipes, shared invariant absence and failed partial
+constructions. Original-IR cases check successful and unproved contracts and
+cached demand-only stage reporting. Existing phased and conditional composition
+regressions remain passing after propagating analysis-only requests to children.
+
+Serial incremental compilation and both tool links passed. Independent reviewers
+accepted the construction and integration. The changed-code style prefilter's
+39 brace findings were inspected: their control bodies are braced; the parser
+misreads nested parentheses. No line-width or whitespace findings remain.
+These checks do not claim a new corpus campaign, device run or scarce-ID repair.

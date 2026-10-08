@@ -162,7 +162,7 @@ void recordSequenceContractAttempt(ProgramRecognition& program, const SyncInput&
 }
 SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& input,
     const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions,
-    std::shared_ptr<PhaseIndex> sharedIndex)
+    std::shared_ptr<PhaseIndex> sharedIndex, bool requireEndpoints)
 {
     SequenceAnalysis result;
     if (!function || function.isDeclaration() || !function.getBody().hasOneBlock() || !expressions ||
@@ -179,7 +179,7 @@ SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& i
     state->completeInvocation = node == 0;
     // Whole-function membership is mathematical. Endpoint preparation checks
     // its own complete recipe and visit-binding contract independently.
-    state->requireEndpoints = node != 0;
+    state->requireEndpoints = node != 0 && requireEndpoints;
     if (node < program.nodes.size()) { state->requiredOuterLoops = program.nodes[node].loops; }
     if (!state->collect(node) || !state->partition()) { result.error = state->error; return result; }
     state->summarize();
