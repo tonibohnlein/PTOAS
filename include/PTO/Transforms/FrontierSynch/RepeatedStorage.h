@@ -28,6 +28,14 @@ struct RepeatedStorageInnerRun {
     unsigned coordinate = 0;
 };
 using RepeatedStorageOwner = RegionalStorageOwner;
+// Supplied by a checked repetition profile (for example rotating banks).
+// Reservations cover every visit, but are used only to prove disjointness.
+// They are never exposed as access membership or byte selectors.
+struct RepeatedPersistentStorage {
+    SyncStorageCell reservation;
+    std::vector<std::size_t> effects;
+    bool readOnly = false;
+};
 struct RepeatedStorageTypesResult;
 class RepeatedStorage {
 public:
@@ -35,6 +43,9 @@ public:
     explicit RepeatedStorage(std::shared_ptr<State> state) : state(std::move(state)) {}
     std::optional<RepeatedStorageOwner> owner(std::size_t family, RegionalByteAddress address) const;
     std::optional<RegionalStorageSelectors> selectors(RegionalByteAddress address) const;
+    // Only the classified owned/read-only families, excluding persistent cells
+    // whose actual selectors are supplied by the caller's repetition profile.
+    std::optional<RegionalStorageSelectors> projectedSelectors(RegionalByteAddress address) const;
     // Only the inter-visit bridge view removes these effects. The original
     // body, its internal demands, and the exported effects remain intact.
     bool contains(std::size_t effect) const;
@@ -68,6 +79,14 @@ RepeatedStorageResult buildRepeatedStorage(const RegionalAnalysis& body, scf::Fo
 // Missing body effect selectors remain an error, distinct from geometric success.
 RepeatedStorageResult recognizeRepeatedStorage(const RegionalAnalysis& body, scf::ForOp loop,
     RegionExpressions::Id trips, const PhaseIndex* phaseIndex = nullptr, uint64_t phasePeriod = 1);
+// The caller establishes each persistent profile's complete physical coverage
+// and invariant logical child. This shared proof checks all residual ownership
+// and separation against those reservations without a joint phase expansion.
+RepeatedStorageResult buildRepeatedStorageWithPersistent(const RegionalAnalysis& body, scf::ForOp loop,
+    RegionExpressions::Id trips, ArrayRef<RepeatedStorageFamily> families,
+    ArrayRef<RepeatedPersistentStorage> persistent);
+RepeatedStorageResult recognizeRepeatedStorageWithPersistent(const RegionalAnalysis& body, scf::ForOp loop,
+    RegionExpressions::Id trips, ArrayRef<RepeatedPersistentStorage> persistent);
 struct RepeatedStorageTypesResult {
     std::string error;
     // Null entries have a complete finite persistent-cell interface. Non-null

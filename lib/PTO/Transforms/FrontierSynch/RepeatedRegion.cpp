@@ -42,6 +42,10 @@ bool RepeatedRegionState::buildBoundary()
             crossings.push_back({a.event(PeriodicEventKind::Completion), b.event(), edge.guard, false});
         }
     }
+    return buildNativeBoundary();
+}
+bool RepeatedRegionState::buildNativeBoundary()
+{
     for (const auto& [pipe, lasts] : body.lastPayloads) {
         auto found = body.firstPayloads.find(pipe);
         if (found == body.firstPayloads.end()) { error = "missing repeated native first selector"; return false; }

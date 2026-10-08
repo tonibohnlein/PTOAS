@@ -82,16 +82,18 @@ bool sameFamily(const RepeatedStorageFamily& a, const RepeatedStorageFamily& b)
         a.origin.symbols == b.origin.symbols;
 }
 } // namespace
-RepeatedStorageResult recognizeRepeatedStorage(const RegionalAnalysis& body, scf::ForOp loop,
-                                               RegionExpressions::Id trips, const PhaseIndex* phaseIndex,
-                                               uint64_t phasePeriod)
+static RepeatedStorageResult recognizeStorage(const RegionalAnalysis& body, scf::ForOp loop,
+    RegionExpressions::Id trips, const PhaseIndex* phaseIndex, uint64_t phasePeriod,
+    ArrayRef<RepeatedPersistentStorage> persistent)
 {
     if (!loop || !body.accessModel) { return {"evolving storage has no shared effect model", {}}; }
     llvm::DenseSet<std::size_t> visited;
     std::vector<RepeatedStorageFamily> families;
     for (const auto& anchor : body.anchors) {
         for (auto id : body.accessModel->effectsFor(anchor.phase)) {
-            if (!visited.insert(id).second) { continue; }
+            if (!visited.insert(id).second || llvm::any_of(persistent, [id](const auto& profile) {
+                    return llvm::is_contained(profile.effects, id);
+                })) { continue; }
             const auto& effect = body.accessModel->effects()[id];
             const bool represented = llvm::any_of(body.accessBoundary, [id](const auto& access) {
                 return access.effect == id && access.representedByCells;
@@ -110,6 +112,17 @@ RepeatedStorageResult recognizeRepeatedStorage(const RegionalAnalysis& body, scf
         }
     }
     if (families.empty()) { return {"no constant-stride evolving storage family was constructed", {}}; }
-    return buildRepeatedStorage(body, loop, trips, families, phaseIndex, phasePeriod);
+    return persistent.empty() ? buildRepeatedStorage(body, loop, trips, families, phaseIndex, phasePeriod) :
+        buildRepeatedStorageWithPersistent(body, loop, trips, families, persistent);
+}
+RepeatedStorageResult recognizeRepeatedStorage(const RegionalAnalysis& body, scf::ForOp loop,
+    RegionExpressions::Id trips, const PhaseIndex* phaseIndex, uint64_t phasePeriod)
+{
+    return recognizeStorage(body, loop, trips, phaseIndex, phasePeriod, {});
+}
+RepeatedStorageResult recognizeRepeatedStorageWithPersistent(const RegionalAnalysis& body, scf::ForOp loop,
+    RegionExpressions::Id trips, ArrayRef<RepeatedPersistentStorage> persistent)
+{
+    return recognizeStorage(body, loop, trips, nullptr, 1, persistent);
 }
 } // namespace mlir::pto::frontiersynch
