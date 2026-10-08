@@ -59,6 +59,8 @@ private:
     friend CompactClasses captureCompactClassBoundary(scf::ForOp, const PhaseIndex&,
         std::shared_ptr<const CompactFixedBodyContext>, const CompactWriterReaderBindings&, std::string&);
     friend CompactClasses captureFiniteClassBoundary(FiniteRequirements, FiniteSelection, std::string&);
+    friend CompactClasses captureGuardedClassBoundary(func::FuncOp, Block&, ArrayRef<Operation*>,
+        const PhaseIndex&, const SyncInput&, std::shared_ptr<RegionExpressions>, std::string&);
     friend CompactClassRepetition repeatCompactClassBoundary(func::FuncOp, scf::ForOp, CompactClasses);
     friend CompactClassComposition composeCompactClassBoundariesInBlock(
         func::FuncOp, Block&, const SyncInput&, std::vector<CompactClasses>);
@@ -74,6 +76,13 @@ CompactClasses captureCompactClassBoundary(scf::ForOp loop, const PhaseIndex& in
     std::shared_ptr<const CompactFixedBodyContext> domain,
     const CompactWriterReaderBindings& bindings, std::string& error);
 CompactClasses captureFiniteClassBoundary(FiniteRequirements frame, FiniteSelection selection, std::string& error);
+// Finite guarded scan/rank analysis supplies the same exact lower and upper
+// graph. Capture a new guarded occurrence context; original arm cuts, presence
+// and per-site class contributors survive. Roots are consecutive original
+// operations of invocation, not a concatenation of mutually exclusive arms.
+CompactClasses captureGuardedClassBoundary(func::FuncOp function, Block& invocation,
+    ArrayRef<Operation*> roots, const PhaseIndex& index, const SyncInput& input,
+    std::shared_ptr<RegionExpressions> expressions, std::string& error);
 // Attach recipes for exactly the immutable upper selected graph. This trusted
 // producer hook changes no graph/domain/storage claim; failures remain detached.
 CompactClasses withCompactClassPreparation(CompactClasses original,

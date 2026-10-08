@@ -70,4 +70,32 @@ module {
     } {frontier.test_arithmetic_region = "local-loaded-bound"}
     return
   }
+  // Prefill's loaded sequence length, unsigned group count and tail test.
+  // Negative lengths are not excluded by this IR: the large unsigned quotient
+  // permits wrapped i*4. Report scalar normalization, not unsupported if/else.
+  func.func @unsigned_tail(%lengths: !pto.ptr<i32, gm>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c3 = arith.constant 3 : index
+    %c4 = arith.constant 4 : index
+    %base = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %base : !tile
+    %lo = pto.load %lengths[%c0] : !pto.ptr<i32, gm> -> i32
+    %hi = pto.load %lengths[%c1] : !pto.ptr<i32, gm> -> i32
+    %start = arith.index_cast %lo : i32 to index
+    %end = arith.index_cast %hi : i32 to index
+    %length = arith.subi %end, %start : index
+    %rounded = arith.addi %length, %c3 : index
+    %groups = arith.divui %rounded, %c4 : index
+    scf.for %i = %c0 to %groups step %c1 {
+      %offset = arith.muli %i, %c4 : index
+      %remaining = arith.subi %length, %offset : index
+      %active = arith.cmpi sge, %remaining, %c1 : index
+      scf.if %active {
+        %v = pto.tgetval ins(%a, %c0 : !tile, index) outs : f32
+      }
+    } {frontier.test_arithmetic_region = "unsigned-tail"}
+    return
+  }
+
 }

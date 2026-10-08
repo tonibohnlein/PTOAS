@@ -188,6 +188,7 @@ bool ProgramBuilder::prepareGuard(Value root, const ArithmeticSite& site)
             continue;
         }
         if (!value.getType().isInteger(1)) {
+            output.extraction.note(RecognitionIssue::UnsupportedControl, value.getDefiningOp());
             return false;
         }
         if (booleanConstant(value) || constant(value)) {
@@ -198,10 +199,18 @@ bool ProgramBuilder::prepareGuard(Value root, const ArithmeticSite& site)
             continue;
         }
         if (auto compare = value.getDefiningOp<arith::CmpIOp>()) {
-            const bool supported = supportedComparison(compare) && prepareValue(compare.getLhs(), site) &&
-                                   prepareValue(compare.getRhs(), site);
-            if (!supported) {
+            if (!supportedComparison(compare)) {
+                output.extraction.note(RecognitionIssue::UnsupportedControl, compare);
                 return false;
+            }
+            for (Value operand : compare->getOperands()) {
+                if (!prepareValue(operand, site)) {
+                    // The predicate kind is supported. Report the scalar that
+                    // could not be normalized, rather than rejecting scf.if.
+                    output.extraction.note(RecognitionIssue::IndexArithmetic,
+                        operand.getDefiningOp() ? operand.getDefiningOp() : compare.getOperation());
+                    return false;
+                }
             }
             continue;
         }
@@ -211,6 +220,7 @@ bool ProgramBuilder::prepareGuard(Value root, const ArithmeticSite& site)
         const bool negation = exclusive && (booleanConstant(exclusive.getLhs()) ||
                                             booleanConstant(exclusive.getRhs()));
         if (!andOr && !negation) {
+            output.extraction.note(RecognitionIssue::UnsupportedControl, operation);
             return false;
         }
         llvm::append_range(work, operation->getOperands());
