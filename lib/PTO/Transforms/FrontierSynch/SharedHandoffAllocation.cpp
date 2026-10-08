@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <functional>
 #include <queue>
+#include <numeric>
+#include <optional>
 namespace mlir::pto::frontiersynch {
 namespace {
 using Edges = std::vector<std::vector<uint32_t>>;
@@ -54,8 +56,8 @@ bool prepare(Edges& edges, std::vector<uint32_t>& order, std::string& error)
     }
     return true;
 }
-SharedHandoffAllocation greedy(llvm::ArrayRef<SharedHandoff> handoffs, const Edges& edges,
-                              llvm::ArrayRef<uint32_t> order)
+std::optional<SharedHandoffAllocation> greedy(llvm::ArrayRef<SharedHandoff> handoffs,
+    llvm::ArrayRef<uint32_t> order, const std::function<bool(uint32_t, uint32_t)>& precedes, uint64_t capacity)
 {
     SharedHandoffAllocation result;
     result.lanes.resize(handoffs.size());
@@ -64,7 +66,7 @@ SharedHandoffAllocation greedy(llvm::ArrayRef<SharedHandoff> handoffs, const Edg
         uint32_t selected = UINT32_MAX, free = UINT32_MAX;
         for (uint32_t lane = 0; lane < last.size(); ++lane) {
             const auto prior = last[lane];
-            if (!std::binary_search(edges[prior].begin(), edges[prior].end(), next)) { continue; }
+            if (!precedes(prior, next)) { continue; }
             if (free == UINT32_MAX) { free = lane; }
             if (handoffs[prior].sourcePipe == handoffs[next].sourcePipe &&
                 handoffs[prior].targetPipe == handoffs[next].targetPipe) {
@@ -74,6 +76,7 @@ SharedHandoffAllocation greedy(llvm::ArrayRef<SharedHandoff> handoffs, const Edg
         }
         if (selected == UINT32_MAX) { selected = free; }
         if (selected == UINT32_MAX) {
+            if (last.size() == capacity) { return std::nullopt; }
             selected = static_cast<uint32_t>(last.size());
             last.push_back(next);
         } else { last[selected] = next; }
@@ -140,7 +143,37 @@ SharedHandoffAllocation allocateSharedHandoffs(
     std::vector<uint32_t> order;
     if (!prepare(edges, order, invalid.error)) { return invalid; }
     if (handoffs.empty()) { invalid.exactMinimum = true; return invalid; }
-    auto result = greedy(handoffs, edges, order);
-    return result.budget <= capacity ? result : minimum(edges, order);
+    auto result = greedy(handoffs, order, [&](uint32_t from, uint32_t to) {
+        return std::binary_search(edges[from].begin(), edges[from].end(), to);
+    }, capacity);
+    return result ? *result : minimum(edges, order);
+}
+SharedHandoffAllocation allocateSharedHandoffsByQuery(
+    llvm::ArrayRef<SharedHandoff> handoffs,
+    const std::function<bool(uint32_t, uint32_t)>& precedes, uint64_t capacity)
+{
+    SharedHandoffAllocation result;
+    if (handoffs.size() > UINT32_MAX || !precedes) {
+        result.error = "certified handoff query is missing or its indices are unrepresentable";
+        return result;
+    }
+    std::vector<uint32_t> order(handoffs.size());
+    std::iota(order.begin(), order.end(), 0);
+    if (auto assigned = greedy(handoffs, order, precedes, capacity)) {
+        assigned->exactMinimum = handoffs.empty();
+        return *assigned;
+    }
+    // Greedy has stopped at the first exhausted pool. No quadratic relation is
+    // allocated on the successful path, including smaller supplied ID subsets.
+    Edges edges(handoffs.size());
+    for (uint32_t i = 0; i < handoffs.size(); ++i) {
+        for (uint32_t j = i + 1; j < handoffs.size(); ++j) {
+            if (precedes(i, j)) { edges[i].push_back(j); }
+        }
+    }
+    order.clear();
+    SharedHandoffAllocation invalid;
+    if (!prepare(edges, order, invalid.error)) { return invalid; }
+    return minimum(edges, order);
 }
 } // namespace mlir::pto::frontiersynch

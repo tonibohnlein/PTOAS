@@ -28,49 +28,66 @@ DictionaryAttr handoff(Builder& b, int64_t record, uint32_t p, uint32_t q,
 } // namespace
 DictionaryAttr explicitAllocationCertificate(const ExplicitAnalysis& analysis, int64_t plan, MLIRContext* context)
 {
+    if (!context || plan < 0 || !analysis.error.empty() || !analysis.reduction.error.empty() ||
+        analysis.occurrences.size() > UINT32_MAX) { return {}; }
     Builder b(context);
     const auto& r = analysis.reduction;
+    const auto n = analysis.occurrences.size();
+    if (r.pipeColumns.size() != n || r.localRanks.size() != n || r.startRanks.size() != n) { return {}; }
+    std::vector<std::vector<uint32_t>> byPipe(r.pipeLabels.size());
+    for (uint32_t i = 0; i < n; ++i) {
+        if (r.pipeColumns[i] >= byPipe.size() || r.startRanks[i].size() != byPipe.size() ||
+            r.pipeLabels[r.pipeColumns[i]] != analysis.occurrences[i].pipe) { return {}; }
+        auto& row = byPipe[r.pipeColumns[i]];
+        row.push_back(i);
+        if (r.localRanks[i] != row.size()) { return {}; }
+    }
     // Local insertion places a barrier before the consumer. For nonadjacent
     // local demands this adds order: retain it in the fixed-plan reuse query.
     std::vector<StorageGenerator> edges;
-    std::vector<std::vector<uint32_t>> byPipe(r.pipeLabels.size());
-    for (uint32_t i = 0; i < analysis.occurrences.size(); ++i) {
-        byPipe[r.pipeColumns[i]].push_back(i);
-    }
-    for (uint32_t i = 0; i < analysis.occurrences.size(); ++i) {
-        for (uint32_t p = 0; p < byPipe.size(); ++p) {
-            if (auto rank = r.startRanks[i][p]) { edges.push_back({byPipe[p][rank - 1], i}); }
-        }
-    }
+    std::vector<std::vector<std::size_t>> bySource(n);
     bool strengthened = false;
-    std::vector<std::size_t> indices;
     for (std::size_t i = 0; i < r.retained.size(); ++i) {
         const auto& edge = r.retained[i];
-        if (r.pipeColumns[edge.source] != r.pipeColumns[edge.target]) { indices.push_back(i); continue; }
+        if (edge.source >= edge.target || edge.target >= n || i > INT64_MAX) { return {}; }
+        if (r.pipeColumns[edge.source] != r.pipeColumns[edge.target]) {
+            bySource[edge.source].push_back(i); continue;
+        }
+        if (r.localRanks[edge.target] < 2) { return {}; }
         auto previous = byPipe[r.pipeColumns[edge.target]][r.localRanks[edge.target] - 2];
         if (previous != edge.source) { edges.push_back({previous, edge.target}); strengthened = true; }
+    }
+    for (uint32_t i = 0; i < n; ++i) {
+        for (uint32_t p = 0; p < byPipe.size(); ++p) {
+            const auto rank = r.startRanks[i][p];
+            if (rank > byPipe[p].size() || (rank && byPipe[p][rank - 1] >= i)) { return {}; }
+            if (rank && strengthened) { edges.push_back({byPipe[p][rank - 1], i}); }
+        }
     }
     auto actual = strengthened ? reduceExplicitDemands(analysis.occurrences, edges) : ExplicitReduction{};
     if (!actual.error.empty()) { return {}; }
     const auto& order = strengthened ? actual : r;
     SmallVector<Attribute> handoffs;
-    for (auto index : indices) {
-        const auto& edge = r.retained[index];
-        SmallVector<int64_t> successors;
-        for (auto [j, other] : llvm::enumerate(indices)) {
-            auto next = r.retained[other].source;
-            const bool samePipe = r.pipeColumns[edge.target] == r.pipeColumns[next];
-            // WAIT before its consumer precedes SET after that same or a later
-            // payload on this pipe, without requiring consumer completion.
-            bool reuse = samePipe ? edge.target <= next :
-                order.startRanks[next][order.pipeColumns[edge.target]] >= order.localRanks[edge.target];
-            if (reuse) { successors.push_back(j); }
+    // Source buckets supply a topological handoff order in O(n+h) work. Keep
+    // original record IDs while serializing only O(k) rank data per handoff.
+    for (const auto& bucket : bySource) {
+        for (auto index : bucket) {
+            const auto& edge = r.retained[index];
+            SmallVector<int64_t> ranks(order.startRanks[edge.source].begin(), order.startRanks[edge.source].end());
+            NamedAttrList attributes(handoff(b, index, analysis.occurrences[edge.source].pipe,
+                                             analysis.occurrences[edge.target].pipe, ranks));
+            attributes.set("source_position", b.getI64IntegerAttr(edge.source));
+            attributes.set("target_position", b.getI64IntegerAttr(edge.target));
+            attributes.set("target_rank", b.getI64IntegerAttr(order.localRanks[edge.target]));
+            handoffs.push_back(attributes.getDictionary(context));
         }
-        handoffs.push_back(handoff(b, index, analysis.occurrences[edge.source].pipe,
-                                  analysis.occurrences[edge.target].pipe, successors));
     }
-    return certificate(b, plan, "reuse-order", handoffs);
+    SmallVector<int64_t> labels(order.pipeLabels.begin(), order.pipeLabels.end());
+    NamedAttrList attributes(certificate(b, plan, "rank-query", handoffs));
+    attributes.set("pipe_labels", b.getDenseI64ArrayAttr(labels));
+    return attributes.getDictionary(context);
 }
+
 DictionaryAttr finiteRegionalAllocationCertificate(const RegionalAnalysis& region, const PreparedLogicalPlan& plan)
 {
     if (llvm::any_of(region.outerLoops, [](const auto& loops) { return !loops.empty(); }) ||

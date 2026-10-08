@@ -30,8 +30,13 @@ void specialize(GuardedRotatingAnalysis& analysis, RegionExpressions::Substituti
     records(analysis.periodic.records);
     records(analysis.periodic.nativePrerequisites);
     for (auto& value : analysis.periodic.retained) { rewrite(value); }
-    for (auto& threshold : analysis.periodic.thresholds) {
-        rewrite(threshold.reachable); rewrite(threshold.distance);
+    for (auto& frontier : analysis.periodic.frontiers) {
+        for (auto& threshold : frontier.starts) {
+            rewrite(threshold.reachable); rewrite(threshold.distance);
+        }
+        for (auto& threshold : frontier.completions) {
+            rewrite(threshold.reachable); rewrite(threshold.distance);
+        }
     }
     for (auto& fragment : analysis.fragments) {
         rewrite(fragment.offset); rewrite(fragment.read); rewrite(fragment.write);

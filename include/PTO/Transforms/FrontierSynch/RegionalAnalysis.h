@@ -18,6 +18,7 @@ namespace mlir::pto::frontiersynch {
 // Bound that expansion independently of a compact modulus and runtime trips.
 // The periodic quotient itself does not require slot enumeration.
 inline constexpr uint64_t maxRegionalSlotVisits = 256;
+struct RegionalNumericalInterface;
 struct RegionalCost {
     uint64_t repeatedRegions = 0, phaseDescriptions = 0;
     uint64_t children = 0;
@@ -31,6 +32,8 @@ struct RegionalCost {
     // Proof requests, including cached requests. Each producer states its query
     // cost: guarded implication and numerical boundary proofs have different costs.
     uint64_t implicationChecks = 0;
+    uint64_t numericalLeafQueries = 0, numericalIndexOperations = 0;
+    uint64_t numericalMerges = 0, numericalReusedChildren = 0;
 };
 struct RegionalEvent {
     uint32_t type = 0;
@@ -112,6 +115,9 @@ struct RegionalAnalysis {
     std::map<uint32_t, std::vector<RegionalSelector>> firstSitePayloads;
     RegionalCapabilities capabilities;
     RegionalCost cost;
+    // Exact immutable numerical port order for this selected graph/context.
+    // Graph, identity, or presence adapters must clear it unless transformed.
+    std::shared_ptr<const RegionalNumericalInterface> numerical;
     // Exports, including discharged effects, belong to one unchanged invocation
     // and alias context. Composition must not reinterpret that context.
     // This field records the assumption on any exported based GM cells.

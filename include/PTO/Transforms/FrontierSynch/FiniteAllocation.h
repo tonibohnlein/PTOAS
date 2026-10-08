@@ -16,6 +16,9 @@ inline constexpr llvm::StringLiteral FiniteAllocationAttr = "pto.finite_allocati
 // Version-two evidence uses one shared numeric-ID pool. Explicit reuse-order
 // exports are exact for the fixed plan; guarded compatibility is sufficient.
 // Records denote at most one handoff per invocation, never a repeated family.
+// Explicit certificates serialize O(kh) source rank profiles, not h² reuse
+// pairs. Decoder greedy uses at most E queries per handoff for the supplied
+// pool; only its failure materializes the exact relation for matching.
 DictionaryAttr explicitAllocationCertificate(const ExplicitAnalysis& analysis, int64_t plan, MLIRContext* context);
 // Null means the regional finite interface is unavailable. No IR mutation.
 // Uses original cuts to identify occurrences; it never reads emitted guards.
