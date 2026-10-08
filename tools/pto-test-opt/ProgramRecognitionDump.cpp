@@ -50,6 +50,43 @@ llvm::json::Object attempt(StringRef route, const fs::RecognitionResult& result)
     return llvm::json::Object{{"route", route}, {"state", fs::recognitionName(result.state)},
                               {"issues", std::move(issues)}};
 }
+llvm::json::Object contract(const fs::ProgramContractCandidate& candidate)
+{
+    llvm::json::Array issues, obligations;
+    for (const auto& issue : candidate.diagnostics) {
+        issues.push_back(llvm::json::Object{{"issue", fs::recognitionName(issue.issue)},
+            {"category", fs::contractName(fs::contractDiagnosticKind(issue))},
+            {"original_outside_candidate", issue.outsideClass},
+            {"operation", issue.anchor ? issue.anchor->getName().getStringRef() : StringRef()},
+            {"location", location(issue.anchor)}});
+    }
+    for (const auto& issue : candidate.arithmeticDiagnostics) {
+        const auto category = issue.issue == fs::ArithmeticIssue::InvalidConfiguration ? "producer-limit" :
+            (issue.outsideClass ? "candidate-criterion-violation" : "unmet-obligation");
+        issues.push_back(llvm::json::Object{{"issue", fs::recognitionName(issue.issue)},
+            {"category", category}, {"relation", issue.relation}, {"piece", issue.piece},
+            {"count", issue.count}, {"witness", "first"}});
+    }
+    for (const auto& obligation : candidate.obligations) {
+        obligations.push_back(llvm::json::Object{{"name", obligation.name},
+            {"state", fs::contractName(obligation.status)}});
+    }
+    llvm::json::Object result{{"class", fs::contractName(candidate.kind)},
+        {"node", candidate.node ? static_cast<int64_t>(*candidate.node) : -1},
+        {"scope", candidate.node ? "original-region" : "whole-function-fixed-profile"},
+        {"membership", fs::contractName(candidate.membership)},
+        {"obligations", std::move(obligations)}, {"issues", std::move(issues)},
+        {"demands", fs::contractName(candidate.demands)},
+        {"endpoint_recipes", fs::contractName(candidate.endpointRecipes)},
+        {"allocation_analysis", fs::contractName(candidate.allocation)},
+        {"implementation_error", candidate.implementationError}};
+    if (candidate.arithmeticProfile) {
+        const auto& limits = *candidate.arithmeticProfile;
+        result["profile"] = llvm::json::Object{{"pipes", limits.pipes}, {"dimensions", limits.dimensions},
+            {"period", limits.period}, {"coefficient", limits.coefficient}};
+    }
+    return result;
+}
 }
 LogicalResult dumpProgramRecognition(func::FuncOp function, const pto::SyncInput& input,
                                      const fs::ProgramRecognition& program) {
@@ -180,17 +217,23 @@ LogicalResult dumpProgramRecognition(func::FuncOp function, const pto::SyncInput
             arithmetic["state"] = fs::recognitionName(program.recognition.state);
             arithmetic["class"] = fs::recognitionName(program.recognition.arithmeticClass);
             llvm::json::Array issues;
-            for (const auto& issue : program.recognition.diagnostics) {
+            for (const auto& issue : fs::summarizeArithmeticDiagnostics(program.recognition.diagnostics)) {
                 issues.push_back(llvm::json::Object{{"issue", fs::recognitionName(issue.issue)},
                     {"category", issue.outsideClass ? "class-mismatch" : "unmet-obligation"},
-                    {"relation", issue.relation}, {"piece", issue.piece}});
+                    {"relation", issue.relation}, {"piece", issue.piece},
+                    {"count", issue.count}, {"witness", "first"}});
             }
             arithmetic["issues"] = std::move(issues);
         }
     }
+    llvm::json::Array contracts;
+    for (const auto& candidate : program.contractAudit) { contracts.push_back(contract(candidate)); }
+    llvm::json::Object audit{{"membership_scope", "individual-candidate-and-fixed-profile"},
+        {"unproved_is_not_class_exclusion", true}, {"endpoint_or_id_failure_is_not_class_exclusion", true},
+        {"candidates", std::move(contracts)}};
     llvm::json::Object document{{"function", function.getSymName()}, {"analysis_ready", false},
         {"nodes", std::move(nodes)}, {"payloads", std::move(payloads)}, {"guards", std::move(guards)},
-        {"arithmetic", std::move(arithmetic)}};
+        {"arithmetic", std::move(arithmetic)}, {"contract_audit", std::move(audit)}};
     llvm::outs() << llvm::json::Value(std::move(document)) << "\n";
     return success();
 }

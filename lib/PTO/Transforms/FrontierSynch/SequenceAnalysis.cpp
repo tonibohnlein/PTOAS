@@ -124,6 +124,42 @@ SequenceAnalysis analyzeSequence(func::FuncOp function, const SyncInput& input, 
 {
     return analyzeSequenceRegion(function, input, program, 0, std::make_shared<RegionExpressions>());
 }
+void recordSequenceContractAttempt(ProgramRecognition& program, const SyncInput& input,
+                                   const SequenceAnalysis& analysis)
+{
+    ProgramContractCandidate candidate;
+    candidate.kind = ContractClass::Sequence;
+    candidate.node = 0;
+    candidate.membership = ContractStatus::Unproved;
+    candidate.demands = ContractImplementation::Unavailable;
+    candidate.implementationError = analysis.error;
+    const auto& state = analysis.state;
+    const bool original = state && state->program == &program && state->input == &input &&
+        state->completeInvocation && state->reconstructPrerequisites && state->requiredOuterLoops.empty() &&
+        !program.nodes.empty() && program.nodes[0].kind == StructureKind::Sequence && !program.nodes[0].parent &&
+        program.nodes[0].anchor == state->function.getOperation() &&
+        program.nodes[0].region == &state->function.getBody();
+    const bool established = original && analysis.error.empty() && analysis.insertionError.empty() &&
+        state->error.empty() && state->expressions.constructionError().empty();
+    // finishSequence publishes a state only after importing exact child
+    // queries/selectors, reconciling shared storage, reconstructing original
+    // value prerequisites and completing the crossing closure. Composed views
+    // lack the original program/input identities and cannot prove this claim.
+    for (const char* obligation : {"original-structured-occurrence-tree", "shared-context-exact-child-queries",
+        "complete-storage-boundary-selectors", "native-first-last-and-supplied-prerequisite-coverage"}) {
+        candidate.obligations.push_back({obligation,
+            established ? ContractStatus::Established : ContractStatus::Unproved});
+    }
+    if (established) {
+        candidate.membership = ContractStatus::Established;
+        candidate.demands = ContractImplementation::Available;
+    } else if (candidate.implementationError.empty()) {
+        candidate.implementationError = original && !state->error.empty() ? state->error :
+            "sequence result does not certify the original complete invocation before endpoint preparation";
+    }
+    program.sequenceContract = std::move(candidate);
+    refreshProgramContractAudit(program);
+}
 SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& input,
     const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions,
     std::shared_ptr<PhaseIndex> sharedIndex)
@@ -141,6 +177,9 @@ SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& i
     state->input = &input;
     state->program = &program;
     state->completeInvocation = node == 0;
+    // Whole-function membership is mathematical. Endpoint preparation checks
+    // its own complete recipe and visit-binding contract independently.
+    state->requireEndpoints = node != 0;
     if (node < program.nodes.size()) { state->requiredOuterLoops = program.nodes[node].loops; }
     if (!state->collect(node) || !state->partition()) { result.error = state->error; return result; }
     state->summarize();

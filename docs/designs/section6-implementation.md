@@ -45,10 +45,14 @@ if needed for machine safety, is recorded separately from class rejection.
 
 ## Status
 
-All eight milestones are complete after focused validation and two independent
-reviews. Milestone 8 additionally passed the final pinned corpus campaign; it
-integrates bounding dispatch, logical insertion and allocation. Milestones 1–7
-are listed below; milestone 8 is the commit containing this final status.
+All eight milestones have implementation commits and accepted focused reviews,
+but the end-to-end completion claim was premature. The generic executable
+Section 6 fallback remains incomplete: skipped/unbalanced control and some
+nested endpoint interfaces can still prevent a logical plan. Consequently the
+conditional matching, nested exports and production integration milestones
+remain incomplete against the goal of a logical plan for every eligible input.
+Milestone 8 passed the pinned corpus comparison for its implemented subset;
+that establishes no universal logical-plan coverage. Commit records follow.
 Milestone 1 is committed as
 `3890123bb`; milestone 2 has passed validation and two independent reviews.
 Milestone 2 is committed as `b0d71f7a5`.
@@ -453,3 +457,63 @@ Evidence is stored under `.local/section6-implementation/`:
 `m8-nine-final/results.json`. Input and emitter hashes match the pinned baseline;
 compiler hashes and all options are recorded in `pins.json`. The interrupted
 pre-optimization campaign is separately labeled and is not final validation.
+
+## Section 5 admission correction (in progress)
+
+Recognition checks the shared modeled input before selecting a demand producer.
+Every configured class candidate is retained, including both fixed arithmetic
+profiles (P=1 and P=2, k<=8, D<=8, C<=8). These are the currently implemented
+producer configurations, not all fixed-period classes admitted by the theorem.
+A failed analysis, query export, endpoint recipe or allocation cannot
+turn an established input contract into a class exclusion. Producer limits and
+unavailable adapters are recorded separately from violated criteria. An
+unproved contract is not a proof that the program is outside that class.
+
+The existing recognition client emits the complete audit without constructing
+numeric demand, endpoint or allocation backends. The corpus runner can capture
+that report independently before attempting logical insertion. The production
+pass keeps an immutable report in the detached logical plan and publishes it
+only when insertion commits; failed preparation still leaves the original IR
+unchanged. Physical-core projections retain separate reports.
+
+Sequence demand analysis is cached separately from endpoint preparation. A
+successful original-input sequence construction establishes its complete
+storage, native and prerequisite interface evidence; child recognition alone
+does not establish those premises. Runtime lower bounds use the existing
+counted-loop ordinal normalization in balanced and repeated-phase endpoints.
+
+Completion requires measured recognition and logical-plan outcomes on the
+eligible corpus. Remaining adapter obligations must be closed or identified
+as implementation gaps; they must not be counted as genuine class mismatches.
+The broader Section 6 relational baseline does not by itself supply a cheap
+executable matcher for every arbitrary skipped-writer program.
+
+The logical dispatcher retains an accepted sequence plan instead of invoking
+full arithmetic demand analysis solely to obtain an allocation certificate.
+Missing allocation remains a separate physical-pass obligation. Arithmetic
+remains a logical fallback when no earlier preparation succeeds. This may
+change physical acceptance and is not a scarcity-repair implementation.
+
+The first independent 786-input recognition sweep completed 772 reports;
+14 failed while serializing repeated arithmetic diagnostics under the local
+process memory limit. These are reporting failures, not class exclusions.
+Reports now aggregate equal arithmetic issues and exclusion flags, retaining
+their exact multiplicity and the first relation/piece witness. Membership
+continues to inspect the original evidence. All 14 focused reruns completed successfully. Across the pinned initial sweep
+and replay, 785 inputs have reports; one manually synchronized input is
+intentionally skipped. Compiler hashes for both batches remain recorded.
+
+Final focused validation covered 15 corpus inputs: all 15 recognition requests
+completed; nine produced logical plans and six completed C++ generation.
+`mlp_out_seed` and `lm_head_matmul` now produce logical plans where the pinned
+baseline failed; the former also allocates and emits C++. The latter retains
+a regional allocation failure. The two pinned GEMMs retain their baseline
+seven-ID rejection with six eligible IDs. No scarcity repair was added.
+The six remaining focused logical failures retain analysis/export obligations
+independently of their class reports. This does not establish full logical
+coverage or complete contract decisions for every unproved adapter.
+
+The conditional regression passes 15 emitted execution closures, including
+nesting depths two through four. Synthetic audit checks verify multiplicity,
+first witnesses, opposite exclusion flags, all three arithmetic candidates,
+and evidence preservation across refresh and endpoint failure.

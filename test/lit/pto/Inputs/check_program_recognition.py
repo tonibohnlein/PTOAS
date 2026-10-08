@@ -48,6 +48,27 @@ def check_common(document):
         if attempt["state"] == "not-applicable":
             assert any(i["category"] == "class-mismatch" for i in attempt["issues"])
 
+    # Membership and implementation observations are independent. Recognition
+    # runs neither demand construction nor endpoint/physical allocation backends.
+    audit = document["contract_audit"]
+    assert audit["unproved_is_not_class_exclusion"]
+    assert audit["endpoint_or_id_failure_is_not_class_exclusion"]
+    candidates = audit["candidates"]
+    profiles = [candidate for candidate in candidates if "profile" in candidate]
+    assert len(profiles) == 6
+    assert {candidate["profile"]["period"] for candidate in profiles} == {1, 2}
+    assert {candidate["class"] for candidate in profiles} == {
+        "arithmetic-differences", "arithmetic-octagons", "arithmetic-bounded-coefficients"}
+    for candidate in candidates:
+        assert candidate["demands"] == "not-requested"
+        assert candidate["endpoint_recipes"] == "not-requested"
+        assert candidate["allocation_analysis"] == "not-requested"
+        assert candidate["membership"] in {"established", "violated", "unproved", "not-evaluated"}
+        if candidate["membership"] == "violated":
+            assert any(issue["category"] in {"criterion-violation", "candidate-criterion-violation"}
+                       for issue in candidate["issues"]) or any(
+                obligation["state"] == "violated" for obligation in candidate["obligations"])
+
 
 def routes(document, name):
     return [attempt for node in document["nodes"] for attempt in node["attempts"]

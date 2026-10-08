@@ -7,6 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 """Check actual sequence insertion against independent physical conflict graphs."""
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -68,6 +69,12 @@ def validate(document, trips, reader_only=False, rmw=False, inner_visits=0, part
         commands.append(command)
     actual = closure_with_commands(pipes, commands)
     assert actual == [row & ~(1 << i) for i, row in enumerate(required)], "sequence changed required order"
+
+
+def operation_count(text, name):
+    """Count original textual operations, excluding names in diagnostic attributes."""
+    pattern = r"^\s*(?:%[^=\n]+=[ \t]*)?" + re.escape(name) + r"\b"
+    return len(re.findall(pattern, text, re.MULTILINE))
 
 
 def main():
@@ -157,7 +164,8 @@ def main():
         path.write_text(source)
         small = invoke(tool, "--insert-logical", path)
         assert large.replace("1000000000", "5") == small
-        assert large.count("scf.for") == source.count("scf.for")
+        # Diagnostic attributes can name scf.for without adding an operation.
+        assert operation_count(large, "scf.for") == operation_count(source, "scf.for")
         assert "pto.logical_set" in large and "pto.set_flag" not in large
         # Constant trip counts change analysis input, unlike trace arguments.
         constant_sizes = []
@@ -170,8 +178,8 @@ def main():
             report = json.loads(invoke(tool, "--sequence-analysis", path))
             assert not report["error"] and report["prepared"], report
             constant_analysis.append(tuple(report[k] for k in ("ports", "cells", "expressions", "emitted")))
-            assert emitted.count("scf.for") == 1
-            assert emitted.count("pto.textract") == source.count("pto.textract")
+            assert operation_count(emitted, "scf.for") == 1
+            assert operation_count(emitted, "pto.textract") == operation_count(source, "pto.textract")
             constant_sizes.append((len(emitted.splitlines()), emitted.count("pto.logical_")))
         assert constant_sizes[0] == constant_sizes[1], constant_sizes
         assert constant_analysis[0] == constant_analysis[1], constant_analysis

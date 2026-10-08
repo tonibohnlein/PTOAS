@@ -51,6 +51,8 @@ struct PreparedLogicalPlan {
     // Optional producer certificate for the immediately following allocation
     // pass. It owns no borrowed analysis state; changing the plan invalidates it.
     DictionaryAttr allocationCertificate;
+    // Immutable recognition snapshot, attached only when insertion commits.
+    DictionaryAttr recognitionReport;
     // Optional typed lifetime interface for parent composition; invalidated with
     // the regional expression arena and original IR. Never reconstructed from guards.
     std::shared_ptr<RegionalAllocationSummary> regionalAllocation;

@@ -272,7 +272,7 @@ DictionaryAttr takePlan(func::FuncOp function)
 {
     NamedAttrList attrs;
     for (StringRef name : {StringRef("pto.endpoint_families"), StringRef(FiniteAllocationAttr),
-                           StringRef(CyclicAllocationAttr)}) {
+                           StringRef(CyclicAllocationAttr), StringRef("pto.frontier_recognition")}) {
         if (auto value = function->removeAttr(name)) { attrs.set(name, value); }
     }
     return attrs.getDictionary(function.getContext());

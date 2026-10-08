@@ -220,8 +220,10 @@ LogicalResult recognize(func::FuncOp function, const pto::SyncInput &input, bool
   for (const auto &diagnostic : arithmetic.extraction.diagnostics) {
     llvm::outs() << "  issue " << fs::recognitionName(diagnostic.issue) << "\n";
   }
-  for (const auto &diagnostic : arithmetic.recognition.diagnostics) {
-    llvm::outs() << "  issue " << fs::recognitionName(diagnostic.issue) << "\n";
+  for (const auto &diagnostic : fs::summarizeArithmeticDiagnostics(arithmetic.recognition.diagnostics)) {
+    llvm::outs() << "  issue " << fs::recognitionName(diagnostic.issue)
+                 << " count=" << diagnostic.count << " first-relation=" << diagnostic.relation
+                 << " first-piece=" << diagnostic.piece << "\n";
   }
   llvm::outs() << "  arithmetic sites=" << arithmetic.sites.size()
                << " parameters=" << arithmetic.parameters.size()

@@ -13,6 +13,7 @@
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
 namespace mlir::pto::frontiersynch {
 // Detached whole-function producer shared by module coordination and tests.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFunctionSynchronization(
@@ -31,6 +32,8 @@ public:
     LogicalResult analyzeNumericCandidates();
     bool hasOnlyNativeScalarRequirements() const { return nativeScalarOnly; }
     LogicalResult analyzeExplicitFunction();
+    SequenceAnalysis* analyzeSequenceFunction();
+    void noteSequenceEndpointOutcome(StringRef error);
     const ExplicitAnalysis* explicitResult() const { return explicitAnalysis ? &*explicitAnalysis : nullptr; }
     const SyncInput* input() const { return storage.get(); }
     std::shared_ptr<const SyncInput> sharedInput() const { return storage; }
@@ -44,6 +47,7 @@ private:
     std::shared_ptr<SyncInput> storage;
     std::optional<ProgramRecognition> program;
     std::optional<ExplicitAnalysis> explicitAnalysis;
+    std::optional<SequenceAnalysis> sequenceAnalysis;
 };
 } // namespace mlir::pto::frontiersynch
 #endif
