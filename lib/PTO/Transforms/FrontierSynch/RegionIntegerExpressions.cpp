@@ -135,6 +135,7 @@ RegionExpressions::Id RegionExpressions::integerPredicate(const IntegerSystem& s
     for (auto [input, residue] : llvm::zip(inputs, residues)) {
         if (!valid(input) || residue >= period) { return reject("integer predicate has invalid input or residue"); }
     }
+    if (system.isKnownEmpty()) { return boolean(false); }
     if (period == 1 && system.constraints().empty() && system.congruences().empty()) { return boolean(true); }
     // Query composition can identify source and target coordinates. Preserve
     // that equality algebraically instead of emitting independent columns for
@@ -269,6 +270,28 @@ RegionExpressions::Id RegionExpressions::integerPredicate(const IntegerSystem& s
         }
     }
     return internInteger(std::move(recipe));
+}
+RegionExpressions::Id RegionExpressions::integerFloor(const IntegerAffine& numerator, const BoundInteger& denominator,
+    ArrayRef<Id> inputs, uint64_t period, ArrayRef<uint64_t> residues)
+{
+    if (!period || period > INT64_MAX || inputs.size() != residues.size() ||
+        numerator.coefficients.size() != inputs.size() || denominator <= 0) {
+        return reject("integer floor has inconsistent dimensions, period or divisor");
+    }
+    SmallVector<Id> quotients;
+    SmallVector<uint64_t> zeros(inputs.size(), 0);
+    for (auto [input, residue] : llvm::zip(inputs, residues)) {
+        if (!valid(input) || residue >= period) { return reject("integer floor has invalid input or residue"); }
+        if (period == 1) { quotients.push_back(input); continue; }
+        // Parameter quotient formation and final floor both use the existing
+        // checked signed-i128 recipe. Output period one suppresses occurrence
+        // reconstruction without changing any existing witness semantics.
+        const IntegerAffine identity{{BoundInteger(1)}, BoundInteger(0)};
+        quotients.push_back(integerWitness(identity, BoundInteger(static_cast<int64_t>(period)),
+            {input}, 1, {0}, 0));
+        if (quotients.back() == invalid) { return invalid; }
+    }
+    return integerWitness(numerator, denominator, quotients, 1, zeros, 0);
 }
 RegionExpressions::Id RegionExpressions::integerWitness(const IntegerAffine& numerator, const BoundInteger& denominator,
     ArrayRef<Id> inputs, uint64_t period, ArrayRef<uint64_t> residues, uint64_t outputResidue)

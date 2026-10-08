@@ -22,6 +22,9 @@ DictionaryAttr arithmeticAllocationCertificate(const ArithmeticDemandAnalysis& a
     int64_t plan, MLIRContext* context);
 // Immutable retained guards select a guaranteed-active numerical witness graph.
 // Distinct potential record phases receive disjoint cyclic subsequences.
+DictionaryAttr guardedPeriodicAllocationCertificate(RegionExpressions& expressions,
+    ArrayRef<GuardedPeriodicPayload> payloads, ArrayRef<GuardedPeriodicRecord> generators,
+    const GuardedPeriodicQuotient& periodic, int64_t plan, MLIRContext* context);
 DictionaryAttr guardedAllocationCertificate(const GuardedRotatingAnalysis& analysis,
     int64_t plan, MLIRContext* context);
 } // namespace mlir::pto::frontiersynch

@@ -109,32 +109,31 @@ DictionaryAttr arithmeticAllocationCertificate(const ArithmeticDemandAnalysis& a
     }
     return encode(allocation, plan, context, "dedicated-families");
 }
-DictionaryAttr guardedAllocationCertificate(const GuardedRotatingAnalysis& analysis,
-                                             int64_t plan, MLIRContext* context)
+DictionaryAttr guardedPeriodicAllocationCertificate(RegionExpressions& arena,
+    ArrayRef<GuardedPeriodicPayload> inputPayloads, ArrayRef<GuardedPeriodicRecord> inputGenerators,
+    const GuardedPeriodicQuotient& periodic, int64_t plan, MLIRContext* context)
 {
-    if (!analysis.error.empty() || !analysis.expressions || !analysis.periodic.error.empty() ||
-        analysis.generators.size() != analysis.periodic.retained.size()) { return {}; }
-    auto& arena = *analysis.expressions;
+    if (!periodic.error.empty() || inputGenerators.size() != periodic.retained.size()) { return {}; }
     struct Record { uint32_t id; uint64_t gap; };
     std::map<std::pair<uint32_t, uint32_t>, std::vector<Record>> groups;
-    for (uint32_t r = 0; r < analysis.generators.size(); ++r) {
-        auto retained = analysis.periodic.retained[r];
+    for (uint32_t r = 0; r < inputGenerators.size(); ++r) {
+        auto retained = periodic.retained[r];
         if (arena.implies(retained, arena.boolean(false))) { continue; }
-        const auto& edge = analysis.generators[r];
-        auto p = analysis.payloads[edge.source].pipe, q = analysis.payloads[edge.target].pipe;
+        const auto& edge = inputGenerators[r];
+        auto p = inputPayloads[edge.source].pipe, q = inputPayloads[edge.target].pipe;
         if (p == q) { continue; }
-        std::vector<uint32_t> mapping(analysis.payloads.size(), UINT32_MAX);
+        std::vector<uint32_t> mapping(inputPayloads.size(), UINT32_MAX);
         std::vector<PeriodicPayload> payloads;
-        for (uint32_t i = 0; i < analysis.payloads.size(); ++i) {
-            if (arena.implies(retained, analysis.payloads[i].presence)) {
+        for (uint32_t i = 0; i < inputPayloads.size(); ++i) {
+            if (arena.implies(retained, inputPayloads[i].presence)) {
                 mapping[i] = payloads.size();
-                payloads.push_back({analysis.payloads[i].pipe});
+                payloads.push_back({inputPayloads[i].pipe});
             }
         }
         auto distance = arena.constantUnder(retained, edge.displacement);
         if (!distance || mapping[edge.source] == UINT32_MAX || mapping[edge.target] == UINT32_MAX) { return {}; }
         std::vector<PeriodicRecord> generators;
-        for (const auto& candidate : analysis.generators) {
+        for (const auto& candidate : inputGenerators) {
             auto d = arena.constantUnder(retained, candidate.displacement);
             if (d && mapping[candidate.source] != UINT32_MAX && mapping[candidate.target] != UINT32_MAX &&
                 (arena.implies(retained, candidate.active) || arena.constantUnder(retained, candidate.active) == 1)) {
@@ -142,7 +141,7 @@ DictionaryAttr guardedAllocationCertificate(const GuardedRotatingAnalysis& analy
             }
         }
         std::vector<PeriodicRecord> native;
-        for (const auto& candidate : analysis.periodic.nativePrerequisites) {
+        for (const auto& candidate : periodic.nativePrerequisites) {
             auto d = arena.constantUnder(retained, candidate.displacement);
             if (d && mapping[candidate.source] != UINT32_MAX && mapping[candidate.target] != UINT32_MAX &&
                 arena.implies(retained, candidate.active)) {
@@ -172,5 +171,12 @@ DictionaryAttr guardedAllocationCertificate(const GuardedRotatingAnalysis& analy
         allocation.directions.push_back(std::move(direction));
     }
     return encode(allocation, plan, context, "guarded-record-cycles");
+}
+DictionaryAttr guardedAllocationCertificate(const GuardedRotatingAnalysis& analysis,
+    int64_t plan, MLIRContext* context)
+{
+    if (!analysis.error.empty() || !analysis.expressions) { return {}; }
+    return guardedPeriodicAllocationCertificate(*analysis.expressions, analysis.payloads,
+        analysis.generators, analysis.periodic, plan, context);
 }
 } // namespace mlir::pto::frontiersynch

@@ -29,6 +29,29 @@ struct GuardedRanks {
     std::optional<RegionExpressions::Id> query(
         RegionExpressions& expressions, PeriodicEvent source, PeriodicEvent target) const;
 };
+// Register form of the forward reducer. Sources are supplied in decreasing
+// reference order; completion rows and ranks refer to that same execution.
+// The supplier bounds total executed ranks by UINT64_MAX and supplies a
+// reachable register state. The transition does not retain previous owners.
+struct GuardedRankFrontier {
+    std::vector<RegionExpressions::Id> counters;
+    std::vector<std::vector<RegionExpressions::Id>> starts, completions;
+};
+// Incoming guards imply source presence; the transition adds target presence.
+struct GuardedRankIncoming {
+    uint32_t column;
+    RegionExpressions::Id rank, guard;
+    llvm::ArrayRef<RegionExpressions::Id> completion;
+};
+struct GuardedRankStep {
+    std::string error;
+    RegionExpressions::Id rank = RegionExpressions::invalid;
+    std::vector<RegionExpressions::Id> start, completion, retained;
+};
+GuardedRankFrontier initGuardedRankFrontier(RegionExpressions& expressions, uint32_t columns);
+GuardedRankStep advanceGuardedRank(RegionExpressions& expressions, GuardedRankFrontier& frontier,
+    uint32_t column, RegionExpressions::Id present, llvm::ArrayRef<GuardedRankIncoming> candidates,
+    llvm::ArrayRef<GuardedRankIncoming> native = {});
 // All edges are forward in the potential occurrence order. Guards imply
 // endpoint presence; the implementation conjoins presence as well. Duplicates
 // are ORed. Native prerequisites seed each start row before cover tests.

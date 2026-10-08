@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <numeric>
 #include <tuple>
+#include <type_traits>
 namespace mlir::pto::frontiersynch {
 bool ArithmeticEventKey::operator<(const ArithmeticEventKey& other) const
 {
@@ -140,7 +141,7 @@ public:
         result.pipeCount = program.primitives.pipeCount;
     }
     TypedArithmeticDemandAnalysis<System> result;
-    void run()
+    void run(bool generatorsOnly = false)
     {
         if (program.extraction.state != RecognitionState::Applicable ||
             program.recognition.state != RecognitionState::Applicable ||
@@ -148,6 +149,24 @@ public:
             fail("exact supported arithmetic primitives are required"); return;
         }
         if (!import() || !buildRelations() || !buildConflicts()) { return; }
+        if (!generatorsOnly) { complete(); }
+    }
+    std::vector<ArithmeticOccurrenceDomain> occurrenceDomains() const
+    {
+        std::vector<ArithmeticOccurrenceDomain> domains;
+        if constexpr (std::is_same_v<System, IntegerSystem>) {
+            for (const auto& piece : pieces) {
+                if (piece.schema->kind != PrimitiveKind::Occurrences || !piece.schema->sourceSite) { continue; }
+                domains.push_back({*piece.schema->sourceSite,
+                    {piece.residues.begin(), piece.residues.begin() + piece.schema->sourceDimensions},
+                    parameterResidues(piece), piece.system});
+            }
+        }
+        return domains;
+    }
+    void complete()
+    {
+        if (!result.error.empty()) { return; }
         Relation nativeCompletions;
         for (const auto& [key, pieces] : result.nativeOrder) {
             if (key.source.event == ArithmeticEvent::Completion && key.target.event == ArithmeticEvent::Start) {
@@ -587,6 +606,71 @@ auto analyze(const ArithmeticProgram& program, const StructuredProtection* prote
     return std::move(analysis.result);
 }
 } // namespace
+struct GeneralArithmeticGeneratorStage::State {
+    std::unique_ptr<Analysis<IntegerPolicy>> engine;
+    const ArithmeticProgram* program = nullptr;
+    GeneralArithmeticDemandAnalysis unavailable;
+    std::vector<ArithmeticOccurrenceDomain> domains;
+    State() { unavailable.error = "arithmetic generator stage is unavailable or already consumed"; }
+};
+GeneralArithmeticGeneratorStage::GeneralArithmeticGeneratorStage() : state(std::make_unique<State>()) {}
+GeneralArithmeticGeneratorStage::~GeneralArithmeticGeneratorStage() = default;
+GeneralArithmeticGeneratorStage::GeneralArithmeticGeneratorStage(GeneralArithmeticGeneratorStage&&) noexcept = default;
+GeneralArithmeticGeneratorStage& GeneralArithmeticGeneratorStage::operator=(
+    GeneralArithmeticGeneratorStage&&) noexcept = default;
+const GeneralArithmeticDemandAnalysis& GeneralArithmeticGeneratorStage::analysis() const
+{
+    if (!state) {
+        static const auto missing = [] {
+            GeneralArithmeticDemandAnalysis result;
+            result.error = "arithmetic generator stage is already consumed";
+            return result;
+        }();
+        return missing;
+    }
+    return state->engine ? state->engine->result : state->unavailable;
+}
+bool GeneralArithmeticGeneratorStage::belongsTo(const ArithmeticProgram& program) const
+{
+    return state && state->program == &program;
+}
+const std::vector<ArithmeticOccurrenceDomain>& GeneralArithmeticGeneratorStage::occurrences() const
+{
+    static const std::vector<ArithmeticOccurrenceDomain> empty;
+    return state ? state->domains : empty;
+}
+GeneralArithmeticGeneratorStage analyzeGeneralArithmeticGenerators(
+    const ArithmeticProgram& program, const StructuredProtection* protection)
+{
+    GeneralArithmeticGeneratorStage stage;
+    stage.state->program = &program;
+    stage.state->engine = std::make_unique<Analysis<IntegerPolicy>>(program, protection);
+    stage.state->engine->run(true);
+    if (stage.state->engine->result.error.empty()) {
+        stage.state->domains = stage.state->engine->occurrenceDomains();
+    } else {
+        stage.state->engine->result.generators.clear();
+        stage.state->engine->result.nativeOrder.clear();
+    }
+    return stage;
+}
+GeneralArithmeticDemandAnalysis completeGeneralArithmeticDemands(GeneralArithmeticGeneratorStage&& stage)
+{
+    auto state = std::move(stage.state);
+    if (!state || !state->engine) {
+        GeneralArithmeticDemandAnalysis result;
+        result.error = "arithmetic generator stage is unavailable or already consumed";
+        return result;
+    }
+    state->engine->complete();
+    auto result = std::move(state->engine->result);
+    if (!result.error.empty()) {
+        result.generators.clear(); result.nativeOrder.clear();
+        result.requiredOrder.clear(); result.minimumDemands.clear();
+        result.exactMinimum = false; result.adjacentLocalDemands = false;
+    }
+    return result;
+}
 ArithmeticDemandAnalysis analyzeArithmeticDemandsWithProtection(const ArithmeticProgram& program,
                                                                const StructuredProtection& protection)
 {

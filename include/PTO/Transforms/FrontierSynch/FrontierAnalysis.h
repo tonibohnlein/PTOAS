@@ -13,12 +13,17 @@
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticPeriodicConversion.h"
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
 namespace mlir::pto::frontiersynch {
 // Detached whole-function producer shared by module coordination and tests.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFunctionSynchronization(
     func::FuncOp function, GMAliasPolicy policy);
+struct ArithmeticPeriodicExports {
+    bool endpointsAvailable = false, allocationAvailable = false;
+    std::string endpointError, allocationError;
+};
 class FrontierAnalysis {
 public:
     explicit FrontierAnalysis(Operation* operation) : function(dyn_cast<func::FuncOp>(operation)) {}
@@ -35,6 +40,14 @@ public:
     LogicalResult analyzeExplicitFunction();
     SequenceAnalysis* analyzeSequenceFunction();
     LogicalResult analyzeArithmeticFunction();
+    // Pause at exact generators before attempting the distance-interval adapter.
+    // Failed conversion/endpoint export can resume this stage without rebuilding.
+    LogicalResult analyzeArithmeticPeriodicFunction();
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticPeriodicFunction();
+    const ArithmeticPeriodicExports& arithmeticPeriodicExports() const { return periodicExports; }
+    const ArithmeticPeriodicProgram* arithmeticPeriodicDemands() const {
+        return arithmeticPeriodicAnalysis ? &*arithmeticPeriodicAnalysis : nullptr;
+    }
     const ArithmeticDemandAnalysis* arithmeticDemands() const {
         return arithmeticAnalysis ? &*arithmeticAnalysis : nullptr;
     }
@@ -61,6 +74,9 @@ private:
     std::optional<SequenceAnalysis> sequenceAnalysis;
     std::optional<ArithmeticDemandAnalysis> arithmeticAnalysis;
     std::optional<GeneralArithmeticDemandAnalysis> generalArithmeticAnalysis;
+    std::optional<GeneralArithmeticGeneratorStage> arithmeticGeneratorStage;
+    std::optional<ArithmeticPeriodicProgram> arithmeticPeriodicAnalysis;
+    ArithmeticPeriodicExports periodicExports;
 };
 } // namespace mlir::pto::frontiersynch
 #endif
