@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/RepeatedPhases.h"
 #include "RepeatedRegionInternal.h"
+#include "CountedLoop.h"
 #include "SequenceAnalysisInternal.h"
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -139,16 +140,16 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
     if (trips >= e.size() || e.isBoolean(trips) || !e.constructionError().empty()) {
         failure.error = "repeated phases require a valid integer trip expression"; return failure;
     }
-    auto lower = sequenceInteger(loop.getLowerBound()), step = sequenceInteger(loop.getStep());
-    if (!lower || *lower < 0 || !step || *step <= 0) {
-        failure.error = "phase endpoint binding requires a positive constant index step"; return failure;
+    const auto domain = CountedLoop::get(loop);
+    if (!domain) {
+        failure.error = "phase endpoint binding requires a represented 64-bit counted domain"; return failure;
     }
     if (begin == RegionExpressions::invalid) { begin = e.constant(0); }
     if (begin >= e.size() || e.isBoolean(begin)) {
         failure.error = "phase interval requires an integer beginning"; return failure;
     }
     const auto q = phases.size();
-    auto ordinal = e.div(e.sub(e.input(loop.getInductionVar()), e.constant(*lower)), e.constant(*step));
+    auto ordinal = domain->ordinal(e);
     auto period = e.div(ordinal, e.constant(q)), phaseValue = e.rem(ordinal, e.constant(q));
     auto periods = e.div(trips, e.constant(q)), remainder = e.rem(trips, e.constant(q));
     auto firstPeriod = e.div(begin, e.constant(q)), firstPhase = e.rem(begin, e.constant(q));

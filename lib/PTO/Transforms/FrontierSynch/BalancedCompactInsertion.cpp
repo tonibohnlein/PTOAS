@@ -8,21 +8,14 @@
 // One logical slot identity distributed independently to each original arm cut.
 #include "PTO/Transforms/FrontierSynch/BalancedCompactBody.h"
 #include "PTO/IR/PTO.h"
+#include "CountedLoop.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Dominance.h"
-#include "mlir/IR/Matchers.h"
-#include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "llvm/ADT/DenseSet.h"
 #include <map>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
 namespace {
-std::optional<int64_t> constant(Value value)
-{
-    APInt number;
-    if (!matchPattern(value, m_ConstantInt(&number)) || !number.isSignedIntN(64)) { return std::nullopt; }
-    return number.getSExtValue();
-}
 bool validPath(scf::ForOp loop, const BalancedCompactAlternative& alternative)
 {
     auto* region = alternative.phase->elementOp->getParentRegion();
@@ -71,8 +64,9 @@ bool validBody(func::FuncOp function, const BalancedCompactBody& body, const Per
 }
 class Preparer {
 public:
-    Preparer(const BalancedCompactBody& body, const LogicalEndpointPlan& logical, int64_t planId)
-        : body(body), logical(logical), builder(body.loop->getContext()),
+    Preparer(const BalancedCompactBody& body, const LogicalEndpointPlan& logical, const CountedLoop& domain,
+             int64_t planId)
+        : body(body), logical(logical), domain(domain), builder(body.loop->getContext()),
           plan(std::make_unique<PreparedLogicalPlan>(planId))
     {}
     std::unique_ptr<PreparedLogicalPlan> run();
@@ -86,35 +80,36 @@ private:
     {
         return builder.create<arith::CmpIOp>(body.loop->getLoc(), predicate, left, right);
     }
-    void initialize();
+    bool initialize();
     bool families();
     void endpoint(const EndpointRecipe& recipe, const BalancedCompactAlternative& alternative);
     const BalancedCompactBody& body;
     const LogicalEndpointPlan& logical;
+    const CountedLoop& domain;
     OpBuilder builder;
     std::unique_ptr<PreparedLogicalPlan> plan;
-    Value trips, ordinal, zero, one;
+    Value trips, ordinal;
     using Namespace = std::tuple<uint32_t, uint32_t, uint64_t>;
     std::map<Namespace, uint32_t> namespaces;
     std::map<Operation*, Block*> blocks;
 };
-void Preparer::initialize()
+bool Preparer::initialize()
 {
+    RegionExpressions expressions;
+    const auto count = domain.trips(expressions), visit = domain.ordinal(expressions);
     auto loop = body.loop;
-    auto location = loop.getLoc();
     builder.setInsertionPointToEnd(&plan->addPreparation(loop));
-    zero = number(0); one = number(1);
-    auto positive = compare(arith::CmpIPredicate::sgt, loop.getUpperBound(), loop.getLowerBound());
-    auto difference = builder.create<arith::SubIOp>(location, loop.getUpperBound(), loop.getLowerBound());
-    auto span = builder.create<arith::SelectOp>(location, positive, difference, zero);
-    auto quotient = builder.create<arith::DivUIOp>(location, span, loop.getStep());
-    auto remainder = builder.create<arith::RemUIOp>(location, span, loop.getStep());
-    auto partial = compare(arith::CmpIPredicate::ne, remainder, zero);
-    auto extra = builder.create<arith::SelectOp>(location, partial, one, zero);
-    trips = builder.create<arith::AddIOp>(location, quotient, extra);
-    builder.setInsertionPointToEnd(&plan->addPreparation(&loop.getBody()->front()));
-    auto offset = builder.create<arith::SubIOp>(location, loop.getInductionVar(), loop.getLowerBound());
-    ordinal = builder.create<arith::DivUIOp>(location, offset, loop.getStep());
+    llvm::DenseMap<RegionExpressions::Id, Value> memo;
+    auto emittedTrips = expressions.emit(count, builder, loop, memo);
+    if (failed(emittedTrips)) { return false; }
+    trips = *emittedTrips;
+    auto* bodyCut = &loop.getBody()->front();
+    builder.setInsertionPointToEnd(&plan->addPreparation(bodyCut));
+    memo.clear();
+    auto emittedOrdinal = expressions.emit(visit, builder, bodyCut, memo);
+    if (failed(emittedOrdinal)) { return false; }
+    ordinal = *emittedOrdinal;
+    return true;
 }
 void Preparer::endpoint(const EndpointRecipe& recipe, const BalancedCompactAlternative& alternative)
 {
@@ -185,7 +180,7 @@ std::unique_ptr<PreparedLogicalPlan> Preparer::run()
 {
     if (!families()) { return nullptr; }
     if (logical.recipes.empty()) { return std::move(plan); }
-    initialize();
+    if (!initialize()) { return nullptr; }
     for (const auto& recipe : logical.recipes) {
         const auto slot = recipe.kind == EndpointKind::Set ? recipe.source : recipe.target;
         for (const auto& alternative : body.slots[slot].alternatives) { endpoint(recipe, alternative); }
@@ -202,12 +197,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBalancedCompactInsertion(
         error = "balanced endpoint preparation has a stale body, incompatible slot word or enclosing invocation";
         return failure();
     }
-    auto loop = body.loop;
-    auto lower = constant(loop.getLowerBound()), step = constant(loop.getStep());
-    const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
-    if (!lower || *lower < 0 || !step || *step <= 0 || !loop.getInductionVar().getType().isIndex() ||
-        bits.isScalable() || bits.getFixedValue() != 64) {
-        error = "balanced endpoint arithmetic needs 64-bit index and nonnegative fixed lower/positive fixed step";
+    const auto domain = CountedLoop::get(body.loop);
+    if (!domain) {
+        error = "balanced endpoint arithmetic needs a represented 64-bit counted domain";
         return failure();
     }
     auto logical = buildLogicalEndpoints(analysis);
@@ -218,8 +210,11 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBalancedCompactInsertion(
             return failure();
         }
     }
-    auto plan = Preparer(body, logical, planId).run();
-    if (!plan) { error = "balanced slot cuts do not exhaustively partition original branches"; return failure(); }
+    auto plan = Preparer(body, logical, *domain, planId).run();
+    if (!plan) {
+        error = "balanced slot cuts or counted coordinates are unavailable at original cuts";
+        return failure();
+    }
     return std::move(plan);
 }
 } // namespace mlir::pto::frontiersynch
