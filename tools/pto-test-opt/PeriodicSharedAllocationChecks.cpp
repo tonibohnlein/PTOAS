@@ -125,6 +125,17 @@ bool exhaustive(uint64_t& checked)
     }
     return true;
 }
+bool directedNamespaces()
+{
+    Matrix weights{{uint64_t(4), std::nullopt}, {std::nullopt, uint64_t(2)}};
+    auto separate = fs::allocateDirectedPeriodic(weights, {{1, 2}, {2, 1}});
+    auto same = fs::allocateDirectedPeriodic(weights, {{1, 2}, {1, 2}});
+    if (separate.status != Status::Success || same.status != Status::Success || separate.budget != 4 || same.budget != 6 ||
+        separate.phases[0].laneBegin != 0 || separate.phases[1].laneBegin != 0) { return false; }
+    // Cross-direction edges cannot establish reuse of one notification state.
+    weights[0][1] = 0; weights[1][0] = 1;
+    return fs::allocateDirectedPeriodic(weights, {{1, 2}, {2, 1}}).budget == 4;
+}
 bool boundaries()
 {
     const auto absent = std::nullopt;
@@ -156,7 +167,7 @@ bool boundaries()
 int runPeriodicSharedAllocationChecks()
 {
     uint64_t checked = 0;
-    if (!exhaustive(checked) || !boundaries()) {
+    if (!exhaustive(checked) || !boundaries() || !directedNamespaces()) {
         llvm::errs() << "periodic shared allocation checks failed\n";
         return 1;
     }

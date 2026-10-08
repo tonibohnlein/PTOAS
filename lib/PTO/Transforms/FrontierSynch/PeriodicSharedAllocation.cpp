@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/PeriodicSharedAllocation.h"
 #include "llvm/ADT/DynamicAPInt.h"
 #include <utility>
+#include <map>
 
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -162,6 +163,40 @@ PeriodicSharedAllocation allocatePeriodicShared(const PeriodicReuseMatrix& weigh
         if (!seen[start] && !appendCycle(weights, *next, start, seen, result)) {
             return fail(Status::Overflow, "minimum periodic cycle-cover budget exceeds uint64 representation");
         }
+    }
+    return result;
+}
+PeriodicSharedAllocation allocateDirectedPeriodic(const PeriodicReuseMatrix& weights,
+    const std::vector<std::pair<uint32_t, uint32_t>>& directions)
+{
+    if (weights.size() != directions.size() || weights.size() >= UINT32_MAX) {
+        return fail(Status::InvalidInput, "directed periodic phase dimensions disagree");
+    }
+    for (const auto& row : weights) {
+        if (row.size() != weights.size()) { return fail(Status::InvalidInput, "directed reuse matrix must be square"); }
+    }
+    std::map<std::pair<uint32_t, uint32_t>, std::vector<uint32_t>> groups;
+    for (uint32_t i = 0; i < directions.size(); ++i) { groups[directions[i]].push_back(i); }
+    PeriodicSharedAllocation result;
+    result.phases.resize(weights.size());
+    for (const auto& group : groups) {
+        const auto& indices = group.second;
+        PeriodicReuseMatrix part(indices.size(), std::vector<std::optional<uint64_t>>(indices.size()));
+        for (std::size_t i = 0; i < indices.size(); ++i) {
+            for (std::size_t j = 0; j < indices.size(); ++j) { part[i][j] = weights[indices[i]][indices[j]]; }
+        }
+        auto assigned = allocatePeriodicShared(part);
+        if (assigned.status != Status::Success) { return assigned; }
+        const auto firstCycle = result.cycles.size();
+        for (auto cycle : assigned.cycles) {
+            cycle.firstPhase = indices[cycle.firstPhase]; result.cycles.push_back(cycle);
+        }
+        for (std::size_t i = 0; i < indices.size(); ++i) {
+            auto phase = assigned.phases[i];
+            phase.successor = indices[phase.successor]; phase.cycle += static_cast<uint32_t>(firstCycle);
+            result.phases[indices[i]] = phase;
+        }
+        result.budget = std::max(result.budget, assigned.budget);
     }
     return result;
 }

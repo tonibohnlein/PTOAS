@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Greedy shared-pool walk, followed when necessary by an exact chain partition.
 #include "PTO/Transforms/FrontierSynch/SharedHandoffAllocation.h"
+#include "llvm/ADT/STLExtras.h"
+#include <map>
 #include <algorithm>
 #include <functional>
 #include <queue>
@@ -175,5 +177,76 @@ SharedHandoffAllocation allocateSharedHandoffsByQuery(
     SharedHandoffAllocation invalid;
     if (!prepare(edges, order, invalid.error)) { return invalid; }
     return minimum(edges, order);
+}
+namespace {
+using Directions = std::map<std::pair<uint32_t, uint32_t>, std::vector<uint32_t>>;
+Directions directionGroups(llvm::ArrayRef<SharedHandoff> handoffs)
+{
+    Directions groups;
+    for (uint32_t i = 0; i < handoffs.size(); ++i) {
+        groups[{handoffs[i].sourcePipe, handoffs[i].targetPipe}].push_back(i);
+    }
+    return groups;
+}
+void mergeDirection(SharedHandoffAllocation& output, const SharedHandoffAllocation& part,
+                    const std::vector<uint32_t>& indices)
+{
+    output.budget = std::max(output.budget, part.budget);
+    output.exactMinimum &= part.exactMinimum;
+    for (std::size_t i = 0; i < indices.size(); ++i) { output.lanes[indices[i]] = part.lanes[i]; }
+}
+} // namespace
+SharedHandoffAllocation allocateDirectedHandoffs(
+    llvm::ArrayRef<SharedHandoff> handoffs, llvm::ArrayRef<std::vector<uint32_t>> successors, uint64_t capacity)
+{
+    SharedHandoffAllocation result;
+    if (handoffs.size() >= UINT32_MAX || handoffs.size() != successors.size()) {
+        result.error = "directed handoff dimensions are invalid"; return result;
+    }
+    for (const auto& row : successors) {
+        if (llvm::any_of(row, [&](uint32_t id) { return id >= handoffs.size(); })) {
+            result.error = "directed handoff successor is out of range"; return result;
+        }
+    }
+    result.lanes.resize(handoffs.size()); result.exactMinimum = true;
+    for (const auto& group : directionGroups(handoffs)) {
+        const auto& direction = group.first;
+        const auto& indices = group.second;
+        std::map<uint32_t, uint32_t> local;
+        for (uint32_t i = 0; i < indices.size(); ++i) { local[indices[i]] = i; }
+        Edges edges(indices.size());
+        for (std::size_t i = 0; i < indices.size(); ++i) {
+            for (auto next : successors[indices[i]]) {
+                auto found = local.find(next);
+                if (found != local.end()) { edges[i].push_back(found->second); }
+            }
+        }
+        std::vector<SharedHandoff> part(indices.size(), {direction.first, direction.second});
+        auto assigned = allocateSharedHandoffs(part, edges, capacity);
+        if (!assigned.error.empty()) { return assigned; }
+        mergeDirection(result, assigned, indices);
+    }
+    return result;
+}
+SharedHandoffAllocation allocateDirectedHandoffsByQuery(
+    llvm::ArrayRef<SharedHandoff> handoffs,
+    const std::function<bool(uint32_t, uint32_t)>& precedes, uint64_t capacity)
+{
+    SharedHandoffAllocation result;
+    if (handoffs.size() >= UINT32_MAX || !precedes) {
+        result.error = "directed handoff query is missing or unrepresentable"; return result;
+    }
+    result.lanes.resize(handoffs.size()); result.exactMinimum = true;
+    for (const auto& group : directionGroups(handoffs)) {
+        const auto& direction = group.first;
+        const auto& indices = group.second;
+        std::vector<SharedHandoff> part(indices.size(), {direction.first, direction.second});
+        auto assigned = allocateSharedHandoffsByQuery(part, [&](uint32_t from, uint32_t to) {
+            return precedes(indices[from], indices[to]);
+        }, capacity);
+        if (!assigned.error.empty()) { return assigned; }
+        mergeDirection(result, assigned, indices);
+    }
+    return result;
 }
 } // namespace mlir::pto::frontiersynch

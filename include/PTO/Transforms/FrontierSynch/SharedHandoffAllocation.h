@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// One outstanding notification per numeric ID, shared across all directions.
+// Chain-cover engine and hardware adapter for direction-qualified event IDs.
 #ifndef PTO_FRONTIERSYNCH_SHAREDHANDOFFALLOCATION_H
 #define PTO_FRONTIERSYNCH_SHAREDHANDOFFALLOCATION_H
 #include "llvm/ADT/ArrayRef.h"
@@ -19,7 +19,7 @@ struct SharedHandoff {
 };
 struct SharedHandoffAllocation {
     std::string error;
-    std::vector<uint32_t> lanes; // Input handoff index -> dense global lane index.
+    std::vector<uint32_t> lanes; // Input handoff index -> lane index (local to direction for hardware adapters).
     uint64_t budget = 0;
     bool exactMinimum = false;
 };
@@ -44,6 +44,14 @@ SharedHandoffAllocation allocateSharedHandoffs(
 // words. On failure only, materialize the forward relation, validate it, and
 // compute the exact minimum by matching. An empty callback is rejected.
 SharedHandoffAllocation allocateSharedHandoffsByQuery(
+    llvm::ArrayRef<SharedHandoff> handoffs,
+    const std::function<bool(uint32_t, uint32_t)>& precedes, uint64_t capacity);
+// Hardware adapter: each directed pipe pair has its own eligible-ID namespace.
+// Lanes are local to a direction, and budget is the maximum direction budget.
+// Cross-direction causal edges do not constrain numeric-ID reuse.
+SharedHandoffAllocation allocateDirectedHandoffs(
+    llvm::ArrayRef<SharedHandoff> handoffs, llvm::ArrayRef<std::vector<uint32_t>> successors, uint64_t capacity);
+SharedHandoffAllocation allocateDirectedHandoffsByQuery(
     llvm::ArrayRef<SharedHandoff> handoffs,
     const std::function<bool(uint32_t, uint32_t)>& precedes, uint64_t capacity);
 } // namespace mlir::pto::frontiersynch

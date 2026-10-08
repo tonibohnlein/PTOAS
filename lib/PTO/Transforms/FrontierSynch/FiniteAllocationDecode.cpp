@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Decode finite shared-pool evidence without changing the logical plan.
+// Decode finite reuse evidence independently for each directed pipe pair.
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/SharedHandoffAllocation.h"
 #include "PTO/IR/PTO.h"
@@ -89,25 +89,30 @@ FailureOr<PhysicalAllocationPlan> decodeFiniteAllocation(
     }
     SharedHandoffAllocation allocation;
     if (ranked) {
-        allocation = allocateSharedHandoffsByQuery(handoffs, [&](uint32_t from, uint32_t to) {
+        allocation = allocateDirectedHandoffsByQuery(handoffs, [&](uint32_t from, uint32_t to) {
             const auto& a = ranks[from]; const auto& b = ranks[to];
             return handoffs[from].targetPipe == handoffs[to].sourcePipe ? a.target <= b.source :
                 evidence[to][a.targetColumn] >= a.targetRank;
         }, eligibleIds.size());
         if (!allocation.error.empty()) { return function.emitError(allocation.error), failure(); }
     } else if (exact) {
-        allocation = allocateSharedHandoffs(handoffs, evidence, eligibleIds.size());
+        allocation = allocateDirectedHandoffs(handoffs, evidence, eligibleIds.size());
         if (!allocation.error.empty()) { return function.emitError(allocation.error), failure(); }
     } else {
         // Mutually exclusive guards can permit sharing without one uniform
         // orientation. This is sufficient coloring, not a minimum-width claim.
-        for (const auto& row : evidence) {
+        for (std::size_t i = 0; i < evidence.size(); ++i) {
             SmallVector<bool> used(eligibleIds.size(), false);
-            for (auto prior : row) { used[allocation.lanes[prior]] = true; }
+            for (auto prior : evidence[i]) {
+                if (handoffs[prior].sourcePipe == handoffs[i].sourcePipe &&
+                    handoffs[prior].targetPipe == handoffs[i].targetPipe) {
+                    used[allocation.lanes[prior]] = true;
+                }
+            }
             uint32_t color = 0;
             while (color < used.size() && used[color]) { ++color; }
             if (color == used.size()) {
-                return function.emitError("finite guarded assignment not certified within shared capacity; "
+                return function.emitError("finite guarded assignment not certified within directed capacity; "
                     "no minimum-capacity claim; scarcity repair not implemented yet"), failure();
             }
             allocation.lanes.push_back(color);
@@ -116,7 +121,7 @@ FailureOr<PhysicalAllocationPlan> decodeFiniteAllocation(
     }
     if (allocation.budget > eligibleIds.size()) {
         return function.emitError("fixed finite handoff plan requires ") << allocation.budget <<
-            " shared event IDs, only " << eligibleIds.size() <<
+            " event IDs in one direction, only " << eligibleIds.size() <<
             " available; scarcity repair not implemented yet", failure();
     }
     PhysicalAllocationPlan result;

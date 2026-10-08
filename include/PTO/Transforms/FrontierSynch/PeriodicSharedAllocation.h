@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace mlir::pto::frontiersynch {
 using PeriodicReuseMatrix = std::vector<std::vector<std::optional<uint64_t>>>;
@@ -50,5 +51,9 @@ struct PeriodicSharedAllocation {
 // NoFiniteCover is distinct from a valid cover exceeding uint64 representation.
 // Failed results contain no partial assignment. Empty input succeeds at budget 0.
 PeriodicSharedAllocation allocatePeriodicShared(const PeriodicReuseMatrix& weights);
+// Hardware adapter. Solve each directed pipe pair independently; lane ranges
+// may overlap across directions. Budget is the largest per-direction budget.
+PeriodicSharedAllocation allocateDirectedPeriodic(const PeriodicReuseMatrix& weights,
+    const std::vector<std::pair<uint32_t, uint32_t>>& directions);
 } // namespace mlir::pto::frontiersynch
 #endif

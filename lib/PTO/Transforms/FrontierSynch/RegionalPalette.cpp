@@ -31,8 +31,8 @@ std::shared_ptr<RegionalAllocationSummary> coalesceRegionalAllocation(
                 (member.tupleRule && !validPhysicalTupleRule(*member.tupleRule, group.budget))) { return {}; }
         }
     }
-    // Preserve dynamic lane mappings and mixed cycles. Constant formulas can
-    // still share across directions using pairwise command-lifetime proofs.
+    // Preserve dynamic lane mappings. Split mixed constant groups by direction;
+    // only same-direction lifetimes need a proof for numeric-ID sharing.
     if (llvm::any_of(groups, [&](const auto& group) {
         return !group.lanes.empty() || llvm::any_of(group.members, [&](const auto& member) {
             return regionalAllocationDirection(group, member) != std::make_pair(group.sourcePipe, group.targetPipe);

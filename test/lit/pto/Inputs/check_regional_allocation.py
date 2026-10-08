@@ -62,17 +62,18 @@ def main():
         args = ["--mlir-disable-threading", "--pto-frontier-allocate=eligible-ids=0,3,5"]
         physical = invoke(opt, args, path)
         assert physical.returncode == 0, physical.stderr
-        assert "pto.logical_" not in physical.stdout and physical.stdout.count("scf.for") == 1
+        loops = sum(line.strip().startswith("scf.for") for line in physical.stdout.splitlines())
+        assert "pto.logical_" not in physical.stdout and loops == 1
         # Reject malformed palette references before changing logical IR.
         for old, new in [('version = 2 : i64', 'version = 1 : i64'),
                          ('budget = 2 : i64', 'budget = 0 : i64'),
                          ('conflicts = array<i64>', 'conflicts = array<i64: 999999>'),
                          ('phases = array<i64: 0>', 'phases = array<i64: -1>'),
-                         ('strides = array<i64: 1, 1>', 'strides = array<i64: -1, 1>'),
-                         ('strides = array<i64: 1, 1>', 'strides = array<i64>'),
+                         ('strides = array<i64: 1>', 'strides = array<i64: -1>'),
+                         ('strides = array<i64: 1>', 'strides = array<i64>'),
                          ('local = 1 : i64', 'local = 0 : i64'),
                          ('successors = array<i64>', 'successors = array<i64: 999999>'),
-                         ('sources = array<i64: 3, 2>', 'sources = array<i64: 3>')]:
+                         ('sources = array<i64: 2>', 'sources = array<i64: 2, 3>')]:
             assert old in logical.stdout, old
             path.write_text(logical.stdout.replace(old, new, 1))
             broken = invoke(opt, args, path)
