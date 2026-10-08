@@ -9,6 +9,9 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_COMPACTWRITERREADERINPUTINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/CompactWriterReaderInput.h"
 namespace mlir::pto::frontiersynch::detail {
+// Shared cross-visit test: unknown geometry overlaps; only established uniform
+// numeric separation can discharge a pair. Invalid/missing records are conservative.
+bool compactEffectsMayMeet(const SyncStorageEffects& model, std::size_t a, std::size_t b);
 // Caller supplies the structurally proved fixed slot sequence: each slot has
 // exactly one executed alternative, all with its common pipe. Every original
 // phase in the loop belongs to exactly one slot. This is a shared extraction

@@ -47,11 +47,12 @@ if needed for machine safety, is recorded separately from class rejection.
 
 Milestone 1 has passed two independent reviews, focused validation, and the
 complete paired corpus comparison. This milestone is complete; Section 6
-implementation continues with milestone 6. Milestone 1 is committed as
+implementation continues with milestone 7. Milestone 1 is committed as
 `3890123bb`; milestone 2 has passed validation and two independent reviews.
 Milestone 2 is committed as `b0d71f7a5`.
 Milestone 3 is committed as `ad83e6c2d`.
 Milestone 4 is committed as `a5d5af0db`.
+Milestone 5 is committed as `a213bf6ae`.
 The previous six completed milestones are recorded in
 `section5-recognizer-update.md`.
 
@@ -265,3 +266,51 @@ regression helper used a stale record layout; rebuilding all affected dependents
 resolved it. The changed-code check's 68 brace findings were independently
 confirmed as braced bodies; whitespace checks passed. Production fallback
 registration and multiple-cut physical allocation remain milestone 8.
+
+## Milestone 6 implementation
+
+Mixed composition builds separate lower and upper sequence graphs from the same
+occurrence context, retaining sign-specific access specifications, original
+requirement owners and typed child records. Supplied crossings are reduced
+jointly with the generated ones. Reclosure reconstructs original native value
+links before clearing their temporary numerical representation. Empty children
+retain the native links that skip them. Missing exports preserve original
+mathematical snapshots.
+
+Compact upper class summaries retain every access site's first and last
+occurrences and complete original effect unions. They do not treat a may-write
+as a kill. A generic collector compares classes through their shared effects
+and generates last-source to first-target crossings for every interacting
+ordered child pair. Finite siblings and already composed schemas use the same
+consumer; classes remain local to their immutable owners. Native-only lower
+crossings and exact finite child facts remain separate. Public physical-byte
+storage capabilities are not fabricated by this class-schema adapter.
+The cost charges child-pair/access-pair comparisons, tested effect-union
+products, and the shared structured-protection prepass separately.
+
+The finite replacement producer captures the original explicit scan itself,
+proves equality with all original requirements of one group, and applies the
+qualified revision before merging identities. It retains new typed record
+definitions, other groups, fixed prerequisites, and original ownership. Unknown
+proofs retain the old selection. A revised exact group's original closure
+queries remain valid by the concrete equality certificate.
+
+The numerical boundary counter counts prefix/suffix rectangle unions, including
+uncertainty propagated through exact crossings. It also supplies the compressed
+binary chain-index route and supports hierarchical accumulation. Qualified
+fixed-body graph snapshots now produce exact pipe counts and rank selectors
+without unfolding iterations; their construction cost is charged separately.
+Arbitrary regional rank synthesis remains a supplied-interface obligation.
+
+Selected-order excess does not include additional order introduced by local
+barrier placement. Composition records when placement may strengthen its order;
+weaker selected-order reuse proofs remain sound, but the selected excess cannot
+be reported as actual-plan excess in that case.
+
+All subsets and integration passed two independent static reviews. Serial
+compilation and tool links passed. Independent checks passed 69,984 composition
+event pairs, 128 finite boundary graph bounds, 256 finite replacement cases,
+rectangle and hierarchy cases, large-count arithmetic, compact rank oracles,
+and mixed finite/compact alias, unknown, disjoint and scalar-protected fixtures.
+The common fixed/conditional input regressions passed. The changed-code check's
+101 brace findings were confirmed as braced bodies; whitespace checks passed.

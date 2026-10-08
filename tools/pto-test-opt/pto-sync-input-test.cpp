@@ -355,10 +355,18 @@ int runCompactOrderBoundsChecks(func::FuncOp function, const pto::SyncInput& inp
 int runBalancedCompactBodyChecks(func::FuncOp function, const pto::SyncInput& input);
 int runGuardedCompactMatchingChecks(func::FuncOp function, const pto::SyncInput& input);
 int runConditionalCompactInputChecks(func::FuncOp function, const pto::SyncInput& input);
+int runBoundaryExcessChecks();
+int runBoundingSequenceChecks(func::FuncOp function, const pto::SyncInput& input);
+int runCompactStorageBoundaryChecks(func::FuncOp function, const pto::SyncInput& input);
+int runCompactBoundaryRanksChecks(func::FuncOp function, const pto::SyncInput& input);
+int runFiniteRequirementReplacementChecks(func::FuncOp function, const pto::SyncInput& input);
 int runPeriodicSharedAllocationChecks();
 bool runRepeatedReadOnlyStorageChecks(MLIRContext*);
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
 int main(int argc, char **argv) {
+  if (argc == 2 && StringRef(argv[1]) == "--boundary-excess-checks") {
+    return runBoundaryExcessChecks();
+  }
   if (argc == 2 && StringRef(argv[1]) == "--compact-lower-facts-checks") {
     return runCompactLowerFactsChecks();
   }
@@ -465,6 +473,11 @@ int main(int argc, char **argv) {
   const bool hierarchyChecks = argc == 3 && StringRef(argv[1]) == "--numerical-hierarchy-checks";
   const bool boundingChecks = argc == 3 && StringRef(argv[1]) == "--bounding-contract-checks";
   const bool compactInputChecks = argc == 3 && StringRef(argv[1]) == "--compact-input-checks";
+  const bool compactBoundaryRanksChecks = argc == 3 && StringRef(argv[1]) == "--compact-boundary-ranks-checks";
+  const bool compactStorageBoundaryChecks = argc == 3 &&
+      StringRef(argv[1]) == "--compact-storage-boundary-checks";
+  const bool boundingSequenceChecks = argc == 3 && StringRef(argv[1]) == "--bounding-sequence-checks";
+  const bool finiteReplacementChecks = argc == 3 && StringRef(argv[1]) == "--finite-replacement-checks";
   const bool conditionalCompactChecks = argc == 3 && StringRef(argv[1]) == "--conditional-compact-input-checks";
   const bool balancedCompactChecks = argc == 3 && StringRef(argv[1]) == "--balanced-compact-checks";
   const bool guardedCompactChecks = argc == 3 && StringRef(argv[1]) == "--guarded-compact-checks";
@@ -478,7 +491,8 @@ int main(int argc, char **argv) {
       !numericAnalysis && !insertLogical &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
       !expressionChecks && !hierarchyChecks && !boundingChecks && !compactInputChecks && !compactBoundsChecks &&
-      !balancedCompactChecks && !guardedCompactChecks && !conditionalCompactChecks &&
+      !balancedCompactChecks && !guardedCompactChecks && !conditionalCompactChecks && !finiteReplacementChecks &&
+      !boundingSequenceChecks && !compactStorageBoundaryChecks && !compactBoundaryRanksChecks &&
       !preparedInsertion && !finiteOverlayInsertion &&
       !expectFailure && !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip &&
       !regionChecks && !phaseCopies && !step0 && !existing) {
@@ -490,7 +504,8 @@ int main(int argc, char **argv) {
                  "--structured-trace|--physical-trace|--numerical-hierarchy-checks|--bounding-contract-checks|"
                  "--compact-input-checks|"
                  "--compact-order-bounds-checks|--balanced-compact-checks|--guarded-compact-checks|"
-                 "--conditional-compact-input-checks|"
+                 "--conditional-compact-input-checks|--finite-replacement-checks|--bounding-sequence-checks|"
+                 "--compact-storage-boundary-checks|--compact-boundary-ranks-checks|"
                  "--arithmetic|--explicit-analysis|--rotating-analysis|--roundtrip|"
                  "--region-contract-checks|"
                  "--step0-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
@@ -510,7 +525,8 @@ int main(int argc, char **argv) {
                          structuredTrace || sequenceAnalysis || finiteGuardedAnalysis || finiteOverlayInsertion ||
                          expressionChecks || hierarchyChecks || boundingChecks || compactInputChecks ||
                          compactBoundsChecks || balancedCompactChecks || guardedCompactChecks ||
-                         conditionalCompactChecks ||
+                         conditionalCompactChecks || finiteReplacementChecks || boundingSequenceChecks ||
+                         compactStorageBoundaryChecks || compactBoundaryRanksChecks ||
                          preparedInsertion || arithmetic ||
                          aliasChecks || roundtrip || regionChecks || phaseCopies || step0 || existing;
   const auto filename = argv[hasOption ? 2 : 1];
@@ -684,6 +700,22 @@ int main(int argc, char **argv) {
     }
     if (compactInputChecks) {
       if (runCompactWriterReaderInputChecks(function, input)) { return 1; }
+      continue;
+    }
+    if (compactBoundaryRanksChecks) {
+      if (runCompactBoundaryRanksChecks(function, input)) { return 1; }
+      continue;
+    }
+    if (compactStorageBoundaryChecks) {
+      if (runCompactStorageBoundaryChecks(function, input)) { return 1; }
+      continue;
+    }
+    if (boundingSequenceChecks) {
+      if (runBoundingSequenceChecks(function, input)) { return 1; }
+      continue;
+    }
+    if (finiteReplacementChecks) {
+      if (runFiniteRequirementReplacementChecks(function, input)) { return 1; }
       continue;
     }
     if (conditionalCompactChecks) {
