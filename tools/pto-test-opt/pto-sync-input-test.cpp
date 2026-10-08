@@ -339,6 +339,7 @@ int runNumericalWeightedRepetitionChecks();
 int runNumericalRepeatedSquaringChecks();
 bool runFiniteVisitChecks(MLIRContext*);
 int runFiniteVisitInputChecks(func::FuncOp);
+int runRotatingRegionChecks(func::FuncOp);
 int runLifetimeStreamChecks();
 int runArithmeticPeriodicConversionChecks();
 int runArithmeticPeriodicInputChecks(func::FuncOp, const pto::SyncInput&);
@@ -494,6 +495,7 @@ int main(int argc, char **argv) {
   const bool storageEffects = argc == 3 && StringRef(argv[1]) == "--storage-effects";
   const bool rotatingAnalysis = argc == 3 && StringRef(argv[1]) == "--rotating-analysis";
   const bool explicitAnalysis = argc == 3 && StringRef(argv[1]) == "--explicit-analysis";
+  const bool rotatingRegionChecks = argc == 3 && StringRef(argv[1]) == "--rotating-region-checks";
   const bool finiteVisitInput = argc == 3 && StringRef(argv[1]) == "--finite-visit-input-checks";
   const bool arithmeticPeriodicInput = argc == 3 && StringRef(argv[1]) == "--arithmetic-periodic-input-checks";
   const bool arithmetic = argc == 3 && StringRef(argv[1]) == "--arithmetic";
@@ -528,7 +530,8 @@ int main(int argc, char **argv) {
   if (argc != 2 && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !recognition &&
       !numericAnalysis && !insertLogical &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
-      !finiteVisitInput && !arithmeticPeriodicInput && !expressionChecks && !hierarchyChecks && !boundingChecks &&
+      !rotatingRegionChecks && !finiteVisitInput && !arithmeticPeriodicInput &&
+      !expressionChecks && !hierarchyChecks && !boundingChecks &&
       !compactInputChecks && !compactBoundsChecks &&
       !balancedCompactChecks && !guardedCompactChecks && !conditionalCompactChecks && !finiteReplacementChecks &&
       !boundingSequenceChecks && !compactStorageBoundaryChecks && !compactBoundaryRanksChecks &&
@@ -576,7 +579,8 @@ int main(int argc, char **argv) {
                          compactStorageBoundaryChecks || compactBoundaryRanksChecks ||
                          boundingRepetitionChecks || compactClassRepetitionChecks || compactBoundingPipelineChecks ||
                          compactBoundingAllocationChecks ||
-                         preparedInsertion || arithmetic || arithmeticPeriodicInput || finiteVisitInput ||
+                         preparedInsertion || arithmetic || arithmeticPeriodicInput ||
+                         finiteVisitInput || rotatingRegionChecks ||
                          aliasChecks || roundtrip || regionChecks || phaseCopies || step0 || existing;
   const auto filename = argv[hasOption ? 2 : 1];
   auto module = parseSourceFile<ModuleOp>(filename, &context);
@@ -612,6 +616,12 @@ int main(int argc, char **argv) {
   if (sequenceAnalysis) {
     for (auto function : module->getOps<func::FuncOp>()) {
       if (failed(runSequenceAnalysisChecks(function, policy))) { return 1; }
+    }
+    return 0;
+  }
+  if (rotatingRegionChecks) {
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (runRotatingRegionChecks(function)) { return 1; }
     }
     return 0;
   }

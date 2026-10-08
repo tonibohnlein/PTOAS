@@ -148,6 +148,8 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/ClosedCallees.cpp
   FrontierSynch/FrontierAnalysis.cpp
   FrontierSynch/RegionalEvents.cpp
+  FrontierSynch/RotatingRegion.cpp
+  FrontierSynch/RotatingRegionRecognition.cpp
   FrontierSynch/RepeatedRegion.cpp
   FrontierSynch/RepeatedStorage.cpp
   FrontierSynch/RepeatedStorageGeometry.cpp

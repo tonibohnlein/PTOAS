@@ -217,6 +217,20 @@ std::optional<RegionalStorageSelectors> RepeatedStorage::selectors(RegionalByteA
     }
     return finish(*state, result) ? std::optional<RegionalStorageSelectors>(std::move(result)) : std::nullopt;
 }
+std::optional<RegionalStorageSelectors> RepeatedStorage::projectedSelectors(RegionalByteAddress address) const
+{
+    if (!validAddress(*state, address)) { return std::nullopt; }
+    RegionalStorageSelectors result;
+    for (std::size_t id = 0; id < state->families.size(); ++id) {
+        auto owned = lookupOwner(*state, id, address);
+        if (!owned) { return std::nullopt; }
+        if (state->expressions().constantValue(owned->present) == uint64_t(0)) { continue; }
+        for (const auto& piece : state->families[id].pieces) {
+            if (!appendPiece(result, piece, *owned, state->families[id], *state)) { return std::nullopt; }
+        }
+    }
+    return finish(*state, result) ? std::optional<RegionalStorageSelectors>(std::move(result)) : std::nullopt;
+}
 std::shared_ptr<const RegionalSymbolicStorageCertificate> RepeatedStorage::certificate() const
 {
     auto result = std::make_shared<RegionalSymbolicStorageCertificate>();

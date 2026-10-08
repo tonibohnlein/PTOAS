@@ -569,6 +569,29 @@ bool runRepeatedStorageChecks(MLIRContext* context)
     for (uint64_t trips = 0; trips < 4; ++trips) {
         if (!check(body, loop, function, trips)) { return false; }
     }
+    // A separately proved persistent bank profile must be compared against
+    // the entire owned reservation, while projected selectors exclude it.
+    const auto persistentEffect = body.accessBoundary.back().effect;
+    fs::RepeatedPersistentStorage persistent{{pto::AddressSpace::GM, 0, 64, function.getArgument(1)},
+        {persistentEffect}, true};
+    auto projected = fs::recognizeRepeatedStorageWithPersistent(body, loop,
+        body.expressions->constant(3), {persistent});
+    if (!projected.storage) { llvm::errs() << projected.error << "\n"; return false; }
+    auto present = projected.storage->projectedSelectors({pto::AddressSpace::GM, function.getArgument(0),
+        body.expressions->constant(0)});
+    auto absent = projected.storage->projectedSelectors({pto::AddressSpace::GM, function.getArgument(1),
+        body.expressions->constant(0)});
+    if (!present || !absent || present->firstWriters.empty() || !absent->firstReaders.empty() ||
+        !absent->lastReaders.empty()) { return false; }
+    auto aliasesPersistent = body;
+    aliasesPersistent.gmAliasPolicy = pto::GMAliasPolicy::MayAlias;
+    if (fs::recognizeRepeatedStorageWithPersistent(aliasesPersistent, loop,
+        body.expressions->constant(3), {persistent}).storage) { return false; }
+    // Full profile reservations, not the first canonical bank, govern safety.
+    persistent.reservation.base = function.getArgument(0);
+    persistent.reservation.begin = 32; persistent.reservation.end = 68;
+    if (fs::recognizeRepeatedStorageWithPersistent(body, loop,
+        body.expressions->constant(4), {persistent}).storage) { return false; }
     auto missing = body; missing.accessBoundary.erase(missing.accessBoundary.begin());
     if (fs::recognizeRepeatedStorage(missing, loop, body.expressions->constant(2)).storage) { return false; }
     auto aliases = body; aliases.gmAliasPolicy = pto::GMAliasPolicy::MayAlias;

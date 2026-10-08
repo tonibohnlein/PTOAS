@@ -318,6 +318,18 @@ bool separation(State& state)
                 state.families[j].spec.kind == RepeatedStorageKind::SharedReadOnly) { continue; }
             if (!separated(state, family, state.families[j])) { return false; }
         }
+        for (const auto& profile : state.persistent) {
+            if (family.spec.kind == RepeatedStorageKind::SharedReadOnly && profile.readOnly) { continue; }
+            const auto& cell = profile.reservation;
+            State::Family persistent;
+            persistent.spec.space = cell.space;
+            persistent.spec.kind = RepeatedStorageKind::SharedReadOnly;
+            persistent.spec.origin.base = cell.base;
+            persistent.spec.origin.byteOffset = getAffineConstantExpr(cell.begin, state.loop.getContext());
+            persistent.extent = cell.end - cell.begin;
+            if (persistent.extent) { persistent.pieces.emplace_back(); }
+            if (!separated(state, family, persistent)) { return false; }
+        }
         for (const auto& cell : state.body.storageBoundary) {
             if (family.spec.kind == RepeatedStorageKind::SharedReadOnly &&
                 cell.firstWriters.empty() && cell.lastWriters.empty()) { continue; }
@@ -430,7 +442,9 @@ bool completeEffects(const State& state, const llvm::DenseSet<std::size_t>& assi
             auto found = llvm::find_if(state.body.accessBoundary,
                 [id](const auto& access) { return access.effect == id; });
             if (found == state.body.accessBoundary.end()) { return false; }
-            if (assigned.count(id)) { continue; }
+            if (assigned.count(id) || llvm::any_of(state.persistent, [id](const auto& profile) {
+                    return llvm::is_contained(profile.effects, id);
+                })) { continue; }
             const auto& effect = state.body.accessModel->effects()[id];
             if (!invariantEffect(effect, state.loop)) {
                 if (!found->representedByCells || !phaseIndex || phasePeriod <= 1 || effect.regions.empty()) {
@@ -443,6 +457,9 @@ bool completeEffects(const State& state, const llvm::DenseSet<std::size_t>& assi
                     })) { return false; }
             }
             if (found->representedByCells) { continue; }
+            // The projected selector API exports classified residual families
+            // only. An unclassified invariant access cannot silently disappear.
+            if (!state.persistent.empty()) { return false; }
             for (auto owned : assigned) {
                 if (state.body.accessModel->mayOverlap(id, owned)) { return false; }
             }
@@ -451,9 +468,9 @@ bool completeEffects(const State& state, const llvm::DenseSet<std::size_t>& assi
     return true;
 }
 } // namespace
-RepeatedStorageResult buildRepeatedStorage(const RegionalAnalysis& body, scf::ForOp loop,
+static RepeatedStorageResult buildStorage(const RegionalAnalysis& body, scf::ForOp loop,
     RegionExpressions::Id trips, ArrayRef<RepeatedStorageFamily> families,
-    const PhaseIndex* phaseIndex, uint64_t phasePeriod)
+    const PhaseIndex* phaseIndex, uint64_t phasePeriod, ArrayRef<RepeatedPersistentStorage> persistent)
 {
     RepeatedStorageResult result;
     if (!phasePeriod || phasePeriod > maxRegionalSlotVisits || !loop || !body.expressions || !body.accessModel ||
@@ -468,14 +485,36 @@ RepeatedStorageResult buildRepeatedStorage(const RegionalAnalysis& body, scf::Fo
     }
     auto state = std::make_shared<State>();
     state->body = body; state->loop = loop; state->trips = trips;
+    state->persistent.assign(persistent.begin(), persistent.end());
+    llvm::DenseSet<std::size_t> persistentIds;
+    for (const auto& profile : persistent) {
+        if (profile.reservation.begin >= profile.reservation.end || profile.reservation.end > INT64_MAX ||
+            profile.effects.empty()) {
+            result.error = "persistent storage profile has invalid reservation or effect identity"; return result;
+        }
+        for (auto id : profile.effects) {
+            if (id >= body.accessModel->effects().size() || !persistentIds.insert(id).second ||
+                llvm::none_of(body.anchors, [&](const auto& anchor) {
+                    return anchor.phase == body.accessModel->effects()[id].phase;
+                }) ||
+                !body.accessModel->effects()[id].memory ||
+                body.accessModel->effects()[id].memory->scope != profile.reservation.space ||
+                (profile.readOnly && body.accessModel->effects()[id].mode == SyncAccessMode::Write)) {
+                result.error = "persistent storage profile has invalid reservation or effect identity"; return result;
+            }
+        }
+    }
     llvm::DenseSet<std::size_t> assigned;
     for (const auto& family : families) {
-        if (!addFamily(*state, family, assigned)) {
+        if (llvm::any_of(family.effects, [&](auto id) { return persistentIds.count(id); }) ||
+            !addFamily(*state, family, assigned)) {
             result.error = "evolving storage lacks complete invariant local byte maps or effect selectors";
             return result;
         }
     }
-    if (llvm::any_of(body.symbolicStorageEffects, [&](std::size_t id) { return !assigned.count(id); }) ||
+    if (llvm::any_of(body.symbolicStorageEffects, [&](std::size_t id) {
+            return !assigned.count(id) && !persistentIds.count(id);
+        }) ||
         !completeEffects(*state, assigned, phaseIndex, phasePeriod)) {
         result.error = "evolving storage has an unexported effect or an unclassified overlapping residual access";
         return result;
@@ -486,6 +525,18 @@ RepeatedStorageResult buildRepeatedStorage(const RegionalAnalysis& body, scf::Fo
     }
     result.storage = std::make_shared<RepeatedStorage>(std::move(state));
     return result;
+}
+RepeatedStorageResult buildRepeatedStorage(const RegionalAnalysis& body, scf::ForOp loop,
+    RegionExpressions::Id trips, ArrayRef<RepeatedStorageFamily> families,
+    const PhaseIndex* phaseIndex, uint64_t phasePeriod)
+{
+    return buildStorage(body, loop, trips, families, phaseIndex, phasePeriod, {});
+}
+RepeatedStorageResult buildRepeatedStorageWithPersistent(const RegionalAnalysis& body, scf::ForOp loop,
+    RegionExpressions::Id trips, ArrayRef<RepeatedStorageFamily> families,
+    ArrayRef<RepeatedPersistentStorage> persistent)
+{
+    return buildStorage(body, loop, trips, families, nullptr, 1, persistent);
 }
 RepeatedStorageTypesResult recognizeRepeatedStorageTypes(ArrayRef<RegionalAnalysis> bodies,
     scf::ForOp loop, RegionExpressions::Id trips, const PhaseIndex* phaseIndex, uint64_t phasePeriod)

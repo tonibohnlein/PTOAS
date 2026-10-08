@@ -29,6 +29,7 @@ struct RepeatedStorage::State {
     scf::ForOp loop;
     Id trips = RegionExpressions::invalid;
     std::vector<Family> families;
+    std::vector<RepeatedPersistentStorage> persistent;
     std::vector<std::size_t> effectIds;
     std::string error;
     RegionExpressions& expressions() const { return *body.expressions; }

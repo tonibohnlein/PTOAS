@@ -53,6 +53,7 @@ struct RepeatedRegionState {
     std::string error;
     RegionExpressions& e() { return *body.expressions; }
     bool buildBoundary();
+    bool buildNativeBoundary();
     bool closePorts();
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare(ArrayRef<scf::ForOp> enclosing);
     std::optional<Id> query(RegionalEvent source, RegionalEvent target);

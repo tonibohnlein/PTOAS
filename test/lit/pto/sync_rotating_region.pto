@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --rotating-region-checks %s
+// RUN: %python %S/Inputs/check_rotating_region.py pto-sync-input-test %s
+// Two independent operand rings surround a compact inner computation. Every
+// accessed written cell is refreshed even when the inner loop has zero trips.
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+!right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+!left_ring = !pto.multi_tile_buf<!pto.tile_buf<left, 16x16xf16, slayout=row_major>, count=3>
+!right_ring = !pto.multi_tile_buf<!pto.tile_buf<right, 16x16xf16, slayout=col_major>, count=5>
+module attributes {pto.target_arch = "a3"} {
+  func.func @rotating_region(%n: index, %m: index) attributes {test.trace_arguments = array<i64: 2, 3>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %three = arith.constant 3 : index
+    %five = arith.constant 5 : index
+    %stride = arith.constant 1 : index
+    %offset = arith.constant 0 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left_ring = pto.alloc_multi_tile addr = %base : !left_ring
+    %right_ring = pto.alloc_multi_tile addr = %base : !right_ring
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %visit = %zero to %n step %one {
+      %scaled = arith.muli %visit, %stride : index
+      %shifted = arith.addi %scaled, %offset : index
+      %left_slot = arith.remui %shifted, %three : index
+      %right_slot = arith.remui %visit, %five : index
+      %left = pto.multi_tile_get %left_ring[%left_slot] : !left_ring -> !left
+      %right = pto.multi_tile_get %right_ring[%right_slot] : !right_ring -> !right
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%right : !right)
+      pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+      scf.for %inner = %zero to %m step %one {
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+      }
+    }
+    return
+  }
+}
