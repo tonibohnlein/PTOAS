@@ -47,6 +47,13 @@ bool execute(Block& block, const fs::PhaseIndex& index, const fs::RegionalAnalys
             values.erase(loop.getInductionVar()); visits.erase(loop);
             continue;
         }
+        if (auto branch = dyn_cast<scf::IfOp>(operation)) {
+            const auto condition = scalar(branch.getCondition(), values);
+            if (!condition) { return false; }
+            auto& arm = *condition ? branch.getThenRegion() : branch.getElseRegion();
+            if (!arm.empty() && !execute(arm.front(), index, region, values, visits, word)) { return false; }
+            continue;
+        }
         for (auto* phase : index.phasesFor(&operation)) {
             uint32_t type = 0;
             while (type < region.anchors.size() && region.anchors[type].phase != phase) { ++type; }
@@ -112,41 +119,46 @@ bool verify(func::FuncOp function, scf::ForOp outer, const pto::SyncInput& input
 {
     const auto& bounds = result.boundary->bounds();
     const auto& region = bounds.upper->regional();
-    for (int64_t outerCount : {0, 1, 2}) {
-        for (int64_t innerCount : {0, 1, 3}) {
-            DenseMap<Value, int64_t> values;
-            for (auto argument : function.getArguments()) { values[argument] = innerCount; }
-            values[function.getArgument(0)] = outerCount;
-            DenseMap<Operation*, uint64_t> visits;
-            std::vector<Executed> word;
-            // Enumerate only this test's small outer prefix, with original loop
-            // indices mapped independently into the exported tuple metadata.
-            for (int64_t visit = 0; visit < outerCount; ++visit) {
-                values[outer.getInductionVar()] = visit; visits[outer] = visit;
-                if (!execute(*outer.getBody(), index, region, values, visits, word)) { return false; }
-            }
-            values.erase(outer.getInductionVar());
-            const auto expected = original(word, input);
-            for (std::size_t a = 0; a < word.size(); ++a) {
-                for (std::size_t b = 0; b < word.size(); ++b) {
-                    auto source = word[a].event, target = word[b].event;
-                    source.kind = Kind::Completion; target.kind = Kind::Start;
-                    const auto upper = query(*bounds.upper, source, target, values);
-                    const auto lower = query(*bounds.lower, source, target, values);
-                    if (!upper || !lower || (*lower && !expected[2*a+1][2*b]) ||
-                        (expected[2*a+1][2*b] && !*upper)) { return false; }
+    const bool guarded = llvm::any_of(function.getArgumentTypes(), [](Type type) { return type.isInteger(1); });
+    for (int64_t flag = 0; flag < (guarded ? 2 : 1); ++flag) {
+        for (int64_t outerCount : {0, 1, 2}) {
+            for (int64_t innerCount : {0, 1, 3}) {
+                DenseMap<Value, int64_t> values;
+                for (auto argument : function.getArguments()) {
+                    values[argument] = argument.getType().isInteger(1) ? flag : innerCount;
                 }
+                values[function.getArgument(0)] = outerCount;
+                DenseMap<Operation*, uint64_t> visits;
+                std::vector<Executed> word;
+                // Enumerate only this test's small outer prefix, with original loop
+                // indices mapped independently into the exported tuple metadata.
+                for (int64_t visit = 0; visit < outerCount; ++visit) {
+                    values[outer.getInductionVar()] = visit; visits[outer] = visit;
+                    if (!execute(*outer.getBody(), index, region, values, visits, word)) { return false; }
+                }
+                values.erase(outer.getInductionVar());
+                const auto expected = original(word, input);
+                for (std::size_t a = 0; a < word.size(); ++a) {
+                    for (std::size_t b = 0; b < word.size(); ++b) {
+                        auto source = word[a].event, target = word[b].event;
+                        source.kind = Kind::Completion; target.kind = Kind::Start;
+                        const auto upper = query(*bounds.upper, source, target, values);
+                        const auto lower = query(*bounds.lower, source, target, values);
+                        if (!upper || !lower || (*lower && !expected[2*a+1][2*b]) ||
+                            (expected[2*a+1][2*b] && !*upper)) { return false; }
+                    }
+                }
+                // The unrelated final V payload need not finish before the next
+                // invocation's first scalar reader: the actual last writer releases it.
+                if (function->hasAttr("test.repeat_early") && outerCount == 2 && innerCount > 0) {
+                    const auto half = word.size() / 2;
+                    auto source = word[half - 1].event, target = word[half].event;
+                    source.kind = Kind::Completion; target.kind = Kind::Start;
+                    auto early = query(*bounds.upper, source, target, values);
+                    if (!early || *early) { return false; }
+                }
+                ++cases;
             }
-            // The unrelated final V payload need not finish before the next
-            // invocation's first scalar reader: the actual last writer releases it.
-            if (function->hasAttr("test.repeat_early") && outerCount == 2 && innerCount > 0) {
-                const auto half = word.size() / 2;
-                auto source = word[half - 1].event, target = word[half].event;
-                source.kind = Kind::Completion; target.kind = Kind::Start;
-                auto early = query(*bounds.upper, source, target, values);
-                if (!early || *early) { return false; }
-            }
-            ++cases;
         }
     }
     return true;

@@ -81,7 +81,10 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
             if (auto divisor = PhaseNormalization::modulus(operation->getResult(0))) { addPeriod(*divisor); }
         }
     });
-    if (!nested || !uniformControl) {
+    if (!nested) {
+        return unavailable("no nested body");
+    }
+    if (!uniformControl) {
         return unavailable("nested bounds must be invariant across outer visits");
     }
     std::string sliceError;
