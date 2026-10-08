@@ -116,33 +116,42 @@ std::optional<PhysicalRotation> physicalRotation(const SyncStorageEffect& effect
         return std::nullopt;
     }
     const uint64_t bytes = found->second.front()->allocateSize;
-    int64_t base = 0, stride = 1;
+    int64_t base = 0, stride = 0;
     AffineBinaryOpExpr modulo(nullptr);
-    SmallVector<AffineExpr> terms{origin->byteOffset};
+    // Keep modulo subexpressions as atoms while distributing constant scales.
+    // General affine simplification can rewrite mod into floor divisions and
+    // hide the rotation. Shared geometry already establishes integer semantics.
+    SmallVector<std::pair<AffineExpr, int64_t>> terms{{origin->byteOffset, 1}};
     while (!terms.empty()) {
-        auto expression = terms.pop_back_val();
+        auto [expression, scale] = terms.pop_back_val();
+        if (scale == 0) { continue; }
         if (auto number = dyn_cast<AffineConstantExpr>(expression)) {
-            if (llvm::AddOverflow(base, number.getValue(), base)) { return std::nullopt; }
+            int64_t contribution;
+            if (llvm::MulOverflow(scale, number.getValue(), contribution) ||
+                llvm::AddOverflow(base, contribution, base)) { return std::nullopt; }
             continue;
         }
         auto binary = dyn_cast<AffineBinaryOpExpr>(expression);
-        if (binary && binary.getKind() == AffineExprKind::Add) {
-            terms.push_back(binary.getLHS());
-            terms.push_back(binary.getRHS());
+        if (!binary) { return std::nullopt; }
+        if (binary.getKind() == AffineExprKind::Add) {
+            terms.push_back({binary.getLHS(), scale});
+            terms.push_back({binary.getRHS(), scale});
             continue;
         }
-        if (modulo) { return std::nullopt; }
-        if (binary && binary.getKind() == AffineExprKind::Mul) {
+        if (binary.getKind() == AffineExprKind::Mul) {
             auto factor = dyn_cast<AffineConstantExpr>(binary.getRHS());
-            if (!factor || factor.getValue() <= 0) { return std::nullopt; }
-            stride = factor.getValue();
-            binary = dyn_cast<AffineBinaryOpExpr>(binary.getLHS());
+            int64_t product;
+            if (!factor || llvm::MulOverflow(scale, factor.getValue(), product)) { return std::nullopt; }
+            terms.push_back({binary.getLHS(), product});
+            continue;
         }
-        if (!binary || binary.getKind() != AffineExprKind::Mod) { return std::nullopt; }
+        if (binary.getKind() != AffineExprKind::Mod || (modulo && modulo != binary) ||
+            llvm::AddOverflow(stride, scale, stride)) { return std::nullopt; }
         modulo = binary;
     }
     auto modulus = modulo ? dyn_cast<AffineConstantExpr>(modulo.getRHS()) : AffineConstantExpr{};
-    if (!modulus || modulus.getValue() <= 0 || base < 0 || !bytes || bytes > static_cast<uint64_t>(stride)) {
+    if (!modulus || modulus.getValue() <= 0 || base < 0 || stride <= 0 ||
+        !bytes || bytes > static_cast<uint64_t>(stride)) {
         return std::nullopt;
     }
     const uint64_t count = modulus.getValue();

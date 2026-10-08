@@ -11,6 +11,7 @@
 !ring3 = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=3>
 !partial = !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 !gap = !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=2, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!prefill_tile = !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=128, v_row=1, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 module {
   func.func @parameter_rotation(%n: index, %offset: index) {
     %zero = arith.constant 0 : i64
@@ -128,7 +129,8 @@ module {
     %one = arith.constant 1.0 : f32
     %ring = pto.alloc_multi_tile addr = %zero : !ring3
     scf.for %i = %i0 to %n step %i1 {
-      %sum = arith.addi %i, %i1 : index
+      // iv+1 cannot overflow on this loop domain; iv+4 can.
+      %sum = arith.addi %i, %i4 : index
       %slot = arith.remui %sum, %i3 : index
       %tile = pto.multi_tile_get %ring[%slot] : !ring3 -> !tile
       %v = pto.tgetval ins(%tile, %i0 : !tile, index) outs : f32
@@ -177,4 +179,29 @@ module {
     }
     return
   }
+  // Reduced from causal_conv1d_prefill: the same bank address is written as
+  // (bank*4 + 1)*256 and bank*1024 + 256. Both denote one slot family.
+  func.func @factored_physical_rotation(%n: index) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %four = arith.constant 4 : index
+    %bytes = arith.constant 256 : index
+    %stride = arith.constant 1024 : index
+    scf.for %i = %zero to %n step %one {
+      %bank = arith.remui %i, %two : index
+      %scaled = arith.muli %bank, %four : index
+      %slot = arith.addi %scaled, %one : index
+      %factored = arith.muli %slot, %bytes : index
+      %factored64 = arith.index_cast %factored : index to i64
+      %left = pto.alloc_tile addr = %factored64 : !prefill_tile
+      %shift = arith.muli %bank, %stride : index
+      %flat = arith.addi %shift, %bytes : index
+      %flat64 = arith.index_cast %flat : index to i64
+      %right = pto.alloc_tile addr = %flat64 : !prefill_tile
+      pto.tmov ins(%left : !prefill_tile) outs(%right : !prefill_tile)
+    }
+    return
+  }
+
 }

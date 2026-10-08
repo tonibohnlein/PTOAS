@@ -27,7 +27,7 @@ def main():
                          text=True, timeout=45)
     blocks = {block.splitlines()[0]: block for block in
               re.split(r"^recognition ", run.stdout, flags=re.MULTILINE)[1:]}
-    assert len(blocks) == 10
+    assert len(blocks) == 11
     state, text = route(blocks["parameter_rotation"], "guarded-rotating")
     assert state == "applicable", text
     assert "parameters=1" in text and "stride=1" in text and "atom=[0,4)" in text, text
@@ -46,7 +46,9 @@ def main():
         assert state != "applicable", (name, text)
         assert "issue slot-expression" in text or "issue index-arithmetic" in text, (name, text)
     state, text = route(blocks["yielded_payload_result"], "finite-guarded")
-    assert state == "missing-premise" and "issue additional-prerequisite" in text, text
+    # Scalar result use follows native scalar order. Recognition is independent
+    # of whether the later guard can be emitted at a particular endpoint.
+    assert state == "applicable" and "entry-guards=late" in text, text
     for name, expected in {
         "partial_overlap_ranges": [(0, 64, 1, 1, 0), (64, 128, 2, 1, 1), (128, 192, 1, 0, 1)],
         "gap_ranges": [(0, 32, 1, 1, 0), (64, 96, 2, 1, 1), (128, 160, 1, 0, 1)],
@@ -56,6 +58,10 @@ def main():
         atoms = re.findall(r"atom=\[(\d+),(\d+)\).*?effects=(\d+) reads=(\d+) writes=(\d+)", text)
         actual = sorted(tuple(map(int, atom)) for atom in atoms)
         assert actual == expected, (name, actual, text)
+    state, text = route(blocks["factored_physical_rotation"], "rotating")
+    assert state == "applicable", text
+    assert "slots=2 stride=1 offset=0" in text and "atom=[0,256)" in text, text
+    assert "effects=2 reads=1 writes=1" in text, text
     print("extended rotation: parameter offset, guard recipe, four rejections, exact gaps and yielded prerequisites")
 
 
