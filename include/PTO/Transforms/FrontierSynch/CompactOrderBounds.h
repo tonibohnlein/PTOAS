@@ -14,19 +14,25 @@
 namespace mlir::pto::frontiersynch {
 // Only the factory can establish this fixed, all-sites-present occurrence frame.
 // The arena/context are owned. Original loop, phases and SyncInput are borrowed
-// unchanged, as in OrderContext. One invocation has no enclosing visit tuple;
-// enclosing loops require a future composition adapter with outer coordinates.
+// unchanged, as in OrderContext. Root factories reject enclosing loops. The
+// explicitly scoped factory instead captures one named body invocation; a
+// qualified repetition adapter must supply outer coordinates before reuse.
 class CompactFixedBodyContext {
 public:
     const OrderContext& context() const { return owner; }
     llvm::ArrayRef<PeriodicPayload> payloads() const { return word; }
     RegionExpressions::Id trips() const { return count; }
+    Block* invocationBlock() const { return invocation; }
 private:
     CompactFixedBodyContext(OrderContext context, std::vector<PeriodicPayload> payloads,
-                            RegionExpressions::Id trips);
+                            RegionExpressions::Id trips, Block* invocation);
     OrderContext owner;
     std::vector<PeriodicPayload> word;
     RegionExpressions::Id count;
+    Block* invocation; // Relative one-invocation frame; never an omitted outer ordinal.
+    friend std::shared_ptr<const CompactFixedBodyContext> captureCompactSlotContextInBlock(
+        scf::ForOp, Block&, const SyncInput&, const PhaseIndex&, std::shared_ptr<RegionExpressions>,
+        RegionExpressions::Id, std::string&);
     friend std::shared_ptr<const CompactFixedBodyContext> captureBalancedCompactFixedBodyContext(
         scf::ForOp, const SyncInput&, const PhaseIndex&, std::shared_ptr<RegionExpressions>,
         RegionExpressions::Id, std::string&);
@@ -52,6 +58,14 @@ std::shared_ptr<const CompactFixedBodyContext> captureCompactFixedBodyContext(
 // upper/lower/native facts must hold for EVERY alternative in the same slot.
 std::shared_ptr<const CompactFixedBodyContext> captureBalancedCompactFixedBodyContext(
     scf::ForOp loop, const SyncInput& input, const PhaseIndex& index,
+    std::shared_ptr<RegionExpressions> arena, RegionExpressions::Id exactTrips, std::string& error);
+
+// Capture one invocation of a loop directly inside an explicitly named body
+// block. Relative occurrences deliberately have no coordinates outside that
+// block. This does NOT certify reuse across invocations: a repetition producer
+// must prove uniform counts/presence/query/native assumptions before lifting.
+std::shared_ptr<const CompactFixedBodyContext> captureCompactSlotContextInBlock(
+    scf::ForOp loop, Block& invocation, const SyncInput& input, const PhaseIndex& index,
     std::shared_ptr<RegionExpressions> arena, RegionExpressions::Id exactTrips, std::string& error);
 
 struct CompactOrderBounds {

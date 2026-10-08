@@ -232,6 +232,7 @@ std::optional<RepeatedRegionState::Id> RepeatedRegionState::relativeQuery(
 std::optional<RepeatedRegionState::Id> RepeatedRegionState::acrossQuery(
     const RegionalEvent& source, const RegionalEvent& target, Id gap)
 {
+    if (weightedAcross) { return weightedAcross(source, target, gap); }
     auto across = e().boolean(false);
     if (e().constantValue(gap) == 1) {
         // Reference-forward paths between adjacent visits cross their boundary

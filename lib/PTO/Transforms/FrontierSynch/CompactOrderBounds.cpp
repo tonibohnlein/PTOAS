@@ -53,14 +53,24 @@ struct CapturedSlotDomain {
 };
 std::optional<CapturedSlotDomain> captureSlots(scf::ForOp loop, const SyncInput& input,
     llvm::ArrayRef<std::vector<const CompoundInstanceElement*>> slots,
-    const std::shared_ptr<RegionExpressions>& arena, Expr exactTrips, std::string& error)
+    const std::shared_ptr<RegionExpressions>& arena, Expr exactTrips, std::string& error,
+    Block* invocation = nullptr)
 {
     if (!loop || !arena || !arena->constructionError().empty() || exactTrips >= arena->size() ||
         arena->isBoolean(exactTrips) || slots.size() > UINT32_MAX) {
         error = "compact fixed context requires an original loop, valid arena and exact integer trip circuit";
         return std::nullopt;
     }
+    auto function = loop->getParentOfType<func::FuncOp>();
+    if (!function || function.isExternal() || function.getBody().empty()) {
+        error = "compact fixed context requires a loop in a defined function";
+        return std::nullopt;
+    }
+    if (invocation && loop->getBlock() != invocation) {
+        error = "compact loop is outside its relative invocation block"; return std::nullopt;
+    }
     for (auto* parent = loop->getParentOp(); parent; parent = parent->getParentOp()) {
+        if (invocation && parent == invocation->getParentOp()) { break; }
         if (isa<LoopLikeOpInterface>(parent)) {
             error = "compact query export needs an enclosing-visit coordinate adapter";
             return std::nullopt;
@@ -123,8 +133,8 @@ std::optional<CapturedSlotDomain> captureSlots(scf::ForOp loop, const SyncInput&
 }
 } // namespace
 CompactFixedBodyContext::CompactFixedBodyContext(OrderContext context, std::vector<PeriodicPayload> payloads,
-                                                 Expr trips)
-    : owner(std::move(context)), word(std::move(payloads)), count(trips) {}
+                                                 Expr trips, Block* invocation)
+    : owner(std::move(context)), word(std::move(payloads)), count(trips), invocation(invocation) {}
 std::shared_ptr<const CompactFixedBodyContext> captureCompactFixedBodyContext(
     scf::ForOp loop, const SyncInput& input, const PhaseIndex& index,
     std::shared_ptr<RegionExpressions> arena, Expr exactTrips, std::string& error)
@@ -145,7 +155,8 @@ std::shared_ptr<const CompactFixedBodyContext> captureCompactFixedBodyContext(
     auto domain = captureSlots(loop, input, slots, arena, exactTrips, error);
     if (!domain) { return {}; }
     return std::shared_ptr<const CompactFixedBodyContext>(
-        new CompactFixedBodyContext(std::move(domain->context), std::move(domain->payloads), exactTrips));
+        new CompactFixedBodyContext(std::move(domain->context), std::move(domain->payloads), exactTrips,
+            &loop->getParentOfType<func::FuncOp>().front()));
 }
 std::shared_ptr<const CompactFixedBodyContext> captureBalancedCompactFixedBodyContext(
     scf::ForOp loop, const SyncInput& input, const PhaseIndex& index,
@@ -163,7 +174,30 @@ std::shared_ptr<const CompactFixedBodyContext> captureBalancedCompactFixedBodyCo
     auto domain = captureSlots(loop, input, slots, arena, exactTrips, error);
     if (!domain) { return {}; }
     return std::shared_ptr<const CompactFixedBodyContext>(
-        new CompactFixedBodyContext(std::move(domain->context), std::move(domain->payloads), exactTrips));
+        new CompactFixedBodyContext(std::move(domain->context), std::move(domain->payloads), exactTrips,
+            &loop->getParentOfType<func::FuncOp>().front()));
+}
+std::shared_ptr<const CompactFixedBodyContext> captureCompactSlotContextInBlock(
+    scf::ForOp loop, Block& invocation, const SyncInput& input, const PhaseIndex& index,
+    std::shared_ptr<RegionExpressions> arena, Expr exactTrips, std::string& error)
+{
+    error.clear();
+    if (!loop || loop->getBlock() != &invocation ||
+        !index.valueAvailable(loop.getLowerBound(), loop, Boundary::Before)) {
+        error = "compact scoped loop must be directly inside its invocation block"; return {};
+    }
+    auto body = recognizeBalancedCompactBody(loop, input, index);
+    if (!body.error.empty()) { error = body.error; return {}; }
+    std::vector<std::vector<const CompoundInstanceElement*>> slots;
+    for (const auto& slot : body.slots) {
+        std::vector<const CompoundInstanceElement*> alternatives;
+        for (const auto& alternative : slot.alternatives) { alternatives.push_back(alternative.phase); }
+        slots.push_back(std::move(alternatives));
+    }
+    auto domain = captureSlots(loop, input, slots, arena, exactTrips, error, &invocation);
+    if (!domain) { return {}; }
+    return std::shared_ptr<const CompactFixedBodyContext>(new CompactFixedBodyContext(
+        std::move(domain->context), std::move(domain->payloads), exactTrips, &invocation));
 }
 CompactOrderBounds buildCompactOrderBounds(std::shared_ptr<const CompactFixedBodyContext> domain,
     const CompactWriterReaderAnalysis& upper, const CompactLowerFacts& lower, uint64_t certificateTrips)
