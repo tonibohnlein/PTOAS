@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/DifferenceBoundRelations.h"
 #include "PTO/Transforms/FrontierSynch/IntegerRelations.h"
 #include <map>
+#include <memory>
 #include <vector>
 namespace mlir::pto::frontiersynch {
 struct ArithmeticEventKey {
@@ -58,6 +59,37 @@ struct TypedArithmeticDemandAnalysis {
 };
 using ArithmeticDemandAnalysis = TypedArithmeticDemandAnalysis<DifferenceBoundSystem>;
 using GeneralArithmeticDemandAnalysis = TypedArithmeticDemandAnalysis<IntegerSystem>;
+class StructuredProtection;
+// Paused exact generator construction. The original program/shared effects are
+// borrowed during creation; continuation uses only the imported relations.
+// Moving into completion consumes the stage, so fallback never regenerates its
+// accesses, projected conflicts or prerequisite relations.
+struct ArithmeticOccurrenceDomain {
+    std::size_t site = 0;
+    std::vector<uint64_t> residues, parameterResidues;
+    IntegerSystem system;
+};
+class GeneralArithmeticGeneratorStage {
+public:
+    GeneralArithmeticGeneratorStage();
+    ~GeneralArithmeticGeneratorStage();
+    GeneralArithmeticGeneratorStage(GeneralArithmeticGeneratorStage&&) noexcept;
+    GeneralArithmeticGeneratorStage& operator=(GeneralArithmeticGeneratorStage&&) noexcept;
+    GeneralArithmeticGeneratorStage(const GeneralArithmeticGeneratorStage&) = delete;
+    GeneralArithmeticGeneratorStage& operator=(const GeneralArithmeticGeneratorStage&) = delete;
+    const GeneralArithmeticDemandAnalysis& analysis() const;
+    bool belongsTo(const ArithmeticProgram& program) const;
+    const std::vector<ArithmeticOccurrenceDomain>& occurrences() const;
+private:
+    struct State;
+    std::unique_ptr<State> state;
+    friend GeneralArithmeticGeneratorStage analyzeGeneralArithmeticGenerators(
+        const ArithmeticProgram&, const StructuredProtection*);
+    friend GeneralArithmeticDemandAnalysis completeGeneralArithmeticDemands(GeneralArithmeticGeneratorStage&&);
+};
+GeneralArithmeticGeneratorStage analyzeGeneralArithmeticGenerators(
+    const ArithmeticProgram& program, const StructuredProtection* protection = nullptr);
+GeneralArithmeticDemandAnalysis completeGeneralArithmeticDemands(GeneralArithmeticGeneratorStage&& stage);
 // The DBM entry point accepts the difference-bound subclass. Input must supply
 // complete physical primitives and the core-native model. Every join retains
 // one parameter context and matches endpoint residue tuples exactly. No loop

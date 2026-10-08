@@ -34,6 +34,8 @@ public:
     unsigned dimensions() const { return dimensionCount; }
     const std::vector<IntegerConstraint>& constraints() const { return inequalities; }
     const std::vector<IntegerCongruence>& congruences() const { return divisibilities; }
+    // Representation/cache observation only; never invokes an emptiness solver.
+    bool isKnownEmpty() const { return contradiction || (emptyCache && *emptyCache); }
     bool isEmpty() const;
     FailureOr<IntegerSystem> intersect(const IntegerSystem& other) const;
     // Duplicates identify old coordinates; fresh coordinates are unconstrained.
