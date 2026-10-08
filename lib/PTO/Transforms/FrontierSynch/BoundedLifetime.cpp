@@ -178,6 +178,23 @@ RefreshCertificate certifyRotatingRefresh(
         result.error = "refresh presence list does not match payloads";
         return result;
     }
+    std::vector<uint8_t> coveredWriters;
+    for (const auto& fragment : fragments) {
+        if (fragment.payload >= unconditional.size()) {
+            result.error = "refresh fragment has no payload"; return result;
+        }
+        coveredWriters.push_back(fragment.write && unconditional[fragment.payload]);
+    }
+    return certifyRotatingRefreshCoverage(payloads, fragments, coveredWriters, prerequisiteSpan);
+}
+RefreshCertificate certifyRotatingRefreshCoverage(
+    llvm::ArrayRef<PeriodicPayload> payloads, llvm::ArrayRef<RotatingFragment> fragments,
+    llvm::ArrayRef<uint8_t> coveredWriters, uint64_t prerequisiteSpan)
+{
+    RefreshCertificate result;
+    if (coveredWriters.size() != fragments.size()) {
+        result.error = "refresh coverage list does not match fragments"; return result;
+    }
     auto normalized = extractRotatingGenerators(payloads, fragments);
     if (!normalized.error.empty()) {
         result.error = normalized.error;
@@ -186,7 +203,8 @@ RefreshCertificate certifyRotatingRefresh(
     using Orbit = std::tuple<uint32_t, uint32_t, uint64_t>;
     std::set<Orbit> writable, refreshed;
     result.span = prerequisiteSpan;
-    for (const auto& f : fragments) {
+    for (std::size_t i = 0; i < fragments.size(); ++i) {
+        const auto& f = fragments[i];
         if (f.protectionGroup) {
             result.error = "refresh certificate requires ordinary storage generators";
             return result;
@@ -197,14 +215,14 @@ RefreshCertificate certifyRotatingRefresh(
         const auto divisor = std::gcd(f.stride % f.slots, f.slots);
         Orbit orbit{f.family, f.atom, f.offset % divisor};
         writable.insert(orbit);
-        if (unconditional[f.payload]) {
+        if (coveredWriters[i]) {
             refreshed.insert(orbit);
             result.span = std::max(result.span, f.slots / divisor);
         }
     }
     for (const auto& orbit : writable) {
         if (!refreshed.count(orbit)) {
-            result.error = "a writable orbit has no unconditional refresh producer";
+            result.error = "a writable orbit has no collectively complete refresh map";
             return result;
         }
     }

@@ -807,7 +807,7 @@ FailureOr<RegionalAnalysis> composeArithmeticRegionalSequence(ArrayRef<RegionalA
         &RegionalCost::arithmeticRegions, &RegionalCost::boundaryBytes, &RegionalCost::selectorComparisons,
         &RegionalCost::crossingCandidates, &RegionalCost::implicationChecks, &RegionalCost::numericalLeafQueries,
         &RegionalCost::numericalIndexOperations, &RegionalCost::numericalMerges,
-        &RegionalCost::numericalReusedChildren}) {
+        &RegionalCost::numericalReusedChildren, &RegionalCost::retainedExpressionNodes}) {
         cost.*member = 0;
         for (const auto& child : children) {
             if (child.cost.*member > UINT64_MAX - cost.*member) {

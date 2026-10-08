@@ -852,6 +852,23 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         else if (succeeded(childPlan)) { regionScope &= !(**childPlan).completeInvocation; }
     }
     auto analysis = fs::analyzeSequence(function, input, *program);
+    uint64_t boundedRegions = 0, boundedRecords = 0;
+    bool boundedCacheStable = true;
+    for (const auto& node : program->nodes) {
+        if (!node.boundedDemands) { continue; }
+        ++boundedRegions; boundedRecords += node.boundedDemands->analysis.sourceDemands.size();
+        fs::PhaseIndex index;
+        if (failed(index.build(function, input))) { return failure(); }
+        std::string diagnostic;
+        auto again = fs::cachedBoundedLifetimeRegion(function, node, index, input, diagnostic);
+        boundedCacheStable &= succeeded(again) && *again == node.boundedDemands;
+        // A fresh modeled input cannot borrow another input's result, even
+        // when it describes the same unchanged original IR.
+        pto::SyncInput other(policy);
+        if (failed(other.build(function))) { return failure(); }
+        auto foreign = fs::cachedBoundedLifetimeRegion(function, node, index, other, diagnostic);
+        boundedCacheStable &= failed(foreign) && !diagnostic.empty();
+    }
     // Reuse this actual analysis: copied recognition objects must not inherit
     // evidence bound to the original program, even with identical node values.
     auto foreignProgram = *program;
@@ -894,6 +911,8 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
     function.print(current);
     llvm::outs() << llvm::json::Value(llvm::json::Object{
         {"function", function.getSymName()}, {"error", analysis.error},
+        {"bounded_cached_regions", boundedRegions}, {"bounded_cached_demands", boundedRecords},
+        {"bounded_cache_stable", boundedCacheStable},
         {"insertion_error", analysis.insertionError},
         {"prepared", succeeded(prepared)},
         {"nested_matching", succeeded(prepared) && (**prepared).nestedIdentities},
@@ -917,7 +936,7 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         {"crossing_candidates", analysis.cost.crossingCandidates},
         {"implication_checks", analysis.cost.implicationChecks},
         {"expressions", expressions ? expressions->size() : 0}, {"emitted", emitted}}) << "\n";
-    return success(before == after && regionScope && contractAudit);
+    return success(before == after && regionScope && contractAudit && boundedCacheStable);
 }
 
 LogicalResult runFiniteGuardedAnalysisChecks(func::FuncOp function, pto::GMAliasPolicy policy)

@@ -19,12 +19,14 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
     for (const auto& child : composer.children) {
         const auto& cost = child.regional.cost;
         if (cost.arithmeticRegions > UINT64_MAX - composer.costs.arithmeticRegions ||
-            cost.boundaryBytes > UINT64_MAX - composer.costs.boundaryBytes) {
+            cost.boundaryBytes > UINT64_MAX - composer.costs.boundaryBytes ||
+            cost.retainedExpressionNodes > UINT64_MAX - composer.costs.retainedExpressionNodes) {
             result.error = "regional arithmetic cost count exceeds representation";
             return result;
         }
         composer.costs.arithmeticRegions += cost.arithmeticRegions;
         composer.costs.boundaryBytes += cost.boundaryBytes;
+        composer.costs.retainedExpressionNodes += cost.retainedExpressionNodes;
         composer.costs.physicalFragments += cost.physicalFragments;
         composer.costs.rotatingResidues += cost.rotatingResidues;
         composer.costs.numericVisits += cost.numericVisits;
