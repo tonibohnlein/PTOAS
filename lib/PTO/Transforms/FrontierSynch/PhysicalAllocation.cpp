@@ -22,7 +22,7 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/Transforms/CSE.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include <algorithm>
@@ -31,6 +31,8 @@
 #include <memory>
 #include <tuple>
 #include <optional>
+#include <set>
+#include <unordered_map>
 namespace mlir::pto::frontiersynch {
 bool validPhysicalTupleRule(const PhysicalTupleRule& rule, uint64_t budget)
 {
@@ -54,6 +56,7 @@ struct Family {
     SmallVector<int64_t> originalRecords;
     int64_t sourcePipe = 0, targetPipe = 0;
     uint64_t displacement = 0;
+    SmallVector<int64_t> sourceChoices, targetChoices; // Invocation loop ID, then exact alternative cut IDs.
 };
 using Records = llvm::DenseMap<int64_t, const PhysicalRecordAllocation*>;
 using Families = std::map<int64_t, Family>;
@@ -82,6 +85,21 @@ std::optional<int64_t> number(DictionaryAttr dictionary, StringRef name)
     }
     return attr.getInt();
 }
+bool readChoices(DictionaryAttr item, StringRef name, int64_t primary, SmallVectorImpl<int64_t>& output)
+{
+    auto raw = item.get(name);
+    if (!raw) { return true; }
+    auto array = dyn_cast<DenseI64ArrayAttr>(raw);
+    if (!array) { return false; }
+    if (array.empty()) { return true; }
+    if (array.size() < 3 || array[0] < 0 || array[1] != primary) { return false; }
+    std::set<int64_t> cuts;
+    for (auto cut : array.asArrayRef().drop_front()) {
+        if (cut < 0 || !cuts.insert(cut).second) { return false; }
+    }
+    output.append(array.asArrayRef().begin(), array.asArrayRef().end());
+    return true;
+}
 LogicalResult readFamily(func::FuncOp function, DictionaryAttr item, const Records& records,
                          Families& families, llvm::DenseSet<int64_t>& seen, bool nested)
 {
@@ -101,6 +119,11 @@ LogicalResult readFamily(func::FuncOp function, DictionaryAttr item, const Recor
     family.sourcePipe = *source;
     family.targetPipe = *target;
     family.displacement = static_cast<uint64_t>(*displacement);
+    if (!readChoices(item, "source_choices", *sourceCut, family.sourceChoices) ||
+        !readChoices(item, "target_choices", *targetCut, family.targetChoices) ||
+        (local.getValue() && !family.sourceChoices.empty())) {
+        return function.emitError("malformed endpoint alternative cut partition");
+    }
     for (auto attr : members) {
         auto member = dyn_cast<DictionaryAttr>(attr);
         auto record = member ? number(member, "record") : std::nullopt;
@@ -202,7 +225,7 @@ struct Piece {
 };
 using Pieces = std::map<int64_t, Piece>;
 using Namespace = std::tuple<int64_t, int64_t, uint64_t>;
-using SideCounts = llvm::DenseMap<int64_t, std::array<unsigned, 3>>;
+using SideCuts = std::map<std::pair<int64_t, int64_t>, std::set<int64_t>>;
 FailureOr<Pieces> readPieces(func::FuncOp function, const Families& families)
 {
     std::map<int64_t, const Family*> owners;
@@ -224,7 +247,7 @@ FailureOr<Pieces> readPieces(func::FuncOp function, const Families& families)
         return function.emitError("endpoint-family metadata is missing executable pieces"), failure();
     }
     Pieces result;
-    SideCounts counts;
+    SideCuts coverage;
     for (auto attr : pieces) {
         auto item = dyn_cast<DictionaryAttr>(attr);
         if (!item) {
@@ -251,9 +274,12 @@ FailureOr<Pieces> readPieces(func::FuncOp function, const Families& families)
             }
             const auto& provenance = *owner->second;
             const bool local = provenance.sourcePipe == provenance.targetPipe;
+            const auto& choices = *kind == 0 ? provenance.sourceChoices : provenance.targetChoices;
             auto expectedCut = *kind == 0 ? provenance.sourceCut : provenance.targetCut;
+            const bool validCut = choices.empty() ? expectedCut == cut :
+                llvm::is_contained(ArrayRef<int64_t>(choices).drop_front(), *cut);
             if (Namespace{provenance.sourcePipe, provenance.targetPipe, provenance.displacement} != key ||
-                local != (*kind == 1) || expectedCut != cut || ++counts[record][*kind] != 1) {
+                local != (*kind == 1) || !validCut || !coverage[{record, *kind}].insert(*cut).second) {
                 return function.emitError("endpoint piece has repeated or inconsistent record coverage"), failure();
             }
             piece.records.push_back(record);
@@ -262,10 +288,13 @@ FailureOr<Pieces> readPieces(func::FuncOp function, const Families& families)
     }
     for (const auto& entry : owners) {
         const bool local = entry.second->sourcePipe == entry.second->targetPipe;
-        const std::array<unsigned, 3> expected = local ? std::array<unsigned, 3>{0, 1, 0} :
-            std::array<unsigned, 3>{1, 0, 1};
-        if (counts.lookup(entry.first) != expected) {
-            return function.emitError("endpoint pieces do not cover every original record endpoint"), failure();
+        for (int64_t kind = 0; kind < 3; ++kind) {
+            const auto& choices = kind == 0 ? entry.second->sourceChoices : entry.second->targetChoices;
+            const bool required = local ? kind == 1 : kind != 1;
+            const auto expected = required ? (choices.empty() ? 1U : choices.size() - 1) : 0U;
+            if (coverage[{entry.first, kind}].size() != expected) {
+                return function.emitError("endpoint pieces do not cover every original record endpoint"), failure();
+            }
         }
     }
     return result;
@@ -284,7 +313,9 @@ bool validRecordMember(Operation* op, const Piece& piece, bool nested)
         llvm::is_contained(piece.records, value.getSExtValue());
 }
 struct CoordinateProvenance {
-    llvm::DenseMap<int64_t, scf::ForOp> loops;
+    // Serialized nonnegative IDs can equal LLVM DenseMap sentinel values.
+    // Preserve the metadata namespace and reject unknown IDs with ordinary lookup.
+    std::map<int64_t, scf::ForOp> loops;
     std::map<int64_t, DictionaryAttr> members;
 };
 FailureOr<CoordinateProvenance> readCoordinates(func::FuncOp function)
@@ -340,7 +371,8 @@ LogicalResult prepareCoordinatePhase(Endpoint& endpoint, const CoordinateProvena
             if (!coordinate || coordinate.size() != 2 || coordinate[0] < 0) {
                 return before->emitError("endpoint-family coordinate requires a loop identity and induction value");
             }
-            auto loop = provenance.loops.lookup(coordinate[0]);
+            const auto found = provenance.loops.find(coordinate[0]);
+            auto loop = found == provenance.loops.end() ? scf::ForOp{} : found->second;
             if (!loop || !dominance.properlyDominates(loop.getInductionVar(), before)) {
                 return before->emitError("endpoint-family coordinate is unavailable at its command cut");
             }
@@ -384,12 +416,9 @@ FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const Ph
         return failure();
     }
     const bool nested = number(function->getAttrOfType<DictionaryAttr>("pto.endpoint_families"), "version") == 4;
-    std::optional<CoordinateProvenance> coordinates;
-    if (!nested) {
-        auto result = readCoordinates(function);
-        if (failed(result)) { return failure(); }
-        coordinates = std::move(*result);
-    }
+    auto coordinates = readCoordinates(function);
+    if (failed(coordinates)) { return failure(); }
+    std::map<std::pair<int64_t, int64_t>, SmallVector<Operation*>> actualChoices;
     std::map<int64_t, unsigned> coordinateCounts;
     DominanceInfo dominance(function);
     SmallVector<Endpoint> endpoints;
@@ -446,6 +475,7 @@ FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const Ph
                     return WalkResult::interrupt();
                 }
             }
+            actualChoices[{record, piece.kind}].push_back(op);
             endpoint.tupleMembers.push_back(member);
             endpoint.phases.push_back(member->phase % member->ids.size());
             endpoint.labels.push_back(static_cast<uint64_t>(record));
@@ -463,6 +493,22 @@ FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const Ph
     for (const auto& entry : *pieces) {
         if (entry.second.kind != 1 && !seen.contains(entry.first)) {
             return function.emitError("executable piece has no logical endpoint"), failure();
+        }
+    }
+    for (const auto& [id, family] : families) {
+        (void)id;
+        if (family.sourcePipe == family.targetPipe) { continue; }
+        for (int64_t kind : {0, 2}) {
+            const auto& choices = kind == 0 ? family.sourceChoices : family.targetChoices;
+            if (choices.empty()) { continue; }
+            const auto found = coordinates->loops.find(choices.front());
+            auto loop = found == coordinates->loops.end() ? scf::ForOp{} : found->second;
+            for (auto record : family.originalRecords) {
+                if (!validateEndpointCommandChoices(loop, actualChoices[{record, kind}])) {
+                    return function.emitError("endpoint alternatives do not partition original branch execution"),
+                        failure();
+                }
+            }
         }
     }
     return endpoints;
@@ -738,6 +784,44 @@ void emitAllocatedCommand(OpBuilder& builder, Operation* op, std::optional<int64
         }
     }
 }
+void compactGeneratedArithmetic(func::FuncOp function, const llvm::DenseSet<Operation*>& original,
+                                DominanceInfo& dominance)
+{
+    // Allocation owns only its new arithmetic. Whole-function CSE also deletes
+    // unused reads and merges original payloads, invalidating occurrence identities.
+    // Each block has its own hash directory; no branch or invocation is crossed.
+    // Expected work is linear in visited syntax and generated expression size,
+    // plus equivalence checks within hash-collision buckets; no trip expansion.
+    // Original pointer membership is tested without dereferencing erased commands.
+    function.walk([&](Operation* owner) {
+        for (auto& region : owner->getRegions()) {
+            for (auto& block : region) {
+                std::unordered_map<std::size_t, SmallVector<Operation*>> known;
+                for (auto& operation : llvm::make_early_inc_range(block)) {
+                    auto* op = &operation;
+                    if (original.contains(op) || op->getNumRegions() || !op->getNumResults() ||
+                        op->getName().getDialectNamespace() != "arith" || !isMemoryEffectFree(op) ||
+                        llvm::any_of(op->getUsers(), [&](Operation* user) { return original.contains(user); })) {
+                        continue;
+                    }
+                    const auto hash = static_cast<std::size_t>(OperationEquivalence::computeHash(op,
+                        OperationEquivalence::directHashValue, OperationEquivalence::ignoreHashValue,
+                        OperationEquivalence::IgnoreLocations));
+                    auto& candidates = known[hash];
+                    auto found = llvm::find_if(candidates, [&](Operation* previous) {
+                        return dominance.properlyDominates(previous, op) && OperationEquivalence::isEquivalentTo(
+                            previous, op, OperationEquivalence::IgnoreLocations);
+                    });
+                    if (found == candidates.end()) { candidates.push_back(op); }
+                    else {
+                        op->replaceAllUsesWith((*found)->getResults());
+                        op->erase();
+                    }
+                }
+            }
+        }
+    });
+}
 } // namespace
 LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> eligibleIds)
 {
@@ -772,6 +856,8 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
         return function.emitError("physical allocation requires 64-bit occurrence indices");
     }
     DominanceInfo dominance(function);
+    llvm::DenseSet<Operation*> original;
+    function.walk([&](Operation* operation) { original.insert(operation); });
     for (const auto& endpoint : *endpoints) {
         OpBuilder builder(endpoint.operation);
         auto branch = dyn_cast<scf::IfOp>(endpoint.operation->getParentOp());
@@ -812,6 +898,7 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
         // Command execution remains inside the original presence guard.
         builder.setInsertionPoint(endpoint.operation);
         emitAllocatedCommand(builder, endpoint.operation, staticId, eventId);
+        original.erase(endpoint.operation);
         endpoint.operation->erase();
     }
     function.walk([&](Operation* op) {
@@ -823,9 +910,8 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
     function->removeAttr("pto.endpoint_families");
     function->removeAttr(CyclicAllocationAttr);
     function->removeAttr(FiniteAllocationAttr);
-    IRRewriter rewriter(function.getContext());
-    if (!function->hasAttr(ActiveContextAttr)) {
-        eliminateCommonSubExpressions(rewriter, dominance, function);
+    if (!endpoints->empty() && !function->hasAttr(ActiveContextAttr)) {
+        compactGeneratedArithmetic(function, original, dominance);
     }
     return success();
 }

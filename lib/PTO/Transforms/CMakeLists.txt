@@ -253,6 +253,9 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/BoundingRepeatedQuery.cpp
   FrontierSynch/RepeatedExcess.cpp
   FrontierSynch/CompactClassRepetition.cpp
+  FrontierSynch/CompactBoundingInsertion.cpp
+  FrontierSynch/CompactBoundingAllocation.cpp
+  FrontierSynch/EndpointCutChoices.cpp
   FrontierSynch/RotatingBoundary.cpp
   FrontierSynch/RotatingExtraction.cpp
   FrontierSynch/ExplicitAnalysis.cpp

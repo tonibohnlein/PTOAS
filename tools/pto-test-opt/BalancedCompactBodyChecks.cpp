@@ -103,7 +103,8 @@ bool check(func::FuncOp function, const pto::SyncInput& input)
     auto prepared = fs::prepareBalancedCompactInsertion(function, body, analysis, 73, error);
     if (failed(prepared) || !error.empty() || render(function) != before ||
         (*prepared)->endpoints.size() != 4 * static_cast<uint64_t>(alternatives.getInt()) ||
-        !(*prepared)->families.empty() || (*prepared)->groupedFamilies) { return false; }
+        (*prepared)->families.size() != analysis.retained.size() || !(*prepared)->groupedFamilies ||
+        !(*prepared)->independentPieces) { return false; }
     std::vector<OriginalOperation> original;
     function.walk([&](Operation* operation) {
         if (operation != function) {
@@ -121,7 +122,11 @@ bool check(func::FuncOp function, const pto::SyncInput& input)
     }
     if (failed(fs::insertLogicalSynchronization(function, **prepared)) || failed(verify(function))) { return false; }
     for (const auto& saved : original) {
-        if (saved.operation->getBlock() != saved.block || saved.operation->getAttrDictionary() != saved.attributes ||
+        NamedAttrList actual(saved.operation->getAttrDictionary()), expected(saved.attributes);
+        // Serialization tags original loops; payload/control semantics stay unchanged.
+        actual.erase("pto.family_loop"); expected.erase("pto.family_loop");
+        if (saved.operation->getBlock() != saved.block ||
+            actual.getDictionary(function.getContext()) != expected.getDictionary(function.getContext()) ||
             !llvm::equal(saved.operation->getOperands(), saved.operands)) { return false; }
     }
     std::size_t traceId = 0;

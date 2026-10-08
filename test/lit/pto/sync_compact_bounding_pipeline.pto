@@ -1,0 +1,119 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --compact-bounding-pipeline-checks %s
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @readonly_balanced(%n: index) attributes {test.compact_direct, test.no_notifications} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %zero = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %c0 to %n step %c1 {
+      %r = arith.remui %i, %c2 : index
+      %even = arith.cmpi eq, %r, %c0 : index
+      scf.if %even {
+        %a = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32 {test.label = "R_then"}
+      } else {
+        %b = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32 {test.label = "R_else"}
+      }
+    }
+    return
+  }
+  func.func @unknown_address(%n: index, %address: i64) attributes {test.expect_compact_dispatch} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %address : !tile
+    scf.for %i = %c0 to %n step %c1 {
+      pto.texpands ins(%one : f32) outs(%tile : !tile) {test.label = "W"}
+      %v = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32 {test.label = "R"}
+    }
+    return
+  }
+  func.func @exact_route_priority(%n: index) attributes {test.exact_priority} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %c0 to %n step %c1 {
+      pto.texpands ins(%one : f32) outs(%tile : !tile) {test.label = "W"}
+      %v = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32 {test.label = "R"}
+    }
+    return
+  }
+  func.func @balanced_future_arms(%n: index) attributes {test.compact_direct} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %c0 to %n step %c1 {
+      %r = arith.remui %i, %c2 : index
+      %even = arith.cmpi eq, %r, %c0 : index
+      scf.if %even {
+        pto.texpands ins(%one : f32) outs(%tile : !tile) {test.label = "W_then"}
+        %a = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32 {test.label = "R_then"}
+      } else {
+        pto.texpands ins(%one : f32) outs(%tile : !tile) {test.label = "W_else"}
+        %b = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32 {test.label = "R_else"}
+      }
+    }
+    return
+  }
+  // Current uniform lane proof cannot establish symbolic guarded extrema equality.
+  // All logical/storage checks still apply; this is an export gap, not scarcity.
+  func.func @nested_uniform(%m: index, %n: index)
+      attributes {test.compact_direct, test.missing_allocation_export} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %c0 to %m step %c1 {
+      %before = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32 {test.label = "R_before"}
+      scf.for %j = %c0 to %n step %c1 {
+        pto.texpands ins(%one : f32) outs(%tile : !tile) {test.label = "W_inner"}
+        %inside = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32 {test.label = "R_inner"}
+      }
+    }
+    return
+  }
+  func.func @nested_numeric_inner(%m: index) attributes {test.compact_direct} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %c0 to %m step %c1 {
+      %before = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32 {test.label = "R_before"}
+      scf.for %j = %c0 to %c2 step %c1 {
+        pto.texpands ins(%one : f32) outs(%tile : !tile) {test.label = "W_inner"}
+        %inside = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32 {test.label = "R_inner"}
+      }
+    }
+    return
+  }
+  func.func @finite_loop_sequence(%n: index) attributes {test.compact_direct} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    pto.texpands ins(%one : f32) outs(%tile : !tile) {test.label = "W_entry"}
+    scf.for %i = %c0 to %n step %c1 {
+      %inside = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32 {test.label = "R_loop"}
+      pto.texpands ins(%one : f32) outs(%tile : !tile) {test.label = "W_loop"}
+    }
+    %after = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32 {test.label = "R_exit"}
+    return
+  }
+}

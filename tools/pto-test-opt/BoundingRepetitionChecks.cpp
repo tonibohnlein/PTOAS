@@ -199,7 +199,22 @@ bool checkWideDistances()
     edges.push_back({ports[3], ports[4], arena->boolean(true), false, 1});
     std::string error;
     auto query = fs::buildBoundingRepeatedQuery(body, ports, edges, error);
-    if (!query || !error.empty()) { return false; }
+    if (!query || !error.empty() || query->cost().bodyQueries || query->cost().relaxations) { return false; }
+    // Unit proofs must not initialize P^3 closure. Sibling snapshots reuse
+    // immutable body answers, but never each other's crossing-dependent result.
+    auto unit = query->across(ports[3], ports[4], arena->constant(1));
+    if (!unit || arena->constantValue(*unit) != 1 || query->cost().relaxations != edges.size() ||
+        !query->cost().bodyQueries) { return false; }
+    auto sibling = query->withCrossings(edges, error);
+    if (!sibling || !error.empty()) { return false; }
+    auto same = sibling->across(ports[3], ports[4], arena->constant(1));
+    if (!same || arena->constantValue(*same) != 1 || sibling->cost().bodyQueries) { return false; }
+    auto removed = edges; removed.back().guard = arena->boolean(false);
+    auto different = sibling->withCrossings(std::move(removed), error);
+    sibling.reset(); // Shared body memo ownership survives its originating query.
+    if (!different || !error.empty()) { return false; }
+    auto absent = different->across(ports[3], ports[4], arena->constant(1));
+    if (!absent || arena->constantValue(*absent) != 0 || different->cost().bodyQueries) { return false; }
     auto finite = query->distance(ports[1], ports[2]), huge = query->distance(ports[1], ports[4]);
     auto unreachable = query->distance(ports[5], ports[0]);
     auto yes = query->across(ports[1], ports[2], arena->constant(UINT64_MAX));

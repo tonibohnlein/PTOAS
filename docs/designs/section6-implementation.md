@@ -45,15 +45,18 @@ if needed for machine safety, is recorded separately from class rejection.
 
 ## Status
 
-Milestone 1 has passed two independent reviews, focused validation, and the
-complete paired corpus comparison. This milestone is complete; Section 6
-implementation continues with milestone 8. Milestone 1 is committed as
+All eight milestones are complete after focused validation and two independent
+reviews. Milestone 8 additionally passed the final pinned corpus campaign; it
+integrates bounding dispatch, logical insertion and allocation. Milestones 1–7
+are listed below; milestone 8 is the commit containing this final status.
+Milestone 1 is committed as
 `3890123bb`; milestone 2 has passed validation and two independent reviews.
 Milestone 2 is committed as `b0d71f7a5`.
 Milestone 3 is committed as `ad83e6c2d`.
 Milestone 4 is committed as `a5d5af0db`.
 Milestone 5 is committed as `a213bf6ae`.
 Milestone 6 is committed as `a6c03f40b`.
+Milestone 7 is committed as `4fddea317`.
 The previous six completed milestones are recorded in
 `section5-recognizer-update.md`.
 
@@ -358,3 +361,95 @@ traces. Repeated preparation preserves arbitrary-distance matching guards and
 source coordinates, but its existing allocation export is withheld for nonunit
 crossings. Missing endpoint or allocation exports preserve the computed graphs.
 Production fallback registration and physical integration remain milestone 8.
+
+## Milestone 8 implementation
+
+The production dispatcher first retains any accepted exact logical result.
+Only an exact-route miss enables compact writer/reader bounding analysis. Both
+routes use the same shared modeled input; fallback introduces no geometry gate,
+new instruction table, address recovery or occurrence unfolding. Detached plans
+own the shared input and captured mathematical results, keeping every borrowed
+phase pointer alive. Failed endpoint and allocation exports retain the completed
+mathematical owner through the preparation interface and report their obligation.
+
+Finite and fixed-word children attach their existing endpoint recipes to the
+upper graph. Sequence and invariant counted repetition prepare those recipes
+in the original enclosing context; lower query sidecars never receive upper
+preparation callbacks. A balanced root distributes a demand's source and target
+independently to their original mutually exclusive cuts, rather than constructing
+a Cartesian product or recomputing a future branch outcome. A private structural
+certificate proves an exhaustive branch partition per iteration. Serialized
+allocation rechecks that partition on the original branch tree after skipping
+only the immediate generated command guard. Missing, duplicate, coexecuting or
+foreign cuts fail before mutation.
+
+Selected periodic records bind each endpoint family, pipe, displacement and
+original record to the existing shared-cycle allocation certificate. One numeric
+pool of IDs 0–5 is used. A zero-notification graph receives an explicit zero-budget
+certificate; malformed empty proofs do not authorize nonempty handoffs. A failed
+capacity or interface check keeps the logical plan unchanged. No scarcity repair
+is added, and the sufficient cycle assignment is not claimed to achieve a general
+minimum physical capacity. Physical cleanup deduplicates only generated arithmetic;
+original payloads, operands and control identities remain unchanged. Weighted
+repeat queries keep representability separate from their total machine integer values, preserving constant weights through guarded closure. Unit-gap
+queries enumerate the current unit crossings and exact within-body prefixes and
+suffixes, avoiding a general shortest-distance circuit for that common case.
+Full weighted closure is now lazy. Candidate deletion snapshots share immutable
+within-body query answers, while each retains its own crossing-dependent caches.
+Unit-distance deletion scans the current retained crossings without constructing
+a Floyd closure. Circuit and validation operation counts exclude ordered-directory
+lookup factors and per-trial body/port snapshot copies, which are charged separately. This corrected two slow corpus fallback paths: both now produce
+logical plans, and one also completes allocation and C++ emission. Neither
+optimization unfolds visits or substitutes an analysis budget.
+Consumer-adjacent local placement may strengthen the
+selected graph, so its selected-order excess is not presented as actual-plan excess.
+
+Remaining qualified-export limitations are explicit: arbitrary unbalanced/skipped
+bodies, varying inner repetition without the required interface, mixed or nested
+balanced multiple-cut ports, and nonunit repeated allocation without its reuse
+certificate. Symbolic inner counts can additionally leave uniform reuse unproved:
+the current constant specialization does not prove the equality of `trips-1`
+and `select(trips>0,trips-1,0)` under an activity guard in the tested symbolic
+nested plan. Numeric inner counts fold
+that selector and support the tested nested allocation path. The symbolic case
+retains its logical plan and reports a missing allocation export, not ID scarcity. These do not become kernel-specific recognizers or invented
+proofs.
+
+### Milestone 8 final validation
+
+Two independent reviewers accepted the source, tests and scope. The final
+query-sharing refinement also received two independent acceptances. Serial
+compilation and both tool links passed. All six final focused commands passed:
+seven integrated pipeline fixtures, balanced endpoint/allocation negatives,
+58,880 weighted nested event pairs, 123,552 regional event pairs, 27,264 phased
+queries, 1,583 allocation envelopes, and causal command/reuse regressions.
+The symbolic nested fixture deliberately verifies a retained logical plan and
+transactional missing-allocation-export rejection; the numeric nested fixture
+verifies successful physical allocation. All 59 brace-check diagnostics were
+confirmed to be regex false positives on braced bodies; no other compliance
+findings or whitespace errors remain.
+
+The final pinned 786-input campaign, compared with milestone 1, produced:
+
+| Stage | Baseline successes | Final successes |
+|---|---:|---:|
+| Logical plans | 513 | 565 |
+| Six-ID allocation | 441 | 487 |
+| C++ emission | 439 | 485 |
+
+This adds 52 logical successes and 46 complete compilations, with no formerly
+successful stage lost. The same 23 inputs reached the external campaign watchdog
+in both runs. Six newly produced logical plans lack a certified allocation under
+six IDs; this does not prove six IDs are insufficient. Raw totals include manual
+synchronization skips and must not be described as newly recognized kernels.
+The same nine audited TileLang ports retain seven logical successes and three
+complete compilations; four retain qualified allocation failures and two retain
+control/repetition-contract gaps. No device execution or performance claim is
+part of this validation.
+
+Evidence is stored under `.local/section6-implementation/`:
+`m8-final-focused-results.json`, `m8-corpus-final/REPORT.md`,
+`m8-corpus-final/comparison.json`, per-input logs and generated C++, and
+`m8-nine-final/results.json`. Input and emitter hashes match the pinned baseline;
+compiler hashes and all options are recorded in `pins.json`. The interrupted
+pre-optimization campaign is separately labeled and is not final validation.

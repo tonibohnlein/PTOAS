@@ -20,9 +20,12 @@ struct BoundingRepeatedQuery::State {
     std::vector<RegionalEvent> ports;
     std::vector<RepeatedCrossing> crossings;
     std::map<Key, std::size_t> indices;
-    std::map<std::pair<Key, Key>, std::optional<Id>> localMemo;
+    using LocalMemo = std::map<std::pair<Key, Key>, std::optional<Id>>;
+    std::shared_ptr<LocalMemo> localMemo = std::make_shared<LocalMemo>();
     std::map<std::pair<Key, Key>, Distance> positiveMemo;
+    std::map<std::pair<Key, Key>, Id> unitMemo;
     std::vector<std::vector<Distance>> closure;
+    bool closureAttempted = false, closureReady = false;
     BoundingRepetitionCost cost;
     std::string error;
     RegionExpressions& e() { return *body.expressions; }
@@ -44,30 +47,53 @@ struct BoundingRepeatedQuery::State {
         auto fits = e().land(e().land(a.representable, b.representable),
                             e().le(a.value, e().sub(e().constant(UINT64_MAX), b.value)));
         // Overflow preserves reachability but cannot satisfy a uint64 gap.
-        // All off-guard arithmetic remains total machine arithmetic.
-        return {reachable, fits, e().select(fits, e().add(a.value, b.value), e().constant(0))};
+        // The value is inspected only when representable holds; off-guard
+        // wrapped addition is total and irrelevant. Keeping it unmasked also
+        // preserves constant path weights through guarded min-plus closure.
+        return {reachable, fits, e().add(a.value, b.value)};
     }
     std::optional<Id> local(RegionalEvent a, RegionalEvent b)
     {
         const auto pair = std::make_pair(key(a), key(b));
-        if (auto found = localMemo.find(pair); found != localMemo.end()) { return found->second; }
+        if (auto found = localMemo->find(pair); found != localMemo->end()) { return found->second; }
         if (cost.bodyQueries == UINT64_MAX) { return {}; }
         ++cost.bodyQueries;
         auto answer = regionalReachability(body, std::move(a), std::move(b));
         if (answer && (*answer >= e().size() || !e().isBoolean(*answer))) { answer.reset(); }
-        localMemo.emplace(pair, answer);
+        localMemo->emplace(pair, answer);
         return answer;
     }
     bool initialize()
     {
         const auto n = ports.size();
-        if (n > UINT32_MAX || (n && (n > UINT64_MAX / n || n*n > UINT64_MAX / n))) {
+        if (n > UINT32_MAX) {
             error = "weighted repeated port work exceeds representation"; return false;
         }
         for (std::size_t i = 0; i < n; ++i) {
             if (!validRegionalEvent(body, ports[i]) || !indices.emplace(key(ports[i]), i).second) {
                 error = "weighted repeated ports need distinct valid body identities"; return false;
             }
+        }
+        for (auto& crossing : crossings) {
+            auto a = indices.find(key(crossing.source)), b = indices.find(key(crossing.target));
+            if (!crossing.displacement || a == indices.end() || b == indices.end() ||
+                crossing.guard >= e().size() || !e().isBoolean(crossing.guard)) {
+                error = "weighted crossing needs positive distance and valid guarded port identities"; return false;
+            }
+            auto pa = regionalPresence(body, crossing.source), pb = regionalPresence(body, crossing.target);
+            if (!pa || !pb) { error = "weighted crossing presence unavailable"; return false; }
+            crossing.guard = e().land(crossing.guard, e().land(*pa, *pb));
+        }
+        return e().constructionError().empty();
+    }
+    bool ensureClosure()
+    {
+        if (closureAttempted) { return closureReady; }
+        closureAttempted = true;
+        const uint64_t n = ports.size();
+        if (n && (n > UINT64_MAX / n || n*n > UINT64_MAX / n ||
+                  n*n*n > UINT64_MAX - cost.relaxations)) {
+            error = "weighted repeated port work exceeds representation"; return false;
         }
         closure.assign(n, std::vector<Distance>(n, absent()));
         for (std::size_t a = 0; a < n; ++a) {
@@ -78,15 +104,8 @@ struct BoundingRepeatedQuery::State {
             }
         }
         for (const auto& crossing : crossings) {
-            auto a = indices.find(key(crossing.source)), b = indices.find(key(crossing.target));
-            if (!crossing.displacement || a == indices.end() || b == indices.end() ||
-                crossing.guard >= e().size() || !e().isBoolean(crossing.guard)) {
-                error = "weighted crossing needs positive distance and valid guarded port identities"; return false;
-            }
-            auto pa = regionalPresence(body, crossing.source), pb = regionalPresence(body, crossing.target);
-            if (!pa || !pb) { error = "weighted crossing presence unavailable"; return false; }
-            auto guard = e().land(crossing.guard, e().land(*pa, *pb));
-            closure[a->second][b->second] = minimum(closure[a->second][b->second], edge(guard, crossing.displacement));
+            auto a = indices.at(key(crossing.source)), b = indices.at(key(crossing.target));
+            closure[a][b] = minimum(closure[a][b], edge(crossing.guard, crossing.displacement));
         }
         // Zero-weight aliases may form SCCs. The nonnegative min-plus Floyd
         // recurrence is valid without ordering those aliases or inventing payloads.
@@ -98,13 +117,40 @@ struct BoundingRepeatedQuery::State {
                 }
             }
         }
-        return e().constructionError().empty();
+        closureReady = e().constructionError().empty();
+        return closureReady;
+    }
+    std::optional<Id> unit(const RegionalEvent& source, const RegionalEvent& target)
+    {
+        if (!validRegionalEvent(body, source) || !validRegionalEvent(body, target)) { return {}; }
+        const auto pair = std::make_pair(key(source), key(target));
+        if (auto found = unitMemo.find(pair); found != unitMemo.end()) { return found->second; }
+        auto result = e().boolean(false);
+        // Every crossing has positive displacement. A path of total distance
+        // one therefore uses exactly one retained unit crossing, with arbitrary
+        // zero-distance body paths before and after it. Keep this Boolean proof
+        // instead of constructing an integer shortest-distance comparison.
+        for (const auto& crossing : crossings) {
+            if (cost.relaxations == UINT64_MAX) { return {}; }
+            ++cost.relaxations;
+            if (crossing.displacement != 1 || e().constantValue(crossing.guard) == 0) { continue; }
+            auto prefix = local(source, crossing.source);
+            if (!prefix) { return {}; }
+            if (e().constantValue(*prefix) == 0) { continue; }
+            auto suffix = local(crossing.target, target);
+            if (!suffix) { return {}; }
+            result = e().lor(result, e().land(crossing.guard, e().land(*prefix, *suffix)));
+        }
+        if (!e().constructionError().empty()) { return {}; }
+        unitMemo.emplace(pair, result);
+        return result;
     }
     std::optional<Distance> positive(const RegionalEvent& source, const RegionalEvent& target)
     {
         if (!validRegionalEvent(body, source) || !validRegionalEvent(body, target)) { return {}; }
         const auto pair = std::make_pair(key(source), key(target));
         if (auto found = positiveMemo.find(pair); found != positiveMemo.end()) { return found->second; }
+        if (!ensureClosure()) { return {}; }
         std::vector<Distance> first(ports.size(), absent());
         for (const auto& crossing : crossings) {
             auto prefix = local(source, crossing.source);
@@ -139,6 +185,18 @@ BoundingRepeatedQuery::BoundingRepeatedQuery(std::shared_ptr<State> implementati
 const RegionalAnalysis& BoundingRepeatedQuery::body() const { return state->body; }
 llvm::ArrayRef<RegionalEvent> BoundingRepeatedQuery::ports() const { return state->ports; }
 const BoundingRepetitionCost& BoundingRepeatedQuery::cost() const { return state->cost; }
+std::shared_ptr<BoundingRepeatedQuery> BoundingRepeatedQuery::withCrossings(
+    std::vector<RepeatedCrossing> crossings, std::string& error) const
+{
+    error.clear();
+    auto next = std::make_shared<State>();
+    next->body = state->body; next->ports = state->ports;
+    next->crossings = std::move(crossings); next->localMemo = state->localMemo;
+    if (!next->initialize()) {
+        error = next->error.empty() ? next->e().constructionError() : next->error; return {};
+    }
+    return std::shared_ptr<BoundingRepeatedQuery>(new BoundingRepeatedQuery(std::move(next)));
+}
 std::optional<BoundingPeriodDistance> BoundingRepeatedQuery::distance(RegionalEvent source, RegionalEvent target)
 {
     if (!validRegionalEvent(state->body, source) || !validRegionalEvent(state->body, target)) { return {}; }
@@ -150,6 +208,7 @@ std::optional<BoundingPeriodDistance> BoundingRepeatedQuery::distance(RegionalEv
 std::optional<Id> BoundingRepeatedQuery::across(const RegionalEvent& source, const RegionalEvent& target, Id gap)
 {
     if (gap >= state->e().size() || state->e().isBoolean(gap)) { return {}; }
+    if (state->e().constantValue(gap) == 1) { return state->unit(source, target); }
     auto distance = state->positive(source, target);
     if (!distance) { return {}; }
     // Complete invariant native chains allow delaying the source by any number

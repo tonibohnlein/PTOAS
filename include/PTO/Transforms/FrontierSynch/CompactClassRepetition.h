@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/BoundingRepetition.h"
 #include "PTO/Transforms/FrontierSynch/CompactStorageBoundary.h"
 namespace mlir::pto::frontiersynch {
+using CompactClassPreparation = std::function<CompactClasses(CompactClasses)>;
 struct CompactClassRepetition {
     std::string error;
     std::vector<CompactClasses> captured; // Static intermediate owners, also retained on failed exports.
@@ -19,6 +20,11 @@ struct CompactClassRepetition {
     CompactClasses boundary;
     uint64_t scalarValues = 0, accessPairs = 0, effectPairs = 0;
 };
+// Build one original block as finite spans and compact/repeated children. The
+// optional decorator attaches endpoint recipes to immutable leaf mathematics;
+// unavailable decoration must return the original owner, not erase its result.
+CompactClassRepetition captureCompactClassSequence(func::FuncOp function, Block& invocation,
+    const SyncInput& input, std::shared_ptr<RegionExpressions> arena, CompactClassPreparation prepare = {});
 // Concrete q=1 producer: body must be a privately captured whole invocation of
 // loop's block on the unchanged shared input. Proves inner bounds/control are
 // deterministic and independent of this loop's IV/carried state. The upper
