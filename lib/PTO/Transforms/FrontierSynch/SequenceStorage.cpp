@@ -9,6 +9,7 @@
 #include "CountedLoop.h"
 #include "PTO/Transforms/FrontierSynch/VaryingRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
+#include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "llvm/ADT/MapVector.h"
@@ -166,6 +167,15 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         children.push_back(std::move(child));
         return true;
     } else {
+        if (node.boundedLifetime &&
+            node.boundedLifetime->skeleton.result.state == RecognitionState::Applicable) {
+            std::string diagnostic;
+            auto bounded = cachedBoundedLifetimeRegion(function, node, index, *input, diagnostic);
+            if (succeeded(bounded)) {
+                node.boundedExportError =
+                    "bounded demands available; global query/native/storage selectors require a regional provider";
+            } else if (!diagnostic.empty()) { repeatedAttempt = diagnostic; }
+        }
         // Existing numerical routes can already allocate physical IDs. Preserve
         // that capability for statically enumerable inner bodies, including
         // regional candidates with prologues/epilogues. Dynamic inner bounds do
@@ -206,6 +216,32 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
             std::string arithmeticError;
             auto regional = analyzeArithmeticRegion({function, child.loop}, index, *input, arena, arithmeticError);
             if (succeeded(regional)) {
+                if (node.boundedDemands && child.loop->getParentOp() == function) {
+                    // Both constructions derive their modeled graph from this
+                    // original loop, input, guards and prerequisite index. The
+                    // arithmetic provider supplies global queries/selectors;
+                    // bounded local rows are never used as global queries.
+                    auto demands = node.boundedDemands;
+                    regional->cost.physicalFragments += demands->window.accesses.size();
+                    regional->cost.retainedExpressionNodes += demands->expressions.size();
+                    regional->cost.selectorComparisons += demands->analysis.accessPairs;
+                    auto originalPrepare = regional->prepareWithVisits;
+                    regional->prepareWithVisits = [demands, originalPrepare](ArrayRef<scf::ForOp> enclosing)
+                        -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
+                        // Preserve a working arithmetic recipe and its regional
+                        // allocation certificate. Bounded recipes fill endpoint
+                        // gaps; they do not replace successful physical exports.
+                        if (originalPrepare) {
+                            auto prepared = originalPrepare(enclosing);
+                            if (succeeded(prepared)) { return prepared; }
+                        }
+                        if (!enclosing.empty()) { return failure(); }
+                        std::string diagnostic;
+                        return prepareBoundedLifetimeResult(demands, diagnostic);
+                    };
+                    regional->prepare = [prepare = regional->prepareWithVisits]() { return prepare({}); };
+                    node.boundedExportError.clear();
+                }
                 child.regional = std::move(*regional);
                 child.anchors = child.regional.anchors;
                 children.push_back(std::move(child));

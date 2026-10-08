@@ -29,6 +29,8 @@ struct RegionalCost {
     uint64_t arithmeticRegions = 0;
     uint64_t boundaryBytes = 0; // Physical bytes represented by the certified boundary atoms.
     uint64_t selectorComparisons = 0, crossingCandidates = 0, expressionNodes = 0;
+    // Owned analysis arenas distinct from the composing regional expression DAG.
+    uint64_t retainedExpressionNodes = 0;
     // Proof requests, including cached requests. Each producer states its query
     // cost: guarded implication and numerical boundary proofs have different costs.
     uint64_t implicationChecks = 0;

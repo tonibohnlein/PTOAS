@@ -13,7 +13,7 @@ two independent accepting reviews, and its own commit before proceeding.
 | 2 | Constraint import for piecewise bounds and shared positive-step ordinal normalization | Accepted |
 | 3 | Shared symbolic storage certificates and crossings between symbolic siblings | Accepted |
 | 4 | Reuse ownership/phase/boundary certificates in varying repetition and whole-visit type extraction | Accepted |
-| 5 | Collective guarded refresh and reusable bounded-lifetime regional results | Pending |
+| 5 | Collective guarded refresh and reusable bounded-lifetime regional results | Accepted |
 | 6 | Numerical composition for general sequences without unnecessary dense port closure | Pending |
 | 7 | Original-IR contract audit and pinned corpus validation through available emission/allocation | Pending |
 
@@ -275,3 +275,41 @@ to reappear as finite arithmetic boundaries. Two independent reviewers accepted
 the final source including the finite-neighbor adapter. The style prefilter's
 compound-condition brace findings have braced bodies; no line-width or whitespace
 findings remain. This is focused validation, not a new full corpus/device run.
+
+## Integration milestone 5 contracts
+
+Collective refresh groups identical normalized physical maps before proving
+Boolean coverage of their writer guards. Two writers in the same orbit but at
+different offsets do not establish per-visit refresh. Execution predicates are
+retained unchanged in demand generation.
+
+The bounded construction returns an owned, source-indexed demand circuit for
+any qualifying original loop. Its cache has its own arena so parent transaction
+rollback cannot invalidate it. Endpoint preparation, including storage-lane
+fallback, reuses that circuit rather than rerunning reduction. Region caches
+are tied to the original modeled input; whole-function success still requires
+whole-function coverage.
+
+Ordinary sequence composition records bounded mathematical success separately
+from global query availability. An independent arithmetic provider over the same
+original top-level loop can supply its exact global queries/storage/native
+selectors. Existing arithmetic endpoint preparation and allocation are preferred;
+bounded recipes can supply commands if that preparation fails. Both constructions
+are charged; this adapter does not claim to avoid arithmetic analysis work.
+Without such a provider, the source-window result remains demand-only. Its local
+rank rows are never exported as global reachability. General arbitrary-predicate
+bounded loops still need the draft's stored streaming profiles or another global
+interface for arbitrary later queries; no compact query theorem is inferred from
+refresh. This limitation is an export obligation, not a failed class criterion.
+
+Milestone 5 validation: serial incremental compilation and both tool links passed.
+Collective-refresh checks covered complementary, nested and separate branches,
+missing writers and shifted-map rejection; regional demand caches survived
+unsatisfied parent exports and rejected reuse with another modeled input.
+Independent command-closure checks covered varying and bounded endpoints.
+Storage-lane tests checked 784 handoffs; bounded provenance checked 1,280
+guard/mode valuations. Sequence tests checked 32 command closures and 15 causal
+allocation traces. Both source reviewers accepted the final callback precedence
+and separate-arena cost accounting. Three prefilter brace findings were inspected:
+the affected compound conditions have braced bodies. No whitespace findings
+remain. This does not establish general bounded streaming/global-query support.

@@ -73,6 +73,34 @@ void collect(ArrayRef<Operation*> roots, Operation* entry, const PhaseIndex& ind
         }
     }
 }
+// Coverage concerns one identical physical map, not merely its slot orbit.
+// A guard node is covered when some matching writer always executes under it.
+// Complementary covered children establish their parent's coverage; nested
+// parents occur earlier in the DAG, so one reverse pass suffices.
+bool coversEveryVisit(const GuardedRecognition& skeleton, ArrayRef<std::size_t> writers)
+{
+    std::vector<uint8_t> covered(skeleton.guards.size());
+    for (auto writer : writers) {
+        if (writer >= skeleton.phases.size()) { return false; }
+        auto guard = skeleton.phases[writer].guard;
+        if (!guard) { return true; }
+        if (*guard >= covered.size()) { return false; }
+        covered[*guard] = 1;
+    }
+    std::vector<DenseMap<Value, uint8_t>> branches(skeleton.guards.size() + 1);
+    for (std::size_t i = skeleton.guards.size(); i > 0; --i) {
+        const auto& guard = skeleton.guards[i - 1];
+        if (!guard.condition || (guard.parent && *guard.parent >= i - 1)) { return false; }
+        if (!covered[i - 1]) { continue; }
+        auto parent = guard.parent.value_or(skeleton.guards.size());
+        auto& arms = branches[parent][guard.condition];
+        arms |= guard.takeThen ? 1 : 2;
+        if (arms != 3) { continue; }
+        if (!guard.parent) { return true; }
+        covered[*guard.parent] = 1;
+    }
+    return false;
+}
 } // namespace
 
 GuardedRecognition recognizeFiniteGuarded(Region& region, const PhaseIndex& index,
@@ -159,12 +187,10 @@ BoundedLifetimeRecognition recognizeBoundedLifetime(scf::ForOp loop, const Phase
     SmallVector<const CompoundInstanceElement*> phases;
     DenseMap<const CompoundInstanceElement*, uint32_t> positions;
     std::vector<PeriodicPayload> payloads;
-    std::vector<uint8_t> unconditional;
     for (const auto& item : skeleton.phases) {
         positions[item.phase] = phases.size();
         phases.push_back(item.phase);
         payloads.push_back({static_cast<uint32_t>(item.phase->kPipeValue)});
-        unconditional.push_back(!item.guard);
     }
     detail::inspectRotatingPhases(loop, phases, input, input.accesses(), skeleton.result, index);
     if (skeleton.result.state != RecognitionState::Applicable) {
@@ -202,13 +228,28 @@ BoundedLifetimeRecognition recognizeBoundedLifetime(scf::ForOp loop, const Phase
         fragments.push_back(
             {found->second, family, atom, access.slots, access.stride, access.offset, access.reads, access.writes, 0});
     }
-    out.refresh = certifyRotatingRefresh(payloads, fragments, unconditional);
-    if (!out.refresh.error.empty()) {
-        // This producer is sufficient, not a decision procedure for refresh:
-        // complementary guarded writers can cover an orbit without either
-        // static writer being unconditional.
-        skeleton.result.note(RecognitionIssue::RefreshBound, loop);
+    using Map = std::tuple<uint32_t, uint32_t, uint64_t, uint64_t, uint64_t>;
+    std::map<Map, SmallVector<std::size_t>> writerMaps;
+    for (std::size_t i = 0; i < fragments.size(); ++i) {
+        const auto& fragment = fragments[i];
+        if (!fragment.write) { continue; }
+        if (!fragment.slots) {
+            out.refresh.error = "collective refresh requires a nonzero slot modulus";
+            skeleton.result.note(RecognitionIssue::RefreshBound, loop);
+            return out;
+        }
+        writerMaps[{fragment.family, fragment.atom, fragment.slots,
+                    fragment.stride % fragment.slots, fragment.offset % fragment.slots}].push_back(i);
     }
+    std::vector<uint8_t> coveredWriters(fragments.size());
+    for (const auto& [map, members] : writerMaps) {
+        SmallVector<std::size_t> writers;
+        for (auto member : members) { writers.push_back(fragments[member].payload); }
+        if (!coversEveryVisit(skeleton, writers)) { continue; }
+        for (auto member : members) { coveredWriters[member] = 1; }
+    }
+    out.refresh = certifyRotatingRefreshCoverage(payloads, fragments, coveredWriters);
+    if (!out.refresh.error.empty()) { skeleton.result.note(RecognitionIssue::RefreshBound, loop); }
     return out;
 }
 } // namespace mlir::pto::frontiersynch

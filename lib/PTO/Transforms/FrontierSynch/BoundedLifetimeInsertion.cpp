@@ -21,15 +21,17 @@
 #include <map>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
-BoundedLifetimeDemandResult::BoundedLifetimeDemandResult() = default;
+BoundedLifetimeDemandResult::BoundedLifetimeDemandResult(std::shared_ptr<RegionExpressions> arena)
+    : arena(std::move(arena)), expressions(*this->arena) {}
 BoundedLifetimeDemandResult::~BoundedLifetimeDemandResult() = default;
-namespace {
 using Id = RegionExpressions::Id;
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
+FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> analyzeBoundedLifetimeRegion(
     func::FuncOp function, scf::ForOp loop, const PhaseIndex& index, const SyncInput& input,
-    const BoundedLifetimeRecognition& recognized, std::string& error, bool completeInvocation,
-    bool allowStorageLanes = true, std::shared_ptr<BoundedLifetimeDemandResult>* retained = nullptr)
+    const BoundedLifetimeRecognition& recognized, std::string& error, std::shared_ptr<RegionExpressions> arena)
 {
+    if (!function || !loop || loop->getParentOfType<func::FuncOp>() != function) {
+        error = "bounded lifetime region must belong to its original function"; return failure();
+    }
     const auto& skeleton = recognized.skeleton;
     auto domain = CountedLoop::get(loop);
     if (skeleton.result.state != RecognitionState::Applicable || !recognized.refresh.error.empty() || !domain) {
@@ -41,12 +43,15 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
         error = "bounded lifetime window cannot represent its potential occurrences";
         return failure();
     }
-    auto demands = std::make_shared<BoundedLifetimeDemandResult>();
+    if (!arena) { arena = std::make_shared<RegionExpressions>(); }
+    auto demands = std::make_shared<BoundedLifetimeDemandResult>(std::move(arena));
+    demands->function = function; demands->loop = loop; demands->input = &input;
     auto& e = demands->expressions;
     auto& symbols = demands->symbols;
-    auto base = e.input(symbols.addArgument(IndexType::get(function.getContext()), function.getLoc()));
+    const auto base = demands->base =
+        e.input(symbols.addArgument(IndexType::get(function.getContext()), function.getLoc()));
     auto trips = domain->trips(e);
-    auto ordinal =
+    demands->ordinal =
         e.div(e.sub(e.input(loop.getInductionVar()), e.input(loop.getLowerBound())), e.constant(domain->step));
     SmallVector<const CompoundInstanceElement*> phases;
     auto& anchors = demands->anchors;
@@ -67,7 +72,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
     window.storageProtection = ptoStorageProtection();
     const auto protection = structuredProtection(input.accesses());
     std::map<std::pair<uint64_t, uint64_t>, uint64_t> groups;
-    std::vector<std::pair<Id, std::pair<Value, uint64_t>>> predicateBindings;
+    auto& predicateBindings = demands->predicateBindings;
     for (uint64_t d = 0; d <= span; ++d) {
         std::vector<Id> guards;
         for (const auto& guard : skeleton.guards) {
@@ -92,7 +97,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
     }
     DenseMap<Value, uint32_t> families;
     std::map<std::tuple<uint32_t, uint64_t, uint64_t, uint64_t>, uint32_t> cells;
-    std::vector<StorageLaneCell> physicalCells;
+    auto& physicalCells = demands->physicalCells;
     for (uint64_t d = 0; d <= span; ++d) {
         for (const auto& access : skeleton.result.accesses) {
             const auto& effect = input.accesses().effects()[access.effect];
@@ -151,13 +156,45 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
         error = analysis.error;
         return failure();
     }
-    // Publish before endpoint/allocation preparation: those stages may fail
-    // independently without undoing the exact demand construction.
-    if (retained) {
-        *retained = demands;
+    for (const auto& site : skeleton.phases) { demands->unconditional.push_back(!site.guard); }
+    return demands;
+}
+FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> cachedBoundedLifetimeRegion(
+    func::FuncOp function, const StructureNode& node, const PhaseIndex& index,
+    const SyncInput& input, std::string& error)
+{
+    auto loop = dyn_cast_or_null<scf::ForOp>(node.anchor);
+    if (!loop || !node.boundedLifetime) { error = "no bounded loop certificate"; return failure(); }
+    if (!node.boundedDemandAttempted) {
+        auto analyzed = analyzeBoundedLifetimeRegion(function, loop, index, input,
+            *node.boundedLifetime, node.boundedDemandError);
+        node.boundedDemandAttempted = true;
+        if (succeeded(analyzed)) { node.boundedDemands = *analyzed; }
     }
-    SmallVector<uint8_t> unconditional;
-    for (const auto& site : skeleton.phases) { unconditional.push_back(!site.guard); }
+    error = node.boundedDemandError;
+    if (!node.boundedDemands) { return failure(); }
+    if (node.boundedDemands->function != function || node.boundedDemands->loop != loop ||
+        node.boundedDemands->input != &input) {
+        error = "bounded cache belongs to different original modeled input"; return failure();
+    }
+    return node.boundedDemands;
+}
+namespace {
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
+    const std::shared_ptr<BoundedLifetimeDemandResult>& demands, std::string& error,
+    bool completeInvocation, bool allowStorageLanes = true)
+{
+    auto function = demands->function;
+    auto& e = demands->expressions;
+    auto& window = demands->window;
+    auto& analysis = demands->analysis;
+    auto& predicates = *demands->predicates;
+    auto& anchors = demands->anchors;
+    const auto m = anchors.size();
+    const auto base = demands->base, ordinal = demands->ordinal;
+    const auto& physicalCells = demands->physicalCells;
+    const auto& predicateBindings = demands->predicateBindings;
+    const auto& unconditional = demands->unconditional;
     StorageLaneAllocation storage;
     DictionaryAttr storageCertificate;
     if (completeInvocation && allowStorageLanes) {
@@ -211,8 +248,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
             if (useStorageLanes) {
                 // Witness choice has its own endpoint-availability obligation.
                 // Retain the original logical plan if that extra recipe fails.
-                return prepareEndpoints(
-                    function, loop, index, input, recognized, error, completeInvocation, false, retained);
+                return prepareEndpoints(demands, error, completeInvocation, false);
             }
             error = predicates.error.empty() ? e.lastEmissionError() : predicates.error;
             return failure();
@@ -231,11 +267,26 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
     return result;
 }
 } // namespace
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeResult(
+    std::shared_ptr<BoundedLifetimeDemandResult> demands, std::string& error, bool completeInvocation)
+{
+    if (!demands || !demands->predicates || !demands->analysis.error.empty()) {
+        error = "bounded endpoint preparation requires an owned successful analysis"; return failure();
+    }
+    if (completeInvocation && llvm::any_of(demands->input->instructions(), [&](const auto* phase) {
+        return !demands->loop->isProperAncestor(phase->elementOp);
+    })) {
+        error = "bounded regional result does not cover the whole invocation"; return failure();
+    }
+    return prepareEndpoints(demands, error, completeInvocation);
+}
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeEndpoints(
     func::FuncOp function, scf::ForOp loop, const PhaseIndex& index, const SyncInput& input,
     const BoundedLifetimeRecognition& recognized, std::string& error)
 {
-    return prepareEndpoints(function, loop, index, input, recognized, error, false);
+    auto demands = analyzeBoundedLifetimeRegion(function, loop, index, input, recognized, error);
+    if (failed(demands)) { return failure(); }
+    return prepareBoundedLifetimeResult(*demands, error);
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeInsertion(
     func::FuncOp function, const SyncInput& input, const ProgramRecognition& program, std::string& error,
@@ -266,6 +317,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeInsertion(
     if (failed(index.build(function, input))) {
         return failure();
     }
-    return prepareEndpoints(function, loop, index, input, *selected->boundedLifetime, error, true, true, demands);
+    auto analyzed = cachedBoundedLifetimeRegion(function, *selected, index, input, error);
+    if (failed(analyzed)) { return failure(); }
+    if (demands) { *demands = *analyzed; }
+    return prepareBoundedLifetimeResult(*analyzed, error, true);
 }
 } // namespace mlir::pto::frontiersynch

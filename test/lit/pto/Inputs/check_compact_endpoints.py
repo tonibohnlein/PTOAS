@@ -38,12 +38,13 @@ def graph(payloads, bounded=False):
     return closure(2*len(effects), edges)[0]
 
 
-def check_commands(document, bounded=False):
+def check_commands(document, bounded=False, expected=None):
     assert document["accepted"], document
     trace = document["trace"]
     assert not trace["error"], trace
     payloads = [x for x in trace["events"] if x["kind"] == "payload"]
-    expected = graph(payloads, bounded)
+    if expected is None:
+        expected = graph(payloads, bounded)
     commands = []
     for event in trace["events"]:
         if event["kind"] == "payload":
