@@ -20,6 +20,8 @@ private:
         : invocation(loop), alternatives(cuts.begin(), cuts.end()) {}
     scf::ForOp invocation;
     std::vector<TemplateEndpointCut> alternatives;
+    friend std::shared_ptr<const EndpointCutChoices> qualifyTerminalCleanupCuts(
+        ArrayRef<TemplateEndpointCut>);
     friend std::shared_ptr<const EndpointCutChoices> qualifyEndpointCutChoices(
         scf::ForOp, ArrayRef<TemplateEndpointCut>);
 };
@@ -29,6 +31,11 @@ private:
 // unchanged until insertion. Work is polynomial in the explicit path metadata.
 std::shared_ptr<const EndpointCutChoices> qualifyEndpointCutChoices(
     scf::ForOp loop, ArrayRef<TemplateEndpointCut> cuts);
+// Finite source publication: consumer WAIT or terminal cleanup WAIT. A null
+// loop identifies this kind. The producer certifies complementary activity;
+// this qualifier verifies original cuts and excludes repeated occurrences.
+std::shared_ptr<const EndpointCutChoices> qualifyTerminalCleanupCuts(ArrayRef<TemplateEndpointCut> cuts);
+bool validateTerminalCleanupCommands(func::FuncOp function, ArrayRef<Operation*> commands);
 // Revalidate serialized alternatives against actual command ancestors. Only
 // each command's immediate generated endpoint guard wrapper is omitted; every
 // more distant branch still must partition the invocation exhaustively.

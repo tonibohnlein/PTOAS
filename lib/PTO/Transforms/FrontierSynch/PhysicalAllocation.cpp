@@ -92,7 +92,10 @@ bool readChoices(DictionaryAttr item, StringRef name, int64_t primary, SmallVect
     auto array = dyn_cast<DenseI64ArrayAttr>(raw);
     if (!array) { return false; }
     if (array.empty()) { return true; }
-    if (array.size() < 3 || array[0] < 0 || array[1] != primary) { return false; }
+    if (array.size() < 3 || array[0] < -1 ||
+        (array[0] == -1 && (name != "target_choices" || array.size() != 3)) || array[1] != primary) {
+        return false;
+    }
     std::set<int64_t> cuts;
     for (auto cut : array.asArrayRef().drop_front()) {
         if (cut < 0 || !cuts.insert(cut).second) { return false; }
@@ -121,7 +124,8 @@ LogicalResult readFamily(func::FuncOp function, DictionaryAttr item, const Recor
     family.displacement = static_cast<uint64_t>(*displacement);
     if (!readChoices(item, "source_choices", *sourceCut, family.sourceChoices) ||
         !readChoices(item, "target_choices", *targetCut, family.targetChoices) ||
-        (local.getValue() && !family.sourceChoices.empty())) {
+        (local.getValue() && (!family.sourceChoices.empty() ||
+            (!family.targetChoices.empty() && family.targetChoices.front() == -1)))) {
         return function.emitError("malformed endpoint alternative cut partition");
     }
     for (auto attr : members) {
@@ -504,7 +508,9 @@ FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const Ph
             const auto found = coordinates->loops.find(choices.front());
             auto loop = found == coordinates->loops.end() ? scf::ForOp{} : found->second;
             for (auto record : family.originalRecords) {
-                if (!validateEndpointCommandChoices(loop, actualChoices[{record, kind}])) {
+                const auto& commands = actualChoices[{record, kind}];
+                if (!(choices.front() == -1 ? validateTerminalCleanupCommands(function, commands) :
+                      validateEndpointCommandChoices(loop, commands))) {
                     return function.emitError("endpoint alternatives do not partition original branch execution"),
                         failure();
                 }

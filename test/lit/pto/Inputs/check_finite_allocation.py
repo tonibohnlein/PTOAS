@@ -63,6 +63,11 @@ def main():
     cases = [linear, "", load("L"),
              f"scf.if %g {{\n{load('L')}\n{compute('C')}\n}} else {{\n{load('E')}\n{compute('D')}\n}}",
              f"{load('L')}\n{compute('C')}\nscf.if %g {{\n{load('E')}\n{compute('D')}\n}}\n{load('B')}\n{compute('F')}"]
+    # The condition exists only after publication. A skipped consumer must
+    # consume its notification at return, after the independent later payload.
+    late_choice = "%choice = scf.if %g -> i1 { scf.yield %h : i1 } else { scf.yield %g : i1 }"
+    cases.append(f"{load('L')}\n{late_choice}\nscf.if %choice {{ {compute('C')} }}\n{load('E')}")
+    cases.append(f"scf.if %g {{ {load('L')} }}\n{late_choice}\nscf.if %choice {{ {compute('C')} }}\n{load('E')}")
     effects = {x: ({"mat"}, {"left"}) for x in ("L", "E", "B")}
     effects.update({x: ({"left", "right"}, {"acc"}) for x in ("C", "D", "F")})
     count = 0
@@ -81,6 +86,21 @@ def main():
             validate(report, labels, effects)
             physical_check(report, set(range(6)))
             count += 1
+        # The first WAIT may be skipped, so its ID remains occupied when the
+        # second SET executes, even though the first consumer precedes it.
+        late_second = "%next = scf.if %h -> i1 { scf.yield %g : i1 } else { scf.yield %h : i1 }"
+        body = (f"{load('L')}\n{late_choice}\nscf.if %choice {{ {compute('C')} }}\n"
+                f"{load('E')}\n{late_second}\nscf.if %next {{ {compute('D')} }}")
+        for g, h in itertools.product((0, 1), repeat=2):
+            text = render(source, body, g, h).replace(
+                "test.trace_arguments =", "test.eligible_ids = array<i64: 0>, test.trace_arguments =")
+            path.write_text(text)
+            report = json.loads(run(tool, ["--structured-trace"], path).stdout)
+            assert report["accepted"] and not report["allocated"] and report["allocation_unchanged_on_failure"], report
+            path.write_text(text.replace("array<i64: 0>", "array<i64: 0, 1>"))
+            report = json.loads(run(tool, ["--structured-trace"], path).stdout)
+            validate(report, ["L"] + (["C"] if g and h else []) + ["E"] + (["D"] if g and h else []), effects)
+            physical_check(report, {0, 1})
         # Two independent publications have overlapping causal lifetimes.
         body = "\n".join([load('L'), load('X', 'second'), compute('C'), compute('Y').replace('%left,', '%second,')])
         path.write_text(render(source, body, 1, 1).replace(

@@ -117,8 +117,8 @@ module {
     return
   }
   // Exact guarded demands exist, but the source cut cannot evaluate the later
-  // division. Keep that result and report unavailable endpoint code.
-  func.func @late_guard(%n: index, %d: index) attributes {test.unmet_exports} {
+  // division. Keep that result and consume skipped notifications at return.
+  func.func @late_guard(%n: index, %d: index) attributes {test.late_guard} {
     %c0 = arith.constant 0 : index
     %zero = arith.constant 0 : i64
     %one = arith.constant 1.0 : f32
