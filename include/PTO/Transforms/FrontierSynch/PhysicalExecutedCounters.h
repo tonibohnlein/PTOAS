@@ -14,7 +14,7 @@ namespace mlir::pto::frontiersynch {
 // separate SET/WAIT SSA counters, both zero at invocation entry. They advance
 // modulo width only when the corresponding logical command executes. Existing
 // scf.for/scf.if results are preserved; unknown region semantics are rejected.
-// Family palettes are disjoint in one global pool, excluding all hidden macro
+// Family palettes are disjoint within each direction, excluding its hidden macro
 // reservations. Failure leaves the original function unchanged.
 LogicalResult allocateExecutedFamilyCounters(func::FuncOp function,
     DictionaryAttr certificate, ArrayRef<int64_t> eligibleIds);

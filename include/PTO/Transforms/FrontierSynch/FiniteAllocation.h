@@ -13,7 +13,7 @@
 #include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
 namespace mlir::pto::frontiersynch {
 inline constexpr llvm::StringLiteral FiniteAllocationAttr = "pto.finite_allocation";
-// Version-two evidence uses one shared numeric-ID pool. Explicit reuse-order
+// Version-two evidence allocates independently for each directed pipe pair. Explicit reuse-order
 // exports are exact for the fixed plan; guarded compatibility is sufficient.
 // Records denote at most one handoff per invocation, never a repeated family.
 // Explicit certificates serialize O(kh) source rank profiles, not h² reuse

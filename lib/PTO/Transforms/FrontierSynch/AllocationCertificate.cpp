@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Serialize allocation evidence for the shared numeric event-ID pool.
+// Serialize allocation evidence with independent directed event-ID namespaces.
 #include "PTO/Transforms/FrontierSynch/PeriodicSharedCertificate.h"
 #include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/ExecutionContexts.h"
@@ -108,7 +108,7 @@ FailureOr<PhysicalAllocationPlan> decodeCyclicAllocation(func::FuncOp function, 
         return function.emitError("physical allocation requires a cyclic allocation certificate"), failure();
     }
     if (auto strategy = certificate.getAs<StringAttr>("strategy");
-        strategy && strategy.getValue() == "shared-cycle-cover") {
+        strategy && (strategy.getValue() == "directed-cycle-cover" || strategy.getValue() == "shared-cycle-cover")) {
         return decodePeriodicSharedAllocation(function, certificate, eligibleIds);
     }
     auto version = number(certificate, "version"), plan = number(certificate, "plan");
@@ -120,7 +120,6 @@ FailureOr<PhysicalAllocationPlan> decodeCyclicAllocation(func::FuncOp function, 
     result.planId = *plan;
     llvm::DenseSet<uint64_t> directionKeys;
     llvm::DenseSet<int64_t> recordKeys;
-    std::size_t used = 0;
     for (auto attr : directions) {
         auto direction = decodeDirection(function, attr);
         if (failed(direction)) {
@@ -132,22 +131,20 @@ FailureOr<PhysicalAllocationPlan> decodeCyclicAllocation(func::FuncOp function, 
             return function.emitError("duplicate cyclic allocation direction"), failure();
         }
         const auto budget = static_cast<uint64_t>(d.budget);
-        if (budget > eligibleIds.size() - used) {
+        if (budget > eligibleIds.size()) {
             if (auto strategy = certificate.getAs<StringAttr>("strategy")) {
                 return function.emitError("sufficient compact assignment does not fit supplied capacity: ")
                     << strategy.getValue() << " direction " << d.source << " -> " << d.target
                     << " uses " << budget
                     << "; no minimum-capacity claim; scarcity repair not implemented yet", failure();
             }
-            return function.emitError("devoted shared-pool assignment does not fit: direction ")
+            return function.emitError("directed event-ID assignment does not fit: direction ")
                 << d.source << " -> " << d.target << " certified cyclic strategy needs " << budget << ", only "
-                << eligibleIds.size() << " eligible IDs are available in the shared pool; "
+                << eligibleIds.size() << " eligible IDs are available in this direction; "
                 << "scarcity repair not implemented yet", failure();
         }
-        // This certificate devotes disjoint palettes to directions. Cross-direction
-        // sharing requires a shared reuse certificate, supplied by another route.
-        auto ids = eligibleIds.slice(used, budget);
-        used += budget;
+        // The same eligible numeric values name independent events in different directions.
+        auto ids = eligibleIds.take_front(budget);
         for (auto [phase, record] : llvm::enumerate(d.records.asArrayRef())) {
             if (record < 0 || !recordKeys.insert(record).second) {
                 return function.emitError("invalid or duplicate cyclic allocation record"), failure();

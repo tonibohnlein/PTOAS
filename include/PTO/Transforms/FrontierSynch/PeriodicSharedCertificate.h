@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Shared-cycle certificates for an unconditional periodic payload skeleton.
+// Direction-qualified cycle certificates for an unconditional periodic payload skeleton.
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_PERIODICSHAREDCERTIFICATE_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_PERIODICSHAREDCERTIFICATE_H
 #include "PTO/Transforms/FrontierSynch/PeriodicAnalysis.h"
@@ -26,9 +26,9 @@ std::optional<PeriodicSharedAssignment> buildPeriodicSharedAssignment(const Peri
 // for hidden macro reservations. Arbitrary indexed guards are not supported.
 // Null means invalid input, an unrepresentable threshold/budget, or no finite
 // cycle cover. No scarcity repair or logical-plan mutation is performed.
-// The version-two CyclicAllocationAttr uses strategy "shared-cycle-cover",
+// The version-three CyclicAllocationAttr uses strategy "directed-cycle-cover",
 // budget, order_exact, and entries {record,source,target,lane_begin,lane_count,
-// offset}. Its minimum is for the supplied cycle-cover graph only. When startup
+// offset}. Budget is the maximum per-direction requirement. Its minimum is for the supplied cycle-cover graph only. When startup
 // guards prevent uniform barrier reconstruction, order_exact is false.
 DictionaryAttr encodePeriodicSharedAllocation(
     const PeriodicAnalysis& analysis, int64_t plan, MLIRContext* context);

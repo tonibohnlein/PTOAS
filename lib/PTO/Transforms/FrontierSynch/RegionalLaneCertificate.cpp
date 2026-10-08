@@ -39,6 +39,9 @@ DictionaryAttr regionalLaneEvidence(const RegionalAnalysis& region,
     std::vector<Lane> lanes;
     for (uint32_t g = 0; g < summary.groups.size(); ++g) {
         auto group = summary.groups[g];
+        if (llvm::any_of(group.members, [&](const auto& member) {
+            return regionalAllocationDirection(group, member) != std::make_pair(group.sourcePipe, group.targetPipe);
+        })) { return {}; }
         exportConstantRegionalLanes(group);
         // A wider internal cycle cannot fit the six-ID allocation-only path.
         // Do not enumerate arbitrary encoded budgets just to discover that.
@@ -85,6 +88,9 @@ DictionaryAttr regionalLaneEvidence(const RegionalAnalysis& region,
     std::vector<std::vector<bool>> order(lanes.size(), std::vector<bool>(lanes.size()));
     for (std::size_t i = 0; i < lanes.size(); ++i) {
         for (std::size_t j = 0; j < lanes.size(); ++j) {
+            const auto& a = summary.groups[lanes[i].group];
+            const auto& b = summary.groups[lanes[j].group];
+            if (a.sourcePipe != b.sourcePipe || a.targetPipe != b.targetPipe) { continue; }
             if (i != j) { order[i][j] = before(lanes[i], lanes[j]); }
         }
     }
@@ -94,7 +100,10 @@ DictionaryAttr regionalLaneEvidence(const RegionalAnalysis& region,
         SmallVector<int64_t> successors, conflicts;
         for (uint32_t j = 0; j < lanes.size(); ++j) {
             if (order[i][j] && (!order[j][i] || i < j)) { successors.push_back(j); }
-            if (j < i && !order[i][j] && !order[j][i]) { conflicts.push_back(j); }
+            const auto& a = summary.groups[lanes[i].group];
+            const auto& b = summary.groups[lanes[j].group];
+            if (j < i && a.sourcePipe == b.sourcePipe && a.targetPipe == b.targetPipe &&
+                !order[i][j] && !order[j][i]) { conflicts.push_back(j); }
         }
         rows.push_back(b.getDictionaryAttr({
             b.getNamedAttr("group", b.getI64IntegerAttr(lanes[i].group)),
@@ -153,6 +162,37 @@ bool placeChains(const std::vector<DecodedLane>& lanes, const SharedHandoffAlloc
     for (auto lane : assignment.lanes) { physical.push_back(eligible[matched[lane]]); }
     return true;
 }
+bool placeDirectedChains(const std::vector<DecodedLane>& lanes, const std::vector<SharedHandoff>& handoffs,
+                         ArrayRef<int64_t> eligible, SmallVector<int64_t>& physical)
+{
+    std::map<std::pair<uint32_t, uint32_t>, std::vector<uint32_t>> groups;
+    for (uint32_t i = 0; i < handoffs.size(); ++i) {
+        groups[{handoffs[i].sourcePipe, handoffs[i].targetPipe}].push_back(i);
+    }
+    physical.assign(lanes.size(), -1);
+    for (const auto& [direction, indices] : groups) {
+        std::map<uint32_t, uint32_t> local;
+        for (uint32_t i = 0; i < indices.size(); ++i) { local[indices[i]] = i; }
+        std::vector<DecodedLane> part;
+        std::vector<std::vector<uint32_t>> successors;
+        for (auto i : indices) {
+            auto lane = lanes[i]; lane.successors.clear(); lane.conflicts.clear();
+            for (auto next : lanes[i].successors) {
+                if (auto found = local.find(next); found != local.end()) { lane.successors.push_back(found->second); }
+            }
+            for (auto prior : lanes[i].conflicts) {
+                if (auto found = local.find(prior); found != local.end()) { lane.conflicts.push_back(found->second); }
+            }
+            successors.push_back(lane.successors); part.push_back(std::move(lane));
+        }
+        std::vector<SharedHandoff> domain(indices.size(), {direction.first, direction.second});
+        auto assigned = allocateSharedHandoffs(domain, successors, eligible.size());
+        SmallVector<int64_t> ids;
+        if (!assigned.error.empty() || !placeChains(part, assigned, eligible, ids)) { return false; }
+        for (std::size_t i = 0; i < indices.size(); ++i) { physical[indices[i]] = ids[i]; }
+    }
+    return true;
+}
 }
 FailureOr<SmallVector<SmallVector<int64_t>>> allocateRegionalLanes(func::FuncOp function,
     DictionaryAttr evidence, ArrayAttr groups, ArrayRef<int64_t> eligible)
@@ -171,11 +211,17 @@ FailureOr<SmallVector<SmallVector<int64_t>>> allocateRegionalLanes(func::FuncOp 
         if (!budget || *budget <= 0 || *budget > 6) {
             return function.emitError("invalid regional lane budget"), failure();
         }
+        auto source = integer(d, "source"), target = integer(d, "target");
+        auto sources = d.getAs<DenseI64ArrayAttr>("sources"), targets = d.getAs<DenseI64ArrayAttr>("targets");
+        if (!source || !target || (sources && llvm::any_of(sources.asArrayRef(),
+                [&](int64_t value) { return value != *source; })) ||
+            (targets && llvm::any_of(targets.asArrayRef(), [&](int64_t value) { return value != *target; }))) {
+            return function.emitError("regional lane group contains mixed directions"), failure();
+        }
         result.push_back(SmallVector<int64_t>(*budget, -1));
     }
     std::vector<DecodedLane> lanes;
     std::vector<SharedHandoff> handoffs;
-    std::vector<std::vector<uint32_t>> successors;
     for (auto entry : raw) {
         auto d = dyn_cast<DictionaryAttr>(entry);
         auto group = d ? integer(d, "group") : std::nullopt, local = d ? integer(d, "local") : std::nullopt;
@@ -194,7 +240,6 @@ FailureOr<SmallVector<SmallVector<int64_t>>> allocateRegionalLanes(func::FuncOp 
         auto p = integer(palette, "source"), q = integer(palette, "target");
         if (!p || !q) { return function.emitError("missing regional lane direction"), failure(); }
         handoffs.push_back({uint32_t(*p), uint32_t(*q)});
-        successors.push_back(lane.successors);
         result[*group][*local] = lanes.size(); lanes.push_back(std::move(lane));
     }
     for (const auto& group : result) {
@@ -204,16 +249,19 @@ FailureOr<SmallVector<SmallVector<int64_t>>> allocateRegionalLanes(func::FuncOp 
     }
     // Pairwise guarded compatibility need not be transitive through an absent
     // middle lane. Matching is used only when its strict-order validation holds.
-    auto assignment = allocateSharedHandoffs(handoffs, successors, eligible.size());
     SmallVector<int64_t> physical;
-    if (!assignment.error.empty() || !placeChains(lanes, assignment, eligible, physical)) {
+    if (!placeDirectedChains(lanes, handoffs, eligible, physical)) {
         physical.clear();
-        for (const auto& lane : lanes) {
+        for (std::size_t i = 0; i < lanes.size(); ++i) {
+            const auto& lane = lanes[i];
             std::set<int64_t> used = lane.forbidden;
-            for (auto prior : lane.conflicts) { used.insert(physical[prior]); }
+            for (auto prior : lane.conflicts) {
+                if (handoffs[i].sourcePipe == handoffs[prior].sourcePipe &&
+                    handoffs[i].targetPipe == handoffs[prior].targetPipe) { used.insert(physical[prior]); }
+            }
             auto id = llvm::find_if(eligible, [&](int64_t value) { return !used.count(value); });
             if (id == eligible.end()) {
-                return function.emitError("regional lane assignment not certified within shared capacity; "
+                return function.emitError("regional lane assignment not certified within directed capacity; "
                     "no minimum-capacity claim; scarcity repair not implemented yet"), failure();
             }
             physical.push_back(*id);

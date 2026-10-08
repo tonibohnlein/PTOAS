@@ -48,16 +48,19 @@ FailureOr<Families> decode(func::FuncOp function, DictionaryAttr certificate, Ar
         function.emitError("executed arithmetic allocation requires a closed whole-function certificate");
         return failure();
     }
-    std::set<int64_t> available;
+    std::set<int64_t> eligibleSet;
     for (auto id : eligible) {
-        if (id < 0 || id >= 6 || !available.insert(id).second) {
+        if (id < 0 || id >= 6 || !eligibleSet.insert(id).second) {
             return function.emitError("executed allocation requires distinct eligible IDs in 0..5"), failure();
         }
     }
+    using Direction = std::pair<uint32_t, uint32_t>;
+    std::map<Direction, std::set<int64_t>> reservations, availableByDirection;
     function.walk([&](Operation* op) {
         if (auto model = getSyncMacroModel(op)) {
             for (const auto& hidden : model->hiddenEvents) {
-                for (auto id : hidden.eventIds) { available.erase(id); }
+                auto& ids = reservations[{static_cast<uint32_t>(hidden.srcPipe), static_cast<uint32_t>(hidden.dstPipe)}];
+                ids.insert(hidden.eventIds.begin(), hidden.eventIds.end());
             }
         }
     });
@@ -72,6 +75,12 @@ FailureOr<Families> decode(func::FuncOp function, DictionaryAttr certificate, Ar
             !width || *width < 1 || *width > 6 || result.count(*record) ||
             total > INT64_MAX - static_cast<uint64_t>(*width)) {
             return function.emitError("malformed executed arithmetic family allocation"), failure();
+        }
+        Direction direction{static_cast<uint32_t>(*source), static_cast<uint32_t>(*target)};
+        auto entry = availableByDirection.emplace(direction, eligibleSet);
+        auto& available = entry.first->second;
+        if (entry.second) {
+            for (auto id : reservations[direction]) { available.erase(id); }
         }
         if (available.size() < static_cast<uint64_t>(*width)) {
             return function.emitError("supplied IDs cannot realize the sufficient executed-family palettes"), failure();

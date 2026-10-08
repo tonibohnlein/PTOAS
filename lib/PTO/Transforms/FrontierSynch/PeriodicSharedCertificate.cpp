@@ -101,20 +101,24 @@ std::optional<Entry> decodeEntry(Attribute raw, int64_t budget)
 bool decodeEntries(ArrayAttr raw, int64_t budget, std::vector<Entry>& entries)
 {
     std::set<int64_t> records;
-    std::map<int64_t, int64_t> ranges;
+    std::map<std::pair<int64_t, int64_t>, std::map<int64_t, int64_t>> ranges;
     for (auto attr : raw) {
         auto entry = decodeEntry(attr, budget);
         if (!entry || !records.insert(entry->record).second) { return false; }
-        auto range = ranges.emplace(entry->begin, entry->count);
+        auto range = ranges[{entry->source, entry->target}].emplace(entry->begin, entry->count);
         if (!range.second && range.first->second != entry->count) { return false; }
         entries.push_back(*entry);
     }
-    int64_t end = 0;
-    for (const auto& range : ranges) {
-        if (range.first != end) { return false; }
-        end += range.second; // decodeEntry bounded each range by budget <= INT64_MAX.
+    int64_t maximum = 0;
+    for (const auto& direction : ranges) {
+        int64_t end = 0;
+        for (const auto& range : direction.second) {
+            if (range.first != end) { return false; }
+            end += range.second; // decodeEntry bounded each range by budget <= INT64_MAX.
+        }
+        maximum = std::max(maximum, end);
     }
-    return end == budget;
+    return maximum == budget;
 }
 } // namespace
 std::optional<PeriodicSharedAssignment> buildPeriodicSharedAssignment(const PeriodicAnalysis& analysis)
@@ -134,7 +138,12 @@ std::optional<PeriodicSharedAssignment> buildPeriodicSharedAssignment(const Peri
     }
     PeriodicReuseMatrix weights;
     if (!reuseWeights(analysis, *order, records, weights)) { return {}; }
-    auto allocation = allocatePeriodicShared(weights);
+    std::vector<std::pair<uint32_t, uint32_t>> directions;
+    for (auto id : records) {
+        const auto& record = analysis.generators[id];
+        directions.emplace_back(analysis.payloads[record.source].pipe, analysis.payloads[record.target].pipe);
+    }
+    auto allocation = allocateDirectedPeriodic(weights, directions);
     if (allocation.status != PeriodicSharedAllocationStatus::Success) { return std::nullopt; }
     return PeriodicSharedAssignment{std::move(allocation), std::move(records), exact};
 }
@@ -166,9 +175,9 @@ DictionaryAttr encodePeriodicSharedAllocation(const PeriodicAnalysis& analysis, 
             b.getNamedAttr("lane_count", b.getI64IntegerAttr(static_cast<int64_t>(p.laneCount))),
             b.getNamedAttr("offset", b.getI64IntegerAttr(static_cast<int64_t>(p.offset)))}));
     }
-    return b.getDictionaryAttr({b.getNamedAttr("version", b.getI64IntegerAttr(2)),
+    return b.getDictionaryAttr({b.getNamedAttr("version", b.getI64IntegerAttr(3)),
         b.getNamedAttr("plan", b.getI64IntegerAttr(plan)),
-        b.getNamedAttr("strategy", b.getStringAttr("shared-cycle-cover")),
+        b.getNamedAttr("strategy", b.getStringAttr("directed-cycle-cover")),
         b.getNamedAttr("order_exact", b.getBoolAttr(assignment->orderExact)),
         b.getNamedAttr("budget", b.getI64IntegerAttr(static_cast<int64_t>(allocation.budget))),
         b.getNamedAttr("entries", b.getArrayAttr(entries))});
@@ -182,9 +191,9 @@ FailureOr<PhysicalAllocationPlan> decodePeriodicSharedAllocation(
     auto strategy = certificate.getAs<StringAttr>("strategy");
     auto exact = certificate.getAs<BoolAttr>("order_exact");
     auto raw = certificate.getAs<ArrayAttr>("entries");
-    if (!version || *version != 2 || !plan || *plan < 0 || !budget || *budget < 0 || !strategy ||
-        strategy.getValue() != "shared-cycle-cover" || !exact || !raw) {
-        return function.emitError("malformed periodic shared-cycle certificate"), failure();
+    if (!version || *version != 3 || !plan || *plan < 0 || !budget || *budget < 0 || !strategy ||
+        strategy.getValue() != "directed-cycle-cover" || !exact || !raw) {
+        return function.emitError("malformed periodic directed-cycle certificate"), failure();
     }
     std::vector<Entry> entries;
     if (!decodeEntries(raw, *budget, entries)) {
@@ -197,8 +206,8 @@ FailureOr<PhysicalAllocationPlan> decodePeriodicSharedAllocation(
         }
     }
     if (static_cast<uint64_t>(*budget) > eligibleIds.size()) {
-        return function.emitError("minimum of supplied periodic cycle-cover graph needs ") << *budget
-            << " shared IDs, only " << eligibleIds.size() << " available; order_exact=" << exact.getValue()
+        return function.emitError("supplied periodic cycle cover needs ") << *budget
+            << " IDs in one direction, only " << eligibleIds.size() << " available; order_exact=" << exact.getValue()
             << "; no universal fixed-plan or hardware minimum claim; scarcity repair not implemented yet", failure();
     }
     PhysicalAllocationPlan result;

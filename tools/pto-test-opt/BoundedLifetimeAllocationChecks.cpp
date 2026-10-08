@@ -8,6 +8,7 @@
 // Sufficient allocation witnesses, including optional endpoint participation.
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeAllocation.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
+#include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
@@ -86,12 +87,41 @@ bool sharedDirections(mlir::func::FuncOp function)
     auto w = window(e, 1);
     std::vector<fs::GuardedRankEdge> demands{{0, 1, e.boolean(true)}, {1, 2, e.boolean(true)}};
     auto certificate = fs::boundedLifetimeAllocationCertificate(function, e, w, {1, 1}, demands, 0);
-    if (budget(certificate) != 1) { return false; }
-    auto group = mlir::cast<mlir::DictionaryAttr>(certificate.getAs<mlir::ArrayAttr>("groups")[0]);
-    auto sources = group.getAs<mlir::DenseI64ArrayAttr>("sources");
-    auto targets = group.getAs<mlir::DenseI64ArrayAttr>("targets");
-    return sources && targets && sources.asArrayRef() == llvm::ArrayRef<int64_t>({0, 1}) &&
-        targets.asArrayRef() == llvm::ArrayRef<int64_t>({1, 0});
+    if (budget(certificate, 2) != 1) { return false; }
+    auto groups = certificate.getAs<mlir::ArrayAttr>("groups");
+    for (unsigned i = 0; i < 2; ++i) {
+        auto group = mlir::cast<mlir::DictionaryAttr>(groups[i]);
+        auto sources = group.getAs<mlir::DenseI64ArrayAttr>("sources");
+        auto targets = group.getAs<mlir::DenseI64ArrayAttr>("targets");
+        if (!sources || !targets || sources.size() != 1 || targets.size() != 1 ||
+            sources[0] != i || targets[0] != 1 - i) { return false; }
+    }
+    return true;
+}
+bool constantDirections()
+{
+    fs::RegionalAnalysis region;
+    region.expressions = std::make_shared<fs::RegionExpressions>();
+    region.capabilities.exactQueries = true;
+    auto& e = *region.expressions;
+    fs::RegionalAllocationMember first;
+    first.firstSource.ordinal = first.lastTarget.ordinal = e.constant(0);
+    first.lastTarget.kind = fs::PeriodicEventKind::Completion;
+    // Empty visits make these lifetimes compatible; direction must still be retained.
+    first.active = e.boolean(false); first.sourcePipe = 0; first.targetPipe = 1;
+    auto second = first; second.record = 1; second.sourcePipe = 1; second.targetPipe = 0;
+    auto third = second; third.record = 2;
+    fs::RegionalAllocationSummary input;
+    input.groups.push_back({0, 1, 1, {first, second}});
+    input.groups.push_back({1, 0, 1, {third}});
+    auto output = fs::coalesceRegionalAllocation(region, input);
+    if (!output || output->groups.size() != 2) { return false; }
+    for (const auto& group : output->groups) {
+        for (const auto& member : group.members) {
+            if (member.sourcePipe != group.sourcePipe || member.targetPipe != group.targetPipe) { return false; }
+        }
+    }
+    return output->groups[0].members.size() == 1 && output->groups[1].members.size() == 2;
 }
 bool protectedModes(mlir::func::FuncOp function)
 {
@@ -123,7 +153,7 @@ int runBoundedLifetimeAllocationChecks()
     mlir::Builder builder(&context);
     mlir::OwningOpRef<mlir::func::FuncOp> function(mlir::func::FuncOp::create(
         builder.getUnknownLoc(), "bounded_allocation_checks", builder.getFunctionType({}, {})));
-    if (!ordinary(*function) || !palettes(*function) || !sharedDirections(*function) || !protectedModes(*function)) {
+    if (!ordinary(*function) || !palettes(*function) || !sharedDirections(*function) || !constantDirections() || !protectedModes(*function)) {
         llvm::errs() << "bounded lifetime allocation certificate check failed\n";
         return 1;
     }

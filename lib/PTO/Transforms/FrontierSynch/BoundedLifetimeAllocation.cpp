@@ -124,48 +124,54 @@ DictionaryAttr encode(func::FuncOp function, llvm::ArrayRef<Palette> palettes, i
                       const PeriodicSharedAllocation* shared = nullptr)
 {
     Builder b(function.getContext());
-    std::set<int64_t> reserved;
+    using Direction = std::pair<uint32_t, uint32_t>;
+    std::map<Direction, std::set<int64_t>> reserved;
     function.walk([&](Operation* operation) {
         if (auto model = getSyncMacroModel(operation)) {
             for (const auto& event : model->hiddenEvents) {
-                reserved.insert(event.eventIds.begin(), event.eventIds.end());
+                const auto source = static_cast<uint32_t>(event.srcPipe);
+                const auto target = static_cast<uint32_t>(event.dstPipe);
+                reserved[{source, target}].insert(event.eventIds.begin(), event.eventIds.end());
             }
         }
     });
-    SmallVector<Attribute> groups;
-    const auto count = shared && !palettes.empty() ? std::size_t(1) : palettes.size();
-    for (std::size_t i = 0; i < count; ++i) {
-        const auto& p = palettes[i];
-        SmallVector<int64_t> conflicts, strides(p.records.size(), 0), phases(p.records.size(), 0);
-        for (std::size_t j = 0; j < i; ++j) {
-            conflicts.push_back(j);
-        }
-        // Version-four source tuple has one coordinate: the source ordinal.
-        auto rule = b.getDictionaryAttr({b.getNamedAttr("coordinate_count", b.getI64IntegerAttr(1)),
-            b.getNamedAttr("base", b.getI64IntegerAttr(0)),
-            b.getNamedAttr("terms", b.getArrayAttr({b.getDenseI64ArrayAttr({0, 1, 0, int64_t(p.gap), 1})}))});
-        SmallVector<Attribute> rules(p.records.size(), rule);
-        SmallVector<int64_t> records(p.records), sources(p.records.size(), p.source);
-        SmallVector<int64_t> targets(p.records.size(), p.target);
-        uint64_t paletteBudget = p.gap;
+    std::vector<std::vector<std::size_t>> domains;
+    std::map<Direction, std::size_t> positions;
+    for (std::size_t i = 0; i < palettes.size(); ++i) {
         if (shared) {
-            records.clear(); sources.clear(); targets.clear(); rules.clear();
-            paletteBudget = shared->budget;
-            for (std::size_t j = 0; j < palettes.size(); ++j) {
-                const auto& phase = shared->phases[j];
-                auto tuple = b.getDictionaryAttr({b.getNamedAttr("coordinate_count", b.getI64IntegerAttr(1)),
-                    b.getNamedAttr("base", b.getI64IntegerAttr(phase.laneBegin)),
-                    b.getNamedAttr("terms", b.getArrayAttr({b.getDenseI64ArrayAttr(
-                        {0, 1, int64_t(phase.offset), int64_t(phase.laneCount), 1})}))});
-                for (auto record : palettes[j].records) {
-                    records.push_back(record); sources.push_back(palettes[j].source);
-                    targets.push_back(palettes[j].target); rules.push_back(tuple);
-                }
-            }
-            strides.assign(records.size(), 0); phases.assign(records.size(), 0); conflicts.clear();
+            auto entry = positions.emplace(Direction{palettes[i].source, palettes[i].target}, domains.size());
+            if (entry.second) { domains.emplace_back(); }
+            domains[entry.first->second].push_back(i);
+        } else { domains.push_back({i}); }
+    }
+    SmallVector<Attribute> groups;
+    for (std::size_t i = 0; i < domains.size(); ++i) {
+        const auto& p = palettes[domains[i].front()];
+        SmallVector<int64_t> conflicts, records, sources, targets;
+        SmallVector<Attribute> rules;
+        uint64_t paletteBudget = 0;
+        for (std::size_t j = 0; j < i; ++j) {
+            const auto& prior = palettes[domains[j].front()];
+            if (p.source == prior.source && p.target == prior.target) { conflicts.push_back(j); }
         }
-        const auto& hidden = reserved;
+        for (auto index : domains[i]) {
+            const auto& member = palettes[index];
+            const uint64_t begin = shared ? shared->phases[index].laneBegin : 0;
+            const uint64_t width = shared ? shared->phases[index].laneCount : member.gap;
+            const uint64_t offset = shared ? shared->phases[index].offset : 0;
+            paletteBudget = std::max(paletteBudget, begin + width);
+            auto rule = b.getDictionaryAttr({b.getNamedAttr("coordinate_count", b.getI64IntegerAttr(1)),
+                b.getNamedAttr("base", b.getI64IntegerAttr(begin)),
+                b.getNamedAttr("terms", b.getArrayAttr({b.getDenseI64ArrayAttr(
+                    {0, 1, int64_t(offset), int64_t(width), 1})}))});
+            for (auto record : member.records) {
+                records.push_back(record); sources.push_back(member.source);
+                targets.push_back(member.target); rules.push_back(rule);
+            }
+        }
+        const auto& hidden = reserved[{p.source, p.target}];
         SmallVector<int64_t> forbidden(hidden.begin(), hidden.end());
+        SmallVector<int64_t> zeros(records.size(), 0);
         groups.push_back(b.getDictionaryAttr({
             b.getNamedAttr("source", b.getI64IntegerAttr(p.source)),
             b.getNamedAttr("target", b.getI64IntegerAttr(p.target)),
@@ -173,8 +179,8 @@ DictionaryAttr encode(func::FuncOp function, llvm::ArrayRef<Palette> palettes, i
             b.getNamedAttr("records", b.getDenseI64ArrayAttr(records)),
             b.getNamedAttr("sources", b.getDenseI64ArrayAttr(sources)),
             b.getNamedAttr("targets", b.getDenseI64ArrayAttr(targets)),
-            b.getNamedAttr("strides", b.getDenseI64ArrayAttr(strides)),
-            b.getNamedAttr("phases", b.getDenseI64ArrayAttr(phases)),
+            b.getNamedAttr("strides", b.getDenseI64ArrayAttr(zeros)),
+            b.getNamedAttr("phases", b.getDenseI64ArrayAttr(zeros)),
             b.getNamedAttr("tuple_rules", b.getArrayAttr(rules)),
             b.getNamedAttr("conflicts", b.getDenseI64ArrayAttr(conflicts)),
             b.getNamedAttr("forbidden_ids", b.getDenseI64ArrayAttr(forbidden))}));
@@ -251,7 +257,9 @@ DictionaryAttr boundedLifetimeAllocationCertificate(
             costs[i][j] = maximum;
         }
     }
-    auto shared = allocatePeriodicShared(costs);
+    std::vector<std::pair<uint32_t, uint32_t>> directions;
+    for (const auto& palette : palettes) { directions.emplace_back(palette.source, palette.target); }
+    auto shared = allocateDirectedPeriodic(costs, directions);
     if (!originalRecords.empty()) {
         for (auto& palette : palettes) {
             for (auto& record : palette.records) { record = originalRecords[record]; }

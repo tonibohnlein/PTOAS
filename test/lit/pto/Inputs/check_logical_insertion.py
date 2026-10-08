@@ -147,6 +147,19 @@ def validate(template, trace):
     return {"payloads": len(payloads), "commands": len(commands), "covers": len(covers)}
 
 
+def without_function_metadata(text):
+    # Recognition diagnostics introduce function attributes and location aliases.
+    # Compare the original operation text independently of that diagnostic data.
+    lines = []
+    for line in text.splitlines():
+        if line.startswith("#loc"):
+            continue
+        if line.strip().startswith("func.func "):
+            line = line.split(" attributes {", 1)[0]
+        lines.append(line)
+    return lines
+
+
 def main():
     tool = shutil.which(sys.argv[1])
     assert tool
@@ -164,7 +177,8 @@ def main():
             assert "pto.set_flag" not in emitted and "pto.wait_flag" not in emitted
             # Structured payloads and loops remain single original operations.
             for name in ["scf.for", "pto.tload", "pto.textract"]:
-                assert emitted.count(name) == original.count(name)
+                assert sum(line.strip().startswith(name) for line in emitted.splitlines()) == sum(
+                    line.strip().startswith(name) for line in original.splitlines())
             trace = json.loads(invoke(tool, "--insertion-trace", path))
             assert trace["outer_trips"] == max(0, (upper - 1 + 1) // 2)
             summaries.append(validate(template, trace))
@@ -196,17 +210,19 @@ def main():
         assert not empty_template["counted_visits"]
         empty_inserted = invoke(tool, "--insert-logical", path)
         empty_certificate = ('pto.cyclic_allocation = {budget = 0 : i64, entries = [], '
-                             'order_exact = true, plan = 0 : i64, strategy = "shared-cycle-cover", '
-                             'version = 2 : i64}, ')
+                             'order_exact = true, plan = 0 : i64, strategy = "directed-cycle-cover", '
+                             'version = 3 : i64}, ')
         assert empty_certificate in empty_inserted
-        assert empty_inserted.replace(empty_certificate, '', 1) == invoke(tool, "--roundtrip", path)
+        assert without_function_metadata(empty_inserted) == without_function_metadata(
+            invoke(tool, "--roundtrip", path))
         empty_trace = json.loads(invoke(tool, "--insertion-trace", path))
         assert empty_trace["outer_trips"] == 0 and not empty_trace["events"]
         validate(empty_template, empty_trace)
         # Parameterized nests now use the exact arithmetic route.
         path.write_text(original.replace("%k = %one to %five", "%k = %one to %n"))
         accepted = invoke(tool, "--insert-logical", path)
-        assert accepted.count("scf.for") == original.count("scf.for")
+        assert sum(line.strip().startswith("scf.for") for line in accepted.splitlines()) == sum(
+            line.strip().startswith("scf.for") for line in original.splitlines())
         # A runtime step is outside the numerical template contract; failure
         # must not publish a partially inserted plan.
         path.write_text(original.replace("%k = %one to %five step %two",

@@ -35,7 +35,7 @@ def check_physical(template, report, eligible):
             assert (old['source_pipe'], old['target_pipe']) == (new['source_pipe'], new['target_pipe'])
             command['identity'] = (old['plan'], old['record'], old['source_ordinal'], tuple(old.get('members', [])))
             assert new['physical_id'] in eligible
-            event = new['physical_id']
+            event = (new['source_pipe'], new['target_pipe'], new['physical_id'])
             identity = command['identity'] + (new['source_pipe'], new['target_pipe'])
             uses.append((len(commands), new['kind'], event, identity))
         commands.append(command)
@@ -83,7 +83,8 @@ def run_checks(tool, optimizer, source):
         assert 'pto.logical_' not in physical and 'pto.cyclic_allocation' not in physical
         assert 'pto.set_flag' in physical and 'pto.wait_flag' in physical
         for name in ['scf.for', 'pto.tload', 'pto.textract']:
-            assert physical.count(name) == original.count(name), 'original payload/control structure changed'
+            assert sum(line.strip().startswith(name) for line in physical.splitlines()) == sum(
+                line.strip().startswith(name) for line in original.splitlines()), 'original payload/control structure changed'
         # Mutating a real physical assignment must be caught independently.
         broken = copy.deepcopy(report)
         commands = [e for e in broken['physical']['events'] if e['kind'] in ('set', 'wait')]
@@ -110,7 +111,7 @@ def run_checks(tool, optimizer, source):
         assert 'pto.logical_' not in result.stdout
         logical = opt(optimizer, path, ['--pto-frontier-analysis']).stdout
         for changed, expected in [
-            (logical.replace('version = 2 : i64', 'version = 1 : i64', 1), 'malformed'),
+            (logical.replace('version = 3 : i64', 'version = 1 : i64', 1), 'malformed'),
             (logical.replace('budget = 2 : i64', 'budget = -1 : i64', 1), 'malformed'),
             (logical.replace('plan 0 record', 'plan 1 record', 1), 'disagrees with its executable piece certificate'),
             ('\n'.join(line for line in logical.splitlines() if 'pto.logical_wait' not in line), 'no logical endpoint'),

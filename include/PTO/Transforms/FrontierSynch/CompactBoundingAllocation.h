@@ -18,7 +18,7 @@ namespace mlir::pto::frontiersynch {
 // remain applicable; this adapter does not supply a new reservation proof.
 // Empty plans export a zero-budget certificate bound to the original invocation.
 // True means an exported certificate, not that hardware capacity
-// suffices. The shared numeric pool is still checked by the physical decoder;
+// suffices. Per-direction numeric capacity is still checked by the physical decoder;
 // missing reuse proof and scarcity never trigger repairs or discard the plan.
 // Typed lane summaries are supplied when the existing regional exporter supports
 // the graph/frame. No minimum for arbitrary plans or actual excess is claimed.

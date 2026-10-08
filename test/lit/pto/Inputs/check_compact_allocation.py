@@ -54,16 +54,14 @@ def main():
             path.write_text(eligible(rotating.replace("array<i64: 0>", f"array<i64: {trips}>")))
             physical_check(trace(tool, path), set(range(6)))
             count += 2
-        # This sufficient producer devotes four IDs to each direction, requiring
-        # eight in the shared pool even when one runtime trace executes fewer.
-        # Its capacity rejection predates the compact bounding dispatcher.
+        # Each direction has its own capacity; both four-ID palettes fit.
         for g, h, trips, offset in itertools.product((0, 1), (0, 1), (0, 1, 4), (0, 1)):
             text = guarded.replace("%i, %offset", "%i, %zero" if offset == 0 else "%i, %one")
             text = text.replace("array<i64: 1, 1, 3, 0>", f"array<i64: {g}, {h}, {trips}, {offset}>")
             path.write_text(eligible(text))
             report, diagnostic = trace_result(tool, path)
-            guarded_capacity_rejection(report, diagnostic)
-            capacity_rejections += 1
+            physical_check(report, set(range(6)))
+            count += 1
         # Compile, do not execute, a billion-trip nest. Physical IR size must
         # stay independent of the numerical trip count.
         sizes = []
@@ -73,7 +71,8 @@ def main():
                                      "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5", str(path)],
                                     capture_output=True, text=True, timeout=45)
             assert result.returncode == 0, result.stderr
-            assert "pto.logical_" not in result.stdout and result.stdout.count("scf.for") == 2
+            loops = sum(line.strip().startswith("scf.for") for line in result.stdout.splitlines())
+            assert "pto.logical_" not in result.stdout and loops == 2
             sizes.append(len(result.stdout.splitlines()))
         assert max(sizes) <= min(sizes) + 5, sizes
         # Symbolic offsets remain unsupported by this sufficient constant-cycle
@@ -88,13 +87,13 @@ def main():
         report = trace(tool, path)
         assert report["accepted"] and not report["allocated"] and report["allocation_unchanged_on_failure"]
         # This producer retains its static sufficient budget for a contradictory
-        # guard. Require the known capacity failure, but no executed payload or
+        # guard. With one eligible ID, require capacity failure but no executed payload or
         # notification; the unchanged logical plan contains only its ALL barrier.
         text = guarded.replace("%i, %offset", "%i, %zero")
         text = text.replace("      scf.if %g {", "      %yes = arith.constant true\n"
                             "      %notg = arith.xori %g, %yes : i1\n"
                             "      %never = arith.andi %g, %notg : i1\n      scf.if %never {")
-        path.write_text(eligible(text))
+        path.write_text(eligible(text, "0"))
         report, diagnostic = trace_result(tool, path)
         guarded_capacity_rejection(report, diagnostic)
         assert report["trace"]["payloads"] == 0, report
