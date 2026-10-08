@@ -9,6 +9,8 @@
 // RUN: pto-sync-input-test --numerical-hierarchy-checks %s
 // RUN: pto-sync-input-test --bounding-contract-checks %s
 // RUN: pto-sync-input-test --certified-partial-reduction-checks
+// RUN: pto-sync-input-test --control-origin-distance-checks
+// RUN: pto-sync-input-test --compact-writer-reader-checks
 // CHECK: regional expression checks passed
 
 module {
