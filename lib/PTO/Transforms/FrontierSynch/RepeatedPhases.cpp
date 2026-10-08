@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/RepeatedPhases.h"
 #include "RepeatedRegionInternal.h"
+#include "RepeatedReadOnlyStorage.h"
 #include "CountedLoop.h"
 #include "SequenceAnalysisInternal.h"
 namespace mlir::pto::frontiersynch {
@@ -125,6 +126,74 @@ void appendPartial(RegionalAnalysis& out, const std::vector<RegionalAnalysis>& p
         }
     }
 }
+// Each invariant phase executes at most once in these boundary windows. The
+// first q visits contain the first writer/prefix readers; the last q visits
+// contain the last writer/suffix readers, including phases absent for a byte.
+// Folding whole per-byte summaries is essential: masking an unclipped first
+// writer would not reveal the next writer after an initial partial period.
+RegionalStorageSelectors projectStorage(RegionExpressions& e,
+    const std::vector<RegionalStorageSelectors>& phases, const std::vector<uint32_t>& starts,
+    Id begin, Id end)
+{
+    const auto q = e.constant(phases.size());
+    const auto firstPeriod = e.div(begin, q), firstPhase = e.rem(begin, q);
+    const auto lastPeriod = e.div(end, q), lastPhase = e.rem(end, q);
+    RegionalStorageBoundary first, last;
+    for (unsigned pass = 0; pass < 2; ++pass) {
+        auto initial = e.add(firstPeriod, e.constant(pass));
+        auto final = pass ? lastPeriod : e.sub(lastPeriod, e.constant(1));
+        for (std::size_t phase = 0; phase < phases.size(); ++phase) {
+            const auto p = e.constant(phase);
+            auto belowEnd = [&](Id period) {
+                return e.lor(e.lt(period, lastPeriod), e.land(e.eq(period, lastPeriod), e.lt(p, lastPhase)));
+            };
+            auto aboveBegin = [&](Id period) {
+                return e.lor(e.lt(firstPeriod, period), e.land(e.eq(period, firstPeriod), e.le(firstPhase, p)));
+            };
+            auto firstGuard = e.land(pass ? e.lt(p, firstPhase) : e.le(firstPhase, p), belowEnd(initial));
+            auto lastGuard = e.land(pass ? e.lt(p, lastPhase) : e.le(lastPhase, p),
+                e.land(belowEnd(final), aboveBegin(final)));
+            const auto& source = phases[phase];
+            RegionalStorageBoundary cell{{}, source.firstWriters, source.lastWriters,
+                                         source.firstReaders, source.lastReaders};
+            mergeCell(e, first, liftCell(e, cell, starts[phase], initial, firstGuard));
+            mergeCell(e, last, liftCell(e, std::move(cell), starts[phase], final, lastGuard));
+        }
+    }
+    return {std::move(first.firstWriters), std::move(last.lastWriters),
+            std::move(first.firstReaders), std::move(last.lastReaders)};
+}
+std::optional<RegionalStorageSelectors> phaseStorage(const RegionalAnalysis& phase, RegionalByteAddress address)
+{
+    if (phase.storageSelectors) { return phase.storageSelectors(address); }
+    // A finite-only phase can answer the same byte query through its exact
+    // partition. Residual effect relationships are not an absence certificate.
+    for (const auto* accesses : {&phase.accessBoundary, &phase.deferredAccessBoundary}) {
+        if (llvm::any_of(*accesses, [](const auto& access) { return !access.representedByCells; })) {
+            return std::nullopt;
+        }
+    }
+    auto& e = *phase.expressions;
+    RegionalStorageSelectors result;
+    for (const auto& cell : phase.storageBoundary) {
+        if (cell.cell.space != address.space) { continue; }
+        if (cell.cell.base != address.base) {
+            SmallVector<SyncStorageCell> domains{cell.cell, {address.space, 0, 1, address.base}};
+            if (!storageBasesAreComparable(domains, phase.gmAliasPolicy)) { return std::nullopt; }
+            continue;
+        }
+        auto active = e.land(e.le(e.constant(cell.cell.begin), address.offset),
+                             e.lt(address.offset, e.constant(cell.cell.end)));
+        auto append = [&](Selectors& target, Selectors source) {
+            restrictSelectors(e, source, active);
+            target.insert(target.end(), source.begin(), source.end());
+        };
+        append(result.firstWriters, cell.firstWriters); append(result.lastWriters, cell.lastWriters);
+        for (const auto& [pipe, values] : cell.firstReaders) { append(result.firstReaders[pipe], values); }
+        for (const auto& [pipe, values] : cell.lastReaders) { append(result.lastReaders[pipe], values); }
+    }
+    return result;
+}
 } // namespace
 RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loop,
     std::vector<RegionalAnalysis> phases, Id trips, ArrayRef<scf::ForOp> enclosing, Id begin,
@@ -170,6 +239,49 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
     bool endpoints = llvm::all_of(phases, [](const RegionalAnalysis& phase) {
         return phase.capabilities.endpointRecipes && (phase.prepare || phase.prepareWithVisits);
     });
+    const bool symbolic = llvm::any_of(phases, [](const auto& phase) {
+        return phase.storageSelectors || !phase.symbolicStorageEffects.empty();
+    });
+    std::shared_ptr<const std::vector<RegionalAnalysis>> originalPhases;
+    if (symbolic) {
+        originalPhases = std::make_shared<const std::vector<RegionalAnalysis>>(phases);
+        const SyncStorageEffects* model = nullptr;
+        std::vector<std::size_t> periodEffects;
+        for (const auto& phase : phases) {
+            if (phase.accessModel) {
+                if (model && (model != phase.accessModel || phase.gmAliasPolicy != phases.front().gmAliasPolicy)) {
+                    failure.error = "symbolic phases require one shared effect and alias context"; return failure;
+                }
+                model = phase.accessModel;
+            }
+            for (const auto* accesses : {&phase.accessBoundary, &phase.deferredAccessBoundary}) {
+                for (const auto& access : *accesses) {
+                    if (!phase.accessModel || access.effect >= phase.accessModel->effects().size() ||
+                        !validRegionalEvent(phase, access.first.event) ||
+                        !validRegionalEvent(phase, access.last.event) || access.first.present >= e.size() ||
+                        access.last.present >= e.size() || !e.isBoolean(access.first.present) ||
+                        !e.isBoolean(access.last.present)) {
+                        failure.error = "symbolic phase has invalid shared effect extrema"; return failure;
+                    }
+                    // Only consumed sibling extrema discharge collective
+                    // coverage. A deferred-only ordinary phase does not enter
+                    // the crossing graph. Its missing bridge must remain an
+                    // unavailable interface, even if its effect ID is known.
+                    if (accesses == &phase.accessBoundary && !llvm::is_contained(periodEffects, access.effect)) {
+                        periodEffects.push_back(access.effect);
+                    }
+                }
+            }
+        }
+        // Keep qualification separate from graph construction. Finite atoms
+        // produced here must survive both period composition and clipping.
+        auto executed = e.select(e.lt(begin, trips), trips, e.constant(0));
+        for (auto& phase : phases) {
+            if (!phase.storageSelectors && phase.symbolicStorageEffects.empty()) { continue; }
+            failure.error = prepareRepeatedSymbolicStorage(phase, loop, executed, periodEffects);
+            if (!failure.error.empty()) { return failure; }
+        }
+    }
     SmallVector<scf::ForOp> protectionContext(enclosing.begin(), enclosing.end());
     protectionContext.push_back(loop);
     auto composed = composeRegionalSequenceWithin(function, arena, phases, false, false, protectionContext);
@@ -181,14 +293,6 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
     if (!endpoints) {
         body.prepare = {}; body.prepareWithVisits = {}; body.prepareFiltered = {};
         body.capabilities.endpointRecipes = false;
-    }
-    // The interval exporter below reconstructs finite boundaries from each
-    // phase. It does not yet clip symbolic byte callbacks or retain the finite
-    // atoms materialized by invariant repetition; admitting them would export
-    // visits outside [begin, trips) or lose persistent-writer bridges.
-    if (body.storageSelectors || !body.symbolicStorageEffects.empty()) {
-        failure.error = "phased symbolic storage requires interval-aware selector and boundary lifting";
-        return failure;
     }
     auto count = e.add(periods, e.select(e.lt(e.constant(0), remainder), e.constant(1), e.constant(0)));
     RepeatedRegionAnalysis result;
@@ -300,6 +404,40 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
         if (!value) { return std::nullopt; }
         return arena->land(*value, arena->land(*pa, *pb));
     };
+    if (originalPhases) {
+        out.accessBoundary.clear(); out.deferredAccessBoundary.clear();
+        for (std::size_t phase = 0; phase < q; ++phase) {
+            const auto& source = (*originalPhases)[phase];
+            for (auto effect : source.symbolicStorageEffects) {
+                if (!llvm::is_contained(out.symbolicStorageEffects, effect)) {
+                    out.symbolicStorageEffects.push_back(effect);
+                }
+            }
+            auto append = [&](auto& target, const auto& accesses) {
+                for (auto access : accesses) {
+                    for (auto* selector : {&access.first, &access.last}) {
+                        selector->event.type += starts[phase];
+                        selector->event.visits.insert(selector->event.visits.begin(), e.constant(0));
+                    }
+                    target.push_back(std::move(access));
+                }
+            };
+            append(out.accessBoundary, source.accessBoundary);
+            append(out.deferredAccessBoundary, source.deferredAccessBoundary);
+        }
+        out.storageSelectors = [originalPhases, arena, starts, begin, trips](RegionalByteAddress address)
+            -> std::optional<RegionalStorageSelectors> {
+            if (address.offset >= arena->size() || arena->isBoolean(address.offset)) { return std::nullopt; }
+            if (arena->constantValue(arena->lt(begin, trips)) == 0) { return RegionalStorageSelectors{}; }
+            std::vector<RegionalStorageSelectors> selected;
+            for (const auto& phase : *originalPhases) {
+                auto selectors = phaseStorage(phase, address);
+                if (!selectors) { return std::nullopt; }
+                selected.push_back(std::move(*selectors));
+            }
+            return projectStorage(*arena, selected, starts, begin, trips);
+        };
+    }
     for (auto* accesses : {&out.accessBoundary, &out.deferredAccessBoundary}) {
         for (auto& access : *accesses) {
             const auto phase = typePhases[access.last.event.type];

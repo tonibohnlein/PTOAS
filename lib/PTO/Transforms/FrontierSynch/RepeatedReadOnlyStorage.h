@@ -12,7 +12,17 @@
 namespace mlir::pto::frontiersynch {
 // Materialize exact singleton boundary atoms only from complete finite support.
 // A failure leaves the input unchanged. The expansion is representation-bounded.
-std::string materializeRepeatedSymbolicStorage(RegionalAnalysis& body, scf::ForOp loop, RegionExpressions::Id trips);
+// periodEffects, when supplied by phased composition, names effects with
+// validated extrema in sibling phases of this same period/shared model. It
+// satisfies only the collective coverage check; it never supplies selectors.
+std::string materializeRepeatedSymbolicStorage(RegionalAnalysis& body, scf::ForOp loop, RegionExpressions::Id trips,
+                                              ArrayRef<std::size_t> periodEffects = {});
+// Qualify one invariant phase and construct only its crossing view. Preserve
+// the original view separately for exact byte callbacks and effect exports.
+// Reuses the same read-only/all-writer or finite-support proof as repetition;
+// failure leaves body unchanged. No repeated graph or visit expansion occurs.
+std::string prepareRepeatedSymbolicStorage(RegionalAnalysis& body, scf::ForOp loop, RegionExpressions::Id trips,
+                                          ArrayRef<std::size_t> periodEffects = {});
 RepeatedRegionAnalysis repeatSymbolicStorageRegion(func::FuncOp function, scf::ForOp loop,
     RegionalAnalysis body, RegionExpressions::Id trips);
 } // namespace mlir::pto::frontiersynch
