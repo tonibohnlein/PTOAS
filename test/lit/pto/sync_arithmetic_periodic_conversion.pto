@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --arithmetic-periodic-input-checks %s
+// RUN: %python %S/Inputs/check_arithmetic_periodic_ordinals.py pto-sync-input-test %s
 module attributes {pto.backend = "emitc", "pto.device-spec" = "Ascend910B1", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a3"} {
   func.func @periodic_prefix_0(%arg0: !pto.ptr<f32, gm>, %arg1: !pto.ptr<f32, gm>) attributes {test.trace_arguments = array<i64: 0, 0>} {
     %c0_i64 = arith.constant 0 : i64

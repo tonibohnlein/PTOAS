@@ -7,13 +7,49 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/ArithmeticPeriodicConversion.h"
 #include "mlir/IR/Matchers.h"
+#include "CountedLoop.h"
 namespace mlir::pto::frontiersynch {
 namespace {
-bool constantIs(Value value, int64_t expected)
+// Import the already normalized source expression. Only affine combinations
+// of the existing parameter bindings are needed for this coordinate change.
+// No new execution parameters or unchecked machine arithmetic are introduced.
+std::optional<IntegerAffine> lowerForm(const ArithmeticProgram& program, scf::ForOp loop)
 {
-    APInt integer;
-    return matchPattern(value, m_ConstantInt(&integer)) && integer.isSignedIntN(64) &&
-           integer.getSExtValue() == expected;
+    mlir::pto::detail::ScalarEvolution scalar(loop.getContext(), loop);
+    auto expression = scalar.value(loop.getLowerBound(), [&](Value value) -> AffineExpr {
+        for (unsigned i = 0; i < program.parameters.size(); ++i) {
+            if (program.parameters[i] == value) { return getAffineSymbolExpr(i, loop.getContext()); }
+        }
+        return {};
+    });
+    IntegerAffine form;
+    form.coefficients.resize(program.parameters.size());
+    SmallVector<std::pair<AffineExpr, BoundInteger>> pending{{expression, BoundInteger(1)}};
+    while (!pending.empty()) {
+        auto [term, scale] = pending.pop_back_val();
+        if (!term) { return {}; }
+        if (auto constant = dyn_cast<AffineConstantExpr>(term)) {
+            form.constant += scale * BoundInteger(constant.getValue());
+        } else if (auto parameter = dyn_cast<AffineSymbolExpr>(term)) {
+            if (parameter.getPosition() >= form.coefficients.size()) { return {}; }
+            form.coefficients[parameter.getPosition()] += scale;
+        } else if (auto binary = dyn_cast<AffineBinaryOpExpr>(term)) {
+            if (binary.getKind() == AffineExprKind::Add) {
+                pending.push_back({binary.getLHS(), scale});
+                pending.push_back({binary.getRHS(), scale});
+            } else if (binary.getKind() == AffineExprKind::Mul) {
+                auto constant = dyn_cast<AffineConstantExpr>(binary.getRHS());
+                auto operand = binary.getLHS();
+                if (!constant) {
+                    constant = dyn_cast<AffineConstantExpr>(binary.getLHS());
+                    operand = binary.getRHS();
+                }
+                if (!constant) { return {}; }
+                pending.push_back({operand, scale * BoundInteger(constant.getValue())});
+            } else { return {}; }
+        } else { return {}; }
+    }
+    return form;
 }
 bool checkSkeleton(const ArithmeticProgram& program, ArithmeticPeriodicProgram& out)
 {
@@ -33,8 +69,13 @@ bool checkSkeleton(const ArithmeticProgram& program, ArithmeticPeriodicProgram& 
             return false;
         }
     }
-    if (!constantIs(out.loop.getLowerBound(), 0) || !constantIs(out.loop.getStep(), 1)) {
-        out.conversion.diagnostic = "periodic binding needs normalized zero-origin unit-step occurrence coordinates";
+    if (!CountedLoop::get(out.loop)) {
+        out.conversion.diagnostic =
+            "periodic binding needs a proved 64-bit counted-loop ordinal and positive constant step";
+        return false;
+    }
+    if (!lowerForm(program, out.loop)) {
+        out.conversion.diagnostic = "periodic binding needs an affine origin in the existing arithmetic parameters";
         return false;
     }
     return true;
@@ -50,12 +91,60 @@ bool bindSkeleton(const ArithmeticProgram& program, ArithmeticPeriodicProgram& o
     }
     return true;
 }
-std::optional<uint32_t> typeOf(const ArithmeticProgram& program, uint64_t period, const ArithmeticEventKey& event)
+struct OrdinalPhase {
+    uint32_t type = 0;
+    // old IV quotient = step * ordinal quotient + lower parameter quotient
+    // form + offset, for this ordinal phase and parameter-residue tuple.
+    BoundInteger offset;
+};
+std::vector<OrdinalPhase> phasesFor(const ArithmeticProgram& program, uint64_t period,
+    int64_t step, const IntegerAffine& lower, const ArithmeticEventKey& event,
+    const std::vector<uint64_t>& parameters)
 {
-    if (event.site >= program.sites.size() || event.residues.size() != 1 || event.residues.front() >= period) {
-        return {};
+    if (event.site >= program.sites.size() || event.residues.size() != 1 ||
+        event.residues.front() >= period || parameters.size() != lower.coefficients.size()) { return {}; }
+    BoundInteger fixed = lower.constant;
+    for (unsigned i = 0; i < parameters.size(); ++i) {
+        if (parameters[i] >= period) { return {}; }
+        fixed += lower.coefficients[i] * BoundInteger(static_cast<int64_t>(parameters[i]));
     }
-    return event.residues.front() * program.sites.size() + event.site;
+    const BoundInteger modulus(static_cast<int64_t>(period));
+    std::vector<OrdinalPhase> result;
+    for (uint64_t phase = 0; phase < period; ++phase) {
+        auto raw = fixed + BoundInteger(step) * BoundInteger(static_cast<int64_t>(phase));
+        auto offset = floorDiv(raw, modulus);
+        auto residue = raw - offset * modulus;
+        if (residue == BoundInteger(static_cast<int64_t>(event.residues.front()))) {
+            result.push_back({static_cast<uint32_t>(phase * program.sites.size() + event.site), offset});
+        }
+    }
+    return result;
+}
+// Exact substitution preserves every inequality and congruence. There is no
+// projection or rounding of access distances; floor occurs only in the fixed
+// origin/residue conversion above (including negative origins).
+FailureOr<IntegerSystem> ordinalSystem(const IntegerSystem& system, const IntegerAffine& lower,
+    int64_t step, ArrayRef<BoundInteger> offsets)
+{
+    const auto coordinates = offsets.size();
+    if (system.dimensions() != coordinates + lower.coefficients.size()) { return failure(); }
+    auto substitute = [&](std::vector<BoundInteger>& row) {
+        BoundInteger constant;
+        for (unsigned coordinate = 0; coordinate < coordinates; ++coordinate) {
+            auto coefficient = row[coordinate];
+            constant += coefficient * offsets[coordinate];
+            row[coordinate] *= BoundInteger(step);
+            for (unsigned parameter = 0; parameter < lower.coefficients.size(); ++parameter) {
+                row[coordinates + parameter] += coefficient * lower.coefficients[parameter];
+            }
+        }
+        return constant;
+    };
+    auto constraints = system.constraints();
+    auto congruences = system.congruences();
+    for (auto& row : constraints) { row.bound -= substitute(row.coefficients); }
+    for (auto& row : congruences) { row.residue -= substitute(row.coefficients); }
+    return IntegerSystem::create(system.dimensions(), constraints, congruences);
 }
 std::vector<IntegerSystem> domainsFor(const GeneralArithmeticGeneratorStage& stage, const ArithmeticEventKey& event,
                                      const std::vector<uint64_t>& parameters)
@@ -69,29 +158,55 @@ std::vector<IntegerSystem> domainsFor(const GeneralArithmeticGeneratorStage& sta
     return domains;
 }
 bool appendRelations(const ArithmeticProgram& program, const GeneralArithmeticGeneratorStage& stage,
-                     const GeneralArithmeticRelation& relations, bool native, ArithmeticPeriodicInput& input)
+                     const GeneralArithmeticRelation& relations, bool native, ArithmeticPeriodicInput& input,
+                     int64_t step, const IntegerAffine& lower)
 {
     for (const auto& [key, pieces] : relations) {
-        auto source = typeOf(program, input.parameterPeriod, key.source);
-        auto target = typeOf(program, input.parameterPeriod, key.target);
-        if (!source || !target) { return false; }
+        if (key.source.site >= program.sites.size() || key.target.site >= program.sites.size() ||
+            key.source.residues.size() != 1 || key.target.residues.size() != 1 ||
+            key.source.residues.front() >= input.parameterPeriod ||
+            key.target.residues.front() >= input.parameterPeriod ||
+            key.parameterResidues.size() != lower.coefficients.size() ||
+            llvm::any_of(key.parameterResidues, [&](uint64_t r) { return r >= input.parameterPeriod; })) {
+            return false;
+        }
+        auto sources = phasesFor(program, input.parameterPeriod, step, lower, key.source, key.parameterResidues);
+        auto targets = phasesFor(program, input.parameterPeriod, step, lower, key.target, key.parameterResidues);
+        // A residue not visited by a non-coprime stride has no occurrence.
+        if (sources.empty() || targets.empty()) { continue; }
         const bool completionStart = key.source.event == ArithmeticEvent::Completion &&
                                      key.target.event == ArithmeticEvent::Start;
         if (!completionStart) {
-            // These are already supplied by the canonical native pipe chains.
-            // No other non-core native relation may silently disappear.
             const bool coreKinds = (key.source.event == ArithmeticEvent::Start &&
                 (key.target.event == ArithmeticEvent::Start || key.target.event == ArithmeticEvent::Completion)) ||
                 (key.source.event == ArithmeticEvent::Completion && key.target.event == ArithmeticEvent::Completion);
-            if (!native || !coreKinds || input.payloads[*source].pipe != input.payloads[*target].pipe) { return false; }
+            if (!native || !coreKinds || input.payloads[sources.front().type].pipe !=
+                input.payloads[targets.front().type].pipe) { return false; }
             continue;
         }
         auto sourceDomains = domainsFor(stage, key.source, key.parameterResidues);
         auto targetDomains = domainsFor(stage, key.target, key.parameterResidues);
         if (sourceDomains.empty() || targetDomains.empty()) { return false; }
-        for (const auto& piece : pieces) {
-            input.pieces.push_back({*source, *target, piece, key.parameterResidues,
-                sourceDomains, targetDomains, native, input.pieces.size()});
+        for (auto source : sources) {
+            for (auto target : targets) {
+                std::vector<IntegerSystem> from, to;
+                for (const auto& domain : sourceDomains) {
+                    auto converted = ordinalSystem(domain, lower, step, {source.offset});
+                    if (failed(converted)) { return false; }
+                    from.push_back(std::move(*converted));
+                }
+                for (const auto& domain : targetDomains) {
+                    auto converted = ordinalSystem(domain, lower, step, {target.offset});
+                    if (failed(converted)) { return false; }
+                    to.push_back(std::move(*converted));
+                }
+                for (const auto& piece : pieces) {
+                    auto converted = ordinalSystem(piece, lower, step, {source.offset, target.offset});
+                    if (failed(converted)) { return false; }
+                    input.pieces.push_back({source.type, target.type, std::move(*converted), key.parameterResidues,
+                        from, to, native, input.pieces.size()});
+                }
+            }
         }
     }
     return true;
@@ -128,8 +243,11 @@ ArithmeticPeriodicProgram convertArithmeticPeriodicProgram(const ArithmeticProgr
     for (auto* phase : out.phases) {
         input.payloads.push_back({static_cast<uint32_t>(phase->kPipeValue), input.expressions->boolean(true)});
     }
-    if (!appendRelations(program, stage, stage.analysis().generators, false, input) ||
-        !appendRelations(program, stage, stage.analysis().nativeOrder, true, input)) {
+    const auto domain = CountedLoop::get(out.loop);
+    const auto lower = lowerForm(program, out.loop);
+    if (!domain || !lower ||
+        !appendRelations(program, stage, stage.analysis().generators, false, input, domain->step, *lower) ||
+        !appendRelations(program, stage, stage.analysis().nativeOrder, true, input, domain->step, *lower)) {
         out.conversion.diagnostic =
             "arithmetic event/domain bindings or non-core native relations lack periodic export";
         return out;

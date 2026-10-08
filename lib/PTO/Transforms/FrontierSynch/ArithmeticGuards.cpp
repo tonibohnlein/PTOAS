@@ -46,13 +46,14 @@ bool supportedComparison(arith::CmpIOp compare)
     default: return false;
     }
 }
-std::optional<Pieces> combine(Pieces left, Pieces right, bool conjunction)
+std::optional<Pieces> combine(Pieces left, Pieces right, bool conjunction, bool* exceeded = nullptr)
 {
     if (!conjunction) {
         for (const auto& piece : right) {
             if (!llvm::is_contained(left, piece)) {
                 const bool full = left.size() == maxGuardPieces;
                 if (full) {
+                    if (exceeded) { *exceeded = true; }
                     return std::nullopt;
                 }
                 left.push_back(piece);
@@ -62,6 +63,7 @@ std::optional<Pieces> combine(Pieces left, Pieces right, bool conjunction)
     }
     const bool oversized = !right.empty() && left.size() > maxGuardPieces / right.size();
     if (oversized) {
+        if (exceeded) { *exceeded = true; }
         return std::nullopt;
     }
     Pieces result;
@@ -72,6 +74,7 @@ std::optional<Pieces> combine(Pieces left, Pieces right, bool conjunction)
                 if (!llvm::is_contained(rows, row)) {
                     const bool full = rows.size() == maxGuardRows;
                     if (full) {
+                        if (exceeded) { *exceeded = true; }
                         return std::nullopt;
                     }
                     rows.push_back(row);
@@ -116,11 +119,13 @@ std::optional<Pieces> comparison(ProgramBuilder& builder, arith::CmpIOp compare,
 }
 std::optional<Pieces> condition(ProgramBuilder& builder, Value value, bool truth,
                                const ArithmeticSite& site, unsigned offset, unsigned depth,
-                               GuardCache& cache);
+                               GuardCache& cache, bool& exceeded);
 std::optional<Pieces> buildCondition(ProgramBuilder& builder, Value value, bool truth,
-                               const ArithmeticSite& site, unsigned offset, unsigned depth, GuardCache& cache)
+                               const ArithmeticSite& site, unsigned offset, unsigned depth,
+                               GuardCache& cache, bool& exceeded)
 {
     if (depth > maxGuardDepth) {
+        exceeded = true;
         return std::nullopt;
     }
     if (auto constant = booleanConstant(value)) {
@@ -143,7 +148,7 @@ std::optional<Pieces> buildCondition(ProgramBuilder& builder, Value value, bool 
         auto left = booleanConstant(exclusive.getLhs()), right = booleanConstant(exclusive.getRhs());
         if (left || right) {
             return condition(builder, left ? exclusive.getRhs() : exclusive.getLhs(),
-                             truth != (left ? *left : *right), site, offset, depth + 1, cache);
+                             truth != (left ? *left : *right), site, offset, depth + 1, cache, exceeded);
         }
         return std::nullopt;
     }
@@ -151,18 +156,20 @@ std::optional<Pieces> buildCondition(ProgramBuilder& builder, Value value, bool 
     if (!andOr) {
         return std::nullopt;
     }
-    auto left = condition(builder, operation->getOperand(0), truth, site, offset, depth + 1, cache);
-    auto right = condition(builder, operation->getOperand(1), truth, site, offset, depth + 1, cache);
+    auto left = condition(builder, operation->getOperand(0), truth, site, offset, depth + 1, cache, exceeded);
+    auto right = condition(builder, operation->getOperand(1), truth, site, offset, depth + 1, cache, exceeded);
     if (!left || !right) {
         return std::nullopt;
     }
     const bool conjunction = isa<arith::AndIOp>(operation) == truth;
-    return combine(std::move(*left), std::move(*right), conjunction);
+    return combine(std::move(*left), std::move(*right), conjunction, &exceeded);
 }
 std::optional<Pieces> condition(ProgramBuilder& builder, Value value, bool truth,
-                               const ArithmeticSite& site, unsigned offset, unsigned depth, GuardCache& cache)
+                               const ArithmeticSite& site, unsigned offset, unsigned depth,
+                               GuardCache& cache, bool& exceeded)
 {
     if (depth > maxGuardDepth) {
+        exceeded = true;
         return std::nullopt;
     }
     auto key = std::make_pair(value, static_cast<unsigned>(truth));
@@ -170,13 +177,142 @@ std::optional<Pieces> condition(ProgramBuilder& builder, Value value, bool truth
     if (found != cache.end()) {
         return found->second;
     }
-    auto result = buildCondition(builder, value, truth, site, offset, depth, cache);
+    auto result = buildCondition(builder, value, truth, site, offset, depth, cache, exceeded);
     if (result) {
         cache[key] = *result;
     }
     return result;
 }
+// Bound alternatives remain explicit relation pieces. Their Cartesian
+// products are charged by the emitted primitive-piece count; a representation
+// cap is reported as a producer limit, never as a theorem-class violation.
+struct BoundPiece {
+    AffineExpr value;
+    Rows rows;
+};
+using BoundPieces = SmallVector<BoundPiece>;
+std::optional<BoundPieces> boundPieces(ProgramBuilder& builder, Value input, const ArithmeticSite& site,
+                                     unsigned offset, unsigned depth, GuardCache& cache, bool& exceeded)
+{
+    if (depth > maxGuardDepth) { exceeded = true; return std::nullopt; }
+    if (auto affine = builder.value(input, site, offset)) { return BoundPieces{{affine, {}}}; }
+    auto* op = input.getDefiningOp();
+    const bool minmax = op && isa<arith::MinSIOp, arith::MaxSIOp>(op);
+    auto select = dyn_cast_or_null<arith::SelectOp>(op);
+    if (!input.getType().isIndex() || (!minmax && !select)) { return std::nullopt; }
+    Value left = select ? select.getTrueValue() : op->getOperand(0);
+    Value right = select ? select.getFalseValue() : op->getOperand(1);
+    auto a = boundPieces(builder, left, site, offset, depth + 1, cache, exceeded);
+    auto b = boundPieces(builder, right, site, offset, depth + 1, cache, exceeded);
+    if (!a || !b) { return std::nullopt; }
+    BoundPieces result;
+    auto append = [&](AffineExpr value, std::optional<Pieces> predicates) {
+        if (!predicates) { return false; }
+        if (predicates->size() > maxGuardPieces - result.size()) { exceeded = true; return false; }
+        for (auto& rows : *predicates) { result.push_back({value, std::move(rows)}); }
+        return true;
+    };
+    if (select) {
+        for (bool truth : {true, false}) {
+            auto predicate = condition(builder, select.getCondition(), truth, site, offset,
+                                       depth + 1, cache, exceeded);
+            if (!predicate) { return std::nullopt; }
+            for (const auto& choice : truth ? *a : *b) {
+                if (!append(choice.value, combine(Pieces{choice.rows}, *predicate, true, &exceeded))) {
+                    return std::nullopt;
+                }
+            }
+        }
+    } else {
+        for (const auto& x : *a) {
+            for (const auto& y : *b) {
+                auto rows = combine(Pieces{x.rows}, Pieces{y.rows}, true, &exceeded);
+                if (!rows) { return std::nullopt; }
+                auto difference = mlir::pto::detail::checkedAdd(y.value,
+                    mlir::pto::detail::checkedMul(x.value, getAffineConstantExpr(-1, builder.context)));
+                if (!difference) { return std::nullopt; }
+                // Tie belongs to the left choice. No fixed-width subtraction
+                // is executed: these are mathematical comparison constraints.
+                if (isa<arith::MaxSIOp>(op)) {
+                    difference = mlir::pto::detail::checkedMul(difference,
+                        getAffineConstantExpr(-1, builder.context));
+                }
+                auto opposite = mlir::pto::detail::checkedAdd(
+                    mlir::pto::detail::checkedMul(difference, getAffineConstantExpr(-1, builder.context)),
+                    getAffineConstantExpr(-1, builder.context));
+                if (!difference || !opposite ||
+                    !append(x.value, combine(*rows, Pieces{{difference}}, true, &exceeded)) ||
+                    !append(y.value, combine(*rows, Pieces{{opposite}}, true, &exceeded))) { return std::nullopt; }
+            }
+        }
+    }
+    return result;
+}
+std::optional<Pieces> piecewiseDomain(ProgramBuilder& builder, const ArithmeticSite& site,
+                                     unsigned offset, GuardCache& cache, bool& exceeded)
+{
+    Pieces result{Rows{}};
+    for (auto [id, storedLoop] : llvm::enumerate(site.loops)) {
+        auto loop = storedLoop;
+        if (builder.value(loop.getLowerBound(), site, offset) &&
+            builder.value(loop.getUpperBound(), site, offset)) { continue; }
+        auto lower = boundPieces(builder, loop.getLowerBound(), site, offset, 0, cache, exceeded);
+        auto upper = boundPieces(builder, loop.getUpperBound(), site, offset, 0, cache, exceeded);
+        if (!lower || !upper) { return std::nullopt; }
+        Pieces alternatives;
+        auto step = dyn_cast<AffineConstantExpr>(builder.value(loop.getStep(), site, offset));
+        if (!step || step.getValue() <= 0) { return std::nullopt; }
+        const auto iv = getAffineDimExpr(offset + id, builder.context);
+        const auto minusOne = getAffineConstantExpr(-1, builder.context);
+        for (const auto& low : *lower) {
+            for (const auto& high : *upper) {
+                auto distance = mlir::pto::detail::checkedAdd(iv,
+                    mlir::pto::detail::checkedMul(low.value, minusOne));
+                auto constant = dyn_cast<AffineConstantExpr>(high.value);
+                auto bound = constant && constant.getValue() == INT64_MIN ? minusOne :
+                    mlir::pto::detail::checkedAdd(mlir::pto::detail::checkedAdd(high.value, -iv), minusOne);
+                if (!distance || !bound) { return std::nullopt; }
+                Rows rows{distance, bound};
+                if (step.getValue() != 1) { rows.push_back(-(distance % step.getValue())); }
+                auto selected = combine(Pieces{low.rows}, Pieces{high.rows}, true, &exceeded);
+                if (selected) { selected = combine(std::move(*selected), Pieces{rows}, true, &exceeded); }
+                auto joined = selected ? combine(std::move(alternatives), std::move(*selected), false, &exceeded) :
+                                         std::optional<Pieces>{};
+                if (!joined) { return std::nullopt; }
+                alternatives = std::move(*joined);
+            }
+        }
+        auto combined = combine(std::move(result), std::move(alternatives), true, &exceeded);
+        if (!combined) { return std::nullopt; }
+        result = std::move(*combined);
+    }
+    return result;
+}
 } // namespace
+
+bool ProgramBuilder::prepareBound(Value input, const ArithmeticSite& site)
+{
+    SmallVector<std::pair<Value, unsigned>> work{{input, 0}};
+    DenseSet<Value> seen;
+    while (!work.empty()) {
+        auto [value, depth] = work.pop_back_val();
+        if (depth > maxGuardDepth) {
+            output.extraction.note(RecognitionIssue::TemplateExpansionLimit, value.getDefiningOp());
+            return false;
+        }
+        if (!seen.insert(value).second || prepareValue(value, site)) { continue; }
+        auto* op = value.getDefiningOp();
+        if (!value.getType().isIndex() || !op) { return false; }
+        if (auto select = dyn_cast<arith::SelectOp>(op)) {
+            if (!prepareGuard(select.getCondition(), site)) { return false; }
+            work.push_back({select.getTrueValue(), depth + 1});
+            work.push_back({select.getFalseValue(), depth + 1});
+        } else if (isa<arith::MinSIOp, arith::MaxSIOp>(op)) {
+            for (auto operand : op->getOperands()) { work.push_back({operand, depth + 1}); }
+        } else { return false; }
+    }
+    return true;
+}
 
 bool ProgramBuilder::prepareGuard(Value root, const ArithmeticSite& site)
 {
@@ -233,13 +369,25 @@ void ProgramBuilder::emitForSites(PrimitiveRelation& relation, ArrayRef<AffineEx
     Pieces pieces{Rows(rows)};
     for (auto [site, offset] : endpoints) {
         GuardCache cache;
+        bool exceeded = false;
+        auto domain = piecewiseDomain(*this, *site, offset, cache, exceeded);
+        auto constrained = domain ? combine(std::move(pieces), std::move(*domain), true, &exceeded) :
+                                    std::optional<Pieces>{};
+        if (!constrained) {
+            output.extraction.note(exceeded ? RecognitionIssue::TemplateExpansionLimit : RecognitionIssue::LoopDomain,
+                                   site->phase ? site->phase->elementOp : nullptr);
+            return;
+        }
+        pieces = std::move(*constrained);
         for (auto guard : site->guards) {
             auto branch = guard.branch;
-            auto alternatives = condition(*this, branch.getCondition(), guard.takeThen, *site, offset, 0, cache);
-            auto combined = alternatives ? combine(std::move(pieces), std::move(*alternatives), true) :
+            auto alternatives = condition(*this, branch.getCondition(), guard.takeThen, *site,
+                                          offset, 0, cache, exceeded);
+            auto combined = alternatives ? combine(std::move(pieces), std::move(*alternatives), true, &exceeded) :
                                           std::optional<Pieces>{};
             if (!combined) {
-                output.extraction.note(RecognitionIssue::UnsupportedControl, branch);
+                output.extraction.note(exceeded ? RecognitionIssue::TemplateExpansionLimit :
+                                       RecognitionIssue::UnsupportedControl, branch);
                 return;
             }
             pieces = std::move(*combined);

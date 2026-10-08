@@ -229,6 +229,9 @@ SmallVector<AffineExpr> ProgramBuilder::domain(const ArithmeticSite& site, unsig
         const auto iv = getAffineDimExpr(offset + id, context);
         auto lower = value(loop.getLowerBound(), site, offset);
         auto upper = value(loop.getUpperBound(), site, offset);
+        // Piecewise bounds, including the lower-origin congruence, are emitted
+        // together in emitForSites after choosing their exact alternatives.
+        if (!lower || !upper) { continue; }
         auto step = cast<AffineConstantExpr>(value(loop.getStep(), site, offset)).getValue();
         auto distance = mlir::pto::detail::checkedAdd(iv, mlir::pto::detail::checkedMul(
             lower, getAffineConstantExpr(-1, context)));

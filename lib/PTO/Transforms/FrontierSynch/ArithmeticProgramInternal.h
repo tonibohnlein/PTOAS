@@ -25,6 +25,7 @@ struct ProgramBuilder {
     AffineExpr registerParameter(Value value);
     bool prepareValue(Value input, const ArithmeticSite& site);
     bool prepareGuard(Value condition, const ArithmeticSite& site);
+    bool prepareBound(Value input, const ArithmeticSite& site);
     // Conjoin both endpoint guard domains at their respective coordinate offsets.
     void emitForSites(PrimitiveRelation& relation, ArrayRef<AffineExpr> rows,
                       ArrayRef<std::pair<const ArithmeticSite*, unsigned>> endpoints);

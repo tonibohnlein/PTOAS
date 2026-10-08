@@ -6,18 +6,11 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/GuardedPeriodicInsertion.h"
-#include "mlir/IR/Matchers.h"
-#include "mlir/Interfaces/DataLayoutInterfaces.h"
+#include "CountedLoop.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
 namespace {
 using Expr = RegionExpressions::Id;
-std::optional<int64_t> constant(Value value)
-{
-    APInt number;
-    if (!matchPattern(value, m_ConstantInt(&number)) || number.getBitWidth() > 64) { return std::nullopt; }
-    return number.getSExtValue();
-}
 class Preparer {
 public:
     Preparer(func::FuncOp function, const GuardedPeriodicEndpointInput& analysis,
@@ -28,19 +21,13 @@ public:
     LogicalResult run()
     {
         auto loop = analysis.loop;
-        auto low = constant(loop.getLowerBound()), step = constant(loop.getStep());
-        const auto bits = DataLayout::closest(function).getTypeSizeInBits(builder.getIndexType());
-        if (!low || *low < 0 || !step || *step <= 0 || bits.isScalable() || bits.getFixedValue() != 64) {
-            error = "guarded endpoint domain requires a nonnegative start, positive step and 64-bit index";
+        const auto domain = CountedLoop::get(loop);
+        if (!domain) {
+            error = "guarded endpoint domain requires a proved counted-loop ordinal and positive constant step";
             return failure();
         }
-        auto zero = arena.constant(0), one = arena.constant(1);
-        auto lower = arena.input(loop.getLowerBound()), upper = arena.input(loop.getUpperBound());
-        auto stride = arena.constant(*step);
-        auto span = arena.select(arena.slt(lower, upper), arena.sub(upper, lower), zero);
-        trips = arena.add(arena.div(span, stride),
-                          arena.select(arena.eq(arena.rem(span, stride), zero), zero, one));
-        auto originalOrdinal = arena.div(arena.sub(arena.input(loop.getInductionVar()), lower), stride);
+        trips = domain->trips(arena);
+        auto originalOrdinal = domain->ordinal(arena);
         ordinal = arena.div(originalOrdinal, arena.constant(analysis.period));
         residue = arena.rem(originalOrdinal, arena.constant(analysis.period));
         builder.setInsertionPointToEnd(&plan.addPreparation(loop));
