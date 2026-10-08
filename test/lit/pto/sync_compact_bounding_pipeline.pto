@@ -116,4 +116,19 @@ module {
     %after = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32 {test.label = "R_exit"}
     return
   }
+  // Exact guarded demands exist, but the source cut cannot evaluate the later
+  // division. Keep that result and report unavailable endpoint code.
+  func.func @late_guard(%n: index, %d: index) attributes {test.unmet_exports} {
+    %c0 = arith.constant 0 : index
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    pto.texpands ins(%one : f32) outs(%tile : !tile)
+    %q = arith.divsi %n, %d : index
+    %g = arith.cmpi sge, %q, %c0 : index
+    scf.if %g {
+      %v = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+    }
+    return
+  }
 }
