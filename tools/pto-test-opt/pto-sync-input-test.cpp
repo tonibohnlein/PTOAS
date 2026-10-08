@@ -352,6 +352,9 @@ int runCompactWriterReaderInputChecks(func::FuncOp function, const pto::SyncInpu
 int runCompactLowerFactsChecks();
 int runPeriodicExcessChecks();
 int runCompactOrderBoundsChecks(func::FuncOp function, const pto::SyncInput& input);
+int runBalancedCompactBodyChecks(func::FuncOp function, const pto::SyncInput& input);
+int runGuardedCompactMatchingChecks(func::FuncOp function, const pto::SyncInput& input);
+int runConditionalCompactInputChecks(func::FuncOp function, const pto::SyncInput& input);
 int runPeriodicSharedAllocationChecks();
 bool runRepeatedReadOnlyStorageChecks(MLIRContext*);
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
@@ -462,6 +465,9 @@ int main(int argc, char **argv) {
   const bool hierarchyChecks = argc == 3 && StringRef(argv[1]) == "--numerical-hierarchy-checks";
   const bool boundingChecks = argc == 3 && StringRef(argv[1]) == "--bounding-contract-checks";
   const bool compactInputChecks = argc == 3 && StringRef(argv[1]) == "--compact-input-checks";
+  const bool conditionalCompactChecks = argc == 3 && StringRef(argv[1]) == "--conditional-compact-input-checks";
+  const bool balancedCompactChecks = argc == 3 && StringRef(argv[1]) == "--balanced-compact-checks";
+  const bool guardedCompactChecks = argc == 3 && StringRef(argv[1]) == "--guarded-compact-checks";
   const bool compactBoundsChecks = argc == 3 && StringRef(argv[1]) == "--compact-order-bounds-checks";
   const bool finiteOverlayInsertion = argc == 3 && StringRef(argv[1]) == "--finite-overlay-insertion";
   const bool finiteGuardedAnalysis = argc == 3 && StringRef(argv[1]) == "--finite-guarded-analysis";
@@ -472,6 +478,7 @@ int main(int argc, char **argv) {
       !numericAnalysis && !insertLogical &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
       !expressionChecks && !hierarchyChecks && !boundingChecks && !compactInputChecks && !compactBoundsChecks &&
+      !balancedCompactChecks && !guardedCompactChecks && !conditionalCompactChecks &&
       !preparedInsertion && !finiteOverlayInsertion &&
       !expectFailure && !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip &&
       !regionChecks && !phaseCopies && !step0 && !existing) {
@@ -482,7 +489,8 @@ int main(int argc, char **argv) {
                  "--finite-guarded-analysis|--finite-overlay-insertion|--region-expression-checks|--sequence-analysis|"
                  "--structured-trace|--physical-trace|--numerical-hierarchy-checks|--bounding-contract-checks|"
                  "--compact-input-checks|"
-                 "--compact-order-bounds-checks|"
+                 "--compact-order-bounds-checks|--balanced-compact-checks|--guarded-compact-checks|"
+                 "--conditional-compact-input-checks|"
                  "--arithmetic|--explicit-analysis|--rotating-analysis|--roundtrip|"
                  "--region-contract-checks|"
                  "--step0-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
@@ -501,7 +509,8 @@ int main(int argc, char **argv) {
                          insertionTrace || physicalTrace ||
                          structuredTrace || sequenceAnalysis || finiteGuardedAnalysis || finiteOverlayInsertion ||
                          expressionChecks || hierarchyChecks || boundingChecks || compactInputChecks ||
-                         compactBoundsChecks ||
+                         compactBoundsChecks || balancedCompactChecks || guardedCompactChecks ||
+                         conditionalCompactChecks ||
                          preparedInsertion || arithmetic ||
                          aliasChecks || roundtrip || regionChecks || phaseCopies || step0 || existing;
   const auto filename = argv[hasOption ? 2 : 1];
@@ -677,6 +686,18 @@ int main(int argc, char **argv) {
       if (runCompactWriterReaderInputChecks(function, input)) { return 1; }
       continue;
     }
+    if (conditionalCompactChecks) {
+      if (runConditionalCompactInputChecks(function, input)) { return 1; }
+      continue;
+    }
+    if (balancedCompactChecks) {
+      if (runBalancedCompactBodyChecks(function, input)) { return 1; }
+      continue;
+    }
+    if (guardedCompactChecks) {
+      if (runGuardedCompactMatchingChecks(function, input)) { return 1; }
+      continue;
+    }
     if (compactBoundsChecks) {
       if (runCompactOrderBoundsChecks(function, input)) { return 1; }
       continue;
@@ -736,7 +757,7 @@ int main(int argc, char **argv) {
       }
     }
   }
-  if (rotatingAnalysis) {
+  if (rotatingAnalysis || balancedCompactChecks || guardedCompactChecks) {
     return 0;
   }
   if (before != render(module->getOperation())) {

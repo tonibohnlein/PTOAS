@@ -240,6 +240,10 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/CompactLowerFacts.cpp
   FrontierSynch/PeriodicExcessCertificate.cpp
   FrontierSynch/CompactOrderBounds.cpp
+  FrontierSynch/BalancedCompactBody.cpp
+  FrontierSynch/BalancedCompactInsertion.cpp
+  FrontierSynch/GuardedCompactMatching.cpp
+  FrontierSynch/ConditionalCompactInput.cpp
   FrontierSynch/RotatingBoundary.cpp
   FrontierSynch/RotatingExtraction.cpp
   FrontierSynch/ExplicitAnalysis.cpp

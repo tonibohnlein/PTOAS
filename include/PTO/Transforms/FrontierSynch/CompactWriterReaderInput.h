@@ -34,7 +34,10 @@ enum class CompactInputIssue { None, InvalidBinding, FixedSkeleton, Prerequisite
 struct CompactWriterReaderInput {
     std::string error;
     CompactInputIssue issue = CompactInputIssue::None;
+    // Legacy singleton word; empty when any slot has multiple alternatives.
     std::vector<const CompoundInstanceElement*> phases;
+    // Exactly one original alternative executes at each structural slot/visit.
+    std::vector<std::vector<const CompoundInstanceElement*>> phaseAlternatives;
     std::vector<PeriodicPayload> payloads;
     std::vector<CompactClassAccess> accesses;
     std::vector<CompactSourceQuery> queries;

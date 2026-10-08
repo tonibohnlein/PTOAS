@@ -47,10 +47,11 @@ if needed for machine safety, is recorded separately from class rejection.
 
 Milestone 1 has passed two independent reviews, focused validation, and the
 complete paired corpus comparison. This milestone is complete; Section 6
-implementation continues with milestone 5. Milestone 1 is committed as
+implementation continues with milestone 6. Milestone 1 is committed as
 `3890123bb`; milestone 2 has passed validation and two independent reviews.
 Milestone 2 is committed as `b0d71f7a5`.
 Milestone 3 is committed as `ad83e6c2d`.
+Milestone 4 is committed as `a5d5af0db`.
 The previous six completed milestones are recorded in
 `section5-recognizer-update.md`.
 
@@ -224,3 +225,43 @@ excess/profile cases, huge trip counts, support/diagonal and malformed-index
 checks passed. Bounds queries and immutable-snapshot tests passed all five
 shared-input fixtures. This milestone exports quality certificates and queries;
 production fallback dispatch remains milestone 8.
+
+## Milestone 5 implementation
+
+Balanced nested branches compare their executed pipe words and retain one slot
+with the original mutually exclusive alternatives. The shared extraction core
+unions alternative effects and source bounds; it keeps a native prerequisite
+only when every alternative pair supports it. Arm-specific requirements remain
+upper software demands. No definite overwrite is inferred from a union.
+Ordinary fixed bodies use this same core.
+
+Detached endpoint preparation distributes each side of a logical record to its
+original alternative cuts. Every copy keeps the same record and source ordinal;
+source and target alternatives are never paired by a Cartesian product. The
+original branch chooses exactly one side per visit. Finite-prefix guards handle
+zero trips, short visits and the final unmatched publication.
+
+Skipped-site matching separately establishes source presence and guard
+availability. It accepts a mandatory source, identical shifted predicates, or
+original enclosing-branch evidence. Payload-produced future predicates are not
+recomputed. Unknown presence, unavailable placement and missing executed local
+adjacency retain the mathematical records without a plan. Local skipped-demand
+placement remains the existing bounded-lifetime route's separate obligation;
+this adapter does not extend that route to arbitrary skipped control.
+
+Balanced query exports use the common all-slots-present occurrence frame, with
+no arbitrary branch chosen as the anchor. Enclosing invocation coordinates and
+multiple-cut family allocation metadata require their own adapters; missing
+exports do not discard the computed order. The optional-reader excess helper
+implements only the bounded-indirect-read pattern and does not apply fixed-body
+frontier sums to arbitrary skips.
+
+Two independent reviewers accepted each production subset and the integration.
+Serial compilation and both tool links passed. Actual inserted-command traces
+passed zero/short-trip and changing-arm checks; shared input coverage passed
+958 alternative words. Six guarded placement cases passed, along with the
+fixed-body input/bounds regressions and 972 excess/profile cases. The initial
+regression helper used a stale record layout; rebuilding all affected dependents
+resolved it. The changed-code check's 68 brace findings were independently
+confirmed as braced bodies; whitespace checks passed. Production fallback
+registration and multiple-cut physical allocation remain milestone 8.

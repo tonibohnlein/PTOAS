@@ -1,0 +1,126 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --guarded-compact-checks %s
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+!right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a3"} {
+  func.func @mandatory_shift(%n: index, %g: i1, %h: i1, %p: !pto.ptr<f32, gm>)
+      attributes {test.guard_shift = 1 : i64, test.guard_case = 0 : i64} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %fz = arith.constant 0.0 : f32
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %zero to %n step %one {
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.guard_site = 0 : i64}
+      %residue = arith.remui %i, %two : index
+      %active = arith.cmpi eq, %residue, %zero : index
+      scf.if %active { pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc) {test.guard_site = 1 : i64} }
+    }
+    return
+  }
+  func.func @identical_invariant(%n: index, %g: i1, %h: i1, %p: !pto.ptr<f32, gm>)
+      attributes {test.guard_shift = 1 : i64, test.guard_case = 1 : i64} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %fz = arith.constant 0.0 : f32
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %zero to %n step %one {
+      scf.if %g {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.guard_site = 0 : i64}
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc) {test.guard_site = 1 : i64}
+      }
+    }
+    return
+  }
+  func.func @enclosing(%n: index, %g: i1, %h: i1, %p: !pto.ptr<f32, gm>)
+      attributes {test.guard_shift = 0 : i64, test.guard_case = 2 : i64} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %fz = arith.constant 0.0 : f32
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %zero to %n step %one {
+      scf.if %g {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.guard_site = 0 : i64}
+        scf.if %h { pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc) {test.guard_site = 1 : i64} }
+      }
+    }
+    return
+  }
+  func.func @optional_source(%n: index, %g: i1, %h: i1, %p: !pto.ptr<f32, gm>)
+      attributes {test.guard_shift = 0 : i64, test.guard_case = 3 : i64} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %fz = arith.constant 0.0 : f32
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %zero to %n step %one {
+      scf.if %g {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.guard_site = 0 : i64}
+      }
+      pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc) {test.guard_site = 1 : i64}
+    }
+    return
+  }
+  func.func @future_load(%n: index, %g: i1, %h: i1, %p: !pto.ptr<f32, gm>)
+      attributes {test.guard_shift = 0 : i64, test.guard_case = 4 : i64} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %fz = arith.constant 0.0 : f32
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %zero to %n step %one {
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.guard_site = 0 : i64}
+      %v = pto.load %p[%i] : !pto.ptr<f32, gm> -> f32
+      %active = arith.cmpf ogt, %v, %fz : f32
+      scf.if %active { pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc) {test.guard_site = 1 : i64} }
+    }
+    return
+  }
+  func.func @local_gap(%n: index, %g: i1, %h: i1, %p: !pto.ptr<f32, gm>)
+      attributes {test.guard_shift = 0 : i64, test.guard_case = 5 : i64} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %fz = arith.constant 0.0 : f32
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %zero to %n step %one {
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.guard_site = 0 : i64}
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.guard_site = 1 : i64}
+    }
+    return
+  }
+}

@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --balanced-compact-checks %s
+// RUN: pto-sync-input-test --conditional-compact-input-checks %s
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @nested_balanced(%n: index, %address: i64)
+      attributes {test.balanced_slots = 2 : i64, test.balanced_alternatives = 3 : i64} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %address : !tile
+    scf.for %i = %c0 to %n step %c1 {
+      %r2 = arith.remui %i, %c2 : index
+      %r3 = arith.remui %i, %c3 : index
+      %even = arith.cmpi eq, %r2, %c0 : index
+      %third = arith.cmpi eq, %r3, %c0 : index
+      scf.if %even {
+        pto.texpands ins(%one : f32) outs(%tile : !tile)
+        %a = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      } else {
+        scf.if %third {
+          pto.texpands ins(%one : f32) outs(%tile : !tile)
+          %b = pto.tgetval ins(%tile, %c1 : !tile, index) outs : f32
+        } else {
+          pto.texpands ins(%one : f32) outs(%tile : !tile)
+          %c = pto.tgetval ins(%tile, %c2 : !tile, index) outs : f32
+        }
+      }
+    }
+    return
+  }
+  func.func @fixed_body(%n: index) attributes {test.balanced_slots = 2 : i64,
+      test.balanced_alternatives = 1 : i64} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %c0 to %n step %c1 {
+      pto.texpands ins(%one : f32) outs(%tile : !tile)
+      %value = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+    }
+    return
+  }
+  func.func @optional_payload(%n: index, %condition: i1) attributes {test.balanced_reject} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %c0 to %n step %c1 {
+      scf.if %condition { pto.texpands ins(%one : f32) outs(%tile : !tile) }
+    }
+    return
+  }
+  func.func @enclosed_fixed_body(%n: index) attributes {test.balanced_slots = 2 : i64,
+      test.balanced_alternatives = 1 : i64} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    %enabled = arith.cmpi sge, %n, %c0 : index
+    scf.if %enabled {
+      scf.for %i = %c0 to %n step %c1 {
+        pto.texpands ins(%one : f32) outs(%tile : !tile)
+        %value = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+  func.func @different_pipe_word(%n: index, %condition: i1) attributes {test.balanced_reject} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %c0 to %n step %c1 {
+      scf.if %condition {
+        pto.texpands ins(%one : f32) outs(%tile : !tile)
+      } else {
+        %value = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+  func.func @inner_loop(%n: index) attributes {test.balanced_reject} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %n step %c1 {
+      scf.for %j = %c0 to %n step %c1 { }
+    }
+    return
+  }
+}
