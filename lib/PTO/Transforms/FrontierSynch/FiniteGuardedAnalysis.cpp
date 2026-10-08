@@ -201,6 +201,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedInsertion(Fi
     if (succeeded(result)) {
         (*result)->allocationCertificate =
             regionalAllocationCertificate(finiteGuardedRegionalResult(analysis), **result);
+        if (!(*result)->allocationCertificate) {
+            (*result)->allocationCertificate = finiteRegionalAllocationCertificate(
+                finiteGuardedRegionalResult(analysis), **result);
+        }
     }
     analysis.insertionError = analysis.state->insertionError;
     return result;

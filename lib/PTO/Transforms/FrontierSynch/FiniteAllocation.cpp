@@ -106,7 +106,7 @@ DictionaryAttr finiteRegionalAllocationCertificate(const RegionalAnalysis& regio
             return {};
         }
     }
-    struct Handoff { int64_t record; uint32_t source, target; RegionExpressions::Id active; };
+    struct Handoff { int64_t record; uint32_t source, target; RegionExpressions::Id active; bool cleanup; };
     std::vector<Handoff> handoffs;
     auto zero = arena.constant(0);
     for (const auto& family : plan.families) {
@@ -123,8 +123,9 @@ DictionaryAttr finiteRegionalAllocationCertificate(const RegionalAnalysis& regio
         if (!sp || !tp) { return {}; }
         // Endpoint presence overapproximates retention, so proving compatibility
         // under this stronger activation condition is safe but may lose sharing.
+        const bool cleanup = family.targetChoices && !family.targetChoices->loop();
         handoffs.push_back(
-            {member.record,s->second,t->second,arena.land(*sp,*tp)});
+            {member.record,s->second,t->second,cleanup ? *sp : arena.land(*sp,*tp),cleanup});
     }
     Builder b(plan.endpoints.empty() ? region.anchors.front().before.before->getContext() :
                                      plan.endpoints.front().before->getContext());
@@ -139,6 +140,8 @@ DictionaryAttr finiteRegionalAllocationCertificate(const RegionalAnalysis& regio
             auto yx = regionalHandoffReuse(region, {y.target,zero,PeriodicEventKind::Completion},
                                            {x.source,zero,PeriodicEventKind::Start});
             if (!xy || !yx) { return {}; }
+            if (x.cleanup) { xy = arena.boolean(false); }
+            if (y.cleanup) { yx = arena.boolean(false); }
             if (!arena.implies(arena.land(x.active,y.active),arena.lor(*xy,*yx))) { incompatible.push_back(j); }
         }
         entries.push_back(handoff(b, x.record, static_cast<uint32_t>(region.anchors[x.source].phase->kPipeValue),

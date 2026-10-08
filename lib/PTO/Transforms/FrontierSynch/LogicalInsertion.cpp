@@ -259,9 +259,11 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
                 const auto& choices = target ? family.targetChoices : family.sourceChoices;
                 if (!choices) { continue; }
                 const auto primary = target ? family.targetCut : family.sourceCut;
-                if (!plan.independentPieces || choices->cuts().size() < 2 ||
+                if (!plan.independentPieces || (!choices->loop() && (!target || family.local)) ||
+                    choices->cuts().size() < 2 ||
                     choices->cuts().front().before != primary.before ||
-                    !qualifyEndpointCutChoices(choices->loop(), choices->cuts())) {
+                    !(choices->loop() ? qualifyEndpointCutChoices(choices->loop(), choices->cuts()) :
+                      qualifyTerminalCleanupCuts(choices->cuts()))) {
                     return function.emitError("invalid structural endpoint alternatives");
                 }
                 for (const auto& cut : choices->cuts()) {
@@ -357,7 +359,7 @@ void serializeFamilies(func::FuncOp function, const PreparedLogicalPlan& plan,
     auto choices = [&](const std::shared_ptr<const EndpointCutChoices>& proof) {
         SmallVector<int64_t> ids;
         if (proof) {
-            ids.push_back(loopId(proof->loop()));
+            ids.push_back(proof->loop() ? loopId(proof->loop()) : -1);
             for (const auto& cut : proof->cuts()) { ids.push_back(cutIds.lookup(cut.before)); }
         }
         return builder.getDenseI64ArrayAttr(ids);
