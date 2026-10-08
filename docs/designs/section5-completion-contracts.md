@@ -14,8 +14,13 @@ two independent accepting reviews, and its own commit before proceeding.
 | 3 | Shared symbolic storage certificates and crossings between symbolic siblings | Accepted |
 | 4 | Reuse ownership/phase/boundary certificates in varying repetition and whole-visit type extraction | Accepted |
 | 5 | Collective guarded refresh and reusable bounded-lifetime regional results | Accepted |
-| 6 | Numerical composition for general sequences without unnecessary dense port closure | Pending |
+| 6 | Numerical composition for general sequences without unnecessary dense port closure | Accepted |
 | 7 | Original-IR contract audit and pinned corpus validation through available emission/allocation | Pending |
+| 8 | Rotating compact children without common-period expansion | Pending |
+| 9 | Structured symbolic crossing exports for mixed regional backends | Pending |
+| 10 | Compact guarded-periodic regional exports using shared counted domains | Pending |
+| 11 | Production bounded-lifetime evaluation and charged global profiles | Pending |
+| 12 | Executable finite-visit type selection when endpoint values are available | Pending |
 
 All milestones analyze the existing shared modeled accesses. They add no
 exact-address admission gate or kernel-specific recognition. Successful demands
@@ -313,3 +318,173 @@ allocation traces. Both source reviewers accepted the final callback precedence
 and separate-arena cost accounting. Three prefilter brace findings were inspected:
 the affected compound conditions have braced bodies. No whitespace findings
 remain. This does not establish general bounded streaming/global-query support.
+
+## Additional milestones from the current manuscript
+
+Audit baseline: synchronization_draft/paper/paper.tex, manuscript commit
+7885ff9 (2026-10-08), with its included minimum_demands.tex,
+combined_algorithm.tex and supporting appendices. The former restart/ tree and
+archived drafts are not normative. Uncommitted model/approximation edits were
+not interpreted as new Section 5 contracts. Two independent source reviewers
+checked this follow-up against the current implementation after milestones 1–5.
+
+Milestones 6 and 7 remain in order. Milestone 7 supplies a measured checkpoint
+and concrete original-IR acceptance inputs for the extensions below. Keep its
+pinned corpus and compare each later milestone against that checkpoint. Each
+extension still requires focused semantic tests, two accepting reviews and a
+separate commit. Repeat the complete pinned campaign after the last extension;
+do not run the complete campaign after every source edit.
+
+### 8. Rotating compact children without common-period expansion
+
+Draft contract: prop:rotating-visit-footprints in
+appendices/regional_composition_details.tex, with the selector proof in
+appendices/counted_region_composition.tex. The weighted reducer exists; the
+regional producer still normally expands outer phases.
+
+Implement a shared rotating-family certificate over the existing modeled
+physical maps. Analyze the bank-renamed child once. For each family generate
+storage crossings at distance b/gcd(s,b), native crossings at distance one, and
+all supplied prerequisites. Check local-cell refresh, injective banks and
+physical separation exactly as required by the proposition. Feed those records
+to weighted repetition and export modular first/last-bank selectors. Reuse child
+endpoint recipes and the established command-availability checks.
+
+Acceptance: a compact nested child using two coprime bank counts, zero trips,
+short executions, absent banks and cross-visit reuse. Compare small instances
+with an independent occurrence graph and verify that representation size does
+not expand the least common bank period. A missing refresh must produce a
+specific failed premise, not silently use the adjacent-visit rule. Demand,
+query, endpoint and allocation availability remain separately recorded.
+
+### 9. Structured symbolic crossing exports for mixed regional backends
+
+Draft contract: the exact boundary-map/crossing interfaces of Section 5.5 and
+thm:repeated-compact-regions. Current adapters cover finite neighbors through
+bounded byte enumeration and all-arithmetic children through relations. Neither
+implements general supported mixed symbolic families.
+
+Add an optional structured relation or actual-edge-map export alongside point
+query callbacks. Produce it for the existing affine/constant-stride ownership
+and phased families. Compose supported producer/consumer relations without
+materializing each byte. Preserve physical identity, parameter contexts,
+occurrence coordinates, guard semantics and prerequisites. Generate executable
+endpoint selectors through the existing supported relation language. An opaque
+callback is not automatically a formula and must not be passed to projection.
+
+Acceptance: large symbolic siblings with overlap, holes and disjoint subranges;
+a periodic/owned child beside an arithmetic child; and reuse of the parent's
+selectors in another merge. Compare finite specializations with an independent
+graph, and show output size independent of numerical byte-range length for
+these map forms. Preserve the mathematical result on a missing endpoint adapter.
+
+### 10. Compact guarded-periodic regional exports
+
+Draft contract: periodic storage extraction and its boundary-selector exports
+in Section 5.4 and the analysis-export tables. GuardedRotatingRegional still
+requires a constant origin and expands slots even when an affine physical-slot
+family already describes them. This is an export restriction, not a periodic
+class criterion.
+
+Use the shared counted-loop ordinal throughout queries, selectors and endpoint
+preparation. Export exact slot membership and first/last occurrences directly
+from the certified base/stride/count family, using milestones 3/4 and 9 for
+symbolic crossings. Retain finite enumeration as an explicitly charged adapter.
+Preserve machine-integer range and divisibility proofs from normalization.
+
+Acceptance: an immutable-guarded rotating loop with runtime origin and positive
+constant step, both standalone and between siblings; a large constant ring with
+a small access description; clipping, zero trips and partial periods. Require
+unchanged demands under equivalent coordinate changes and export size
+independent of slot count for the supported symbolic family. Compare small
+instances with explicit analysis; test endpoint and allocation outcomes separately.
+
+### 11. Production bounded-lifetime evaluation and global profiles
+
+Draft contract: prop:streaming-bounded-lifetimes and the following global-profile
+paragraph in Section 5.4. The engines exist but have no production callers.
+Milestone 5 retained window demands; it did not complete streaming integration.
+
+This is an evaluated-input capability; it does not by itself expand static
+compilation coverage for unresolved predicates. Connect the stateful engines to
+requests that evaluate supplied predicates in execution order. Offer explicitly
+charged stored global rows for later all-event
+queries. In resolved evaluation contexts, maintain the actual storage/native
+boundary summary with the scan and let sequence composition consume it. Charge
+O(Tmk) stored rank words separately from bounded streaming working state. A
+symbolic program with arbitrary future predicates does not gain a constant-size
+whole-loop selector merely from refresh; preserve this distinction in the API.
+
+Reuse the existing window/matching construction for static endpoint recipes when
+its availability contract applies. Consumer-time retention does not justify a
+source-time SET guard. Do not insert a new runtime dependence-analysis machine
+into compiled kernels implicitly; any such lowering would require its own
+explicit execution and cost contract.
+
+Acceptance: refresh-certified irregular guards with producer prologue and
+consumer epilogue, complementary writers, missing readers, zero trips and
+cross-boundary reuse. Compare demands, global rows and boundary queries with
+independent executed graphs. Show bounded working state and separately measured
+stored history. Retain exact demands when code generation remains unavailable.
+
+### 12. Executable finite-visit type selection
+
+Draft contract: prop:finite-visit-types and the matching-code availability
+conditions. The demand-library theorem is already implemented. This milestone
+connects its result to commands where the required choices can execute.
+
+Retain original selection paths and pair identities. Select each type's internal
+recipes and each adjacent type-pair crossing using values available or safely
+recomputable at the original cuts. Handle entry/exit, zero/one visits, shared
+prefixes/suffixes, repeated SSA decisions and distinct successive choices. Reuse
+existing proven cleanup matching only where its premises apply. Preserve a
+demand-only result when a future choice is unavailable at the source.
+
+Acceptance: the existing whole-visit corpus-derived fixtures through command
+insertion; independently compare selected command order across type words. Use
+an applicable existing allocation certificate for successful physical plans and
+report allocation unsupported/scarcity separately. The finite-type proposition
+does not promise arbitrary-word compact queries or a universal allocator.
+
+### Audit items, not automatic scope expansion
+
+The original-IR arithmetic producer still supports narrower registered profiles
+than the abstract fixed-k,D,P,C theorems (notably period and dimension settings).
+Milestone 7 must record these as profile/producer limits. Configurable profiles
+can be a separate follow-up once a corpus case and bounded construction cost
+justify them; simply increasing solver limits is not a new implementation.
+
+Broader source recovery for parameter-dependent ownership strides, arbitrary
+varying schedules and general formula equivalence must not be inferred from the
+supplied-certificate theorems. Section 6 completion, optional general Presburger
+tracing and event-ID scarcity repair remain outside these Section 5 milestones.
+
+## Integration milestone 6 contracts
+
+Numerical sequence reduction keeps the original flat child and endpoint
+identities. A balanced binary index merges contiguous child intervals and
+assigns each crossing to the split separating its endpoints, including crossings
+that skip children. Numerical index work is charged per merge; routing takes
+O(r log(h+1)) operations for h children, in addition to identity-directory work.
+The hierarchy retains its selected ports and answers non-port queries through
+child thresholds and merge propagation. Unsupported numerical guards or
+coordinates leave the symbolic reducer available. Graph replacement invalidates
+the entire numerical hierarchy before rebuilding queries.
+
+Invariant repetition no longer allocates a dense base-distance array during
+initialization. Base entries use the existing lazy recurrence memo. This removes
+redundant eager quadratic storage, not the worst-case cost of subsequently
+requested symbolic closure.
+
+Milestone 6 validation: serial incremental build and both tool links passed.
+The independent numerical oracle checked 109,584 event pairs, including flat
+three/four/five-child sequences, skipped-child storage, an empty child,
+non-port queries, overlay invalidation and both symbolic-guard valuations.
+Repeated-region and bounding-sequence oracles checked 125,856 and 69,984
+event pairs. Existing phase/storage checks, 32 sequence command closures and
+15 causal allocation traces passed. A fixture enum typo was corrected to VEC.
+Fifteen style prefilter brace findings were inspected; every affected body is
+braced, with no warnings or whitespace findings.
+
+Two independent source reviews accepted the complete milestone, including
+crossing ownership, non-port queries, invalidation and the cost claims.
