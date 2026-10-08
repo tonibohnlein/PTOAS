@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/CompactStorageBoundary.h"
 #include "CompactWriterReaderInputInternal.h"
+#include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "llvm/ADT/DenseSet.h"
 #include <limits>
@@ -170,6 +171,70 @@ CompactClasses captureFiniteClassBoundary(FiniteRequirements frame, FiniteSelect
             result->unavailable = "finite class composition needs an enclosing conditional-presence adapter";
         }
     }
+    return result;
+}
+CompactClasses captureGuardedClassBoundary(func::FuncOp function, Block& invocation,
+    ArrayRef<Operation*> roots, const PhaseIndex& index, const SyncInput& input,
+    std::shared_ptr<RegionExpressions> expressions, std::string& error)
+{
+    error.clear();
+    if (roots.empty() || llvm::any_of(roots, [&](Operation* op) {
+            return !op || op->getBlock() != &invocation;
+        })) {
+        error = "guarded class roots must belong to their original invocation";
+        return {};
+    }
+    auto analysis = analyzeFiniteGuarded(function, roots, index, input, std::move(expressions));
+    if (!analysis.error.empty()) { error = analysis.error; return {}; }
+    auto domain = finiteGuardedRegionalResult(analysis);
+    auto context = captureRegionalOrderContext(input, domain, error);
+    if (failed(context)) { return {}; }
+    auto view = makeRegionalOrderView(*context, {domain.reachability, domain.numerical}, error);
+    if (failed(view)) { return {}; }
+    auto result = std::shared_ptr<CompactClassBoundary>(new CompactClassBoundary());
+    result->order.context = *context;
+    result->order.lower = *view;
+    result->order.upper = *view;
+    result->order.guarantee = InputOrderGuarantee::InputOrderEquivalent;
+    result->order.reduction = ReductionQuality::Covers;
+    result->invocation = &invocation;
+    result->firstAnchor = roots.front();
+    result->lastAnchor = roots.back();
+    result->selectors = domain;
+    auto& arena = *domain.expressions;
+    const auto zero = arena.constant(0);
+    for (uint32_t site = 0; site < domain.anchors.size(); ++site) {
+        const auto* phase = domain.anchors[site].phase;
+        const RegionalEvent event{site, zero, Kind::Start};
+        auto present = regionalPresence(domain, event);
+        if (!present) { error = "guarded occurrence presence unavailable"; return {}; }
+        result->originalPhases.push_back(phase);
+        result->selectors.firstSitePayloads[site] = {{event, *present}};
+        for (auto effect : input.accesses().effectsFor(phase)) {
+            const auto& access = input.accesses().effects()[effect];
+            if (access.rangesMaterialized && access.ranges.empty()) { continue; }
+            if (result->effects.size() == UINT32_MAX) {
+                error = "guarded class identity exceeds representation"; return {};
+            }
+            const auto identity = static_cast<uint32_t>(result->effects.size());
+            result->effects.push_back({effect});
+            result->sites.push_back({identity, static_cast<uint32_t>(phase->kPipeValue), {effect},
+                access.mode == SyncAccessMode::Read, access.mode == SyncAccessMode::Write,
+                {event, *present}, {{site, zero, Kind::Completion}, *present}});
+        }
+    }
+    // The leaf is one relative invocation. Enclosing repetition prefixes the
+    // original coordinates; it must not bind this leaf to a different nest.
+    SmallVector<scf::ForOp> enclosing;
+    for (auto* parent = invocation.getParentOp(); parent; parent = parent->getParentOp()) {
+        if (auto loop = dyn_cast<scf::ForOp>(parent)) { enclosing.push_back(loop); }
+    }
+    std::reverse(enclosing.begin(), enclosing.end());
+    result->selectors.prepareWithVisits = [prepare = domain.prepare, enclosing](ArrayRef<scf::ForOp> loops)
+        -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
+        if (loops != ArrayRef<scf::ForOp>(enclosing)) { return failure(); }
+        return prepare();
+    };
     return result;
 }
 CompactClassCrossings collectCompactClassCrossings(llvm::ArrayRef<CompactClasses> children)

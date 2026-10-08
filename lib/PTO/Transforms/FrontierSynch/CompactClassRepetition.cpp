@@ -90,6 +90,13 @@ public:
                 auto child = region(inner);
                 if (!child) { return {}; }
                 captured.push_back(child); children.push_back(std::move(child));
+            } else if (isa<scf::IfOp>(operation)) {
+                if (!flush()) { return {}; }
+                auto child = captureGuardedClassBoundary(function, invocation, {&operation},
+                    index, input, arena, error);
+                if (!child) { return {}; }
+                captured.push_back(child);
+                children.push_back(std::move(child));
             } else { run.push_back(&operation); }
         }
         if (!flush()) { return {}; }

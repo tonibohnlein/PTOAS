@@ -304,3 +304,25 @@ contract above; the supplied primitive-bundle checker has its own broader contra
 forward prerequisites are detected but not extracted. These limitations remain
 distinct from the generator/reducer and composition backends, which recognition
 does not provide. No recognized input is reported as Section 8 Ready.
+
+### Guarded leaves in compact class composition
+
+Compact class composition accepts a loop-free conditional as a guarded leaf
+through the existing finite-guarded scan and rank reducer. The leaf retains its
+original occurrence identities, presence predicates, query owner, boundary
+selectors and endpoint recipes. Empty and unequal arms do not require padding.
+Repeating the enclosing body still requires the existing invariant-invocation
+contract; this does not admit arbitrary iteration-dependent control or loops
+inside the conditional.
+
+Arithmetic diagnostics distinguish an unsupported condition from a supported
+comparison whose operands cannot be represented without changing machine-integer
+semantics. In particular, an unsigned-divided trip count does not establish
+that a signed tail subtraction is non-wrapping. Such operands report
+`index-arithmetic` at the defining operation.
+
+`sync_compact_class_repetition.pto` checks the guarded boundary queries against
+independent unfolded executions, varying branch choice independently of trip
+counts. `sync_regional_arithmetic_context.pto` includes an unsigned tail reduced
+from the prefill benchmark and verifies rejection of an unjustified affine
+interpretation.

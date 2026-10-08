@@ -22,6 +22,11 @@ def require(condition, message):
 
 def check_region(document):
     name = document["region"]
+    if name == "unsigned-tail":
+        require("index-arithmetic" in document["issues"] and "unsupported-control" not in document["issues"],
+                "tail normalization was reported as unsupported conditional structure")
+        require(not document["sites"] and not document["relations"], "wrapped tail exported affine relations")
+        return 0
     if name in ("local-nonlinear", "local-loaded-bound"):
         require(not document["sites"] and not document["parameters"] and not document["relations"],
                 "local nonlinear access was accepted or exported partially")
@@ -88,9 +93,9 @@ def main():
     documents = [json.loads(line.removeprefix("arithmetic-json ")) for line in result.stdout.splitlines()
                  if line.startswith("arithmetic-json ")]
     regions = [doc for doc in documents if "region" in doc]
-    require(len(regions) == 6, "missing regional extraction fixtures")
+    require(len(regions) == 7, "missing regional extraction fixtures")
     checks = sum(check_region(document) for document in regions)
-    print("regional arithmetic: 4 accepted, 2 rejected; independent checks:", checks)
+    print("regional arithmetic: 4 accepted, 3 rejected; independent checks:", checks)
 
 
 if __name__ == "__main__":

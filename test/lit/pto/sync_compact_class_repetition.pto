@@ -60,4 +60,32 @@ module {
     }
     return
   }
+  // The gated-delta input has unequal arms between regular loop work. This
+  // reduced storage/control slice keeps unequal and empty arms, but uses an
+  // invariant predicate so that q=1 repetition's premise is established.
+  func.func @guarded_relative_body(%m: index, %n: index, %flag: i1) attributes {test.class_repeat} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %base = arith.constant 0 : i64
+    %far = arith.constant 4096 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    %b = pto.alloc_tile addr = %far : !tile
+    scf.for %i = %c0 to %m step %c1 {
+      scf.if %flag {
+        pto.texpands ins(%one : f32) outs(%a : !tile)
+      } else {
+        pto.texpands ins(%one : f32) outs(%b : !tile)
+        %read = pto.tgetval ins(%b, %c0 : !tile, index) outs : f32
+      }
+      scf.for %j = %c0 to %n step %c1 {
+        %read = pto.tgetval ins(%a, %c0 : !tile, index) outs : f32
+      }
+      scf.if %flag {
+        pto.texpands ins(%one : f32) outs(%a : !tile)
+      }
+    }
+    return
+  }
+
 }

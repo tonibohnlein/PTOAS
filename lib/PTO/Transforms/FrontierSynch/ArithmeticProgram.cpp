@@ -91,9 +91,7 @@ void collect(const PhaseIndex& index, detail::ProgramBuilder& builder)
         }
         if (auto branch = dyn_cast<scf::IfOp>(op)) {
             ArithmeticSite context{nullptr, enclosing(op, root), {}};
-            if (!builder.prepareGuard(branch.getCondition(), context)) {
-                output.extraction.note(RecognitionIssue::UnsupportedControl, op);
-            }
+            builder.prepareGuard(branch.getCondition(), context);
             return;
         }
         if (op->getNumRegions()) {
