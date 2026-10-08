@@ -344,12 +344,6 @@ LogicalResult allocateContextSynchronization(func::FuncOp function, ArrayRef<int
         if (!saved || (entry.getName() != "cube" && entry.getName() != "vector")) {
             return function.emitError("malformed execution-context certificate");
         }
-        for (auto attr : saved) {
-            if (attr.getName() != "pto.endpoint_families" && attr.getName() != FiniteAllocationAttr &&
-                attr.getName() != CyclicAllocationAttr) {
-                return function.emitError("unexpected execution-context certificate field");
-            }
-        }
         auto finite = saved.getAs<DictionaryAttr>(FiniteAllocationAttr);
         auto cyclic = saved.getAs<DictionaryAttr>(CyclicAllocationAttr);
         if (finite && cyclic) { return function.emitError("ambiguous execution-context allocation"); }
@@ -384,7 +378,12 @@ LogicalResult allocateContextSynchronization(func::FuncOp function, ArrayRef<int
             return function.emitError("malformed execution-context certificate");
         }
         working->setAttr(ActiveContextAttr, entry.getName());
-        for (auto attr : saved) { working->setAttr(attr.getName(), attr.getValue()); }
+        // Consume only allocation inputs. Recognition reports and other metadata
+        // are neither allocation requirements nor attributes to install on the function.
+        for (StringRef name : {StringRef("pto.endpoint_families"), StringRef(FiniteAllocationAttr),
+                               StringRef(CyclicAllocationAttr)}) {
+            if (auto value = saved.get(name)) { working->setAttr(name, value); }
+        }
         working.walk([&](scf::ForOp loop) {
             if (auto ids = loop->getAttrOfType<DictionaryAttr>(ContextLoopsAttr)) {
                 if (auto id = ids.get(entry.getName())) { loop->setAttr("pto.family_loop", id); }
