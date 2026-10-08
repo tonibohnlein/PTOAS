@@ -93,7 +93,8 @@ def main():
         logical = run(opt, ['--mlir-disable-threading', '--pto-frontier-analysis'], path)
         assert logical.returncode == 0, logical.stderr
         assert 'pto.finite_allocation' in logical.stdout
-        for old, new in [('evidence = array<i64>', 'evidence = array<i64: 0>'),
+        assert 'mode = "rank-query"' in logical.stdout
+        for old, new in [('target_rank = 1 : i64', 'target_rank = 0 : i64'),
                          ('version = 2 : i64', 'version = 1 : i64')]:
             assert old in logical.stdout, logical.stdout
             path.write_text(logical.stdout.replace(old, new, 1))

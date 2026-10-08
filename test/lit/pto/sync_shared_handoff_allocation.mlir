@@ -6,3 +6,4 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --shared-handoff-allocation-checks
+// RUN: pto-sync-input-test --finite-query-checks

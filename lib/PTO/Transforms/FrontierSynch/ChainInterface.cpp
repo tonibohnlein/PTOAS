@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Algebraic storage generators without expanding banks or loop iterations.
-#include "PTO/Transforms/FrontierSynch/ChainInterface.h"
+#include "ChainInterfaceInternal.h"
 #include <algorithm>
 #include <limits>
 namespace mlir::pto::frontiersynch {
@@ -15,8 +15,7 @@ bool NumericalChainInterface::reaches(uint32_t source, uint32_t target) const
     return error.empty() && source < chain.size() && target < chain.size() &&
            forward[source][chain[target]] <= rank[target];
 }
-NumericalChainInterface buildNumericalChainInterface(
-    std::vector<std::vector<uint32_t>> chains, const std::function<std::optional<bool>(uint32_t, uint32_t)>& query)
+NumericalChainInterface chain::initialize(std::vector<std::vector<uint32_t>> chains)
 {
     NumericalChainInterface out;
     out.chains = std::move(chains);
@@ -47,6 +46,32 @@ NumericalChainInterface buildNumericalChainInterface(
     }
     out.forward.assign(count, std::vector<uint32_t>(out.chains.size()));
     out.reverse.assign(count, std::vector<uint32_t>(out.chains.size()));
+    return out;
+}
+void chain::invert(NumericalChainInterface& out)
+{
+    for (uint32_t c = 0; c < out.chains.size(); ++c) {
+        for (uint32_t d = 0; d < out.chains.size(); ++d) {
+            const auto& source = out.chains[c];
+            const auto& target = out.chains[d];
+            uint32_t cursor = 0;
+            for (uint32_t j = 0; j < target.size(); ++j) {
+                while (cursor < source.size() && out.forward[source[cursor]][d] <= j) {
+                    ++cursor; ++out.operations;
+                }
+                out.reverse[target[j]][c] = cursor; ++out.operations;
+            }
+        }
+    }
+}
+NumericalChainInterface buildNumericalChainInterface(
+    std::vector<std::vector<uint32_t>> chains, const std::function<std::optional<bool>(uint32_t, uint32_t)>& query)
+{
+    auto out = chain::initialize(std::move(chains));
+    if (!out.error.empty() || !query) {
+        if (out.error.empty()) { out.error = "missing numerical leaf query"; }
+        return out;
+    }
     for (uint32_t c = 0; c < out.chains.size(); ++c) {
         for (uint32_t d = 0; d < out.chains.size(); ++d) {
             const auto& source = out.chains[c];
@@ -67,25 +92,20 @@ NumericalChainInterface buildNumericalChainInterface(
                 }
                 out.forward[id][d] = cursor;
             }
-            cursor = 0;
-            for (uint32_t j = 0; j < target.size(); ++j) {
-                while (cursor < source.size() && out.forward[source[cursor]][d] <= j) {
-                    ++cursor;
-                }
-                out.reverse[target[j]][c] = cursor;
-            }
         }
     }
+    chain::invert(out);
     return out;
 }
-std::optional<std::vector<bool>> reduceNumericalCrossings(
+std::optional<std::vector<bool>> chain::reduce(
     const NumericalChainInterface& left, const NumericalChainInterface& right,
-    const std::vector<NumericalCrossing>& edges)
+    const std::vector<NumericalCrossing>& edges, uint64_t& operations)
 {
     if (!left.error.empty() || !right.error.empty() || edges.size() > UINT32_MAX) {
         return std::nullopt;
     }
     for (const auto& edge : edges) {
+        ++operations;
         if (edge.source >= left.chain.size() || edge.target >= right.chain.size()) {
             return std::nullopt;
         }
@@ -96,6 +116,7 @@ std::optional<std::vector<bool>> reduceNumericalCrossings(
             const auto length = left.chains[c].size();
             std::vector<std::vector<uint32_t>> points(length), tests(length);
             for (uint32_t id = 0; id < edges.size(); ++id) {
+                ++operations;
                 const auto& edge = edges[id];
                 if (left.chain[edge.source] == c && right.chain[edge.target] == d) {
                     points[left.rank[edge.source]].push_back(id);
@@ -109,7 +130,9 @@ std::optional<std::vector<bool>> reduceNumericalCrossings(
             const Candidate absent{UINT32_MAX, UINT32_MAX};
             Candidate first = absent, second = absent;
             for (std::size_t position = length; position; --position) {
+                ++operations;
                 for (auto id : points[position - 1]) {
+                    ++operations;
                     Candidate next{right.rank[edges[id].target], id};
                     if (next < first) {
                         second = first;
@@ -119,6 +142,7 @@ std::optional<std::vector<bool>> reduceNumericalCrossings(
                     }
                 }
                 for (auto id : tests[position - 1]) {
+                    ++operations;
                     const auto other = first.second == id ? second : first;
                     if (other.first < right.reverse[edges[id].target][d]) {
                         retained[id] = false;
@@ -128,5 +152,12 @@ std::optional<std::vector<bool>> reduceNumericalCrossings(
         }
     }
     return retained;
+}
+std::optional<std::vector<bool>> reduceNumericalCrossings(
+    const NumericalChainInterface& left, const NumericalChainInterface& right,
+    const std::vector<NumericalCrossing>& edges)
+{
+    uint64_t operations = 0;
+    return chain::reduce(left, right, edges, operations);
 }
 } // namespace mlir::pto::frontiersynch

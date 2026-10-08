@@ -32,6 +32,10 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
         composer.costs.selectorComparisons += cost.selectorComparisons;
         composer.costs.crossingCandidates += cost.crossingCandidates;
         composer.costs.implicationChecks += cost.implicationChecks;
+        composer.costs.numericalLeafQueries += cost.numericalLeafQueries;
+        composer.costs.numericalIndexOperations += cost.numericalIndexOperations;
+        composer.costs.numericalMerges += cost.numericalMerges;
+        composer.costs.numericalReusedChildren += cost.numericalReusedChildren;
     }
     if (!composer.importSummaries(composer.requireEndpoints)) { result.error = composer.error; return result; }
     composer.bridges();
@@ -185,6 +189,10 @@ SequenceAnalysis composeRegionalSequenceWithin(func::FuncOp function,
         state->children.push_back(std::move(child));
     }
     return finishSequence(std::move(state));
+}
+NumericalChainQueryCost sequenceNumericalQueryCounts(const SequenceAnalysis& analysis)
+{
+    return analysis.state ? analysis.state->numericalQueryCost : NumericalChainQueryCost{};
 }
 RegionExpressions* sequenceExpressions(SequenceAnalysis& analysis)
 {

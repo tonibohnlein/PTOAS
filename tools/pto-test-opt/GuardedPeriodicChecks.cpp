@@ -96,10 +96,28 @@ bool graphCase(const llvm::json::Object& input, llvm::json::Object& output, MLIR
             expressions->input(entry->getArgument(argument + 1)),
             expressions->input(entry->getArgument(argument)), *bound});
     }
-    auto quotient = fs::analyzeGuardedPeriodicQuotient(expressions, payloads, generators);
+    std::vector<fs::GuardedPeriodicRecord> native;
+    if (const auto* fixed = input.getArray("native_prerequisites")) {
+        if (fixed->size() > 576) { return false; }
+        for (const auto& item : *fixed) {
+            const auto* object = item.getAsObject();
+            if (!object) { return false; }
+            auto source = number(*object, "source"), target = number(*object, "target");
+            auto distance = number(*object, "distance");
+            if (!source || *source > UINT32_MAX || !target || *target > UINT32_MAX || !distance) { return false; }
+            native.push_back({static_cast<uint32_t>(*source), static_cast<uint32_t>(*target),
+                expressions->constant(*distance), expressions->boolean(true), *distance});
+        }
+    }
+    auto quotient = fs::analyzeGuardedPeriodicQuotient(expressions, payloads, generators, native);
     output["error"] = quotient.error;
     output["expressions"] = expressions->size();
     output["edges"] = quotient.graphEdges;
+    output["pipes"] = quotient.frontiers.size();
+    output["frontier_entries"] = 4 * payloads.size() * quotient.frontiers.size();
+    output["relaxations"] = quotient.relaxationCandidates;
+    output["exclusions"] = quotient.exclusionCandidates;
+    output["scaling_additions"] = quotient.scalingAdditions;
     if (!quotient.error.empty()) { return true; }
     // Emit each shared root once, then reuse that exact circuit for all samples.
     Block code;
@@ -115,9 +133,20 @@ bool graphCase(const llvm::json::Object& input, llvm::json::Object& output, MLIR
     for (auto id : quotient.retained) {
         if (!append(id)) { return false; }
     }
-    for (const auto& threshold : quotient.thresholds) {
-        if (!append(threshold.reachable) || !append(threshold.distance)) { return false; }
+    uint64_t queries = 0;
+    if (input.getBoolean("export_thresholds").value_or(false)) {
+        for (uint32_t a = 0; a < 2 * payloads.size(); ++a) {
+            for (uint32_t b = 0; b < 2 * payloads.size(); ++b) {
+                auto threshold = quotient.eventThreshold(
+                    {a / 2, a % 2 ? fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start},
+                    {b / 2, b % 2 ? fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start});
+                if (!threshold || !append(threshold->reachable) || !append(threshold->distance)) { return false; }
+                ++queries;
+            }
+        }
     }
+    output["threshold_queries"] = queries;
+    output["expressions_after_queries"] = expressions->size();
     output["emitted"] = code.getOperations().size();
     llvm::json::Array evaluations;
     for (const auto& sample : *samples) {
