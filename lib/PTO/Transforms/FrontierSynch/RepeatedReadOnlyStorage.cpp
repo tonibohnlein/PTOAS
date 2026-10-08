@@ -106,24 +106,20 @@ void lift(RegionalStorageSelectors& selectors, RegionExpressions& e, RegionExpre
     for (auto& [pipe, values] : selectors.lastReaders) { appendVisit(values, true); }
 }
 } // namespace
-RepeatedRegionAnalysis repeatSymbolicStorageRegion(func::FuncOp function, scf::ForOp loop,
-    RegionalAnalysis body, RegionExpressions::Id trips)
+std::string prepareRepeatedSymbolicStorage(RegionalAnalysis& body, scf::ForOp loop,
+    RegionExpressions::Id trips, ArrayRef<std::size_t> periodEffects)
 {
-    RepeatedRegionAnalysis result;
-    if (!function || !loop || loop->getParentOfType<func::FuncOp>() != function || !body.expressions ||
-        trips >= body.expressions->size() || body.expressions->isBoolean(trips)) {
-        result.error = "symbolic repetition requires an original loop and integer trip expression";
-        return result;
+    if (!loop || !body.expressions || trips >= body.expressions->size() || body.expressions->isBoolean(trips)) {
+        return "symbolic repetition requires an original loop and integer trip expression";
     }
     llvm::DenseSet<std::size_t> readers;
-    result.error = validate(body, loop, readers);
-    if (!result.error.empty()) { return result; }
-    auto original = std::make_shared<RegionalAnalysis>(std::move(body));
-    auto crossingView = *original;
-    const bool conflictFree = conflictFreeReaders(*original, loop, readers);
+    auto error = validate(body, loop, readers);
+    if (!error.empty()) { return error; }
+    auto crossingView = body;
+    const bool conflictFree = conflictFreeReaders(body, loop, readers);
     if (!conflictFree) {
-        result.error = materializeRepeatedSymbolicStorage(crossingView, loop, trips);
-        if (!result.error.empty()) { return result; }
+        error = materializeRepeatedSymbolicStorage(crossingView, loop, trips, periodEffects);
+        if (!error.empty()) { return error; }
     }
     crossingView.storageSelectors = {};
     crossingView.symbolicStorageEffects.clear();
@@ -143,6 +139,21 @@ RepeatedRegionAnalysis repeatSymbolicStorageRegion(func::FuncOp function, scf::F
         }
         crossingView.deferredAccessBoundary.clear();
     }
+    body = std::move(crossingView);
+    return {};
+}
+RepeatedRegionAnalysis repeatSymbolicStorageRegion(func::FuncOp function, scf::ForOp loop,
+    RegionalAnalysis body, RegionExpressions::Id trips)
+{
+    RepeatedRegionAnalysis result;
+    if (!function || !loop || loop->getParentOfType<func::FuncOp>() != function) {
+        result.error = "symbolic repetition requires an original enclosing function";
+        return result;
+    }
+    auto original = std::make_shared<RegionalAnalysis>(std::move(body));
+    auto crossingView = *original;
+    result.error = prepareRepeatedSymbolicStorage(crossingView, loop, trips);
+    if (!result.error.empty()) { return result; }
     // Internal queries and recipes remain complete. Only independently proven
     // conflict-free readers are removed from the two-copy access boundary.
     result = repeatInvariantRegion(function, loop, std::move(crossingView), trips);

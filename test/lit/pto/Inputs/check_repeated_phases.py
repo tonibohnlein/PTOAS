@@ -8,6 +8,7 @@
 """Exact emitted-command comparisons for explicitly phased compact repeats."""
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -36,7 +37,7 @@ def main():
             path.write_text(source.replace("array<i64: 2, 3>", "array<i64: 1000000000, 1000000001>"))
             large = run(tool, "--insert-logical", path)
             assert small == large.replace("1000000000, 1000000001", "2, 3")
-            assert small.count("scf.for") == 2 and "version = 4" in small
+            assert len(re.findall(r"(?m)^\s*scf\.for\b", small)) == 2 and "version = 4" in small
         # Enclosing q=1 composition must preserve the child's period-coordinate
         # divisor and original phase binding at every emitted endpoint.
         triple = source.replace("%n: index, %m: index", "%p: index, %n: index, %m: index")

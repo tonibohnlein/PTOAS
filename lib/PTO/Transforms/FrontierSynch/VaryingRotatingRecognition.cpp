@@ -127,11 +127,30 @@ AffineRotatingVisits analyzeVaryingRotating(
         failure.error = child.error;
         return failure;
     }
-    // The automatic producer currently models ordinary storage. Do not lose
-    // shared uniform relationships or native hardware prerequisites by rebuilding.
-    if (input.accesses().hasUniformRelationships(child.phases) || !child.periodic.nativePrerequisites.empty()) {
-        failure.error = "varying boundary requires a shared relationship adapter";
-        return failure;
+    std::vector<std::pair<uint32_t, uint32_t>> uniformCrossings;
+    if (input.accesses().hasUniformRelationships(child.phases)) {
+        for (uint32_t source = 0; source < child.phases.size(); ++source) {
+            for (uint32_t target = 0; target < child.phases.size(); ++target) {
+                bool conflict = false;
+                for (auto a : input.accesses().effectsFor(child.phases[source])) {
+                    for (auto b : input.accesses().effectsFor(child.phases[target])) {
+                        conflict |= input.accesses().uniformConflict(a, b);
+                    }
+                }
+                if (conflict) {
+                    uniformCrossings.emplace_back(source, target);
+                }
+            }
+        }
+    }
+    // Inner invocation protection need not extend across re-entry. Project the
+    // same shared facts into the outer scope for the crossing witnesses only.
+    const auto protection = structuredProtection(input.accesses());
+    for (std::size_t i = 0; i < child.fragments.size(); ++i) {
+        auto& fragment = child.fragments[i];
+        const auto& effect = input.accesses().effects()[recognized.child.accesses[i].effect];
+        fragment.protectionGroup = effect.memory->scope == AddressSpace::ACC && fragment.stride == 0 ?
+            protection.inLoop(effect.phase, recognized.outer) : 0;
     }
     std::vector<RotatingBoundaryCell> cells;
     std::set<std::pair<uint32_t, uint32_t>> seen;
@@ -148,7 +167,7 @@ AffineRotatingVisits analyzeVaryingRotating(
         }
     }
     auto certificate = buildRotatingBoundaryCertificate(
-        child.periodic.payloads, child.fragments, cells, child.extraction.generators, maxRegionalSlotVisits,
+        std::move(child.periodic), child.fragments, cells, uniformCrossings, maxRegionalSlotVisits,
         ptoStorageProtection());
     return analyzeAffineRotatingVisits(
         std::move(certificate), recognized.slope, recognized.intercept, maxRegionalSlotVisits);
