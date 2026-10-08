@@ -611,6 +611,18 @@ bool checkSymbolicArithmeticSiblings(func::FuncOp function, const pto::SyncInput
         if (failed(child) || child->anchors.size() != 1 || !child->arithmeticRelations) {
             llvm::errs() << "symbolic child: " << error << "\n"; return false;
         }
+        // Retain every nondischarged fixed GM family alongside the symbolic
+        // UB family. Globally read-only GM effects may already be discharged
+        // by the shared analysis; no finite selector is needed for those.
+        bool finiteGM = false;
+        for (const auto& access : child->accessBoundary) {
+            const bool gm = input.accesses().effects()[access.effect].memory->scope == pto::AddressSpace::GM;
+            finiteGM |= gm;
+            if (access.representedByCells != gm) { return false; }
+        }
+        if ((finiteGM && child->storageBoundary.empty()) || child->symbolicStorageEffects.empty()) {
+            llvm::errs() << "partial arithmetic storage families were not retained\n"; return false;
+        }
         children.push_back(std::move(*child));
     }
     auto first = fs::composeRegionalSequence(function, arena, {children[0], children[1]}, true, false);

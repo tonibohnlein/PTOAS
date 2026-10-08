@@ -83,7 +83,8 @@ bool sameFamily(const RepeatedStorageFamily& a, const RepeatedStorageFamily& b)
 }
 } // namespace
 RepeatedStorageResult recognizeRepeatedStorage(const RegionalAnalysis& body, scf::ForOp loop,
-                                               RegionExpressions::Id trips)
+                                               RegionExpressions::Id trips, const PhaseIndex* phaseIndex,
+                                               uint64_t phasePeriod)
 {
     if (!loop || !body.accessModel) { return {"evolving storage has no shared effect model", {}}; }
     llvm::DenseSet<std::size_t> visited;
@@ -109,6 +110,6 @@ RepeatedStorageResult recognizeRepeatedStorage(const RegionalAnalysis& body, scf
         }
     }
     if (families.empty()) { return {"no constant-stride evolving storage family was constructed", {}}; }
-    return buildRepeatedStorage(body, loop, trips, families);
+    return buildRepeatedStorage(body, loop, trips, families, phaseIndex, phasePeriod);
 }
 } // namespace mlir::pto::frontiersynch
