@@ -16,6 +16,7 @@
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -29,6 +30,7 @@ struct State : ArithmeticRegionalRelations {
     using StorageKey = std::pair<AddressSpace, Value>;
     using Interval = std::pair<uint64_t, uint64_t>;
     llvm::MapVector<StorageKey, std::vector<Interval>> finiteStorage;
+    bool finiteStorageComplete = false;
     std::shared_ptr<RegionExpressions> arena;
     std::vector<uint32_t> pipes;
     struct LoopGeometry { Id lower; int64_t step; uint64_t maximumOrdinal; };
@@ -322,6 +324,7 @@ bool sameReaders(const std::map<uint32_t, std::vector<RegionalSelector>>& a,
 // whole-region route without paying for interfaces it cannot export.
 bool collectFiniteStorage(State& state)
 {
+    llvm::DenseSet<State::StorageKey> symbolic;
     for (const auto& access : state.primitives) {
         const auto& schema = *access.schema;
         if (schema.kind != PrimitiveKind::Reads && schema.kind != PrimitiveKind::Writes) { continue; }
@@ -329,6 +332,8 @@ bool collectFiniteStorage(State& state)
         if (!schema.storageSpace || byteColumn >= access.system.dimensions() || byteColumn >= access.residues.size()) {
             state.error = "arithmetic storage primitive lacks its physical byte coordinate"; return false;
         }
+        const State::StorageKey key{*schema.storageSpace, schema.storageBase};
+        if (symbolic.count(key)) { continue; }
         // Imported primitives already include the exact occurrence and shared
         // parameter context. Projection here is directly to the byte quotient.
         auto projected = access.system.project({byteColumn});
@@ -347,14 +352,13 @@ bool collectFiniteStorage(State& state)
                 }
             }
             if (!lower || !upper) {
-                state.error = "arithmetic region needs a finite storage boundary or a symbolic crossing adapter";
-                return false;
+                symbolic.insert(key); state.finiteStorage.erase(key); break;
             }
             const BoundInteger period(state.program.primitives.period), residue(access.residues[byteColumn]);
             const auto begin = *lower * period + residue;
             const auto end = *upper * period + residue + 1;
             if (begin < 0 || end > BoundInteger(INT64_MAX)) {
-                state.error = "arithmetic storage boundary is outside representable physical offsets"; return false;
+                symbolic.insert(key); state.finiteStorage.erase(key); break;
             }
             if (begin >= end) { continue; }
             state.finiteStorage[{*schema.storageSpace, schema.storageBase}].push_back({
@@ -372,6 +376,7 @@ bool collectFiniteStorage(State& state)
         }
         intervals = std::move(merged);
     }
+    state.finiteStorageComplete = symbolic.empty();
     return true;
 }
 // A byte predicate with coefficient +1 changes at bound+1 minus its
@@ -530,14 +535,14 @@ FailureOr<RegionalAnalysis> exportState(const std::shared_ptr<State>& state,
         default: break;
         }
     }
-    if (finite && !finiteBoundaries(*state, out)) {
+    if (!state->finiteStorage.empty() && !finiteBoundaries(*state, out)) {
         if (state->error != "arithmetic finite boundary atom adapter limit") {
             error = state->error; return failure();
         }
         // Keep the exact relations and selector maps. The finite-port adapter
         // is optional; its size limit is not a storage-precision condition.
         finite = false; state->error.clear();
-        out.storageBoundary.clear(); out.cost.cells = 0;
+        out.storageBoundary.clear(); out.cost.cells = 0; state->finiteStorage.clear();
     }
     out.arithmeticRelations = state;
     for (unsigned type = 0; type < state->program.sites.size(); ++type) {
@@ -551,8 +556,12 @@ FailureOr<RegionalAnalysis> exportState(const std::shared_ptr<State>& state,
                 out.deferredAccessBoundary.push_back({effect, first[type].front(), last[type].front(), false});
                 continue;
             }
-            bool geometric = finite && !input.accesses().effects()[effect].regions.empty();
-            if (!finite) { out.symbolicStorageEffects.push_back(effect); }
+            const auto& modeled = input.accesses().effects()[effect];
+            const bool geometric = !modeled.regions.empty() && modeled.memory &&
+                llvm::all_of(modeled.regions, [&](const auto& region) {
+                    return state->finiteStorage.count({modeled.memory->scope, region.base});
+                });
+            if (!finite && !geometric) { out.symbolicStorageEffects.push_back(effect); }
             out.accessBoundary.push_back({effect, first[type].front(), last[type].front(), geometric});
         }
     }
@@ -680,14 +689,8 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext cont
     auto imported = importArithmeticIntegerPieces(state->program);
     if (failed(imported)) { error = "regional arithmetic primitive import failed"; return failure(); }
     state->primitives = std::move(*imported);
-    bool finite = collectFiniteStorage(*state);
-    if (!finite) {
-        if (state->error != "arithmetic region needs a finite storage boundary or a symbolic crossing adapter" &&
-            state->error != "arithmetic storage boundary is outside representable physical offsets") {
-            error = state->error; return failure();
-        }
-        state->finiteStorage.clear(); state->error.clear();
-    }
+    if (!collectFiniteStorage(*state)) { error = state->error; return failure(); }
+    const bool finite = state->finiteStorageComplete;
     for (const auto& piece : state->primitives) {
         if (piece.schema->kind != PrimitiveKind::Occurrences || !piece.schema->sourceSite) { continue; }
         const auto dimensions = piece.schema->sourceDimensions;

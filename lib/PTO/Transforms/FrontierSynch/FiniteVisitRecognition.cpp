@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Finite type selection is kept separate from invariant type interiors.
 #include "PTO/Transforms/FrontierSynch/FiniteVisitRecognition.h"
+#include "PTO/Transforms/FrontierSynch/RepeatedStorage.h"
 #include "PhaseNormalization.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
@@ -24,50 +25,91 @@ void obligation(ProgramContractCandidate& candidate, StringRef name, ContractSta
 bool alternatives(const ProgramRecognition& program, std::size_t body, FiniteVisitRecognition& result,
                   const PhaseIndex& index)
 {
-    std::vector<FiniteVisitAlternative> pending{{body, {}}};
+    struct Pending {
+        FiniteVisitAlternative type;
+        std::vector<std::size_t> remaining;
+    };
+    std::vector<Pending> pending{{{}, {body}}};
+    result.typeDescriptions = 1;
+    result.nodeReferences = 1;
     while (!pending.empty()) {
-        auto current = std::move(pending.back()); pending.pop_back();
-        const auto& sequence = program.nodes[current.node];
-        std::optional<std::size_t> choice;
-        bool onlyChoice = true;
-        for (auto id : sequence.children) {
-            const auto& child = program.nodes[id];
-            if (child.kind == StructureKind::Conditional && !choice) { choice = id; }
-            else if (child.payloadCount || child.kind != StructureKind::ExplicitRun) { onlyChoice = false; }
-        }
-        if (!choice || !onlyChoice) {
-            result.alternatives.push_back(std::move(current)); continue;
-        }
-        // Scalar choice scaffolding is still original program input. A run
-        // without payload phases must satisfy the shared leaf contract too;
-        // zero payload count does not discharge unknown effects or commands.
-        for (auto id : sequence.children) {
-            const auto& child = program.nodes[id];
-            if (child.kind == StructureKind::ExplicitRun &&
-                (!child.explicitResult || child.explicitResult->state != RecognitionState::Applicable)) {
-                result.error = "finite type selection scaffolding lacks a complete shared leaf contract";
-                return false;
+        auto current = std::move(pending.back());
+        pending.pop_back();
+        bool forked = false;
+        while (!current.remaining.empty()) {
+            const auto id = current.remaining.back();
+            current.remaining.pop_back();
+            const auto& node = program.nodes[id];
+            if (node.unsupportedContext) {
+                result.error = "finite type has an unsupported original invocation context"; return false;
             }
+            if (node.kind == StructureKind::Sequence) {
+                for (auto child : llvm::reverse(node.children)) { current.remaining.push_back(child); }
+                result.nodeReferences += node.children.size();
+                continue;
+            }
+            if (node.kind == StructureKind::Conditional) {
+                auto branch = dyn_cast_or_null<scf::IfOp>(node.anchor);
+                if (!branch || node.children.size() != 2 || branch.getElseRegion().empty() ||
+                    index.hasRelevantResults(branch) || index.needsValuePrerequisite(branch)) {
+                    result.error =
+                        "finite type selection needs exhaustive arms and mapped result/control prerequisites";
+                    return false;
+                }
+                // One SSA condition has one value throughout this visit.
+                // Repeated tests must follow the already selected polarity;
+                // copying both arms would invent impossible whole-visit types.
+                auto known = llvm::find_if(current.type.selection, [&](auto choice) {
+                    return choice.branch.getCondition() == branch.getCondition();
+                });
+                if (known != current.type.selection.end()) {
+                    const bool takeThen = known->takeThen;
+                    for (auto child : node.children) {
+                        if ((program.nodes[child].region == &branch.getThenRegion()) == takeThen) {
+                            current.type.selection.push_back({branch, takeThen});
+                            current.remaining.push_back(child);
+                            ++result.nodeReferences;
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                // Every pending prefix produces at least one complete type.
+                // Bound the explicit product before copying either branch.
+                if (pending.size() + result.alternatives.size() + 2 > maxRegionalSlotVisits) {
+                    result.error = "finite whole-visit type expansion exceeds producer limit"; return false;
+                }
+                for (auto child : llvm::reverse(node.children)) {
+                    auto next = current;
+                    next.type.selection.push_back({branch, program.nodes[child].region == &branch.getThenRegion()});
+                    next.remaining.push_back(child);
+                    ++result.typeDescriptions;
+                    result.nodeReferences += next.type.nodes.size() + next.remaining.size();
+                    pending.push_back(std::move(next));
+                }
+                forked = true;
+                break;
+            }
+            // Payload-free scalar scaffolding still needs a complete original
+            // leaf contract. It is not an independent synchronization child.
+            if (node.kind == StructureKind::ExplicitRun && !node.payloadCount) {
+                if (!node.explicitResult || node.explicitResult->state != RecognitionState::Applicable) {
+                    result.error = "finite type selection scaffolding lacks a complete shared leaf contract";
+                    return false;
+                }
+                continue;
+            }
+            current.type.nodes.push_back(id);
+            ++result.nodeReferences;
         }
-        const auto& node = program.nodes[*choice];
-        auto branch = dyn_cast_or_null<scf::IfOp>(node.anchor);
-        if (!branch || node.children.size() != 2 || branch.getElseRegion().empty() ||
-            index.hasRelevantResults(branch) || index.needsValuePrerequisite(branch)) {
-            result.error = "finite type selection needs exhaustive arms and mapped result/control prerequisites";
-            return false;
-        }
-        for (auto id : llvm::reverse(node.children)) {
-            auto path = current.selection;
-            path.push_back({branch, program.nodes[id].region == &branch.getThenRegion()});
-            pending.push_back({id, std::move(path)});
-        }
+        if (!forked) { result.alternatives.push_back(std::move(current.type)); }
     }
     if (result.alternatives.size() < 2) {
         result.error = "finite alternative adapter requires an exhaustive original decision tree"; return false;
     }
     return true;
 }
-bool qualifyInterior(const SyncInput& input, const ProgramRecognition& program, const PhaseIndex& index,
+bool qualifyInterior(const SyncInput& input, const PhaseIndex& index,
                      FiniteVisitRecognition& result)
 {
     RegionExpressions arena;
@@ -103,17 +145,43 @@ bool qualifyInterior(const SyncInput& input, const ProgramRecognition& program, 
         if (effect.regions.empty() && !effect.rangesMaterialized) { uniform = false; }
         for (const auto& region : effect.regions) { uniform &= scalar.periodic(region, 1); }
     }
-    if (!uniform) {
-        result.error = "finite type physical-map invariance or visit-owned storage projection is unavailable";
-        return false;
-    }
-    // Every structural leaf is a whole arm invocation. Its surrounding choice
-    // is deliberately excluded from the child analysis, never shared by two
-    // distinct visits. Only inner invariant predicates remain in its graph.
-    for (const auto& type : result.alternatives) {
-        if (program.nodes[type.node].unsupportedContext) {
-            result.error = "finite type arm has an unsupported original invocation context"; return false;
+    result.storageProjectionRequired = !uniform;
+    obligation(result.contract, "physical-map-invariance-or-joint-storage-projection",
+        uniform ? ContractStatus::Established : ContractStatus::Unproved);
+    return true;
+}
+bool projectStorage(FiniteVisitInput& types, FiniteVisitRecognition& recognition)
+{
+    auto& contract = recognition.contract;
+    const bool projection = recognition.storageProjectionRequired ||
+        llvm::any_of(types.types, [](const auto& type) {
+            const auto& body = type.body;
+            return body.storageSelectors || !body.symbolicStorageEffects.empty() ||
+                !body.deferredAccessBoundary.empty() ||
+                llvm::any_of(body.accessBoundary, [](const auto& access) { return !access.representedByCells; });
+        });
+    if (projection) {
+        obligation(contract, "physical-map-invariance-or-joint-storage-projection", ContractStatus::Unproved);
+        std::vector<RegionalAnalysis> bodies;
+        for (const auto& type : types.types) { bodies.push_back(type.body); }
+        auto domain = CountedLoop::get(recognition.loop);
+        if (!domain) {
+            contract.demands = ContractImplementation::Unavailable;
+            contract.implementationError = "finite visit storage projection has no counted domain";
+            return false;
         }
+        auto trips = domain->trips(*types.types.front().body.expressions);
+        auto proof = std::make_shared<RepeatedStorageTypesResult>(
+            recognizeRepeatedStorageTypes(bodies, recognition.loop, trips));
+        if (!proof->error.empty()) {
+            contract.demands = ContractImplementation::Unavailable;
+            contract.implementationError = "finite visit joint storage projection: " + proof->error;
+            return false;
+        }
+        for (auto& type : types.types) {
+            type.projectedStorage = FiniteVisitStorageProjection{type.body.storageBoundary, proof};
+        }
+        obligation(contract, "physical-map-invariance-or-joint-storage-projection", ContractStatus::Established);
     }
     return true;
 }
@@ -125,7 +193,8 @@ FiniteVisitRecognition recognizeFiniteVisitLoop(func::FuncOp function, const Syn
     out.contract.kind = ContractClass::FiniteVisitTypes; out.contract.node = node;
     out.contract.membership = ContractStatus::Unproved;
     for (const char* name : {"exhaustive-original-type-selection", "invariant-type-interiors",
-        "complete-adjacent-prerequisite-coverage", "exact-child-demand-query-selector-interfaces",
+        "complete-adjacent-prerequisite-coverage", "physical-map-invariance-or-joint-storage-projection",
+        "exact-child-demand-query-selector-interfaces",
         "common-mandatory-pipes-and-persistent-refresh"}) {
         obligation(out.contract, name, ContractStatus::Unproved);
     }
@@ -142,7 +211,7 @@ FiniteVisitRecognition recognizeFiniteVisitLoop(func::FuncOp function, const Syn
     }
     if (!alternatives(program, program.nodes[node].children.front(), out, index)) { return fail(out.error); }
     obligation(out.contract, "exhaustive-original-type-selection", ContractStatus::Established);
-    if (!qualifyInterior(input, program, index, out)) { return fail(out.error); }
+    if (!qualifyInterior(input, index, out)) { return fail(out.error); }
     obligation(out.contract, "invariant-type-interiors", ContractStatus::Established);
     obligation(out.contract, "complete-adjacent-prerequisite-coverage", ContractStatus::Established);
     return out;
@@ -169,16 +238,41 @@ FiniteVisitAnalysis analyzeFiniteVisitLoop(func::FuncOp function, const SyncInpu
     // The selected loop advances between the two visits. Only its enclosing
     // invocations are fixed; including it would incorrectly extend scoped
     // hardware protection across the very boundary being reduced.
+    std::map<std::size_t, RegionalAnalysis> regions;
+    auto within = types.enclosing;
+    within.push_back(out.recognition.loop);
     for (const auto& alternative : out.recognition.alternatives) {
-        out.children.push_back(analyzeSequenceRegion(function, input, program, alternative.node, arena, index, false));
+        std::vector<RegionalAnalysis> parts;
+        for (auto child : alternative.nodes) {
+            auto found = out.cachedNodes.find(child);
+            if (found == out.cachedNodes.end()) {
+                auto analyzed = analyzeSequenceRegion(function, input, program, child, arena, index, false);
+                found = out.cachedNodes.emplace(child, std::move(analyzed)).first;
+            }
+            if (!found->second.error.empty()) {
+                contract.demands = ContractImplementation::Unavailable;
+                contract.implementationError = "finite type child interface: " + found->second.error;
+                return out;
+            }
+            auto view = regions.find(child);
+            if (view == regions.end()) {
+                view = regions.emplace(child, sequenceRegionalResult(found->second)).first;
+            }
+            parts.push_back(view->second);
+        }
+        // A type is a complete unmasked visit. Its original selection path is
+        // retained for consumers, never reused as an inter-visit predicate.
+        out.children.push_back(composeRegionalSequenceWithin(
+            function, arena, std::move(parts), true, false, within));
         if (!out.children.back().error.empty()) {
             contract.demands = ContractImplementation::Unavailable;
-            contract.implementationError = "finite type child interface: " + out.children.back().error;
+            contract.implementationError = "finite whole-visit composition: " + out.children.back().error;
             return out;
         }
         types.types.push_back({sequenceRegionalResult(out.children.back()), {}});
     }
     obligation(contract, "exact-child-demand-query-selector-interfaces", ContractStatus::Established);
+    if (!projectStorage(types, out.recognition)) { return out; }
     out.demands = buildFiniteVisitDemands(function, std::move(types));
     if (!out.demands->error.empty()) {
         contract.demands = ContractImplementation::Unavailable;

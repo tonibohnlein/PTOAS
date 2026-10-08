@@ -12,7 +12,7 @@ two independent accepting reviews, and its own commit before proceeding.
 | 1 | Lazy arithmetic dispatch, preserve difference-bound routing, and retain bounded demand results after endpoint failure | Accepted |
 | 2 | Constraint import for piecewise bounds and shared positive-step ordinal normalization | Accepted |
 | 3 | Shared symbolic storage certificates and crossings between symbolic siblings | Accepted |
-| 4 | Reuse ownership/phase/boundary certificates in varying repetition and whole-visit type extraction | Pending |
+| 4 | Reuse ownership/phase/boundary certificates in varying repetition and whole-visit type extraction | Accepted |
 | 5 | Collective guarded refresh and reusable bounded-lifetime regional results | Pending |
 | 6 | Numerical composition for general sequences without unnecessary dense port closure | Pending |
 | 7 | Original-IR contract audit and pinned corpus validation through available emission/allocation | Pending |
@@ -218,3 +218,60 @@ reviewers accepted the source and these test corrections. The style prefilter's
 56 compound-condition brace findings were inspected; bodies are braced. No
 line-width or whitespace findings remain. This is focused validation, not a new
 corpus or device campaign.
+
+
+## Integration milestone 4 contracts
+
+Periodic phase recognition discovers periods in loop bounds as well as storage
+selectors. It proves whole-value periodicity before specializing counted domains;
+a residue identity alone cannot justify a trip-count replacement. Queries,
+selectors and endpoint filters use the same specialized domain, including empty
+phases and partial outer periods.
+
+Phase-owned storage uses a joint certificate over all phase bodies. Original
+physical maps determine actual owners; only logical context is canonicalized
+under the proved storage renaming. Crossing views omit certified owned effects,
+while original internal demands and endpoint recipes remain intact. Exported
+selectors convert actual visit coordinates to period/phase coordinates after
+checking physical ownership and the active visit interval. Combined read-only
+selectors retain the first/last access per pipe.
+
+Arithmetic regional exports retain complete finite physical families alongside
+symbolic families. A single unbounded piece invalidates finite coverage for its
+whole physical family, not for unrelated families. Finite atom expansion remains
+a charged optional adapter.
+
+Finite visit extraction now constructs whole visits with shared prefixes,
+suffixes and sequential choices. Original child analyses are cached; each type
+is composed without its outer selection predicate. Repeated tests of the same
+SSA predicate reuse one decision. Distinct-choice products are explicitly
+materialized and their producer limit is reported separately from class failure.
+Automatic storage projection checks ownership across every type, including all
+persistent and residual accesses; a per-type proof cannot discharge cross-type
+aliases. The resulting finite-type library remains demand-only where executable
+selection and arbitrary-word global queries are unavailable.
+
+The rotating-child boundary producer is independent of the outer length
+schedule. It retains the child's original quotient and uses separately scoped
+protection for cross-visit storage. The affine-length route consumes this
+certificate; other schedules must supply their own boundary-type sequence proof.
+
+Finite-neighbor composition queries the symbolic child's complete byte selectors
+on the finite counterpart's support. Pair-local coverage suppresses only those
+residual geometric tests; full symbolic effects and callbacks remain exported.
+Uniform modeled relationships are retained. Byte expansion is charged and uses
+the existing finite-interface limit, with unsupported projections left explicit.
+
+Milestone 4 validation: serial incremental compilation and both tool links passed.
+The phase oracle checked 27,776 event queries plus storage selectors. Whole-visit
+types, independent/repeated decisions and explicit type limits passed. Periodic
+length tests covered empty, unequal and sliced phases and compact emission.
+Owned phase tests checked 20 single/two-consumer byte closures, holes, zero trips,
+partial periods and rejected overlapping ownership. Existing arithmetic sibling,
+varying-length, repeated-storage and numerical/regional oracle checks passed.
+The rotating boundary oracle ran 1,440 comparisons; its stale expected count was
+corrected. Read-only effects discharged by the shared analysis are not required
+to reappear as finite arithmetic boundaries. Two independent reviewers accepted
+the final source including the finite-neighbor adapter. The style prefilter's
+compound-condition brace findings have braced bodies; no line-width or whitespace
+findings remain. This is focused validation, not a new full corpus/device run.

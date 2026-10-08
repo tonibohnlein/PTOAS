@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/RepeatedPhases.h"
+#include "PTO/Transforms/FrontierSynch/RepeatedStorage.h"
 #include "RepeatedRegionInternal.h"
 #include "RepeatedReadOnlyStorage.h"
 #include "CountedLoop.h"
@@ -194,10 +195,119 @@ std::optional<RegionalStorageSelectors> phaseStorage(const RegionalAnalysis& pha
     }
     return result;
 }
+template <typename Callback>
+bool mapStorageSelectors(RegionalStorageSelectors& selected, Callback callback)
+{
+    for (auto* values : {&selected.firstWriters, &selected.lastWriters}) {
+        for (auto& value : *values) { if (!callback(value)) { return false; } }
+    }
+    for (auto* readers : {&selected.firstReaders, &selected.lastReaders}) {
+        for (auto& [pipe, values] : *readers) {
+            for (auto& value : values) { if (!callback(value)) { return false; } }
+        }
+    }
+    return true;
+}
+void appendStorageSelectors(RegionalStorageSelectors& out, const RegionalStorageSelectors& source)
+{
+    llvm::append_range(out.firstWriters, source.firstWriters);
+    llvm::append_range(out.lastWriters, source.lastWriters);
+    for (const auto& [pipe, values] : source.firstReaders) { llvm::append_range(out.firstReaders[pipe], values); }
+    for (const auto& [pipe, values] : source.lastReaders) { llvm::append_range(out.lastReaders[pipe], values); }
+}
+// Finite cells and omitted read-only families may describe the same byte.
+// Normalize their union in the original phase's order before folding phases.
+bool normalizePhaseReaders(const RegionalAnalysis& phase, RegionalStorageSelectors& selected)
+{
+    auto& e = *phase.expressions;
+    auto normalize = [&](Selectors& values, bool first) {
+        Selectors unique;
+        for (const auto& candidate : values) {
+            auto same = llvm::find_if(unique, [&](const auto& other) {
+                return candidate.event.type == other.event.type && candidate.event.ordinal == other.event.ordinal &&
+                    candidate.event.kind == other.event.kind && candidate.event.visits == other.event.visits;
+            });
+            if (same == unique.end()) { unique.push_back(candidate); }
+            else { same->present = e.lor(same->present, candidate.present); }
+        }
+        values = std::move(unique);
+        const auto candidates = values;
+        for (auto& candidate : values) {
+            for (const auto& other : candidates) {
+                auto before = regionalReferenceBefore(phase, first ? other.event : candidate.event,
+                    first ? candidate.event : other.event);
+                if (!before) { return false; }
+                candidate.present = e.land(candidate.present, e.lnot(e.land(other.present, *before)));
+            }
+        }
+        return true;
+    };
+    for (auto& [pipe, readers] : selected.firstReaders) { if (!normalize(readers, true)) { return false; } }
+    for (auto& [pipe, readers] : selected.lastReaders) { if (!normalize(readers, false)) { return false; } }
+    return true;
+}
+// Query true physical ownership before changing coordinates. The joint proof
+// excludes cross-visit aliases and aliases with every phase's persistent cells.
+// Read-only families instead use the ordinary first/last phase-window fold.
+std::optional<RegionalStorageSelectors> projectOwnedPhaseStorage(
+    const std::vector<RegionalAnalysis>& finitePhases, const RepeatedStorageTypesResult& proof,
+    const std::vector<std::shared_ptr<const RegionalSymbolicStorageCertificate>>& certificates,
+    const std::vector<uint32_t>& starts, Id begin, Id trips, RegionalByteAddress address)
+{
+    auto& e = *finitePhases.front().expressions;
+    if (address.offset >= e.size() || e.isBoolean(address.offset)) { return std::nullopt; }
+    if (e.constantValue(e.lt(begin, trips)) == 0) { return RegionalStorageSelectors{}; }
+    const auto q = e.constant(finitePhases.size());
+    std::vector<RegionalStorageSelectors> invariant;
+    RegionalStorageSelectors owned;
+    for (std::size_t phase = 0; phase < finitePhases.size(); ++phase) {
+        auto local = phaseStorage(finitePhases[phase], address);
+        if (!local) { return std::nullopt; }
+        if (proof.storage[phase]) {
+            auto selected = proof.storage[phase]->selectors(address);
+            if (!selected) { return std::nullopt; }
+            auto ownMembership = e.boolean(false), readMembership = e.boolean(false);
+            for (const auto& family : certificates[phase]->families) {
+                if (!family.membership) { return std::nullopt; }
+                auto present = family.membership(address);
+                if (!present) { return std::nullopt; }
+                if (family.kind == RegionalStorageFamilyKind::VisitOwned) {
+                    ownMembership = e.lor(ownMembership, *present);
+                } else if (family.kind == RegionalStorageFamilyKind::SharedReadOnly) {
+                    readMembership = e.lor(readMembership, *present);
+                } else { return std::nullopt; }
+            }
+            auto readers = *selected;
+            if (!mapStorageSelectors(readers, [&](RegionalSelector& value) {
+                    if (value.event.visits.empty()) { return false; }
+                    value.event.visits.erase(value.event.visits.begin());
+                    value.present = e.land(value.present, readMembership);
+                    return true;
+                })) { return std::nullopt; }
+            appendStorageSelectors(*local, readers);
+            if (!normalizePhaseReaders(proof.storage[phase]->body(), *local)) { return std::nullopt; }
+            if (!mapStorageSelectors(*selected, [&](RegionalSelector& value) {
+                    if (value.event.visits.empty()) { return false; }
+                    auto visit = value.event.visits.front();
+                    auto actual = e.land(e.eq(e.rem(visit, q), e.constant(phase)),
+                                         e.land(e.le(begin, visit), e.lt(visit, trips)));
+                    value.present = e.land(value.present, e.land(ownMembership, actual));
+                    value.event.type += starts[phase];
+                    value.event.visits.front() = e.div(visit, q);
+                    return true;
+                })) { return std::nullopt; }
+            appendStorageSelectors(owned, *selected);
+        }
+        invariant.push_back(std::move(*local));
+    }
+    auto result = projectStorage(e, invariant, starts, begin, trips);
+    appendStorageSelectors(result, owned);
+    return result;
+}
 } // namespace
 RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loop,
     std::vector<RegionalAnalysis> phases, Id trips, ArrayRef<scf::ForOp> enclosing, Id begin,
-    std::optional<uint64_t> maximumLength)
+    std::optional<uint64_t> maximumLength, std::shared_ptr<const RepeatedStorageTypesResult> storage)
 {
     RepeatedRegionAnalysis failure;
     if (!function || !loop || loop->getParentOfType<func::FuncOp>() != function || phases.empty() ||
@@ -239,12 +349,42 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
     bool endpoints = llvm::all_of(phases, [](const RegionalAnalysis& phase) {
         return phase.capabilities.endpointRecipes && (phase.prepare || phase.prepareWithVisits);
     });
-    const bool symbolic = llvm::any_of(phases, [](const auto& phase) {
+    const bool symbolic = storage || llvm::any_of(phases, [](const auto& phase) {
         return phase.storageSelectors || !phase.symbolicStorageEffects.empty();
     });
     std::shared_ptr<const std::vector<RegionalAnalysis>> originalPhases;
+    std::vector<std::shared_ptr<const RegionalSymbolicStorageCertificate>> familyCertificates;
     if (symbolic) {
         originalPhases = std::make_shared<const std::vector<RegionalAnalysis>>(phases);
+        if (storage) {
+            if (!storage->error.empty() || storage->storage.size() != phases.size()) {
+                failure.error = "phase storage projection lacks joint family evidence"; return failure;
+            }
+            for (std::size_t phase = 0; phase < phases.size(); ++phase) {
+                auto& view = phases[phase];
+                const auto& owner = storage->storage[phase];
+                familyCertificates.push_back(owner ? owner->certificate() : nullptr);
+                if (owner && (owner->loop() != loop || owner->trips() != trips ||
+                    owner->body().expressions != arena || owner->body().accessModel != view.accessModel ||
+                    owner->body().gmAliasPolicy != view.gmAliasPolicy ||
+                    owner->body().anchors.size() != view.anchors.size() ||
+                    !llvm::equal(owner->body().anchors, view.anchors, [](const auto& a, const auto& b) {
+                        return a.phase == b.phase;
+                    }))) {
+                    failure.error = "phase ownership belongs to a different invocation or child"; return failure;
+                }
+                auto projected = [&](std::size_t effect) { return owner && owner->contains(effect); };
+                if (llvm::any_of(view.symbolicStorageEffects,
+                    [&](std::size_t effect) { return !projected(effect); })) {
+                    failure.error = "phase ownership does not cover every symbolic effect"; return failure;
+                }
+                llvm::erase_if(view.accessBoundary, [&](const auto& access) { return projected(access.effect); });
+                llvm::erase_if(view.deferredAccessBoundary,
+                    [&](const auto& access) { return projected(access.effect); });
+                view.symbolicStorageEffects.clear();
+                view.storageSelectors = {}; view.symbolicStorage.reset(); view.arithmeticRelations.reset();
+            }
+        }
         const SyncStorageEffects* model = nullptr;
         std::vector<std::size_t> periodEffects;
         for (const auto& phase : phases) {
@@ -277,6 +417,7 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
         // produced here must survive both period composition and clipping.
         auto executed = e.select(e.lt(begin, trips), trips, e.constant(0));
         for (auto& phase : phases) {
+            if (storage) { continue; }
             if (!phase.storageSelectors && phase.symbolicStorageEffects.empty()) { continue; }
             failure.error = prepareRepeatedSymbolicStorage(phase, loop, executed, periodEffects);
             if (!failure.error.empty()) { return failure; }
@@ -415,6 +556,13 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
                     out.symbolicStorageEffects.push_back(effect);
                 }
             }
+            if (storage && storage->storage[phase]) {
+                for (auto effect : storage->storage[phase]->effects()) {
+                    if (!llvm::is_contained(out.symbolicStorageEffects, effect)) {
+                        out.symbolicStorageEffects.push_back(effect);
+                    }
+                }
+            }
             auto append = [&](auto& target, const auto& accesses) {
                 for (auto access : accesses) {
                     for (auto* selector : {&access.first, &access.last}) {
@@ -439,6 +587,51 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
             }
             return projectStorage(*arena, selected, starts, begin, trips);
         };
+        if (storage) {
+            auto finitePhases = std::make_shared<const std::vector<RegionalAnalysis>>(phases);
+            out.storageSelectors = [finitePhases, storage, familyCertificates, starts, begin, trips]
+                (RegionalByteAddress address) {
+                return projectOwnedPhaseStorage(*finitePhases, *storage, familyCertificates,
+                    starts, begin, trips, address);
+            };
+            auto certificate = std::make_shared<RegionalSymbolicStorageCertificate>();
+            certificate->expressions = arena; certificate->accessModel = out.accessModel;
+            certificate->gmAliasPolicy = out.gmAliasPolicy;
+            for (std::size_t phase = 0; phase < q; ++phase) {
+                if (!familyCertificates[phase]) { continue; }
+                for (const auto& source : familyCertificates[phase]->families) {
+                    auto family = source;
+                    // Family membership is reusable after this coordinate
+                    // transform. The composite selector callback owns the
+                    // exact period/type map; no original visit owner escapes.
+                    family.kind = RegionalStorageFamilyKind::General;
+                    family.owner = {};
+                    family.membership = [source, arena, phase, q, begin, trips]
+                        (RegionalByteAddress address) -> std::optional<Id> {
+                        if (!source.membership) { return std::nullopt; }
+                        auto member = source.membership(address);
+                        if (!member) { return std::nullopt; }
+                        auto& dag = *arena;
+                        auto divisor = dag.constant(q), residue = dag.constant(phase);
+                        auto first = dag.add(dag.div(begin, divisor),
+                            dag.select(dag.lt(residue, dag.rem(begin, divisor)), dag.constant(1), dag.constant(0)));
+                        auto exists = dag.lor(dag.lt(first, dag.div(trips, divisor)),
+                            dag.land(dag.eq(first, dag.div(trips, divisor)), dag.lt(residue, dag.rem(trips, divisor))));
+                        if (source.kind == RegionalStorageFamilyKind::VisitOwned) {
+                            if (!source.owner) { return std::nullopt; }
+                            auto owner = source.owner(address);
+                            if (!owner) { return std::nullopt; }
+                            exists = dag.land(owner->present,
+                                dag.land(dag.eq(dag.rem(owner->visit, divisor), residue),
+                                    dag.land(dag.le(begin, owner->visit), dag.lt(owner->visit, trips))));
+                        }
+                        return dag.land(*member, exists);
+                    };
+                    certificate->families.push_back(std::move(family));
+                }
+            }
+            out.symbolicStorage = std::move(certificate);
+        }
     }
     for (auto* accesses : {&out.accessBoundary, &out.deferredAccessBoundary}) {
         for (auto& access : *accesses) {

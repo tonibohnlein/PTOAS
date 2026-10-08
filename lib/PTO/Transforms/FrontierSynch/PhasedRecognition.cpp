@@ -5,6 +5,9 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+// Compose original nested regions after proving their storage and counted
+// domains repeat under one common outer phase period. Phase-specialized trip
+// circuits govern queries, storage boundaries and endpoint filters together.
 #include "PhaseNormalization.h"
 #include "BoundarySlices.h"
 #include "CountedLoop.h"
@@ -15,8 +18,105 @@
 #include "PTO/Transforms/FrontierSynch/NumericTemplateRegional.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "PTO/Transforms/FrontierSynch/RepeatedPhases.h"
+#include "PTO/Transforms/FrontierSynch/RepeatedStorage.h"
 namespace mlir::pto::frontiersynch {
 namespace {
+// After joint storage certification, owned-cell translation is a graph
+// isomorphism. Bind only the body's parameter context, protecting caller query
+// coordinates with owned placeholders before substituting that context.
+struct PhaseLogicalView {
+    RegionalAnalysis original;
+    Block symbols;
+    SmallVector<std::pair<Expr, Expr>> parameters;
+    SmallVector<Expr> coordinates;
+    unsigned width = 1;
+    PhaseLogicalView(RegionalAnalysis original, ArrayRef<std::pair<Expr, Expr>> parameters,
+                     scf::ForOp outer)
+        : original(std::move(original)), parameters(parameters.begin(), parameters.end())
+    {
+        for (const auto& loops : this->original.outerLoops) { width = std::max(width, unsigned(loops.size() + 1)); }
+        for (unsigned i = 0; i < 2 * width; ++i) {
+            coordinates.push_back(this->original.expressions->input(
+                symbols.addArgument(IndexType::get(outer.getContext()), outer.getLoc())));
+        }
+    }
+    RegionalEvent bind(RegionalEvent event, unsigned start, SmallVectorImpl<std::pair<Expr, Expr>>& values)
+    {
+        auto& e = *original.expressions;
+        RegionExpressions::Substitution context(parameters);
+        auto protect = [&](Expr& coordinate, unsigned position) {
+            // Keep already invariant coordinates, especially literal explicit
+            // ordinals, in the form understood by the child's query provider.
+            if (e.substitute(coordinate, context) == coordinate) { return; }
+            values.emplace_back(coordinates[position], coordinate);
+            coordinate = coordinates[position];
+        };
+        protect(event.ordinal, start);
+        for (unsigned i = 0; i < event.visits.size(); ++i) { protect(event.visits[i], start + i + 1); }
+        return event;
+    }
+    std::optional<Expr> query(RegionalEvent a, std::optional<RegionalEvent> b, bool reference)
+    {
+        if (a.visits.size() >= width || (b && b->visits.size() >= width)) { return std::nullopt; }
+        SmallVector<std::pair<Expr, Expr>> values;
+        auto first = bind(a, 0, values);
+        std::optional<Expr> result;
+        if (!b) { result = regionalPresence(original, first); }
+        else {
+            auto second = bind(*b, width, values);
+            result = reference ? regionalReferenceBefore(original, first, second) :
+                                 regionalReachability(original, first, second);
+        }
+        if (!result) { return std::nullopt; }
+        auto& e = *original.expressions;
+        RegionExpressions::Substitution context(parameters), arguments(values);
+        return e.substitute(e.substitute(*result, context), arguments);
+    }
+};
+void bindLogicalPhase(RegionalAnalysis& view, ArrayRef<std::pair<Expr, Expr>> parameters, scf::ForOp outer)
+{
+    auto state = std::make_shared<PhaseLogicalView>(view, parameters, outer);
+    view.presence = [state](RegionalEvent a) { return state->query(a, std::nullopt, false); };
+    view.reachability = [state](RegionalEvent a, RegionalEvent b) { return state->query(a, b, false); };
+    view.referenceBefore = [state](RegionalEvent a, RegionalEvent b) { return state->query(a, b, true); };
+    RegionExpressions::Substitution bindings(parameters);
+    auto& e = *view.expressions;
+    auto rewrite = [&](RegionalSelector& value) {
+        value.present = e.substitute(value.present, bindings);
+        value.event.ordinal = e.substitute(value.event.ordinal, bindings);
+        for (auto& visit : value.event.visits) { visit = e.substitute(visit, bindings); }
+    };
+    for (auto* side : {&view.firstPayloads, &view.lastPayloads, &view.firstSitePayloads}) {
+        for (auto& [pipe, values] : *side) { for (auto& value : values) { rewrite(value); } }
+    }
+    for (auto& cell : view.storageBoundary) {
+        for (auto* side : {&cell.firstWriters, &cell.lastWriters}) { for (auto& value : *side) { rewrite(value); } }
+        for (auto* side : {&cell.firstReaders, &cell.lastReaders}) {
+            for (auto& [pipe, values] : *side) { for (auto& value : values) { rewrite(value); } }
+        }
+    }
+    for (auto* side : {&view.accessBoundary, &view.deferredAccessBoundary}) {
+        for (auto& access : *side) { rewrite(access.first); rewrite(access.last); }
+    }
+    view.arithmeticRelations.reset(); view.symbolicStorage.reset(); view.numerical.reset();
+}
+std::optional<Expr> phaseTripCount(scf::ForOp loop, PhaseNormalization& normalizer,
+    RegionExpressions& expressions, uint64_t phase, uint64_t period,
+    SmallVectorImpl<std::pair<Expr, Expr>>& bindings)
+{
+    auto domain = CountedLoop::get(loop);
+    if (!domain) { return std::nullopt; }
+    for (Value bound : {loop.getLowerBound(), loop.getUpperBound(), loop.getStep()}) {
+        if (normalizer.independent(bound)) { continue; }
+        // A congruence alone cannot replace a trip bound by a representative.
+        if (!normalizer.periodic(bound, period)) { return std::nullopt; }
+        auto value = normalizer.atPhase(bound, phase, period);
+        if (!value) { return std::nullopt; }
+        bindings.emplace_back(expressions.input(bound), *value);
+    }
+    RegionExpressions::Substitution substitution(bindings);
+    return expressions.substitute(domain->trips(expressions), substitution);
+}
 void specialize(GuardedRotatingAnalysis& analysis, RegionExpressions::Substitution& bindings)
 {
     auto rewrite = [&](Expr& expression) { expression = analysis.expressions->substitute(expression, bindings); };
@@ -63,7 +163,8 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
     const auto& sequence = program->nodes[node.children.front()];
     PhaseNormalization normalizer(outer, index, expressions);
     uint64_t period = 1;
-    bool nested = false, uniformControl = true, periodFits = true;
+    bool nested = false, periodFits = true;
+    SmallVector<Value> innerBounds;
     auto addPeriod = [&](uint64_t slots) {
         if (!slots) { periodFits = false; return; }
         auto factor = slots / std::gcd(period, slots);
@@ -73,8 +174,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
     outer.getBody()->walk([&](Operation* operation) {
         if (auto inner = dyn_cast<scf::ForOp>(operation)) {
             nested = true;
-            uniformControl &= normalizer.independent(inner.getLowerBound()) &&
-                normalizer.independent(inner.getUpperBound()) && normalizer.independent(inner.getStep());
+            innerBounds.append({inner.getLowerBound(), inner.getUpperBound(), inner.getStep()});
         }
         if (operation->getNumResults() == 1 && index.isRelevant(operation->getResult(0)) &&
             !normalizer.independent(operation->getResult(0))) {
@@ -84,8 +184,18 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
     if (!nested) {
         return unavailable("no nested body");
     }
-    if (!uniformControl) {
-        return unavailable("nested bounds must be invariant across outer visits");
+    // Bound-only remainder values need not participate in a physical address.
+    // Discover their periods before checking whole-value domain invariance.
+    SmallVector<Value> pending(innerBounds.begin(), innerBounds.end());
+    DenseSet<Value> seenBounds;
+    while (!pending.empty()) {
+        auto value = pending.pop_back_val();
+        if (!seenBounds.insert(value).second || normalizer.independent(value)) { continue; }
+        if (auto divisor = PhaseNormalization::modulus(value)) { addPeriod(*divisor); }
+        auto* definition = value.getDefiningOp();
+        if (definition && outer->isProperAncestor(definition)) {
+            llvm::append_range(pending, definition->getOperands());
+        }
     }
     std::string sliceError;
     std::vector<BoundarySlice> intervals;
@@ -126,6 +236,11 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
     if (!periodFits || (period <= 1 && !boundaryControl)) {
         return unavailable("no supported outer bank period or finite control boundary");
     }
+    for (Value bound : innerBounds) {
+        if (!normalizer.periodic(bound, period)) {
+            return unavailable("nested bounds do not repeat under the common outer phase period");
+        }
+    }
     bool uniformDescriptors = true;
     outer.getBody()->walk([&](Operation* operation) {
         if (operation->getNumRegions() || !index.phasesFor(operation).empty()) { return; }
@@ -136,17 +251,17 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
             if (operand.getType().isIntOrIndex()) { uniformDescriptors &= normalizer.periodic(operand, period); }
         }
     });
-    if (!uniformDescriptors) { return unavailable("a descriptor is not invariant under the outer bank period"); }
+    bool evolvingStorage = !uniformDescriptors;
     for (const auto& effect : input->accesses().effects()) {
         if (!effect.phase || !outer->isProperAncestor(effect.phase->elementOp)) { continue; }
         const auto effectId = static_cast<std::size_t>(&effect - input->accesses().effects().data());
         if (detail::dischargeGlobalReadOnlyEffect(effectId, input->accesses())) { continue; }
         if (effect.selection && !normalizer.periodic(effect.selection->selector, period)) {
-            return unavailable("storage selection does not repeat under the outer bank period");
+            evolvingStorage = true;
         }
         for (const auto& region : effect.regions) {
             if (!normalizer.periodic(region, period)) {
-                return unavailable("physical storage map needs an owned-family or boundary phase adapter");
+                evolvingStorage = true;
             }
         }
     }
@@ -241,88 +356,6 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                             return true;
                         }
                     }
-                    if (auto found = rotating.find(id); found != rotating.end() && interval.bindings.empty()) {
-                        SmallVector<std::pair<Expr, Expr>> replacements;
-                        for (Value parameter : rotatingParameters[id]) {
-                            auto value = normalizer.residue(parameter, phase, period);
-                            if (!value) { return unavailable("fixed-width bank residue normalization is unproved"); }
-                            replacements.emplace_back(expressions.input(parameter), *value);
-                        }
-                        auto specialized = found->second;
-                        RegionExpressions::Substitution substitution(replacements);
-                        specialize(specialized, substitution);
-                        auto view = guardedRotatingRegionalResult(function, *input, specialized, diagnostic);
-                        if (failed(view)) { return unavailable("child phase export: " + diagnostic); }
-                        parts.push_back(std::move(*view));
-                        return true;
-                    }
-                    if (auto inner = dyn_cast_or_null<scf::ForOp>(child.anchor);
-                        child.kind == StructureKind::Loop && inner) {
-                        auto domain = CountedLoop::get(inner);
-                        if (!domain) {
-                            return unavailable("nested sliced child requires a representable counted domain");
-                        }
-                        auto innerTrips = domain->trips(expressions);
-                        auto childSlices = collectBoundarySlices(
-                            inner, index, expressions, innerTrips, interval.bindings, diagnostic);
-                        if (!childSlices) { return unavailable("nested boundary: " + diagnostic); }
-                        std::vector<RegionalAnalysis> childParts;
-                        for (auto& slice : *childSlices) {
-                            PhaseNormalization childNormalizer(inner, index, expressions);
-                            DenseMap<Value, bool> choices;
-                            SmallVector<Value> guards;
-                            inner.getBody()->walk([&](scf::IfOp branch) {
-                                auto bound = boundaryGuard(
-                                    branch.getCondition(), childNormalizer, slice.bindings, expressions);
-                                if (!bound) { return; }
-                                slice.bindings[branch.getCondition()] = *bound;
-                                if (auto known = expressions.constantValue(*bound)) {
-                                    choices[branch.getCondition()] = *known != 0;
-                                }
-                                else { guards.push_back(branch.getCondition()); }
-                            });
-                            auto recognized = detail::recognizeRotatingSlice(inner, index, *input, choices, guards);
-                            if (recognized.result.state != RecognitionState::Applicable) {
-                                std::string reason = "nested slice does not supply a rotating regional interface";
-                                for (const auto& issue : recognized.result.diagnostics) {
-                                    reason += " / " + recognitionName(issue.issue).str();
-                                }
-                                return unavailable(reason);
-                            }
-                            auto analyzed = analyzeGuardedRotating(inner, *input, recognized, arena, slice.bindings);
-                            if (!analyzed.error.empty()) { return unavailable(analyzed.error); }
-                            SmallVector<std::pair<Expr, Expr>> replacements;
-                            DenseSet<Value> seen;
-                            for (const auto& access : recognized.result.accesses) {
-                                for (Value parameter : access.parameters) {
-                                    if (normalizer.independent(parameter) || !seen.insert(parameter).second) {
-                                        continue;
-                                    }
-                                    auto value = normalizer.residue(parameter, phase, period);
-                                    if (!value) {
-                                        return unavailable("nested phase parameter lacks a residue certificate");
-                                    }
-                                    replacements.emplace_back(expressions.input(parameter), *value);
-                                }
-                            }
-                            RegionExpressions::Substitution substitution(replacements);
-                            specialize(analyzed, substitution);
-                            auto view = guardedRotatingRegionalResult(
-                                function, *input, analyzed, diagnostic, slice.interval);
-                            if (failed(view)) { return unavailable("nested slice export: " + diagnostic); }
-                            childParts.push_back(std::move(*view));
-                        }
-                        if (childParts.empty()) { return true; }
-                        auto composed = composeRegionalSequenceWithin(
-                            function, arena, std::move(childParts), true, false, child.loops);
-                        if (!composed.error.empty()) {
-                            return unavailable("nested slice composition: " + composed.error);
-                        }
-                        composed.state->completeInvocation = false;
-                        composed.state->requiredOuterLoops.assign(child.loops.begin(), child.loops.end());
-                        parts.push_back(sequenceRegionalResult(composed));
-                        return true;
-                    }
                     auto appendArithmetic = [&](Operation* root) {
                         bool guardContract = true;
                         root->walk([&](scf::IfOp branch) {
@@ -349,12 +382,142 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                                         return bound;
                                     }
                                 }
+                                // A true owned address must retain its actual
+                                // outer coordinate. A later joint family proof
+                                // justifies projecting its inter-visit effects.
+                                if (evolvingStorage && !normalizer.periodic(parameter, period)) {
+                                    return expressions.input(parameter);
+                                }
                                 return normalizer.atPhase(parameter, phase, period);
                             });
                         if (failed(view)) { return false; }
                         parts.push_back(std::move(*view));
                         return true;
                     };
+                    if (evolvingStorage && child.kind == StructureKind::Loop) {
+                        bool ownedMaps = false;
+                        for (const auto& effect : input->accesses().effects()) {
+                            if (!effect.phase || !child.anchor->isProperAncestor(effect.phase->elementOp)) { continue; }
+                            for (const auto& region : effect.regions) {
+                                ownedMaps |= !normalizer.periodic(region, period);
+                            }
+                        }
+                        if (ownedMaps) {
+                            if (!appendArithmetic(child.anchor)) {
+                                return unavailable("owned nested phase export: " + diagnostic);
+                            }
+                            return true;
+                        }
+                    }
+                    if (auto found = rotating.find(id); found != rotating.end() && interval.bindings.empty()) {
+                        SmallVector<std::pair<Expr, Expr>> replacements;
+                        auto phaseTrips = phaseTripCount(found->second.loop, normalizer, expressions,
+                                                        phase, period, replacements);
+                        if (!phaseTrips) {
+                            return unavailable("phase-specialized nested counted-domain adapter unavailable");
+                        }
+                        const bool specializedDomain = !replacements.empty();
+                        for (Value parameter : rotatingParameters[id]) {
+                            auto inputExpression = expressions.input(parameter);
+                            if (llvm::any_of(replacements, [&](const auto& binding) {
+                                    return binding.first == inputExpression;
+                                })) { continue; }
+                            auto value = normalizer.residue(parameter, phase, period);
+                            if (!value) { return unavailable("fixed-width bank residue normalization is unproved"); }
+                            replacements.emplace_back(inputExpression, *value);
+                        }
+                        auto specialized = found->second;
+                        RegionExpressions::Substitution substitution(replacements);
+                        specialize(specialized, substitution);
+                        // The surrounding phase supplies the domain equality.
+                        // Keep original ordinal identities and cuts; every query
+                        // and endpoint filter sees this same specialized length.
+                        auto slice = specializedDomain ?
+                            std::optional<PeriodicSlice>(PeriodicSlice{c(0), *phaseTrips}) :
+                                                         std::nullopt;
+                        auto view = guardedRotatingRegionalResult(function, *input, specialized, diagnostic, slice);
+                        if (failed(view)) { return unavailable("child phase export: " + diagnostic); }
+                        parts.push_back(std::move(*view));
+                        return true;
+                    }
+                    if (auto inner = dyn_cast_or_null<scf::ForOp>(child.anchor);
+                        child.kind == StructureKind::Loop && inner) {
+                        SmallVector<std::pair<Expr, Expr>> domainBindings;
+                        auto innerTrips = phaseTripCount(inner, normalizer, expressions, phase, period, domainBindings);
+                        if (!innerTrips) {
+                            return unavailable("nested sliced child requires a phase-specialized counted domain");
+                        }
+                        auto childSlices = collectBoundarySlices(
+                            inner, index, expressions, *innerTrips, interval.bindings, diagnostic);
+                        if (!childSlices) { return unavailable("nested boundary: " + diagnostic); }
+                        std::vector<RegionalAnalysis> childParts;
+                        for (auto& slice : *childSlices) {
+                            RegionExpressions::Substitution domainSubstitution(domainBindings);
+                            slice.interval.begin = expressions.substitute(slice.interval.begin, domainSubstitution);
+                            slice.interval.end = expressions.substitute(slice.interval.end, domainSubstitution);
+                            for (auto& binding : slice.bindings) {
+                                binding.second = expressions.substitute(binding.second, domainSubstitution);
+                            }
+                            PhaseNormalization childNormalizer(inner, index, expressions);
+                            DenseMap<Value, bool> choices;
+                            SmallVector<Value> guards;
+                            inner.getBody()->walk([&](scf::IfOp branch) {
+                                auto bound = boundaryGuard(
+                                    branch.getCondition(), childNormalizer, slice.bindings, expressions);
+                                if (!bound) { return; }
+                                slice.bindings[branch.getCondition()] = *bound;
+                                if (auto known = expressions.constantValue(*bound)) {
+                                    choices[branch.getCondition()] = *known != 0;
+                                }
+                                else { guards.push_back(branch.getCondition()); }
+                            });
+                            auto recognized = detail::recognizeRotatingSlice(inner, index, *input, choices, guards);
+                            if (recognized.result.state != RecognitionState::Applicable) {
+                                std::string reason = "nested slice does not supply a rotating regional interface";
+                                for (const auto& issue : recognized.result.diagnostics) {
+                                    reason += " / " + recognitionName(issue.issue).str();
+                                }
+                                return unavailable(reason);
+                            }
+                            auto analyzed = analyzeGuardedRotating(inner, *input, recognized, arena, slice.bindings);
+                            if (!analyzed.error.empty()) { return unavailable(analyzed.error); }
+                            SmallVector<std::pair<Expr, Expr>> replacements(
+                                domainBindings.begin(), domainBindings.end());
+                            DenseSet<Value> seen;
+                            for (const auto& access : recognized.result.accesses) {
+                                for (Value parameter : access.parameters) {
+                                    if (normalizer.independent(parameter) || !seen.insert(parameter).second) {
+                                        continue;
+                                    }
+                                    auto inputExpression = expressions.input(parameter);
+                                    if (llvm::any_of(replacements, [&](const auto& binding) {
+                                            return binding.first == inputExpression;
+                                        })) { continue; }
+                                    auto value = normalizer.residue(parameter, phase, period);
+                                    if (!value) {
+                                        return unavailable("nested phase parameter lacks a residue certificate");
+                                    }
+                                    replacements.emplace_back(inputExpression, *value);
+                                }
+                            }
+                            RegionExpressions::Substitution substitution(replacements);
+                            specialize(analyzed, substitution);
+                            auto view = guardedRotatingRegionalResult(
+                                function, *input, analyzed, diagnostic, slice.interval);
+                            if (failed(view)) { return unavailable("nested slice export: " + diagnostic); }
+                            childParts.push_back(std::move(*view));
+                        }
+                        if (childParts.empty()) { return true; }
+                        auto composed = composeRegionalSequenceWithin(
+                            function, arena, std::move(childParts), true, false, child.loops);
+                        if (!composed.error.empty()) {
+                            return unavailable("nested slice composition: " + composed.error);
+                        }
+                        composed.state->completeInvocation = false;
+                        composed.state->requiredOuterLoops.assign(child.loops.begin(), child.loops.end());
+                        parts.push_back(sequenceRegionalResult(composed));
+                        return true;
+                    }
                     if (child.kind == StructureKind::ExplicitRun) {
                         bool invariant = true;
                         for (auto payload : child.payloads) {
@@ -385,6 +548,9 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                             enclosing.push_back(outer);
                             auto view = specializedExplicitRunRegional(function, outer, child.operations, index,
                                 *input, arena, enclosing, [&](Value value) -> std::optional<int64_t> {
+                                    if (evolvingStorage && !runNormalizer.periodic(value, period)) {
+                                        return std::nullopt;
+                                    }
                                     auto bound = runNormalizer.atPhase(value, phase, period);
                                     if (!bound) { return std::nullopt; }
                                     auto literal = expressions.constantValue(*bound);
@@ -430,7 +596,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                 composed.state->requiredOuterLoops.assign(node.loops.begin(), node.loops.end());
                 composed.state->requiredOuterLoops.push_back(outer);
                 auto view = sequenceRegionalResult(composed);
-                if (!writersExported(view)) {
+                if (!evolvingStorage && !writersExported(view)) {
                     compactFailure = "discharged writer lacks an outer re-entry storage interface";
                     return std::nullopt;
                 }
@@ -441,6 +607,9 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
             repeatedAttempt = previousAttempt;
             if (invalidExpression) { return unavailable(compactFailure); }
             if (!selected) {
+                if (evolvingStorage) {
+                    return unavailable(compactFailure + "; evolving phase requires an exact original-map adapter");
+                }
                 // A bounded numeric inner body is an explicit word, including
                 // genuine moving subregions. Bind geometry only after the complete
                 // periodic-map proof above; control receives independent interval
@@ -472,13 +641,46 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                 selected = std::move(*body);
             }
             auto view = std::move(*selected);
-            if (!writersExported(view)) {
+            if (!evolvingStorage && !writersExported(view)) {
                 return unavailable("discharged writer lacks an outer re-entry storage interface");
             }
             phases.push_back(std::move(view));
         }
+        std::shared_ptr<const RepeatedStorageTypesResult> storage;
+        if (evolvingStorage) {
+            for (auto& phase : phases) {
+                llvm::append_range(phase.accessBoundary, phase.deferredAccessBoundary);
+                phase.deferredAccessBoundary.clear();
+            }
+            for (uint64_t phase = 0; phase < period; ++phase) {
+                SmallVector<std::pair<Expr, Expr>> bindings;
+                bool mapped = true;
+                auto bind = [&](Value value) {
+                    if (!value.getType().isIntOrIndex() || value.getType().isInteger(1) ||
+                        normalizer.independent(value) || !index.isRelevant(value)) { return; }
+                    auto representative = normalizer.atPhase(value, phase, period);
+                    if (!representative) { mapped = false; return; }
+                    bindings.emplace_back(expressions.input(value), *representative);
+                };
+                bind(outer.getInductionVar());
+                outer.getBody()->walk([&](Operation* operation) {
+                    for (Value value : operation->getResults()) { bind(value); }
+                });
+                if (!mapped) { return unavailable("owned phase logical parameter normalization unavailable"); }
+                bindLogicalPhase(phases[phase], bindings, outer);
+            }
+            // The transformation is tentative until the joint proof succeeds.
+            // Its physical reconstruction still consumes original shared maps;
+            // retaining these canonical logical callbacks also prevents owner
+            // byte queries from capturing one currently executing outer IV.
+            auto proof = std::make_shared<RepeatedStorageTypesResult>(
+                recognizeRepeatedStorageTypes(phases, outer, interval.interval.end, &index, period));
+            if (!proof->error.empty()) { return unavailable("joint phase storage: " + proof->error); }
+            storage = std::move(proof);
+        }
         auto repeated = repeatPhasedRegions(function, outer, std::move(phases), interval.interval.end,
-                                           node.loops, interval.interval.begin, interval.maximumLength);
+                                           node.loops, interval.interval.begin, interval.maximumLength,
+                                           std::move(storage));
         if (!repeated.error.empty()) { return unavailable(repeated.error); }
         intervalViews.push_back(std::move(repeated.regional));
     }

@@ -24,7 +24,8 @@ def invoke(tool, mode, path):
 
 
 def check(document, n, m, repeats=1, bank_stride=32, initial_load=False, active_prefix=False,
-          moving_extract=False, external_value=False, moving_stride=32):
+          moving_extract=False, external_value=False, moving_stride=32, phase_lengths=(),
+          owned_stride=0, owned_probe=0, owned_probes=()):
     assert document["accepted"], document
     trace = document["trace"]
     assert not trace["error"], trace
@@ -40,7 +41,8 @@ def check(document, n, m, repeats=1, bank_stride=32, initial_load=False, active_
                 gm_base = 1000000000 + 65536 * 4 * visit
                 expected.append(("load", prefix + [visit], set(range(gm_base, gm_base + 32)), tile))
             expected.append(("prologue", prefix + [visit], cell, set()))
-            for inner in range(max(0, m)):
+            inner_length = phase_lengths[visit % len(phase_lengths)] if phase_lengths else m
+            for inner in range(max(0, inner_length)):
                 if moving_extract:
                     source_begin = 4096 + inner * moving_stride
                     expected.append(("extract", prefix + [visit, inner],
@@ -48,8 +50,17 @@ def check(document, n, m, repeats=1, bank_stride=32, initial_load=False, active_
                 expected.append(("compute", prefix + [visit, inner], tile, tile))
                 expected.append(("read", prefix + [visit, inner], cell, set()))
             expected.append(("epilogue", prefix + [visit], set(), cell))
+            if owned_stride:
+                owned_base = 1000000000 + 65536 * 4 + visit * owned_stride
+                expected.append(("owned", prefix + [visit], tile, set(range(owned_base, owned_base + 32))))
             if moving_extract:
                 expected.append(("sourcewrite", prefix + [visit], set(), set(range(4096, 4100))))
+    if owned_stride:
+        for consumer, offset in enumerate(owned_probes or (owned_probe,)):
+            probe = 1000000000 + 65536 * 4 + offset
+            output = 4096 + 32 * consumer
+            label = "consume" if consumer == 0 else f"consume{consumer}"
+            expected.append((label, [], set(range(probe, probe + 32)), set(range(output, output + 32))))
     events = trace["events"]
     payloads = [event for event in events if event["kind"] == "payload"]
     assert [(p["label"], p["coordinates"]) for p in payloads] == [x[:2] for x in expected]

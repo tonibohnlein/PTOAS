@@ -114,15 +114,30 @@ VaryingRotatingRecognition recognizeVaryingRotating(scf::ForOp outer, const Phas
     }
     return out;
 }
-AffineRotatingVisits analyzeVaryingRotating(
-    const VaryingRotatingRecognition& recognized, const PhaseIndex& index, const SyncInput& input)
+RotatingChildBoundaryResult analyzeRotatingChildBoundary(scf::ForOp outer, scf::ForOp inner,
+    const RecognitionResult& recognized, const PhaseIndex& index, const SyncInput& input)
 {
-    AffineRotatingVisits failure;
-    if (recognized.result.state != RecognitionState::Applicable) {
+    RotatingChildBoundaryResult failure;
+    if (!outer || !inner || !outer->isProperAncestor(inner) ||
+        recognized.state != RecognitionState::Applicable) {
         failure.error = "varying rotating contract not established";
         return failure;
     }
-    auto child = analyzeRotating(recognized.inner, index, input, recognized.child, false);
+    RegionExpressions arena;
+    PhaseNormalization invariance(outer, index, arena);
+    for (const auto& access : recognized.accesses) {
+        const auto& effect = input.accesses().effects()[access.effect];
+        if ((effect.selection && !invariance.independent(effect.selection->selector)) ||
+            llvm::any_of(effect.regions, [&](const auto& region) { return !invariance.periodic(region, 1); })) {
+            failure.error = "rotating child boundary requires invariant physical maps across visits";
+            return failure;
+        }
+    }
+    if (!recognized.dischargedEffects.empty()) {
+        failure.error = "rotating child discharge lacks a cross-visit independence certificate";
+        return failure;
+    }
+    auto child = analyzeRotating(inner, index, input, recognized, false);
     if (!child.error.empty()) {
         failure.error = child.error;
         return failure;
@@ -146,11 +161,12 @@ AffineRotatingVisits analyzeVaryingRotating(
     // Inner invocation protection need not extend across re-entry. Project the
     // same shared facts into the outer scope for the crossing witnesses only.
     const auto protection = structuredProtection(input.accesses());
-    for (std::size_t i = 0; i < child.fragments.size(); ++i) {
-        auto& fragment = child.fragments[i];
-        const auto& effect = input.accesses().effects()[recognized.child.accesses[i].effect];
+    auto crossingFragments = child.fragments;
+    for (std::size_t i = 0; i < crossingFragments.size(); ++i) {
+        auto& fragment = crossingFragments[i];
+        const auto& effect = input.accesses().effects()[recognized.accesses[i].effect];
         fragment.protectionGroup = effect.memory->scope == AddressSpace::ACC && fragment.stride == 0 ?
-            protection.inLoop(effect.phase, recognized.outer) : 0;
+            protection.inLoop(effect.phase, outer) : 0;
     }
     std::vector<RotatingBoundaryCell> cells;
     std::set<std::pair<uint32_t, uint32_t>> seen;
@@ -167,9 +183,28 @@ AffineRotatingVisits analyzeVaryingRotating(
         }
     }
     auto certificate = buildRotatingBoundaryCertificate(
-        std::move(child.periodic), child.fragments, cells, uniformCrossings, maxRegionalSlotVisits,
+        child.periodic, crossingFragments, cells, uniformCrossings, maxRegionalSlotVisits,
         ptoStorageProtection());
+    failure.error = certificate.error;
+    failure.child = std::make_shared<RotatingAnalysis>(std::move(child));
+    failure.boundary = std::move(certificate);
+    return failure;
+}
+AffineRotatingVisits analyzeVaryingRotating(
+    const VaryingRotatingRecognition& recognized, const PhaseIndex& index, const SyncInput& input)
+{
+    if (recognized.result.state != RecognitionState::Applicable) {
+        AffineRotatingVisits failure;
+        failure.error = "varying rotating contract not established";
+        return failure;
+    }
+    auto analyzed = analyzeRotatingChildBoundary(recognized.outer, recognized.inner, recognized.child, index, input);
+    if (!analyzed.error.empty()) {
+        AffineRotatingVisits failure;
+        failure.error = analyzed.error;
+        return failure;
+    }
     return analyzeAffineRotatingVisits(
-        std::move(certificate), recognized.slope, recognized.intercept, maxRegionalSlotVisits);
+        std::move(analyzed.boundary), recognized.slope, recognized.intercept, maxRegionalSlotVisits);
 }
 } // namespace mlir::pto::frontiersynch

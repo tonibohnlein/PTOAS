@@ -9,6 +9,7 @@
 #include "RepeatedStorageInternal.h"
 #include "RepeatedStorageProjection.h"
 #include "DisjointTranslations.h"
+#include "PhaseNormalization.h"
 #include "../InsertSync/SyncEffectRanges.h"
 #include "../InsertSync/SyncRegionArithmetic.h"
 #include "mlir/IR/Matchers.h"
@@ -318,6 +319,8 @@ bool separation(State& state)
             if (!separated(state, family, state.families[j])) { return false; }
         }
         for (const auto& cell : state.body.storageBoundary) {
+            if (family.spec.kind == RepeatedStorageKind::SharedReadOnly &&
+                cell.firstWriters.empty() && cell.lastWriters.empty()) { continue; }
             State::Family persistent;
             persistent.spec.space = cell.cell.space;
             persistent.spec.kind = RepeatedStorageKind::SharedReadOnly;
@@ -327,6 +330,55 @@ bool separation(State& state)
             persistent.extent = cell.cell.end - cell.cell.begin;
             if (persistent.extent) { persistent.pieces.emplace_back(); }
             if (!separated(state, family, persistent)) { return false; }
+        }
+    }
+    return true;
+}
+// Alternatives can use the same reservation in the same visit. Only distinct
+// visits must be disjoint, so prove the union rather than requiring disjoint
+// families in the two alternative bodies.
+bool separateAlternativeFamilies(const State& state, const State::Family& a, const State::Family& b)
+{
+    if (a.spec.kind == RepeatedStorageKind::SharedReadOnly &&
+        b.spec.kind == RepeatedStorageKind::SharedReadOnly) { return true; }
+    if (a.spec.kind == RepeatedStorageKind::VisitOwned && b.spec.kind == RepeatedStorageKind::VisitOwned &&
+        a.spec.space == b.spec.space && a.spec.origin.base == b.spec.origin.base &&
+        a.spec.stride == b.spec.stride && originDifference(a.spec.origin, b.spec.origin) == 0) {
+        SmallVector<SyncStorageCell> ranges;
+        for (const auto* family : {&a, &b}) {
+            for (const auto& piece : family->pieces) {
+                const auto end = piece.inner ? piece.end + (piece.inner->maxTrips - 1) * piece.inner->stride :
+                                              piece.end;
+                ranges.push_back({a.spec.space, piece.begin, end});
+            }
+        }
+        const auto trips = state.expressions().constantValue(state.trips).value_or(UINT64_MAX);
+        return detail::disjointTranslations(ranges, APInt(128, a.spec.stride), trips);
+    }
+    return separated(state, a, b);
+}
+bool separateTypeResiduals(const State& owner, const State& other)
+{
+    llvm::DenseSet<std::size_t> omitted(other.effectIds.begin(), other.effectIds.end());
+    for (const auto& family : owner.families) {
+        for (const auto& cell : other.body.storageBoundary) {
+            if (family.spec.kind == RepeatedStorageKind::SharedReadOnly &&
+                cell.firstWriters.empty() && cell.lastWriters.empty()) { continue; }
+            State::Family persistent;
+            persistent.spec.space = cell.cell.space;
+            persistent.spec.kind = RepeatedStorageKind::SharedReadOnly;
+            persistent.spec.origin.base = cell.cell.base;
+            if (cell.cell.begin > INT64_MAX || cell.cell.end < cell.cell.begin) { return false; }
+            persistent.spec.origin.byteOffset = getAffineConstantExpr(cell.cell.begin, owner.loop->getContext());
+            persistent.extent = cell.cell.end - cell.cell.begin;
+            if (persistent.extent) { persistent.pieces.emplace_back(); }
+            if (!separated(owner, family, persistent)) { return false; }
+        }
+        for (const auto& access : other.body.accessBoundary) {
+            if (omitted.count(access.effect) || access.representedByCells) { continue; }
+            for (auto effect : family.spec.effects) {
+                if (owner.body.accessModel->mayOverlap(effect, access.effect)) { return false; }
+            }
         }
     }
     return true;
@@ -366,7 +418,8 @@ bool invariantEffect(const SyncStorageEffect& effect, scf::ForOp loop)
     }
     return true;
 }
-bool completeEffects(const State& state, const llvm::DenseSet<std::size_t>& assigned)
+bool completeEffects(const State& state, const llvm::DenseSet<std::size_t>& assigned,
+                     const PhaseIndex* phaseIndex, uint64_t phasePeriod)
 {
     for (const auto& access : state.body.accessBoundary) {
         if (access.effect >= state.body.accessModel->effects().size() ||
@@ -379,7 +432,16 @@ bool completeEffects(const State& state, const llvm::DenseSet<std::size_t>& assi
             if (found == state.body.accessBoundary.end()) { return false; }
             if (assigned.count(id)) { continue; }
             const auto& effect = state.body.accessModel->effects()[id];
-            if (!invariantEffect(effect, state.loop)) { return false; }
+            if (!invariantEffect(effect, state.loop)) {
+                if (!found->representedByCells || !phaseIndex || phasePeriod <= 1 || effect.regions.empty()) {
+                    return false;
+                }
+                PhaseNormalization normalizer(state.loop, *phaseIndex, state.expressions());
+                if ((effect.selection && !normalizer.periodic(effect.selection->selector, phasePeriod)) ||
+                    llvm::any_of(effect.regions, [&](const auto& region) {
+                        return !normalizer.periodic(region, phasePeriod);
+                    })) { return false; }
+            }
             if (found->representedByCells) { continue; }
             for (auto owned : assigned) {
                 if (state.body.accessModel->mayOverlap(id, owned)) { return false; }
@@ -390,10 +452,12 @@ bool completeEffects(const State& state, const llvm::DenseSet<std::size_t>& assi
 }
 } // namespace
 RepeatedStorageResult buildRepeatedStorage(const RegionalAnalysis& body, scf::ForOp loop,
-    RegionExpressions::Id trips, ArrayRef<RepeatedStorageFamily> families)
+    RegionExpressions::Id trips, ArrayRef<RepeatedStorageFamily> families,
+    const PhaseIndex* phaseIndex, uint64_t phasePeriod)
 {
     RepeatedStorageResult result;
-    if (!loop || !body.expressions || !body.accessModel || trips >= body.expressions->size() ||
+    if (!phasePeriod || phasePeriod > maxRegionalSlotVisits || !loop || !body.expressions || !body.accessModel ||
+        trips >= body.expressions->size() ||
         body.expressions->isBoolean(trips) ||
         !body.capabilities.exactSelectors || !body.capabilities.exactQueries || !body.presence || !body.reachability ||
         llvm::any_of(body.anchors, [&](const auto& anchor) {
@@ -412,7 +476,7 @@ RepeatedStorageResult buildRepeatedStorage(const RegionalAnalysis& body, scf::Fo
         }
     }
     if (llvm::any_of(body.symbolicStorageEffects, [&](std::size_t id) { return !assigned.count(id); }) ||
-        !completeEffects(*state, assigned)) {
+        !completeEffects(*state, assigned, phaseIndex, phasePeriod)) {
         result.error = "evolving storage has an unexported effect or an unclassified overlapping residual access";
         return result;
     }
@@ -422,5 +486,62 @@ RepeatedStorageResult buildRepeatedStorage(const RegionalAnalysis& body, scf::Fo
     }
     result.storage = std::make_shared<RepeatedStorage>(std::move(state));
     return result;
+}
+RepeatedStorageTypesResult recognizeRepeatedStorageTypes(ArrayRef<RegionalAnalysis> bodies,
+    scf::ForOp loop, RegionExpressions::Id trips, const PhaseIndex* phaseIndex, uint64_t phasePeriod)
+{
+    RepeatedStorageTypesResult out;
+    if (bodies.empty() || !loop) { out.error = "finite visit storage has no original type bodies"; return out; }
+    std::vector<std::shared_ptr<State>> states;
+    SmallVector<const CompoundInstanceElement*> phases;
+    for (const auto& body : bodies) {
+        if (!body.expressions || body.expressions != bodies.front().expressions ||
+            !body.accessModel || body.accessModel != bodies.front().accessModel ||
+            body.gmAliasPolicy != bodies.front().gmAliasPolicy || !body.deferredAccessBoundary.empty()) {
+            out.error = "finite visit storage requires common modeled input and complete access boundaries";
+            return out;
+        }
+        auto recovered = recognizeRepeatedStorage(body, loop, trips, phaseIndex, phasePeriod);
+        std::shared_ptr<State> state;
+        if (recovered.storage) { state = recovered.storage->state; }
+        else {
+            // No omitted family is needed for an already finite complete type.
+            // Reuse the same invariance and effect coverage checks as ownership.
+            auto checked = buildRepeatedStorage(body, loop, trips, {}, phaseIndex, phasePeriod);
+            if (!checked.storage) { out.error = recovered.error; return out; }
+            state = checked.storage->state;
+        }
+        if (llvm::any_of(body.accessBoundary, [&](const auto& access) {
+                return !access.representedByCells && !llvm::is_contained(state->effectIds, access.effect);
+            })) {
+            out.error = "finite visit projection cannot omit an unclassified residual effect";
+            return out;
+        }
+        for (const auto& anchor : body.anchors) { phases.push_back(anchor.phase); }
+        out.storage.push_back(std::move(recovered.storage));
+        states.push_back(std::move(state));
+    }
+    if (bodies.front().accessModel->hasUniformRelationships(phases)) {
+        out.error = "finite visit storage projection needs explicit uniform relationship coverage";
+        return out;
+    }
+    for (std::size_t i = 0; i < states.size(); ++i) {
+        for (std::size_t j = 0; j < i; ++j) {
+            if (!separateTypeResiduals(*states[i], *states[j]) ||
+                !separateTypeResiduals(*states[j], *states[i])) {
+                out.error = "visit-owned storage can overlap another type's persistent or residual storage";
+                return out;
+            }
+            for (const auto& a : states[i]->families) {
+                for (const auto& b : states[j]->families) {
+                    if (!separateAlternativeFamilies(*states[i], a, b)) {
+                        out.error = "cross-type storage is not proved disjoint across distinct visits";
+                        return out;
+                    }
+                }
+            }
+        }
+    }
+    return out;
 }
 } // namespace mlir::pto::frontiersynch

@@ -21,7 +21,7 @@ def run(tool, mode, path):
     return result.stdout
 
 
-def check(document, outer, inner):
+def check(document, outer, inner, consumer=False):
     assert document["accepted"], document
     trace = document["trace"]
     assert not trace["error"], trace
@@ -34,11 +34,16 @@ def check(document, outer, inner):
                             ({("left", iteration % 2), ("right", 0)}, {("acc", 0)})])
         expected.append((2, [visit]))
         effects.append((set(), {("gm", visit * 8 + byte) for byte in range(4)}))
+    if consumer:
+        expected.append((3, []))
+        effects.append(({("gm", byte) for byte in range(4)}, set()))
     assert [(value["type"], value["coordinates"]) for value in payloads] == expected
     pipes = [value["pipe"] for value in payloads]
     edges = native(pipes)
     for a, (reads, writes) in enumerate(effects):
         for b in range(a + 1, len(effects)):
+            if pipes[a] == 0 and pipes[b] == 0:
+                continue  # Same-scalar storage accesses are hardware protected.
             later_reads, later_writes = effects[b]
             if writes & (later_reads | later_writes) or reads & later_writes:
                 edges.add((2 * a + 1, 2 * b))
@@ -75,14 +80,20 @@ def main():
         path.write_text(source)
         emitted = run(tool, "--insert-logical", path)
         assert "version = 4" in emitted and "pto.store" in emitted
-        for invalid in (source.replace(" overflow<nsw>", ""),
-                        source.replace("    return",
-                                       "    %external = pto.load %p[%zero] : !pto.ptr<f32, gm> -> f32\n    return")):
-            path.write_text(invalid)
-            rejected = json.loads(run(tool, "--sequence-analysis", path))
-            assert rejected["error"] and not rejected["queries_available"], rejected
+        path.write_text(source.replace(" overflow<nsw>", ""))
+        rejected = json.loads(run(tool, "--sequence-analysis", path))
+        assert rejected["error"] and not rejected["queries_available"], rejected
+        finite_consumer = source.replace("    return",
+            "    %external = pto.load %p[%zero] : !pto.ptr<f32, gm> -> f32\n    return")
+        path.write_text(finite_consumer)
+        composed = json.loads(run(tool, "--sequence-analysis", path))
+        assert not composed["error"] and composed["prepared"] and composed["queries_available"], composed
+        assert composed["symbolic_storage_effects"] > 0 and composed["boundary_bytes"] >= 4, composed
+        for outer, inner in ((0, 0), (1, 0), (2, 3)):
+            path.write_text(finite_consumer.replace("array<i64: 2, 3>", f"array<i64: {outer}, {inner}>"))
+            check(json.loads(run(tool, "--structured-trace", path)), outer, inner, consumer=True)
     print(f"repeated storage: {len(cases)} production closures, "
-          "zero-inner stores and explicit crossing rejection passed")
+          "zero-inner stores and finite-consumer composition passed")
 
 
 if __name__ == "__main__":
