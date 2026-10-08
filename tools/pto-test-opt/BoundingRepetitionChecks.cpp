@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/BoundingRepetition.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "llvm/Support/raw_ostream.h"
+#include <set>
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 namespace {
@@ -94,10 +95,14 @@ std::optional<fs::BoundingRepetitionInput> specification(func::FuncOp function, 
     result.upper.crossings.push_back(edge(0, 1, inner ? inner-1 : 0, 2, arena->boolean(true)));
     // At inner=1 these records denote the same semantic endpoints.
     result.upper.crossings.push_back(edge(0, 1, 0, 2, arena->boolean(true)));
+    auto alias = edge(0, 1, 0, 2, arena->boolean(true));
+    alias.edge.source.ordinal = arena->select(arena->input(function.getArgument(2)),
+        arena->constant(inner ? inner - 1 : 0), arena->constant(0));
+    result.upper.crossings.push_back(std::move(alias));
     return result;
 }
 Graph oracle(const fs::BoundingRepetitionInput& spec, fs::RegionExpressions& arena, uint64_t inner,
-             uint64_t visits, uint64_t begin, uint32_t phases, bool upper, bool enabled)
+             uint64_t visits, uint64_t begin, uint32_t phases, bool upper, bool enabled, Id parameter)
 {
     const uint64_t count = 2*inner*visits;
     Graph graph(2*count, std::vector<bool>(2*count));
@@ -113,8 +118,10 @@ Graph oracle(const fs::BoundingRepetitionInput& spec, fs::RegionExpressions& are
     const auto& edges = upper ? spec.upper.crossings : spec.lower.crossings;
     for (const auto& record : edges) {
         const auto& edge = record.edge;
-        if (arena.constantValue(edge.guard) != 1 && !enabled) { continue; }
-        auto ordinal = *arena.constantValue(edge.source.ordinal);
+        const std::pair<Id, Id> binding{parameter, arena.boolean(enabled)};
+        fs::RegionExpressions::Substitution substitution(binding);
+        if (arena.constantValue(arena.substitute(edge.guard, substitution)) != 1) { continue; }
+        auto ordinal = *arena.constantValue(arena.substitute(edge.source.ordinal, substitution));
         if (ordinal >= inner) { continue; }
         for (uint64_t source = begin; source < visits; ++source) {
             if (source%phases != edge.source.type/2) { continue; }
@@ -128,11 +135,25 @@ Graph oracle(const fs::BoundingRepetitionInput& spec, fs::RegionExpressions& are
     close(graph); return graph;
 }
 bool checkCase(func::FuncOp function, scf::ForOp loop, const pto::SyncInput& input,
-               uint64_t inner, uint64_t visits, uint64_t begin, uint32_t phases, uint64_t& queries)
+               uint64_t inner, uint64_t visits, uint64_t begin, uint32_t phases, uint64_t& queries,
+               bool numerical = false)
 {
     auto arena = std::make_shared<fs::RegionExpressions>();
     auto spec = specification(function, input, arena, inner, visits, begin, phases);
     if (!spec) { return false; }
+    if (numerical) {
+        // Bind the original input root, never a constant true guard: the latter
+        // would accidentally substitute every true node in the oracle too.
+        const std::pair<Id, Id> binding{arena->input(function.getArgument(2)), arena->boolean(true)};
+        fs::RegionExpressions::Substitution substitution(binding);
+        for (auto* sign : {&spec->lower, &spec->upper}) {
+            for (auto& record : sign->crossings) {
+                record.edge.guard = arena->substitute(record.edge.guard, substitution);
+                record.edge.source.ordinal = arena->substitute(record.edge.source.ordinal, substitution);
+                record.edge.target.ordinal = arena->substitute(record.edge.target.ordinal, substitution);
+            }
+        }
+    }
     auto result = fs::repeatBoundingRegion(function, loop, input, *spec);
     if (!result.error.empty() || !result.bounds.lower || !result.bounds.upper ||
         result.lower.query->ports().size() != result.upper.query->ports().size() ||
@@ -149,11 +170,50 @@ bool checkCase(func::FuncOp function, scf::ForOp loop, const pto::SyncInput& inp
             {arena->constant(visit/phases)}};
     };
     for (bool upper : {false, true}) {
+        auto& index = upper ? result.upper.query : result.lower.query;
+        auto covers = index->covers();
+        if (!covers || result.bounds.reduction != fs::ReductionQuality::Covers) { return false; }
         for (bool enabled : {false, true}) {
-            const auto graph = oracle(*spec, *arena, inner, visits, begin, phases, upper, enabled);
+            const auto graph = oracle(*spec, *arena, inner, visits, begin, phases, upper, enabled,
+                                      arena->input(function.getArgument(2)));
             const auto& view = upper ? *result.bounds.upper : *result.bounds.lower;
             const std::pair<Id, Id> binding{arena->input(function.getArgument(2)), arena->boolean(enabled)};
             fs::RegionExpressions::Substitution substitution(binding);
+            std::set<std::pair<uint64_t, uint64_t>> actualCrossings, expectedCrossings;
+            if (inner) {
+                for (const auto& edge : *covers) {
+                    if (edge.native || arena->constantValue(arena->substitute(edge.guard, substitution)) != 1) {
+                        continue;
+                    }
+                    const auto sourceOrdinal = *arena->constantValue(
+                        arena->substitute(edge.source.ordinal, substitution));
+                    const auto targetOrdinal = *arena->constantValue(
+                        arena->substitute(edge.target.ordinal, substitution));
+                    for (uint64_t source = begin; source < visits; ++source) {
+                        if (source % phases != edge.source.type / 2) { continue; }
+                        const auto target = phases * (source / phases + edge.displacement) + edge.target.type / 2;
+                        if (target >= visits) { continue; }
+                        const auto a = 2 * (2 * inner * source + 2 * sourceOrdinal + edge.source.type % 2) + 1;
+                        const auto b = 2 * (2 * inner * target + 2 * targetOrdinal + edge.target.type % 2);
+                        if (!actualCrossings.emplace(a, b).second) {
+                            llvm::errs() << "duplicate semantic crossing retained\n"; return false;
+                        }
+                    }
+                }
+                for (uint64_t a = 1; a < graph.size(); a += 2) {
+                    for (uint64_t b = a + 1; b < graph.size(); b += 2) {
+                        if (!graph[a][b] || a / (4 * inner * phases) == b / (4 * inner * phases)) { continue; }
+                        bool redundant = false;
+                        for (uint64_t z = a + 1; z < b; ++z) { redundant |= graph[a][z] && graph[z][b]; }
+                        if (!redundant) { expectedCrossings.emplace(a, b); }
+                    }
+                }
+            }
+            if (actualCrossings != expectedCrossings) {
+                llvm::errs() << "crossing cover mismatch K=" << inner << " T=" << visits << " q=" << phases
+                             << " begin=" << begin << " upper=" << upper << " guard=" << enabled << "\n";
+                return false;
+            }
             for (uint64_t a = 0; a < graph.size(); ++a) {
                 for (uint64_t b = 0; b < graph.size(); ++b) {
                     auto answer = fs::regionalReachability(view.regional(), event(a), event(b));
@@ -176,6 +236,50 @@ bool checkCase(func::FuncOp function, scf::ForOp loop, const pto::SyncInput& inp
     auto malformed = *spec; malformed.upper.crossings[0].edge.displacement = 0;
     auto rejected = fs::repeatBoundingRegion(function, loop, input, std::move(malformed));
     return rejected.bounds.lower && !rejected.bounds.upper && !rejected.upper.exportError.empty();
+}
+bool checkNumericalBinding(func::FuncOp function, scf::ForOp loop, const pto::SyncInput& input,
+                           uint64_t& queries)
+{
+    // Real fixture phase anchors permit native pipe-chain qualification. Both
+    // clipped one- and two-phase frames use constant selected graphs. The
+    // longer two-phase prefix contains actual displacement-two handoffs.
+    for (uint32_t phases : {1u, 2u}) {
+        const uint64_t visits = phases == 1 ? 5 : 7;
+        if (!checkCase(function, loop, input, 4, visits, 1, phases, queries, true)) { return false; }
+    }
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto selected = body(input, arena, 4, false);
+    std::vector<fs::RegionalEvent> ports;
+    std::vector<fs::RepeatedCrossing> edges;
+    for (auto kind : {Kind::Start, Kind::Completion}) {
+        fs::RegionalEvent first{0, arena->constant(0), kind}, last{1, arena->constant(3), kind};
+        ports.push_back(first); ports.push_back(last);
+        edges.push_back({last, first, arena->boolean(true), true, 1});
+    }
+    std::string error;
+    auto index = fs::buildBoundingRepeatedQuery(std::move(selected), ports, edges, error);
+    if (!index || !index->covers()) { llvm::errs() << error << "\n"; return false; }
+    const auto indexRelaxations = index->cost().relaxations;
+    fs::RegionalEvent source{0, arena->constant(1), Kind::Start};
+    fs::RegionalEvent target{1, arena->constant(2), Kind::Start};
+    // These events lie strictly between exported ports. Exit/entry attachments
+    // alone need a carry, but the original child has a direct zero-distance path.
+    auto distance = index->distance(source, target);
+    auto across = index->across(source, target, arena->constant(1));
+    const auto arbitraryRelaxations = index->cost().relaxations;
+    auto portDistance = index->distance(ports[1], ports[0]);
+    // One fixture pipe gives two native event-kind chains. Each of these two
+    // arbitrary-event queries needs at most 2^2 indexed probes; a direct port
+    // query adds none. A guarded cubic closure would exceed this bound.
+    constexpr uint64_t maxArbitraryProbes = 2 * 2 * 2;
+    if (!distance || !across || !portDistance || arena->constantValue(distance->reachable) != 1 ||
+        arena->constantValue(distance->representable) != 1 || arena->constantValue(distance->value) != 0 ||
+        arena->constantValue(*across) != 1 || arena->constantValue(portDistance->value) != 1 ||
+        arbitraryRelaxations < indexRelaxations || arbitraryRelaxations - indexRelaxations > maxArbitraryProbes ||
+        index->cost().relaxations != arbitraryRelaxations) {
+        llvm::errs() << "numerical non-port direct child path or indexed query bound failed\n"; return false;
+    }
+    return true;
 }
 bool checkWideDistances()
 {
@@ -224,6 +328,13 @@ bool checkWideDistances()
         arena->constantValue(huge->reachable) != 1 || arena->constantValue(huge->representable) != 0 ||
         arena->constantValue(unreachable->reachable) != 0 || arena->constantValue(*yes) != 1 ||
         arena->constantValue(*no) != 0) { return false; }
+    auto nativeDuplicate = edges;
+    nativeDuplicate.push_back({ports[1], ports[2], arena->boolean(true), true, UINT64_MAX});
+    auto prioritized = fs::buildBoundingRepeatedQuery(body, ports, nativeDuplicate, error);
+    if (!prioritized) { return false; }
+    auto reduced = prioritized->covers();
+    if (!reduced || arena->constantValue((*reduced)[6].guard) != 0 ||
+        arena->constantValue(reduced->back().guard) != 1) { return false; }
     auto invalid = ports[0]; invalid.ordinal = arena->boolean(false);
     if (query->distance(invalid, ports[0])) { return false; }
     edges[0].displacement = 0;
@@ -238,6 +349,7 @@ int runBoundingRepetitionChecks(func::FuncOp function, const pto::SyncInput& inp
     auto loop = inner ? inner->getParentOfType<scf::ForOp>() : scf::ForOp{};
     if (!loop || !checkWideDistances()) { llvm::errs() << "weighted distance checks failed\n"; return 1; }
     uint64_t queries = 0;
+    if (!checkNumericalBinding(function, loop, input, queries)) { return 1; }
     for (uint32_t phases : {1u, 2u}) {
         for (uint64_t innerCount : {0u, 1u, 2u}) {
             for (uint64_t visits : {0u, 1u, 2u, 4u, 5u}) {
