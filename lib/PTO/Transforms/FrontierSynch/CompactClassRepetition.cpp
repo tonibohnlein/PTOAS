@@ -58,12 +58,13 @@ private:
 };
 class BodyBuilder {
 public:
-    BodyBuilder(func::FuncOp function, const SyncInput& input, std::shared_ptr<RegionExpressions> arena)
-        : function(function), input(input), arena(std::move(arena)) {}
+    BodyBuilder(func::FuncOp function, const SyncInput& input, std::shared_ptr<RegionExpressions> arena,
+                CompactClassPreparation prepare = {})
+        : function(function), input(input), arena(std::move(arena)), prepare(std::move(prepare)) {}
     PhaseIndex index;
     std::vector<CompactClasses> captured;
     std::string error;
-    CompactClasses body(scf::ForOp loop)
+    CompactClasses body(Block& invocation)
     {
         std::vector<CompactClasses> children;
         SmallVector<Operation*> run;
@@ -79,11 +80,11 @@ public:
             for (auto* operation : run) { llvm::append_range(phases, index.phasesFor(operation)); }
             run.clear();
             if (phases.empty()) { return true; }
-            auto leaf = finite(*loop.getBody(), phases);
+            auto leaf = finite(invocation, phases);
             if (!leaf) { return false; }
             captured.push_back(leaf); children.push_back(std::move(leaf)); return true;
         };
-        for (Operation& operation : *loop.getBody()) {
+        for (Operation& operation : invocation) {
             if (auto inner = dyn_cast<scf::ForOp>(operation)) {
                 if (!flush()) { return {}; }
                 auto child = region(inner);
@@ -92,9 +93,9 @@ public:
             } else { run.push_back(&operation); }
         }
         if (!flush()) { return {}; }
-        if (children.empty()) { return finite(*loop.getBody(), {}); }
+        if (children.empty()) { return finite(invocation, {}); }
         if (children.size() == 1) { return children.front(); }
-        auto combined = composeCompactClassBoundariesInBlock(function, *loop.getBody(), input, std::move(children));
+        auto combined = composeCompactClassBoundariesInBlock(function, invocation, input, std::move(children));
         if (!combined.boundary) { error = combined.error; return {}; }
         captured.push_back(combined.boundary);
         return combined.boundary;
@@ -106,14 +107,15 @@ private:
         std::vector<RequirementGroupId> groups(input.accesses().cells().size(), 1);
         auto frame = captureFiniteRequirementsInBlock(function, invocation, input, phases, arena,
             nextProducer++, groups, 2, error);
-        return frame ? captureFiniteClassBoundary(frame, {}, error) : CompactClasses{};
+        auto result = frame ? captureFiniteClassBoundary(frame, {}, error) : CompactClasses{};
+        return result && prepare ? prepare(result) : result;
     }
     CompactClasses region(scf::ForOp loop)
     {
         bool nested = false;
         loop.getBody()->walk([&](scf::ForOp) { nested = true; });
         if (nested) {
-            auto inner = body(loop);
+            auto inner = body(*loop.getBody());
             if (!inner) { return {}; }
             auto repeated = repeatCompactClassBoundary(function, loop, inner);
             if (!repeated.boundary) { error = repeated.error; return {}; }
@@ -123,12 +125,14 @@ private:
         if (!counted) { error = "compact class child needs a represented counted domain"; return {}; }
         auto context = captureCompactSlotContextInBlock(loop, *loop->getBlock(), input, index,
             arena, counted->trips(*arena), error);
-        return context ? captureCompactClassBoundary(loop, index, context, {}, error) : CompactClasses{};
+        auto result = context ? captureCompactClassBoundary(loop, index, context, {}, error) : CompactClasses{};
+        return result && prepare ? prepare(result) : result;
     }
     func::FuncOp function;
     const SyncInput& input;
     std::shared_ptr<RegionExpressions> arena;
     uint64_t nextProducer = 1;
+    CompactClassPreparation prepare;
 };
 } // namespace
 CompactClassRepetition repeatCompactClassBoundary(func::FuncOp function, scf::ForOp loop, CompactClasses body)
@@ -181,10 +185,16 @@ CompactClassRepetition repeatCompactClassBoundary(func::FuncOp function, scf::Fo
     if (!links.error.empty()) { result.error = links.error; return result; }
     BoundingRepetitionInput specification;
     specification.trips = trips;
+    for (auto* ancestor = loop->getParentOp(); ancestor; ancestor = ancestor->getParentOp()) {
+        if (auto enclosing = dyn_cast<scf::ForOp>(ancestor)) { specification.enclosing.push_back(enclosing); }
+    }
+    std::reverse(specification.enclosing.begin(), specification.enclosing.end());
     specification.lower.bridges = specification.upper.bridges = BoundingSequenceBridges::SuppliedCrossings;
     specification.guarantee = InputOrderGuarantee::InputOrderCovering;
     BoundingSequenceChild phase;
     phase.bounds = body->bounds(); phase.lowerExports = phase.upperExports = body->nativeExports();
+    phase.lowerExports->prepare = {}; phase.lowerExports->prepareWithVisits = {};
+    phase.lowerExports->prepareFiltered = {}; phase.lowerExports->capabilities.endpointRecipes = false;
     phase.mathematicalOwner = body; phase.placementMayStrengthen = true;
     specification.phases.push_back(std::move(phase));
     for (const auto& link : links.upper) {
@@ -238,10 +248,27 @@ CompactClassRepetition analyzeCompactClassRepetition(func::FuncOp function, scf:
     if (failed(builder.index.build(function, input))) {
         result.error = "class repetition shared input indexing failed"; return result;
     }
-    auto body = builder.body(loop);
+    auto body = builder.body(*loop.getBody());
     if (!body) { result.error = builder.error; result.captured = std::move(builder.captured); return result; }
     result = repeatCompactClassBoundary(function, loop, std::move(body));
     result.captured = std::move(builder.captured);
+    return result;
+}
+CompactClassRepetition captureCompactClassSequence(func::FuncOp function, Block& invocation,
+    const SyncInput& input, std::shared_ptr<RegionExpressions> arena, CompactClassPreparation prepare)
+{
+    CompactClassRepetition result;
+    if (!function || function.isDeclaration() || !arena || !invocation.getParentOp() ||
+        (invocation.getParentOp() != function && !function->isProperAncestor(invocation.getParentOp()))) {
+        result.error = "compact block construction needs its original function invocation"; return result;
+    }
+    BodyBuilder builder(function, input, std::move(arena), std::move(prepare));
+    if (failed(builder.index.build(function, input))) {
+        result.error = "compact block shared input indexing failed"; return result;
+    }
+    result.boundary = builder.body(invocation);
+    result.original = result.boundary;
+    result.error = builder.error; result.captured = std::move(builder.captured);
     return result;
 }
 } // namespace mlir::pto::frontiersynch

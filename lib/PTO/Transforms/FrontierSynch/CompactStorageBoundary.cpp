@@ -56,6 +56,16 @@ Operation* rootAnchor(Operation* operation, Block* block)
     return operation;
 }
 } // namespace
+CompactClasses withCompactClassPreparation(CompactClasses original,
+    std::function<FailureOr<std::unique_ptr<PreparedLogicalPlan>>(ArrayRef<scf::ForOp>)> preparation)
+{
+    if (!original || !preparation) { return original; }
+    auto result = std::shared_ptr<CompactClassBoundary>(new CompactClassBoundary(*original));
+    result->selectors.prepareWithVisits = std::move(preparation);
+    result->selectors.prepare = [prepare = result->selectors.prepareWithVisits]() { return prepare({}); };
+    result->selectors.capabilities.endpointRecipes = true;
+    return result;
+}
 CompactClasses captureCompactClassBoundary(scf::ForOp loop, const PhaseIndex& index,
     std::shared_ptr<const CompactFixedBodyContext> domain,
     const CompactWriterReaderBindings& bindings, std::string& error)
@@ -237,6 +247,10 @@ CompactClassComposition composeCompactClassBoundariesInBlock(
     if (!function || function.isDeclaration() || !function.getBody().hasOneBlock()) {
         result.error = "class composition needs a defined single-block function";
     }
+    for (auto* ancestor = invocation.getParentOp(); ancestor; ancestor = ancestor->getParentOp()) {
+        if (auto enclosing = dyn_cast<scf::ForOp>(ancestor)) { specification.enclosing.push_back(enclosing); }
+    }
+    std::reverse(specification.enclosing.begin(), specification.enclosing.end());
     specification.lower.bridges = specification.upper.bridges = BoundingSequenceBridges::SuppliedCrossings;
     specification.guarantee = InputOrderGuarantee::InputOrderCovering;
     if (!invocation.getParentOp() || (function && invocation.getParentOp() != function.getOperation() &&
@@ -255,6 +269,8 @@ CompactClassComposition composeCompactClassBoundariesInBlock(
         selected.mathematicalOwner = child;
         selected.placementMayStrengthen = true;
         selected.lowerExports = selected.upperExports = child->nativeExports();
+        selected.lowerExports->prepare = {}; selected.lowerExports->prepareWithVisits = {};
+        selected.lowerExports->prepareFiltered = {}; selected.lowerExports->capabilities.endpointRecipes = false;
         specification.children.push_back(std::move(selected));
         if (child->invocationBlock() != &invocation) { result.error = "class children have different invocations"; }
         if (!child->exportError().empty() && result.error.empty()) { result.error = child->exportError(); }

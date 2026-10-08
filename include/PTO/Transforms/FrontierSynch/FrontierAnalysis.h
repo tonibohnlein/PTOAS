@@ -33,6 +33,7 @@ public:
     LogicalResult analyzeExplicitFunction();
     const ExplicitAnalysis* explicitResult() const { return explicitAnalysis ? &*explicitAnalysis : nullptr; }
     const SyncInput* input() const { return storage.get(); }
+    std::shared_ptr<const SyncInput> sharedInput() const { return storage; }
     const ProgramRecognition* result() const { return program ? &*program : nullptr; }
 private:
     LogicalResult recognizeStructure();
@@ -40,7 +41,7 @@ private:
     bool initialized = false;
     bool nativeScalarOnly = false;
     GMAliasPolicy policy = GMAliasPolicy::MayNotAlias;
-    std::unique_ptr<SyncInput> storage;
+    std::shared_ptr<SyncInput> storage;
     std::optional<ProgramRecognition> program;
     std::optional<ExplicitAnalysis> explicitAnalysis;
 };
