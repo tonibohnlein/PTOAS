@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "NumericalRepeatedBinding.h"
+#include "PTO/Transforms/FrontierSynch/RegionalNumericalInterface.h"
 #include <algorithm>
 #include <map>
 #include <tuple>
@@ -35,11 +36,11 @@ bool order(std::vector<uint32_t>& values, const std::function<std::optional<bool
     return true;
 }
 } // namespace
-std::optional<NumericalRepeatedBinding> bindNumericalRepeated(
+std::optional<NumericalRepeatedFrame> evaluateNumericalRepeatedFrame(
     const RegionalAnalysis& body, const std::vector<RegionalEvent>& ports,
     const std::vector<RepeatedCrossing>& crossings, NumericalBindingWork& work)
 {
-    NumericalRepeatedBinding out;
+    NumericalRepeatedFrame out;
     auto& e = *body.expressions;
     if (ports.size() > UINT32_MAX) { return {}; }
     for (const auto& crossing : crossings) {
@@ -90,6 +91,14 @@ std::optional<NumericalRepeatedBinding> bindNumericalRepeated(
     auto child = buildNumericalChainInterface(std::move(chains), [&](uint32_t a, uint32_t b) -> std::optional<bool> {
         if (work.bodyQueries == UINT64_MAX) { return {}; }
         ++work.bodyQueries;
+        if (body.numerical && body.numerical->query) {
+            NumericalChainQueryCost cost;
+            auto answer = body.numerical->query(events[a], events[b], cost);
+            if (cost.indexOperations > UINT64_MAX - work.nestedIndexOperations ||
+                cost.leafQueries > UINT64_MAX - work.bodyQueries) { return {}; }
+            work.nestedIndexOperations += cost.indexOperations; work.bodyQueries += cost.leafQueries;
+            if (answer) { return answer; }
+        }
         auto query = regionalReachability(body, events[a], events[b]);
         auto value = query ? e.constantValue(*query) : std::nullopt;
         return value ? std::optional<bool>(*value != 0) : std::nullopt;
@@ -106,18 +115,30 @@ std::optional<NumericalRepeatedBinding> bindNumericalRepeated(
         links.push_back({out.ports[a->second], out.ports[b->second], crossing.displacement, crossing.native});
         originals.push_back(i);
     }
-    out.analysis = buildNumericalWeightedRepetition(child, links);
+    out.child = std::move(child); out.links = std::move(links);
+    out.originals = std::move(originals); out.events = std::move(events);
+    return out;
+}
+std::optional<NumericalRepeatedBinding> bindNumericalRepeated(
+    const RegionalAnalysis& body, const std::vector<RegionalEvent>& ports,
+    const std::vector<RepeatedCrossing>& crossings, NumericalBindingWork& work)
+{
+    auto frame = evaluateNumericalRepeatedFrame(body, ports, crossings, work);
+    if (!frame) { return {}; }
+    NumericalRepeatedBinding out;
+    auto& e = *body.expressions;
+    out.analysis = buildNumericalWeightedRepetition(frame->child, frame->links);
     work.index = out.analysis.cost;
     if (!out.analysis.error.empty()) { return {}; }
     out.covers = crossings;
     for (auto& crossing : out.covers) { crossing.guard = e.boolean(false); }
     for (std::size_t canonical = 0; canonical < out.analysis.crossings.size(); ++canonical) {
         if (out.analysis.retained[canonical]) {
-            const auto original = originals[out.analysis.representatives[canonical]];
+            const auto original = frame->originals[out.analysis.representatives[canonical]];
             out.covers[original].guard = crossings[original].guard;
         }
     }
-    out.events = std::move(events);
+    out.events = std::move(frame->events); out.ports = std::move(frame->ports);
     return out;
 }
 } // namespace mlir::pto::frontiersynch

@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --region-expression-checks %s | FileCheck %s
 // RUN: pto-sync-input-test --numerical-hierarchy-checks %s
+// RUN: pto-sync-input-test --numerical-repeated-squaring-checks
 // RUN: pto-sync-input-test --bounding-contract-checks %s
 // RUN: pto-sync-input-test --certified-partial-reduction-checks
 // RUN: pto-sync-input-test --control-origin-distance-checks

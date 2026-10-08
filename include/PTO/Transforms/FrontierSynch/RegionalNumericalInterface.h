@@ -13,7 +13,7 @@ namespace mlir::pto::frontiersynch {
 struct RegionalNumericalInterface {
     std::shared_ptr<const NumericalChainInterface> index;
     // Dense event IDs, including distinct start/completion ports. Numerical
-    // exports currently require constant leaf ordinals and no outer visits.
+    // exports require evaluated leaf ordinals and enclosing visit coordinates.
     std::vector<RegionalEvent> events;
     std::vector<std::pair<uint32_t, PeriodicEventKind>> chainKeys;
     std::function<std::optional<bool>(RegionalEvent, RegionalEvent, NumericalChainQueryCost&)> query;
