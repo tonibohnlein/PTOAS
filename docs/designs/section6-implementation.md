@@ -4,7 +4,8 @@
 
 The shared modeled accesses are authoritative. This work adds no address-precision
 admission gate, instruction whitelist, or second footprint-recovery implementation.
-Demand reduction is exact for the selected modeled order. Section 6 additionally
+Demand reduction preserves the selected modeled order; a completed covers
+reduction returns its minimum generators. Section 6 additionally
 constructs a sound bounding order when the compact exact routes do not apply.
 Missing endpoint or allocation exports do not justify replacing already computed
 exact demands with a different order.
@@ -46,7 +47,9 @@ if needed for machine safety, is recorded separately from class rejection.
 
 Milestone 1 has passed two independent reviews, focused validation, and the
 complete paired corpus comparison. This milestone is complete; Section 6
-implementation starts with milestone 2. The previous six completed milestones are recorded in
+implementation continues with milestone 3. Milestone 1 is committed as
+`3890123bb`; milestone 2 has passed validation and two independent reviews.
+The previous six completed milestones are recorded in
 `section5-recognizer-update.md`.
 
 ## Milestone 1 implementation
@@ -130,3 +133,29 @@ Campaign artifacts are under `.local/section6-implementation/`, in
 used manifest hash
 `84df1e2ae9d8616458f7281e8e271f686f8da39e07b0a018eb6fab961f2ed76f`.
 Earlier partial campaigns in that directory are superseded and excluded.
+
+## Milestone 2 implementation
+
+The bounding interface binds lower and upper selected-order queries to one
+immutable occurrence context and the shared access model. It clears stale
+query and numerical exports, validates fresh numerical index shapes, and
+permits mathematical results without endpoint or allocation exports.
+
+Requirement provenance retains original, unreduced cell and prerequisite
+ownership. Replacement evidence binds a producer's proof to the complete
+original group, context, domain and records. The binding API is a trusted
+producer boundary, not an equivalence checker; concrete proof-producing
+composition adapters belong to milestone 6.
+
+Partial reduction deletes only on a native path or an actual path through a
+strict intermediate event in the unchanged selected graph. Unknown queries or
+forwardness leave the original generator in place. Simultaneous removals keep
+the same closure and the original provenance.
+
+Both independent static reviews accepted the interfaces, provenance, partial
+reducer and integration. Serial compilation and tool links passed. Focused
+checks passed immutable-context and malformed-index cases, guarded provenance
+binding and ownership cases, and 2,144 independent partial-reduction graph
+valuations. The compliance check's 92 brace findings were regex false positives;
+balanced-parenthesis inspection confirmed braced bodies. Whitespace checks
+passed. These components are not yet a dispatched Section 6 fallback.

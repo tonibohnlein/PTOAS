@@ -231,6 +231,9 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/ChainInterface.cpp
   FrontierSynch/ChainComposition.cpp
   FrontierSynch/ChainMergeQueries.cpp
+  FrontierSynch/BoundingRegionalAnalysis.cpp
+  FrontierSynch/RequirementProvenance.cpp
+  FrontierSynch/CertifiedPartialReduction.cpp
   FrontierSynch/RotatingBoundary.cpp
   FrontierSynch/RotatingExtraction.cpp
   FrontierSynch/ExplicitAnalysis.cpp
