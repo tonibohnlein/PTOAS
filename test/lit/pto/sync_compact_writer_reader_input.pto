@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --compact-input-checks %s | FileCheck %s
+// CHECK: compact shared input checks passed: static_ranges
+// CHECK: compact shared input checks passed: shifted_scalar
+// CHECK: compact shared input checks passed: unknown_ranges
+// CHECK: compact shared input checks passed: value_prerequisite
+// CHECK: compact shared input checks passed: nested_structure
+
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @static_ranges(%n: index) attributes {test.compact_classes = 2 : i64, test.compact_rmw} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %zero = arith.constant 0 : i64
+    %far = arith.constant 4096 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %zero : !tile
+    %b = pto.alloc_tile addr = %far : !tile
+    scf.for %i = %c0 to %n step %c1 {
+      pto.texpands ins(%one : f32) outs(%a : !tile)
+      pto.texpands ins(%one : f32) outs(%b : !tile)
+      pto.tadds ins(%a, %one : !tile, f32) outs(%a : !tile)
+    }
+    return
+  }
+  func.func @shifted_scalar(%p: !pto.ptr<f32, gm>, %n: index)
+      attributes {test.compact_classes = 1 : i64, test.compact_shifted, test.overlap = array<i64: 0, 1>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    scf.for %i = %c0 to %n step %c1 {
+      %j = arith.addi %i, %c1 : index
+      pto.store %one, %p[%i] : !pto.ptr<f32, gm>, f32
+      %v = pto.load %p[%j] : !pto.ptr<f32, gm> -> f32
+    }
+    return
+  }
+  func.func @unknown_ranges(%address: i64, %n: index)
+      attributes {test.compact_classes = 1 : i64, test.compact_unknown} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %address : !tile
+    %b = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %c0 to %n step %c1 {
+      pto.texpands ins(%one : f32) outs(%a : !tile)
+      pto.texpands ins(%one : f32) outs(%b : !tile)
+    }
+    return
+  }
+  func.func @value_prerequisite(%n: index)
+      attributes {test.compact_classes = 1 : i64, test.compact_prerequisite} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %zero = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %zero : !tile
+    scf.for %i = %c0 to %n step %c1 {
+      %v = pto.tgetval ins(%a, %c0 : !tile, index) outs : f32
+      pto.texpands ins(%v : f32) outs(%a : !tile)
+    }
+    return
+  }
+  func.func @nested_structure(%n: index) attributes {test.compact_nested} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %n step %c1 {
+      scf.for %j = %c0 to %n step %c1 { }
+    }
+    return
+  }
+}
