@@ -82,6 +82,9 @@ struct ArithmeticPeriodicProgram {
     std::vector<ArithmeticPeriodicSite> sites; // Periodic type -> original cut and IV residue.
     std::vector<const CompoundInstanceElement*> phases;
 };
+// Cheap original-cut check before constructing arithmetic generator relations.
+// Failure is an adapter limitation, not a failed arithmetic class check.
+bool checkArithmeticPeriodicSkeleton(const ArithmeticProgram& program, std::string& diagnostic);
 // Original producer adapter; does not complete arithmetic closure/subtraction.
 // The stage must belong to this unchanged program. Current prefix binding uses
 // one root-relative loop, zero lower bound and unit step; other bindings retain

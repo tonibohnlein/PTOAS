@@ -213,6 +213,7 @@ def main():
         path.write_text(unsafe)
         report = run(tool, "--structured-trace", path)
         assert not report["accepted"] and report["unchanged_on_failure"], report
+        assert report["bounded_demands_retained"] and report["bounded_demand_count"] > 0, report
     print(f"{tests} compact command closures and varying-region all-event queries passed")
 
 

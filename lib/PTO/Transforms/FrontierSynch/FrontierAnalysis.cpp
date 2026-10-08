@@ -74,6 +74,7 @@ LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy, bool r
     arithmeticPeriodicAnalysis.reset();
     periodicExports = {};
     explicitAnalysis.reset();
+    boundedAnalysis.reset();
     sequenceAnalysis.reset();
     finiteVisitAnalyses.clear();
     program.reset();
@@ -163,10 +164,22 @@ LogicalResult FrontierAnalysis::analyzeFiniteVisitCandidates()
     refreshProgramContractAudit(*program);
     return success();
 }
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareBoundedLifetimeFunction(std::string& error)
+{
+    if (failed(recognizeStructure())) { return failure(); }
+    return prepareBoundedLifetimeInsertion(function, *storage, *program, error, &boundedAnalysis);
+}
 LogicalResult FrontierAnalysis::analyzeArithmeticPeriodicFunction()
 {
     if (failed(recognizeArithmetic()) || !program->arithmetic) { return failure(); }
     if (!arithmeticPeriodicAnalysis) {
+        std::string diagnostic;
+        if (!checkArithmeticPeriodicSkeleton(*program->arithmetic, diagnostic)) {
+            arithmeticPeriodicAnalysis.emplace();
+            arithmeticPeriodicAnalysis->conversion.status = ArithmeticPeriodicStatus::AdapterUnavailable;
+            arithmeticPeriodicAnalysis->conversion.diagnostic = std::move(diagnostic);
+            return failure();
+        }
         if (!arithmeticGeneratorStage) {
             const auto protection = structuredProtection(storage->accesses());
             arithmeticGeneratorStage.emplace(analyzeGeneralArithmeticGenerators(*program->arithmetic, &protection));
@@ -202,6 +215,16 @@ LogicalResult FrontierAnalysis::analyzeArithmeticFunction()
 {
     if (failed(recognizeArithmetic()) || !program->arithmetic) { return failure(); }
     const auto& arithmetic = *program->arithmetic;
+    // A failed periodic conversion must not switch a difference-bound input
+    // to the general integer reducer merely because that adapter used it.
+    if (arithmetic.recognition.arithmeticClass == ArithmeticClass::Differences) {
+        arithmeticGeneratorStage.reset();
+        if (!arithmeticAnalysis) {
+            const auto protection = structuredProtection(storage->accesses());
+            arithmeticAnalysis = analyzeArithmeticDemandsWithProtection(arithmetic, protection);
+        }
+        return success(arithmeticAnalysis->error.empty() && arithmeticAnalysis->exactMinimum);
+    }
     if (arithmeticGeneratorStage) {
         if (!generalArithmeticAnalysis) {
             generalArithmeticAnalysis = completeGeneralArithmeticDemands(std::move(*arithmeticGeneratorStage));
@@ -213,12 +236,6 @@ LogicalResult FrontierAnalysis::analyzeArithmeticFunction()
         return success(generalArithmeticAnalysis->error.empty() && generalArithmeticAnalysis->exactMinimum);
     }
     const auto protection = structuredProtection(storage->accesses());
-    if (arithmetic.recognition.arithmeticClass == ArithmeticClass::Differences) {
-        if (!arithmeticAnalysis) {
-            arithmeticAnalysis = analyzeArithmeticDemandsWithProtection(arithmetic, protection);
-        }
-        return success(arithmeticAnalysis->error.empty() && arithmeticAnalysis->exactMinimum);
-    }
     if (!generalArithmeticAnalysis) {
         generalArithmeticAnalysis = analyzeGeneralArithmeticDemandsWithProtection(arithmetic, protection);
     }
@@ -226,6 +243,7 @@ LogicalResult FrontierAnalysis::analyzeArithmeticFunction()
 }
 bool FrontierAnalysis::hasWholeFunctionMinimumDemands() const
 {
+    if (boundedAnalysis) { return true; }
     if (explicitAnalysis && explicitAnalysis->error.empty()) { return true; }
     if (arithmeticPeriodicAnalysis) {
         const auto& converted = arithmeticPeriodicAnalysis->conversion;
@@ -391,9 +409,9 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     if (failed(analysis.initialize(policy))) {
         return failure();
     }
-    // Contract checks precede analysis, endpoint generation and allocation.
-    // Retain all outcomes even when another route supplies the logical plan.
-    if (failed(analysis.recognizeArithmetic())) { return failure(); }
+    // Full arithmetic relation production is lazy. Cheap routes need only
+    // structural observations; exhaustive diagnostic clients request arithmetic
+    // explicitly through recognizeArithmetic().
     FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepared = failure();
     std::string routeError;
     StringRef logicalBackend;
@@ -448,8 +466,7 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
                 if (succeeded(prepared)) { logicalBackend = "guarded-rotating"; }
             }
             if (failed(prepared)) {
-                prepared = frontiersynch::prepareBoundedLifetimeInsertion(
-                    function,*analysis.input(),*analysis.result(),routeError);
+                prepared = analysis.prepareBoundedLifetimeFunction(routeError);
                 if (succeeded(prepared)) { logicalBackend = "bounded-lifetime"; }
             }
             if (failed(prepared)) {

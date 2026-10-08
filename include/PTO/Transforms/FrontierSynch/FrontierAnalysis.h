@@ -25,6 +25,7 @@ struct ArithmeticPeriodicExports {
     std::string endpointError, allocationError;
 };
 struct FiniteVisitAnalysis;
+struct BoundedLifetimeDemandResult;
 class FrontierAnalysis {
 public:
     explicit FrontierAnalysis(Operation* operation) : function(dyn_cast<func::FuncOp>(operation)) {}
@@ -46,6 +47,8 @@ public:
     const std::map<std::size_t, std::shared_ptr<const FiniteVisitAnalysis>>& finiteVisitDemands() const {
         return finiteVisitAnalyses;
     }
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeFunction(std::string& error);
+    const BoundedLifetimeDemandResult* boundedLifetimeDemands() const { return boundedAnalysis.get(); }
     LogicalResult analyzeArithmeticFunction();
     // Pause at exact generators before attempting the distance-interval adapter.
     // Failed conversion/endpoint export can resume this stage without rebuilding.
@@ -78,6 +81,7 @@ private:
     std::shared_ptr<SyncInput> storage;
     std::optional<ProgramRecognition> program;
     std::optional<ExplicitAnalysis> explicitAnalysis;
+    std::shared_ptr<BoundedLifetimeDemandResult> boundedAnalysis;
     std::optional<SequenceAnalysis> sequenceAnalysis;
     std::optional<ArithmeticDemandAnalysis> arithmeticAnalysis;
     std::optional<GeneralArithmeticDemandAnalysis> generalArithmeticAnalysis;

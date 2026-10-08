@@ -1,5 +1,38 @@
 # Section 5 construction contracts
 
+## Integration follow-up (2026-10-08)
+
+The construction implementations below do not imply complete original-IR
+recognition, regional exports, or executable plans. The follow-up work proceeds
+in the following order. Each milestone requires focused semantic validation,
+two independent accepting reviews, and its own commit before proceeding.
+
+| Milestone | Integration work | Status |
+|---|---|---|
+| 1 | Lazy arithmetic dispatch, preserve difference-bound routing, and retain bounded demand results after endpoint failure | Accepted |
+| 2 | Constraint import for piecewise bounds and shared positive-step ordinal normalization | Pending |
+| 3 | Shared symbolic storage certificates and crossings between symbolic siblings | Pending |
+| 4 | Reuse ownership/phase/boundary certificates in varying repetition and whole-visit type extraction | Pending |
+| 5 | Collective guarded refresh and reusable bounded-lifetime regional results | Pending |
+| 6 | Numerical composition for general sequences without unnecessary dense port closure | Pending |
+| 7 | Original-IR contract audit and pinned corpus validation through available emission/allocation | Pending |
+
+All milestones analyze the existing shared modeled accesses. They add no
+exact-address admission gate or kernel-specific recognition. Successful demands
+must survive unavailable queries, selectors, endpoint recipes, or allocation.
+Finite visit-type tables remain demand-only when arbitrary-word queries or
+executable choices are unavailable. Streaming retention at a consumer does not
+make a future predicate available to an earlier SET.
+
+The baseline full campaign at `ee26eec8a` covered 786 prepared inputs: 594
+logical outputs, 560 C++ outputs, and 17 logical-analysis watchdog cancellations.
+Commit `2075425c4` then restored nine C++ outputs and ten allocations by fixing
+unrelated metadata rejection. Its focused rerun did not repeat the full corpus.
+The benchmark set has eleven prepared inputs, including the two GEMMs: nine
+logical outputs and seven C++ outputs. One main-corpus input already contains
+manual synchronization and passes through unchanged. These are compiler
+outcomes, not device validation or proof of class membership.
+
 This records the five completion milestones after the original recognizer
 implementation. Analysis is relative to the shared modeled accesses, including
 conservative ranges. An unresolved real address is not a separate admission
@@ -104,3 +137,22 @@ accepted the construction and integration. The changed-code style prefilter's
 39 brace findings were inspected: their control bodies are braced; the parser
 misreads nested parentheses. No line-width or whitespace findings remain.
 These checks do not claim a new corpus campaign, device run or scarce-ID repair.
+
+## Integration milestone 1 validation
+
+Production dispatch no longer constructs arithmetic profiles before successful
+native-scalar, explicit, or structural routes. Explicit diagnostic recognition
+still requests all configured profiles. Periodic source eligibility is checked
+before generator construction; both early source rejection and rejection after
+generator construction preserve the dedicated difference-bound reducer.
+
+Bounded demand results own their window, DAG, predicate placeholders and source
+records. Whole-function coverage is checked before publishing them, and endpoint
+failure cannot discard that result or silently select a weaker fallback.
+
+Focused dispatch, arithmetic conversion, bounded endpoint/retained-predicate,
+and section allocation regressions passed. Two independent reviewers accepted
+the final code. The changed-code checker reports four false brace findings in
+compound test conditions; all four bodies have explicit braces. Line-width and
+whitespace checks are clean. Validation logs are in the local milestone ledger;
+this does not constitute a full corpus or device run.
