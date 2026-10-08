@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/BoundingRepetition.h"
+#include "NumericalRepeatedBinding.h"
 #include <map>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
@@ -26,6 +27,9 @@ struct BoundingRepeatedQuery::State {
     std::map<std::pair<Key, Key>, Id> unitMemo;
     std::vector<std::vector<Distance>> closure;
     bool closureAttempted = false, closureReady = false;
+    bool numericalAttempted = false;
+    std::optional<NumericalRepeatedBinding> numerical;
+    std::optional<std::vector<RepeatedCrossing>> retained;
     BoundingRepetitionCost cost;
     std::string error;
     RegionExpressions& e() { return *body.expressions; }
@@ -62,6 +66,90 @@ struct BoundingRepeatedQuery::State {
         if (answer && (*answer >= e().size() || !e().isBoolean(*answer))) { answer.reset(); }
         localMemo->emplace(pair, answer);
         return answer;
+    }
+    Id sameEvent(const RegionalEvent& a, const RegionalEvent& b)
+    {
+        if (a.type != b.type || a.kind != b.kind || a.visits.size() != b.visits.size()) {
+            return e().boolean(false);
+        }
+        auto same = e().eq(a.ordinal, b.ordinal);
+        for (std::size_t i = 0; i < a.visits.size(); ++i) {
+            same = e().land(same, e().eq(a.visits[i], b.visits[i]));
+        }
+        return same;
+    }
+    std::optional<std::vector<RepeatedCrossing>> covers()
+    {
+        if (!error.empty()) { return {}; }
+        if (retained) { return retained; }
+        if (!numericalAttempted) {
+            numericalAttempted = true;
+            NumericalBindingWork bindingWork;
+            numerical = bindNumericalRepeated(body, ports, crossings, bindingWork);
+            {
+                auto charge = [&](uint64_t& counter, uint64_t amount) {
+                    if (amount > UINT64_MAX - counter) {
+                        error = "weighted repeated construction counter overflow"; return false;
+                    }
+                    counter += amount; return true;
+                };
+                const auto& work = bindingWork.index;
+                if (!charge(cost.bodyQueries, bindingWork.bodyQueries) ||
+                    !charge(cost.deletionTests, work.coverQueries)) { return {}; }
+                for (auto amount : {bindingWork.orderingQueries, work.validation, work.internalEdges,
+                                    work.crossingEdges, work.heapPushes, work.heapPops, work.relaxations,
+                                    work.prefixEntries}) {
+                    if (!charge(cost.relaxations, amount)) { return {}; }
+                }
+            }
+        }
+        if (numerical) { retained = numerical->covers; return retained; }
+        const auto original = crossings;
+        for (std::size_t i = 0; i < crossings.size(); ++i) {
+            auto duplicate = e().boolean(false);
+            for (std::size_t j = 0; j < original.size(); ++j) {
+                const bool priority = original[j].native != original[i].native ? original[j].native : j < i;
+                if (!priority || original[i].displacement != original[j].displacement) { continue; }
+                auto same = e().land(sameEvent(original[i].source, original[j].source),
+                                     sameEvent(original[i].target, original[j].target));
+                duplicate = e().lor(duplicate, e().land(original[j].guard, same));
+            }
+            crossings[i].guard = e().land(original[i].guard, e().lnot(duplicate));
+        }
+        auto result = crossings;
+        for (std::size_t i = 0; i < crossings.size(); ++i) {
+            const auto& candidate = crossings[i];
+            if (candidate.native || e().constantValue(candidate.guard) == 0) { continue; }
+            if (cost.deletionTests == UINT64_MAX) { return {}; }
+            ++cost.deletionTests;
+            auto alternative = e().boolean(false);
+            for (std::size_t j = 0; j < crossings.size(); ++j) {
+                if (cost.relaxations == UINT64_MAX) { return {}; }
+                ++cost.relaxations;
+                const auto& final = crossings[j];
+                if (i == j || final.displacement > candidate.displacement ||
+                    e().constantValue(final.guard) == 0) { continue; }
+                auto suffix = local(final.target, candidate.target);
+                if (!suffix) { return {}; }
+                if (e().constantValue(*suffix) == 0) { continue; }
+                const auto remaining = candidate.displacement - final.displacement;
+                Id prefix;
+                if (!remaining) {
+                    auto internal = local(candidate.source, final.source);
+                    if (!internal) { return {}; }
+                    prefix = *internal;
+                } else {
+                    if (!ensureClosure()) { return {}; }
+                    const auto& distance = closure[indices.at(key(candidate.source))][indices.at(key(final.source))];
+                    prefix = e().land(distance.representable, e().le(distance.value, e().constant(remaining)));
+                }
+                alternative = e().lor(alternative, e().land(final.guard, e().land(prefix, *suffix)));
+            }
+            result[i].guard = e().land(candidate.guard, e().lnot(alternative));
+        }
+        if (!e().constructionError().empty()) { return {}; }
+        retained = std::move(result);
+        return retained;
     }
     bool initialize()
     {
@@ -145,9 +233,56 @@ struct BoundingRepeatedQuery::State {
         unitMemo.emplace(pair, result);
         return result;
     }
+    std::optional<Distance> numericalDistance(const RegionalEvent& source, const RegionalEvent& target)
+    {
+        if (!numerical) { return {}; }
+        const auto& index = *numerical->analysis.index;
+        auto convert = [&](NumericalWeightedDistance distance) {
+            return Distance{e().boolean(distance.reachable), e().boolean(distance.displacement.has_value()),
+                            e().constant(distance.displacement.value_or(0))};
+        };
+        auto a = indices.find(key(source)), b = indices.find(key(target));
+        if (a != indices.end() && b != indices.end()) {
+            auto from = numerical->ports[a->second], to = numerical->ports[b->second];
+            if (from == UINT32_MAX || to == UINT32_MAX) { return absent(); }
+            auto distance = index.distance(from, to);
+            return distance ? std::optional<Distance>(convert(*distance)) : std::nullopt;
+        }
+        NumericalChainQueryCost thresholdCost;
+        auto thresholds = [&](bool reverse) {
+            return numericalLeafThresholds(index.body, [&](uint32_t port, bool) -> std::optional<bool> {
+                auto value = reverse ? local(numerical->events[port], target) : local(source, numerical->events[port]);
+                auto evaluated = value ? e().constantValue(*value) : std::nullopt;
+                return evaluated ? std::optional<bool>(*evaluated != 0) : std::nullopt;
+            }, reverse, thresholdCost);
+        };
+        auto from = thresholds(false), to = thresholds(true);
+        if (!from || !to) { return {}; }
+        auto direct = local(source, target);
+        if (!direct) { return {}; }
+        // Selected ports need not lie between arbitrary interior events.
+        auto best = edge(*direct, 0);
+        for (std::size_t a = 0; a < index.body.chains.size(); ++a) {
+            if ((*from)[a] == index.body.chains[a].size()) { continue; }
+            for (std::size_t b = 0; b < index.body.chains.size(); ++b) {
+                if (!(*to)[b]) { continue; }
+                if (cost.relaxations == UINT64_MAX) { return {}; }
+                ++cost.relaxations;
+                auto distance = index.distance(index.body.chains[a][(*from)[a]], index.body.chains[b][(*to)[b] - 1]);
+                if (!distance) { return {}; }
+                best = minimum(best, convert(*distance));
+            }
+        }
+        return best;
+    }
     std::optional<Distance> positive(const RegionalEvent& source, const RegionalEvent& target)
     {
         if (!validRegionalEvent(body, source) || !validRegionalEvent(body, target)) { return {}; }
+        if (auto distance = numericalDistance(source, target)) {
+            // Native carry pads a zero-distance body path to one visit.
+            distance->value = e().select(e().eq(distance->value, e().constant(0)), e().constant(1), distance->value);
+            return distance;
+        }
         const auto pair = std::make_pair(key(source), key(target));
         if (auto found = positiveMemo.find(pair); found != positiveMemo.end()) { return found->second; }
         if (!ensureClosure()) { return {}; }
@@ -197,9 +332,16 @@ std::shared_ptr<BoundingRepeatedQuery> BoundingRepeatedQuery::withCrossings(
     }
     return std::shared_ptr<BoundingRepeatedQuery>(new BoundingRepeatedQuery(std::move(next)));
 }
+std::optional<std::vector<RepeatedCrossing>> BoundingRepeatedQuery::covers() { return state->covers(); }
 std::optional<BoundingPeriodDistance> BoundingRepeatedQuery::distance(RegionalEvent source, RegionalEvent target)
 {
     if (!validRegionalEvent(state->body, source) || !validRegionalEvent(state->body, target)) { return {}; }
+    if (auto numerical = state->numericalDistance(source, target)) { return numerical; }
+    auto a = state->indices.find(key(source)), b = state->indices.find(key(target));
+    if (a != state->indices.end() && b != state->indices.end()) {
+        if (!state->ensureClosure()) { return {}; }
+        return state->closure[a->second][b->second];
+    }
     auto direct = state->local(source, target);
     auto positive = state->positive(source, target);
     if (!direct || !positive) { return {}; }
@@ -208,7 +350,7 @@ std::optional<BoundingPeriodDistance> BoundingRepeatedQuery::distance(RegionalEv
 std::optional<Id> BoundingRepeatedQuery::across(const RegionalEvent& source, const RegionalEvent& target, Id gap)
 {
     if (gap >= state->e().size() || state->e().isBoolean(gap)) { return {}; }
-    if (state->e().constantValue(gap) == 1) { return state->unit(source, target); }
+    if (!state->numerical && state->e().constantValue(gap) == 1) { return state->unit(source, target); }
     auto distance = state->positive(source, target);
     if (!distance) { return {}; }
     // Complete invariant native chains allow delaying the source by any number
