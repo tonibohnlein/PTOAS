@@ -7,7 +7,9 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/CompactOrderBounds.h"
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
+#include "PTO/Transforms/FrontierSynch/BalancedCompactBody.h"
 #include "llvm/ADT/DenseSet.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 #include <utility>
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -45,31 +47,24 @@ std::optional<RegionalOrderView> exportOrder(const PeriodicExcessSnapshot& snaps
     auto view = makeRegionalOrderView(snapshot->context(), std::move(queries), error);
     return succeeded(view) ? std::optional<RegionalOrderView>(std::move(*view)) : std::nullopt;
 }
-} // namespace
-CompactFixedBodyContext::CompactFixedBodyContext(OrderContext context, std::vector<PeriodicPayload> payloads,
-                                                 Expr trips)
-    : owner(std::move(context)), word(std::move(payloads)), count(trips) {}
-std::shared_ptr<const CompactFixedBodyContext> captureCompactFixedBodyContext(
-    scf::ForOp loop, const SyncInput& input, const PhaseIndex& index,
-    std::shared_ptr<RegionExpressions> arena, Expr exactTrips, std::string& error)
+struct CapturedSlotDomain {
+    OrderContext context;
+    std::vector<PeriodicPayload> payloads;
+};
+std::optional<CapturedSlotDomain> captureSlots(scf::ForOp loop, const SyncInput& input,
+    llvm::ArrayRef<std::vector<const CompoundInstanceElement*>> slots,
+    const std::shared_ptr<RegionExpressions>& arena, Expr exactTrips, std::string& error)
 {
-    error.clear();
     if (!loop || !arena || !arena->constructionError().empty() || exactTrips >= arena->size() ||
-        arena->isBoolean(exactTrips)) {
+        arena->isBoolean(exactTrips) || slots.size() > UINT32_MAX) {
         error = "compact fixed context requires an original loop, valid arena and exact integer trip circuit";
-        return {};
+        return std::nullopt;
     }
-    const auto contract = recognizeExplicit(*loop.getBody(), index, input.accesses());
-    for (const auto& diagnostic : contract.diagnostics) {
-        if (diagnostic.issue != RecognitionIssue::AdditionalPrerequisite) {
-            error = "compact order export needs a fixed all-sites-present shared body";
-            return {};
+    for (auto* parent = loop->getParentOp(); parent; parent = parent->getParentOp()) {
+        if (isa<LoopLikeOpInterface>(parent)) {
+            error = "compact query export needs an enclosing-visit coordinate adapter";
+            return std::nullopt;
         }
-    }
-    auto phases = index.explicitSequence(*loop.getBody());
-    if (failed(phases) || phases->size() > UINT32_MAX) {
-        error = "compact order export has no fixed representable phase sequence";
-        return {};
     }
     RegionalAnalysis domain;
     domain.expressions = arena;
@@ -77,23 +72,39 @@ std::shared_ptr<const CompactFixedBodyContext> captureCompactFixedBodyContext(
     domain.gmAliasPolicy = input.memory().gmPolicy();
     domain.firstOrdinal = arena->constant(0);
     std::vector<PeriodicPayload> payloads;
-    for (const auto* phase : *phases) {
-        if (!phase || !phase->elementOp || phase->elementOp->getBlock() != loop.getBody()) {
-            error = "compact order export phase is not in the original loop body";
-            return {};
+    llvm::DenseSet<const CompoundInstanceElement*> shared(input.instructions().begin(), input.instructions().end());
+    llvm::DenseSet<const CompoundInstanceElement*> members;
+    for (const auto& alternatives : slots) {
+        if (alternatives.empty()) { error = "compact order slot has no alternative"; return std::nullopt; }
+        std::optional<uint32_t> pipe;
+        for (const auto* phase : alternatives) {
+            if (!phase || !shared.contains(phase) || !phase->elementOp ||
+                !loop->isProperAncestor(phase->elementOp) || !members.insert(phase).second) {
+                error = "compact order alternatives do not partition original shared phases";
+                return std::nullopt;
+            }
+            const auto current = static_cast<uint32_t>(phase->kPipeValue);
+            if (pipe && *pipe != current) { error = "compact order slot has different pipes"; return std::nullopt; }
+            pipe = current;
         }
-        auto* operation = phase->elementOp;
-        domain.anchors.push_back({phase, {}, {operation->getBlock(), operation},
-                                  {operation->getBlock(), operation->getNextNode()}});
+        if (alternatives.size() == 1) {
+            const auto* phase = alternatives.front();
+            auto* operation = phase->elementOp;
+            domain.anchors.push_back({phase, {}, {operation->getBlock(), operation},
+                                      {operation->getBlock(), operation->getNextNode()}});
+        } else {
+            // A structural slot is not an arbitrarily chosen arm's concrete
+            // occurrence. Its numerical identity and pipe live in the word;
+            // distributed endpoints need the separate balanced cut mapping.
+            domain.anchors.push_back({});
+        }
         domain.occurrenceLoops.push_back(loop);
-        payloads.push_back({static_cast<uint32_t>(phase->kPipeValue)});
+        payloads.push_back({*pipe});
     }
-    // Verify the supplied index did not omit any shared modeled phase.
-    llvm::DenseSet<const CompoundInstanceElement*> members(phases->begin(), phases->end());
     for (const auto* phase : input.instructions()) {
-        if (phase->elementOp->getBlock() == loop.getBody() && !members.contains(phase)) {
+        if (loop->isProperAncestor(phase->elementOp) && !members.contains(phase)) {
             error = "compact order export omitted an original shared phase";
-            return {};
+            return std::nullopt;
         }
     }
     const auto types = payloads.size();
@@ -107,9 +118,52 @@ std::shared_ptr<const CompactFixedBodyContext> captureCompactFixedBodyContext(
             arena->land(arena->eq(source.ordinal, target.ordinal), arena->boolean(source.type < target.type)));
     };
     auto context = captureRegionalOrderContext(input, domain, error);
-    if (failed(context)) { return {}; }
+    if (failed(context)) { return std::nullopt; }
+    return CapturedSlotDomain{std::move(*context), std::move(payloads)};
+}
+} // namespace
+CompactFixedBodyContext::CompactFixedBodyContext(OrderContext context, std::vector<PeriodicPayload> payloads,
+                                                 Expr trips)
+    : owner(std::move(context)), word(std::move(payloads)), count(trips) {}
+std::shared_ptr<const CompactFixedBodyContext> captureCompactFixedBodyContext(
+    scf::ForOp loop, const SyncInput& input, const PhaseIndex& index,
+    std::shared_ptr<RegionExpressions> arena, Expr exactTrips, std::string& error)
+{
+    error.clear();
+    if (!loop) { error = "compact order context needs an original loop"; return {}; }
+    const auto contract = recognizeExplicit(*loop.getBody(), index, input.accesses());
+    for (const auto& diagnostic : contract.diagnostics) {
+        if (diagnostic.issue != RecognitionIssue::AdditionalPrerequisite) {
+            error = "compact order export needs a fixed all-sites-present shared body";
+            return {};
+        }
+    }
+    auto phases = index.explicitSequence(*loop.getBody());
+    if (failed(phases)) { error = "compact order export has no fixed phase sequence"; return {}; }
+    std::vector<std::vector<const CompoundInstanceElement*>> slots;
+    for (const auto* phase : *phases) { slots.push_back({phase}); }
+    auto domain = captureSlots(loop, input, slots, arena, exactTrips, error);
+    if (!domain) { return {}; }
     return std::shared_ptr<const CompactFixedBodyContext>(
-        new CompactFixedBodyContext(std::move(*context), std::move(payloads), exactTrips));
+        new CompactFixedBodyContext(std::move(domain->context), std::move(domain->payloads), exactTrips));
+}
+std::shared_ptr<const CompactFixedBodyContext> captureBalancedCompactFixedBodyContext(
+    scf::ForOp loop, const SyncInput& input, const PhaseIndex& index,
+    std::shared_ptr<RegionExpressions> arena, Expr exactTrips, std::string& error)
+{
+    error.clear();
+    auto body = recognizeBalancedCompactBody(loop, input, index);
+    if (!body.error.empty()) { error = body.error; return {}; }
+    std::vector<std::vector<const CompoundInstanceElement*>> slots;
+    for (const auto& slot : body.slots) {
+        std::vector<const CompoundInstanceElement*> alternatives;
+        for (const auto& alternative : slot.alternatives) { alternatives.push_back(alternative.phase); }
+        slots.push_back(std::move(alternatives));
+    }
+    auto domain = captureSlots(loop, input, slots, arena, exactTrips, error);
+    if (!domain) { return {}; }
+    return std::shared_ptr<const CompactFixedBodyContext>(
+        new CompactFixedBodyContext(std::move(domain->context), std::move(domain->payloads), exactTrips));
 }
 CompactOrderBounds buildCompactOrderBounds(std::shared_ptr<const CompactFixedBodyContext> domain,
     const CompactWriterReaderAnalysis& upper, const CompactLowerFacts& lower, uint64_t certificateTrips)
