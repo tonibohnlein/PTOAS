@@ -5,8 +5,9 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Run pinned prepared inputs serially through analysis, allocation, and emission.
+"""Run pinned inputs serially through independent recognition and compilation.
 
+Recognition reports do not depend on logical emission or physical allocation.
 Timeouts are campaign cancellations, never recognizer class mismatches. The emitter
 may be a separate build; both executable hashes are recorded explicitly.
 """
@@ -47,7 +48,7 @@ def invoke(arguments, directory, name, timeout):
     return {"status": status, "exit": code, "seconds": time.monotonic() - start}
 
 
-def run_case(row, compiler, emitter, output, timeout):
+def run_case(row, compiler, emitter, output, timeout, recognizer=None, recognition_only=False):
     """Validate the pin and run one module through the three distinct passes."""
     item = row["case"]
     source = Path(item["input"]).resolve(strict=True)
@@ -60,6 +61,14 @@ def run_case(row, compiler, emitter, output, timeout):
     directory.mkdir()
     result = {"index": index, "id": item["id"], "family": item["family"],
               "input": str(source), "sha256": item["sha256"]}
+    if recognizer is not None:
+        result["recognition"] = invoke([str(recognizer), "--gm-alias=may-not-alias", "--recognize", str(source)],
+            directory, "recognition", timeout)
+    if recognition_only:
+        for stage in ("logical", "allocation", "emission"):
+            result[stage] = {"status": "not_run"}
+        (directory / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        return result
     result["logical"] = invoke([str(compiler), "--mlir-disable-threading",
         "--pto-frontier-analysis=gm-alias=may-not-alias", str(source)], directory, "logical", timeout)
     result["allocation"] = {"status": "not_run"}
@@ -87,7 +96,13 @@ def main():
     parser.add_argument("--timeout", type=float, default=120.0,
                         help="External campaign watchdog in seconds, not an analysis budget")
     parser.add_argument("--cpu", type=int, help="One allowed CPU; LLVM derives one worker from this affinity")
+    parser.add_argument("--recognizer", type=Path,
+                        help="Existing pto-sync-input-test executable for independent class reports")
+    parser.add_argument("--recognition-only", action="store_true",
+                        help="Campaign option: check contracts without logical analysis, allocation or emission")
     args = parser.parse_args()
+    if args.recognition_only and args.recognizer is None:
+        parser.error("--recognition-only requires --recognizer")
     # The standalone emitter does not register MLIR's threading CLI option.
     # LLVM's Linux thread-count query honors this inherited affinity mask.
     allowed = os.sched_getaffinity(0)
@@ -99,6 +114,7 @@ def main():
         parser.error("Timeout must be positive")
     compiler = args.compiler.resolve(strict=True)
     emitter = args.emitter.resolve(strict=True)
+    recognizer = args.recognizer.resolve(strict=True) if args.recognizer else None
     manifest = args.manifest.resolve(strict=True)
     rows = json.loads(manifest.read_text(encoding="utf-8"))
     indices = [int(row["index"]) for row in rows]
@@ -113,16 +129,22 @@ def main():
             "allocation_options": ["--mlir-disable-threading", "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5"],
             "emission_options": ["--pto-level=level3", "--enable-insert-sync=false",
                                  "--enable-plan-memory=false"]}
+    if recognizer:
+        pins["recognizer"] = sha256(recognizer)
+        pins["recognition_options"] = ["--gm-alias=may-not-alias", "--recognize"]
+    pins["recognition_only"] = args.recognition_only
     (output / "pins.json").write_text(json.dumps(pins, indent=2) + "\n", encoding="utf-8")
     results = []
     for row in rows:
-        result = run_case(row, compiler, emitter, output, args.timeout)
+        result = run_case(row, compiler, emitter, output, args.timeout, recognizer, args.recognition_only)
         results.append(result)
         (output / "results.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
-        print(result["index"], *(result[step]["status"] for step in ("logical", "allocation", "emission")),
-              flush=True)
+        stages = ("recognition", "logical", "allocation", "emission") if recognizer else (
+            "logical", "allocation", "emission")
+        print(result["index"], *(result[step]["status"] for step in stages), flush=True)
 
-    if sha256(compiler) != pins["compiler"] or sha256(emitter) != pins["emitter"]:
+    if (sha256(compiler) != pins["compiler"] or sha256(emitter) != pins["emitter"] or
+            (recognizer and sha256(recognizer) != pins["recognizer"])):
         raise RuntimeError("A compiler executable changed during the campaign")
 
 

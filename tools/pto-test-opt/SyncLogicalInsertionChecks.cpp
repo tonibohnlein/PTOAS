@@ -670,7 +670,28 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         else if (succeeded(childPlan)) { regionScope &= !(**childPlan).completeInvocation; }
     }
     auto analysis = fs::analyzeSequence(function, input, *program);
+    // Reuse this actual analysis: copied recognition objects must not inherit
+    // evidence bound to the original program, even with identical node values.
+    auto foreignProgram = *program;
+    fs::recordSequenceContractAttempt(foreignProgram, input, analysis);
+    bool contractAudit = foreignProgram.sequenceContract &&
+        foreignProgram.sequenceContract->membership == fs::ContractStatus::Unproved;
+    fs::recordSequenceContractAttempt(*program, input, analysis);
+    const auto expectedMembership = analysis.error.empty() && analysis.state ?
+        fs::ContractStatus::Established : fs::ContractStatus::Unproved;
+    contractAudit &= program->sequenceContract && program->sequenceContract->membership == expectedMembership;
+    fs::recordSequenceEndpointAttempt(*program, "synthetic endpoint capability gap");
+    contractAudit &= program->sequenceContract->membership == expectedMembership &&
+        program->sequenceContract->endpointRecipes == fs::ContractImplementation::Unavailable;
+    fs::refreshProgramContractAudit(*program);
+    contractAudit &= llvm::any_of(program->contractAudit, [&](const auto& candidate) {
+        return candidate.kind == fs::ContractClass::Sequence && candidate.node == 0 &&
+            candidate.membership == expectedMembership &&
+            candidate.endpointRecipes == fs::ContractImplementation::Unavailable;
+    });
     auto prepared = fs::prepareSequenceInsertion(analysis);
+    fs::recordSequenceEndpointAttempt(*program, failed(prepared) ? analysis.insertionError : "");
+    contractAudit &= program->sequenceContract->membership == expectedMembership;
     auto regional = fs::sequenceRegionalResult(analysis);
     auto* expressions = fs::sequenceExpressions(analysis);
     bool validQueries = analysis.error.empty() && bool(analysis.state);
@@ -698,7 +719,7 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         {"storage_selector_interface", bool(regional.storageSelectors)},
         {"allocation_interface", failed(prepared) ? "no-logical-plan" :
             ((**prepared).regionalAllocation || (**prepared).allocationCertificate ? "constructed" : "unavailable")},
-        {"queries_available", validQueries}, {"unchanged", before == after},
+        {"queries_available", validQueries}, {"unchanged", before == after}, {"contract_audit", contractAudit},
         {"slice_prerequisite", checkSlicePrerequisite(function, input)},
         {"region_scope", checkRegionScope ? llvm::json::Value(regionScope) : llvm::json::Value(nullptr)},
         {"arithmetic_entry_prerequisite", checkArithmeticEntryPrerequisite(function, input)},
@@ -714,7 +735,7 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         {"crossing_candidates", analysis.cost.crossingCandidates},
         {"implication_checks", analysis.cost.implicationChecks},
         {"expressions", expressions ? expressions->size() : 0}, {"emitted", emitted}}) << "\n";
-    return success(before == after && regionScope);
+    return success(before == after && regionScope && contractAudit);
 }
 
 LogicalResult runFiniteGuardedAnalysisChecks(func::FuncOp function, pto::GMAliasPolicy policy)

@@ -56,6 +56,97 @@ fs::StructureKind controlKind(Operation* operation)
     return fs::StructureKind::Unsupported;
 }
 
+bool auditContracts()
+{
+    const SmallVector<fs::ArithmeticDiagnostic> repeatedDiagnostics{
+        {fs::ArithmeticIssue::CoefficientLimit, true, 7, 3},
+        {fs::ArithmeticIssue::CoefficientLimit, true, 9, 4},
+        {fs::ArithmeticIssue::CoefficientLimit, false, 11, 5},
+        {fs::ArithmeticIssue::InvalidConfiguration, false, 2, 1},
+        {fs::ArithmeticIssue::CoefficientLimit, true, 12, 6}};
+    const auto summaries = fs::summarizeArithmeticDiagnostics(repeatedDiagnostics);
+    if (summaries.size() != 3 || summaries[0].count != 3 || summaries[0].relation != 7 ||
+        summaries[0].piece != 3 || !summaries[0].outsideClass || summaries[1].count != 1 ||
+        summaries[1].outsideClass || summaries[2].issue != fs::ArithmeticIssue::InvalidConfiguration ||
+        !fs::summarizeArithmeticDiagnostics({}).empty()) { return false; }
+    fs::ProgramRecognition countedProgram;
+    fs::ArithmeticProgram rejectedArithmetic;
+    rejectedArithmetic.recognition.state = fs::RecognitionState::NotApplicable;
+    rejectedArithmetic.recognition.diagnostics = repeatedDiagnostics;
+    fs::recordArithmeticContractAttempt(countedProgram, {8, 8, 2, 8}, rejectedArithmetic);
+    fs::refreshProgramContractAudit(countedProgram);
+    if (countedProgram.contractAudit.size() != 3 ||
+        llvm::any_of(countedProgram.contractAudit, [](const auto& candidate) {
+            return candidate.membership != fs::ContractStatus::Violated ||
+                candidate.arithmeticDiagnostics.size() != 3 ||
+                candidate.arithmeticDiagnostics[0].count != 3 || candidate.arithmeticDiagnostics[0].relation != 7;
+        })) { return false; }
+    fs::ProgramRecognition program;
+    fs::StructureNode root; root.kind = fs::StructureKind::Sequence; root.children.push_back(1);
+    fs::StructureNode child; child.kind = fs::StructureKind::Loop;
+    child.numericTemplate.emplace(); // Established input contract, unavailable demand backend.
+    child.periodicAnalysis.emplace(); child.periodicAnalysis->error = "synthetic backend gap";
+    program.nodes.push_back(std::move(root)); program.nodes.push_back(std::move(child));
+    fs::refreshProgramContractAudit(program);
+    bool sawNumeric = false, sawComposition = false;
+    for (const auto& candidate : program.contractAudit) {
+        if (candidate.kind == fs::ContractClass::NumericTemplate && candidate.node == 1) {
+            sawNumeric = candidate.membership == fs::ContractStatus::Established &&
+                candidate.demands == fs::ContractImplementation::Unavailable &&
+                candidate.implementationError == "synthetic backend gap";
+        }
+        if (candidate.kind == fs::ContractClass::Sequence && candidate.node == 0) {
+            sawComposition = candidate.membership == fs::ContractStatus::Unproved &&
+                llvm::any_of(candidate.obligations, [](const auto& obligation) {
+                    return obligation.name == "child-1-exact-contract" &&
+                        obligation.status == fs::ContractStatus::Established;
+                }) && llvm::any_of(candidate.obligations, [](const auto& obligation) {
+                    return obligation.name == "complete-storage-boundary-selectors" &&
+                        obligation.status == fs::ContractStatus::NotEvaluated;
+                });
+        }
+    }
+    if (!sawNumeric || !sawComposition) { return false; }
+    const fs::RecognitionDiagnostic limit{fs::RecognitionIssue::TemplateExpansionLimit, true, nullptr};
+    const fs::RecognitionDiagnostic adapter{fs::RecognitionIssue::UnsupportedView, true, nullptr};
+    if (fs::contractDiagnosticKind(limit) != fs::ContractDiagnosticKind::ProducerLimit ||
+        fs::contractDiagnosticKind(adapter) != fs::ContractDiagnosticKind::AdapterGap) { return false; }
+    auto& recognition = program.nodes[1].numericTemplate->result;
+    recognition.state = fs::RecognitionState::NotApplicable;
+    recognition.diagnostics = {limit, adapter};
+    fs::refreshProgramContractAudit(program);
+    for (const auto& candidate : program.contractAudit) {
+        if (candidate.kind == fs::ContractClass::NumericTemplate &&
+            candidate.membership != fs::ContractStatus::Unproved) { return false; }
+    }
+    recognition.diagnostics.push_back({fs::RecognitionIssue::CommonStride, true, nullptr});
+    fs::refreshProgramContractAudit(program);
+    for (const auto& candidate : program.contractAudit) {
+        if (candidate.kind == fs::ContractClass::NumericTemplate &&
+            candidate.membership != fs::ContractStatus::Violated) { return false; }
+    }
+    // Exact normalized DBM rows with existential coordinates may still select
+    // the general importer. That backend choice must not reject DBM membership.
+    fs::ArithmeticProgram arithmetic;
+    arithmetic.recognition.arithmeticClass = fs::ArithmeticClass::BoundedCoefficients;
+    fs::NormalizedPiece piece{0, 0, false, {}}; piece.rows.push_back({{1, -1}, 0, false});
+    arithmetic.recognition.pieces.push_back(std::move(piece));
+    fs::recordArithmeticContractAttempt(program, {8, 8, 1, 8}, arithmetic);
+    arithmetic.extraction.note(fs::RecognitionIssue::UnsupportedView, nullptr);
+    fs::recordArithmeticContractAttempt(program, {8, 8, 2, 8}, arithmetic);
+    fs::refreshProgramContractAudit(program);
+    unsigned established = 0, unproved = 0;
+    for (const auto& candidate : program.contractAudit) {
+        if (!candidate.arithmeticProfile) { continue; }
+        if (candidate.arithmeticProfile->period == 1 && candidate.membership == fs::ContractStatus::Established) {
+            ++established;
+        } else if (candidate.arithmeticProfile->period == 2 && candidate.membership == fs::ContractStatus::Unproved) {
+            ++unproved;
+        } else { return false; }
+    }
+    return established == 3 && unproved == 3;
+}
+
 class StructureVerifier {
 public:
     StructureVerifier(func::FuncOp function, const pto::SyncInput& input,
@@ -302,5 +393,6 @@ private:
 LogicalResult verifyProgramStructure(func::FuncOp function, const pto::SyncInput& input,
                                      const fs::ProgramRecognition& program)
 {
+    if (!auditContracts()) { return function.emitError("independent contract audit checks failed"); }
     return StructureVerifier(function, input, program).run();
 }

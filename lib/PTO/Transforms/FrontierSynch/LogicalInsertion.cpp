@@ -505,6 +505,9 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
             builder.create<BarrierOp>(ret.getLoc(), PipeAttr::get(function.getContext(), PIPE::PIPE_ALL));
         });
     }
+    if (plan.recognitionReport) {
+        function->setAttr("pto.frontier_recognition", plan.recognitionReport);
+    }
     if (plan.allocationCertificate) {
         auto kind = plan.allocationCertificate.getAs<StringAttr>("kind");
         function->setAttr(kind && kind.getValue() == "finite" ? FiniteAllocationAttr : CyclicAllocationAttr,
