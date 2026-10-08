@@ -21,6 +21,7 @@
 #include "PTO/Transforms/FrontierSynch/GuardedPeriodicInsertion.h"
 #include "PTO/Transforms/FrontierSynch/CompactAllocation.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
+#include "PTO/Transforms/FrontierSynch/FiniteVisitRecognition.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "RecognitionInternal.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
@@ -74,6 +75,7 @@ LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy, bool r
     periodicExports = {};
     explicitAnalysis.reset();
     sequenceAnalysis.reset();
+    finiteVisitAnalyses.clear();
     program.reset();
     storage.reset();
     initialized = true;
@@ -137,7 +139,29 @@ SequenceAnalysis* FrontierAnalysis::analyzeSequenceFunction() {
         recordSequenceContractAttempt(*program, *storage, *sequenceAnalysis);
         refreshProgramContractAudit(*program);
     }
+    if (!sequenceAnalysis->error.empty()) { (void)analyzeFiniteVisitCandidates(); }
     return &*sequenceAnalysis;
+}
+LogicalResult FrontierAnalysis::analyzeFiniteVisitCandidates()
+{
+    if (failed(recognizeStructure())) { return failure(); }
+    for (const auto& candidate : program->finiteVisitContracts) {
+        if (!candidate.node || finiteVisitAnalyses.count(*candidate.node)) { continue; }
+        const auto eligible = llvm::find_if(candidate.obligations, [](const auto& item) {
+            return item.name == "exhaustive-original-type-selection" && item.status == ContractStatus::Established;
+        });
+        if (eligible == candidate.obligations.end()) { continue; }
+        auto result = std::make_shared<FiniteVisitAnalysis>(
+            analyzeFiniteVisitLoop(function, *storage, *program, *candidate.node));
+        finiteVisitAnalyses.emplace(*candidate.node, std::move(result));
+    }
+    for (auto& candidate : program->finiteVisitContracts) {
+        if (!candidate.node) { continue; }
+        auto found = finiteVisitAnalyses.find(*candidate.node);
+        if (found != finiteVisitAnalyses.end()) { candidate = found->second->recognition.contract; }
+    }
+    refreshProgramContractAudit(*program);
+    return success();
 }
 LogicalResult FrontierAnalysis::analyzeArithmeticPeriodicFunction()
 {
