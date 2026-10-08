@@ -15,7 +15,7 @@ bool constantIs(Value value, int64_t expected)
     return matchPattern(value, m_ConstantInt(&integer)) && integer.isSignedIntN(64) &&
            integer.getSExtValue() == expected;
 }
-bool bindSkeleton(const ArithmeticProgram& program, ArithmeticPeriodicProgram& out)
+bool checkSkeleton(const ArithmeticProgram& program, ArithmeticPeriodicProgram& out)
 {
     if (program.sites.empty() || !out.period || out.period > INT64_MAX ||
         program.sites.size() > UINT32_MAX / out.period) {
@@ -37,6 +37,11 @@ bool bindSkeleton(const ArithmeticProgram& program, ArithmeticPeriodicProgram& o
         out.conversion.diagnostic = "periodic binding needs normalized zero-origin unit-step occurrence coordinates";
         return false;
     }
+    return true;
+}
+bool bindSkeleton(const ArithmeticProgram& program, ArithmeticPeriodicProgram& out)
+{
+    if (!checkSkeleton(program, out)) { return false; }
     for (uint64_t residue = 0; residue < out.period; ++residue) {
         for (uint32_t site = 0; site < program.sites.size(); ++site) {
             out.sites.push_back({site, residue});
@@ -92,6 +97,15 @@ bool appendRelations(const ArithmeticProgram& program, const GeneralArithmeticGe
     return true;
 }
 } // namespace
+bool checkArithmeticPeriodicSkeleton(const ArithmeticProgram& program, std::string& diagnostic)
+{
+    // Check only source shape. Residue cardinality is checked again when the
+    // generator stage supplies its period; no relations or type word are built.
+    ArithmeticPeriodicProgram out;
+    const bool valid = checkSkeleton(program, out);
+    diagnostic = std::move(out.conversion.diagnostic);
+    return valid;
+}
 ArithmeticPeriodicProgram convertArithmeticPeriodicProgram(const ArithmeticProgram& program,
     const GeneralArithmeticGeneratorStage& stage, std::shared_ptr<RegionExpressions> expressions)
 {

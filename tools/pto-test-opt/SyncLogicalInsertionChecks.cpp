@@ -476,6 +476,7 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
         return verify(function);
     }
     bool accepted = false;
+    std::shared_ptr<fs::BoundedLifetimeDemandResult> boundedDemands;
     if (function->hasAttr("test.mixed_stride_insertion")) {
         auto program = fs::recognizeProgram(function, input);
         std::string error;
@@ -488,7 +489,7 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
         auto program = fs::recognizeProgram(function,input);
         std::string error;
         if (succeeded(program)) {
-            auto prepared = fs::prepareBoundedLifetimeInsertion(function,input,*program,error);
+            auto prepared = fs::prepareBoundedLifetimeInsertion(function,input,*program,error,&boundedDemands);
             accepted = succeeded(prepared) && succeeded(fs::insertLogicalSynchronization(function,**prepared));
         }
         if (!accepted) { llvm::errs() << error << "\n"; }
@@ -534,10 +535,40 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
         accepted = succeeded(prepared) && succeeded(fs::insertLogicalSynchronization(function, **prepared));
         if (accepted && failed(verify(function))) { return failure(); }
     }
+    // The preparation stack (including recognition and detached endpoint code)
+    // is gone. The cached DAG must still support demand analysis, particularly
+    // after a replay failure has discarded the executable plan.
+    if (boundedDemands) {
+        auto replay = fs::analyzeLifetimeWindow(boundedDemands->expressions, boundedDemands->window);
+        const auto& original = boundedDemands->analysis.sourceDemands;
+        if (!replay.error.empty() || replay.sourceDemands.size() != original.size()) { return failure(); }
+        for (std::size_t i = 0; i < original.size(); ++i) {
+            const auto& a = original[i];
+            const auto& b = replay.sourceDemands[i];
+            if (a.source != b.source || a.target != b.target || a.guard != b.guard) { return failure(); }
+            for (bool truth : {false, true}) {
+                std::vector<std::pair<fs::RegionExpressions::Id, fs::RegionExpressions::Id>> bindings;
+                for (auto [id, value] : boundedDemands->expressions.referencedInputs(a.guard)) {
+                    if (!value || !value.getType()) { return failure(); }
+                    auto argument = dyn_cast<BlockArgument>(value);
+                    auto replacement = value.getType().isInteger(1) ? boundedDemands->expressions.boolean(truth) :
+                        boundedDemands->expressions.constant(
+                            argument && argument.getOwner() == &boundedDemands->symbols ? 0 : 7);
+                    bindings.push_back({id, replacement});
+                }
+                fs::RegionExpressions::Substitution substitution(bindings);
+                auto concrete = boundedDemands->expressions.substitute(a.guard, substitution);
+                if (!boundedDemands->expressions.constantValue(concrete)) { return failure(); }
+            }
+        }
+    }
     auto trace = accepted ? Interpreter(input.instructions()).run(function) : llvm::json::Object{};
     const bool valid = !accepted || trace.getString("error").value_or("missing trace status").empty();
+    const auto boundedCount = boundedDemands ? static_cast<int64_t>(boundedDemands->analysis.sourceDemands.size()) : 0;
     llvm::json::Object report{{"function", function.getSymName()},
-        {"accepted", accepted}, {"unchanged_on_failure", accepted || before == render()}};
+        {"accepted", accepted}, {"unchanged_on_failure", accepted || before == render()},
+        {"bounded_demands_retained", bool(boundedDemands)},
+        {"bounded_demand_count", boundedCount}};
     auto ids = function->getAttrOfType<DenseI64ArrayAttr>("test.eligible_ids");
     if (accepted && ids) {
         auto logicalIR = render();
