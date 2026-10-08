@@ -16,6 +16,7 @@
 #include "PTO/Transforms/FrontierSynch/NumericTemplateEndpoints.h"
 #include "PTO/Transforms/FrontierSynch/PeriodicAllocation.h"
 namespace mlir::pto::frontiersynch {
+struct BoundedLifetimeDemandResult;
 enum class StructureKind { Sequence, ExplicitRun, Loop, Conditional, Unsupported, Section };
 enum class ContractClass {
     Finite, FiniteGuarded, Periodic, GuardedPeriodic, BoundedLifetime,
@@ -72,6 +73,11 @@ struct StructureNode {
     std::optional<GuardedRecognition> finiteGuardedResult;
     std::optional<GuardedRecognition> guardedRotatingResult;
     std::optional<BoundedLifetimeRecognition> boundedLifetime;
+    // Analysis cache owns a separate arena: failed parent-region transactions
+    // must not invalidate successful source-window demand circuits.
+    mutable bool boundedDemandAttempted = false;
+    mutable std::shared_ptr<BoundedLifetimeDemandResult> boundedDemands;
+    mutable std::string boundedDemandError, boundedExportError;
     std::optional<VaryingRotatingRecognition> varyingRotating;
     std::optional<AffineRotatingVisits> varyingDemands;
     std::optional<NumericTemplate> numericTemplate;

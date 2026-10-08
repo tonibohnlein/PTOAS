@@ -319,6 +319,13 @@ void refreshProgramContractAudit(ProgramRecognition& program)
                 node.guardedRotatingResult ? &node.guardedRotatingResult->result : nullptr);
             appendContract(program, id, ContractClass::BoundedLifetime,
                 node.boundedLifetime ? &node.boundedLifetime->skeleton.result : nullptr);
+            if (node.boundedDemandAttempted) {
+                auto& observed = program.contractAudit.back();
+                observed.demands = node.boundedDemands ? ContractImplementation::Available :
+                                                        ContractImplementation::Unavailable;
+                observed.implementationError = node.boundedDemandError;
+                if (!node.boundedExportError.empty()) { observed.implementationError = node.boundedExportError; }
+            }
             appendContract(program, id, ContractClass::VaryingPeriodic,
                 node.varyingRotating ? &node.varyingRotating->result : nullptr);
             appendContract(program, id, ContractClass::NumericTemplate,

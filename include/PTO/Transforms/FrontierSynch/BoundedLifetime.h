@@ -72,5 +72,12 @@ struct RefreshCertificate {
 RefreshCertificate certifyRotatingRefresh(
     llvm::ArrayRef<PeriodicPayload> payloads, llvm::ArrayRef<RotatingFragment> fragments,
     llvm::ArrayRef<uint8_t> unconditional, uint64_t prerequisiteSpan = 0);
+// Each nonzero coveredWriters[i] certifies that fragment i's complete normalized
+// write map is written on every iteration, possibly by complementary guarded
+// occurrences. This does not make any particular payload unconditional. The
+// caller proves exact-map coverage; covering only a common orbit is insufficient.
+RefreshCertificate certifyRotatingRefreshCoverage(
+    llvm::ArrayRef<PeriodicPayload> payloads, llvm::ArrayRef<RotatingFragment> fragments,
+    llvm::ArrayRef<uint8_t> coveredWriters, uint64_t prerequisiteSpan = 0);
 } // namespace mlir::pto::frontiersynch
 #endif
