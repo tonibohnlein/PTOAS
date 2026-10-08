@@ -7,6 +7,9 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/RepeatedPhases.h"
 #include "llvm/Support/raw_ostream.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/OwningOpRef.h"
+#include <limits>
 #include <set>
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
@@ -47,7 +50,7 @@ bool selected(fs::RegionExpressions& e, const std::vector<fs::RegionalSelector>&
 }
 bool check(func::FuncOp function, Operation* anchor, scf::ForOp loop,
            unsigned q, unsigned trips, unsigned begin, unsigned profile, uint64_t& checked,
-           bool singleton = false, bool symbolicTail = false)
+           bool singleton = false, bool symbolicTail = false, bool runtimeCoordinates = false)
 {
     auto arena = std::make_shared<fs::RegionExpressions>();
     auto& e = *arena;
@@ -101,6 +104,23 @@ bool check(func::FuncOp function, Operation* anchor, scf::ForOp loop,
     auto repeated = fs::repeatPhasedRegions(function, loop, std::move(phases), endExpression, {}, beginExpression,
         singleton ? std::optional<uint64_t>(1) : std::nullopt);
     if (!repeated.error.empty()) { llvm::errs() << repeated.error << "\n"; return false; }
+    if (runtimeCoordinates) {
+        if (!repeated.regional.endpointEventGuard) { return false; }
+        for (int64_t lower : {int64_t(-9), int64_t(5), std::numeric_limits<int64_t>::min()}) {
+            for (unsigned visit = 0; visit < 6; ++visit) {
+                fs::RegionExpressions::Substitution coordinates({
+                    {e.input(loop.getLowerBound()), e.constant(static_cast<uint64_t>(lower))},
+                    {e.input(loop.getInductionVar()), e.constant(static_cast<uint64_t>(lower + 3 * visit))}});
+                for (unsigned type = 0; type < 2 * q; ++type) {
+                    const auto guard = repeated.regional.endpointEventGuard(
+                        {type, zero, fs::PeriodicEventKind::Start, {e.constant(visit / q)}});
+                    if (!guard || e.constantValue(e.substitute(*guard, coordinates)) != (visit % q == type / 2)) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
     if (repeated.regional.capabilities.endpointRecipes || repeated.regional.prepare ||
         repeated.regional.prepareWithVisits) { return false; }
     auto active = [&](unsigned occurrence) {
@@ -191,6 +211,21 @@ bool runRepeatedPhaseChecks(func::FuncOp function)
                 }
             }
         }
+    }
+    // Keep the original expression fixture immutable. The cloned inner loop
+    // uses a runtime signed lower bound and stride three; synthetic phase
+    // queries above remain independently checked against their unfolded graph.
+    OwningOpRef<func::FuncOp> copy(function.clone());
+    Operation* copiedAnchor = nullptr;
+    copy->walk([&](Operation* op) { if (op->hasAttr("test.nested")) { copiedAnchor = op; } });
+    auto copiedLoop = copiedAnchor ? copiedAnchor->getParentOfType<scf::ForOp>() : scf::ForOp();
+    if (!copiedLoop || copy->getNumArguments() == 0 || !copy->getArgument(0).getType().isIndex()) { return false; }
+    OpBuilder builder(copiedLoop);
+    auto stride = builder.create<arith::ConstantIndexOp>(copiedLoop.getLoc(), 3);
+    copiedLoop->setOperand(0, copy->getArgument(0));
+    copiedLoop->setOperand(2, stride);
+    for (unsigned q : {2U, 3U}) {
+        if (!check(*copy, copiedAnchor, copiedLoop, q, 4, 1, 0, checked, false, false, true)) { return false; }
     }
     llvm::errs() << "repeated phase oracle: " << checked << " event queries plus storage selectors\n";
     return true;

@@ -11,6 +11,8 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
+#include <array>
+#include <limits>
 #include <map>
 #include <tuple>
 using namespace mlir;
@@ -112,10 +114,17 @@ bool check(func::FuncOp function, const pto::SyncInput& input)
                 SmallVector<Value>(operation->getOperands()), operation->getAttrDictionary()});
         }
     });
-    // Varying the original trace argument changes the execution, not its IR.
+    // Enumerate original signed IVs independently of the generated ordinal
+    // formulas. The runtime-lower fixture uses a positive stride of three.
+    const bool runtimeLower = function->hasAttr("test.runtime_lower");
+    std::vector<std::array<int64_t, 2>> arguments{{0, 0}, {1, 0}, {2, 0}, {5, 0}};
+    if (runtimeLower) {
+        const auto low = std::numeric_limits<int64_t>::min(), high = std::numeric_limits<int64_t>::max();
+        arguments = {{0, 0}, {7, 7}, {9, 2}, {4, 14}, {-8, 3}, {low, low + 6}, {high - 8, high - 2}};
+    }
     std::vector<std::vector<int64_t>> originalTraces;
-    for (int64_t trips : {0, 1, 2, 5}) {
-        function->setAttr("test.trace_arguments", DenseI64ArrayAttr::get(function.getContext(), {trips, 0}));
+    for (const auto& values : arguments) {
+        function->setAttr("test.trace_arguments", DenseI64ArrayAttr::get(function.getContext(), values));
         auto trace = traceStructuredLogicalInsertion(function, input.instructions());
         if (!commands(trace)) { return false; }
         originalTraces.push_back(payloads(trace));
@@ -130,8 +139,12 @@ bool check(func::FuncOp function, const pto::SyncInput& input)
             !llvm::equal(saved.operation->getOperands(), saved.operands)) { return false; }
     }
     std::size_t traceId = 0;
-    for (uint32_t trips : {0, 1, 2, 5}) {
-        function->setAttr("test.trace_arguments", DenseI64ArrayAttr::get(function.getContext(), {trips, 0}));
+    for (const auto& values : arguments) {
+        uint32_t trips = 0;
+        const int64_t lower = runtimeLower ? values[0] : 0;
+        const int64_t upper = runtimeLower ? values[1] : values[0];
+        for (int64_t iv = lower; iv < upper; iv += runtimeLower ? 3 : 1) { ++trips; }
+        function->setAttr("test.trace_arguments", DenseI64ArrayAttr::get(function.getContext(), values));
         auto trace = traceStructuredLogicalInsertion(function, input.instructions());
         auto actual = commands(trace);
         Commands expected;

@@ -34,6 +34,15 @@ struct CountedLoop {
         if (!count.isSignedIntN(64)) { return std::nullopt; }
         return CountedLoop{loop, step.getSExtValue(), count.isZero() ? 0 : count.getZExtValue() - 1};
     }
+    // At an executed cut IV >= lower in signed order. Their difference is
+    // the exact unsigned distance even across zero; division yields the
+    // original visit ordinal without reconstructing or changing the IV.
+    RegionExpressions::Id ordinal(RegionExpressions& arena) const
+    {
+        auto current = loop;
+        return arena.div(arena.sub(arena.input(current.getInductionVar()), arena.input(current.getLowerBound())),
+            arena.constant(step));
+    }
     RegionExpressions::Id trips(RegionExpressions& arena) const
     {
         auto zero = arena.constant(0), one = arena.constant(1), stride = arena.constant(step);
