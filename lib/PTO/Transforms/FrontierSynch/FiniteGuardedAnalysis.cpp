@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "FiniteGuardedInternal.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
@@ -147,6 +148,56 @@ FiniteGuardedAnalysis analyzeFiniteGuarded(func::FuncOp function, ArrayRef<Opera
     result.cost = state->cost;
     result.state = std::move(state);
     return result;
+}
+RegionalAnalysis expandedFiniteRegionalQueries(const FiniteGuardedAnalysis& analysis,
+    std::shared_ptr<const SyncInput> inputOwner)
+{
+    RegionalAnalysis out;
+    auto state = analysis.state;
+    auto program = analysis.expandedProgram;
+    const bool valid = state && program && analysis.error.empty() &&
+        state->anchors.size() == program->sites.size() &&
+        (!inputOwner || state->accessModel == &inputOwner->accesses());
+    if (!valid) { return out; }
+    out.expressions = state->arena;
+    out.anchors = state->anchors;
+    out.occurrenceLoops.resize(out.anchors.size());
+    for (auto [id, site] : llvm::enumerate(program->sites)) {
+        for (auto fixed : site.fixedCoordinates) {
+            out.anchors[id].coordinates.push_back({fixed.loop, fixed.induction});
+        }
+    }
+    out.accessModel = state->accessModel;
+    out.gmAliasPolicy = state->gmAliasPolicy;
+    out.cost = state->cost;
+    out.capabilities.exactQueries = true;
+    // Keep the input and expanded occurrence map alive through every callback.
+    // One local invocation has no free ordinal or enclosing visit coordinates.
+    auto validEvent = [state, program, inputOwner](RegionalEvent event) {
+        const bool sameInput = !inputOwner || state->accessModel == &inputOwner->accesses();
+        return sameInput && event.type < program->sites.size() && event.visits.empty() &&
+            event.ordinal < state->arena->size() && !state->arena->isBoolean(event.ordinal) &&
+            (event.kind == PeriodicEventKind::Start || event.kind == PeriodicEventKind::Completion);
+    };
+    auto present = [state, validEvent](RegionalEvent event) -> std::optional<RegionExpressions::Id> {
+        if (!validEvent(event)) { return std::nullopt; }
+        return state->both(state->presence[event.type], state->arena->eq(event.ordinal, state->arena->constant(0)));
+    };
+    out.presence = present;
+    out.reachability = [state, present](RegionalEvent a, RegionalEvent b) -> std::optional<RegionExpressions::Id> {
+        auto pa = present(a), pb = present(b);
+        if (!pa || !pb) { return std::nullopt; }
+        auto answer = state->rankIndex.query(*state->arena, {a.type, a.kind}, {b.type, b.kind});
+        if (!answer) { return std::nullopt; }
+        return state->both(*answer, state->both(*pa, *pb));
+    };
+    out.referenceBefore = [state, present](RegionalEvent a, RegionalEvent b)
+        -> std::optional<RegionExpressions::Id> {
+        auto pa = present(a), pb = present(b);
+        if (!pa || !pb) { return std::nullopt; }
+        return state->both(state->arena->boolean(a.type < b.type), state->both(*pa, *pb));
+    };
+    return out;
 }
 RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analysis)
 {
