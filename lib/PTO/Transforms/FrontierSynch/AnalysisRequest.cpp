@@ -37,6 +37,19 @@ AnalysisOutcome FrontierAnalysis::analyzeFiniteVisit(const AnalysisRequest& requ
     result.costs = costRecords();
     return result;
 }
+AnalysisOutcome FrontierAnalysis::analyzeFiniteExpansion(const AnalysisRequest& request)
+{
+    AnalysisOutcome result;
+    const bool valid = succeeded(recognizeStructure()) && request.region < program->nodes.size();
+    if (!valid) {
+        result.obligations.push_back({AnalysisStage::Form, "finite expansion original region is unavailable"});
+        return result;
+    }
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    result = requestBackend(AnalysisBackend::ExpandedFinite, request);
+    result.costs = costRecords();
+    return result;
+}
 std::vector<RegionCertification> FrontierAnalysis::certifyRegions()
 {
     const bool formsAvailable = succeeded(recognizeStructure()) && succeeded(recognizeArithmetic()) &&
@@ -73,6 +86,7 @@ std::vector<RegionCertification> FrontierAnalysis::certifyRegions()
             result.selectedClass = "restricted-arithmetic";
         } else if (math.finiteGuardedDemands) {
             result.selectedClass = "finite-guarded-occurrences";
+            if (math.finiteGuardedDemands->expandedProgram) { result.representation = "small-count-expanded"; }
         } else if (math.finiteVisitDemands) {
             result.selectedClass = "finite-visit-types";
         } else if (math.explicitDemands) {
@@ -136,7 +150,7 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
         result.available.queries = exports.capabilities.exactQueries;
         result.available.selectors = exports.capabilities.exactSelectors;
     }
-    if (demands.backend == "native-scalar") { result.available = {}; }
+    if (demands.backend == "native-scalar" || demands.backend == "expanded-finite-guarded") { result.available = {}; }
     result.available.synchronization = attempt.endpoints.value_or(false);
     result.status = AnalysisStatus::Ready;
     result.stage = AnalysisStage::None;
@@ -206,7 +220,7 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
     for (auto backend : {AnalysisBackend::Explicit, AnalysisBackend::NumericalPeriodic,
             AnalysisBackend::Rotating, AnalysisBackend::MixedStride, AnalysisBackend::GuardedRotating,
             AnalysisBackend::BoundedLifetime, AnalysisBackend::Sequence, AnalysisBackend::FiniteVisit,
-            AnalysisBackend::ArithmeticPeriodic, AnalysisBackend::FiniteGuarded}) {
+            AnalysisBackend::ExpandedFinite, AnalysisBackend::ArithmeticPeriodic, AnalysisBackend::FiniteGuarded}) {
         if (backend == AnalysisBackend::ArithmeticPeriodic) {
             for (auto method : arithmeticMethods(request)) {
                 if (attemptBackend(method)) { result.costs = costRecords(); return result; }

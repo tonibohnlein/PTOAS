@@ -162,3 +162,53 @@ This milestone passes 29 focused/oracle checks and all 22 serial corpus
 invocations, with unchanged recognition totals and no timeouts or IR mutations.
 It does not resolve moving-slice GEMM children: those require a cached finite
 guarded expansion preserving original coordinates and carried bank substitutions.
+
+## Original-region finite occurrence expansion
+
+The demands-only session can request one cached finite occurrence expansion
+for a genuine original loop or conditional, or the complete function. Synthetic
+sequence and explicit-run anchors are rejected: an anchor alone does not name
+those regions. Expansion never clones IR or rebuilds the shared access model.
+Each occurrence retains its original phase, branch path and complete fixed IV
+tuple. Actual IV values preserve nonzero origins and nonunit positive steps;
+shared scalar evolution supplies only proved carried recurrences.
+
+The adapter specializes the original physical access maps before affine
+normalization. Its integer overlap generator is a representation adapter, not
+a restricted-arithmetic class claim. Runtime entry parameters remain symbolic.
+Original prerequisite identities are paired within matching represented visits;
+scoped hardware protection additionally requires matching scope and ancestor
+coordinates. Guarded rank reduction owns the resulting exact demands.
+
+The pinned alternative charges 65,536 scalar/control/payload visits, 4,096
+payloads, depth 16 and 65,536 primitive fragments. A separate 65,536-pair bound
+covers potential ordered payload pairs and compatible read/write or write/write
+physical-piece joins; read/read joins are excluded. Products are checked before
+construction or bounded by the fragment cap. Exhaustion makes this optional
+representation unavailable, never outside a tractable class. Costs retain
+actual visits, sites, access fragments, joins, generator edges and circuit nodes.
+
+Repeated original anchors do not yet have certified query, storage-selector or
+endpoint adapters. All three exports are explicitly unavailable; failed exports
+retain the identical owned demand result and do not rerun expansion or reduction.
+Unsupported predicate/scalar adapters and carried payload/control prerequisites
+remain unresolved. This milestone does not implement emission or allocation.
+
+Validation of this milestone passes all 31 focused/oracle checks and all 22
+serial invocations of the eleven pinned inputs under both alias policies.
+The independent oracle verifies byte footprints and dependency closure/covers
+for all three four-visit GEMM children, including carried bank state and
+accumulator reset/protection. Exact original-region certificates increase from
+221/240 to 224/240 with MayNotAlias and from 205/240 to 211/240 with MayAlias.
+Every run preserves original IR, performs no endpoint/allocation construction,
+and finishes within the external measurement limit. Unresolved regions remain
+unresolved; no outside-catalog conclusion is inferred from adapter failure.
+
+Finite-only generator import omits projection of read primitives with no writer
+in the same physical storage identity. This is the existing conflict-join
+partition; complete original primitives remain owned for future interfaces.
+Candidate validation uses fresh compilation of all 248 linked Frontier/tool
+translation units at the recorded optimized flags, based on 69ece94a0371.
+Commands, binary/input hashes, per-case timings and outcomes are retained in
+`.local/section8-refactor/tractable-certification/` (`commands.json`,
+`corpus-provenance.json`, `corpus-results.json`, `validation-results.json`).

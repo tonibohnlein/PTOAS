@@ -58,6 +58,9 @@ void FiniteGuardedState::closeAndReduce()
     for (auto edge : residual) {
         add(edge.source, edge.target, both(presence[edge.source], presence[edge.target]));
     }
+    for (auto edge : guardedResidual) {
+        add(edge.source, edge.target, both(edge.guard, both(presence[edge.source], presence[edge.target])));
+    }
     std::vector<GuardedRankPayload> payloads;
     std::vector<GuardedRankEdge> generators, native;
     for (uint32_t i = 0; i < count; ++i) {
@@ -69,6 +72,7 @@ void FiniteGuardedState::closeAndReduce()
     for (auto edge : nativePrerequisites) {
         native.push_back({edge.source, edge.target, yes()});
     }
+    for (auto edge : guardedNative) { native.push_back({edge.source, edge.target, edge.guard}); }
     rankIndex = reduceGuardedRanks(*arena, payloads, generators, native);
     retained.clear();
     for (auto edge : rankIndex.retained) {

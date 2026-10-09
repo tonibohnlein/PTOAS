@@ -175,6 +175,13 @@ void prerequisites(detail::ProgramBuilder& builder, const PhaseIndex& index)
             for (std::size_t a = 0; a < b; ++a) {
                 const auto& source = builder.output.sites[a];
                 if (source.phase != edge.producer) { continue; }
+                bool sameVisit = true;
+                for (auto x : source.fixedCoordinates) {
+                    for (auto y : target.fixedCoordinates) {
+                        if (x.loop == y.loop && x.induction != y.induction) { sameVisit = false; }
+                    }
+                }
+                if (!sameVisit) { continue; }
                 const unsigned left = source.loops.size(), right = target.loops.size();
                 auto relation = builder.relation(edge.native ? PrimitiveKind::Native : PrimitiveKind::Prerequisites,
                                                   left + right);
@@ -204,12 +211,15 @@ void clearExports(ArithmeticProgram& output)
     output.extraction.dischargedEffects.clear();
 }
 } // namespace
-ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, const PhaseIndex& index,
+static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, const PhaseIndex& index,
                                              const SyncInput& input, const SyncStorageEffects& effects,
-                                             const ArithmeticLimits& limits, ArithmeticEntryConstant entryConstant)
+                                             const ArithmeticLimits& limits, ArithmeticEntryConstant entryConstant,
+                                             const FiniteExpansionLimits* expansion)
 {
     ArithmeticProgram output;
     output.context = region;
+    output.finiteExpansion = expansion != nullptr;
+    output.expansionFragmentLimit = expansion ? expansion->fragments : 0;
     output.modeledInput = &input;
     output.phaseIndex = &index;
     output.specializedEntry = static_cast<bool>(entryConstant);
@@ -233,7 +243,8 @@ ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, con
     }
     detail::ProgramBuilder builder{output, limits, function.getContext(), index, DenseMap<Value, unsigned>(),
                                    std::move(entryConstant)};
-    collect(index, builder);
+    if (expansion) { detail::collectExpanded(builder, *expansion); }
+    else { collect(index, builder); }
     if (output.extraction.state != RecognitionState::Applicable) {
         clearExports(output);
         return output;
@@ -337,6 +348,20 @@ ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, con
         clearExports(output);
     }
     return output;
+}
+ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, const PhaseIndex& index,
+    const SyncInput& input, const SyncStorageEffects& effects, const ArithmeticLimits& limits,
+    ArithmeticEntryConstant entryConstant)
+{
+    return buildArithmeticProgram(region, index, input, effects, limits, std::move(entryConstant), nullptr);
+}
+ArithmeticProgram expandFiniteArithmeticProgram(ArithmeticRegionContext region, const PhaseIndex& index,
+    const SyncInput& input, const SyncStorageEffects& effects, const FiniteExpansionLimits& limits)
+{
+    // Only normalize the specialized affine representation here. These are
+    // representability bounds, not a restricted-arithmetic membership claim.
+    const ArithmeticLimits adapter{UINT_MAX, UINT_MAX, 1, UINT64_MAX};
+    return buildArithmeticProgram(region, index, input, effects, adapter, {}, &limits);
 }
 ArithmeticProgram recognizeArithmeticProgram(func::FuncOp function, const PhaseIndex& index,
                                              const SyncInput& input, const SyncStorageEffects& effects,

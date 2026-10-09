@@ -28,7 +28,7 @@ struct FiniteVisitAnalysis;
 struct ArithmeticPeriodicProgram;
 enum class AnalysisBackend {
     Explicit, NumericalPeriodic, Rotating, MixedStride, GuardedRotating, BoundedLifetime,
-    Sequence, FiniteVisit, ArithmeticPeriodic, Arithmetic, FiniteGuarded, CompactBounding
+    Sequence, FiniteVisit, ExpandedFinite, ArithmeticPeriodic, Arithmetic, FiniteGuarded, CompactBounding
 };
 enum class AnalysisMode { MinimumExact, Fallback };
 enum class AnalysisEvaluation { Uniform, Stateful };

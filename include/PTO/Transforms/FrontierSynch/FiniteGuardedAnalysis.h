@@ -12,17 +12,21 @@
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 namespace mlir::pto::frontiersynch {
 struct FiniteGuardedState;
+struct ArithmeticProgram;
 struct FiniteGuardedAnalysis {
     std::string error;
     std::string insertionError;
     RegionalCost cost;
     std::shared_ptr<FiniteGuardedState> state;
+    std::shared_ptr<const ArithmeticProgram> expandedProgram;
 };
 // Original roots are adjacent operations in the function body. Nested if/else
 // is allowed, loops and unresolved value prerequisites are not. Input/IR remain
 // borrowed and must stay unchanged. No branch valuation is enumerated.
 FiniteGuardedAnalysis analyzeFiniteGuarded(func::FuncOp function, ArrayRef<Operation*> roots,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions = {});
+FiniteGuardedAnalysis analyzeExpandedFinite(func::FuncOp function, Operation* root,
+    const PhaseIndex& index, const SyncInput& input);
 RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analysis);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedLogicalInsertion(FiniteGuardedAnalysis& analysis);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedInsertion(FiniteGuardedAnalysis& analysis);
