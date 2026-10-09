@@ -205,6 +205,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedInsertion(Fi
 {
     auto result = prepareFiniteGuardedLogicalInsertion(analysis);
     if (succeeded(result)) {
+        prepareAllocationSupport(**result);
         (*result)->allocationCertificate =
             regionalAllocationCertificate(finiteGuardedRegionalResult(analysis), **result);
         if (!(*result)->allocationCertificate) {

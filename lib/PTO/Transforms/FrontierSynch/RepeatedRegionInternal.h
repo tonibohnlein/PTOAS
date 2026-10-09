@@ -13,7 +13,7 @@
 #include <tuple>
 namespace mlir::pto::frontiersynch {
 void liftRepeatedSelectors(RegionalAnalysis& out, RegionExpressions::Id trips);
-struct RepeatedRegionState {
+struct RepeatedRegionState : std::enable_shared_from_this<RepeatedRegionState> {
     using Id = RegionExpressions::Id;
     func::FuncOp function;
     scf::ForOp loop;

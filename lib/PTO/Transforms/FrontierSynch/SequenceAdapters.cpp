@@ -313,14 +313,16 @@ void SequenceAnalysisState::bindAdapters()
         out.prepare = [this, id]() -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
             const auto& current = children[id];
             if (!current.loop) {
-                auto prepared = prepareExplicitInsertion(function, current.explicitAnalysis);
+                auto prepared = prepareExplicitInsertion(function, current.explicitAnalysis, false);
                 if (succeeded(prepared)) { (*prepared)->completeInvocation = false; }
                 return prepared;
             }
             auto prepared = std::make_unique<PreparedLogicalPlan>(0);
             if (failed(prepareCountedEndpointCode(function, current.endpoints, *prepared))) { return failure(); }
-            prepared->regionalAllocation =
-                periodicRegionalAllocation(current.regional, current.periodic, current.trips);
+            prepared->allocationPreparation = [owner = shared_from_this(), id](PreparedLogicalPlan& plan) {
+                const auto& child = owner->children[id];
+                plan.regionalAllocation = periodicRegionalAllocation(child.regional, child.periodic, child.trips);
+            };
             return prepared;
         };
         auto convert = [&](Selected selected) {
@@ -627,7 +629,7 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
     }
     if (out.capabilities.endpointRecipes) {
         out.prepare = [owned]() -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
-            auto result = prepareSequenceInsertion(*owned);
+            auto result = prepareSequenceLogicalInsertion(*owned);
             if (succeeded(result)) { (*result)->completeInvocation = false; }
             return result;
         };

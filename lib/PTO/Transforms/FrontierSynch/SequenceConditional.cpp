@@ -29,21 +29,25 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> maskPlan(
     plan.completeInvocation = false;
     // Original arm cuts already suppress commands when the arm is not taken.
     // Allocation summaries also need that presence; copy borrowed summaries.
-    if (plan.regionalAllocation) {
-        plan.regionalAllocation = std::make_shared<RegionalAllocationSummary>(*plan.regionalAllocation);
-        for (auto& group : plan.regionalAllocation->groups) {
-            for (auto& member : group.members) {
-                member.active = arena->select(guard, member.active, arena->boolean(false));
-            }
-            for (auto& lane : group.lanes) {
-                for (auto* selectors : {&lane.firstSources, &lane.lastTargets}) {
-                    for (auto& selector : *selectors) {
-                        selector.present = arena->select(guard, selector.present, arena->boolean(false));
+    auto prepare = std::move(plan.allocationPreparation);
+    plan.allocationPreparation = [prepare = std::move(prepare), arena, guard](PreparedLogicalPlan& plan) {
+        if (prepare) { prepare(plan); }
+        if (plan.regionalAllocation) {
+            plan.regionalAllocation = std::make_shared<RegionalAllocationSummary>(*plan.regionalAllocation);
+            for (auto& group : plan.regionalAllocation->groups) {
+                for (auto& member : group.members) {
+                    member.active = arena->select(guard, member.active, arena->boolean(false));
+                }
+                for (auto& lane : group.lanes) {
+                    for (auto* selectors : {&lane.firstSources, &lane.lastTargets}) {
+                        for (auto& selector : *selectors) {
+                            selector.present = arena->select(guard, selector.present, arena->boolean(false));
+                        }
                     }
                 }
             }
         }
-    }
+    };
     return std::move(*prepared);
 }
 RegionalAnalysis guardedArm(RegionalAnalysis body, Expr guard)

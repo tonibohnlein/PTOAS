@@ -16,7 +16,7 @@ namespace mlir::pto::frontiersynch {
 // Failure leaves original IR unchanged, including failed availability checks.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGuardedRotatingEndpoints(
     func::FuncOp function, GuardedRotatingAnalysis& analysis, std::string& error,
-    const RegionalDemandFilter& filter = {});
+    const RegionalDemandFilter& filter = {}, bool includeAllocation = true);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGuardedRotatingInsertion(
     func::FuncOp function, const SyncInput& input, const ProgramRecognition& program);
 } // namespace mlir::pto::frontiersynch

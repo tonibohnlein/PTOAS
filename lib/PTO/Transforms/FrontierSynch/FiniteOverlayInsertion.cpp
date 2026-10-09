@@ -12,7 +12,7 @@
 #include <map>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayLogicalInsertion(
     func::FuncOp function, const FiniteOverlayAnalysis& analysis,
     std::string& error)
 {
@@ -34,6 +34,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(
     auto supplied = base.prepareFiltered(analysis.retainBase);
     if (failed(supplied)) { error = "finite overlay base endpoint refinement failed"; return failure(); }
     auto plan = std::move(*supplied);
+    auto baseView = takeRegionalAllocationView(*plan);
     plan->allocationCertificate = {};
     // Retain the typed base proof, then rebuild the certificate against augmented queries.
     auto& arena = *base.expressions;
@@ -165,8 +166,22 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(
         endpoint.record = namespaces.at(records.at(endpoint.records.front())); endpoint.piece = piece++;
     }
     if (!arena.constructionError().empty()) { error = arena.constructionError(); return failure(); }
-    plan->regionalAllocation = finiteOverlayAllocation(analysis, *plan, overlayRecords);
-    plan->allocationCertificate = regionalAllocationCertificate(analysis.regional, *plan);
+    plan->allocationPreparation = [owned = std::make_shared<FiniteOverlayAnalysis>(analysis),
+        baseView, overlayRecords = std::move(overlayRecords)](PreparedLogicalPlan& prepared) {
+        prepareAllocationSupport(*baseView);
+        prepared.regionalAllocation = baseView->regionalAllocation;
+        prepared.regionalAllocation = finiteOverlayAllocation(*owned, prepared, overlayRecords);
+    };
+    return plan;
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(
+    func::FuncOp function, const FiniteOverlayAnalysis& analysis, std::string& error)
+{
+    auto plan = prepareFiniteOverlayLogicalInsertion(function, analysis, error);
+    if (succeeded(plan)) {
+        prepareAllocationSupport(**plan);
+        (*plan)->allocationCertificate = regionalAllocationCertificate(analysis.regional, **plan);
+    }
     return plan;
 }
 RegionalAnalysis finiteOverlayRegionalResult(func::FuncOp function,
@@ -179,7 +194,7 @@ RegionalAnalysis finiteOverlayRegionalResult(func::FuncOp function,
     auto owned = std::make_shared<FiniteOverlayAnalysis>(analysis);
     result.prepare = [owned, function]() -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
         std::string error;
-        auto plan = prepareFiniteOverlayInsertion(function, *owned, error);
+        auto plan = prepareFiniteOverlayLogicalInsertion(function, *owned, error);
         if (succeeded(plan)) { (*plan)->completeInvocation = false; }
         return plan;
     };
