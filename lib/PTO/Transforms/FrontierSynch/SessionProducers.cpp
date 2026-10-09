@@ -13,6 +13,8 @@
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "RecognitionInternal.h"
+#include "PTO/Transforms/FrontierSynch/MixedStrideAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/CompactBoundingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 namespace mlir::pto::frontiersynch {
 void FrontierAnalysis::recordWholeRegion(AnalysisBackend backend)
@@ -221,6 +223,20 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
     case AnalysisBackend::GuardedRotating:
     case AnalysisBackend::BoundedLifetime:
         return produceLoopBackend(backend, error);
+    case AnalysisBackend::MixedStride: {
+        auto result = analyzeMixedStrideFunction(function, *storage, *program, *structuralIndex, error);
+        if (failed(result)) { return {}; }
+        owned->mixedStrideDemands = *result;
+        owned->backend = "mixed-stride";
+        return owned;
+    }
+    case AnalysisBackend::CompactBounding: {
+        auto result = analyzeCompactBounding(function, storage, *structuralIndex);
+        if (!result.error.empty()) { error = result.error; return {}; }
+        owned->compactDemands = result.owner;
+        owned->backend = "compact-bounding";
+        return owned;
+    }
     case AnalysisBackend::Sequence: {
         const auto* sequence = analyzeSequenceFunction();
         const bool complete = sequence && sequence->error.empty() && program->sequenceContract &&

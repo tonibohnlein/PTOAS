@@ -17,14 +17,16 @@ struct ProgramRecognition;
 struct RegionalAnalysis;
 struct ArithmeticRegionalRelations;
 struct RotatingAnalysis;
+struct MixedStrideDemands;
+struct CompactBoundingOwner;
 struct GuardedRotatingAnalysis;
 struct BoundedLifetimeDemandResult;
 struct SequenceAnalysis;
 struct FiniteGuardedAnalysis;
 struct ArithmeticPeriodicProgram;
 enum class AnalysisBackend {
-    Explicit, NumericalPeriodic, Rotating, GuardedRotating, BoundedLifetime,
-    Sequence, ArithmeticPeriodic, Arithmetic, FiniteGuarded
+    Explicit, NumericalPeriodic, Rotating, MixedStride, GuardedRotating, BoundedLifetime,
+    Sequence, ArithmeticPeriodic, Arithmetic, FiniteGuarded, CompactBounding
 };
 enum class AnalysisMode { MinimumExact, Fallback };
 enum class AnalysisEvaluation { Uniform, Stateful };
@@ -58,6 +60,8 @@ struct MathematicalResult {
     std::shared_ptr<const ExplicitAnalysis> explicitDemands;
     std::shared_ptr<const ProgramRecognition> recognition;
     std::shared_ptr<const RotatingAnalysis> rotatingDemands;
+    std::shared_ptr<const MixedStrideDemands> mixedStrideDemands;
+    std::shared_ptr<const CompactBoundingOwner> compactDemands;
     std::shared_ptr<GuardedRotatingAnalysis> guardedRotatingDemands;
     std::shared_ptr<BoundedLifetimeDemandResult> boundedDemands;
     std::shared_ptr<SequenceAnalysis> sequenceDemands;

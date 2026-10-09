@@ -63,8 +63,8 @@ CompactClasses attachLeaf(func::FuncOp function, const PhaseIndex& index, Compac
         });
 }
 } // namespace
-CompactBoundingPreparation prepareCompactBoundingInsertion(
-    func::FuncOp function, std::shared_ptr<const SyncInput> input)
+CompactBoundingPreparation analyzeCompactBounding(
+    func::FuncOp function, std::shared_ptr<const SyncInput> input, const PhaseIndex& index)
 {
     CompactBoundingPreparation result;
     auto owner = std::make_shared<CompactBoundingOwner>(); owner->input = std::move(input);
@@ -72,13 +72,10 @@ CompactBoundingPreparation prepareCompactBoundingInsertion(
     if (!function || function.isDeclaration() || !llvm::hasSingleElement(function.getBody()) || !owner->input) {
         result.error = "compact fallback needs one original function block and shared input"; return result;
     }
-    PhaseIndex index;
-    if (failed(index.build(function, *owner->input))) {
-        result.error = "compact fallback shared phase index unavailable"; return result;
-    }
     auto arena = std::make_shared<RegionExpressions>();
     for (const auto* phase : owner->input->instructions()) { arena->forbidRecomputation(phase->elementOp); }
     auto preparationError = std::make_shared<std::string>();
+    owner->preparationError = preparationError;
     auto built = captureCompactClassSequence(function, function.front(), *owner->input, arena,
         [function, &index, preparationError](CompactClasses leaf) {
             return attachLeaf(function, index, std::move(leaf), preparationError);
@@ -99,34 +96,62 @@ CompactBoundingPreparation prepareCompactBoundingInsertion(
     if (missingPrerequisite) {
         result.error = "phase-less completion prerequisite needs a compact order/endpoint interface"; return result;
     }
+    return result;
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareCompactBoundingLogicalInsertion(
+    func::FuncOp function, std::shared_ptr<const CompactBoundingOwner> owner, std::string& error)
+{
+    if (!owner || !owner->boundary || !owner->input) { return failure(); }
     const auto& region = owner->boundary->nativeExports();
     if (!region.prepare && !region.prepareWithVisits) {
-        result.exportError = owner->boundary->exportError().empty() ?
+        error = owner->boundary->exportError().empty() ?
             "compact selected mathematics has no endpoint export" : owner->boundary->exportError();
-        return result;
+        return failure();
     }
     auto prepared = region.prepareWithVisits ? region.prepareWithVisits({}) : region.prepare();
     if (failed(prepared)) {
-        result.exportError = preparationError->empty() ?
-            "compact selected endpoint preparation unavailable" : *preparationError;
-        return result;
+        error = !owner->preparationError || owner->preparationError->empty() ?
+            "compact selected endpoint preparation unavailable" : *owner->preparationError;
+        return failure();
     }
-    result.prepared = std::move(*prepared);
-    result.prepared->completeInvocation = !owner->input->instructions().empty();
-    const bool notifications = llvm::any_of(result.prepared->endpoints, [](const auto& endpoint) {
+    (*prepared)->completeInvocation = !owner->input->instructions().empty();
+    (*prepared)->compactBoundingOwner = std::move(owner);
+    return prepared;
+}
+DictionaryAttr compactBoundingAllocationCertificate(const CompactBoundingOwner& owner, PreparedLogicalPlan& plan)
+{
+    auto certificate = plan.allocationCertificate;
+    if (!certificate && plan.regionalAllocation) {
+        auto selected = owner.boundary->nativeExports();
+        if (owner.boundary->bounds().upper) {
+            selected.reachability = owner.boundary->bounds().upper->regional().reachability;
+        }
+        certificate = regionalAllocationCertificate(selected, plan);
+    }
+    const bool notifications = llvm::any_of(plan.endpoints, [](const auto& endpoint) {
         return endpoint.kind != LogicalCommandKind::Barrier;
     });
-    if (notifications && !result.prepared->allocationCertificate && result.prepared->regionalAllocation) {
-        auto selected = region;
-        if (owner->boundary->bounds().upper) {
-            selected.reachability = owner->boundary->bounds().upper->regional().reachability;
-        }
-        result.prepared->allocationCertificate = regionalAllocationCertificate(selected, *result.prepared);
+    owner.allocationError = notifications && !certificate ? "selected compact allocation certificate unavailable" : "";
+    return certificate;
+}
+CompactBoundingPreparation prepareCompactBoundingInsertion(
+    func::FuncOp function, std::shared_ptr<const SyncInput> input)
+{
+    CompactBoundingPreparation result;
+    const bool valid = function && !function.isDeclaration() && llvm::hasSingleElement(function.getBody()) && input;
+    if (!valid) {
+        result.error = "compact fallback needs one original function block and shared input"; return result;
     }
-    if (notifications && !result.prepared->allocationCertificate) {
-        owner->allocationError = "selected compact allocation certificate unavailable";
+    PhaseIndex index;
+    if (failed(index.build(function, *input))) {
+        result.error = "compact fallback shared phase index unavailable"; return result;
     }
-    result.prepared->compactBoundingOwner = std::move(owner);
+    result = analyzeCompactBounding(function, std::move(input), index);
+    if (!result.error.empty()) { return result; }
+    auto prepared = prepareCompactBoundingLogicalInsertion(function, result.owner, result.exportError);
+    if (failed(prepared)) { return result; }
+    result.prepared = std::move(*prepared);
+    result.prepared->allocationCertificate = compactBoundingAllocationCertificate(*result.owner, *result.prepared);
     return result;
 }
 } // namespace mlir::pto::frontiersynch

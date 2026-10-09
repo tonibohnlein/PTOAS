@@ -40,9 +40,9 @@ const StructureNode* wholeLoop(func::FuncOp function, const SyncInput& input, co
         })) { return nullptr; }
     return selected;
 }
-DictionaryAttr remapCertificate(const PeriodicAnalysis& periodic, MLIRContext* context)
+DictionaryAttr remapCertificate(const PeriodicAnalysis& periodic, int64_t plan, MLIRContext* context)
 {
-    auto certificate = encodePeriodicSharedAllocation(periodic, 0, context);
+    auto certificate = encodePeriodicSharedAllocation(periodic, plan, context);
     if (!certificate) { return {}; }
     std::map<uint32_t, uint32_t> records;
     for (auto [index, record] : llvm::enumerate(periodic.retained)) {
@@ -109,8 +109,9 @@ struct EndpointBuilder {
     }
 };
 } // namespace
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareMixedStrideInsertion(
-    func::FuncOp function, const SyncInput& input, const ProgramRecognition& program, std::string& error)
+FailureOr<std::shared_ptr<MixedStrideDemands>> analyzeMixedStrideFunction(
+    func::FuncOp function, const SyncInput& input, const ProgramRecognition& program,
+    const PhaseIndex& index, std::string& error)
 {
     error.clear();
     auto* selected = wholeLoop(function, input, program);
@@ -118,8 +119,6 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareMixedStrideInsertion(
     auto loop = dyn_cast<scf::ForOp>(selected->anchor);
     auto domain = CountedLoop::get(loop);
     if (!domain) { error = "mixed-stride counted domain unavailable"; return failure(); }
-    PhaseIndex index;
-    if (failed(index.build(function, input))) { error = "mixed-stride phase index unavailable"; return failure(); }
     RecognitionResult outside;
     for (auto& op : function.front()) {
         if (&op == loop.getOperation()) { continue; }
@@ -142,7 +141,18 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareMixedStrideInsertion(
     llvm::append_range(extracted.generators, *demands);
     auto periodic = analyzePeriodicDemands(expanded.payloads, extracted.generators, *native);
     if (!periodic.error.empty()) { error = periodic.error; return failure(); }
-    EndpointBuilder endpoints(*domain, primitives.phases, expanded.period);
+    auto result = std::make_shared<MixedStrideDemands>();
+    result->loop = loop; result->phases.assign(primitives.phases.begin(), primitives.phases.end());
+    result->period = expanded.period; result->periodic = std::move(periodic);
+    return result;
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareMixedStrideLogicalInsertion(
+    func::FuncOp function, const MixedStrideDemands& demands, std::string& error)
+{
+    auto domain = CountedLoop::get(demands.loop);
+    if (!domain) { error = "mixed-stride counted domain unavailable"; return failure(); }
+    const auto& periodic = demands.periodic;
+    EndpointBuilder endpoints(*domain, demands.phases, demands.period);
     CircuitEndpoints emit(function, endpoints.arena, endpoints.anchors);
     for (auto id : periodic.retained) {
         if (id >= periodic.generators.size() || !endpoints.add(emit, periodic.generators[id])) {
@@ -154,8 +164,26 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareMixedStrideInsertion(
     // The only source coordinate is the superperiod ordinal. The original
     // record selector is a namespace operand, not another dynamic coordinate.
     plan->nestedIdentities = false;
-    plan->completeInvocation = !primitives.phases.empty();
-    plan->allocationCertificate = remapCertificate(periodic, function.getContext());
+    plan->completeInvocation = !demands.phases.empty();
+    return plan;
+}
+DictionaryAttr mixedStrideAllocationCertificate(
+    const MixedStrideDemands& demands, int64_t plan, MLIRContext* context)
+{
+    return remapCertificate(demands.periodic, plan, context);
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareMixedStrideInsertion(
+    func::FuncOp function, const SyncInput& input, const ProgramRecognition& program, std::string& error)
+{
+    PhaseIndex index;
+    if (failed(index.build(function, input))) { error = "mixed-stride phase index unavailable"; return failure(); }
+    auto demands = analyzeMixedStrideFunction(function, input, program, index, error);
+    if (failed(demands)) { return failure(); }
+    auto plan = prepareMixedStrideLogicalInsertion(function, **demands, error);
+    if (succeeded(plan)) {
+        (*plan)->allocationCertificate = mixedStrideAllocationCertificate(**demands, (*plan)->planId,
+                                                                          function.getContext());
+    }
     return plan;
 }
 } // namespace mlir::pto::frontiersynch
