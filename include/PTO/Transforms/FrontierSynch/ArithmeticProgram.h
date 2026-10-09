@@ -14,6 +14,9 @@ namespace mlir::pto::frontiersynch {
 struct ArithmeticGuard {
     scf::IfOp branch;
     bool takeThen = true;
+    // A concrete proof for this exact fixed-coordinate environment. Preserve
+    // branch identity, but do not re-interpret its machine-width predicate.
+    bool provenTaken = false;
 };
 struct FixedLoopCoordinate {
     scf::ForOp loop;
@@ -39,6 +42,13 @@ struct ArithmeticRegionContext {
     // from entering a body/arm/run request.
     SmallVector<Operation*> roots;
 };
+// Optional finite access re-emission recipe. Rows include complete occurrence
+// guards; translation uses only the common entry-parameter symbols.
+struct FiniteAccessRecipe {
+    std::size_t relation = 0;
+    AffineExpr translation;
+    SmallVector<SmallVector<AffineExpr>> rows;
+};
 struct ArithmeticProgram {
     ArithmeticRegionContext context;
     // Certification provenance; same IR with a different modeled input or
@@ -48,6 +58,8 @@ struct ArithmeticProgram {
     bool specializedEntry = false;
     bool finiteExpansion = false;
     uint64_t expandedVisits = 0, expandedFragments = 0, expansionFragmentLimit = 0;
+    uint64_t expandedFoldOperations = 0, expandedPrunedArms = 0, expandedTranslationFragments = 0;
+    SmallVector<FiniteAccessRecipe> finiteAccessRecipes;
     // Incoming scalar prerequisites remain obligations of the composing parent.
     SmallVector<ValuePrerequisite> incomingPrerequisites;
     RecognitionResult extraction;

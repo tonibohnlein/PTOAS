@@ -208,6 +208,7 @@ void clearExports(ArithmeticProgram& output)
     output.sites.clear();
     output.parameters.clear();
     output.uniformConflicts.clear();
+    output.finiteAccessRecipes.clear();
     output.incomingPrerequisites.clear();
     output.extraction.dischargedEffects.clear();
 }
@@ -377,6 +378,7 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
         output.primitives.period = configured.period;
         output.primitives.relations.clear();
         output.uniformConflicts.clear();
+        output.finiteAccessRecipes.clear();
         output.expandedFragments = 0;
         // Explicit empty roles differ from absent primitive information.
         for (auto kind : {PrimitiveKind::Context, PrimitiveKind::Occurrences, PrimitiveKind::Order,
@@ -423,6 +425,7 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
             auto original = std::move(output.primitives);
             auto recognized = std::move(output.recognition);
             auto conflicts = std::move(output.uniformConflicts);
+            auto accessRecipes = std::move(output.finiteAccessRecipes);
             const auto extraction = output.extraction;
             const auto fragments = output.expandedFragments;
             output.primitives.parameters = original.parameters;
@@ -434,6 +437,7 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
                 output.primitives = std::move(original);
                 output.recognition = std::move(recognized);
                 output.uniformConflicts = std::move(conflicts);
+                output.finiteAccessRecipes = std::move(accessRecipes);
                 output.extraction = extraction;
             }
             // Both adapter normalizations are charged. The original occurrence

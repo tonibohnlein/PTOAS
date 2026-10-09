@@ -371,7 +371,8 @@ bool ProgramBuilder::prepareGuard(Value root, const ArithmeticSite& site)
     return true;
 }
 void ProgramBuilder::emitForSites(PrimitiveRelation& relation, ArrayRef<AffineExpr> rows,
-                                 ArrayRef<std::pair<const ArithmeticSite*, unsigned>> endpoints)
+                                 ArrayRef<std::pair<const ArithmeticSite*, unsigned>> endpoints,
+                                 SmallVector<SmallVector<AffineExpr>>* recipes)
 {
     if (output.finiteExpansion && output.extraction.state != RecognitionState::Applicable) { return; }
     Pieces pieces{Rows(rows)};
@@ -388,6 +389,7 @@ void ProgramBuilder::emitForSites(PrimitiveRelation& relation, ArrayRef<AffineEx
         }
         pieces = std::move(*constrained);
         for (auto guard : site->guards) {
+            if (guard.provenTaken) { continue; }
             auto branch = guard.branch;
             auto alternatives = condition(*this, branch.getCondition(), guard.takeThen, *site,
                                           offset, 0, cache, exceeded);
@@ -402,6 +404,7 @@ void ProgramBuilder::emitForSites(PrimitiveRelation& relation, ArrayRef<AffineEx
         }
     }
     for (const auto& piece : pieces) {
+        if (recipes) { recipes->push_back(piece); }
         emit(relation, piece);
         if (output.finiteExpansion && output.extraction.state != RecognitionState::Applicable) { return; }
     }

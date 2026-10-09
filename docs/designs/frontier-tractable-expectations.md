@@ -405,3 +405,51 @@ cases and 22 serial corpus runs pass. Every case retains its previous coverage
 (227/240 and 212/240); no timeout or original IR mutation occurs. The slowest
 corpus invocation is 14.3 seconds. Optimized affected-unit builds and both links,
 changed-code compliance and diff checks pass.
+
+## Fixed branch proofs during finite normalization
+
+The original-coordinate finite-expansion adapter now evaluates a conditional
+only when its complete scalar expression has concrete operands in the current
+fixed loop-coordinate environment. It uses the original operation widths and
+scoped data layout, with dialect folders operating on detached copies. The
+memo is local to that environment. Unknown operands, invalid folds, poison
+attributes, overflow or fast-math promises and unsupported index widths retain
+the existing guarded attempt and its obligations.
+
+A proved inactive arm consumes no payload or pair budget. The selected arm
+retains its original branch identity, arm and coordinates, together with a
+proof that its predicate holds in that environment. This proof avoids a second
+interpretation through mathematical integer predicates. Original control
+prerequisites and selected leaf contracts still apply. Runtime conditionals
+retain both potential arms. Folding work and pruned arms are recorded separately
+from visited operations and relation fragments. This extends finite normalization;
+it introduces no additional tractable class or kernel-specific recognizer.
+The three pinned paper hashes remain unchanged.
+
+The initial branch-pruning corpus audit exposed a MayAlias elementwise timeout
+in the general arithmetic importer's quotient projection. An optimized
+line-table profile located the expensive construction before overlap joins.
+Finite demand construction now has a general common-translation adapter:
+within one `(space, base)` family, every nonempty access must provide complete
+raw guarded rows and the same parameter-only translation. It substitutes old
+byte = translated byte + that translation, reuses the selected residue period,
+and regenerates the normalized relations. Missing or differing recipes leave
+the family unchanged. Alias requirements between different bases remain intact.
+Original physical primitives remain retained for queries and future selectors.
+
+This optional representation uses the existing finite fragment cap independently
+of the original normalization. Its attempted fragments are charged separately,
+including a failed adapter followed by the original description. No external
+watchdog becomes a class criterion. Recipes follow the original primitive table
+through P1/P2 construction and rollback. The independent checks compare original
+and translated generator/native unions, actual selected dependency graphs,
+runtime guards, signed bindings, division/remainder origins and P2 residues;
+missing coverage and differing translations exercise the unchanged-family path.
+
+Translation expressions are canonically simplified after checked construction,
+so visit-dependent constant offsets do not hide a common parameter translation.
+No wrapping or guard constraint is removed by that comparison. The previously
+timing-out elementwise MayAlias case completes in 0.08 seconds and gains one
+exact regional certificate. All 22 serial pinned corpus invocations pass with
+227/240 and 213/240 recognized regions; no case loses coverage, times out or
+mutates the original IR. The slowest invocation is 14.1 seconds.
