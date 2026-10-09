@@ -200,9 +200,11 @@ bool TemplateBuilder::block(Block& body, bool emit, unsigned depth)
             }
             for (auto [arm, region] : llvm::enumerate(branch->getRegions())) {
                 const bool chosen = (arm == 0) == *selected;
-                if ((!emit || chosen) && !region.empty() && !block(region.front(), emit, depth + 1)) {
-                    return false;
-                }
+                const bool savedPath = activePath;
+                activePath = savedPath && chosen;
+                const bool walked = (emit && !chosen) || region.empty() || block(region.front(), emit, depth + 1);
+                activePath = savedPath;
+                if (!walked) { return false; }
             }
         } else {
             auto phaseList = index.phasesFor(&op);
@@ -210,8 +212,11 @@ bool TemplateBuilder::block(Block& body, bool emit, unsigned depth)
                 return false;
             }
             for (const auto* phase : phaseList) {
-                if (emit && !payload(phase)) {
-                    return false;
+                if (emit && !payload(phase)) { return false; }
+                if (!emit && activePath && plannedPayloads) {
+                    TemplatePayload planned;
+                    planned.phase = phase; planned.coordinates = path;
+                    plannedPayloads->push_back(std::move(planned));
                 }
             }
         }

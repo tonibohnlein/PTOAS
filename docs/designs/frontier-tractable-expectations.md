@@ -623,3 +623,33 @@ run is 14.0 seconds. Compatibility mappings, foreign input/index refusal, failed
 preflight retries, export retries and alias-context resets are checked. Compliance
 and whitespace checks pass, and the paper hashes are unchanged. This is focused
 validation rather than the final paired corpus campaign.
+
+### Lazy numerical-template preflight
+
+Structural recognition no longer enumerates numerical-template bodies or builds
+their effects. A bounded preflight records selected original payload identities
+and fixed inner-loop coordinates, while preserving the existing conservative
+checks and visit/payload accounting across both constant conditional arms. It
+constructs no access fragments, storage atoms, demands, endpoints or allocation.
+
+An explicit numerical analysis request materializes effects from the retained
+coordinate environment, then uses the unchanged numerical periodic producer and
+reducer. Original-region session requests cache the preflight and materialized
+result independently of later exports. Foreign modeled-input or structural-index
+identities are rejected before materialization. Specialized geometry/control
+compatibility calls use the same split locally; their borrowed callback contexts
+are not merged into the original-region cache.
+
+This milestone removes eager numerical construction. Estimated candidate order
+and specialized composition caches remain separate work. Section 8 and the two
+associated paper sections were reread; their pinned hashes remain unchanged.
+
+Optimized builds (19 translation units, then one final test-driver unit) and
+links pass. All 35 focused checks pass, including the 21 numerical source cases
+under both alias policies, successful/failed-plan retries, foreign-context
+refusal and alias reset. All 22 serial pinned-input runs preserve every region's
+exact-result, certification, class, representation and interface availability:
+227/240 under MayNotAlias and 213/240 under MayAlias, with no timeout or IR
+mutation; the slowest run is 14.0 seconds. Compliance and whitespace checks pass.
+This is focused milestone validation, not the final paired optimized corpus
+campaign.
