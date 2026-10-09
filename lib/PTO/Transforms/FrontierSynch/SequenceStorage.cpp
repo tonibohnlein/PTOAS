@@ -296,7 +296,15 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         auto numeric = std::move(*cachedNumeric);
         if (numeric.result.state != RecognitionState::Applicable) {
             std::string arithmeticError;
-            auto regional = analyzeArithmeticRegion({function, child.loop}, index, *input, arena, arithmeticError);
+            FailureOr<RegionalAnalysis> regional = failure();
+            if (resolveOriginal.demands) {
+                const auto id = static_cast<std::size_t>(&node - program->nodes.data());
+                auto retained = resolveOriginal.demands(id, AnalysisBackend::Arithmetic);
+                if (retained && retained->regionalDemands) { regional = *retained->regionalDemands; }
+                else { arithmeticError = "cached arithmetic regional interfaces unavailable"; }
+            } else {
+                regional = analyzeArithmeticRegion({function, child.loop}, index, *input, arena, arithmeticError);
+            }
             if (succeeded(regional)) {
                 if (node.boundedDemands && child.loop->getParentOp() == function) {
                     // Both constructions derive their modeled graph from this
