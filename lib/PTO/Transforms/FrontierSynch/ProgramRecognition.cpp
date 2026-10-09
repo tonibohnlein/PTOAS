@@ -350,6 +350,10 @@ FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const Sync
     if (failed(index.build(function, input))) {
         return failure();
     }
+    return recognizeProgram(function, input, index);
+}
+FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input,
+                                               const PhaseIndex& index) {
     ProgramRecognition result;
     StructureBuilder builder(result, index, input);
     builder.add(StructureKind::Sequence, function, &function.getBody(), std::nullopt);

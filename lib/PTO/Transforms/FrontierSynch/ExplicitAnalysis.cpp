@@ -225,14 +225,16 @@ std::optional<bool> explicitEventPrecedes(const ExplicitAnalysis& analysis,
     return reduction.localRanks[source.type] <= ranks[sourceColumn];
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareExplicitInsertion(
-    func::FuncOp function, const ExplicitAnalysis& analysis)
+    func::FuncOp function, const ExplicitAnalysis& analysis, bool includeAllocation)
 {
     if (!analysis.error.empty() || function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
         return failure();
     }
     auto plan = std::make_unique<PreparedLogicalPlan>(0);
     plan->completeInvocation = !analysis.phases.empty();
-    plan->allocationCertificate = explicitAllocationCertificate(analysis, plan->planId, function.getContext());
+    if (includeAllocation) {
+        plan->allocationCertificate = explicitAllocationCertificate(analysis, plan->planId, function.getContext());
+    }
     if (analysis.reduction.retained.empty()) {
         return plan;
     }

@@ -41,6 +41,66 @@ int runGuardedPeriodicChecks(llvm::StringRef path);
 int runSyncAliasChecks(func::FuncOp function, const pto::SyncInput &input);
 LogicalResult auditSyncStep0(func::FuncOp function, const pto::SyncInput &input);
 namespace {
+LogicalResult checkAnalysisSession(func::FuncOp function, pto::GMAliasPolicy policy) {
+  using namespace pto::frontiersynch;
+  FrontierAnalysis session(function);
+  if (failed(session.initialize(policy))) { return failure(); }
+  auto first = session.minimumDemands();
+  auto again = session.minimumDemands();
+  const auto& counts = session.constructionCounts();
+  if (first.status != AnalysisStatus::Ready || !first.mathematical ||
+      first.mathematical != again.mathematical || counts.structuralIndices != 1 ||
+      counts.explicitReductions != 1 || counts.logicalPreparations || counts.allocationExports) {
+    return function.emitError("demand-only session rebuilt analysis or constructed exports");
+  }
+  AnalysisNeeds stateful;
+  stateful.evaluation = AnalysisEvaluation::Stateful;
+  auto unsupported = session.minimumDemands(0, stateful);
+  if (unsupported.status != AnalysisStatus::UnmetObligation ||
+      unsupported.mathematical != first.mathematical) {
+    return function.emitError("unavailable evaluation discarded exact demands");
+  }
+  AnalysisRequest logical;
+  logical.needs.synchronization = true;
+  auto ready = session.analyze(logical);
+  const auto preparations = counts.logicalPreparations;
+  auto retry = session.analyze(logical);
+  if (ready.status != AnalysisStatus::Ready || retry.mathematical != first.mathematical ||
+      counts.explicitReductions != 1 || counts.logicalPreparations != preparations || counts.allocationExports) {
+    return function.emitError("logical retry repeated mathematical or export construction");
+  }
+  auto left = session.prepareLogical(ready);
+  auto right = session.prepareLogical(ready);
+  const bool bothPrepared = succeeded(left) && succeeded(right);
+  if (!bothPrepared) { return failure(); }
+  const bool sharedPlan = left->get() == right->get();
+  if (sharedPlan || (*left)->allocationCertificate || (*right)->allocationCertificate) {
+    return function.emitError("detached preparation ownership or allocation separation failed");
+  }
+  PreparedLogicalPlan unrelated(0);
+  const auto unrelatedAllocation = session.attachAllocation(ready, unrelated);
+  const auto allocation = session.attachAllocation(ready, **left);
+  const bool allocationChecked = failed(unrelatedAllocation) && succeeded(allocation);
+  if (!allocationChecked) {
+    return function.emitError("allocation did not validate selected-order ownership");
+  }
+  auto otherPolicy = policy == pto::GMAliasPolicy::MayAlias ?
+      pto::GMAliasPolicy::MayNotAlias : pto::GMAliasPolicy::MayAlias;
+  const auto changedPolicy = session.initialize(otherPolicy);
+  auto incompatible = session.prepareLogical(first);
+  const bool policyIsolated = succeeded(changedPolicy) && failed(incompatible);
+  if (!policyIsolated) {
+    return function.emitError("alias contexts reused incompatible mathematical ownership");
+  }
+  session.invalidate();
+  auto stale = session.prepareLogical(first);
+  const auto reinitialized = session.initialize(policy);
+  const bool invalidated = failed(stale) && succeeded(reinitialized);
+  if (!invalidated) { return failure(); }
+  auto renewed = session.minimumDemands();
+  if (renewed.status != AnalysisStatus::Ready || renewed.mathematical == first.mathematical) { return failure(); }
+  return success();
+}
 LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &input) {
   const auto& storage = input.accesses();
   llvm::outs() << "storage " << function.getSymName() << ": cells=" << storage.cells().size()
@@ -485,6 +545,7 @@ int main(int argc, char **argv) {
     }
     --argc;
   }
+  const bool sessionChecks = argc == 3 && StringRef(argv[1]) == "--analysis-session-checks";
   const bool phaseCopies = argc == 3 && StringRef(argv[1]) == "--phase-copy-checks";
   const bool regionChecks = argc == 3 && StringRef(argv[1]) == "--region-contract-checks";
   const bool step0 = argc == 3 && StringRef(argv[1]) == "--step0-json";
@@ -531,7 +592,7 @@ int main(int argc, char **argv) {
   const bool sequenceAnalysis = argc == 3 && StringRef(argv[1]) == "--sequence-analysis";
   const bool structuredTrace = argc == 3 && StringRef(argv[1]) == "--structured-trace";
   const bool physicalTrace = argc == 3 && StringRef(argv[1]) == "--physical-trace";
-  if (argc != 2 && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !recognition &&
+  if (argc != 2 && !sessionChecks && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !recognition &&
       !numericAnalysis && !insertLogical &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
       !mixedSymbolicChecks && !rotatingRegionChecks && !finiteVisitInput && !arithmeticPeriodicInput &&
@@ -547,7 +608,8 @@ int main(int argc, char **argv) {
     llvm::errs() << "usage: pto-sync-input-test "
                  << "[--gm-alias=may-alias|may-not-alias] "
                  << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
-                 "--recognize|--numeric-analysis|--insert-logical|--prepared-insertion-checks|--insertion-trace|"
+                 "--analysis-session-checks|--recognize|--numeric-analysis|--insert-logical|"
+                 "--prepared-insertion-checks|--insertion-trace|"
                  "--finite-guarded-analysis|--finite-overlay-insertion|--region-expression-checks|--sequence-analysis|"
                  "--structured-trace|--physical-trace|--numerical-hierarchy-checks|--bounding-contract-checks|"
                  "--compact-input-checks|"
@@ -580,7 +642,8 @@ int main(int argc, char **argv) {
     return runRepeatedReadOnlyStorageChecks(&context) ? 0 : 1;
   }
   context.disableMultithreading();
-  const bool hasOption = mixedSymbolicChecks || rotatingAnalysis || explicitAnalysis || expectFailure ||
+  const bool hasOption = sessionChecks || mixedSymbolicChecks || rotatingAnalysis ||
+                         explicitAnalysis || expectFailure ||
                          capabilities || phaseIndex ||
                          storageEffects || recognition || numericAnalysis || insertLogical ||
                          insertionTrace || physicalTrace ||
@@ -598,6 +661,16 @@ int main(int argc, char **argv) {
   auto module = parseSourceFile<ModuleOp>(filename, &context);
   if (!module || failed(verify(*module))) {
     return 1;
+  }
+  if (sessionChecks) {
+    auto before = render(module->getOperation());
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (failed(checkAnalysisSession(function, policy))) { return 1; }
+    }
+    const auto after = render(module->getOperation());
+    if (after != before) { return 1; }
+    llvm::outs() << "analysis-session: retained-demands fresh-fragments source-unchanged\n";
+    return 0;
   }
   if (hierarchyChecks) {
     for (auto function : module->getOps<func::FuncOp>()) {
