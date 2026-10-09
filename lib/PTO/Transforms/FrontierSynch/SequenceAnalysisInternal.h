@@ -72,6 +72,7 @@ struct SequenceAnalysisState {
     bool completeInvocation = true;
     bool reconstructPrerequisites = true;
     bool requireEndpoints = true;
+    SequenceRegionResolver resolveOriginal;
     SmallVector<scf::ForOp> requiredOuterLoops;
     std::shared_ptr<RegionExpressions> arena;
     RegionExpressions& expressions;
@@ -177,6 +178,8 @@ struct SequenceAnalysisState {
         else { crossings[position->second].guard = either(crossings[position->second].guard, guard); }
     }
     bool collect(std::size_t rootNode = 0);
+    FailureOr<RegionalAnalysis> originalRegion(std::size_t node, std::string& diagnostic);
+    bool resolvedChild(std::size_t node);
     bool explicitChild(const StructureNode& node);
     bool conditionalChild(const StructureNode& node);
     bool loopChild(const StructureNode& node);

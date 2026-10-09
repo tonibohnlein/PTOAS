@@ -33,6 +33,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
         if (!supported) { return failure(); }
     }
     if (demands.numericNode) {
+        // Original nested numerical coordinates need a regional insertion
+        // adapter; the whole-invocation emitter cannot stand in for it.
+        if (demands.region != 0) { return failure(); }
         auto& node = program->nodes[*demands.numericNode];
         if (!node.logicalEndpoints) {
             node.logicalEndpoints = buildNumericTemplateEndpoints(*node.numericTemplate, *node.periodicAnalysis);
@@ -42,7 +45,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
     }
     if (demands.rotatingDemands) {
         const auto& rotating = *demands.rotatingDemands;
-        auto& recipe = sessionState->rootAttempts[AnalysisBackend::Rotating].periodicEndpoints;
+        auto& recipe = sessionState->attempts[demands.region][AnalysisBackend::Rotating].periodicEndpoints;
         if (!recipe) {
             SmallVector<TemplateEndpointAnchor> anchors;
             for (auto* phase : rotating.phases) {
@@ -55,17 +58,27 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
         const auto& endpoints = *recipe;
         if (!endpoints.logical.error.empty()) { return failure(); }
         auto plan = std::make_unique<PreparedLogicalPlan>(0);
-        plan->completeInvocation = !rotating.phases.empty();
+        plan->completeInvocation = demands.region == 0 && !rotating.phases.empty();
         if (failed(prepareCountedEndpointCode(function, endpoints, *plan))) { return failure(); }
         plan->allocationCertificate = encodePeriodicSharedAllocation(rotating.periodic, plan->planId,
                                                                      function.getContext());
         return plan;
     }
     if (demands.guardedRotatingDemands) {
-        return prepareGuardedRotatingEndpoints(function, *demands.guardedRotatingDemands, error);
+        auto plan = prepareGuardedRotatingEndpoints(function, *demands.guardedRotatingDemands, error);
+        const bool regional = succeeded(plan) && demands.region != 0;
+        if (regional) { (*plan)->completeInvocation = false; }
+        return plan;
     }
-    if (demands.boundedDemands) { return prepareBoundedLifetimeResult(demands.boundedDemands, error, true); }
+    if (demands.boundedDemands) {
+        return prepareBoundedLifetimeResult(demands.boundedDemands, error, demands.region == 0);
+    }
     if (demands.sequenceDemands) { return prepareSequenceInsertion(*demands.sequenceDemands); }
+    if (demands.regionalDemands) {
+        const auto& regional = *demands.regionalDemands;
+        if (regional.prepare) { return regional.prepare(); }
+        return failure();
+    }
     if (demands.arithmeticPeriodicDemands) { return prepareArithmeticPeriodicFunction(); }
     if (demands.arithmeticDemands) {
         return prepareArithmeticInsertion(function, *program->arithmetic, *demands.arithmeticDemands, error);

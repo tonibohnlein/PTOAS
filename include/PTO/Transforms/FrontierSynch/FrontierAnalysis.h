@@ -88,10 +88,14 @@ public:
     const ProgramRecognition* result() const { return program ? &*program : nullptr; }
 private:
     LogicalResult recognizeStructure();
+    SequenceRegionResolver regionalResolver();
     void recordWholeRegion(AnalysisBackend backend);
     AnalysisOutcome requestBackend(AnalysisBackend backend, const AnalysisRequest& request);
     std::shared_ptr<const MathematicalResult> produceBackend(AnalysisBackend backend, std::string& error);
-    std::shared_ptr<const MathematicalResult> produceLoopBackend(AnalysisBackend backend, std::string& error);
+    std::shared_ptr<const MathematicalResult> produceRegionBackend(
+        AnalysisBackend backend, std::size_t region, std::string& error);
+    std::shared_ptr<const MathematicalResult> produceLoopBackend(
+        AnalysisBackend backend, std::string& error, std::size_t region = 0);
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareRetained(const MathematicalResult& demands);
     std::shared_ptr<AnalysisSessionState> sessionState;
     func::FuncOp function;

@@ -19,8 +19,10 @@ struct BackendAttempt {
     std::shared_ptr<const NumericTemplateEndpoints> periodicEndpoints;
 };
 struct AnalysisSessionState {
-    std::map<AnalysisBackend, BackendAttempt> rootAttempts;
+    std::map<std::size_t, std::map<AnalysisBackend, BackendAttempt>> attempts;
+    std::shared_ptr<RegionExpressions> expressions = std::make_shared<RegionExpressions>();
     std::set<AnalysisBackend> wholeRegionEvidence;
+    std::vector<std::size_t> activeRegions;
 };
 } // namespace mlir::pto::frontiersynch
 #endif

@@ -21,6 +21,24 @@ std::optional<int64_t> sequenceInteger(Value value)
     if (!matchPattern(value, m_ConstantInt(&number)) || !number.isSignedIntN(64)) { return std::nullopt; }
     return number.getSExtValue();
 }
+FailureOr<RegionalAnalysis> SequenceAnalysisState::originalRegion(std::size_t node, std::string& diagnostic)
+{
+    if (resolveOriginal) { return resolveOriginal(node, requireEndpoints, diagnostic); }
+    auto analyzed = analyzeSequenceRegion(function, *input, *program, node, arena, indexOwner, requireEndpoints);
+    if (!analyzed.error.empty()) { diagnostic = analyzed.error; return failure(); }
+    return sequenceRegionalResult(analyzed);
+}
+bool SequenceAnalysisState::resolvedChild(std::size_t node)
+{
+    std::string diagnostic;
+    auto regional = originalRegion(node, diagnostic);
+    if (failed(regional)) { return fail(diagnostic); }
+    Child child;
+    child.regional = std::move(*regional);
+    child.anchors = child.regional.anchors;
+    children.push_back(std::move(child));
+    return true;
+}
 bool SequenceAnalysisState::explicitChild(const StructureNode& node)
 {
 
@@ -150,24 +168,47 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         }
         repeatedAttempt = diagnostic;
     }
+    // Each export attempt owns its candidate. Failed storage or endpoint
+    // adapters cannot leave partial patterns in the child selected later.
+    auto obligation = [&](const std::string& reason) {
+        if (!repeatedAttempt.empty()) { repeatedAttempt += "; "; }
+        repeatedAttempt += reason;
+        error.clear();
+    };
     if (node.rotatingResult && node.rotatingResult->state == RecognitionState::Applicable) {
+        Child candidate;
+        candidate.loop = child.loop;
+        candidate.trips = child.trips;
         auto analysis = analyzeRotating(child.loop, index, *input, *node.rotatingResult);
-        if (!analysis.error.empty()) { return fail(analysis.error); }
-        if (!rotatingPatterns(child, analysis, *node.rotatingResult)) { return false; }
-        child.periodic = std::move(analysis.periodic);
-        child.endpoints = std::move(analysis.endpoints);
-    } else if (node.guardedRotatingResult &&
-               node.guardedRotatingResult->result.state == RecognitionState::Applicable) {
-        auto analysis = analyzeGuardedRotating(child.loop, *input, *node.guardedRotatingResult, arena);
-        if (!analysis.error.empty()) { return fail(analysis.error); }
-        std::string exportError;
-        auto regional = guardedRotatingRegionalResult(function, *input, analysis, exportError);
-        if (failed(regional)) { return fail(exportError); }
-        child.regional = std::move(*regional);
-        child.anchors = child.regional.anchors;
-        children.push_back(std::move(child));
-        return true;
-    } else {
+        if (!analysis.error.empty()) { obligation(analysis.error); }
+        else if (!rotatingPatterns(candidate, analysis, *node.rotatingResult)) { obligation(error); }
+        else if (!analysis.periodic.error.empty() || !analysis.endpoints.logical.error.empty()) {
+            obligation("rotating child cannot export exact endpoints");
+        } else {
+            candidate.periodic = std::move(analysis.periodic);
+            candidate.endpoints = std::move(analysis.endpoints);
+            candidate.anchors = candidate.endpoints.anchors;
+            children.push_back(std::move(candidate));
+            return true;
+        }
+    }
+    if (node.guardedRotatingResult &&
+        node.guardedRotatingResult->result.state == RecognitionState::Applicable) {
+        auto analysis = analyzeGuardedRotating(child.loop, *input, *node.guardedRotatingResult, index, arena);
+        if (!analysis.error.empty()) { obligation(analysis.error); }
+        else {
+            std::string exportError;
+            auto regional = guardedRotatingRegionalResult(function, *input, analysis, exportError);
+            if (failed(regional)) { obligation(exportError); }
+            else {
+                child.regional = std::move(*regional);
+                child.anchors = child.regional.anchors;
+                children.push_back(std::move(child));
+                return true;
+            }
+        }
+    }
+    {
         if (node.boundedLifetime &&
             node.boundedLifetime->skeleton.result.state == RecognitionState::Applicable) {
             std::string diagnostic;
@@ -300,7 +341,8 @@ bool SequenceAnalysisState::collect(std::size_t rootNode)
     for (std::size_t position = 0; position < root.children.size();) {
         const auto& node = program->nodes[root.children[position]];
         if (node.kind == StructureKind::Loop) {
-            if (!loopChild(node)) { return false; }
+            const bool accepted = resolveOriginal ? resolvedChild(root.children[position]) : loopChild(node);
+            if (!accepted) { return false; }
             ++position; continue;
         }
         auto containsLoop = [](const StructureNode& child) {
@@ -311,7 +353,8 @@ bool SequenceAnalysisState::collect(std::size_t rootNode)
             return found;
         };
         if (containsLoop(node)) {
-            if (!conditionalChild(node)) { return false; }
+            const bool accepted = resolveOriginal ? resolvedChild(root.children[position]) : conditionalChild(node);
+            if (!accepted) { return false; }
             ++position; continue;
         }
         SmallVector<Operation*> roots;
@@ -336,9 +379,18 @@ bool SequenceAnalysisState::collect(std::size_t rootNode)
             child.anchors = child.regional.anchors;
             children.push_back(std::move(child));
         } else {
+            StructureNode fused;
+            fused.kind = StructureKind::ExplicitRun;
+            fused.operations = roots;
+            fused.explicitResult = RecognitionResult{};
             for (auto current = position; current < end; ++current) {
-                if (!explicitChild(program->nodes[root.children[current]])) { return false; }
+                const auto& part = program->nodes[root.children[current]];
+                if (!part.explicitResult || part.explicitResult->state != RecognitionState::Applicable) {
+                    return fail("adjacent explicit child has an unmet form obligation");
+                }
+                llvm::append_range(fused.payloads, part.payloads);
             }
+            if (!explicitChild(fused)) { return false; }
         }
         position = end;
     }

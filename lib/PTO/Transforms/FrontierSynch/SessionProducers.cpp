@@ -13,6 +13,7 @@
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "RecognitionInternal.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 namespace mlir::pto::frontiersynch {
 void FrontierAnalysis::recordWholeRegion(AnalysisBackend backend)
 {
@@ -51,17 +52,29 @@ const StructureNode* wholeLoop(func::FuncOp function, const SyncInput& input,
 }
 } // namespace
 std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceLoopBackend(
-    AnalysisBackend backend, std::string& error)
+    AnalysisBackend backend, std::string& error, std::size_t region)
 {
-    const auto* node = wholeLoop(function, *storage, *program, *structuralIndex);
-    if (!node) { error = "route requires one certified whole-invocation loop"; return {}; }
+    const auto* node = region == 0 ? wholeLoop(function, *storage, *program, *structuralIndex) :
+                                    &program->nodes[region];
+    if (!node || node->kind != StructureKind::Loop || node->unsupportedContext) {
+        error = "route requires an original certified loop"; return {};
+    }
     const auto loop = cast<scf::ForOp>(node->anchor);
     auto owned = std::make_shared<MathematicalResult>();
     owned->input = storage;
     owned->recognition = program;
+    owned->region = region;
     switch (backend) {
     case AnalysisBackend::NumericalPeriodic: {
-        if (failed(analyzeNumericCandidates())) { return {}; }
+        if (region == 0) {
+            if (failed(analyzeNumericCandidates())) { return {}; }
+        } else {
+            auto& local = program->nodes[region];
+            if (local.numericTemplate && local.numericTemplate->result.state == RecognitionState::Applicable &&
+                !local.periodicAnalysis) {
+                local.periodicAnalysis = analyzeNumericTemplate(*local.numericTemplate);
+            }
+        }
         const bool available = node->numericTemplate && node->periodicAnalysis &&
             node->periodicAnalysis->error.empty() && !node->numericTemplate->specializedBody;
         if (!available) { return {}; }
@@ -93,7 +106,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceLoopBackend(
             node->boundedLifetime->skeleton.result.state != RecognitionState::Applicable) { return {}; }
         auto demands = cachedBoundedLifetimeRegion(function, *node, *structuralIndex, *storage, error);
         if (failed(demands)) { return {}; }
-        boundedAnalysis = *demands;
+        if (region == 0) { boundedAnalysis = *demands; }
         owned->boundedDemands = *demands;
         owned->backend = "bounded-lifetime";
         break;
@@ -103,6 +116,62 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceLoopBackend(
         return {};
     }
     return owned;
+}
+SequenceRegionResolver FrontierAnalysis::regionalResolver()
+{
+    return [this](std::size_t region, bool endpoints, std::string& error) -> FailureOr<RegionalAnalysis> {
+        AnalysisRequest request;
+        request.region = region;
+        request.needs.queries = request.needs.selectors = true;
+        request.needs.synchronization = endpoints;
+        auto result = analyze(request);
+        if (result.status == AnalysisStatus::Ready && result.mathematical->regionalDemands) {
+            return *result.mathematical->regionalDemands;
+        }
+        for (const auto& obligation : result.obligations) {
+            if (!error.empty()) { error += "; "; }
+            error += obligation.diagnostic;
+        }
+        return failure();
+    };
+}
+std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend(
+    AnalysisBackend backend, std::size_t region, std::string& error)
+{
+    if (backend == AnalysisBackend::NumericalPeriodic || backend == AnalysisBackend::Rotating ||
+        backend == AnalysisBackend::GuardedRotating || backend == AnalysisBackend::BoundedLifetime) {
+        return produceLoopBackend(backend, error, region);
+    }
+    auto owned = std::make_shared<MathematicalResult>();
+    owned->input = storage;
+    owned->recognition = program;
+    owned->region = region;
+    if (backend == AnalysisBackend::Sequence) {
+        auto sequence = std::make_shared<SequenceAnalysis>(analyzeSequenceRegionWithResolver(
+            function, *storage, *program, region, sessionState->expressions, structuralIndex,
+            false, regionalResolver()));
+        if (!sequence->error.empty()) { error = sequence->error; return {}; }
+        owned->regionalDemands = std::make_shared<const RegionalAnalysis>(sequenceRegionalResult(*sequence));
+        owned->sequenceDemands = std::move(sequence);
+        owned->backend = "sequence";
+        return owned;
+    }
+    if (backend == AnalysisBackend::Arithmetic) {
+        const auto& node = program->nodes[region];
+        if (node.kind != StructureKind::Loop && node.kind != StructureKind::Conditional) { return {}; }
+        auto* root = node.anchor;
+        if (!root) { error = "arithmetic region has no original root"; return {}; }
+        auto regional = analyzeArithmeticRegionRetained({function, root}, *structuralIndex, *storage,
+            sessionState->expressions, owned->arithmeticRegionalDemands, error);
+        if (!owned->arithmeticRegionalDemands) { return {}; }
+        if (succeeded(regional)) {
+            owned->regionalDemands = std::make_shared<const RegionalAnalysis>(std::move(*regional));
+        }
+        owned->backend = "arithmetic";
+        return owned;
+    }
+    error = "backend has no standalone regional adapter";
+    return {};
 }
 std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
     AnalysisBackend backend, std::string& error)
@@ -132,8 +201,12 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
         return produceLoopBackend(backend, error);
     case AnalysisBackend::Sequence: {
         const auto* sequence = analyzeSequenceFunction();
-        if (!sequence || !sequence->error.empty()) {
+        const bool complete = sequence && sequence->error.empty() && program->sequenceContract &&
+            program->sequenceContract->membership == ContractStatus::Established &&
+            program->sequenceContract->demands == ContractImplementation::Available;
+        if (!complete) {
             error = sequenceAnalysis ? sequenceAnalysis->error : "sequence form unavailable";
+            if (error.empty()) { error = "sequence does not certify the complete original invocation"; }
             return {};
         }
         owned->sequenceDemands = sequenceAnalysis;

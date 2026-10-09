@@ -145,8 +145,9 @@ LogicalResult FrontierAnalysis::analyzeExplicitFunction() {
 SequenceAnalysis* FrontierAnalysis::analyzeSequenceFunction() {
     if (failed(recognizeStructure())) { return nullptr; }
     if (!sequenceAnalysis) {
-        sequenceAnalysis = std::make_shared<SequenceAnalysis>(analyzeSequenceRegion(
-            function, *storage, *program, 0, std::make_shared<RegionExpressions>(), structuralIndex, false));
+        if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+        sequenceAnalysis = std::make_shared<SequenceAnalysis>(analyzeSequenceRegionWithResolver(
+            function, *storage, *program, 0, sessionState->expressions, structuralIndex, false, regionalResolver()));
         recordSequenceContractAttempt(*program, *storage, *sequenceAnalysis);
         if (program->sequenceContract && program->sequenceContract->membership == ContractStatus::Established &&
             program->sequenceContract->demands == ContractImplementation::Available) {
