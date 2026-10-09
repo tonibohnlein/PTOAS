@@ -88,6 +88,7 @@ struct AnalysisOutcome {
     AnalysisStatus status = AnalysisStatus::NotApplicable;
     AnalysisStage stage = AnalysisStage::Form;
     std::shared_ptr<const MathematicalResult> mathematical;
+    std::shared_ptr<const RegionalAnalysis> regionalExports;
     AnalysisExports available;
     std::vector<AnalysisObligation> obligations;
     std::vector<AnalysisCostRecord> costs;
@@ -108,6 +109,7 @@ struct AnalysisConstructionCounts {
     uint64_t explicitReductions = 0;
     uint64_t rotatingReductions = 0, guardedRotatingReductions = 0;
     uint64_t varyingBoundaryReductions = 0;
+    uint64_t varyingQueryBuilds = 0, varyingSelectorBuilds = 0;
     uint64_t logicalPreparations = 0;
     uint64_t allocationExports = 0;
 };

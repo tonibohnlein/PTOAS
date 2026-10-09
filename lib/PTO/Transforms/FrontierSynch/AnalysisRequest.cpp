@@ -166,6 +166,19 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
         result.available.selectors = exports.capabilities.exactSelectors;
     }
     if (demands.backend == "native-scalar" || demands.backend == "expanded-finite-guarded") { result.available = {}; }
+    if (demands.varyingBoundaryDemands &&
+        (request.needs.queries || request.needs.selectors || request.needs.synchronization)) {
+        std::string error;
+        result.regionalExports = varyingExports(demands, false, error);
+        result.available.queries = static_cast<bool>(result.regionalExports);
+        if (request.needs.selectors) {
+            auto selected = varyingExports(demands, true, error);
+            result.available.selectors = static_cast<bool>(selected);
+            if (selected) { result.regionalExports = std::move(selected); }
+        }
+        if (!error.empty()) { result.obligations.push_back({request.needs.selectors ?
+            AnalysisStage::Selectors : AnalysisStage::Queries, error}); }
+    }
     result.available.synchronization = attempt.endpoints.value_or(false);
     result.status = AnalysisStatus::Ready;
     result.stage = AnalysisStage::None;
@@ -226,6 +239,7 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
         if (!result.mathematical && attempt.mathematical) {
             result.mathematical = attempt.mathematical;
             result.available = attempt.available;
+            result.regionalExports = attempt.regionalExports;
             result.status = AnalysisStatus::UnmetObligation;
             result.stage = attempt.stage;
         }

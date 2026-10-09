@@ -13,6 +13,16 @@
 namespace mlir::pto::frontiersynch {
 // Exact visit-indexed exports. Numerical port transfers are composed by shared
 // Boolean matrix powers; no runtime visit or inner iteration is expanded.
+struct VaryingRegionalExports;
+// Query construction never requests physical selectors or detached commands.
+std::shared_ptr<VaryingRegionalExports> buildVaryingQueries(
+    func::FuncOp function, const VaryingRotatingRecognition& recognized, const PhaseIndex& index,
+    const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
+    std::shared_ptr<const AffineRotatingVisits> certificate, std::string& error,
+    std::shared_ptr<const SyncInput> inputOwner = {});
+std::shared_ptr<const RegionalAnalysis> varyingQueryResult(const VaryingRegionalExports& exports);
+std::shared_ptr<const RegionalAnalysis> varyingSelectedResult(
+    VaryingRegionalExports& exports, const SyncInput& input, std::string& error);
 // A supplied certificate must come from this recognizer and unchanged SyncInput.
 FailureOr<RegionalAnalysis> varyingRotatingRegionalResult(
     func::FuncOp function, const VaryingRotatingRecognition& recognized, const PhaseIndex& index,
