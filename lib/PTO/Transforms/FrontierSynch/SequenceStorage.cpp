@@ -283,16 +283,13 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         if (node.varyingRotating && node.varyingRotating->result.state == RecognitionState::Applicable) {
             std::string diagnostic;
             const auto id = static_cast<std::size_t>(&node - program->nodes.data());
-            auto retained = resolveOriginal.demands ?
-                resolveOriginal.demands(id, AnalysisBackend::VaryingBoundary) : nullptr;
-            const auto* certificate = resolveOriginal.demands ?
-                (retained ? retained->varyingBoundaryDemands.get() : nullptr) :
-                (node.varyingDemands ? &*node.varyingDemands : nullptr);
             FailureOr<RegionalAnalysis> regional = failure();
-            if (!resolveOriginal.demands || certificate) {
+            if (resolveOriginal.exports) {
+                regional = resolveOriginal.exports(id, AnalysisBackend::VaryingBoundary, diagnostic);
+            } else {
                 regional = varyingRotatingRegionalResult(function, *node.varyingRotating, index, *input, arena,
-                    diagnostic, certificate);
-            } else { diagnostic = "cached repeating-boundary demands unavailable"; }
+                    diagnostic, node.varyingDemands ? &*node.varyingDemands : nullptr);
+            }
             if (succeeded(regional)) {
                 child.regional = std::move(*regional); child.anchors = child.regional.anchors;
                 children.push_back(std::move(child)); return true;

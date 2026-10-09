@@ -43,7 +43,9 @@ struct State : std::enable_shared_from_this<State> {
     func::FuncOp function;
     VaryingRotatingRecognition recognized;
     RotatingAnalysis child;
-    AffineRotatingVisits visits;
+    std::shared_ptr<const SyncInput> inputOwner;
+    std::shared_ptr<const AffineRotatingVisits> certificate;
+    const AffineRotatingVisits& visits() const { return *certificate; }
     std::shared_ptr<RegionExpressions> arena;
     RegionalAnalysis out;
     Id trips;
@@ -75,7 +77,7 @@ struct State : std::enable_shared_from_this<State> {
         }
         return value;
     }
-    Id length(Id visit) { return e().add(mul(visit, visits.slope), c(visits.intercept)); }
+    Id length(Id visit) { return e().add(mul(visit, visits().slope), c(visits().intercept)); }
     Id coordinate(Occ x, Id visit) { return x.tail ? e().sub(length(visit), c(x.coordinate)) : c(x.coordinate); }
     RegionalEvent event(Occ x, Id visit, PeriodicEventKind kind = PeriodicEventKind::Start)
     {
@@ -104,12 +106,12 @@ struct State : std::enable_shared_from_this<State> {
     }
     RotatingBoundaryType type(uint64_t t)
     {
-        // Artificial transfer representatives need not be executable visits.
+        // Artificial transfer representatives need not be executable visits().
         // Compute their residue without overflowing even when K(t) itself is
         // beyond uint64; only exact short lengths are converted back to uint64.
-        const auto n = llvm::APInt(128, visits.slope) * llvm::APInt(128, t) + llvm::APInt(128, visits.intercept);
-        return n.ult(llvm::APInt(128, visits.child.cutoff)) ? visits.child.select(n.getZExtValue()) :
-            visits.child.types[n.urem(llvm::APInt(128, visits.child.period)).getZExtValue()];
+        const auto n = llvm::APInt(128, visits().slope) * llvm::APInt(128, t) + llvm::APInt(128, visits().intercept);
+        return n.ult(llvm::APInt(128, visits().child.cutoff)) ? visits().child.select(n.getZExtValue()) :
+            visits().child.types[n.urem(llvm::APInt(128, visits().child.period)).getZExtValue()];
     }
     void add(Occ x)
     {
@@ -165,7 +167,7 @@ struct State : std::enable_shared_from_this<State> {
         auto left = type(target - 1), right = type(target);
         Matrix crossing(ports.size(), std::vector<uint8_t>(ports.size()));
         std::vector<std::pair<Port, Port>> edges;
-        for (auto d : visits.crossingInto(target)) {
+        for (auto d : visits().crossingInto(target)) {
             edges.push_back({{d.source, PeriodicEventKind::Completion}, {d.target, PeriodicEventKind::Start}});
         }
         for (auto [pipe, last] : left.lastPayloads) {
@@ -199,22 +201,22 @@ struct State : std::enable_shared_from_this<State> {
     }
     bool build()
     {
-        for (uint64_t t = 0; t <= visits.startup + visits.period; ++t) {
+        for (uint64_t t = 0; t <= visits().startup + visits().period; ++t) {
             collect(type(t));
         }
-        for (uint64_t t = 1; t <= visits.startup; ++t) {
+        for (uint64_t t = 1; t <= visits().startup; ++t) {
             startup.push_back(transfer(t));
         }
-        for (uint64_t phase = 0; phase < visits.period; ++phase) {
-            suffix.push_back(transfer(visits.startup + visits.period + phase + 1));
+        for (uint64_t phase = 0; phase < visits().period; ++phase) {
+            suffix.push_back(transfer(visits().startup + visits().period + phase + 1));
         }
-        for (uint64_t phase = 0; phase < visits.period; ++phase) {
+        for (uint64_t phase = 0; phase < visits().period; ++phase) {
             Matrix cycle(ports.size(), std::vector<uint8_t>(ports.size()));
             for (std::size_t i = 0; i < ports.size(); ++i) {
                 cycle[i][i] = 1;
             }
-            for (uint64_t j = 0; j < visits.period; ++j) {
-                cycle = product(cycle, suffix[(phase + j) % visits.period]);
+            for (uint64_t j = 0; j < visits().period; ++j) {
+                cycle = product(cycle, suffix[(phase + j) % visits().period]);
             }
             std::vector<Matrix> column{std::move(cycle)};
             for (unsigned bit = 1; bit < 64; ++bit) {
@@ -269,12 +271,12 @@ struct State : std::enable_shared_from_this<State> {
             for (std::size_t j = 0; j < startup.size(); ++j) {
                 values = advance(values, startup[j], e().land(e().le(s, c(j)), e().lt(c(j), t)));
             }
-            auto begin = e().select(e().lt(s, c(visits.startup)), c(visits.startup), s);
+            auto begin = e().select(e().lt(s, c(visits().startup)), c(visits().startup), s);
             auto count = e().select(e().lt(begin, t), e().sub(t, begin), c(0));
-            auto phase = e().rem(e().sub(begin, c(visits.startup)), c(visits.period));
-            auto cycles = e().div(count, c(visits.period)), tail = e().rem(count, c(visits.period));
+            auto phase = e().rem(e().sub(begin, c(visits().startup)), c(visits().period));
+            auto cycles = e().div(count, c(visits().period)), tail = e().rem(count, c(visits().period));
             std::vector<Id> final(ports.size(), e().boolean(false));
-            for (uint64_t p = 0; p < visits.period; ++p) {
+            for (uint64_t p = 0; p < visits().period; ++p) {
                 auto row = values;
                 for (unsigned bit = 0; bit < lastPower[p]; ++bit) {
                     auto active = e().eq(e().rem(e().div(cycles, c(uint64_t(1) << bit)), c(2)), c(1));
@@ -285,8 +287,8 @@ struct State : std::enable_shared_from_this<State> {
                 // exactly when the remaining unsigned quotient is nonzero.
                 // Without stabilization, bit 63 has this same threshold test.
                 row = advance(row, powers[p][lastPower[p]], e().le(c(uint64_t(1) << lastPower[p]), cycles));
-                for (uint64_t j = 0; j < visits.period; ++j) {
-                    row = advance(row, suffix[(p + j) % visits.period], e().lt(c(j), tail));
+                for (uint64_t j = 0; j < visits().period; ++j) {
+                    row = advance(row, suffix[(p + j) % visits().period], e().lt(c(j), tail));
                 }
                 for (std::size_t j = 0; j < ports.size(); ++j) {
                     final[j] = e().lor(final[j], e().land(e().eq(phase, c(p)), row[j]));
@@ -330,7 +332,7 @@ struct State : std::enable_shared_from_this<State> {
     bool selectors(const SyncInput& input)
     {
         std::vector<SyncStorageCell> cells;
-        for (auto cell : visits.child.cells) {
+        for (auto cell : visits().child.cells) {
             std::optional<SyncStorageCell> physical;
             for (std::size_t i = 0; i < child.fragments.size(); ++i) {
                 auto f = child.fragments[i];
@@ -368,7 +370,7 @@ struct State : std::enable_shared_from_this<State> {
         }
         // All head extrema have appeared by the first long visit. Enumerating
         // this certified startup does not enumerate a runtime trip count.
-        for (uint64_t v = 0; v <= visits.startup; ++v) {
+        for (uint64_t v = 0; v <= visits().startup; ++v) {
             auto t = type(v);
             for (std::size_t i = 0; i < cells.size(); ++i) {
                 auto& b = out.storageBoundary[i];
@@ -384,14 +386,15 @@ struct State : std::enable_shared_from_this<State> {
             }
         }
         auto final = e().sub(trips, c(1));
-        for (uint64_t v = 0; v < visits.startup + visits.period; ++v) {
+        for (uint64_t v = 0; v < visits().startup + visits().period; ++v) {
             auto t = type(v);
             auto active =
-                v < visits.startup ?
+                v < visits().startup ?
                     e().eq(final, c(v)) :
                     e().land(
-                        e().le(c(visits.startup), final),
-                        e().eq(e().rem(e().sub(final, c(visits.startup)), c(visits.period)), c(v - visits.startup)));
+                        e().le(c(visits().startup), final),
+                        e().eq(e().rem(e().sub(final, c(visits().startup)), c(visits().period)),
+                            c(v - visits().startup)));
             active = e().land(e().lt(c(0), trips), active);
             for (std::size_t i = 0; i < cells.size(); ++i) {
                 auto& b = out.storageBoundary[i];
@@ -422,7 +425,7 @@ struct State : std::enable_shared_from_this<State> {
         for (auto& [p, values] : out.firstPayloads) {
             values = firsts(std::move(values));
         }
-        auto firstVisit = c(visits.intercept ? 0 : 1);
+        auto firstVisit = c(visits().intercept ? 0 : 1);
         for (uint32_t i = 0; i < child.phases.size(); ++i) {
             auto first = selector({i, 0, false}, firstVisit, e().boolean(true));
             auto last = selector({i, 1, true}, final, e().lt(c(0), trips));
@@ -440,15 +443,15 @@ void State::buildAllocation()
 {
     if (allocationAttempted) { return; }
     allocationAttempted = true;
-    allocationRecords = enumerateVaryingAllocationRecords(visits, allocationError);
+    allocationRecords = enumerateVaryingAllocationRecords(visits(), allocationError);
     if (!allocationRecords) { return; }
-    VaryingBoundaryQuery queries(visits, ports, startup, suffix, powers);
+    VaryingBoundaryQuery queries(visits(), ports, startup, suffix, powers);
     if (!queries.error().empty()) { allocationError = queries.error(); return; }
     const VaryingBoundaryReuseQuery query = [&queries](Occ source, PeriodicEventKind sourceKind,
         Occ target, PeriodicEventKind targetKind, uint64_t sourceVisit, uint64_t gap) {
         return queries.query(source, sourceKind, target, targetKind, sourceVisit, gap);
     };
-    allocation = buildVaryingRotatingAllocation(out, visits, trips, *allocationRecords, query, allocationError);
+    allocation = buildVaryingRotatingAllocation(out, visits(), trips, *allocationRecords, query, allocationError);
     allocationQueries = queries.queryCount;
     // Query proof cost is numerical, not expression-circuit size. Each uncached
     // query uses O(P) quotient attachments and O((startup+period+64)*P^2)
@@ -480,8 +483,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> State::prepare()
                     return e().eq(target, c(targetVisit));
                 }
                 return e().land(
-                    e().lt(c(visits.startup), target),
-                    e().eq(e().rem(e().sub(target, c(visits.startup)), c(visits.period)), c(targetVisit)));
+                    e().lt(c(visits().startup), target),
+                    e().eq(e().rem(e().sub(target, c(visits().startup)), c(visits().period)), c(targetVisit)));
             };
             auto publish = e().land(e().lt(c(1), e().sub(trips, visit)), predicate(e().add(visit, c(1))));
             auto consume = e().land(e().lt(c(0), visit), predicate(visit));
@@ -495,16 +498,16 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> State::prepare()
         }
         return true;
     };
-    for (uint64_t v = 1; v < visits.startup; ++v) {
-        if (!add(visits.startupCrossings[v], v, false)) {
+    for (uint64_t v = 1; v < visits().startup; ++v) {
+        if (!add(visits().startupCrossings[v], v, false)) {
             return failure();
         }
     }
-    if (!add(visits.seam, visits.startup, false)) {
+    if (!add(visits().seam, visits().startup, false)) {
         return failure();
     }
-    for (uint64_t p = 0; p < visits.period; ++p) {
-        if (!add(visits.suffixCrossings[p], p, true)) {
+    for (uint64_t p = 0; p < visits().period; ++p) {
+        if (!add(visits().suffixCrossings[p], p, true)) {
             return failure();
         }
     }
@@ -530,17 +533,28 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> State::prepare()
     return prepared;
 }
 } // namespace
-FailureOr<RegionalAnalysis> varyingRotatingRegionalResult(
+struct VaryingRegionalExports {
+    std::shared_ptr<State> state;
+    std::shared_ptr<const RegionalAnalysis> queries, selected;
+    bool selectorsAttempted = false;
+    std::string selectorError;
+};
+std::shared_ptr<VaryingRegionalExports> buildVaryingQueries(
     func::FuncOp function, const VaryingRotatingRecognition& recognized, const PhaseIndex& index,
-    const SyncInput& input, std::shared_ptr<RegionExpressions> expressions, std::string& error,
-    const AffineRotatingVisits* certificate)
+    const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
+    std::shared_ptr<const AffineRotatingVisits> certificate, std::string& error,
+    std::shared_ptr<const SyncInput> inputOwner)
 {
+    const bool foreignOwner = inputOwner && inputOwner.get() != &input;
+    if (foreignOwner) {
+        error = "varying query owner does not match its modeled input"; return {};
+    }
     if (!function || !expressions || !recognized.outer || !recognized.inner ||
         recognized.result.state != RecognitionState::Applicable ||
         recognized.outer->getParentOfType<func::FuncOp>() != function ||
         !recognized.outer->isProperAncestor(recognized.inner)) {
         error = "varying export requires a recognized original loop and expression arena";
-        return failure();
+        return {};
     }
     if (certificate && (certificate->slope != recognized.slope || certificate->intercept != recognized.intercept ||
                         !certificate->period || !certificate->child.period ||
@@ -548,28 +562,30 @@ FailureOr<RegionalAnalysis> varyingRotatingRegionalResult(
                         certificate->startupCrossings.size() != certificate->startup ||
                         certificate->child.types.size() != certificate->child.period)) {
         error = "varying certificate does not match its recognized visit domain";
-        return failure();
+        return {};
     }
     auto state = std::make_shared<State>();
     state->function = function;
     state->recognized = recognized;
     state->arena = std::move(expressions);
-    state->visits = certificate ? *certificate : analyzeVaryingRotating(recognized, index, input);
-    if (!state->visits.error.empty()) {
-        error = state->visits.error;
-        return failure();
+    if (!certificate) { error = "varying query construction requires retained demands"; return {}; }
+    state->certificate = std::move(certificate);
+    state->inputOwner = std::move(inputOwner);
+    if (!state->visits().error.empty()) {
+        error = state->visits().error;
+        return {};
     }
     auto inner = recognized.inner;
     auto phases = index.explicitSequence(*inner.getBody());
     auto domain = CountedLoop::get(recognized.outer);
     if (!domain || failed(phases)) {
         error = "varying counted domain unavailable";
-        return failure();
+        return {};
     }
     state->child.loop = recognized.inner;
     state->child.phases = *phases;
-    state->child.fragments = state->visits.child.fragments;
-    state->child.periodic = state->visits.child.quotient;
+    state->child.fragments = state->visits().child.fragments;
+    state->child.periodic = state->visits().child.quotient;
     state->trips = domain->trips(state->e());
     auto& out = state->out;
     out.expressions = state->arena;
@@ -581,9 +597,9 @@ FailureOr<RegionalAnalysis> varyingRotatingRegionalResult(
         out.occurrenceLoops.push_back(recognized.inner);
         out.outerLoops.push_back({recognized.outer});
     }
-    if (!state->build() || !state->selectors(input)) {
+    if (!state->build()) {
         error = state->error;
-        return failure();
+        return {};
     }
     // Closures own state. Keep them out of state's prototype to avoid cycles.
     auto result = out;
@@ -608,13 +624,67 @@ FailureOr<RegionalAnalysis> varyingRotatingRegionalResult(
         }
         return state->prepare();
     };
-    result.capabilities = {true, true, true, true, true};
+    result.capabilities = {false, true, false, true, true};
     result.cost.repeatedRegions = 1;
     result.cost.cells = out.storageBoundary.size();
     result.cost.ports = state->ports.size();
-    result.cost.phaseDescriptions = state->visits.startup + state->visits.period;
+    result.cost.phaseDescriptions = state->visits().startup + state->visits().period;
     result.cost.expressionNodes = state->e().size();
     result.cost.implicationChecks = state->allocationQueries;
-    return result;
+    auto exports = std::make_shared<VaryingRegionalExports>();
+    exports->state = std::move(state);
+    exports->queries = std::make_shared<const RegionalAnalysis>(std::move(result));
+    return exports;
+}
+std::shared_ptr<const RegionalAnalysis> varyingQueryResult(const VaryingRegionalExports& exports)
+{
+    return exports.queries;
+}
+std::shared_ptr<const RegionalAnalysis> varyingSelectedResult(
+    VaryingRegionalExports& exports, const SyncInput& input, std::string& error)
+{
+    const bool originalContext = exports.queries->accessModel == &input.accesses() &&
+        exports.queries->gmAliasPolicy == input.memory().gmPolicy();
+    if (!originalContext) {
+        error = "varying selectors require the original modeled input and alias context";
+        return {};
+    }
+    if (!exports.selectorsAttempted) {
+        exports.selectorsAttempted = true;
+        auto& state = *exports.state;
+        // Selector failures cannot change the query prototype or its diagnostics.
+        auto original = state.out;
+        auto originalError = state.error;
+        if (state.selectors(input)) {
+            auto selected = *exports.queries;
+            selected.storageBoundary = state.out.storageBoundary;
+            selected.accessBoundary = state.out.accessBoundary;
+            selected.firstPayloads = state.out.firstPayloads;
+            selected.lastPayloads = state.out.lastPayloads;
+            selected.firstSitePayloads = state.out.firstSitePayloads;
+            selected.capabilities.completeStorageModel = true;
+            selected.capabilities.exactSelectors = true;
+            selected.cost.cells = selected.storageBoundary.size();
+            selected.cost.expressionNodes = state.e().size();
+            exports.selected = std::make_shared<const RegionalAnalysis>(std::move(selected));
+        } else { exports.selectorError = state.error; }
+        state.out = std::move(original);
+        state.error = std::move(originalError);
+    }
+    error = exports.selectorError;
+    return exports.selected;
+}
+FailureOr<RegionalAnalysis> varyingRotatingRegionalResult(
+    func::FuncOp function, const VaryingRotatingRecognition& recognized, const PhaseIndex& index,
+    const SyncInput& input, std::shared_ptr<RegionExpressions> expressions, std::string& error,
+    const AffineRotatingVisits* certificate)
+{
+    auto owner = certificate ? std::make_shared<const AffineRotatingVisits>(*certificate) :
+        std::make_shared<const AffineRotatingVisits>(analyzeVaryingRotating(recognized, index, input));
+    auto exports = buildVaryingQueries(function, recognized, index, input, std::move(expressions), owner, error);
+    if (!exports) { return failure(); }
+    auto selected = varyingSelectedResult(*exports, input, error);
+    if (!selected) { return failure(); }
+    return *selected;
 }
 } // namespace mlir::pto::frontiersynch

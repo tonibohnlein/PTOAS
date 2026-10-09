@@ -15,10 +15,14 @@
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include <set>
 namespace mlir::pto::frontiersynch {
+struct VaryingRegionalExports;
 struct BackendAttempt {
     bool produced = false;
     std::shared_ptr<const MathematicalResult> mathematical;
     std::string demandError;
+    bool varyingQueriesAttempted = false, varyingSelectorsAttempted = false;
+    std::shared_ptr<VaryingRegionalExports> varyingExports;
+    std::string varyingQueryError;
     std::optional<bool> endpoints;
     // The first successful synchronization request owns its detached fragment
     // until PrepareLogical consumes it. Later preparations instantiate afresh.

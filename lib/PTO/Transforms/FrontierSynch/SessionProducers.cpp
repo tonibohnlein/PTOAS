@@ -18,6 +18,7 @@
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/FiniteVisitRecognition.h"
 #include "PTO/Transforms/FrontierSynch/VaryingRotatingRecognition.h"
+#include "PTO/Transforms/FrontierSynch/VaryingRotatingRegional.h"
 namespace mlir::pto::frontiersynch {
 void FrontierAnalysis::recordWholeRegion(AnalysisBackend backend)
 {
@@ -182,6 +183,27 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
     }
     return owned;
 }
+std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::varyingExports(
+    const MathematicalResult& demands, bool selectors, std::string& error)
+{
+    if (!demands.varyingNode || !demands.varyingBoundaryDemands) { return {}; }
+    auto id = *demands.varyingNode;
+    auto& attempt = sessionState->loopAttempts[{id, AnalysisBackend::VaryingBoundary}];
+    if (!attempt.varyingQueriesAttempted) {
+        attempt.varyingQueriesAttempted = true;
+        if (construction.varyingQueryBuilds != UINT64_MAX) { ++construction.varyingQueryBuilds; }
+        attempt.varyingExports = buildVaryingQueries(function, *program->nodes[id].varyingRotating,
+            *structuralIndex, *storage, sessionState->expressions, demands.varyingBoundaryDemands,
+            attempt.varyingQueryError, storage);
+    }
+    if (!attempt.varyingExports) { error = attempt.varyingQueryError; return {}; }
+    if (!selectors) { return varyingQueryResult(*attempt.varyingExports); }
+    if (!attempt.varyingSelectorsAttempted) {
+        attempt.varyingSelectorsAttempted = true;
+        if (construction.varyingSelectorBuilds != UINT64_MAX) { ++construction.varyingSelectorBuilds; }
+    }
+    return varyingSelectedResult(*attempt.varyingExports, *storage, error);
+}
 SequenceRegionResolver FrontierAnalysis::regionalResolver()
 {
     SequenceRegionResolver resolver;
@@ -191,8 +213,10 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver()
         request.needs.queries = request.needs.selectors = true;
         request.needs.synchronization = endpoints;
         auto result = analyze(request);
-        if (result.status == AnalysisStatus::Ready && result.mathematical->regionalDemands) {
-            return *result.mathematical->regionalDemands;
+        auto exports = result.regionalExports ? result.regionalExports :
+            (result.mathematical ? result.mathematical->regionalDemands : nullptr);
+        if (result.status == AnalysisStatus::Ready && exports) {
+            return *exports;
         }
         for (const auto& obligation : result.obligations) {
             if (!error.empty()) { error += "; "; }
@@ -204,6 +228,14 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver()
         std::string error;
         return backend == AnalysisBackend::Arithmetic ? produceArithmeticRegion(region, error) :
                                                         produceLoopBackend(backend, error, region);
+    };
+    resolver.exports = [this](std::size_t region, AnalysisBackend backend, std::string& error)
+        -> FailureOr<RegionalAnalysis> {
+        auto demands = produceLoopBackend(backend, error, region);
+        if (!demands) { return failure(); }
+        auto result = varyingExports(*demands, true, error);
+        if (!result) { return failure(); }
+        return *result;
     };
     return resolver;
 }

@@ -116,6 +116,13 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
     if (demands.boundedDemands) {
         return prepareBoundedLifetimeLogicalResult(demands.boundedDemands, error, demands.region == 0);
     }
+    if (demands.varyingBoundaryDemands) {
+        auto regional = varyingExports(demands, false, error);
+        if (!regional || !regional->prepareWithVisits) { return failure(); }
+        auto result = regional->prepareWithVisits(program->nodes[demands.region].loops);
+        if (succeeded(result)) { (*result)->completeInvocation = demands.region == 0; }
+        return result;
+    }
     if (demands.sequenceDemands) {
         SequenceEndpointResolver resolver = [this](std::size_t region, const RegionalAnalysis& retained,
             ArrayRef<scf::ForOp> enclosing) -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
@@ -125,13 +132,15 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
             request.region = region;
             request.needs.queries = request.needs.selectors = request.needs.synchronization = true;
             auto selected = analyze(request);
+            auto exports = selected.regionalExports ? selected.regionalExports :
+                (selected.mathematical ? selected.mathematical->regionalDemands : nullptr);
             const bool available = selected.status == AnalysisStatus::Ready && selected.mathematical &&
-                                   selected.mathematical->regionalDemands;
+                                   exports;
             if (!available) { return failure(); }
             // Both results certify the exact order for this unchanged original
             // region. Reuse crossing queries only with identical event identities;
             // query callbacks may differ while describing the same exact order.
-            if (!sameOriginalCoordinates(retained, *selected.mathematical->regionalDemands)) { return failure(); }
+            if (!sameOriginalCoordinates(retained, *exports)) { return failure(); }
             return prepareLogical(selected);
         };
         return prepareSequenceLogicalInsertion(*demands.sequenceDemands, program->nodes[demands.region].loops,
