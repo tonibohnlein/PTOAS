@@ -141,7 +141,7 @@ AffineExpr normalizeValue(Value input, const ArithmeticSite& site, unsigned offs
     });
 }
 }
-bool ProgramBuilder::entryParameter(Value value) const
+bool ProgramBuilder::entryParameter(Value value, bool regionalLeaves) const
 {
     if (!value.getType().isIndex() && !value.getType().isInteger(1)) {
         return false;
@@ -154,20 +154,24 @@ bool ProgramBuilder::entryParameter(Value value) const
     if (root != output.context.function.getOperation() && index.valueAvailable(value, root, Boundary::Before)) {
         return true;
     }
-    // A deterministic expression over invocation arguments is invariant even
-    // when its definition is nested. Endpoint emission replays the original
-    // operations at cuts where the definition is unavailable; no signed
-    // division or wrapping arithmetic is replaced by mathematical arithmetic.
+    // A deterministic expression over actual regional entry values is invariant
+    // even when its definition is nested. Keep its original SSA result as the
+    // parameter: floating comparisons and machine arithmetic are not translated
+    // into mathematical arithmetic. Export replay remains a separate obligation.
     std::function<bool(Value)> entry = [&](Value current) {
-        if (auto found = entryInputs.find(current); found != entryInputs.end()) { return found->second; }
-        entryInputs[current] = false;
+        const auto key = std::make_pair(current, static_cast<unsigned>(regionalLeaves));
+        if (auto found = entryInputs.find(key); found != entryInputs.end()) { return found->second; }
+        entryInputs[key] = false;
+        const bool regionalEntry = regionalLeaves && root != output.context.function.getOperation() &&
+            index.valueAvailable(current, root, Boundary::Before);
+        if (regionalEntry) { return entryInputs[key] = true; }
         if (auto argument = dyn_cast<BlockArgument>(current)) {
-            return entryInputs[current] = argument.getOwner() == &output.context.function.front();
+            return entryInputs[key] = argument.getOwner() == &output.context.function.front();
         }
         auto* op = current.getDefiningOp();
         if (!mlir::pto::detail::canReplayScalar(op) ||
             !output.context.function->isProperAncestor(op) || !index.phasesFor(op).empty()) { return false; }
-        return entryInputs[current] = llvm::all_of(op->getOperands(), entry);
+        return entryInputs[key] = llvm::all_of(op->getOperands(), entry);
     };
     return entry(value);
 }
