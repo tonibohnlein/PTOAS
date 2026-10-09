@@ -188,6 +188,9 @@ LogicalResult checkAnalysisSession(func::FuncOp function, pto::GMAliasPolicy pol
     return function.emitError("logical retry repeated mathematical or export construction");
   }
   auto left = session.prepareLogical(ready);
+  if (counts.logicalPreparations != preparations) {
+    return function.emitError("accepted synchronization fragment was prepared twice");
+  }
   auto right = session.prepareLogical(ready);
   const bool bothPrepared = succeeded(left) && succeeded(right);
   if (!bothPrepared) { return failure(); }

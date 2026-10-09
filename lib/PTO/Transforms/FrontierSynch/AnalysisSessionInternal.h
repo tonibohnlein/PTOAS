@@ -20,6 +20,9 @@ struct BackendAttempt {
     std::shared_ptr<const MathematicalResult> mathematical;
     std::string demandError;
     std::optional<bool> endpoints;
+    // The first successful synchronization request owns its detached fragment
+    // until PrepareLogical consumes it. Later preparations instantiate afresh.
+    std::unique_ptr<PreparedLogicalPlan> pendingLogical;
     std::shared_ptr<const NumericTemplateEndpoints> periodicEndpoints;
     // Only the allocation capability is memoized here, including unavailable exports.
     std::map<int64_t, DictionaryAttr> allocation;
