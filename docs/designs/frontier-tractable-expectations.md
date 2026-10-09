@@ -596,3 +596,30 @@ pinned-input runs preserve per-case coverage: 227/240 under MayNotAlias and
 13.7 seconds. Compliance and whitespace checks pass; the three paper hashes
 remain unchanged. This is focused milestone validation, not the final paired
 optimized corpus campaign.
+
+### Retained finite-expansion preflight
+
+Complete small-count expansion now separates its bounded control traversal from
+access and relation construction. The immutable preflight retains original
+roots, payload identities, fixed coordinates, selected branch proofs and
+charged visit/folding counts. Existing visit, depth, payload and pair limits
+bound this optional normalization; exhausting them leaves other exact routes
+available and does not assert that the region is outside a tractable class.
+
+The session caches one preflight per unchanged original region. Demand
+construction consumes that description, and query/selector retries reuse it.
+Standalone compatibility calls perform the same preflight locally. A retained
+plan belongs to its exact modeled input and structural index; materialization
+with another input or index is rejected before relation construction.
+
+This split supplies counts for subsequent candidate ordering. It does not yet
+change backend order, make numerical-template construction lazy, or select
+between original and expanded descriptions by estimated cost.
+
+Both optimized rebuilds and links pass. All 35 focused checks and 22 serial
+pinned-input runs pass, retaining per-case coverage at 227/240 under MayNotAlias
+and 213/240 under MayAlias. There is no timeout or source mutation; the slowest
+run is 14.0 seconds. Compatibility mappings, foreign input/index refusal, failed
+preflight retries, export retries and alias-context resets are checked. Compliance
+and whitespace checks pass, and the paper hashes are unchanged. This is focused
+validation rather than the final paired corpus campaign.

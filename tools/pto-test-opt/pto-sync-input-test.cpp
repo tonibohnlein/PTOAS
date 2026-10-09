@@ -480,13 +480,28 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
   using namespace pto::frontiersynch;
   FrontierAnalysis session(function);
   if (failed(session.initialize(policy))) { return failure(); }
+  if (session.finiteExpansionPreflights()) { return function.emitError("finite preflight was eager"); }
   bool checked = false, bodyChecked = false, runChecked = false;
   std::shared_ptr<const MathematicalResult> retainedOwner;
   std::shared_ptr<const RegionalAnalysis> retainedQueries, retainedStorage;
   for (auto [id, node] : llvm::enumerate(session.result()->nodes)) {
     if (id == 0) { continue; }
+    const auto beforePreflight = session.finiteExpansionPreflights();
     auto first = session.analyzeFiniteExpansion({id});
-    if (!first.mathematical) { continue; }
+    if (!first.mathematical) {
+      const auto count = session.finiteExpansionPreflights();
+      auto retry = session.analyzeFiniteExpansion({id});
+      const bool sameFailure = retry.status == first.status && retry.stage == first.stage &&
+          !retry.mathematical && session.finiteExpansionPreflights() == count;
+      if (!sameFailure) { return function.emitError("failed finite preflight was repeated"); }
+      continue;
+    }
+    const auto preflights = session.finiteExpansionPreflights();
+    if (preflights != beforePreflight + 1) { return function.emitError("finite preflight was not once-only"); }
+    auto repeated = session.analyzeFiniteExpansion({id});
+    const bool reused = repeated.mathematical == first.mathematical &&
+        session.finiteExpansionPreflights() == preflights;
+    if (!reused) { return function.emitError("finite preflight or demand owner was reconstructed"); }
     SmallVector<Operation*> expected;
     if (node.kind == StructureKind::ExplicitRun) { expected = node.operations; }
     else if (node.kind == StructureKind::Sequence && node.region) {
@@ -531,6 +546,10 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
       const auto selectorsAfter = session.constructionCounts().expandedSelectorBuilds;
       const auto checksAfter = session.constructionCounts().expandedSelectorChecks;
       auto retry = session.analyzeFiniteExpansion(stronger);
+      const bool preflightReused = session.finiteExpansionPreflights() == preflights;
+      if (!preflightReused) {
+        return function.emitError("finite export repeated normalization preflight");
+      }
       const auto expectedSelectorCount = selectorsBefore + (capability == 1 ? 1 : 0);
       if (selectorsAfter != expectedSelectorCount ||
           session.constructionCounts().expandedSelectorBuilds != selectorsAfter ||
@@ -614,6 +633,8 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
   const auto otherPolicy = policy == pto::GMAliasPolicy::MayAlias ?
       pto::GMAliasPolicy::MayNotAlias : pto::GMAliasPolicy::MayAlias;
   if (failed(session.initialize(otherPolicy))) { return failure(); }
+  const bool cacheReset = session.finiteExpansionPreflights() == 0;
+  if (!cacheReset) { return function.emitError("finite preflight cache survived an alias-context reset"); }
   auto foreign = expandedFiniteRegionalQueries(*retainedOwner->finiteGuardedDemands, session.sharedInput());
   if (foreign.capabilities.exactQueries) { return function.emitError("expanded query accepted a foreign input owner"); }
   std::string foreignError;

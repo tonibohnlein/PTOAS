@@ -10,6 +10,7 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICPROGRAMINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
 #include "llvm/ADT/MapVector.h"
+namespace mlir::pto::frontiersynch { struct FiniteExpansionPlan; }
 namespace mlir::pto::frontiersynch::detail {
 struct ProgramBuilder {
     ArithmeticProgram& output;
@@ -39,7 +40,8 @@ struct ProgramBuilder {
               std::optional<std::pair<unsigned, uint64_t>> filter = std::nullopt,
               uint64_t modulus = 1);
 };
-void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limits);
+void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limits,
+    const ::mlir::pto::frontiersynch::FiniteExpansionPlan* plan = nullptr);
 // Byte-coordinate translation; original physical primitives stay unchanged.
 // Applied translations are published only after successful construction.
 // An unavailable or unnecessary adapter returns no alternative.
