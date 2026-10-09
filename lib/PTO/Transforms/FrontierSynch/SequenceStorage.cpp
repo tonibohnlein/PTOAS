@@ -255,11 +255,18 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
             staticInnerBounds &= mayEnumerate(inner.getLowerBound()) &&
                                  mayEnumerate(inner.getUpperBound()) && mayEnumerate(inner.getStep());
         });
+        std::shared_ptr<const MathematicalResult> retainedNumeric;
+        if (resolveOriginal.demands) {
+            const auto id = static_cast<std::size_t>(&node - program->nodes.data());
+            retainedNumeric = resolveOriginal.demands(id, AnalysisBackend::NumericalPeriodic);
+        }
         std::optional<NumericTemplate> cachedNumeric;
         const bool originalNumeric = staticInnerBounds && node.numericTemplate &&
             !node.numericTemplate->specializedBody &&
             node.numericTemplate->result.state == RecognitionState::Applicable;
-        if (staticInnerBounds) {
+        if (retainedNumeric && retainedNumeric->numericalDemands) {
+            cachedNumeric = retainedNumeric->numericalDemands->form;
+        } else if (staticInnerBounds && !resolveOriginal.demands) {
             // A successful whole-invocation template already proves the
             // regional context: no external payload can conflict with it.
             // Preserve its original-coordinate mapping and expanded word.
@@ -298,7 +305,12 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         }
         if (boundaryLoop(child.loop)) { return true; }
         // Reuse even a failed cached recognition; diagnostics must not rerun it.
-        if (!cachedNumeric) { cachedNumeric = recognizeRegionalNumericTemplate(child.loop, index, *input); }
+        if (!cachedNumeric) {
+            if (resolveOriginal.demands) {
+                cachedNumeric.emplace();
+                cachedNumeric->result.note(RecognitionIssue::TemplateContext, child.loop, true);
+            } else { cachedNumeric = recognizeRegionalNumericTemplate(child.loop, index, *input); }
+        }
         auto numeric = std::move(*cachedNumeric);
         if (numeric.result.state != RecognitionState::Applicable) {
             std::string arithmeticError;
@@ -356,14 +368,23 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         }
         child.costs.numericVisits = numeric.countedVisits;
         if (!numericPatterns(child, numeric)) { return false; }
-        child.periodic = originalNumeric && node.periodicAnalysis ? *node.periodicAnalysis :
-            analyzeNumericTemplate(numeric);
-        child.endpoints = buildNumericTemplateEndpoints(numeric, child.periodic);
+        if (retainedNumeric && retainedNumeric->numericalDemands) {
+            const auto& owner = retainedNumeric->numericalDemands;
+            child.periodic = owner->analysis;
+            child.numericTemplate = std::shared_ptr<const NumericTemplate>(owner, &owner->form);
+        } else {
+            child.periodic = originalNumeric && node.periodicAnalysis ? *node.periodicAnalysis :
+                analyzeNumericTemplate(numeric);
+            child.numericTemplate = std::make_shared<const NumericTemplate>(std::move(numeric));
+        }
+        auto anchors = numericTemplateAnchors(*child.numericTemplate, child.periodic, error);
+        if (failed(anchors)) { return false; }
+        child.anchors = std::move(*anchors);
     }
     if (!child.periodic.error.empty() || !child.endpoints.logical.error.empty()) {
         return fail("sequence periodic child cannot export exact endpoints");
     }
-    child.anchors = child.endpoints.anchors;
+    if (!child.numericTemplate) { child.anchors = child.endpoints.anchors; }
     children.push_back(std::move(child));
     return true;
 }

@@ -70,15 +70,19 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
         if (!supported) { return failure(); }
     }
     if (demands.numericNode) {
-        // Original nested numerical coordinates need a regional insertion
-        // adapter; the whole-invocation emitter cannot stand in for it.
-        if (demands.region != 0) { return failure(); }
-        auto& node = program->nodes[*demands.numericNode];
-        if (!node.logicalEndpoints) {
-            node.logicalEndpoints = buildNumericTemplateEndpoints(*node.numericTemplate, *node.periodicAnalysis);
+        // Arbitrary enclosing-visit insertion remains a separate adapter.
+        if (demands.region != 0 || !demands.numericalDemands) { return failure(); }
+        auto& recipe = sessionState->attempts[demands.region][AnalysisBackend::NumericalPeriodic].periodicEndpoints;
+        const auto& numeric = *demands.numericalDemands;
+        if (!recipe) {
+            recipe = std::make_shared<const NumericTemplateEndpoints>(
+                buildNumericTemplateEndpoints(numeric.form, numeric.analysis));
         }
-        if (!node.logicalEndpoints->logical.error.empty()) { return failure(); }
-        return prepareNumericTemplateLogicalInsertion(function, *program);
+        if (failed(validateNumericTemplateInsertion(function, numeric, *recipe, *storage))) { return failure(); }
+        auto plan = std::make_unique<PreparedLogicalPlan>(0);
+        plan->completeInvocation = !numeric.form.emptyInvocation;
+        if (failed(prepareCountedEndpointCode(function, *recipe, *plan))) { return failure(); }
+        return plan;
     }
     if (demands.rotatingDemands) {
         const auto& rotating = *demands.rotatingDemands;

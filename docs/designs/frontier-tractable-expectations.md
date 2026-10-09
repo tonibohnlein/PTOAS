@@ -685,3 +685,53 @@ exact-result status and query/selector availability: 227/240 under MayNotAlias,
 213/240 under MayAlias. No timeout or source mutation occurs; the slowest run is
 14.0 seconds. Compliance and whitespace checks pass. Final paired corpus
 performance acceptance remains a separate integration gate.
+
+### Owned original-region numerical mathematics
+
+Numerical analysis now retains its regional template and periodic result in
+one owned mathematical handle. The canonical loop cache is shared by direct
+regional requests, sequence child construction and eligible whole-function
+requests. Regional template validity is independent of root eligibility: a root
+request still requires one original loop covering all payloads and the separate
+outside-loop checks. Surrounding payloads cannot promote child success to a
+whole-function certificate.
+
+Preflight keys distinguish whole-scope compatibility diagnostics from regional
+analysis. Specialized phase/substitution callbacks remain private contexts.
+When the session resolver is present, sequence construction consumes its owned
+numerical form and reduction; an unavailable cached attempt cannot trigger a
+second raw numerical recognition. Standalone compatibility calls keep their
+existing local construction.
+
+Original phase/coordinate/cut mapping is separated from command recipes.
+Sequence children retain the numerical form and instantiate an immutable recipe
+only during preparation, then create fresh detached command fragments on each
+call. Mathematical requests construct neither command recipes nor physical
+allocation. Numerical regional storage-selector and enclosing-visit emission
+adapters remain explicit unsupported capabilities; their failure preserves the
+owned periodic demands while later routes remain available.
+
+Section 8 was reread and all three pinned paper hashes remain unchanged.
+
+Whole-invocation preparation uses the same insertion validator as the legacy
+adapter, preserving bounds, empty-invocation, scope, preexisting-sync, recipe,
+layout and legal-cut checks. Recipe correspondence validation reconstructs the
+expected recipe; it does not rerun the numerical producer or periodic reducer.
+
+Verification: optimized builds and both links pass (142 affected translation
+units, then 33 for shared validation, then one test-driver unit). All 37 focused
+checks pass. The new fixture checks retained demands after export failure,
+independent root eligibility, sequence reuse, zero trips, alias isolation,
+parentless/disjoint detached operations, surviving code after destroying a
+sibling plan, unchanged original IR and direct preexisting-sync rejection.
+The existing sequence oracle's library portion passes 32 actual command-graph
+closure cases plus unavailable-cut replay. Its later public insertion check
+reaches the intentional recognition-only stopping boundary; the complete old
+script is not reported as passing. A numerical allocation-session check passes
+with one cached allocation export after logical preparation.
+
+All 22 serial pinned-input runs preserve every region's class, representation,
+exact-result status and query/selector availability: 227/240 under MayNotAlias,
+213/240 under MayAlias. No timeout or source mutation occurs; the slowest run is
+13.9 seconds. Compliance and whitespace checks pass. This is a milestone
+regression check, not the final paired optimized corpus campaign.

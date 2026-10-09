@@ -27,6 +27,7 @@ struct FiniteGuardedAnalysis;
 struct FiniteVisitAnalysis;
 struct AffineRotatingVisits;
 struct ArithmeticPeriodicProgram;
+struct NumericalRegionDemands;
 enum class AnalysisBackend {
     Explicit, NumericalPeriodic, Rotating, MixedStride, GuardedRotating, BoundedLifetime,
     Sequence, VaryingBoundary, FiniteVisit, ExpandedFinite, ArithmeticPeriodic, Arithmetic,
@@ -80,6 +81,7 @@ struct MathematicalResult {
     std::shared_ptr<const ArithmeticPeriodicProgram> arithmeticPeriodicDemands;
     std::shared_ptr<const ArithmeticDemandAnalysis> arithmeticDemands;
     std::shared_ptr<const GeneralArithmeticDemandAnalysis> generalArithmeticDemands;
+    std::shared_ptr<const NumericalRegionDemands> numericalDemands;
     std::optional<std::size_t> numericNode;
     std::size_t region = 0;
     std::string backend;

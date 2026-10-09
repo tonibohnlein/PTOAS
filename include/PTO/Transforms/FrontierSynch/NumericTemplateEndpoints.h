@@ -37,6 +37,9 @@ struct NumericTemplateEndpoints {
     // Original IR and SyncInput must remain alive and unchanged. The shared
     // logical identity is (record, source outer ordinal), never an EventAttr.
 };
+// Original occurrence mapping only; constructs no logical command recipes.
+FailureOr<std::vector<TemplateEndpointAnchor>> numericTemplateAnchors(
+    const NumericTemplate& input, const PeriodicAnalysis& analysis, std::string& error);
 // Bind a certified periodic relation to supplied original occurrence anchors.
 NumericTemplateEndpoints bindPeriodicEndpoints(scf::ForOp outer,
     ArrayRef<TemplateEndpointAnchor> anchors, const PeriodicAnalysis& analysis);

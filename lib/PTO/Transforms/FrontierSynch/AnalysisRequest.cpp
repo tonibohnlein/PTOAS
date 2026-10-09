@@ -24,6 +24,19 @@ AnalysisOutcome FrontierAnalysis::minimumDemands(std::size_t region, AnalysisNee
     exports.synchronization = false;
     return analyze({region, AnalysisMode::MinimumExact, exports});
 }
+AnalysisOutcome FrontierAnalysis::analyzeNumericalRegion(const AnalysisRequest& request)
+{
+    AnalysisOutcome result;
+    const bool valid = succeeded(recognizeStructure()) && request.region < program->nodes.size();
+    if (!valid) {
+        result.obligations.push_back({AnalysisStage::Form, "numerical original region is unavailable"});
+        return result;
+    }
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    result = requestBackend(AnalysisBackend::NumericalPeriodic, request);
+    result.costs = costRecords();
+    return result;
+}
 AnalysisOutcome FrontierAnalysis::analyzeArithmeticRegional(const AnalysisRequest& request)
 {
     AnalysisOutcome result;
@@ -341,7 +354,8 @@ DictionaryAttr allocateRetained(const MathematicalResult& demands, const Program
     const auto plan = prepared.planId;
     if (demands.explicitDemands) { return explicitAllocationCertificate(*demands.explicitDemands, plan, context); }
     if (demands.numericNode) {
-        return encodePeriodicSharedAllocation(*program.nodes[*demands.numericNode].periodicAnalysis, plan, context);
+        return demands.numericalDemands ?
+            encodePeriodicSharedAllocation(demands.numericalDemands->analysis, plan, context) : DictionaryAttr{};
     }
     if (demands.rotatingDemands) {
         return encodePeriodicSharedAllocation(demands.rotatingDemands->periodic, plan, context);

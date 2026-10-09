@@ -46,7 +46,8 @@ struct AnalysisSessionState {
     std::map<std::pair<std::size_t, uint8_t>, std::vector<AnalysisBackend>> arithmeticOrders;
     std::vector<AnalysisCostRecord> costs;
     std::map<std::size_t, std::shared_ptr<const FiniteExpansionPlan>> finiteExpansionPlans;
-    std::map<std::size_t, std::shared_ptr<const NumericTemplatePlan>> numericTemplatePlans;
+    std::map<std::pair<std::size_t, bool>, std::shared_ptr<const NumericTemplatePlan>> numericTemplatePlans;
+    uint64_t numericalRegionBuilds = 0;
     std::map<std::size_t, std::map<AnalysisBackend, BackendAttempt>> attempts;
     // Canonical original-loop construction is independent of root/regional exports.
     std::map<std::pair<std::size_t, AnalysisBackend>, BackendAttempt> loopAttempts;

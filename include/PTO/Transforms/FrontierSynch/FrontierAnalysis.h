@@ -51,6 +51,8 @@ public:
     uint64_t arithmeticRegionConstructions() const;
     uint64_t finiteExpansionPreflights() const;
     uint64_t numericTemplatePreflights() const;
+    uint64_t numericalRegionConstructions() const;
+    AnalysisOutcome analyzeNumericalRegion(const AnalysisRequest& request);
     // Rank supported arithmetic reducers without constructing generators.
     std::vector<AnalysisBackend> arithmeticMethods(const AnalysisRequest& request);
     std::vector<AnalysisCostRecord> costRecords() const;
