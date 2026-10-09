@@ -63,19 +63,12 @@ void GetValidShapeOp::getEffects(
 
 // Elementwise + reductions: mostly PIPE_V tilebuf ops
 void TAddOp::getEffects(PTOEffectList& effects) {
-  if (!addAlignedPointwiseAccessEffects(effects, {&getSrc0Mutable(), &getSrc1Mutable()}, getDstMutable())) {
-    PTO_ADD_READ(effects, getSrc0Mutable());
-    PTO_ADD_READ(effects, getSrc1Mutable());
-    PTO_ADD_WRITE(effects, getDstMutable());
-  }
+  addPointwiseEffects(effects, {&getSrc0Mutable(), &getSrc1Mutable()}, getDstMutable());
 }
 PTO_DEFINE_BINARY_EFFECTS(TAddReluOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
 PTO_DEFINE_TERNARY_EFFECTS(TAddCOp, getSrc0Mutable(), getSrc1Mutable(), getSrc2Mutable(), getDstMutable())
 void TAddSOp::getEffects(PTOEffectList& effects) {
-  if (!addAlignedPointwiseAccessEffects(effects, {&getSrcMutable()}, getDstMutable())) {
-    PTO_ADD_READ(effects, getSrcMutable());
-    PTO_ADD_WRITE(effects, getDstMutable());
-  }
+  addPointwiseEffects(effects, {&getSrcMutable()}, getDstMutable());
 }
 PTO_DEFINE_BINARY_EFFECTS(TAddSCOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
 void TAxpyOp::getEffects(
@@ -135,8 +128,12 @@ void TColSumOp::getEffects(
   PTO_ADD_WRITE(effects, getDstMutable());
 }
 
-PTO_DEFINE_UNARY_SCRATCH_EFFECTS(TCvtOp, getSrcMutable(), getTmpMutable(),
-                                 getDstMutable())
+void TCvtOp::getEffects(PTOEffectList& effects) {
+  if (addConversionAccess(*this, effects)) { return; }
+  PTO_ADD_READ(effects, getSrcMutable());
+  addA2A3ScratchEffects(effects, getOperation(), getTmpMutable());
+  PTO_ADD_WRITE(effects, getDstMutable());
+}
 void TRandomOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_WRITE(effects, getDstMutable());
@@ -151,7 +148,9 @@ void TDivSOp::getEffects(
   PTO_ADD_WRITE(effects, getDstMutable());
 }
 
-PTO_DEFINE_UNARY_EFFECTS(TExpOp, getSrcMutable(), getDstMutable())
+void TExpOp::getEffects(PTOEffectList& effects) {
+  addPointwiseEffects(effects, {&getSrcMutable()}, getDstMutable());
+}
 
 // TEXPANDS: Write(dst) (broadcast scalar)
 void TExpandsOp::getEffects(
@@ -230,8 +229,12 @@ void TMrgSortOp::getEffects(
   }
 }
 
-PTO_DEFINE_BINARY_EFFECTS(TMulOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
-PTO_DEFINE_UNARY_EFFECTS(TMulSOp, getSrc0Mutable(), getDstMutable())
+void TMulOp::getEffects(PTOEffectList& effects) {
+  addPointwiseEffects(effects, {&getSrc0Mutable(), &getSrc1Mutable()}, getDstMutable());
+}
+void TMulSOp::getEffects(PTOEffectList& effects) {
+  addPointwiseEffects(effects, {&getSrc0Mutable()}, getDstMutable());
+}
 PTO_DEFINE_UNARY_EFFECTS(TNegOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_UNARY_EFFECTS(TNotOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_BINARY_EFFECTS(TOrOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())

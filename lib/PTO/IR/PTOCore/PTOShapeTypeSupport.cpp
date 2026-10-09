@@ -265,6 +265,7 @@ static LogicalResult verifyMatBiasTileA5(Operation *op, Type biasTy, Type dstTy,
                                          bool requireFloatBias = false);
 static LogicalResult verifyMatmulTypeTriple(Operation *op, Type lhsElemTy,
                                             Type rhsElemTy, Type dstElemTy);
+static bool getLogicalViewShape(Value value, SmallVectorImpl<int64_t>& shape);
 static std::optional<pto::Layout> getLogicalViewLayout(Value value);
 static std::optional<pto::Layout> getTileBufLogicalLayout(pto::TileBufType type);
 static std::optional<int64_t> getConstantIntegerValue(Value value);

@@ -138,7 +138,11 @@ static std::optional<pto::Layout> getLogicalViewLayout(Value value)
         if (!tvTy) {
             return std::nullopt;
         }
-        SmallVector<int64_t> shape(tvTy.getShape().begin(), tvTy.getShape().end());
+        // The descriptor may carry constant dimensions behind a dynamic type.
+        // Share shape recovery with footprint qualification instead of losing
+        // those operands at the layout-inference boundary.
+        SmallVector<int64_t> shape;
+        if (!getLogicalViewShape(value, shape)) { return std::nullopt; }
         SmallVector<int64_t> strides;
         strides.reserve(make.getStrides().size());
         for (Value stride : make.getStrides()) {
