@@ -94,7 +94,10 @@ void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limit
             sites.push_back(std::move(context));
         }
     };
-    walk(output.context.root, {}, 0);
+    if (output.context.roots.empty()) { walk(output.context.root, {}, 0); }
+    else {
+        for (auto* selected : output.context.roots) { walk(selected, {}, 0); }
+    }
     const auto count = static_cast<uint64_t>(sites.size());
     const bool pairsFit = !count || count <= limits.pairs / count;
     if (!admitted || !pairsFit) {
@@ -107,7 +110,10 @@ void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limit
     output.sites = std::move(sites);
     for (const auto& [op, context] : visits) {
         for (auto prerequisite : builder.index.prerequisitesFor(op)) {
-            if (!output.context.root->isAncestor(prerequisite.producer->elementOp)) {
+            auto* producer = prerequisite.producer->elementOp;
+            const bool internal = output.context.roots.empty() ? output.context.root->isAncestor(producer) :
+                llvm::any_of(output.context.roots, [&](Operation* selected) { return selected->isAncestor(producer); });
+            if (!internal) {
                 output.incomingPrerequisites.push_back(prerequisite);
             }
         }
@@ -127,15 +133,18 @@ void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limit
 } // namespace mlir::pto::frontiersynch::detail
 
 namespace mlir::pto::frontiersynch {
-FiniteGuardedAnalysis analyzeExpandedFinite(func::FuncOp function, Operation* root,
+static FiniteGuardedAnalysis analyzeExpandedFiniteContext(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input)
 {
     FiniteGuardedAnalysis result;
     auto program = std::make_shared<ArithmeticProgram>(
-        expandFiniteArithmeticProgram({function, root}, index, input, input.accesses()));
+        expandFiniteArithmeticProgram(std::move(context), index, input, input.accesses()));
     if (program->extraction.state != RecognitionState::Applicable ||
         program->recognition.state != RecognitionState::Applicable) {
         result.error = "finite expansion requires a bounded exact occurrence/access adapter";
+        for (const auto& issue : program->extraction.diagnostics) {
+            result.error += " / " + recognitionName(issue.issue).str();
+        }
         return result;
     }
     uint64_t accesses = 0, overlapPairs = 0;
@@ -165,7 +174,7 @@ FiniteGuardedAnalysis analyzeExpandedFinite(func::FuncOp function, Operation* ro
     auto stage = analyzeGeneralArithmeticGenerators(*program, &protection);
     if (!stage.analysis().error.empty()) { result.error = stage.analysis().error; return result; }
     auto state = std::make_shared<FiniteGuardedState>();
-    state->function = function;
+    state->function = program->context.function;
     state->arena = std::make_shared<RegionExpressions>();
     state->accessModel = &input.accesses();
     state->gmAliasPolicy = input.memory().gmPolicy();
@@ -181,7 +190,7 @@ FiniteGuardedAnalysis analyzeExpandedFinite(func::FuncOp function, Operation* ro
         state->effects.push_back(std::move(effect));
     }
     auto predicate = [&](const IntegerSystem& system, ArrayRef<uint64_t> residues) {
-        return state->arena->integerPredicate(system, parameters, 1, residues);
+        return state->arena->integerPredicate(system, parameters, program->primitives.period, residues);
     };
     for (const auto& domain : stage.occurrences()) {
         const bool invalidDomain = domain.site >= state->presence.size() || !domain.residues.empty();
@@ -220,5 +229,22 @@ FiniteGuardedAnalysis analyzeExpandedFinite(func::FuncOp function, Operation* ro
     result.expandedProgram = std::move(program);
     result.cost = result.state->cost;
     return result;
+}
+FiniteGuardedAnalysis analyzeExpandedFinite(func::FuncOp function, Operation* root,
+    const PhaseIndex& index, const SyncInput& input)
+{
+    return analyzeExpandedFiniteContext({function, root}, index, input);
+}
+FiniteGuardedAnalysis analyzeExpandedFinite(func::FuncOp function, ArrayRef<Operation*> roots,
+    const PhaseIndex& index, const SyncInput& input)
+{
+    if (roots.empty()) {
+        FiniteGuardedAnalysis result;
+        result.error = "finite expansion root list is empty";
+        return result;
+    }
+    ArithmeticRegionContext context{function, roots.front()};
+    llvm::append_range(context.roots, roots);
+    return analyzeExpandedFiniteContext(std::move(context), index, input);
 }
 } // namespace mlir::pto::frontiersynch

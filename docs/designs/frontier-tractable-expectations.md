@@ -212,3 +212,58 @@ translation units at the recorded optimized flags, based on 69ece94a0371.
 Commands, binary/input hashes, per-case timings and outcomes are retained in
 `.local/section8-refactor/tractable-certification/` (`commands.json`,
 `corpus-provenance.json`, `corpus-results.json`, `validation-results.json`).
+
+## Exact root-list normalization
+
+A sequence body, conditional arm or explicit run now supplies its exact adjacent
+original operations to finite normalization. The owned context records those
+roots and uses the first operation as the entry cut. The adapter never replaces
+a body/arm with its enclosing synthetic anchor. Unsupported contexts, empty
+lists and malformed/nonadjacent lists remain unavailable.
+
+The collector charges one aggregate budget across the complete list. Incoming
+prerequisites are classified against all selected roots; edges between selected
+roots remain internal. Enclosing loop IVs are actual entry bindings, not new
+occurrence coordinates. Proper inner fixed loops alone are expanded. Parent
+branch presence is an entry condition, whereas nested branches retain their
+own exact presence circuits. The mapped query/selector/emission obligations
+of finite expansion remain explicit.
+
+The Section 8, minimum-demands and counted-composition reference hashes were
+rechecked before this milestone and match the pinned catalog.
+
+Symbolic modulo-two access terms can select a parameter-residue adapter before
+integer overlap projection. The same original parameter residues constrain
+occurrences, accesses, native edges and prerequisites. Predicate circuits use
+the retained period; byte residues are preserved as well. This avoids repeated
+quotient projection when a symbolic bank has both readers and writers.
+
+The original P1 primitive description is constructed first and supplies an
+overflow-safe upper bound on the complete P2 description, including every
+parameter and byte residue. P2 is attempted only when its whole description
+fits the existing per-adapter fragment cap. P1 remains owned until P2 succeeds;
+normalization failure restores it. Sites and parameter identities are built
+once. Actual fragment counters charge both adapter constructions; the two
+bounded primitive descriptions are separate from the once-only occurrence
+expansion. Every admitted residue tuple is charged before construction.
+
+The independent oracle checks both parities, negative and positive entry
+parameters, two correlated symbolic banks, nonunit original steps, exact byte
+sets and dependency covers. A smaller fragment allowance verifies that P1
+remains available when P2 is too large.
+
+This milestone passes the 31 focused/oracle checks and all 22 serial pinned
+corpus invocations. Compared with the finite-expansion checkpoint, no case
+loses a certificate: default coverage rises from 224/240 to 227/240 (the three
+GEMM body sequences), and MayAlias coverage rises from 211/240 to 212/240
+(a group-normalization sequence). Every run preserves IR and builds no
+synchronization or allocation.
+
+The first root-list prototype timed out during GEMM's symbolic bank overlap
+projection. Parity normalization resolves that regression: the full TileLang
+case takes approximately 1.5 seconds, and the slowest final corpus case takes
+13.8 seconds. External timeouts remain measurement limits. Optimized binaries
+are built from current sources based on 64e162fe1, with all 248 linked Frontier
+and test-tool translation units refreshed; repaired units and final links
+passed. Commands, hashes, stage outcomes and per-case timings remain in the
+tractable-certification artifact directory.

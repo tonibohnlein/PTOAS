@@ -34,6 +34,10 @@ struct ArithmeticSite {
 struct ArithmeticRegionContext {
     func::FuncOp function;
     Operation* root = nullptr;
+    // Optional exact adjacent roots. root is their entry cut, never an enclosing
+    // synthetic anchor. Owned identities prevent sibling or enclosing visits
+    // from entering a body/arm/run request.
+    SmallVector<Operation*> roots;
 };
 struct ArithmeticProgram {
     ArithmeticRegionContext context;
