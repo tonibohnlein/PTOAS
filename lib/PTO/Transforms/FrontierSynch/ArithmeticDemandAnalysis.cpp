@@ -151,16 +151,14 @@ public:
         if (!import() || !buildRelations() || !buildConflicts()) { return; }
         if (!generatorsOnly) { complete(); }
     }
-    std::vector<ArithmeticOccurrenceDomain> occurrenceDomains() const
+    std::vector<TypedArithmeticOccurrenceDomain<System>> occurrenceDomains() const
     {
-        std::vector<ArithmeticOccurrenceDomain> domains;
-        if constexpr (std::is_same_v<System, IntegerSystem>) {
-            for (const auto& piece : pieces) {
-                if (piece.schema->kind != PrimitiveKind::Occurrences || !piece.schema->sourceSite) { continue; }
-                domains.push_back({*piece.schema->sourceSite,
-                    {piece.residues.begin(), piece.residues.begin() + piece.schema->sourceDimensions},
-                    parameterResidues(piece), piece.system});
-            }
+        std::vector<TypedArithmeticOccurrenceDomain<System>> domains;
+        for (const auto& piece : pieces) {
+            if (piece.schema->kind != PrimitiveKind::Occurrences || !piece.schema->sourceSite) { continue; }
+            domains.push_back({*piece.schema->sourceSite,
+                {piece.residues.begin(), piece.residues.begin() + piece.schema->sourceDimensions},
+                parameterResidues(piece), piece.system});
         }
         return domains;
     }
@@ -610,6 +608,8 @@ struct GeneralArithmeticGeneratorStage::State {
     std::unique_ptr<Analysis<IntegerPolicy>> engine;
     const ArithmeticProgram* program = nullptr;
     GeneralArithmeticDemandAnalysis unavailable;
+    std::optional<GeneralArithmeticDemandAnalysis> generators;
+    std::shared_ptr<GeneralArithmeticDemandAnalysis> reduced;
     std::vector<ArithmeticOccurrenceDomain> domains;
     State() { unavailable.error = "arithmetic generator stage is unavailable or already consumed"; }
 };
@@ -628,6 +628,7 @@ const GeneralArithmeticDemandAnalysis& GeneralArithmeticGeneratorStage::analysis
         }();
         return missing;
     }
+    if (state->generators) { return *state->generators; }
     return state->engine ? state->engine->result : state->unavailable;
 }
 bool GeneralArithmeticGeneratorStage::belongsTo(const ArithmeticProgram& program) const
@@ -652,16 +653,19 @@ GeneralArithmeticGeneratorStage analyzeGeneralArithmeticGenerators(
         stage.state->engine->result.generators.clear();
         stage.state->engine->result.nativeOrder.clear();
     }
+    stage.state->generators = std::move(stage.state->engine->result);
     return stage;
 }
 GeneralArithmeticDemandAnalysis completeGeneralArithmeticDemands(GeneralArithmeticGeneratorStage&& stage)
 {
     auto state = std::move(stage.state);
+    if (state && state->reduced) { return *state->reduced; }
     if (!state || !state->engine) {
         GeneralArithmeticDemandAnalysis result;
         result.error = "arithmetic generator stage is unavailable or already consumed";
         return result;
     }
+    if (state->generators) { state->engine->result = std::move(*state->generators); }
     state->engine->complete();
     auto result = std::move(state->engine->result);
     if (!result.error.empty()) {
@@ -670,6 +674,108 @@ GeneralArithmeticDemandAnalysis completeGeneralArithmeticDemands(GeneralArithmet
         result.exactMinimum = false; result.adjacentLocalDemands = false;
     }
     return result;
+}
+std::shared_ptr<GeneralArithmeticDemandAnalysis> reduceGeneralArithmeticDemands(
+    GeneralArithmeticGeneratorStage& stage)
+{
+    if (!stage.state) { return {}; }
+    auto& state = *stage.state;
+    if (state.reduced) { return state.reduced; }
+    // Transfer only the engine to the consuming adapter. Preserve the original
+    // generator snapshot and domains for future periodic export requests.
+    GeneralArithmeticGeneratorStage completion;
+    completion.state->engine = std::move(state.engine);
+    if (completion.state->engine) { completion.state->engine->result = *state.generators; }
+    state.reduced = std::make_shared<GeneralArithmeticDemandAnalysis>(
+        completeGeneralArithmeticDemands(std::move(completion)));
+    return state.reduced;
+}
+struct DifferenceArithmeticGeneratorStage::State {
+    std::unique_ptr<Analysis<DifferencePolicy>> engine;
+    const ArithmeticProgram* program = nullptr;
+    ArithmeticDemandAnalysis unavailable;
+    std::optional<ArithmeticDemandAnalysis> generators;
+    std::shared_ptr<ArithmeticDemandAnalysis> reduced;
+    std::vector<DifferenceArithmeticOccurrenceDomain> domains;
+    State() { unavailable.error = "arithmetic generator stage is unavailable or already consumed"; }
+};
+DifferenceArithmeticGeneratorStage::DifferenceArithmeticGeneratorStage() : state(std::make_unique<State>()) {}
+DifferenceArithmeticGeneratorStage::~DifferenceArithmeticGeneratorStage() = default;
+DifferenceArithmeticGeneratorStage::DifferenceArithmeticGeneratorStage(
+    DifferenceArithmeticGeneratorStage&&) noexcept = default;
+DifferenceArithmeticGeneratorStage& DifferenceArithmeticGeneratorStage::operator=(
+    DifferenceArithmeticGeneratorStage&&) noexcept = default;
+const ArithmeticDemandAnalysis& DifferenceArithmeticGeneratorStage::analysis() const
+{
+    if (!state) {
+        static const auto missing = [] {
+            ArithmeticDemandAnalysis result;
+            result.error = "arithmetic generator stage is already consumed";
+            return result;
+        }();
+        return missing;
+    }
+    if (state->generators) { return *state->generators; }
+    return state->engine ? state->engine->result : state->unavailable;
+}
+bool DifferenceArithmeticGeneratorStage::belongsTo(const ArithmeticProgram& program) const
+{
+    return state && state->program == &program;
+}
+const std::vector<DifferenceArithmeticOccurrenceDomain>& DifferenceArithmeticGeneratorStage::occurrences() const
+{
+    static const std::vector<DifferenceArithmeticOccurrenceDomain> empty;
+    return state ? state->domains : empty;
+}
+DifferenceArithmeticGeneratorStage analyzeDifferenceArithmeticGenerators(
+    const ArithmeticProgram& program, const StructuredProtection* protection)
+{
+    DifferenceArithmeticGeneratorStage stage;
+    stage.state->program = &program;
+    stage.state->engine = std::make_unique<Analysis<DifferencePolicy>>(program, protection);
+    stage.state->engine->run(true);
+    if (stage.state->engine->result.error.empty()) {
+        stage.state->domains = stage.state->engine->occurrenceDomains();
+    } else {
+        stage.state->engine->result.generators.clear();
+        stage.state->engine->result.nativeOrder.clear();
+    }
+    stage.state->generators = std::move(stage.state->engine->result);
+    return stage;
+}
+ArithmeticDemandAnalysis completeDifferenceArithmeticDemands(DifferenceArithmeticGeneratorStage&& stage)
+{
+    auto state = std::move(stage.state);
+    if (state && state->reduced) { return *state->reduced; }
+    if (!state || !state->engine) {
+        ArithmeticDemandAnalysis result;
+        result.error = "arithmetic generator stage is unavailable or already consumed";
+        return result;
+    }
+    if (state->generators) { state->engine->result = std::move(*state->generators); }
+    state->engine->complete();
+    auto result = std::move(state->engine->result);
+    if (!result.error.empty()) {
+        result.generators.clear(); result.nativeOrder.clear();
+        result.requiredOrder.clear(); result.minimumDemands.clear();
+        result.exactMinimum = false; result.adjacentLocalDemands = false;
+    }
+    return result;
+}
+std::shared_ptr<ArithmeticDemandAnalysis> reduceDifferenceArithmeticDemands(
+    DifferenceArithmeticGeneratorStage& stage)
+{
+    if (!stage.state) { return {}; }
+    auto& state = *stage.state;
+    if (state.reduced) { return state.reduced; }
+    // Transfer only the engine to the consuming adapter. Preserve the original
+    // generator snapshot and domains for future periodic export requests.
+    DifferenceArithmeticGeneratorStage completion;
+    completion.state->engine = std::move(state.engine);
+    if (completion.state->engine) { completion.state->engine->result = *state.generators; }
+    state.reduced = std::make_shared<ArithmeticDemandAnalysis>(
+        completeDifferenceArithmeticDemands(std::move(completion)));
+    return state.reduced;
 }
 ArithmeticDemandAnalysis analyzeArithmeticDemandsWithProtection(const ArithmeticProgram& program,
                                                                const StructuredProtection& protection)

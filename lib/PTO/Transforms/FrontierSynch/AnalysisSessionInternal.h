@@ -29,6 +29,8 @@ struct BackendAttempt {
     std::map<std::pair<std::size_t, std::size_t>, int64_t> arithmeticRecords;
 };
 struct AnalysisSessionState {
+    std::optional<DifferenceArithmeticGeneratorStage> differenceGenerators;
+    uint64_t arithmeticGeneratorBuilds = 0;
     std::map<std::size_t, std::map<AnalysisBackend, BackendAttempt>> attempts;
     // Canonical original-loop construction is independent of root/regional exports.
     std::map<std::pair<std::size_t, AnalysisBackend>, BackendAttempt> loopAttempts;

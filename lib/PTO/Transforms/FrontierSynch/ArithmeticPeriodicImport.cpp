@@ -146,10 +146,76 @@ FailureOr<IntegerSystem> ordinalSystem(const IntegerSystem& system, const Intege
     for (auto& row : congruences) { row.residue -= substitute(row.coefficients); }
     return IntegerSystem::create(system.dimensions(), constraints, congruences);
 }
-std::vector<IntegerSystem> domainsFor(const GeneralArithmeticGeneratorStage& stage, const ArithmeticEventKey& event,
+FailureOr<IntegerSystem> integerRows(unsigned dimensions, ArrayRef<DifferenceBoundConstraint> atoms)
+{
+    std::vector<IntegerConstraint> rows;
+    for (const auto& atom : atoms) {
+        IntegerConstraint row{std::vector<BoundInteger>(dimensions), atom.bound};
+        if (atom.lhs) { row.coefficients[atom.lhs - 1] += BoundInteger(1); }
+        if (atom.rhs) { row.coefficients[atom.rhs - 1] -= BoundInteger(1); }
+        rows.push_back(std::move(row));
+    }
+    return IntegerSystem::create(dimensions, rows, {});
+}
+FailureOr<IntegerSystem> ordinalSystem(const DifferenceBoundSystem& system, const IntegerAffine& lower,
+    int64_t step, ArrayRef<BoundInteger> offsets)
+{
+    auto adapted = integerRows(system.dimensions(), system.constraints());
+    if (failed(adapted)) { return failure(); }
+    return ordinalSystem(*adapted, lower, step, offsets);
+}
+FailureOr<IntegerSystem> ordinalRelation(const IntegerSystem& system,
+    const std::vector<IntegerSystem>& sources, const std::vector<IntegerSystem>& targets,
+    const IntegerAffine& lower, int64_t step, ArrayRef<BoundInteger> offsets)
+{
+    (void)sources; (void)targets;
+    return ordinalSystem(system, lower, step, offsets);
+}
+FailureOr<IntegerSystem> ordinalRelation(const DifferenceBoundSystem& system,
+    const std::vector<DifferenceBoundSystem>& sources, const std::vector<DifferenceBoundSystem>& targets,
+    const IntegerAffine& lower, int64_t step, ArrayRef<BoundInteger> offsets)
+{
+    // Closing a DBM derives absolute endpoint cutoffs from distance bounds and
+    // the common finite domains. They are not new restrictions. Keep the
+    // supported rows only when one exact closure proves their equivalence to
+    // the original piece; otherwise preserve every atom and let the existing
+    // periodic form check report the unsupported cutoff.
+    auto common = [](const DifferenceBoundConstraint& atom, unsigned coordinate,
+                     const std::vector<DifferenceBoundSystem>& domains) {
+        const auto other = coordinate == 1 ? 2U : 1U;
+        const bool foreignCoordinate = domains.empty() || atom.lhs == other || atom.rhs == other;
+        if (foreignCoordinate) { return false; }
+        auto project = [coordinate](unsigned value) {
+            return value == coordinate ? 1U : (value > 2 ? value - 1 : 0U);
+        };
+        for (const auto& domain : domains) {
+            if (domain.isEmpty()) { continue; }
+            auto bound = domain.bound(project(atom.lhs), project(atom.rhs));
+            if (!bound || *bound > atom.bound) { return false; }
+        }
+        return true;
+    };
+    const auto atoms = system.constraints();
+    std::vector<DifferenceBoundConstraint> supported;
+    for (const auto& atom : atoms) {
+        const bool distance = (atom.lhs == 1 && atom.rhs == 2) || (atom.lhs == 2 && atom.rhs == 1);
+        const bool parameters = atom.lhs != 1 && atom.lhs != 2 && atom.rhs != 1 && atom.rhs != 2;
+        const bool accepted = distance || parameters || common(atom, 1, sources) || common(atom, 2, targets);
+        if (accepted) {
+            supported.push_back(atom);
+        }
+    }
+    auto closure = DifferenceBoundSystem::create(system.dimensions(), supported);
+    const bool equivalent = succeeded(closure) && closure->isSubsetOf(system);
+    auto adapted = integerRows(system.dimensions(), equivalent ? supported : atoms);
+    if (failed(adapted)) { return failure(); }
+    return ordinalSystem(*adapted, lower, step, offsets);
+}
+template<class Stage>
+std::vector<typename Stage::System> domainsFor(const Stage& stage, const ArithmeticEventKey& event,
                                      const std::vector<uint64_t>& parameters)
 {
-    std::vector<IntegerSystem> domains;
+    std::vector<typename Stage::System> domains;
     for (const auto& domain : stage.occurrences()) {
         if (domain.site == event.site && domain.residues == event.residues && domain.parameterResidues == parameters) {
             domains.push_back(domain.system);
@@ -157,9 +223,10 @@ std::vector<IntegerSystem> domainsFor(const GeneralArithmeticGeneratorStage& sta
     }
     return domains;
 }
-bool appendRelations(const ArithmeticProgram& program, const GeneralArithmeticGeneratorStage& stage,
-                     const GeneralArithmeticRelation& relations, bool native, ArithmeticPeriodicInput& input,
-                     int64_t step, const IntegerAffine& lower)
+template<class Stage>
+bool appendRelations(const ArithmeticProgram& program, const Stage& stage,
+                     const TypedArithmeticRelation<typename Stage::System>& relations, bool native,
+                     ArithmeticPeriodicInput& input, int64_t step, const IntegerAffine& lower)
 {
     for (const auto& [key, pieces] : relations) {
         if (key.source.site >= program.sites.size() || key.target.site >= program.sites.size() ||
@@ -201,7 +268,8 @@ bool appendRelations(const ArithmeticProgram& program, const GeneralArithmeticGe
                     to.push_back(std::move(*converted));
                 }
                 for (const auto& piece : pieces) {
-                    auto converted = ordinalSystem(piece, lower, step, {source.offset, target.offset});
+                    auto converted = ordinalRelation(piece, sourceDomains, targetDomains,
+                        lower, step, {source.offset, target.offset});
                     if (failed(converted)) { return false; }
                     input.pieces.push_back({source.type, target.type, std::move(*converted), key.parameterResidues,
                         from, to, native, input.pieces.size()});
@@ -221,8 +289,9 @@ bool checkArithmeticPeriodicSkeleton(const ArithmeticProgram& program, std::stri
     diagnostic = std::move(out.conversion.diagnostic);
     return valid;
 }
-ArithmeticPeriodicProgram convertArithmeticPeriodicProgram(const ArithmeticProgram& program,
-    const GeneralArithmeticGeneratorStage& stage, std::shared_ptr<RegionExpressions> expressions)
+template<class Stage>
+static ArithmeticPeriodicProgram convertGeneratorStage(const ArithmeticProgram& program,
+    const Stage& stage, std::shared_ptr<RegionExpressions> expressions)
 {
     ArithmeticPeriodicProgram out;
     out.period = stage.analysis().period;
@@ -254,5 +323,15 @@ ArithmeticPeriodicProgram convertArithmeticPeriodicProgram(const ArithmeticProgr
     }
     out.conversion = convertArithmeticPeriodicIntervals(input);
     return out;
+}
+ArithmeticPeriodicProgram convertArithmeticPeriodicProgram(const ArithmeticProgram& program,
+    const GeneralArithmeticGeneratorStage& stage, std::shared_ptr<RegionExpressions> expressions)
+{
+    return convertGeneratorStage(program, stage, std::move(expressions));
+}
+ArithmeticPeriodicProgram convertArithmeticPeriodicProgram(const ArithmeticProgram& program,
+    const DifferenceArithmeticGeneratorStage& stage, std::shared_ptr<RegionExpressions> expressions)
+{
+    return convertGeneratorStage(program, stage, std::move(expressions));
 }
 } // namespace mlir::pto::frontiersynch

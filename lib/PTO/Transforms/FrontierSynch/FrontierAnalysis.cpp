@@ -181,6 +181,31 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareBounded
     if (boundedAnalysis) { recordWholeRegion(AnalysisBackend::BoundedLifetime); }
     return prepared;
 }
+uint64_t FrontierAnalysis::arithmeticGeneratorConstructions() const
+{
+    return sessionState ? sessionState->arithmeticGeneratorBuilds : 0;
+}
+LogicalResult FrontierAnalysis::ensureArithmeticGenerators()
+{
+    const bool recognized = succeeded(recognizeArithmetic()) && program->arithmetic.has_value();
+    if (!recognized) { return failure(); }
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    const auto& arithmetic = *program->arithmetic;
+    if (arithmetic.recognition.arithmeticClass == ArithmeticClass::Differences) {
+        if (!sessionState->differenceGenerators) {
+            const auto protection = structuredProtection(storage->accesses());
+            sessionState->differenceGenerators.emplace(analyzeDifferenceArithmeticGenerators(arithmetic, &protection));
+            if (sessionState->arithmeticGeneratorBuilds != UINT64_MAX) { ++sessionState->arithmeticGeneratorBuilds; }
+        }
+        return success();
+    }
+    if (!arithmeticGeneratorStage) {
+        const auto protection = structuredProtection(storage->accesses());
+        arithmeticGeneratorStage.emplace(analyzeGeneralArithmeticGenerators(arithmetic, &protection));
+        if (sessionState->arithmeticGeneratorBuilds != UINT64_MAX) { ++sessionState->arithmeticGeneratorBuilds; }
+    }
+    return success();
+}
 LogicalResult FrontierAnalysis::analyzeArithmeticPeriodicFunction()
 {
     if (failed(recognizeArithmetic()) || !program->arithmetic) { return failure(); }
@@ -192,12 +217,11 @@ LogicalResult FrontierAnalysis::analyzeArithmeticPeriodicFunction()
             arithmeticPeriodicAnalysis->conversion.diagnostic = std::move(diagnostic);
             return failure();
         }
-        if (!arithmeticGeneratorStage) {
-            const auto protection = structuredProtection(storage->accesses());
-            arithmeticGeneratorStage.emplace(analyzeGeneralArithmeticGenerators(*program->arithmetic, &protection));
-        }
-        arithmeticPeriodicAnalysis = std::make_shared<ArithmeticPeriodicProgram>(
-            convertArithmeticPeriodicProgram(*program->arithmetic, *arithmeticGeneratorStage));
+        if (failed(ensureArithmeticGenerators())) { return failure(); }
+        auto converted = sessionState->differenceGenerators ?
+            convertArithmeticPeriodicProgram(*program->arithmetic, *sessionState->differenceGenerators) :
+            convertArithmeticPeriodicProgram(*program->arithmetic, *arithmeticGeneratorStage);
+        arithmeticPeriodicAnalysis = std::make_shared<ArithmeticPeriodicProgram>(std::move(converted));
     }
     const auto& conversion = arithmeticPeriodicAnalysis->conversion;
     const bool exact = conversion.status == ArithmeticPeriodicStatus::Applicable && conversion.guarded &&
@@ -228,42 +252,16 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareArithme
 }
 LogicalResult FrontierAnalysis::analyzeArithmeticFunction()
 {
-    if (failed(recognizeArithmetic()) || !program->arithmetic) { return failure(); }
-    const auto& arithmetic = *program->arithmetic;
-    // A failed periodic conversion must not switch a difference-bound input
-    // to the general integer reducer merely because that adapter used it.
-    if (arithmetic.recognition.arithmeticClass == ArithmeticClass::Differences) {
-        arithmeticGeneratorStage.reset();
-        if (!arithmeticAnalysis) {
-            const auto protection = structuredProtection(storage->accesses());
-            arithmeticAnalysis = std::make_shared<ArithmeticDemandAnalysis>(
-                analyzeArithmeticDemandsWithProtection(arithmetic, protection));
-        }
-        const bool exact = arithmeticAnalysis->error.empty() && arithmeticAnalysis->exactMinimum;
+    if (failed(ensureArithmeticGenerators())) { return failure(); }
+    if (sessionState->differenceGenerators) {
+        arithmeticAnalysis = reduceDifferenceArithmeticDemands(*sessionState->differenceGenerators);
+        const bool exact = arithmeticAnalysis && arithmeticAnalysis->error.empty() && arithmeticAnalysis->exactMinimum;
         if (exact) { recordWholeRegion(AnalysisBackend::Arithmetic); }
         return success(exact);
     }
-    if (arithmeticGeneratorStage) {
-        if (!generalArithmeticAnalysis) {
-            generalArithmeticAnalysis = std::make_shared<GeneralArithmeticDemandAnalysis>(
-                completeGeneralArithmeticDemands(std::move(*arithmeticGeneratorStage)));
-        }
-        arithmeticGeneratorStage.reset();
-        const bool exact = generalArithmeticAnalysis->error.empty() && generalArithmeticAnalysis->exactMinimum;
-        if (exact) { recordWholeRegion(AnalysisBackend::Arithmetic); }
-        return success(exact);
-    }
-    if (generalArithmeticAnalysis) {
-        const bool exact = generalArithmeticAnalysis->error.empty() && generalArithmeticAnalysis->exactMinimum;
-        if (exact) { recordWholeRegion(AnalysisBackend::Arithmetic); }
-        return success(exact);
-    }
-    const auto protection = structuredProtection(storage->accesses());
-    if (!generalArithmeticAnalysis) {
-        generalArithmeticAnalysis = std::make_shared<GeneralArithmeticDemandAnalysis>(
-            analyzeGeneralArithmeticDemandsWithProtection(arithmetic, protection));
-    }
-    const bool exact = generalArithmeticAnalysis->error.empty() && generalArithmeticAnalysis->exactMinimum;
+    generalArithmeticAnalysis = reduceGeneralArithmeticDemands(*arithmeticGeneratorStage);
+    const bool exact = generalArithmeticAnalysis && generalArithmeticAnalysis->error.empty() &&
+                       generalArithmeticAnalysis->exactMinimum;
     if (exact) { recordWholeRegion(AnalysisBackend::Arithmetic); }
     return success(exact);
 }
@@ -304,7 +302,8 @@ namespace mlir::pto {
 namespace {
 // Persist recognition independently of which logical backend succeeds. The
 // report contains no borrowed operations or values and survives insertion.
-DictionaryAttr contractReport(const frontiersynch::ProgramRecognition& program, StringRef logicalBackend)
+DictionaryAttr contractReport(const frontiersynch::ProgramRecognition& program, StringRef logicalBackend,
+                              uint64_t arithmeticGeneratorConstructions)
 {
     MLIRContext* context = program.nodes.front().anchor->getContext();
     Builder b(context);
@@ -364,6 +363,7 @@ DictionaryAttr contractReport(const frontiersynch::ProgramRecognition& program, 
     report.set("contracts", b.getArrayAttr(candidates));
     report.set("logical_plan", b.getStringAttr("ready"));
     report.set("selected_logical_backend", b.getStringAttr(logicalBackend));
+    report.set("arithmetic_generator_constructions", b.getI64IntegerAttr(arithmeticGeneratorConstructions));
     report.set("physical_allocation", b.getStringAttr("not-requested"));
     return report.getDictionary(context);
 }
@@ -393,7 +393,10 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     if (failed(prepared) && analysis.hasWholeFunctionMinimumDemands()) {
         routeError = "unmet-exports: exact whole-function demands retained; " + routeError;
     }
-    if (succeeded(prepared)) { (*prepared)->recognitionReport = contractReport(*analysis.result(), logicalBackend); }
+    if (succeeded(prepared)) {
+        (*prepared)->recognitionReport = contractReport(*analysis.result(), logicalBackend,
+                                                       analysis.arithmeticGeneratorConstructions());
+    }
     if (failed(prepared)) {
         auto diagnostic = function.emitError("logical plan unavailable; Section 5 contract outcomes:");
         for (const auto& candidate : analysis.result()->contractAudit) {

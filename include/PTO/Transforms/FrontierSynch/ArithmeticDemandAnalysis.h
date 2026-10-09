@@ -64,13 +64,17 @@ class StructuredProtection;
 // borrowed during creation; continuation uses only the imported relations.
 // Moving into completion consumes the stage, so fallback never regenerates its
 // accesses, projected conflicts or prerequisite relations.
-struct ArithmeticOccurrenceDomain {
+template<class System>
+struct TypedArithmeticOccurrenceDomain {
     std::size_t site = 0;
     std::vector<uint64_t> residues, parameterResidues;
-    IntegerSystem system;
+    System system;
 };
+using ArithmeticOccurrenceDomain = TypedArithmeticOccurrenceDomain<IntegerSystem>;
+using DifferenceArithmeticOccurrenceDomain = TypedArithmeticOccurrenceDomain<DifferenceBoundSystem>;
 class GeneralArithmeticGeneratorStage {
 public:
+    using System = IntegerSystem;
     GeneralArithmeticGeneratorStage();
     ~GeneralArithmeticGeneratorStage();
     GeneralArithmeticGeneratorStage(GeneralArithmeticGeneratorStage&&) noexcept;
@@ -86,10 +90,44 @@ private:
     friend GeneralArithmeticGeneratorStage analyzeGeneralArithmeticGenerators(
         const ArithmeticProgram&, const StructuredProtection*);
     friend GeneralArithmeticDemandAnalysis completeGeneralArithmeticDemands(GeneralArithmeticGeneratorStage&&);
+    friend std::shared_ptr<GeneralArithmeticDemandAnalysis> reduceGeneralArithmeticDemands(
+        GeneralArithmeticGeneratorStage&);
 };
 GeneralArithmeticGeneratorStage analyzeGeneralArithmeticGenerators(
     const ArithmeticProgram& program, const StructuredProtection* protection = nullptr);
 GeneralArithmeticDemandAnalysis completeGeneralArithmeticDemands(GeneralArithmeticGeneratorStage&& stage);
+// Non-consuming completion retains the immutable generator/native-order view
+// for a later adapter attempt and caches the reduced result independently.
+std::shared_ptr<GeneralArithmeticDemandAnalysis> reduceGeneralArithmeticDemands(
+    GeneralArithmeticGeneratorStage& stage);
+class DifferenceArithmeticGeneratorStage {
+public:
+    using System = DifferenceBoundSystem;
+    DifferenceArithmeticGeneratorStage();
+    ~DifferenceArithmeticGeneratorStage();
+    DifferenceArithmeticGeneratorStage(DifferenceArithmeticGeneratorStage&&) noexcept;
+    DifferenceArithmeticGeneratorStage& operator=(DifferenceArithmeticGeneratorStage&&) noexcept;
+    DifferenceArithmeticGeneratorStage(const DifferenceArithmeticGeneratorStage&) = delete;
+    DifferenceArithmeticGeneratorStage& operator=(const DifferenceArithmeticGeneratorStage&) = delete;
+    const ArithmeticDemandAnalysis& analysis() const;
+    bool belongsTo(const ArithmeticProgram& program) const;
+    const std::vector<DifferenceArithmeticOccurrenceDomain>& occurrences() const;
+private:
+    struct State;
+    std::unique_ptr<State> state;
+    friend DifferenceArithmeticGeneratorStage analyzeDifferenceArithmeticGenerators(
+        const ArithmeticProgram&, const StructuredProtection*);
+    friend ArithmeticDemandAnalysis completeDifferenceArithmeticDemands(DifferenceArithmeticGeneratorStage&&);
+    friend std::shared_ptr<ArithmeticDemandAnalysis> reduceDifferenceArithmeticDemands(
+        DifferenceArithmeticGeneratorStage&);
+};
+DifferenceArithmeticGeneratorStage analyzeDifferenceArithmeticGenerators(
+    const ArithmeticProgram& program, const StructuredProtection* protection = nullptr);
+ArithmeticDemandAnalysis completeDifferenceArithmeticDemands(DifferenceArithmeticGeneratorStage&& stage);
+// Non-consuming completion retains the immutable generator/native-order view
+// for a later adapter attempt and caches the reduced result independently.
+std::shared_ptr<ArithmeticDemandAnalysis> reduceDifferenceArithmeticDemands(
+    DifferenceArithmeticGeneratorStage& stage);
 // The DBM entry point accepts the difference-bound subclass. Input must supply
 // complete physical primitives and the core-native model. Every join retains
 // one parameter context and matches endpoint residue tuples exactly. No loop
