@@ -224,8 +224,7 @@ LogicalResult FrontierAnalysis::analyzeArithmeticPeriodicFunction()
         arithmeticPeriodicAnalysis = std::make_shared<ArithmeticPeriodicProgram>(std::move(converted));
     }
     const auto& conversion = arithmeticPeriodicAnalysis->conversion;
-    const bool exact = conversion.status == ArithmeticPeriodicStatus::Applicable && conversion.guarded &&
-                       conversion.guarded->error.empty();
+    const bool exact = conversion.hasExactDemands();
     if (exact) { recordWholeRegion(AnalysisBackend::ArithmeticPeriodic); }
     return success(exact);
 }
@@ -234,11 +233,15 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareArithme
     if (failed(analyzeArithmeticPeriodicFunction())) { return failure(); }
     const auto& converted = *arithmeticPeriodicAnalysis;
     const auto& conversion = converted.conversion;
+    periodicExports = {};
+    if (!conversion.guarded) {
+        periodicExports.endpointError = conversion.exportError;
+        return failure();
+    }
     std::vector<uint64_t> residues;
     for (const auto& site : converted.sites) { residues.push_back(site.residue); }
     GuardedPeriodicEndpointInput input{converted.loop, conversion.expressions, converted.phases,
         conversion.payloads, conversion.generators, &*conversion.guarded, converted.period, residues};
-    periodicExports = {};
     auto prepared = prepareGuardedPeriodicEndpoints(function, input, periodicExports.endpointError);
     if (failed(prepared)) { return failure(); }
     periodicExports.endpointsAvailable = true;
