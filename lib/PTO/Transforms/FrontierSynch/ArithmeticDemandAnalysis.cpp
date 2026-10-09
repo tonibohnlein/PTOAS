@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
+#include "llvm/ADT/DenseSet.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include <algorithm>
 #include <numeric>
@@ -256,6 +257,15 @@ private:
     bool import()
     {
         std::vector<Piece> raw;
+        DenseMap<Value, DenseSet<unsigned>> writtenSpaces;
+        if (program.finiteExpansion) {
+            for (const auto& schema : program.primitives.relations) {
+                const bool writer = schema.kind == PrimitiveKind::Writes && !schema.pieces.empty();
+                if (writer && schema.storageSpace) {
+                    writtenSpaces[schema.storageBase].insert(static_cast<unsigned>(*schema.storageSpace));
+                }
+            }
+        }
         for (const auto& normalized : program.recognition.pieces) {
             if (normalized.empty) { continue; }
             if (normalized.relation >= program.primitives.relations.size()) {
@@ -270,6 +280,18 @@ private:
             const auto liftedDimensions = schema.pieces[normalized.piece].system.getNumInputs();
             auto primitive = Policy::create(liftedDimensions, normalized.rows);
             if (failed(primitive)) { fail("arithmetic primitive construction failed"); return false; }
+            if (program.finiteExpansion && schema.kind == PrimitiveKind::Reads) {
+                const bool valid = schema.storageSpace && schema.sourceSite &&
+                    *schema.sourceSite < program.sites.size() && !schema.targetDimensions;
+                if (!valid) { fail("finite read primitive has an invalid storage/endpoint schema"); return false; }
+                auto found = writtenSpaces.find(schema.storageBase);
+                const bool readOnly = found == writtenSpaces.end() ||
+                    !found->second.count(static_cast<unsigned>(*schema.storageSpace));
+                // Such a read contributes no internal conflict. Keep its full
+                // original primitive in program for future storage exports,
+                // but avoid expensive quotient projection in demands-only import.
+                if (readOnly) { continue; }
+            }
             std::vector<uint64_t> residues;
             for (auto column : keep) { residues.push_back(schema.pieces[normalized.piece].residues[column]); }
             if (liftedDimensions == keep.size()) {
@@ -409,6 +431,19 @@ private:
         // may differ. Equal residues reduce original-coordinate equality to
         // quotient-coordinate equality, in both supported arithmetic domains.
         if (auto* scope = x->second.scope) {
+            for (auto fixed : left.fixedCoordinates) {
+                auto loop = fixed.loop;
+                const bool outsideScope = loop.getOperation() != scope && !loop->isProperAncestor(scope);
+                if (outsideScope) { continue; }
+                auto match = llvm::find_if(right.fixedCoordinates, [&](const FixedLoopCoordinate& other) {
+                    return other.loop == loop;
+                });
+                const bool differentVisit = match == right.fixedCoordinates.end() ||
+                    match->induction != fixed.induction;
+                if (differentVisit) {
+                    return std::nullopt;
+                }
+            }
             for (unsigned i = 0; i < left.loops.size(); ++i) {
                 auto loop = left.loops[i];
                 if (loop.getOperation() != scope && !loop->isProperAncestor(scope)) { continue; }

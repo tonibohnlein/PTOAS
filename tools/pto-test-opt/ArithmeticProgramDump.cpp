@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Structured test output for independent finite checks of derived relations.
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/FiniteGuardedInternal.h"
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
@@ -50,8 +51,11 @@ void dumpArithmeticJSON(func::FuncOp function, const fs::ArithmeticProgram& prog
     }
     llvm::json::Array sites, parameters;
     for (const auto& site : program.sites) {
-        sites.push_back(llvm::json::Object{{"depth", site.loops.size()},
-                                         {"pipe", static_cast<unsigned>(site.phase->kPipeValue)}});
+        llvm::json::Array fixed;
+        for (auto coordinate : site.fixedCoordinates) { fixed.push_back(coordinate.induction); }
+        sites.push_back(llvm::json::Object{{"depth", site.loops.size()}, {"fixed", std::move(fixed)},
+            {"op", site.phase->elementOp->getName().getStringRef()},
+            {"pipe", static_cast<unsigned>(site.phase->kPipeValue)}});
     }
     for (auto parameter : program.parameters) {
         auto argument = dyn_cast<BlockArgument>(parameter);
@@ -96,9 +100,59 @@ void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
                             const pto::SyncInput& input)
 {
     function.walk([&](Operation* root) {
-        if (!root->hasAttr("frontier.test_arithmetic_region")) {
-            return;
+        if (root->hasAttr("frontier.test_expanded_region")) {
+            auto expanded = fs::analyzeExpandedFinite(function, root, index, input);
+            llvm::json::Object document{{"function", function.getSymName()}, {"error", expanded.error}};
+            if (expanded.state) {
+                auto& state = *expanded.state;
+                const auto& form = *expanded.expandedProgram;
+                dumpArithmeticJSON(function, form);
+                document["visits"] = form.expandedVisits;
+                document["fragments"] = form.expandedFragments;
+                document["overlap_joins"] = state.cost.crossingCandidates;
+                document["circuit_nodes"] = state.cost.expressionNodes;
+                document["sites"] = form.sites.size();
+                llvm::json::Array samples;
+                const auto count = form.parameters.size();
+                if (count <= 4) {
+                    for (unsigned mask = 0; mask < (1U << count); ++mask) {
+                        SmallVector<std::pair<fs::RegionExpressions::Id, fs::RegionExpressions::Id>> bindings;
+                        llvm::json::Array values;
+                        for (unsigned i = 0; i < count; ++i) {
+                            const auto value = (mask >> i) & 1U;
+                            values.push_back(value);
+                            auto expression = state.arena->input(form.parameters[i]);
+                            auto fixed = form.parameters[i].getType().isInteger(1) ?
+                                state.arena->boolean(value) : state.arena->constant(value);
+                            bindings.push_back({expression, fixed});
+                        }
+                        fs::RegionExpressions::Substitution substitution(bindings);
+                        auto evaluate = [&](fs::RegionExpressions::Id id) {
+                            auto value = state.arena->substitute(id, substitution);
+                            return state.arena->constantValue(value).value_or(UINT64_MAX);
+                        };
+                        llvm::json::Array presence, edges, native, retained;
+                        for (auto guard : state.presence) { presence.push_back(evaluate(guard)); }
+                        auto append = [&](const auto& source, llvm::json::Array& target) {
+                            for (auto edge : source) {
+                                target.push_back(llvm::json::Array{edge.source, edge.target, evaluate(edge.guard)});
+                            }
+                        };
+                        append(state.guardedResidual, edges);
+                        append(state.guardedNative, native);
+                        append(state.retained, retained);
+                        samples.push_back(llvm::json::Object{{"parameters", std::move(values)},
+                            {"presence", std::move(presence)}, {"generators", std::move(edges)},
+                            {"native", std::move(native)}, {"retained", std::move(retained)}});
+                    }
+                }
+                document["samples"] = std::move(samples);
+                document["exports_blocked"] = !fs::finiteGuardedRegionalResult(expanded).capabilities.exactQueries &&
+                    failed(fs::prepareFiniteGuardedLogicalInsertion(expanded));
+            }
+            llvm::outs() << "expanded-json " << llvm::json::Value(std::move(document)) << "\n";
         }
+        if (!root->hasAttr("frontier.test_arithmetic_region")) { return; }
         auto program = fs::recognizeArithmeticProgram({function, root}, index, input,
                                                       input.accesses(), {8, 8, 2, 8});
         dumpArithmeticJSON(function, program);

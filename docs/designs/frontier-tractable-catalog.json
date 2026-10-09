@@ -369,7 +369,8 @@
     "visits": 65536,
     "payloads": 4096,
     "fragments": 65536,
-    "depth": 16
+    "depth": 16,
+    "finite_adapter_pairs": 65536
   },
   "alias_policies": [
     "may-not-alias",

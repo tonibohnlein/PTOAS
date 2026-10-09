@@ -662,6 +662,10 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext 
         };
     }
     if (certified) {
+        if (certified->finiteExpansion) {
+            error = "finite occurrence representation requires its original-coordinate regional adapter";
+            return failure();
+        }
         if (parameterBinding || certified->context.function != context.function ||
             certified->context.root != context.root || certified->modeledInput != &input ||
             certified->phaseIndex != &index || certified->specializedEntry) {

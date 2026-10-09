@@ -157,6 +157,43 @@ LogicalResult checkArithmeticExportFailure(func::FuncOp function, pto::GMAliasPo
   llvm::outs() << "arithmetic-export-failure: exact-demands-retained cached-retry isolated-context\n";
   return success();
 }
+LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPolicy policy) {
+  using namespace pto::frontiersynch;
+  FrontierAnalysis session(function);
+  if (failed(session.initialize(policy))) { return failure(); }
+  bool checked = false;
+  for (auto [id, node] : llvm::enumerate(session.result()->nodes)) {
+    if (id == 0) { continue; }
+    auto first = session.analyzeFiniteExpansion({id});
+    if (node.kind != StructureKind::Loop && node.kind != StructureKind::Conditional) {
+      if (first.mathematical) { return function.emitError("expanded adapter changed regional scope"); }
+      continue;
+    }
+    if (!first.mathematical) { continue; }
+    checked = true;
+    const bool invalidExports = session.hasWholeFunctionMinimumDemands() ||
+        first.available.queries || first.available.selectors;
+    if (invalidExports) {
+      return function.emitError("expanded child advertised unsupported coverage or exports");
+    }
+    const auto work = session.constructionCounts().mathematicalAttempts;
+    for (unsigned capability = 0; capability < 3; ++capability) {
+      AnalysisRequest stronger{id};
+      stronger.needs.queries = capability == 0;
+      stronger.needs.selectors = capability == 1;
+      stronger.needs.synchronization = capability == 2;
+      auto failure = session.analyzeFiniteExpansion(stronger);
+      auto retry = session.analyzeFiniteExpansion(stronger);
+      if (failure.status != AnalysisStatus::UnmetObligation || failure.mathematical != first.mathematical ||
+          retry.mathematical != first.mathematical || session.constructionCounts().mathematicalAttempts != work) {
+        return function.emitError("finite expansion export retry discarded or reconstructed demands");
+      }
+    }
+  }
+  if (!checked) { return function.emitError("finite expansion session fixture has no supported child"); }
+  llvm::outs() << "finite-expansion-session: original-scope retained-demands cached-exports no-child-promotion\n";
+  return success();
+}
 LogicalResult checkRegionalSession(func::FuncOp function, pto::GMAliasPolicy policy) {
   using namespace pto::frontiersynch;
   FrontierAnalysis session(function);
@@ -822,6 +859,7 @@ int main(int argc, char **argv) {
   const bool finiteVisitInput = argc == 3 && StringRef(argv[1]) == "--finite-visit-input-checks";
   const bool arithmeticPeriodicInput = argc == 3 && StringRef(argv[1]) == "--arithmetic-periodic-input-checks";
   const bool arithmetic = argc == 3 && StringRef(argv[1]) == "--arithmetic";
+  const bool finiteExpansion = argc == 3 && StringRef(argv[1]) == "--finite-expansion";
   const bool certification = argc == 3 && StringRef(argv[1]) == "--certify-regions";
   const bool regionalRecognition = argc == 3 && StringRef(argv[1]) == "--recognize-regions";
   const bool recognition = certification || regionalRecognition ||
@@ -861,7 +899,7 @@ int main(int argc, char **argv) {
   const bool physicalTrace = argc == 3 && StringRef(argv[1]) == "--physical-trace";
   if (argc != 2 && !allocationSessionChecks && !regionalSessionChecks && !retainedChecks && !sessionChecks &&
       !rotatingAnalysis && !explicitAnalysis &&
-      !arithmetic && !recognition &&
+      !arithmetic && !finiteExpansion && !recognition &&
       !numericAnalysis && !insertLogical && !insertLogicalLibrary && !recognitionBoundary &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
       !mixedSymbolicChecks && !rotatingRegionChecks && !finiteVisitInput && !arithmeticPeriodicInput &&
@@ -888,7 +926,8 @@ int main(int argc, char **argv) {
                  "--compact-storage-boundary-checks|--compact-boundary-ranks-checks|"
                  "--bounding-repetition-checks|--compact-class-repetition-checks|"
                  "--compact-bounding-pipeline-checks|--compact-bounding-allocation-checks|"
-                 "--arithmetic|--arithmetic-periodic-input-checks|--explicit-analysis|--rotating-analysis|--roundtrip|"
+                 "--arithmetic|--finite-expansion|--arithmetic-periodic-input-checks|"
+                 "--explicit-analysis|--rotating-analysis|--roundtrip|"
                  "--region-contract-checks|"
                  "--step0-json|--step1-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
     return 1;
@@ -927,7 +966,7 @@ int main(int argc, char **argv) {
                          compactStorageBoundaryChecks || compactBoundaryRanksChecks ||
                          boundingRepetitionChecks || compactClassRepetitionChecks || compactBoundingPipelineChecks ||
                          compactBoundingAllocationChecks ||
-                         preparedInsertion || arithmetic || arithmeticPeriodicInput ||
+                         preparedInsertion || arithmetic || finiteExpansion || arithmeticPeriodicInput ||
                          finiteVisitInput || rotatingRegionChecks ||
                          aliasChecks || roundtrip || regionChecks || phaseCopies || step0 || existing;
   const auto filename = argv[hasOption ? 2 : 1];
@@ -1175,6 +1214,9 @@ int main(int argc, char **argv) {
           }
           llvm::outs() << "native-certification: retained-demands unresolved-class\n";
         }
+        const bool expansionProbeFailed = function->hasAttr("test.finite_expansion_session") &&
+            failed(checkFiniteExpansionSession(function, policy));
+        if (expansionProbeFailed) { return 1; }
         const auto results = analysis.certifyRegions();
         const bool childOnly = function->hasAttr("test.finite_visit_child");
         const bool finiteVisitProbe = function->hasAttr("test.finite_visit_session") || childOnly;
@@ -1286,7 +1328,8 @@ int main(int argc, char **argv) {
   }
   pto::SyncInput input(policy);
   for (auto function : module->getOps<func::FuncOp>()) {
-    const auto view = step1 ? pto::SyncInstructionView::PipeEnvelopes : pto::SyncInstructionView::TranslatorStages;
+    const auto view = (step1 || finiteExpansion) ? pto::SyncInstructionView::PipeEnvelopes :
+        pto::SyncInstructionView::TranslatorStages;
     const bool translated = succeeded(input.build(function, view));
     if (expectFailure) {
       if (translated || !input.ir().empty() || !input.instructions().empty() || !input.buffers().empty()) {
@@ -1297,6 +1340,12 @@ int main(int argc, char **argv) {
     }
     if (!translated) {
       return 1;
+    }
+    if (finiteExpansion) {
+      pto::frontiersynch::PhaseIndex index;
+      if (failed(index.build(function, input))) { return 1; }
+      dumpRegionalArithmetic(function, index, input);
+      continue;
     }
     if (arithmeticPeriodicInput) {
       if (runArithmeticPeriodicInputChecks(function, input)) { return 1; }

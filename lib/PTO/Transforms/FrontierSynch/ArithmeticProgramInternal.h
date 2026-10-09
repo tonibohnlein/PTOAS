@@ -37,6 +37,7 @@ struct ProgramBuilder {
               std::optional<std::pair<unsigned, uint64_t>> filter = std::nullopt,
               uint64_t modulus = 1);
 };
+void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limits);
 void extractAccesses(ProgramBuilder& builder, const SyncInput& input, const SyncStorageEffects& effects);
 } // namespace mlir::pto::frontiersynch::detail
 #endif

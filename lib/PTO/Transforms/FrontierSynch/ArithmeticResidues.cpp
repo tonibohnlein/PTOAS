@@ -126,6 +126,11 @@ AffineExpr normalizeValue(Value input, const ArithmeticSite& site, unsigned offs
     mlir::pto::detail::ScalarEvolution evolution(context, input.getDefiningOp() ? input.getDefiningOp() :
         input.getParentRegion()->getParentOp());
     return evolution.value(input, [&](Value value) -> AffineExpr {
+        for (auto fixed : site.fixedCoordinates) {
+            if (value == fixed.loop.getInductionVar()) {
+                return getAffineConstantExpr(fixed.induction, context);
+            }
+        }
         for (auto [id, storedLoop] : llvm::enumerate(site.loops)) {
             auto loop = storedLoop;
             if (value == loop.getInductionVar()) {
@@ -251,6 +256,13 @@ SmallVector<AffineExpr> ProgramBuilder::domain(const ArithmeticSite& site, unsig
 void ProgramBuilder::emit(PrimitiveRelation& target, ArrayRef<AffineExpr> rows,
                          std::optional<std::pair<unsigned, uint64_t>> filter, uint64_t modulus)
 {
+    if (output.finiteExpansion) {
+        if (output.expandedFragments >= output.expansionFragmentLimit) {
+            output.extraction.note(RecognitionIssue::TemplateExpansionLimit, output.context.root);
+            return;
+        }
+        ++output.expandedFragments;
+    }
     const auto count = target.coordinates.size();
     if (count > limits.dimensions) {
         output.extraction.note(RecognitionIssue::ArithmeticDimension, nullptr, true);

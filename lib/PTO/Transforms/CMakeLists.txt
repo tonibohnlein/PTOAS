@@ -302,6 +302,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Recognition.cpp
   FrontierSynch/GuardedRecognition.cpp
   FrontierSynch/ArithmeticProgram.cpp
+    FrontierSynch/FiniteExpansion.cpp
   FrontierSynch/ArithmeticGuards.cpp
   FrontierSynch/ArithmeticResidues.cpp
   FrontierSynch/ArithmeticAccesses.cpp

@@ -15,10 +15,15 @@ struct ArithmeticGuard {
     scf::IfOp branch;
     bool takeThen = true;
 };
+struct FixedLoopCoordinate {
+    scf::ForOp loop;
+    int64_t induction = 0;
+};
 struct ArithmeticSite {
     const CompoundInstanceElement* phase = nullptr;
     SmallVector<scf::ForOp> loops; // Root-relative, outer to inner.
     SmallVector<ArithmeticGuard> guards; // Enclosing branch arms, outer to inner.
+    SmallVector<FixedLoopCoordinate> fixedCoordinates; // Original IVs, never quotient coordinates.
 };
 // One execution of root, conditional on reaching its entry. Loops/branches
 // enclosing root belong to the parent; their values are shared parameters,
@@ -37,6 +42,8 @@ struct ArithmeticProgram {
     const SyncInput* modeledInput = nullptr;
     const PhaseIndex* phaseIndex = nullptr;
     bool specializedEntry = false;
+    bool finiteExpansion = false;
+    uint64_t expandedVisits = 0, expandedFragments = 0, expansionFragmentLimit = 0;
     // Incoming scalar prerequisites remain obligations of the composing parent.
     SmallVector<ValuePrerequisite> incomingPrerequisites;
     RecognitionResult extraction;
@@ -74,6 +81,14 @@ struct ArithmeticProgram {
 // context. Substitute before relation construction and class checking; never
 // bind local occurrence coordinates. Consumers must enforce that same context
 // when using the specialized queries or inserting the resulting endpoints.
+// Finite normalization is a separately charged representation, not an
+// arithmetic class. Limits bound construction only; exhaustion is unresolved.
+struct FiniteExpansionLimits {
+    uint64_t visits = 65536, payloads = 4096, pairs = 65536, fragments = 65536;
+    unsigned depth = 16;
+};
+ArithmeticProgram expandFiniteArithmeticProgram(ArithmeticRegionContext context, const PhaseIndex& index,
+    const SyncInput& input, const SyncStorageEffects& effects, const FiniteExpansionLimits& limits = {});
 using ArithmeticEntryConstant = std::function<std::optional<int64_t>(Value)>;
 ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext context, const PhaseIndex& index,
                                              const SyncInput& input, const SyncStorageEffects& effects,
