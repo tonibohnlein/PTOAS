@@ -119,41 +119,41 @@ void PhaseIndex::traceResult(const CompoundInstanceElement* producer, Value resu
         return;
     }
     const bool native = availability == SyncResultAvailability::SynchronousScalar;
-    SmallVector<Value> work{result};
-    DenseSet<Value> seen;
-    auto record = [&](Operation* consumer) {
+    SmallVector<std::pair<Value, bool>> work{{result, true}};
+    DenseSet<Value> seenDirect, seenIndirect;
+    auto record = [&](Operation* consumer, bool direct) {
         auto& entries = prerequisites[consumer];
-        if (llvm::none_of(entries, [producer](const auto& entry) { return entry.producer == producer; })) {
-            entries.push_back({producer, consumer, native});
-        }
+        auto found = llvm::find_if(entries, [producer](const auto& entry) { return entry.producer == producer; });
+        if (found == entries.end()) { entries.push_back({producer, consumer, native, direct}); }
+        else { found->directSSA &= direct; }
     };
     while (!work.empty()) {
-        Value value = work.pop_back_val();
-        if (!seen.insert(value).second) {
+        auto [value, direct] = work.pop_back_val();
+        if (!(direct ? seenDirect : seenIndirect).insert(value).second) {
             continue;
         }
         for (OpOperand& use : value.getUses()) {
             Operation* user = use.getOwner();
             if (!phasesFor(user).empty()) {
-                record(user);
+                record(user, direct);
             } else if (auto branch = dyn_cast<scf::IfOp>(user)) {
                 if (!native) {
                     valuePrerequisites.insert(user);
                 }
-                record(user);
+                record(user, false);
                 branch.walk([&](Operation* nested) {
                     if (!phasesFor(nested).empty()) {
-                        record(nested);
+                        record(nested, false);
                     }
                 });
             } else if (isa<scf::YieldOp>(user) && isa<scf::IfOp>(user->getParentOp())) {
-                work.push_back(user->getParentOp()->getResult(use.getOperandNumber()));
+                work.push_back({user->getParentOp()->getResult(use.getOperandNumber()), false});
             } else if (auto loop = dyn_cast<scf::ForOp>(user); loop && use.getOperandNumber() < 3 && native) {
                 // Native scalar bounds are available before loop execution.
                 // They order body users without becoming storage demands.
-                record(user);
+                record(user, false);
                 loop.walk([&](Operation* nested) {
-                    if (!phasesFor(nested).empty()) { record(nested); }
+                    if (!phasesFor(nested).empty()) { record(nested, false); }
                 });
             } else if (user->getNumRegions() || isa<scf::YieldOp>(user)) {
                 // A carried value needs an occurrence map, not a static SSA edge.
@@ -174,10 +174,10 @@ void PhaseIndex::traceResult(const CompoundInstanceElement* producer, Value resu
             } else if (hasOnlyDescriptorEffects(user) || isPreservedSyncProtocol(user)) {
                 // Scalar descriptor updates execute natively. A result from an
                 // asynchronous pipe still needs an explicit completion mapping.
-                record(user);
+                record(user, false);
                 if (!native) { valuePrerequisites.insert(user); }
             } else if (isMemoryEffectFree(user)) {
-                llvm::append_range(work, user->getResults());
+                for (Value next : user->getResults()) { work.push_back({next, direct}); }
             } else {
                 valuePrerequisites.insert(user);
             }

@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_scalar_prerequisite_provenance.py pto-sync-input-test %s
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=1, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @direct(%src: !tile, %dst: !tile) {
+    %zero = arith.constant 0 : index
+    %x = pto.tgetval ins(%src, %zero : !tile, index) outs : f32 {test.label = "x"}
+    %y = pto.tgetval ins(%src, %zero : !tile, index) outs : f32 {test.label = "y"}
+    %sum = arith.addf %x, %y : f32
+    pto.tsetval ins(%zero, %sum : index, f32) outs(%dst : !tile) {test.prerequisite = "sum"}
+    pto.tsetval ins(%zero, %x : index, f32) outs(%dst : !tile) {test.prerequisite = "fanout"}
+    return
+  }
+  func.func @conditional_result(%src: !tile, %dst: !tile, %take: i1) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %merged = scf.if %take -> (f32) {
+      %x = pto.tgetval ins(%src, %zero : !tile, index) outs : f32 {test.label = "x"}
+      scf.yield %x : f32
+    } else {
+      scf.yield %one : f32
+    }
+    pto.tsetval ins(%zero, %merged : index, f32) outs(%dst : !tile) {test.prerequisite = "merged"}
+    return
+  }
+  func.func @mixed_control(%src: !tile, %dst: !tile) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %x = pto.tgetval ins(%src, %zero : !tile, index) outs : f32 {test.label = "x"}
+    %take = arith.cmpf ogt, %x, %one : f32
+    scf.if %take {
+      pto.tsetval ins(%zero, %x : index, f32) outs(%dst : !tile) {test.prerequisite = "mixed"}
+    }
+    return
+  }
+  func.func @mixed_result(%src: !tile, %dst: !tile, %take: i1) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %x = pto.tgetval ins(%src, %zero : !tile, index) outs : f32 {test.label = "x"}
+    %merged = scf.if %take -> (f32) {
+      scf.yield %x : f32
+    } else {
+      scf.yield %one : f32
+    }
+    %both = arith.addf %x, %merged : f32
+    pto.tsetval ins(%zero, %both : index, f32) outs(%dst : !tile) {test.prerequisite = "mixed"}
+    return
+  }
+  func.func @native_bound(%src: !tile, %dst: !tile) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %value = arith.constant 1.0 : f32
+    %x = pto.tgetval ins(%src, %zero : !tile, index) outs : f32 {test.label = "x"}
+    %i = arith.fptosi %x : f32 to i64
+    %n = arith.index_cast %i : i64 to index
+    scf.for %j = %zero to %n step %one {
+      pto.tsetval ins(%zero, %value : index, f32) outs(%dst : !tile) {test.prerequisite = "bound"}
+    } {test.prerequisite = "loop"}
+    return
+  }
+  func.func @carried(%src: !tile, %dst: !tile, %n: index) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %x = pto.tgetval ins(%src, %zero : !tile, index) outs : f32 {test.label = "x"}
+    %final = scf.for %i = %zero to %n step %one iter_args(%value = %x) -> (f32) {
+      pto.tsetval ins(%zero, %value : index, f32) outs(%dst : !tile)
+      scf.yield %value : f32
+    } {test.prerequisite = "carried"}
+    pto.tsetval ins(%zero, %final : index, f32) outs(%dst : !tile) {test.prerequisite = "result"}
+    return
+  }
+}
