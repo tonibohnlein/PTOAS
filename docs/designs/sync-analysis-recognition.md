@@ -40,6 +40,14 @@ form audit, `--recognize-regions` to add cached regional arithmetic forms, and
 Its repeated certification check verifies reuse and zero endpoint/allocation
 construction. `--arithmetic-profile=k:D:P:C` precedes these modes.
 
+Finite-visit analysis is also a session backend. A successful certificate owns
+the analyzed types and all ordered-pair demand templates. It deliberately
+exports no whole-loop queries, storage selectors, matching code or allocation.
+Requests for those capabilities retain the mathematical owner and may try later
+routes. Root promotion requires the loop to cover the whole function; success
+of an isolated child never supplies that evidence. Session calls reuse the
+shared structural index and the existing finite-visit analysis cache.
+
 The algorithm libraries and their direct diagnostic entry points are retained
 for development and focused tests. Historical insertion and allocation results
 below describe those libraries and earlier integration, not current public-pass

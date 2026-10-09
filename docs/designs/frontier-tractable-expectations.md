@@ -124,7 +124,7 @@ and storage certificates; the may-alias losses are not silently ignored.
 
 The source ledger remains provisional for complete positive/negative certificates.
 General finite expansion of each original child, complete bounded-span certificates,
-finite-visit session integration and exhaustive outside-catalog witnesses remain
+exhaustive outside-catalog witnesses remain
 unfinished. Parent recognition through a normalized representation does not certify
 every original descendant directly.
 
@@ -140,3 +140,25 @@ Detailed JSON, per-run logs, exact compilation commands and binary/source hashes
 are retained locally under `.local/section8-refactor/tractable-certification/`
 (`corpus-results.json`, `corpus-provenance.json`, `validation-results.json`,
 `additional-results.json`, `commands.json`).
+
+## Finite-visit session milestone
+
+Finite-visit types now have an owned session result and share the unchanged
+structural index. The general dispatcher retains its earlier applicable routes;
+`analyzeFiniteVisit(request)` explicitly requests this backend through the same
+cache. Exact type-pair templates survive unavailable arbitrary-word queries,
+selectors and synchronization exports. No emission or allocation is added.
+
+The focused fixture verifies four complete types and sixteen ordered pairs,
+child identity, root/child owner reuse, absence of child-only whole-region
+evidence, a parent with an external payload, export-failure retention, repeated
+requests, one structural index and both alias policies. The independent whole-visit
+oracle checks common prefix/middle/suffix, shared atomic-node reuse, correlated
+choices, projected visit-owned storage and the explicit type-expansion limit.
+The fixture also admits bounded-lifetime analysis; generic dispatch correctly
+keeps that earlier route rather than forcing finite-visit selection.
+
+This milestone passes 29 focused/oracle checks and all 22 serial corpus
+invocations, with unchanged recognition totals and no timeouts or IR mutations.
+It does not resolve moving-slice GEMM children: those require a cached finite
+guarded expansion preserving original coordinates and carried bank substitutions.

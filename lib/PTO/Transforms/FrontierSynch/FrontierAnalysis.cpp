@@ -165,7 +165,7 @@ LogicalResult FrontierAnalysis::analyzeFiniteVisitCandidates()
         });
         if (eligible == candidate.obligations.end()) { continue; }
         auto result = std::make_shared<FiniteVisitAnalysis>(
-            analyzeFiniteVisitLoop(function, *storage, *program, *candidate.node));
+            analyzeFiniteVisitLoop(function, *storage, *program, *candidate.node, structuralIndex));
         finiteVisitAnalyses.emplace(*candidate.node, std::move(result));
     }
     for (auto& candidate : program->finiteVisitContracts) {
