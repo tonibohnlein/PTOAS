@@ -41,7 +41,7 @@ int runSyncRegionContractChecks(func::FuncOp function, const pto::SyncInput &inp
 int runPeriodicDemandChecks(llvm::StringRef path);
 int runGuardedPeriodicChecks(llvm::StringRef path);
 int runSyncAliasChecks(func::FuncOp function, const pto::SyncInput &input);
-LogicalResult auditSyncStep0(func::FuncOp function, const pto::SyncInput &input);
+LogicalResult auditSyncStep0(func::FuncOp function, const pto::SyncInput &input, bool envelopes);
 namespace {
 LogicalResult checkAllocationSession(func::FuncOp function, pto::GMAliasPolicy policy) {
   using namespace pto::frontiersynch;
@@ -720,7 +720,8 @@ int main(int argc, char **argv) {
   const bool sessionChecks = argc == 3 && StringRef(argv[1]) == "--analysis-session-checks";
   const bool phaseCopies = argc == 3 && StringRef(argv[1]) == "--phase-copy-checks";
   const bool regionChecks = argc == 3 && StringRef(argv[1]) == "--region-contract-checks";
-  const bool step0 = argc == 3 && StringRef(argv[1]) == "--step0-json";
+  const bool step1 = argc == 3 && StringRef(argv[1]) == "--step1-json";
+  const bool step0 = step1 || (argc == 3 && StringRef(argv[1]) == "--step0-json");
   const bool existingDump = argc == 3 && StringRef(argv[1]) == "--existing-dump";
   const bool existing = existingDump || (argc == 3 && StringRef(argv[1]) == "--existing-check");
   const bool roundtrip = argc == 3 && StringRef(argv[1]) == "--roundtrip";
@@ -795,7 +796,7 @@ int main(int argc, char **argv) {
                  "--compact-bounding-pipeline-checks|--compact-bounding-allocation-checks|"
                  "--arithmetic|--arithmetic-periodic-input-checks|--explicit-analysis|--rotating-analysis|--roundtrip|"
                  "--region-contract-checks|"
-                 "--step0-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
+                 "--step0-json|--step1-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
     return 1;
   }
   DialectRegistry dialects;
@@ -1041,7 +1042,8 @@ int main(int argc, char **argv) {
   }
   pto::SyncInput input(policy);
   for (auto function : module->getOps<func::FuncOp>()) {
-    const bool translated = succeeded(input.build(function));
+    const auto view = step1 ? pto::SyncInstructionView::PipeEnvelopes : pto::SyncInstructionView::TranslatorStages;
+    const bool translated = succeeded(input.build(function, view));
     if (expectFailure) {
       if (translated || !input.ir().empty() || !input.instructions().empty() || !input.buffers().empty()) {
         return 1;
@@ -1127,7 +1129,7 @@ int main(int argc, char **argv) {
       continue;
     }
     if (step0) {
-      if (failed(auditSyncStep0(function, input))) {
+      if (failed(auditSyncStep0(function, input, step1))) {
         return 1;
       }
       continue;

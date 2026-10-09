@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --step1-json %S/sync_phase_index.pto | FileCheck %s --check-prefix=STRUCTURE
+// RUN: pto-sync-input-test --step1-json %S/sync_input_macro_effects.pto | FileCheck %s --check-prefix=MACRO
+// RUN: pto-sync-input-test --gm-alias=may-alias --step1-json %S/sync_phase_index.pto | FileCheck %s --check-prefix=STRUCTURE
+// Step 1 uses production pipe envelopes and builds only shared input and the
+// structural index. The driver checks that extraction leaves the IR unchanged.
+// The audit checks saved declarations, accesses, original anchors/control paths,
+// descriptor loop coordinates and SSA availability. Unresolved accesses remain
+// represented; preservation does not establish physical-footprint completeness.
+// STRUCTURE: "branches":1,"controlled_phases":3
+// STRUCTURE-SAME: "effects":12,"function":"nested","instruction_view":"pipe-envelopes","loops":1
+// STRUCTURE-SAME: "phases":4
+// STRUCTURE-SAME: "step1":"preserved"
+// STRUCTURE-SAME: "unresolved_accesses":12
+// STRUCTURE: "effects":0,"function":"declaration"
+// STRUCTURE-SAME: "phases":0
+// STRUCTURE: "effects":3,"function":"straight"
+// STRUCTURE-SAME: "phases":1
+// MACRO: "effects":6,"function":"tgather_compare_macro_model","instruction_view":"pipe-envelopes"
+// MACRO-SAME: "phases":2,"pipes":{"0":1,"1":1}
+// MACRO-SAME: "step1":"preserved"
+module {}

@@ -104,8 +104,12 @@ void TRowArgMinOp::getEffects(
   PTO_ADD_WRITE(effects, getDstMutable());
 }
 
-PTO_DEFINE_UNARY_SCRATCH_EFFECTS(TRowSumOp, getSrcMutable(), getTmpMutable(),
-                                 getDstMutable())
+void TRowSumOp::getEffects(PTOEffectList& effects) {
+  if (addSingleRowSumAccess(*this, effects)) { return; }
+  PTO_ADD_READ(effects, getSrcMutable());
+  addA2A3ScratchEffects(effects, getOperation(), getTmpMutable());
+  PTO_ADD_WRITE(effects, getDstMutable());
+}
 PTO_DEFINE_UNARY_SCRATCH_EFFECTS(TRowProdOp, getSrcMutable(), getTmpMutable(),
                                  getDstMutable())
 void TRsqrtOp::getEffects(
@@ -169,8 +173,12 @@ void TSort32Op::getEffects(
   PTO_ADD_WRITE(effects, getDstMutable());
 }
 
-PTO_DEFINE_UNARY_EFFECTS(TSqrtOp, getSrcMutable(), getDstMutable())
-PTO_DEFINE_BINARY_EFFECTS(TSubOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+void TSqrtOp::getEffects(PTOEffectList& effects) {
+  addPointwiseEffects(effects, {&getSrcMutable()}, getDstMutable());
+}
+void TSubOp::getEffects(PTOEffectList& effects) {
+  addPointwiseEffects(effects, {&getSrc0Mutable(), &getSrc1Mutable()}, getDstMutable());
+}
 PTO_DEFINE_TERNARY_EFFECTS(TSubCOp, getSrc0Mutable(), getSrc1Mutable(), getSrc2Mutable(), getDstMutable())
 PTO_DEFINE_UNARY_EFFECTS(TSubSOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_BINARY_EFFECTS(TSubSCOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())

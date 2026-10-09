@@ -6,39 +6,44 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Shared exact selections for ordinary aligned ND transfers and pointwise
-// vector operations. DMA fringes, padded loads, and A5 unmasked vector tail
-// reads need different selections; the original effect declarations cover them.
-static bool plainVectorAccessTile(Value value, unsigned alignment)
+// Shared selections for ordinary ND/DN transfers and aligned pointwise operations.
+// GM and local effects are qualified separately: a byte-counted GM transfer
+// remains exact when the local DMA fringe needs an enclosing allocation bound.
+static bool plainVectorAccessTile(Value value, unsigned alignment, bool allowColumnMajor = false)
 {
     auto type = dyn_cast<pto::TileBufType>(value.getType());
     auto space = type ? dyn_cast_or_null<pto::AddressSpaceAttr>(type.getMemorySpace()) : pto::AddressSpaceAttr{};
     if (!type || !space || space.getAddressSpace() != pto::AddressSpace::VEC ||
         type.getShape().size() != 2 || value.getDefiningOp<pto::SubViewOp>() ||
-        type.getBLayoutValueI32() != static_cast<int>(pto::BLayout::RowMajor) ||
+        (type.getBLayoutValueI32() != static_cast<int>(pto::BLayout::RowMajor) &&
+         (!allowColumnMajor || type.getBLayoutValueI32() != static_cast<int>(pto::BLayout::ColMajor))) ||
         type.getSLayoutValueI32() != static_cast<int>(pto::SLayout::NoneBox) ||
         type.getCompactModeI32() != static_cast<int>(pto::CompactMode::Null) || type.getPadValueI32() != 0) {
         return false;
     }
     const auto width = pto::linearAccessBytes(type.getElementType());
     auto shape = type.getShape();
-    return width && width <= 4 && shape[0] > 0 && shape[0] < 4096 &&
-        shape[1] > 0 && shape[1] <= 65535 && (shape[1] * width) % alignment == 0;
+    const unsigned inner = type.getBLayoutValueI32() == static_cast<int>(pto::BLayout::RowMajor) ? 1 : 0;
+    const unsigned outer = 1 - inner;
+    return width && width <= 4 && shape[outer] > 0 && shape[outer] < 4096 &&
+        shape[inner] > 0 && shape[inner] <= 65535 && (shape[inner] * width) % alignment == 0;
 }
 
-// The native ND DMA consumes rank-two view dimensions and a uint32_t byte
-// gap. Qualification keeps every narrowed field representable and excludes
-// padding, so the source and destination have the same logical rectangle.
-static bool vectorAccessNdView(Value value, Value tile, SmallVectorImpl<int64_t>& shape)
+// The native ND/DN DMA consumes rank-two view dimensions and a uint32_t byte
+// gap. Qualification keeps every narrowed field representable. The GM side
+// uses the byte count even for short rows; local fringes are handled separately.
+static bool vectorTransferView(Value value, Value tile, SmallVectorImpl<int64_t>& shape)
 {
     auto layout = getLogicalViewLayout(value);
-    if (!layout || *layout != pto::Layout::ND || !getLogicalViewShape(value, shape) || shape.size() != 2) {
+    if (!layout ||
+        (*layout != pto::Layout::ND && *layout != pto::Layout::DN) ||
+        !getLogicalViewShape(value, shape) || shape.size() != 2) {
         return false;
     }
     auto type = cast<pto::TileBufType>(tile.getType());
     const int64_t width = pto::linearAccessBytes(type.getElementType());
     if (shape[0] <= 0 || shape[0] > type.getShape()[0] || shape[1] <= 0 ||
-        shape[1] > type.getShape()[1] || shape[1] * width % 32 != 0) {
+        shape[1] > type.getShape()[1]) {
         return false;
     }
     Value base = value;
@@ -50,10 +55,25 @@ static bool vectorAccessNdView(Value value, Value tile, SmallVectorImpl<int64_t>
         return false;
     }
     auto viewType = dyn_cast<pto::TensorViewType>(view.getResult().getType());
-    auto row = getConstIndexValue(view.getStrides()[0]);
-    auto col = getConstIndexValue(view.getStrides()[1]);
-    return viewType && viewType.getElementType() == type.getElementType() && row && col && *col == 1 &&
-        *row >= shape[1] && *row <= INT32_MAX && (*row - shape[1]) <= UINT32_MAX / width;
+    const unsigned inner = type.getBLayoutValueI32() == static_cast<int>(pto::BLayout::RowMajor) ? 1 : 0;
+    const unsigned outer = 1 - inner;
+    auto contiguous = getConstIndexValue(view.getStrides()[inner]);
+    auto stride = getConstIndexValue(view.getStrides()[outer]);
+    const auto expectedLayout = inner == 1 ? pto::Layout::ND : pto::Layout::DN;
+    // Singleton dimensions admit both ND and DN. The consumer selects the
+    // orientation, while the descriptor still determines the same GM bytes.
+    SmallVector<int64_t> baseShape;
+    const bool singleton = getLogicalViewShape(base, baseShape) && baseShape.size() == 2 && baseShape[outer] == 1;
+    if (*layout != expectedLayout && !singleton) {
+        return false;
+    }
+    if (!viewType ||
+        viewType.getElementType() != type.getElementType() || !contiguous ||
+        *contiguous != 1 || !stride || *stride < 0 || *stride > INT32_MAX) {
+        return false;
+    }
+    // A single burst never consumes the inter-burst gap.
+    return shape[outer] == 1 || (*stride >= shape[inner] && (*stride - shape[inner]) <= UINT32_MAX / width);
 }
 
 static void addCheckedVectorAccess(PTOEffectList& effects, OpOperand& operand, OpOperand& domain,
@@ -63,37 +83,60 @@ static void addCheckedVectorAccess(PTOEffectList& effects, OpOperand& operand, O
     pto::addAccessRegion(effects, operand, mode, pto::makeCheckedAccessRegion(domain, identity, conditions));
 }
 
+// Both A2/A3 and A5 ND/DN transfers use the valid contiguous extent
+// times sizeof(T) GM bytes per burst. Local stride/padding rules differ for
+// short bursts. Export the exact GM rectangle independently; do not assert a
+// local overwrite of padding.
+static void addVectorTransferAccess(PTOEffectList& effects, OpOperand& global, OpOperand& local,
+                                    ArrayRef<int64_t> shape, bool load)
+{
+    SmallVector<int64_t> conditions{static_cast<int64_t>(local.getOperandNumber()), shape[0], shape[1]};
+    MemoryEffects::Effect* read = MemoryEffects::Read::get();
+    MemoryEffects::Effect* write = MemoryEffects::Write::get();
+    auto* globalMode = load ? read : write;
+    auto* localMode = load ? write : read;
+    addCheckedVectorAccess(effects, global, local, globalMode, conditions);
+    auto type = cast<pto::TileBufType>(local.get().getType());
+    const unsigned inner = type.getBLayoutValueI32() == static_cast<int>(pto::BLayout::RowMajor) ? 1 : 0;
+    const auto burstBytes = shape[inner] * pto::linearAccessBytes(type.getElementType());
+    if (burstBytes % 32 == 0) {
+        addCheckedVectorAccess(effects, local, local, localMode, conditions);
+    } else {
+        addEffect(effects, &local, localMode);
+    }
+}
+
 static bool addVectorLoadAccessEffects(pto::TLoadOp op, PTOEffectList& effects)
 {
-    if (!plainVectorAccessTile(op.getDst(), 32) || op.getPadModeAttr() || op.getPadValue() ||
+    const bool supportedTile = plainVectorAccessTile(op.getDst(), 32, true);
+    if (!supportedTile ||
+        op.getPadModeAttr() || op.getPadValue() ||
         op.getLeftPaddingNum() || op.getRightPaddingNum() || op.getInitOutBuffer() || op.getInitCondition() ||
         op.getOffset() || (op.getCachePolicyAttr() &&
                            op.getCachePolicyAttr().getValue() == pto::LoadCachePolicy::L2Bypass)) {
         return false;
     }
     SmallVector<int64_t> shape;
-    if (!vectorAccessNdView(op.getSrc(), op.getDst(), shape)) {
+    if (!vectorTransferView(op.getSrc(), op.getDst(), shape)) {
         return false;
     }
-    SmallVector<int64_t> conditions{static_cast<int64_t>(op.getDstMutable().getOperandNumber()), shape[0], shape[1]};
-    addCheckedVectorAccess(effects, op.getSrcMutable(), op.getDstMutable(), MemoryEffects::Read::get(), conditions);
-    addCheckedVectorAccess(effects, op.getDstMutable(), op.getDstMutable(), MemoryEffects::Write::get(), conditions);
+    addVectorTransferAccess(effects, op.getSrcMutable(), op.getDstMutable(), shape, true);
     return true;
 }
 
 static bool addVectorStoreAccessEffects(pto::TStoreOp op, PTOEffectList& effects)
 {
-    if (!plainVectorAccessTile(op.getSrc(), 32) || op.getFp() || op.getPreQuantScalar() ||
+    const bool supportedTile = plainVectorAccessTile(op.getSrc(), 32, true);
+    if (!supportedTile ||
+        op.getFp() || op.getPreQuantScalar() ||
         op.getStPhase() != pto::STPhase::Unspecified || op.getAtomicType() != pto::AtomicType::AtomicNone) {
         return false;
     }
     SmallVector<int64_t> shape;
-    if (!vectorAccessNdView(op.getDst(), op.getSrc(), shape)) {
+    if (!vectorTransferView(op.getDst(), op.getSrc(), shape)) {
         return false;
     }
-    SmallVector<int64_t> conditions{static_cast<int64_t>(op.getSrcMutable().getOperandNumber()), shape[0], shape[1]};
-    addCheckedVectorAccess(effects, op.getSrcMutable(), op.getSrcMutable(), MemoryEffects::Read::get(), conditions);
-    addCheckedVectorAccess(effects, op.getDstMutable(), op.getSrcMutable(), MemoryEffects::Write::get(), conditions);
+    addVectorTransferAccess(effects, op.getDstMutable(), op.getSrcMutable(), shape, false);
     return true;
 }
 
@@ -136,3 +179,5 @@ static bool addAlignedPointwiseAccessEffects(PTOEffectList& effects, ArrayRef<Op
     addCheckedVectorAccess(effects, destination, destination, MemoryEffects::Write::get(), conditions);
     return true;
 }
+
+#include "PTOLocalAccessEffects.cpp"
