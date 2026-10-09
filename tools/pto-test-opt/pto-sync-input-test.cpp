@@ -36,6 +36,8 @@
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
+LogicalResult checkNumericPreflight(func::FuncOp, const pto::SyncInput&,
+    const pto::frontiersynch::ProgramRecognition&);
 LogicalResult dumpProgramRecognition(func::FuncOp, const pto::SyncInput &,
     const pto::frontiersynch::ProgramRecognition &);
 LogicalResult verifyProgramStructure(func::FuncOp, const pto::SyncInput &,
@@ -1795,13 +1797,43 @@ int main(int argc, char **argv) {
             {"mathematical_attempts", attempts}, {"logical_preparations", counts.logicalPreparations},
             {"allocation_exports", counts.allocationExports}}) << "\n";
       }
-      if (numericAnalysis && failed(analysis.prepareNumericCandidateExports())) { return 1; }
+      if (numericAnalysis) {
+        const bool lazy = analysis.numericTemplatePreflights() == 0 &&
+            llvm::none_of(analysis.result()->nodes, [](const auto& node) { return node.numericTemplate.has_value(); });
+        if (!lazy) { function.emitError("structural recognition expanded numerical candidates"); return 1; }
+        if (failed(analysis.analyzeNumericCandidates())) { return 1; }
+        const auto count = analysis.numericTemplatePreflights();
+        std::vector<const void*> owners;
+        for (const auto& node : analysis.result()->nodes) {
+          owners.push_back(node.numericTemplate ? &*node.numericTemplate : nullptr);
+          if (node.logicalEndpoints || node.periodicAllocation) {
+            function.emitError("numerical demands constructed endpoints or allocation"); return 1;
+          }
+        }
+        if (failed(analysis.analyzeNumericCandidates())) { return 1; }
+        bool reused = count == analysis.numericTemplatePreflights();
+        for (auto [node, owner] : llvm::zip(analysis.result()->nodes, owners)) {
+          reused &= (node.numericTemplate ? &*node.numericTemplate : nullptr) == owner;
+        }
+        if (!reused) { function.emitError("numerical retry reconstructed its preflight or effects"); return 1; }
+        if (failed(checkNumericPreflight(function, *analysis.input(), *analysis.result()))) { return 1; }
+        if (failed(analysis.prepareNumericCandidateExports())) { return 1; }
+        llvm::errs() << "numeric-session: lazy-preflight cached-effects demand-only foreign-context-rejected\n";
+      }
       const auto& input = *analysis.input();
       const auto& program = *analysis.result();
       if (failed(verifyProgramStructure(function, input, program)) ||
           (!numericAnalysis && failed(recognize(function, input, false, &program))) ||
           failed(dumpProgramRecognition(function, input, program))) {
         return 1;
+      }
+      if (numericAnalysis) {
+        const auto alternate = policy == pto::GMAliasPolicy::MayAlias ?
+            pto::GMAliasPolicy::MayNotAlias : pto::GMAliasPolicy::MayAlias;
+        const bool reset = succeeded(analysis.initialize(alternate)) &&
+            analysis.numericTemplatePreflights() == 0 &&
+            llvm::none_of(analysis.result()->nodes, [](const auto& node) { return node.numericTemplate.has_value(); });
+        if (!reset) { function.emitError("alias-context reset retained numerical construction"); return 1; }
       }
     }
     if (render(module->getOperation()) != before) {

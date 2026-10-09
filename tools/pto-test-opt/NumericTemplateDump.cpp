@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Preserve original occurrence identity in late-expansion diagnostic output.
 #include "PTO/Transforms/FrontierSynch/NumericTemplateAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/NumericTemplatePlan.h"
 #include "mlir/IR/AsmState.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
@@ -103,4 +105,42 @@ llvm::json::Object dumpNumericTemplate(const fs::NumericTemplate& result, AsmSta
         {"counted_payloads", result.countedPayloads}, {"fragments", result.fragments},
         {"period", result.period}, {"refresh", result.refresh}, {"scope", "whole-function"},
         {"interfaces_ready", false}, {"payloads", std::move(payloads)}, {"atoms", std::move(atoms)}};
+}
+
+LogicalResult checkNumericPreflight(func::FuncOp function, const pto::SyncInput& input,
+    const fs::ProgramRecognition& program)
+{
+    fs::PhaseIndex index;
+    if (failed(index.build(function, input))) { return failure(); }
+    for (const auto& node : program.nodes) {
+        if (!node.numericTemplate) { continue; }
+        const auto plan = fs::preflightNumericTemplate(cast<scf::ForOp>(node.anchor), index, input);
+        const bool pure = plan.form.payloads.empty() && plan.form.atoms.empty() && !plan.form.fragments &&
+            plan.form.nativePrerequisites.empty() && plan.form.valueDemands.empty() &&
+            llvm::all_of(plan.payloads, [](const auto& payload) { return payload.effects.empty(); });
+        if (!pure) { return function.emitError("numeric preflight constructed effects or native requirements"); }
+        pto::SyncInput foreign;
+        fs::PhaseIndex foreignIndex;
+        auto refusedInput = fs::materializeNumericTemplate(plan, index, foreign);
+        auto refusedIndex = fs::materializeNumericTemplate(plan, foreignIndex, input);
+        const bool rejected = refusedInput.result.state != fs::RecognitionState::Applicable &&
+            refusedIndex.result.state != fs::RecognitionState::Applicable;
+        if (!rejected) { return function.emitError("numeric preflight accepted a foreign context"); }
+        auto actual = fs::materializeNumericTemplate(plan, index, input);
+        const auto& expected = *node.numericTemplate;
+        bool same = actual.result.state == expected.result.state &&
+            actual.payloads.size() == expected.payloads.size() &&
+            actual.countedVisits == expected.countedVisits && actual.countedPayloads == expected.countedPayloads &&
+            actual.fragments == expected.fragments && actual.period == expected.period &&
+            actual.refresh == expected.refresh && actual.emptyInvocation == expected.emptyInvocation;
+        for (auto [a, b] : llvm::zip(actual.payloads, expected.payloads)) {
+            same &= a.phase == b.phase && a.coordinates.size() == b.coordinates.size() &&
+                a.effects.size() == b.effects.size() && a.invocationProtection == b.invocationProtection;
+            for (auto [x, y] : llvm::zip(a.coordinates, b.coordinates)) {
+                same &= x.loop == y.loop && x.induction == y.induction;
+            }
+        }
+        if (!same) { return function.emitError("numeric retained preflight changed original mapping or construction"); }
+    }
+    return success();
 }

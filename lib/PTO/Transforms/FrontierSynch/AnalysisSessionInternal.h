@@ -17,6 +17,7 @@
 namespace mlir::pto::frontiersynch {
 struct VaryingRegionalExports;
 struct FiniteExpansionPlan;
+struct NumericTemplatePlan;
 struct BackendAttempt {
     bool produced = false;
     std::shared_ptr<const MathematicalResult> mathematical;
@@ -45,6 +46,7 @@ struct AnalysisSessionState {
     std::map<uint8_t, std::vector<AnalysisBackend>> arithmeticOrders;
     std::vector<AnalysisCostRecord> costs;
     std::map<std::size_t, std::shared_ptr<const FiniteExpansionPlan>> finiteExpansionPlans;
+    std::map<std::size_t, std::shared_ptr<const NumericTemplatePlan>> numericTemplatePlans;
     std::map<std::size_t, std::map<AnalysisBackend, BackendAttempt>> attempts;
     // Canonical original-loop construction is independent of root/regional exports.
     std::map<std::pair<std::size_t, AnalysisBackend>, BackendAttempt> loopAttempts;

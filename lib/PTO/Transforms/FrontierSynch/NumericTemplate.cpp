@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Late, charged expansion into a periodic body; no demands or IR insertion.
 #include "NumericTemplateInternal.h"
+#include "NumericTemplatePlan.h"
 #include "RecognitionInternal.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include <map>
@@ -67,14 +68,19 @@ void clear(NumericTemplate& output)
     output.period = 0;
     output.refresh = 0;
 }
-NumericTemplate recognizeTemplate(scf::ForOp outer, const PhaseIndex& index,
+} // namespace
+NumericTemplatePlan preflightNumericTemplate(scf::ForOp outer, const PhaseIndex& index,
                                   const SyncInput& input, NumericTemplateLimits limits, bool regional,
-                                  TemplateGeometryConstant geometry = {}, TemplateControlConstant control = {})
+                                  TemplateGeometryConstant geometry, TemplateControlConstant control)
 {
-    NumericTemplate output;
+    NumericTemplatePlan plan;
+    plan.index = &index; plan.input = &input; plan.regional = regional;
+    plan.geometry = geometry; plan.control = control;
+    auto& output = plan.form;
     output.outer = outer;
     output.limits = limits;
     output.specializedBody = static_cast<bool>(geometry);
+    if (!outer) { output.result.note(RecognitionIssue::LoopDomain, nullptr, true); return plan; }
     auto lower = constant(outer.getLowerBound()), step = constant(outer.getStep());
     const bool valid = lower && step && *lower >= 0 && *step > 0 && limits.depth &&
         limits.visits && limits.payloads && limits.fragments &&
@@ -82,12 +88,12 @@ NumericTemplate recognizeTemplate(scf::ForOp outer, const PhaseIndex& index,
         limits.fragments <= NumericTemplateLimits{}.fragments && limits.depth <= NumericTemplateLimits{}.depth;
     if (!valid) {
         output.result.note(RecognitionIssue::LoopDomain, outer, true);
-        return output;
+        return plan;
     }
     output.lower = *lower;
     output.step = *step;
     if (!scope(output, index, input, regional)) {
-        return output;
+        return plan;
     }
     auto upper = constant(outer.getUpperBound());
     if (upper && *upper <= output.lower) {
@@ -97,27 +103,47 @@ NumericTemplate recognizeTemplate(scf::ForOp outer, const PhaseIndex& index,
         output.emptyInvocation = true;
         output.period = output.specializedBody ? 0 : 1;
         output.refresh = output.specializedBody ? 0 : 1;
-        return output;
+        return plan;
     }
     detail::TemplateBuilder builder{output, index, input, DenseMap<Value, int64_t>(), {}};
+    builder.plannedPayloads = &plan.payloads;
     builder.geometryConstant = std::move(geometry);
     builder.controlConstant = std::move(control);
     for (auto state : outer.getRegionIterArgs()) {
         if (index.isRelevant(state) && !builder.scalar(state)) {
             output.result.note(RecognitionIssue::LoopCarriedState, outer);
-            return output;
+            return plan;
         }
     }
     if (!builder.block(*outer.getBody(), false, 0)) {
-        return output;
+        return plan;
     }
     output.countedVisits = builder.visits;
     output.countedPayloads = builder.phases;
-    builder.visits = 0;
-    builder.phases = 0;
-    builder.coordinates.clear();
-    builder.path.clear();
-    if (!builder.block(*outer.getBody(), true, 0) || !detail::prepareTemplateEffects(builder)) {
+    return plan;
+}
+NumericTemplate materializeNumericTemplate(const NumericTemplatePlan& plan,
+    const PhaseIndex& index, const SyncInput& input)
+{
+    auto output = plan.form;
+    auto outer = output.outer;
+    if (plan.index != &index || plan.input != &input) {
+        output.result.note(RecognitionIssue::TemplateContext, outer, true);
+        clear(output); return output;
+    }
+    if (output.result.state != RecognitionState::Applicable || output.emptyInvocation) { return output; }
+    const bool regional = plan.regional;
+    detail::TemplateBuilder builder{output, index, input, DenseMap<Value, int64_t>(), {}};
+    builder.geometryConstant = plan.geometry; builder.controlConstant = plan.control;
+    for (const auto& planned : plan.payloads) {
+        builder.coordinates.clear(); builder.path = planned.coordinates;
+        for (auto coordinate : planned.coordinates) {
+            builder.coordinates[coordinate.loop.getInductionVar()] = coordinate.induction;
+        }
+        if (!builder.payload(planned.phase)) { clear(output); return output; }
+    }
+    builder.coordinates.clear(); builder.path.clear();
+    if (!detail::prepareTemplateEffects(builder)) {
         clear(output);
         return output;
     }
@@ -186,21 +212,21 @@ NumericTemplate recognizeTemplate(scf::ForOp outer, const PhaseIndex& index,
     }
     return output;
 }
-} // namespace
 NumericTemplate recognizeNumericTemplate(scf::ForOp outer, const PhaseIndex& index,
                                          const SyncInput& input, NumericTemplateLimits limits)
 {
-    return recognizeTemplate(outer, index, input, limits, false);
+    return materializeNumericTemplate(preflightNumericTemplate(outer, index, input, limits, false), index, input);
 }
 NumericTemplate recognizeRegionalNumericTemplate(scf::ForOp outer, const PhaseIndex& index,
                                                  const SyncInput& input, NumericTemplateLimits limits)
 {
-    return recognizeTemplate(outer, index, input, limits, true);
+    return materializeNumericTemplate(preflightNumericTemplate(outer, index, input, limits, true), index, input);
 }
 NumericTemplate recognizeSpecializedNumericBody(scf::ForOp outer, const PhaseIndex& index,
     const SyncInput& input, TemplateGeometryConstant geometry, TemplateControlConstant control,
     NumericTemplateLimits limits)
 {
-    return recognizeTemplate(outer, index, input, limits, true, std::move(geometry), std::move(control));
+    return materializeNumericTemplate(preflightNumericTemplate(
+        outer, index, input, limits, true, std::move(geometry), std::move(control)), index, input);
 }
 } // namespace mlir::pto::frontiersynch

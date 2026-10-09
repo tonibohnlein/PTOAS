@@ -94,7 +94,10 @@ LogicalResult FrontierAnalysis::recognizeStructure() {
 LogicalResult FrontierAnalysis::analyzeNumericCandidates() {
     if (failed(recognizeStructure())) { return failure(); }
     const auto& index = *structuralIndex;
-    for (auto& node : program->nodes) {
+    for (auto [id, node] : llvm::enumerate(program->nodes)) {
+        if (!node.unsupportedContext && node.kind == StructureKind::Loop && node.payloadCount) {
+            (void)materializeNumericRegion(id);
+        }
         if (node.varyingRotating && !node.varyingDemands &&
             node.varyingRotating->result.state == RecognitionState::Applicable) {
             if (construction.varyingBoundaryReductions != UINT64_MAX) { ++construction.varyingBoundaryReductions; }

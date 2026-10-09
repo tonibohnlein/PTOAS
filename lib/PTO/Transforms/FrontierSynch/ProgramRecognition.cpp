@@ -413,13 +413,8 @@ FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const Sync
             node.guardedRotatingResult = recognizeGuardedRotating(loop, index, input, input.accesses());
         }
     }
-    // Charged numerical inner expansion is a late compact-route candidate;
-    // it never changes the original region tree or the explicit-run route.
-    for (auto& node : result.nodes) {
-        if (!node.unsupportedContext && node.kind == StructureKind::Loop && node.payloadCount) {
-            node.numericTemplate = recognizeNumericTemplate(cast<scf::ForOp>(node.anchor), index, input);
-        }
-    }
+    // Small-count numerical expansion is owned by the analysis request, not
+    // structural recognition. Its control preflight and effects remain lazy.
     for (std::size_t id = 0; id < result.nodes.size(); ++id) {
         if (result.nodes[id].kind == StructureKind::Loop) {
             auto finite = recognizeFiniteVisitLoop(function, input, result, id, index);

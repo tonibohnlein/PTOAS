@@ -50,6 +50,7 @@ public:
     uint64_t arithmeticGeneratorConstructions() const;
     uint64_t arithmeticRegionConstructions() const;
     uint64_t finiteExpansionPreflights() const;
+    uint64_t numericTemplatePreflights() const;
     std::vector<AnalysisCostRecord> costRecords() const;
     // Call before reusing this object after original IR mutation. Previously
     // returned handles must no longer be queried against that IR.
@@ -107,6 +108,7 @@ public:
 private:
     LogicalResult recognizeStructure();
     LogicalResult ensureArithmeticGenerators();
+    const NumericTemplate& materializeNumericRegion(std::size_t region);
     const ArithmeticProgram* recognizeArithmeticRegion(std::size_t region);
     std::vector<AnalysisBackend> arithmeticMethods(const AnalysisRequest& request);
     SequenceRegionResolver regionalResolver();
