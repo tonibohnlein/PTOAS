@@ -179,7 +179,20 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         Child candidate;
         candidate.loop = child.loop;
         candidate.trips = child.trips;
-        auto analysis = analyzeRotating(child.loop, index, *input, *node.rotatingResult);
+        const auto id = static_cast<std::size_t>(&node - program->nodes.data());
+        auto retained = resolveOriginal.demands ? resolveOriginal.demands(id, AnalysisBackend::Rotating) : nullptr;
+        RotatingAnalysis analysis;
+        if (retained && retained->rotatingDemands) {
+            analysis = *retained->rotatingDemands;
+            SmallVector<TemplateEndpointAnchor> anchors;
+            for (auto* phase : analysis.phases) {
+                auto* operation = phase->elementOp;
+                anchors.push_back({phase, {}, {operation->getBlock(), operation},
+                                   {operation->getBlock(), operation->getNextNode()}});
+            }
+            analysis.endpoints = bindPeriodicEndpoints(analysis.loop, anchors, analysis.periodic);
+        } else if (resolveOriginal.demands) { analysis.error = "cached rotating demands unavailable"; }
+        else { analysis = analyzeRotating(child.loop, index, *input, *node.rotatingResult); }
         if (!analysis.error.empty()) { obligation(analysis.error); }
         else if (!rotatingPatterns(candidate, analysis, *node.rotatingResult)) { obligation(error); }
         else if (!analysis.periodic.error.empty() || !analysis.endpoints.logical.error.empty()) {
@@ -194,11 +207,20 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
     }
     if (node.guardedRotatingResult &&
         node.guardedRotatingResult->result.state == RecognitionState::Applicable) {
-        auto analysis = analyzeGuardedRotating(child.loop, *input, *node.guardedRotatingResult, index, arena);
-        if (!analysis.error.empty()) { obligation(analysis.error); }
+        const auto id = static_cast<std::size_t>(&node - program->nodes.data());
+        auto retained = resolveOriginal.demands ?
+            resolveOriginal.demands(id, AnalysisBackend::GuardedRotating) : nullptr;
+        std::shared_ptr<GuardedRotatingAnalysis> analysis;
+        if (retained) { analysis = retained->guardedRotatingDemands; }
+        else if (!resolveOriginal.demands) {
+            analysis = std::make_shared<GuardedRotatingAnalysis>(
+                analyzeGuardedRotating(child.loop, *input, *node.guardedRotatingResult, index, arena));
+        }
+        if (!analysis) { obligation("cached guarded rotating demands unavailable"); }
+        else if (!analysis->error.empty()) { obligation(analysis->error); }
         else {
             std::string exportError;
-            auto regional = guardedRotatingRegionalResult(function, *input, analysis, exportError);
+            auto regional = guardedRotatingRegionalResult(function, *input, *analysis, exportError);
             if (failed(regional)) { obligation(exportError); }
             else {
                 child.regional = std::move(*regional);
@@ -243,8 +265,15 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
                                  mayEnumerate(inner.getUpperBound()) && mayEnumerate(inner.getStep());
         });
         std::optional<NumericTemplate> cachedNumeric;
+        const bool originalNumeric = staticInnerBounds && node.numericTemplate &&
+            !node.numericTemplate->specializedBody &&
+            node.numericTemplate->result.state == RecognitionState::Applicable;
         if (staticInnerBounds) {
-            cachedNumeric = recognizeRegionalNumericTemplate(child.loop, index, *input);
+            // A successful whole-invocation template already proves the
+            // regional context: no external payload can conflict with it.
+            // Preserve its original-coordinate mapping and expanded word.
+            cachedNumeric = originalNumeric ? *node.numericTemplate :
+                recognizeRegionalNumericTemplate(child.loop, index, *input);
         }
         if (!cachedNumeric || cachedNumeric->result.state != RecognitionState::Applicable) {
             auto rotating = recognizeRotatingRegion(function, *input, *program,
@@ -313,7 +342,8 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         }
         child.costs.numericVisits = numeric.countedVisits;
         if (!numericPatterns(child, numeric)) { return false; }
-        child.periodic = analyzeNumericTemplate(numeric);
+        child.periodic = originalNumeric && node.periodicAnalysis ? *node.periodicAnalysis :
+            analyzeNumericTemplate(numeric);
         child.endpoints = buildNumericTemplateEndpoints(numeric, child.periodic);
     }
     if (!child.periodic.error.empty() || !child.endpoints.logical.error.empty()) {

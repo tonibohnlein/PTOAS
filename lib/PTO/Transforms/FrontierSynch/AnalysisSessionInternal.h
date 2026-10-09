@@ -6,6 +6,10 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Session cache entries retain demands independently of capability failures.
+// An instance belongs to one unchanged SyncInput, alias/hardware policy and
+// original occurrence tree. initialize/invalidate destroys every entry when
+// that context changes. Specialized parameter/phase views do not use these
+// original-region keys; their private arenas and substitutions remain separate.
 #ifndef PTO_FRONTIERSYNCH_ANALYSISSESSIONINTERNAL_H
 #define PTO_FRONTIERSYNCH_ANALYSISSESSIONINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
@@ -20,6 +24,8 @@ struct BackendAttempt {
 };
 struct AnalysisSessionState {
     std::map<std::size_t, std::map<AnalysisBackend, BackendAttempt>> attempts;
+    // Canonical original-loop construction is independent of root/regional exports.
+    std::map<std::pair<std::size_t, AnalysisBackend>, BackendAttempt> loopAttempts;
     std::shared_ptr<RegionExpressions> expressions = std::make_shared<RegionExpressions>();
     std::set<AnalysisBackend> wholeRegionEvidence;
     std::vector<std::size_t> activeRegions;

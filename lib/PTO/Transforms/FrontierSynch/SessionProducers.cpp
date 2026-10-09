@@ -59,6 +59,23 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceLoopBackend(
     if (!node || node->kind != StructureKind::Loop || node->unsupportedContext) {
         error = "route requires an original certified loop"; return {};
     }
+    const auto original = static_cast<std::size_t>(node - program->nodes.data());
+    auto& attempt = sessionState->loopAttempts[{original, backend}];
+    if (!attempt.produced) {
+        attempt.produced = true;
+        attempt.mathematical = constructLoopBackend(backend, original, attempt.demandError);
+    }
+    error = attempt.demandError;
+    if (!attempt.mathematical) { return {}; }
+    auto result = std::make_shared<MathematicalResult>(*attempt.mathematical);
+    result->region = region;
+    if (region == 0 && result->boundedDemands) { boundedAnalysis = result->boundedDemands; }
+    return result;
+}
+std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend(
+    AnalysisBackend backend, std::size_t region, std::string& error)
+{
+    const auto* node = &program->nodes[region];
     const auto loop = cast<scf::ForOp>(node->anchor);
     auto owned = std::make_shared<MathematicalResult>();
     owned->input = storage;
@@ -66,14 +83,10 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceLoopBackend(
     owned->region = region;
     switch (backend) {
     case AnalysisBackend::NumericalPeriodic: {
-        if (region == 0) {
-            if (failed(analyzeNumericCandidates())) { return {}; }
-        } else {
-            auto& local = program->nodes[region];
-            if (local.numericTemplate && local.numericTemplate->result.state == RecognitionState::Applicable &&
-                !local.periodicAnalysis) {
-                local.periodicAnalysis = analyzeNumericTemplate(*local.numericTemplate);
-            }
+        auto& local = program->nodes[region];
+        if (local.numericTemplate && local.numericTemplate->result.state == RecognitionState::Applicable &&
+            !local.periodicAnalysis) {
+            local.periodicAnalysis = analyzeNumericTemplate(*local.numericTemplate);
         }
         const bool available = node->numericTemplate && node->periodicAnalysis &&
             node->periodicAnalysis->error.empty() && !node->numericTemplate->specializedBody;
@@ -84,6 +97,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceLoopBackend(
     }
     case AnalysisBackend::Rotating: {
         if (!node->rotatingResult || node->rotatingResult->state != RecognitionState::Applicable) { return {}; }
+        if (construction.rotatingReductions != UINT64_MAX) { ++construction.rotatingReductions; }
         auto demands = std::make_shared<RotatingAnalysis>(
             analyzeRotating(loop, *structuralIndex, *storage, *node->rotatingResult, false));
         if (!demands->error.empty()) { error = demands->error; return {}; }
@@ -94,8 +108,10 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceLoopBackend(
     case AnalysisBackend::GuardedRotating: {
         if (!node->guardedRotatingResult ||
             node->guardedRotatingResult->result.state != RecognitionState::Applicable) { return {}; }
+        if (construction.guardedRotatingReductions != UINT64_MAX) { ++construction.guardedRotatingReductions; }
         auto demands = std::make_shared<GuardedRotatingAnalysis>(
-            analyzeGuardedRotating(loop, *storage, *node->guardedRotatingResult, *structuralIndex));
+            analyzeGuardedRotating(loop, *storage, *node->guardedRotatingResult, *structuralIndex,
+                                  sessionState->expressions));
         if (!demands->error.empty()) { error = demands->error; return {}; }
         owned->guardedRotatingDemands = std::move(demands);
         owned->backend = "guarded-rotating";
@@ -106,7 +122,6 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceLoopBackend(
             node->boundedLifetime->skeleton.result.state != RecognitionState::Applicable) { return {}; }
         auto demands = cachedBoundedLifetimeRegion(function, *node, *structuralIndex, *storage, error);
         if (failed(demands)) { return {}; }
-        if (region == 0) { boundedAnalysis = *demands; }
         owned->boundedDemands = *demands;
         owned->backend = "bounded-lifetime";
         break;
@@ -119,7 +134,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceLoopBackend(
 }
 SequenceRegionResolver FrontierAnalysis::regionalResolver()
 {
-    return [this](std::size_t region, bool endpoints, std::string& error) -> FailureOr<RegionalAnalysis> {
+    SequenceRegionResolver resolver;
+    resolver.region = [this](std::size_t region, bool endpoints, std::string& error) -> FailureOr<RegionalAnalysis> {
         AnalysisRequest request;
         request.region = region;
         request.needs.queries = request.needs.selectors = true;
@@ -134,6 +150,11 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver()
         }
         return failure();
     };
+    resolver.demands = [this](std::size_t region, AnalysisBackend backend) {
+        std::string error;
+        return produceLoopBackend(backend, error, region);
+    };
+    return resolver;
 }
 std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend(
     AnalysisBackend backend, std::size_t region, std::string& error)
@@ -192,7 +213,6 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
         }
         owned->explicitDemands = explicitAnalysis;
         owned->backend = "explicit";
-        explicitMathematical = owned;
         return owned;
     case AnalysisBackend::NumericalPeriodic:
     case AnalysisBackend::Rotating:

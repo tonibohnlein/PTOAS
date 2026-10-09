@@ -96,6 +96,8 @@ private:
         AnalysisBackend backend, std::size_t region, std::string& error);
     std::shared_ptr<const MathematicalResult> produceLoopBackend(
         AnalysisBackend backend, std::string& error, std::size_t region = 0);
+    std::shared_ptr<const MathematicalResult> constructLoopBackend(
+        AnalysisBackend backend, std::size_t region, std::string& error);
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareRetained(const MathematicalResult& demands);
     std::shared_ptr<AnalysisSessionState> sessionState;
     func::FuncOp function;
@@ -106,9 +108,7 @@ private:
     std::shared_ptr<ProgramRecognition> program;
     std::shared_ptr<PhaseIndex> structuralIndex;
     std::shared_ptr<ExplicitAnalysis> explicitAnalysis;
-    std::shared_ptr<const MathematicalResult> explicitMathematical;
     AnalysisConstructionCounts construction;
-    std::optional<bool> explicitEndpointOutcome;
     std::shared_ptr<BoundedLifetimeDemandResult> boundedAnalysis;
     std::shared_ptr<SequenceAnalysis> sequenceAnalysis;
     std::shared_ptr<ArithmeticDemandAnalysis> arithmeticAnalysis;

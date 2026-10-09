@@ -82,6 +82,7 @@ struct AnalysisConstructionCounts {
     uint64_t structuralIndices = 0;
     uint64_t mathematicalAttempts = 0;
     uint64_t explicitReductions = 0;
+    uint64_t rotatingReductions = 0, guardedRotatingReductions = 0;
     uint64_t logicalPreparations = 0;
     uint64_t allocationExports = 0;
 };
