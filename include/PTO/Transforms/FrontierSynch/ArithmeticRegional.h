@@ -39,9 +39,5 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext cont
 FailureOr<RegionalAnalysis> analyzeFiniteArithmeticRegion(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
     std::string& error);
-// Compose compatible symbolic arithmetic exports. An unsupported parameter or
-// coordinate adapter leaves the child results intact and reports an obligation.
-FailureOr<RegionalAnalysis> composeArithmeticRegionalSequence(ArrayRef<RegionalAnalysis> children,
-    func::FuncOp function, std::string& error);
 }
 #endif

@@ -54,11 +54,6 @@ FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> cachedBoundedLifetimeReg
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeResult(
     std::shared_ptr<BoundedLifetimeDemandResult> demands, std::string& error,
     bool completeInvocation = false);
-// Builds window predicates indexed by actual source ordinals. Guard replay is
-// checked at both original cuts; failure leaves the source function unchanged.
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeEndpoints(
-    func::FuncOp function, scf::ForOp loop, const PhaseIndex& index, const SyncInput& input,
-    const BoundedLifetimeRecognition& recognized, std::string& error);
 // The optional output is assigned only after whole-invocation exact demand
 // analysis succeeds; endpoint/physical export failures leave it available.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeInsertion(
