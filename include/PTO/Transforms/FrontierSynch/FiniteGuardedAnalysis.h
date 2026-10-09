@@ -34,6 +34,11 @@ FiniteGuardedAnalysis analyzeExpandedFinite(func::FuncOp function, ArrayRef<Oper
 // No physical storage selectors or endpoint recipes are implied.
 RegionalAnalysis expandedFiniteRegionalQueries(const FiniteGuardedAnalysis& analysis,
     std::shared_ptr<const SyncInput> inputOwner = {});
+// Stronger storage snapshot for the same single invocation. Does not prepare
+// endpoints or rerun demand construction. Failure leaves the query snapshot valid.
+FailureOr<RegionalAnalysis> expandedFiniteRegionalSelectors(const FiniteGuardedAnalysis& analysis,
+    const RegionalAnalysis& queries, std::string& error, std::shared_ptr<const SyncInput> inputOwner = {},
+    uint64_t* checkedPredicates = nullptr);
 RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analysis);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedLogicalInsertion(FiniteGuardedAnalysis& analysis);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedInsertion(FiniteGuardedAnalysis& analysis);
