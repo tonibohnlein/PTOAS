@@ -317,6 +317,8 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
   FrontierAnalysis session(function);
   if (failed(session.initialize(policy))) { return failure(); }
   bool checked = false, bodyChecked = false, runChecked = false;
+  std::shared_ptr<const MathematicalResult> retainedOwner;
+  std::shared_ptr<const RegionalAnalysis> retainedQueries;
   for (auto [id, node] : llvm::enumerate(session.result()->nodes)) {
     if (id == 0) { continue; }
     auto first = session.analyzeFiniteExpansion({id});
@@ -353,22 +355,86 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
       return function.emitError("expanded child advertised unsupported coverage or exports");
     }
     const auto work = session.constructionCounts().mathematicalAttempts;
+    std::shared_ptr<const RegionalAnalysis> queries;
     for (unsigned capability = 0; capability < 3; ++capability) {
       AnalysisRequest stronger{id};
-      stronger.needs.queries = capability == 0;
+      stronger.needs.queries = true;
       stronger.needs.selectors = capability == 1;
       stronger.needs.synchronization = capability == 2;
-      auto failure = session.analyzeFiniteExpansion(stronger);
+      auto outcome = session.analyzeFiniteExpansion(stronger);
       auto retry = session.analyzeFiniteExpansion(stronger);
-      if (failure.status != AnalysisStatus::UnmetObligation || failure.mathematical != first.mathematical ||
-          retry.mathematical != first.mathematical || session.constructionCounts().mathematicalAttempts != work) {
-        return function.emitError("finite expansion export retry discarded or reconstructed demands");
+      const auto expectedStatus = capability == 0 ? AnalysisStatus::Ready : AnalysisStatus::UnmetObligation;
+      const bool retained = outcome.status == expectedStatus && outcome.mathematical == first.mathematical &&
+          retry.mathematical == first.mathematical && outcome.available.queries &&
+          outcome.regionalExports && outcome.regionalExports == retry.regionalExports &&
+          session.constructionCounts().mathematicalAttempts == work;
+      if (!retained) {
+        return function.emitError("finite expansion export retry discarded or reconstructed demands or queries");
+      }
+      if (queries && queries != outcome.regionalExports) { return failure(); }
+      queries = outcome.regionalExports;
+      const bool queryOnly = !queries->capabilities.exactSelectors && !queries->capabilities.endpointRecipes &&
+          !queries->capabilities.completeStorageModel && queries->storageBoundary.empty() && !queries->prepare;
+      if (!queryOnly) {
+        return function.emitError("expanded queries advertised unmapped selector or endpoint exports");
+      }
+    }
+    for (auto [siteID, site] : llvm::enumerate(expanded->sites)) {
+      const auto& coordinates = queries->anchors[siteID].coordinates;
+      const bool sameCoordinateCount = coordinates.size() == site.fixedCoordinates.size();
+      if (!sameCoordinateCount) { return failure(); }
+      for (auto [position, coordinate] : llvm::enumerate(coordinates)) {
+        auto expectedCoordinate = site.fixedCoordinates[position];
+        if (coordinate.loop != expectedCoordinate.loop || coordinate.induction != expectedCoordinate.induction) {
+          return function.emitError("expanded query lost original fixed loop coordinates");
+        }
+      }
+      const auto zero = queries->expressions->constant(0);
+      RegionalEvent external{static_cast<uint32_t>(siteID), zero, PeriodicEventKind::Start, {zero}};
+      const bool acceptedExternal = queries->presence(external) || queries->reachability(external, external) ||
+          queries->referenceBefore(external, external);
+      if (acceptedExternal) {
+        return function.emitError("expanded query accepted an unbound external visit");
+      }
+    }
+    if (!expanded->sites.empty()) {
+      retainedOwner = first.mathematical;
+      retainedQueries = queries;
+      auto& e = *queries->expressions;
+      const auto zero = e.constant(0);
+      RegionalEvent missing{0, e.constant(1), PeriodicEventKind::Start};
+      RegionalEvent target{static_cast<uint32_t>(expanded->sites.size() - 1), zero, PeriodicEventKind::Completion};
+      auto absent = queries->presence(missing);
+      auto unreachable = queries->reachability(missing, target);
+      auto unordered = queries->referenceBefore(missing, target);
+      const bool missingAbsent = absent && unreachable && unordered &&
+          e.constantValue(*absent) == 0 && e.constantValue(*unreachable) == 0 && e.constantValue(*unordered) == 0;
+      if (!missingAbsent) { return function.emitError("expanded nonzero ordinal aliases an actual occurrence"); }
+      for (auto malformed : {RegionalEvent{0, RegionExpressions::invalid, PeriodicEventKind::Start},
+                            RegionalEvent{0, zero, static_cast<PeriodicEventKind>(255)}}) {
+        const bool accepted = queries->presence(malformed) || queries->reachability(malformed, target) ||
+            queries->referenceBefore(malformed, target);
+        if (accepted) { return function.emitError("expanded query accepted a malformed event identity"); }
       }
     }
   }
   if (!checked || !bodyChecked || !runChecked) {
     return function.emitError("finite expansion fixture requires successful body and run requests");
   }
+  if (!retainedOwner || !retainedQueries) { return failure(); }
+  RegionalEvent saved{0, retainedQueries->expressions->constant(0), PeriodicEventKind::Start};
+  auto savedPresence = retainedQueries->presence(saved);
+  auto savedReachability = retainedQueries->reachability(saved, saved);
+  const auto otherPolicy = policy == pto::GMAliasPolicy::MayAlias ?
+      pto::GMAliasPolicy::MayNotAlias : pto::GMAliasPolicy::MayAlias;
+  if (failed(session.initialize(otherPolicy))) { return failure(); }
+  auto foreign = expandedFiniteRegionalQueries(*retainedOwner->finiteGuardedDemands, session.sharedInput());
+  if (foreign.capabilities.exactQueries) { return function.emitError("expanded query accepted a foreign input owner"); }
+  retainedOwner.reset();
+  session.invalidate();
+  const bool surviving = savedPresence && savedReachability && retainedQueries->presence(saved) == savedPresence &&
+      retainedQueries->reachability(saved, saved) == savedReachability;
+  if (!surviving) { return function.emitError("expanded query handle did not survive isolated session reset"); }
   llvm::outs() << "finite-expansion-session: original-scope retained-demands cached-exports no-child-promotion\n";
   return success();
 }

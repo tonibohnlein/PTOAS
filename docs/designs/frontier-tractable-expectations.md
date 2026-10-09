@@ -374,3 +374,34 @@ prepared detached plans, destroys one, and checks the other's surviving code,
 unchanged original IR and once-only mathematical/query/selector construction.
 Both the original-context retry after foreign-input rejection and old export
 ownership across session reset are covered under both alias policies.
+
+## Finite-expansion queries in one invocation
+
+Expanded finite occurrences now export arbitrary start/completion reachability
+and presence within one invocation of their original selected roots. Each type
+retains the original phase and its complete fixed loop-coordinate tuple; the
+local event ordinal is zero. Enclosing SSA bindings remain parameters of this
+invocation. Nonzero local ordinals are absent, malformed identities are rejected,
+and external visit coordinates are rejected rather than silently substituted.
+This does not claim a cross-invocation repetition interface.
+
+The session caches this query-only snapshot independently of exact demands.
+Stronger selector or synchronization requests retain both owners and report the
+missing capability. Expanded physical storage boundaries and endpoint recipes
+remain unsupported until their coordinate adapters are implemented. The legacy
+finite-guarded exporter remains blocked for expansions to prevent it from
+claiming those capabilities. Query callbacks retain the expanded program,
+shared rank state and modeled input across session reset. A foreign input owner
+cannot be attached to the snapshot. The three pinned paper hashes are unchanged.
+
+The independent expansion oracle compares all start/completion query pairs with
+closed execution graphs under both alias policies, including absent and reflexive
+events, zero trips, non-unit steps, symbolic parity, nested coordinates and the
+three pinned GEMM inner loops. The session probe checks fixed-coordinate maps,
+strong-export failure retention, nonzero-ordinal absence, malformed identities,
+foreign input rejection and query lifetime after dropping the mathematical handle
+and resetting the session. All 32 focused checks, the 20 varying command oracle
+cases and 22 serial corpus runs pass. Every case retains its previous coverage
+(227/240 and 212/240); no timeout or original IR mutation occurs. The slowest
+corpus invocation is 14.3 seconds. Optimized affected-unit builds and both links,
+changed-code compliance and diff checks pass.

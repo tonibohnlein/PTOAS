@@ -166,6 +166,14 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
         result.available.selectors = exports.capabilities.exactSelectors;
     }
     if (demands.backend == "native-scalar" || demands.backend == "expanded-finite-guarded") { result.available = {}; }
+    if (demands.backend == "expanded-finite-guarded" && (request.needs.queries || attempt.expandedQueries)) {
+        if (!attempt.expandedQueries) {
+            attempt.expandedQueries = std::make_shared<const RegionalAnalysis>(
+                expandedFiniteRegionalQueries(*demands.finiteGuardedDemands, storage));
+        }
+        result.regionalExports = attempt.expandedQueries;
+        result.available.queries = result.regionalExports->capabilities.exactQueries;
+    }
     if (demands.varyingBoundaryDemands &&
         (request.needs.queries || request.needs.selectors || request.needs.synchronization)) {
         std::string error;

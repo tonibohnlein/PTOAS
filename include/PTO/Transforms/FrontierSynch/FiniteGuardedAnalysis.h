@@ -29,6 +29,11 @@ FiniteGuardedAnalysis analyzeExpandedFinite(func::FuncOp function, Operation* ro
     const PhaseIndex& index, const SyncInput& input);
 FiniteGuardedAnalysis analyzeExpandedFinite(func::FuncOp function, ArrayRef<Operation*> roots,
     const PhaseIndex& index, const SyncInput& input);
+// Queries for one invocation of the original region. Expanded types identify
+// fixed original loop coordinates; arbitrary enclosing visits are unsupported.
+// No physical storage selectors or endpoint recipes are implied.
+RegionalAnalysis expandedFiniteRegionalQueries(const FiniteGuardedAnalysis& analysis,
+    std::shared_ptr<const SyncInput> inputOwner = {});
 RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analysis);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedLogicalInsertion(FiniteGuardedAnalysis& analysis);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedInsertion(FiniteGuardedAnalysis& analysis);
