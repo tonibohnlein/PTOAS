@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "RegionalRelationsInternal.h"
 #include "CountedLoop.h"
 #include "mlir/IR/Dominance.h"
@@ -344,10 +345,7 @@ FailureOr<RegionalRelationData> Request::lower(ArrayRef<Value> parameters, std::
         auto result = e.integerRelation(predicate, values, *domain, diagnostic, &cost);
         for (auto member : {&RegionExpressions::RelationCost::gates, &RegionExpressions::RelationCost::pieces,
             &RegionExpressions::RelationCost::projections, &RegionExpressions::RelationCost::formulaProducts}) {
-            if (cost.*member > UINT64_MAX - data.translationCost.*member) {
-                diagnostic = "regional relation translation cost exceeds representation"; return failure();
-            }
-            data.translationCost.*member += cost.*member;
+            accumulateCost(data.translationCost.*member, cost.*member);
         }
         data.translationCost.peakClauses = std::max(data.translationCost.peakClauses, cost.peakClauses);
         return result;

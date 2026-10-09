@@ -10,6 +10,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ANALYSISREQUEST_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ANALYSISREQUEST_H
 #include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
 #include <memory>
 namespace mlir::pto::frontiersynch {
@@ -81,6 +82,7 @@ struct AnalysisOutcome {
     std::shared_ptr<const MathematicalResult> mathematical;
     AnalysisExports available;
     std::vector<AnalysisObligation> obligations;
+    std::vector<AnalysisCostRecord> costs;
 };
 struct AnalysisConstructionCounts {
     uint64_t structuralIndices = 0;

@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticPeriodicConversion.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "mlir/IR/MLIRContext.h"
@@ -193,8 +194,26 @@ int runArithmeticPeriodicConversionChecks()
     return 0;
 }
 
+static bool costOrderingChecks()
+{
+    fs::AnalysisCostEstimate small, large, unknown, tied;
+    small.work = 3; small.representation = 9;
+    large.work = 4; large.representation = 1;
+    unknown.representation = 0;
+    tied.work = 3; tied.representation = 10;
+    uint64_t actual = UINT64_MAX - 1;
+    fs::accumulateCost(actual, 7);
+    return fs::estimatedCostLess(small, large) && fs::estimatedCostLess(large, unknown) &&
+        fs::estimatedCostLess(small, tied) && !fs::estimatedCostLess(small, small) &&
+        !fs::estimatedCostLess(unknown, small) && !fs::estimatedAdd(UINT64_MAX, 1) &&
+        !fs::estimatedMultiply(UINT64_MAX, 2) && !fs::estimatedPower(2, 64) &&
+        fs::estimatedPower(2, 63) == (uint64_t(1) << 63) && fs::estimatedPower({}, 0) == 1 &&
+        fs::estimatedMultiply({}, 0) == 0 && actual == UINT64_MAX;
+}
+
 int runArithmeticPeriodicInputChecks(mlir::func::FuncOp function, const mlir::pto::SyncInput& input)
 {
+    if (!costOrderingChecks()) { return 1; }
     if (function->hasAttr("test.lazy_arithmetic")) {
         auto prepared = fs::prepareFunctionSynchronization(function, mlir::pto::GMAliasPolicy::MayNotAlias);
         if (failed(prepared) || !(*prepared)->recognitionReport) { return 1; }
