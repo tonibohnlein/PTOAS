@@ -7,6 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 """Compare original-coordinate finite expansion with small concrete executions."""
 import json
+import math
 import re
 from pathlib import Path
 import subprocess
@@ -339,6 +340,81 @@ module {
                 assert [site["op"] for site in form["sites"]] == [operation]
                 assert form["parameters"] == [], form
                 assert [sample["presence"] for sample in expanded["samples"]] == [[1]]
+        # A late pure predicate can depend on an actual regional entry value
+        # produced by an earlier payload. Retain the original i1 SSA binding;
+        # do not interpret floating comparisons as integer arithmetic.
+        entry_guard = prerequisite[:prerequisite.index("    scf.for")] + """
+    %external = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+    %threshold = arith.constant 0.0 : f32
+    scf.for %i = %zero to %three step %one {
+      %predicate = arith.cmpf ogt, %external, %threshold : f32
+      scf.if %predicate {
+        pto.tsetval ins(%zero, %external : index, f32) outs(%tile : !tile)
+      } else {
+        pto.tsetval ins(%one, %external : index, f32) outs(%tile : !tile)
+      }
+    } {frontier.test_expanded_region}
+    return
+  }
+}
+"""
+        for predicate in ["ogt", "ueq"]:
+            path.write_text(entry_guard.replace("cmpf ogt", "cmpf " + predicate))
+            for policy in ["may-not-alias", "may-alias"]:
+                form, expanded = invoke(tool, path, policy)
+                assert len(form["parameters"]) == 1, form
+                assert form["parameter_kinds"] == ["entry-value"]
+                # Bind the retained original cmpf to its actual IEEE result.
+                # Both Boolean bindings are realizable; NaN and signed zero
+                # must follow the supplied ordered/unordered predicate.
+                for value in [-1.0, -0.0, 0.0, 1.0, float("nan")]:
+                    choice = int(value > 0.0 if predicate == "ogt" else math.isnan(value) or value == 0.0)
+                    sample = next(item for item in expanded["samples"] if item["parameters"] == [choice])
+                    assert sample["presence"] == [choice, 1 - choice] * 3
+                assert [site["fixed"] for site in form["sites"]] == [[i] for i in range(3) for _ in range(2)]
+                assert expanded["incoming_prerequisites"] > 0
+                for sample in expanded["samples"]:
+                    choice = sample["parameters"][0]
+                    assert sample["presence"] == [choice, 1 - choice] * 3
+        # Moving the same producer inside the selected loop invalidates entry
+        # availability. Also reject a predicate over a non-speculatable divide.
+        internal_guard = entry_guard.replace(
+            "    %external = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32\n", "")
+        internal_guard = internal_guard.replace(
+            "      %predicate =", "      %external = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32\n"
+            "      %predicate =")
+        trapping_guard = entry_guard.replace("func.func @prerequisites()", "func.func @prerequisites(%number: index)")
+        trapping_guard = trapping_guard.replace(
+            "      %predicate = arith.cmpf ogt, %external, %threshold : f32",
+            "      %quotient = arith.divsi %number, %zero : index\n"
+            "      %integer = arith.index_cast %quotient : index to i64\n"
+            "      %floating = arith.sitofp %integer : i64 to f32\n"
+            "      %predicate = arith.cmpf ogt, %floating, %threshold : f32")
+        for rejected in [internal_guard, trapping_guard]:
+            path.write_text(rejected)
+            result = subprocess.run([tool, "--finite-expansion", str(path)], capture_output=True,
+                                    text=True, timeout=60, check=True)
+            errors = [json.loads(line.split(" ", 1)[1])["error"] for line in result.stdout.splitlines()
+                      if line.startswith("expanded-json ")]
+            assert errors and all(errors), "non-entry or non-replayable predicate was promoted"
+        parent_guard = entry_guard.replace(
+            "      %predicate = arith.cmpf ogt, %external, %threshold : f32",
+            "      %integer = arith.index_cast %i : index to i64\n"
+            "      %floating = arith.sitofp %integer : i64 to f32\n"
+            "      %predicate = arith.cmpf ogt, %external, %floating : f32")
+        body_guard = parent_guard.replace("frontier.test_expanded_region", "frontier.test_expanded_body")
+        for policy in ["may-not-alias", "may-alias"]:
+            path.write_text(body_guard)
+            form, expanded = invoke(tool, path, policy)
+            assert form["parameter_kinds"] == ["entry-value"]
+            assert [site["fixed"] for site in form["sites"]] == [[], []]
+            assert [sample["presence"] for sample in expanded["samples"]] == [[0, 1], [1, 0]]
+        path.write_text(parent_guard)
+        result = subprocess.run([tool, "--finite-expansion", str(path)], capture_output=True,
+                                text=True, timeout=60, check=True)
+        errors = [json.loads(line.split(" ", 1)[1])["error"] for line in result.stdout.splitlines()
+                  if line.startswith("expanded-json ")]
+        assert errors and all(errors), "local IV inside an opaque predicate became entry-invariant"
         catalog = json.loads((Path(fixture).resolve().parents[3] /
                               "docs/designs/frontier-tractable-catalog.json").read_text())
         root = Path(fixture).resolve().parents[3]

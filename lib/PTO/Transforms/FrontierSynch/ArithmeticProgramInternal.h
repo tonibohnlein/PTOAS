@@ -17,11 +17,11 @@ struct ProgramBuilder {
     const PhaseIndex& index;
     DenseMap<Value, unsigned> parameterIds;
     ArithmeticEntryConstant entryConstant;
-    mutable DenseMap<Value, bool> entryInputs = DenseMap<Value, bool>();
+    mutable DenseMap<std::pair<Value, unsigned>, bool> entryInputs = DenseMap<std::pair<Value, unsigned>, bool>();
     std::optional<int64_t> constant(Value value) const;
     PrimitiveRelation relation(PrimitiveKind kind, unsigned dimensions) const;
     bool staticallyEmpty(const ArithmeticSite& site) const;
-    bool entryParameter(Value value) const;
+    bool entryParameter(Value value, bool regionalLeaves = false) const;
     AffineExpr registerParameter(Value value);
     bool prepareValue(Value input, const ArithmeticSite& site);
     bool prepareGuard(Value condition, const ArithmeticSite& site);

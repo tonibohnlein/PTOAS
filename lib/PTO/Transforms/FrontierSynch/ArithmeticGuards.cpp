@@ -356,6 +356,13 @@ bool ProgramBuilder::prepareGuard(Value root, const ArithmeticSite& site)
         const bool negation = exclusive && (booleanConstant(exclusive.getLhs()) ||
                                             booleanConstant(exclusive.getRhs()));
         if (!andOr && !negation) {
+            // Preserve supported integer/Boolean normal forms before introducing
+            // another opaque entry binding. This fallback keeps original scalar
+            // semantics for predicates the integer representation cannot express.
+            if (entryParameter(value, true)) {
+                registerParameter(value);
+                continue;
+            }
             output.extraction.note(RecognitionIssue::UnsupportedControl, operation);
             return false;
         }
