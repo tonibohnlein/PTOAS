@@ -7,10 +7,17 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "FiniteGuardedInternal.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
 namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(const RegionalDemandFilter& filter)
 {
     insertionError.clear();
+    const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
+    const bool unsupportedWidth = bits.isScalable() || bits.getFixedValue() != 64;
+    if (unsupportedWidth) {
+        insertionError = "finite guarded endpoint arithmetic requires a 64-bit index representation";
+        return failure();
+    }
     bool terminalCleanup = false;
     auto plan = std::make_unique<PreparedLogicalPlan>(0);
     std::vector<RegionalAllocationGroup> allocationGroups;

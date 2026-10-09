@@ -225,10 +225,6 @@ SequenceAnalysis analyzeSequenceRegionWithResolver(func::FuncOp function, const 
         !expressions->constructionError().empty()) {
         result.error = "sequence route requires a single structured function body"; return result;
     }
-    const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
-    if (bits.isScalable() || bits.getFixedValue() != 64) {
-        result.error = "sequence endpoint arithmetic requires a 64-bit index representation"; return result;
-    }
     auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions), std::move(sharedIndex));
     state->input = &input;
     state->program = &program;
@@ -260,10 +256,6 @@ SequenceAnalysis composeRegionalSequenceWithin(func::FuncOp function,
     if (!function || function.isDeclaration() || !function.getBody().hasOneBlock() || !expressions ||
         !expressions->constructionError().empty()) {
         result.error = "sequence requires a valid common regional expression arena"; return result;
-    }
-    const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
-    if (bits.isScalable() || bits.getFixedValue() != 64) {
-        result.error = "sequence endpoint arithmetic requires a 64-bit index representation"; return result;
     }
     auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions));
     state->requiredOuterLoops.assign(enclosing.begin(), enclosing.end());

@@ -17,6 +17,11 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWithTypeBases(
     ArrayRef<scf::ForOp> enclosing, ArrayRef<uint32_t> typeBases)
 {
+    const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
+    const bool unsupportedWidth = bits.isScalable() || bits.getFixedValue() != 64;
+    if (unsupportedWidth) {
+        fail("sequence endpoint arithmetic requires a 64-bit index representation"); return failure();
+    }
     if (!typeBases.empty() && typeBases.size() != children.size()) {
         fail("regional endpoint owner type-base count differs"); return failure();
     }

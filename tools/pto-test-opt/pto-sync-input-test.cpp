@@ -135,6 +135,11 @@ LogicalResult checkRetainedDemands(func::FuncOp function, pto::GMAliasPolicy pol
   if (first.status != AnalysisStatus::Ready || !first.mathematical || !session.hasWholeFunctionMinimumDemands()) {
     return function.emitError("uniform exact demands unavailable");
   }
+  if (auto expected = function->getAttrOfType<StringAttr>("test.expected_demand_backend")) {
+    if (first.mathematical->backend != expected.getValue()) {
+      return function.emitError("unexpected exact demand backend: ") << first.mathematical->backend;
+    }
+  }
   const auto& counts = session.constructionCounts();
   if (counts.logicalPreparations || counts.allocationExports) {
     return function.emitError("mathematical request constructed logical or allocation exports");

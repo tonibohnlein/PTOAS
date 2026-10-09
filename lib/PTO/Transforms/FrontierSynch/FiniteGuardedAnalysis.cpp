@@ -89,10 +89,6 @@ FiniteGuardedAnalysis analyzeFiniteGuarded(func::FuncOp function, ArrayRef<Opera
         result.error = "finite guarded analysis requires consecutive roots in one original function block";
         return result;
     }
-    const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
-    if (bits.isScalable() || bits.getFixedValue() != 64) {
-        result.error = "finite guarded endpoint arithmetic requires a 64-bit index representation"; return result;
-    }
     auto recognized = recognizeFiniteGuarded(roots, index, input.accesses());
     if (recognized.result.state != RecognitionState::Applicable) {
         result.error = "finite guarded analysis cannot export this region";
