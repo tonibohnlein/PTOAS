@@ -200,6 +200,7 @@ void TensorDumpOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<Memory
 // === TMovOp ===
 // Read: src, Write: dst
 void TMovOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  if (addLocalMoveAccess(*this, effects)) { return; }
   if (classifyTMovForm(getFp()) == TMovForm::XToZz) {
     const MxGroupAxis axis = getGrpAxisAttr()
                                  ? getGrpAxisAttr().getValue()
