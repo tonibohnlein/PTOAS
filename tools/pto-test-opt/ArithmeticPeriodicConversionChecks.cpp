@@ -228,6 +228,17 @@ int runArithmeticPeriodicInputChecks(mlir::func::FuncOp function, const mlir::pt
             llvm::errs() << "difference-bound fallback was displaced by periodic adapter\n";
             return 1;
         }
+        const auto* retained = analysis.arithmeticDemands();
+        const bool reused = analysis.arithmeticGeneratorConstructions() == 1 &&
+            succeeded(analysis.analyzeArithmeticFunction()) && analysis.arithmeticDemands() == retained &&
+            analysis.arithmeticGeneratorConstructions() == 1;
+        if (!reused) { return 1; }
+        fs::FrontierAnalysis reverse(function);
+        const bool reversed = succeeded(reverse.initialize()) && succeeded(reverse.analyzeArithmeticFunction()) &&
+            failed(reverse.analyzeArithmeticPeriodicFunction()) &&
+            reverse.arithmeticGeneratorConstructions() == 1 && reverse.arithmeticDemands() &&
+            reverse.arithmeticDemands()->exactMinimum;
+        if (!reversed) { return 1; }
         llvm::outs() << "difference-bound fallback retained\n";
         return 0;
     }
@@ -243,6 +254,15 @@ int runArithmeticPeriodicInputChecks(mlir::func::FuncOp function, const mlir::pt
         return 1;
     }
     const auto generatorCost = stage.analysis().cost.primitivePieces;
+    const auto* originalGenerators = &stage.analysis();
+    auto reduced = fs::reduceGeneralArithmeticDemands(stage);
+    const bool stable = &stage.analysis() == originalGenerators && reduced &&
+        reduced == fs::reduceGeneralArithmeticDemands(stage) && !stage.analysis().exactMinimum &&
+        stage.analysis().cost.primitivePieces == generatorCost;
+    if (!stable) { return 1; }
+    auto afterReduction = fs::convertArithmeticPeriodicProgram(program, stage);
+    if (afterReduction.conversion.status != converted.conversion.status ||
+        afterReduction.conversion.generators.size() != converted.conversion.generators.size()) { return 1; }
     auto resumed = fs::completeGeneralArithmeticDemands(std::move(stage));
     auto ordinary = fs::analyzeGeneralArithmeticDemandsWithProtection(program, protection);
     if (!resumed.error.empty() || !ordinary.error.empty() || !resumed.exactMinimum ||
@@ -253,6 +273,27 @@ int runArithmeticPeriodicInputChecks(mlir::func::FuncOp function, const mlir::pt
                         return !(a.first < b.first) && !(b.first < a.first) && a.second == b.second;
                     })) {
         llvm::errs() << "arithmetic generator continuation differs\n"; return 1;
+    }
+    if (program.recognition.arithmeticClass == fs::ArithmeticClass::Differences) {
+        auto native = fs::analyzeDifferenceArithmeticGenerators(program, &protection);
+        auto adapted = fs::convertArithmeticPeriodicProgram(program, native);
+        auto demand = fs::reduceDifferenceArithmeticDemands(native);
+        if (!demand || !demand->exactMinimum || native.analysis().exactMinimum ||
+            demand != fs::reduceDifferenceArithmeticDemands(native) ||
+            adapted.conversion.status != converted.conversion.status) {
+            llvm::errs() << "native DBM periodic adapter: " << function.getSymName() << " "
+                         << native.analysis().error << " " << adapted.conversion.diagnostic << " "
+                         << adapted.conversion.exportError << " generators=" << adapted.conversion.generators.size()
+                         << "/" << converted.conversion.generators.size() << " reduced="
+                         << (demand ? demand->error : "missing") << "\n";
+            return 1;
+        }
+        auto retry = fs::convertArithmeticPeriodicProgram(program, native);
+        if (retry.conversion.status != adapted.conversion.status ||
+            retry.conversion.generators.size() != adapted.conversion.generators.size()) { return 1; }
+        // Run the paired original-coordinate endpoint checks on the native
+        // producer's adapter, not merely on its representation sizes.
+        converted = std::move(adapted);
     }
     std::vector<uint64_t> residues;
     for (const auto& site : converted.sites) { residues.push_back(site.residue); }

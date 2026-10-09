@@ -93,5 +93,9 @@ bool checkArithmeticPeriodicSkeleton(const ArithmeticProgram& program, std::stri
 // Site/residue grouping is charged; no trip or distance expansion.
 ArithmeticPeriodicProgram convertArithmeticPeriodicProgram(const ArithmeticProgram& program,
     const GeneralArithmeticGeneratorStage& stage, std::shared_ptr<RegionExpressions> expressions = {});
+// Explicit adapter from native difference-bound generators; relational row
+// conversion occurs only inside this requested periodic export.
+ArithmeticPeriodicProgram convertArithmeticPeriodicProgram(const ArithmeticProgram& program,
+    const DifferenceArithmeticGeneratorStage& stage, std::shared_ptr<RegionExpressions> expressions = {});
 } // namespace mlir::pto::frontiersynch
 #endif
