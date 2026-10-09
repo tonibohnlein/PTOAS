@@ -23,6 +23,19 @@ struct ArithmeticRegionalRelations {
     std::vector<RegionExpressions::Id> parameters;
     std::vector<scf::ForOp> enclosing;
 };
+// Session mathematics contains no arena-local IDs or optional storage exports.
+std::shared_ptr<const ArithmeticRegionalRelations> analyzeArithmeticRegionDemands(
+    ArithmeticRegionContext context, const PhaseIndex& index, const SyncInput& input,
+    const ArithmeticProgram* certified, std::string& error);
+// Each requested snapshot has independent callback state in the common arena.
+// Failed construction rolls back its unpublished nodes and arena diagnostics.
+FailureOr<RegionalAnalysis> exportArithmeticRegion(
+    const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
+    bool selectors, std::string& error, std::shared_ptr<const SyncInput> inputOwner = {});
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticRegion(
+    const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
+    ArrayRef<scf::ForOp> enclosing, std::string& error,
+    std::shared_ptr<const SyncInput> inputOwner = {});
 // Analyze one original region with shared entry bindings. The finite-boundary
 // adapter enumerates bounded physical bytes, never dynamic payload occurrences;
 // adjacent bytes with identical selector tuples share one exported cell.

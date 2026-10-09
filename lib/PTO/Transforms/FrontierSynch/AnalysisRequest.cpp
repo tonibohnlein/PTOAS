@@ -24,6 +24,19 @@ AnalysisOutcome FrontierAnalysis::minimumDemands(std::size_t region, AnalysisNee
     exports.synchronization = false;
     return analyze({region, AnalysisMode::MinimumExact, exports});
 }
+AnalysisOutcome FrontierAnalysis::analyzeArithmeticRegional(const AnalysisRequest& request)
+{
+    AnalysisOutcome result;
+    const bool valid = succeeded(recognizeStructure()) && request.region && request.region < program->nodes.size();
+    if (!valid) {
+        result.obligations.push_back({AnalysisStage::Form, "arithmetic original child region is unavailable"});
+        return result;
+    }
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    result = requestBackend(AnalysisBackend::Arithmetic, request);
+    result.costs = costRecords();
+    return result;
+}
 AnalysisOutcome FrontierAnalysis::analyzeFiniteVisit(const AnalysisRequest& request)
 {
     AnalysisOutcome result;
@@ -166,6 +179,18 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
         result.available.selectors = exports.capabilities.exactSelectors;
     }
     if (demands.backend == "native-scalar" || demands.backend == "expanded-finite-guarded") { result.available = {}; }
+    if (demands.arithmeticRegionalDemands && (request.needs.queries || request.needs.selectors)) {
+        std::string error;
+        result.regionalExports = arithmeticExports(demands, false, error);
+        result.available.queries = static_cast<bool>(result.regionalExports);
+        if (request.needs.selectors) {
+            auto selected = arithmeticExports(demands, true, error);
+            result.available.selectors = static_cast<bool>(selected);
+            if (selected) { result.regionalExports = std::move(selected); }
+        }
+        if (!error.empty()) { result.obligations.push_back({result.available.queries ?
+            AnalysisStage::Selectors : AnalysisStage::Queries, error}); }
+    }
     const bool expandedExports = request.needs.queries || request.needs.selectors || attempt.expandedQueries;
     if (demands.backend == "expanded-finite-guarded" && expandedExports) {
         if (!attempt.expandedQueries) {

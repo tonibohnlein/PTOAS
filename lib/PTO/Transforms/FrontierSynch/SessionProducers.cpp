@@ -204,6 +204,34 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::varyingExports(
     }
     return varyingSelectedResult(*attempt.varyingExports, *storage, error);
 }
+std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::arithmeticExports(
+    const MathematicalResult& demands, bool selectors, std::string& error)
+{
+    if (!demands.arithmeticRegionalDemands) { return {}; }
+    auto& attempt = sessionState->arithmeticRegionAttempts[demands.region];
+    if (!attempt.arithmeticQueriesAttempted) {
+        attempt.arithmeticQueriesAttempted = true;
+        if (construction.arithmeticQueryBuilds != UINT64_MAX) { ++construction.arithmeticQueryBuilds; }
+        auto queries = exportArithmeticRegion(*demands.arithmeticRegionalDemands,
+            sessionState->expressions, false, attempt.arithmeticQueryError, storage);
+        if (succeeded(queries)) {
+            attempt.arithmeticQueries = std::make_shared<const RegionalAnalysis>(std::move(*queries));
+        }
+    }
+    if (!attempt.arithmeticQueries) { error = attempt.arithmeticQueryError; return {}; }
+    if (!selectors) { return attempt.arithmeticQueries; }
+    if (!attempt.arithmeticSelectorsAttempted) {
+        attempt.arithmeticSelectorsAttempted = true;
+        if (construction.arithmeticSelectorBuilds != UINT64_MAX) { ++construction.arithmeticSelectorBuilds; }
+        auto selected = exportArithmeticRegion(*demands.arithmeticRegionalDemands,
+            sessionState->expressions, true, attempt.arithmeticSelectorError, storage);
+        if (succeeded(selected)) {
+            attempt.arithmeticSelectors = std::make_shared<const RegionalAnalysis>(std::move(*selected));
+        }
+    }
+    error = attempt.arithmeticSelectorError;
+    return attempt.arithmeticSelectors;
+}
 SequenceRegionResolver FrontierAnalysis::regionalResolver()
 {
     SequenceRegionResolver resolver;
@@ -231,9 +259,11 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver()
     };
     resolver.exports = [this](std::size_t region, AnalysisBackend backend, std::string& error)
         -> FailureOr<RegionalAnalysis> {
-        auto demands = produceLoopBackend(backend, error, region);
+        auto demands = backend == AnalysisBackend::Arithmetic ? produceArithmeticRegion(region, error) :
+            produceLoopBackend(backend, error, region);
         if (!demands) { return failure(); }
-        auto result = varyingExports(*demands, true, error);
+        auto result = backend == AnalysisBackend::Arithmetic ? arithmeticExports(*demands, true, error) :
+            varyingExports(*demands, true, error);
         if (!result) { return failure(); }
         return *result;
     };
@@ -304,12 +334,9 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceArithmeticReg
             owned->region = region;
             owned->backend = "arithmetic";
             if (sessionState->arithmeticRegionBuilds != UINT64_MAX) { ++sessionState->arithmeticRegionBuilds; }
-            auto regional = analyzeArithmeticRegionRetained({function, node.anchor}, *structuralIndex, *storage,
-                sessionState->expressions, owned->arithmeticRegionalDemands, cached.demandError,
-                recognizeArithmeticRegion(region));
-            if (succeeded(regional)) {
-                owned->regionalDemands = std::make_shared<const RegionalAnalysis>(std::move(*regional));
-            }
+            owned->arithmeticRegionalDemands = analyzeArithmeticRegionDemands(
+                {function, node.anchor}, *structuralIndex, *storage,
+                recognizeArithmeticRegion(region), cached.demandError);
             if (owned->arithmeticRegionalDemands) { cached.mathematical = std::move(owned); }
         }
     }

@@ -17,7 +17,8 @@ struct ArithmeticIntegerPiece {
 // Imports every non-context primitive, restricted to the shared context.
 // Parameter columns follow program.primitives.parameters even when primitive
 // symbol declarations use another order. Empty unions remain empty.
-FailureOr<std::vector<ArithmeticIntegerPiece>> importArithmeticIntegerPieces(const ArithmeticProgram& program);
+FailureOr<std::vector<ArithmeticIntegerPiece>> importArithmeticIntegerPieces(
+    const ArithmeticProgram& program, bool occurrencesOnly = false);
 
 enum class ArithmeticBoundaryKind {
     FirstWriter, LastWriter, FirstReaderBeforeWrite, LastReaderAfterWrite,

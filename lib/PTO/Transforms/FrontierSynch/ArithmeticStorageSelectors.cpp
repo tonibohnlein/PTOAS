@@ -22,7 +22,7 @@ public:
     }
     ArithmeticStorageSelectors result;
     LogicalResult run();
-    LogicalResult import();
+    LogicalResult import(bool occurrencesOnly = false);
     std::vector<Piece> pieces;
 private:
     const ArithmeticProgram& program;
@@ -125,11 +125,14 @@ FailureOr<std::vector<Piece>> Builder::importPiece(const NormalizedPiece& normal
     }
     return imported;
 }
-LogicalResult Builder::import()
+LogicalResult Builder::import(bool occurrencesOnly)
 {
     std::vector<Piece> raw;
     for (const auto& normalized : program.recognition.pieces) {
         if (normalized.empty) { continue; }
+        if (normalized.relation >= program.primitives.relations.size()) { return failure(); }
+        const auto kind = program.primitives.relations[normalized.relation].kind;
+        if (occurrencesOnly && kind != PrimitiveKind::Occurrences && kind != PrimitiveKind::Context) { continue; }
         auto imported = importPiece(normalized);
         if (failed(imported)) { return failure(); }
         for (auto& entry : *imported) {
@@ -367,12 +370,13 @@ LogicalResult Builder::run()
     return success();
 }
 } // namespace
-FailureOr<std::vector<ArithmeticIntegerPiece>> importArithmeticIntegerPieces(const ArithmeticProgram& program)
+FailureOr<std::vector<ArithmeticIntegerPiece>> importArithmeticIntegerPieces(
+    const ArithmeticProgram& program, bool occurrencesOnly)
 {
     if (program.extraction.state != RecognitionState::Applicable ||
         program.recognition.state != RecognitionState::Applicable || !program.primitives.period) { return failure(); }
     Builder builder(program, {});
-    if (failed(builder.import())) { return failure(); }
+    if (failed(builder.import(occurrencesOnly))) { return failure(); }
     return std::move(builder.pieces);
 }
 ArithmeticStorageSelectors buildArithmeticStorageSelectors(
