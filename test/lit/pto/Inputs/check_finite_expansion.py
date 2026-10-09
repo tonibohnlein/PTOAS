@@ -26,6 +26,26 @@ def invoke(tool, path, policy):
     form = next(item for item in documents if item.get("region") == "anonymous")
     assert expanded["exports_blocked"]
     assert expanded["invalid_roots_rejected"]
+    assert expanded["exact_queries"] and expanded["invalid_queries_rejected"]
+    for sample in expanded["samples"]:
+        if len(form["sites"]) > 64:
+            continue
+        present = [i for i, active in enumerate(sample["presence"]) if active]
+        index = {site: position for position, site in enumerate(present)}
+        edges = native([form["sites"][i]["pipe"] for i in present])
+        for source, target, active in sample["generators"] + sample["native"]:
+            if active:
+                assert active == 1 and source in index and target in index
+                edges.add((2 * index[source] + 1, 2 * index[target]))
+        graph, _ = closure(2 * len(present), edges)
+        assert len(sample["event_queries"]) == 2 * len(form["sites"])
+        for source, row in enumerate(sample["event_queries"]):
+            assert len(row) == 2 * len(form["sites"])
+            for target, answer in enumerate(row):
+                expected = (graph[2 * index[source // 2] + source % 2] >>
+                            (2 * index[target // 2] + target % 2)) & 1 if (
+                            source // 2 in index and target // 2 in index) else 0
+                assert answer == expected, (sample["parameters"], source, target, answer, expected)
     if form["period"] == 2:
         assert expanded["period_budget_fallback"]
     return form, expanded

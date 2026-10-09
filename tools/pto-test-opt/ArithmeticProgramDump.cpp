@@ -155,6 +155,19 @@ void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
                 document["overlap_joins"] = state.cost.crossingCandidates;
                 document["circuit_nodes"] = state.cost.expressionNodes;
                 document["sites"] = form.sites.size();
+                auto queries = fs::expandedFiniteRegionalQueries(expanded);
+                document["exact_queries"] = queries.capabilities.exactQueries;
+                const auto zero = state.arena->constant(0);
+                bool invalidQueries = true;
+                if (!form.sites.empty()) {
+                    fs::RegionalEvent external{0, zero, fs::PeriodicEventKind::Start, {zero}};
+                    fs::RegionalEvent invalid{static_cast<uint32_t>(form.sites.size()), zero,
+                        fs::PeriodicEventKind::Start};
+                    fs::RegionalEvent boolean{0, state.arena->boolean(true), fs::PeriodicEventKind::Start};
+                    invalidQueries = !queries.presence(external) && !queries.reachability(external, external) &&
+                        !queries.presence(invalid) && !queries.presence(boolean);
+                }
+                document["invalid_queries_rejected"] = invalidQueries;
                 llvm::json::Array samples;
                 const auto count = form.parameters.size();
                 if (count <= 4) {
@@ -190,9 +203,27 @@ void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
                         append(state.guardedResidual, edges);
                         append(state.guardedNative, native);
                         append(state.retained, retained);
+                        llvm::json::Array eventQueries;
+                        constexpr uint32_t maxDumpSites = 64;
+                        const bool dumpQueries = form.sites.size() <= maxDumpSites;
+                        if (dumpQueries) {
+                            for (uint32_t source = 0; source < 2 * form.sites.size(); ++source) {
+                                llvm::json::Array row;
+                                for (uint32_t target = 0; target < 2 * form.sites.size(); ++target) {
+                                    auto event = [&](uint32_t id) {
+                                        return fs::RegionalEvent{id / 2, zero, id % 2 ?
+                                            fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start};
+                                    };
+                                    auto answer = fs::regionalReachability(queries, event(source), event(target));
+                                    row.push_back(answer ? evaluate(*answer) : UINT64_MAX);
+                                }
+                                eventQueries.push_back(std::move(row));
+                            }
+                        }
                         samples.push_back(llvm::json::Object{{"parameters", std::move(values)},
                             {"presence", std::move(presence)}, {"generators", std::move(edges)},
-                            {"native", std::move(native)}, {"retained", std::move(retained)}});
+                            {"native", std::move(native)}, {"retained", std::move(retained)},
+                            {"event_queries", std::move(eventQueries)}});
                     }
                 }
                 document["samples"] = std::move(samples);
