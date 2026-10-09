@@ -8,6 +8,8 @@
 // Detached preparation consumes retained mathematics. Producer and reducer
 // work is never repeated after a missing synchronization export.
 #include "AnalysisSessionInternal.h"
+#include "PTO/Transforms/FrontierSynch/MixedStrideAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/CompactBoundingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/GuardedPeriodicInsertion.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingAnalysis.h"
@@ -72,6 +74,12 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
         const bool regional = succeeded(plan) && demands.region != 0;
         if (regional) { (*plan)->completeInvocation = false; }
         return plan;
+    }
+    if (demands.mixedStrideDemands) {
+        return prepareMixedStrideLogicalInsertion(function, *demands.mixedStrideDemands, error);
+    }
+    if (demands.compactDemands) {
+        return prepareCompactBoundingLogicalInsertion(function, demands.compactDemands, error);
     }
     if (demands.boundedDemands) {
         return prepareBoundedLifetimeResult(demands.boundedDemands, error, demands.region == 0);
