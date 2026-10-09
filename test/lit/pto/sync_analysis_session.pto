@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --analysis-session-checks %s | FileCheck %s
+// CHECK: analysis-session: retained-demands fresh-fragments source-unchanged
+!tile = !pto.tile_buf<vec, 4x8xf32>
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+!right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a3"} {
+  func.func @empty() { return }
+  func.func @physical_reuse() {
+    %base = arith.constant 1024 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    %b = pto.alloc_tile addr = %base : !tile
+    pto.tsetval ins(%zero, %one : index, f32) outs(%a : !tile)
+    %x = pto.tgetval ins(%b, %zero : !tile, index) outs : f32
+    pto.tsetval ins(%zero, %one : index, f32) outs(%b : !tile)
+    return
+  }
+  func.func @matrix_chain() {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %am = pto.alloc_tile addr = %base : !mat
+    %a = pto.alloc_tile addr = %base : !left
+    %b = pto.alloc_tile addr = %base : !right
+    %c = pto.alloc_tile addr = %base : !acc
+    pto.textract ins(%am, %zero, %zero : !mat, index, index) outs(%a : !left)
+    pto.textract ins(%am, %zero, %zero : !mat, index, index) outs(%b : !right)
+    pto.tmatmul ins(%a, %b : !left, !right) outs(%c : !acc)
+    pto.tmatmul.acc ins(%c, %a, %b : !acc, !left, !right) outs(%c : !acc)
+    pto.textract ins(%am, %zero, %zero : !mat, index, index) outs(%a : !left)
+    return
+  }
+}

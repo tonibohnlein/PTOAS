@@ -11,6 +11,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_FRONTIERANALYSIS_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_FRONTIERANALYSIS_H
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
 #include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticPeriodicConversion.h"
@@ -32,6 +33,16 @@ public:
     // Callers needing structural diagnostics retain the default. The logical
     // pass may defer recognition when the whole-function native proof succeeds.
     LogicalResult initialize(GMAliasPolicy policy = GMAliasPolicy::MayNotAlias, bool requireStructure = true);
+    // Request adapters are migrated by backend. A failed export retains the
+    // owned mathematical result; stateful evaluation is a separate capability.
+    AnalysisOutcome minimumDemands(std::size_t region = 0, AnalysisNeeds exports = {});
+    AnalysisOutcome analyze(const AnalysisRequest& request);
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareLogical(const AnalysisOutcome& result);
+    LogicalResult attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan);
+    const AnalysisConstructionCounts& constructionCounts() const { return construction; }
+    // Call before reusing this object after original IR mutation. Previously
+    // returned handles must no longer be queried against that IR.
+    void invalidate();
     // Build and cache the whole-function arithmetic candidate only on request.
     // Requires successful initialization; uses fixed class limits, not input-derived limits.
     LogicalResult recognizeArithmetic();
@@ -80,7 +91,11 @@ private:
     GMAliasPolicy policy = GMAliasPolicy::MayNotAlias;
     std::shared_ptr<SyncInput> storage;
     std::optional<ProgramRecognition> program;
-    std::optional<ExplicitAnalysis> explicitAnalysis;
+    std::shared_ptr<PhaseIndex> structuralIndex;
+    std::shared_ptr<ExplicitAnalysis> explicitAnalysis;
+    std::shared_ptr<const MathematicalResult> explicitMathematical;
+    AnalysisConstructionCounts construction;
+    std::optional<bool> explicitEndpointOutcome;
     std::shared_ptr<BoundedLifetimeDemandResult> boundedAnalysis;
     std::optional<SequenceAnalysis> sequenceAnalysis;
     std::optional<ArithmeticDemandAnalysis> arithmeticAnalysis;

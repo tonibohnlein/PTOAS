@@ -134,6 +134,9 @@ StringRef contractName(ContractDiagnosticKind kind);
 // Applicable certifies the input contract only. Backend fields remain absent
 // until an explicit FrontierAnalysis::analyzeNumericCandidates request.
 FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input);
+// Reuses the session index; the compatibility overload constructs its own.
+FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input,
+                                               const PhaseIndex& index);
 StringRef structureName(StructureKind kind);
 } // namespace mlir::pto::frontiersynch
 #endif
