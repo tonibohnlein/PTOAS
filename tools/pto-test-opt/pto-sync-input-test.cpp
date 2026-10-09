@@ -15,6 +15,7 @@
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/FiniteVisitRecognition.h"
 #include "PTO/Transforms/FrontierSynch/ClosedCallees.h"
@@ -161,16 +162,37 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
   using namespace pto::frontiersynch;
   FrontierAnalysis session(function);
   if (failed(session.initialize(policy))) { return failure(); }
-  bool checked = false;
+  bool checked = false, bodyChecked = false, runChecked = false;
   for (auto [id, node] : llvm::enumerate(session.result()->nodes)) {
     if (id == 0) { continue; }
     auto first = session.analyzeFiniteExpansion({id});
-    if (node.kind != StructureKind::Loop && node.kind != StructureKind::Conditional) {
-      if (first.mathematical) { return function.emitError("expanded adapter changed regional scope"); }
-      continue;
-    }
     if (!first.mathematical) { continue; }
+    SmallVector<Operation*> expected;
+    if (node.kind == StructureKind::ExplicitRun) { expected = node.operations; }
+    else if (node.kind == StructureKind::Sequence && node.region) {
+      for (auto& operation : node.region->front()) {
+        if (!operation.hasTrait<OpTrait::IsTerminator>()) { expected.push_back(&operation); }
+      }
+    } else { expected.push_back(node.anchor); }
+    const auto& expanded = first.mathematical->finiteGuardedDemands->expandedProgram;
+    if (!expanded || expanded->context.roots != expected) {
+      return function.emitError("expanded adapter changed regional root list");
+    }
+    for (const auto& site : expanded->sites) {
+      const bool enclosed = llvm::any_of(expected, [&](Operation* root) {
+        return root->isAncestor(site.phase->elementOp);
+      });
+      if (!enclosed) { return function.emitError("expanded adapter included an enclosing visit or sibling"); }
+      for (auto coordinate : site.fixedCoordinates) {
+        const bool internal = llvm::any_of(expected, [&](Operation* root) {
+          return root->isAncestor(coordinate.loop.getOperation());
+        });
+        if (!internal) { return function.emitError("expanded adapter enumerated a parent loop"); }
+      }
+    }
     checked = true;
+    bodyChecked |= node.kind == StructureKind::Sequence;
+    runChecked |= node.kind == StructureKind::ExplicitRun && node.payloadCount > 0;
     const bool invalidExports = session.hasWholeFunctionMinimumDemands() ||
         first.available.queries || first.available.selectors;
     if (invalidExports) {
@@ -190,7 +212,9 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
       }
     }
   }
-  if (!checked) { return function.emitError("finite expansion session fixture has no supported child"); }
+  if (!checked || !bodyChecked || !runChecked) {
+    return function.emitError("finite expansion fixture requires successful body and run requests");
+  }
   llvm::outs() << "finite-expansion-session: original-scope retained-demands cached-exports no-child-promotion\n";
   return success();
 }

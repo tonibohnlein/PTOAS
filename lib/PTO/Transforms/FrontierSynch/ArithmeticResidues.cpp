@@ -256,13 +256,6 @@ SmallVector<AffineExpr> ProgramBuilder::domain(const ArithmeticSite& site, unsig
 void ProgramBuilder::emit(PrimitiveRelation& target, ArrayRef<AffineExpr> rows,
                          std::optional<std::pair<unsigned, uint64_t>> filter, uint64_t modulus)
 {
-    if (output.finiteExpansion) {
-        if (output.expandedFragments >= output.expansionFragmentLimit) {
-            output.extraction.note(RecognitionIssue::TemplateExpansionLimit, output.context.root);
-            return;
-        }
-        ++output.expandedFragments;
-    }
     const auto count = target.coordinates.size();
     if (count > limits.dimensions) {
         output.extraction.note(RecognitionIssue::ArithmeticDimension, nullptr, true);
@@ -276,6 +269,10 @@ void ProgramBuilder::emit(PrimitiveRelation& target, ArrayRef<AffineExpr> rows,
             return;
         }
         combinations *= period;
+    }
+    if (output.finiteExpansion && combinations > output.expansionFragmentLimit - output.expandedFragments) {
+        output.extraction.note(RecognitionIssue::TemplateExpansionLimit, output.context.root);
+        return;
     }
     // Entry i1 values have the mathematical representation 0 or 1. Keep this
     // context in every relation, including unconditional sites outside a branch.
@@ -292,6 +289,7 @@ void ProgramBuilder::emit(PrimitiveRelation& target, ArrayRef<AffineExpr> rows,
     bool more = true;
     while (more) {
         if (!filter || residues[filter->first] % modulus == filter->second) {
+            if (output.finiteExpansion) { ++output.expandedFragments; }
             SmallVector<AffineExpr> constraints;
             SmallVector<AffineExpr> dimensions, symbols;
             for (auto [id, residue] : llvm::enumerate(residues)) {

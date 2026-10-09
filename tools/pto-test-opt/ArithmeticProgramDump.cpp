@@ -100,13 +100,56 @@ void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
                             const pto::SyncInput& input)
 {
     function.walk([&](Operation* root) {
-        if (root->hasAttr("frontier.test_expanded_region")) {
-            auto expanded = fs::analyzeExpandedFinite(function, root, index, input);
+        const bool body = root->hasAttr("frontier.test_expanded_body");
+        const bool requested = root->hasAttr("frontier.test_expanded_region") || body;
+        if (requested) {
+            SmallVector<Operation*> roots;
+            auto arm = root->getAttrOfType<IntegerAttr>("frontier.test_expanded_body");
+            const auto selected = arm ? arm.getInt() : 0;
+            const bool validArm = selected >= 0 && static_cast<uint64_t>(selected) < root->getNumRegions();
+            if (body && validArm && root->getRegion(selected).hasOneBlock()) {
+                for (auto& operation : root->getRegion(selected).front()) {
+                    if (!operation.hasTrait<OpTrait::IsTerminator>()) { roots.push_back(&operation); }
+                }
+                auto skip = root->getAttrOfType<IntegerAttr>("frontier.test_expanded_skip");
+                auto take = root->getAttrOfType<IntegerAttr>("frontier.test_expanded_take");
+                const bool validSkip = skip && skip.getInt() >= 0 &&
+                    static_cast<uint64_t>(skip.getInt()) <= roots.size();
+                if (validSkip) {
+                    roots.erase(roots.begin(), roots.begin() + skip.getInt());
+                }
+                const bool validTake = take && take.getInt() >= 0 &&
+                    static_cast<uint64_t>(take.getInt()) <= roots.size();
+                if (validTake) {
+                    roots.resize(take.getInt());
+                }
+            } else if (!body) { roots.push_back(root); }
+            auto expanded = fs::analyzeExpandedFinite(function, roots, index, input);
             llvm::json::Object document{{"function", function.getSymName()}, {"error", expanded.error}};
             if (expanded.state) {
                 auto& state = *expanded.state;
                 const auto& form = *expanded.expandedProgram;
                 dumpArithmeticJSON(function, form);
+                document["root_count"] = form.context.roots.size();
+                document["incoming_prerequisites"] = form.incomingPrerequisites.size();
+                bool invalidRejected = true;
+                for (SmallVector<Operation*> malformed : {SmallVector<Operation*>{nullptr, root},
+                                                         SmallVector<Operation*>{root, root},
+                                                         SmallVector<Operation*>{root, nullptr}}) {
+                    fs::ArithmeticRegionContext context{function, root};
+                    context.roots = std::move(malformed);
+                    auto invalid = fs::expandFiniteArithmeticProgram(context, index, input, input.accesses());
+                    invalidRejected &= invalid.extraction.state != fs::RecognitionState::Applicable;
+                }
+                document["invalid_roots_rejected"] = invalidRejected;
+                if (form.primitives.period == 2) {
+                    fs::FiniteExpansionLimits limits;
+                    limits.fragments = form.expandedFragments / 3;
+                    auto smaller = fs::expandFiniteArithmeticProgram(
+                        form.context, index, input, input.accesses(), limits);
+                    document["period_budget_fallback"] = smaller.extraction.state == fs::RecognitionState::Applicable &&
+                        smaller.recognition.state == fs::RecognitionState::Applicable && smaller.primitives.period == 1;
+                }
                 document["visits"] = form.expandedVisits;
                 document["fragments"] = form.expandedFragments;
                 document["overlap_joins"] = state.cost.crossingCandidates;
@@ -115,11 +158,17 @@ void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
                 llvm::json::Array samples;
                 const auto count = form.parameters.size();
                 if (count <= 4) {
-                    for (unsigned mask = 0; mask < (1U << count); ++mask) {
+                    const bool signedSamples = function->hasAttr("test.sample_signed") && count <= 2 &&
+                        llvm::all_of(form.parameters, [](Value value) { return value.getType().isIndex(); });
+                    unsigned sampleCount = 1;
+                    for (unsigned i = 0; i < count; ++i) { sampleCount *= signedSamples ? 6 : 2; }
+                    for (unsigned mask = 0; mask < sampleCount; ++mask) {
+                        unsigned digits = mask;
                         SmallVector<std::pair<fs::RegionExpressions::Id, fs::RegionExpressions::Id>> bindings;
                         llvm::json::Array values;
                         for (unsigned i = 0; i < count; ++i) {
-                            const auto value = (mask >> i) & 1U;
+                            const int64_t value = signedSamples ? static_cast<int64_t>(digits % 6) - 2 : digits % 2;
+                            digits /= signedSamples ? 6 : 2;
                             values.push_back(value);
                             auto expression = state.arena->input(form.parameters[i]);
                             auto fixed = form.parameters[i].getType().isInteger(1) ?

@@ -8,6 +8,7 @@
 // Derive domains and strict order from the original structured loop tree.
 // Native primitives denote its strict native closure, not adjacent edges.
 #include "ArithmeticProgramInternal.h"
+#include "../InsertSync/SyncRegionArithmetic.h"
 #include "RecognitionInternal.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
@@ -231,6 +232,21 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
         output.extraction.note(RecognitionIssue::UnsupportedControl, function, true);
         return output;
     }
+    if (!region.roots.empty()) {
+        auto* previous = region.roots.front();
+        bool valid = expansion && previous == region.root && previous->getBlock();
+        if (valid) {
+            for (auto* selected : llvm::drop_begin(region.roots)) {
+                const bool adjacent = selected && previous->getNextNode() == selected;
+                if (!adjacent) { valid = false; break; }
+                previous = selected;
+            }
+        }
+        if (!valid) {
+            output.extraction.note(RecognitionIssue::UnsupportedControl, region.root);
+            return output;
+        }
+    }
     if (!limits.pipes || !limits.coefficient || !limits.period) {
         output.extraction.note(RecognitionIssue::ArithmeticConfiguration, function);
         return output;
@@ -241,7 +257,8 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
         output.extraction.note(RecognitionIssue::ArithmeticConfiguration, function);
         return output;
     }
-    detail::ProgramBuilder builder{output, limits, function.getContext(), index, DenseMap<Value, unsigned>(),
+    auto configured = limits;
+    detail::ProgramBuilder builder{output, configured, function.getContext(), index, DenseMap<Value, unsigned>(),
                                    std::move(entryConstant)};
     if (expansion) { detail::collectExpanded(builder, *expansion); }
     else { collect(index, builder); }
@@ -299,7 +316,42 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
         clearExports(output);
         return output;
     }
-    output.primitives.period = limits.period;
+    bool preferParity = false;
+    if (expansion) {
+        bool symbolicParity = false;
+        for (const auto& site : output.sites) {
+            if (builder.staticallyEmpty(site)) { continue; }
+            for (auto id : effects.effectsFor(site.phase)) {
+                if (llvm::is_contained(output.extraction.dischargedEffects, id)) { continue; }
+                for (const auto& region : effects.effects()[id].regions) {
+                    SmallVector<AffineExpr> symbols;
+                    for (auto symbol : region.symbols) { symbols.push_back(builder.value(symbol, site, 0)); }
+                    SmallVector<AffineExpr> dimensions;
+                    for (unsigned i = 0; i < region.extents.size(); ++i) {
+                        dimensions.push_back(getAffineDimExpr(i, function.getContext()));
+                    }
+                    auto specialized = mlir::pto::detail::substitute(region.byteOffset, dimensions, symbols);
+                    if (!specialized) { continue; }
+                    specialized.walk([&](AffineExpr expression) {
+                        auto binary = dyn_cast<AffineBinaryOpExpr>(expression);
+                        const bool modulo = binary && binary.getKind() == AffineExprKind::Mod;
+                        if (!modulo) { return; }
+                        auto divisor = dyn_cast<AffineConstantExpr>(binary.getRHS());
+                        const bool parity = divisor && divisor.getValue() == 2;
+                        if (!parity) { return; }
+                        for (unsigned i = 0; i < output.parameters.size(); ++i) {
+                            symbolicParity |= binary.getLHS().isFunctionOfSymbol(i);
+                        }
+                    });
+                }
+            }
+        }
+        // Resolve a retained parity bank in the declared two-residue adapter.
+        // It changes representation only; original SSA parameter bindings and
+        // all residue cases are preserved. No geometry or class is excluded.
+        preferParity = symbolicParity;
+    }
+    output.primitives.period = configured.period;
     DenseSet<unsigned> pipes;
     for (const auto& site : output.sites) {
         pipes.insert(static_cast<unsigned>(site.phase->kPipeValue));
@@ -321,31 +373,73 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
         clearExports(output);
         return output;
     }
-    // Explicit empty roles differ from absent primitive information.
-    for (auto kind : {PrimitiveKind::Context, PrimitiveKind::Occurrences, PrimitiveKind::Order,
-                      PrimitiveKind::Native, PrimitiveKind::Reads, PrimitiveKind::Writes,
-                      PrimitiveKind::Prerequisites}) {
-        auto relation = builder.relation(kind, 0);
-        if (kind == PrimitiveKind::Context) {
-            builder.emit(relation, {});
+    auto construct = [&]() {
+        output.primitives.period = configured.period;
+        output.primitives.relations.clear();
+        output.uniformConflicts.clear();
+        output.expandedFragments = 0;
+        // Explicit empty roles differ from absent primitive information.
+        for (auto kind : {PrimitiveKind::Context, PrimitiveKind::Occurrences, PrimitiveKind::Order,
+                          PrimitiveKind::Native, PrimitiveKind::Reads, PrimitiveKind::Writes,
+                          PrimitiveKind::Prerequisites}) {
+            auto relation = builder.relation(kind, 0);
+            if (kind == PrimitiveKind::Context) {
+                builder.emit(relation, {});
+            }
+            output.primitives.relations.push_back(std::move(relation));
         }
-        output.primitives.relations.push_back(std::move(relation));
-    }
-    for (std::size_t a = 0; a < output.sites.size(); ++a) {
-        occurrence(builder, a);
-        for (std::size_t b = 0; b < output.sites.size(); ++b) {
-            order(builder, a, b);
+        for (std::size_t a = 0; a < output.sites.size(); ++a) {
+            occurrence(builder, a);
+            for (std::size_t b = 0; b < output.sites.size(); ++b) {
+                order(builder, a, b);
+            }
         }
-    }
-    prerequisites(builder, index);
-    detail::extractAccesses(builder, input, effects);
-    if (output.extraction.state != RecognitionState::Applicable) {
-        clearExports(output);
-        return output;
-    }
-    output.recognition = recognizeArithmetic(output.primitives, limits);
-    if (output.recognition.state != RecognitionState::Applicable) {
-        clearExports(output);
+        prerequisites(builder, index);
+        detail::extractAccesses(builder, input, effects);
+        if (output.extraction.state != RecognitionState::Applicable) {
+            return false;
+        }
+        output.recognition = recognizeArithmetic(output.primitives, configured);
+        return output.recognition.state == RecognitionState::Applicable;
+    };
+    const bool constructed = construct();
+    if (!constructed) { clearExports(output); return output; }
+    if (preferParity) {
+        uint64_t estimate = 0;
+        bool fits = true;
+        for (const auto& relation : output.primitives.relations) {
+            if (relation.pieces.empty()) { continue; }
+            uint64_t copies = 1;
+            for (std::size_t i = 0; i < relation.coordinates.size(); ++i) {
+                if (copies > expansion->fragments / 2) { fits = false; break; }
+                copies *= 2;
+            }
+            const bool remaining = fits &&
+                relation.pieces.size() <= (expansion->fragments - estimate) / copies;
+            if (!remaining) { fits = false; break; }
+            estimate += relation.pieces.size() * copies;
+        }
+        if (fits) {
+            auto original = std::move(output.primitives);
+            auto recognized = std::move(output.recognition);
+            auto conflicts = std::move(output.uniformConflicts);
+            const auto extraction = output.extraction;
+            const auto fragments = output.expandedFragments;
+            output.primitives.parameters = original.parameters;
+            output.primitives.pipeCount = original.pipeCount;
+            configured.period = 2;
+            const bool success = construct();
+            const auto attempted = output.expandedFragments;
+            if (!success) {
+                output.primitives = std::move(original);
+                output.recognition = std::move(recognized);
+                output.uniformConflicts = std::move(conflicts);
+                output.extraction = extraction;
+            }
+            // Both adapter normalizations are charged. The original occurrence
+            // expansion and shared parameter table were constructed only once.
+            output.expandedFragments = fragments + attempted;
+        }
     }
     return output;
 }

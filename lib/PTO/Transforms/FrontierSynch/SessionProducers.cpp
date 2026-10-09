@@ -199,12 +199,21 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend
     owned->region = region;
     if (backend == AnalysisBackend::ExpandedFinite) {
         const auto& node = program->nodes[region];
-        const bool originalRoot = node.kind == StructureKind::Loop || node.kind == StructureKind::Conditional;
-        if (!originalRoot || node.unsupportedContext) {
-            error = "finite expansion requires an original loop or conditional root"; return {};
+        if (node.unsupportedContext) {
+            error = "finite expansion requires a supported original region"; return {};
         }
+        SmallVector<Operation*> roots;
+        if (node.kind == StructureKind::ExplicitRun) { roots = node.operations; }
+        else if (node.kind == StructureKind::Sequence && node.region && node.region->hasOneBlock()) {
+            for (auto& operation : node.region->front()) {
+                if (!operation.hasTrait<OpTrait::IsTerminator>()) { roots.push_back(&operation); }
+            }
+        } else if (node.kind == StructureKind::Loop || node.kind == StructureKind::Conditional) {
+            roots.push_back(node.anchor);
+        }
+        if (roots.empty()) { error = "finite expansion has no original roots"; return {}; }
         auto demands = std::make_shared<FiniteGuardedAnalysis>(
-            analyzeExpandedFinite(function, program->nodes[region].anchor, *structuralIndex, *storage));
+            analyzeExpandedFinite(function, roots, *structuralIndex, *storage));
         if (!demands->error.empty()) { error = demands->error; return {}; }
         owned->finiteGuardedDemands = std::move(demands);
         owned->backend = "expanded-finite-guarded";
