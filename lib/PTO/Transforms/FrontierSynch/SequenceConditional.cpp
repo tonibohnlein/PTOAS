@@ -51,7 +51,7 @@ RegionalAnalysis guardedArm(RegionalAnalysis body, Expr guard)
     auto owner = std::make_shared<const RegionalAnalysis>(std::move(body));
     auto out = *owner;
     out.numerical.reset();
-    out.arithmeticRelations.reset();
+    out.arithmeticRelations.reset(); out.relations.reset();
     out.symbolicStorage.reset();
     auto arena = owner->expressions;
     auto mask = [&](auto& values) {

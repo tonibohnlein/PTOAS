@@ -119,7 +119,7 @@ std::string prepareRepeatedSymbolicStorage(RegionalAnalysis& body, scf::ForOp lo
         // repetition validates and composes this finite crossing view.
         body.storageSelectors = {};
         body.symbolicStorage.reset();
-        body.arithmeticRelations.reset();
+        body.arithmeticRelations.reset(); body.relations.reset();
         return {};
     }
     llvm::DenseSet<std::size_t> readers;
@@ -133,7 +133,7 @@ std::string prepareRepeatedSymbolicStorage(RegionalAnalysis& body, scf::ForOp lo
     }
     crossingView.storageSelectors = {};
     crossingView.symbolicStorage.reset();
-    crossingView.arithmeticRelations.reset();
+    crossingView.arithmeticRelations.reset(); crossingView.relations.reset();
     crossingView.symbolicStorageEffects.clear();
     if (conflictFree) {
         llvm::erase_if(crossingView.accessBoundary, [&](const auto& access) { return readers.count(access.effect); });

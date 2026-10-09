@@ -5,8 +5,19 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// RUN: pto-sync-input-test --arithmetic-storage-selector-checks | FileCheck %s
-// CHECK: arithmetic storage boundary selectors match independent byte lifetimes
-// RUN: pto-sync-input-test --regional-relation-checks | FileCheck %s --check-prefix=RELATIONS
-// RELATIONS: regional relations: raw coordinates, parameter permutations, symbolic bytes and associative covers passed
-module {}
+#ifndef PTO_FRONTIER_REGIONINTEGEREXPRESSIONSINTERNAL_H
+#define PTO_FRONTIER_REGIONINTEGEREXPRESSIONSINTERNAL_H
+#include "PTO/Transforms/FrontierSynch/RegionExpressions.h"
+namespace mlir::pto::frontiersynch {
+struct RegionExpressions::IntegerRecipe {
+    bool predicate = true;
+    IntegerSystem system;
+    IntegerAffine numerator;
+    BoundInteger denominator{1};
+    std::vector<Id> inputs;
+    std::vector<uint64_t> residues;
+    uint64_t period = 1, outputResidue = 0;
+    std::string signature;
+};
+}
+#endif

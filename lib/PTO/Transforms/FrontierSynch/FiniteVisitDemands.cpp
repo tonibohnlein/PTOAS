@@ -129,7 +129,7 @@ private:
             auto view = body;
             // Type-presence masking changes exported selector predicates; the
             // original relation/certificate has not undergone that transform.
-            view.arithmeticRelations.reset();
+            view.arithmeticRelations.reset(); view.relations.reset();
             view.symbolicStorage.reset();
             if (type.projectedStorage) {
                 if (!type.projectedStorage->owner) {

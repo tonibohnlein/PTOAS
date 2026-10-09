@@ -96,6 +96,7 @@ struct RegionalSymbolicStorageCertificate {
     std::vector<RegionalStorageBoundary> uniformBoundaries;
 };
 struct ArithmeticRegionalRelations;
+struct RegionalRelations;
 struct RegionalCapabilities {
     bool completeStorageModel = false, exactQueries = false, exactSelectors = false, endpointRecipes = false;
     bool contextualGuards = false; // Endpoint circuits may contain branch-local predicates.
@@ -139,6 +140,7 @@ struct RegionalAnalysis {
     // Exact relational export is separate from callable query circuits. An
     // identity/presence/order transformation must remap it or clear it.
     std::shared_ptr<const ArithmeticRegionalRelations> arithmeticRelations;
+    std::shared_ptr<const RegionalRelations> relations;
     std::map<uint32_t, std::vector<RegionalSelector>> firstPayloads, lastPayloads;
     // Optional first executed occurrence of each payload type. A present key
     // with an empty vector proves absence; a missing key means unavailable.

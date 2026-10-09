@@ -8,6 +8,8 @@
 // Exact arithmetic child interfaces for sequence composition.
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "CountedLoop.h"
+#include "RegionalRelationsInternal.h"
+#include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegionalComposition.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticStorageSelectors.h"
@@ -833,5 +835,184 @@ FailureOr<RegionalAnalysis> composeArithmeticRegionalSequence(ArrayRef<RegionalA
     cost.children = children.size();
     cost.expressionNodes = state->arena->size();
     return out;
+}
+FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalRelations> relation,
+    std::shared_ptr<RegionExpressions> expressions, std::string& error)
+{
+    const auto& data = relation->data;
+    if (!data.input || !data.context.function || !expressions) { return failure(); }
+    auto demandOnly = [&]() {
+        RegionalAnalysis out;
+        out.expressions = expressions; out.accessModel = &data.input->accesses();
+        out.gmAliasPolicy = data.input->memory().gmPolicy(); out.relations = relation;
+        relation->exportObligation = error;
+        for (const auto& child : relation->children) {
+            llvm::append_range(out.anchors, child.anchors);
+            llvm::append_range(out.occurrenceLoops, child.occurrenceLoops);
+            for (unsigned i = 0; i < child.anchors.size(); ++i) {
+                out.outerLoops.push_back(child.outerLoops.empty() ? std::vector<scf::ForOp>{} : child.outerLoops[i]);
+            }
+        }
+        return out;
+    };
+    auto state = std::make_shared<State>();
+    state->input = data.input; state->program.context = data.context; state->program.sites = data.sites;
+    state->program.parameters = data.parameterValues; state->parameters = data.parameters;
+    state->program.extraction.dischargedEffects = data.dischargedEffects;
+    state->program.primitives.period = data.analysis.period;
+    state->program.primitives.pipeCount = data.analysis.pipeCount;
+    state->program.primitives.parameters.resize(data.analysis.parameterCount);
+    state->analysis = data.analysis; state->selectors = data.selectors; state->occurrences = data.occurrences;
+    state->arena = expressions;
+    if (!state->initialize()) { error = state->error; return demandOnly(); }
+    state->enclosing = data.enclosing;
+    for (const auto& site : data.sites) { state->pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue)); }
+    auto result = exportState(state, *data.input, error, false);
+    if (failed(result)) { return demandOnly(); }
+    // The common relation representation owns crossing demands. Producers keep
+    // their internal minimum-demand representation and its original recipes.
+    result->arithmeticRelations.reset(); result->relations = relation;
+    std::vector<TemplateEndpointAnchor> originals;
+    for (const auto& child : relation->children) { llvm::append_range(originals, child.anchors); }
+    if (originals.size() != result->anchors.size()) {
+        error = "symbolic parent original endpoint owner count differs"; return failure();
+    }
+    result->anchors = std::move(originals);
+    std::vector<bool> hasLeaf;
+    result->occurrenceLoops.clear(); result->outerLoops.clear(); result->outerDivisors.clear();
+    for (const auto& child : relation->children) {
+        for (unsigned i = 0; i < child.anchors.size(); ++i) {
+            hasLeaf.push_back(bool(child.occurrenceLoops[i]));
+            result->occurrenceLoops.push_back(child.occurrenceLoops[i]);
+            result->outerLoops.push_back(child.outerLoops.empty() ? std::vector<scf::ForOp>{} : child.outerLoops[i]);
+        }
+    }
+    auto canonical = [hasLeaf, arena = state->arena](RegionalEvent event) {
+        if (event.type >= hasLeaf.size()) { event.type = UINT32_MAX; return event; }
+        if (!hasLeaf[event.type] && !event.visits.empty()) {
+            event.ordinal = event.visits.back(); event.visits.pop_back();
+        }
+        return event;
+    };
+    std::vector<bool> hasCoordinates;
+    for (const auto& site : data.sites) { hasCoordinates.push_back(!site.loops.empty()); }
+    auto original = [hasLeaf, hasCoordinates, arena = state->arena](RegionalEvent event) {
+        if (!hasLeaf[event.type] && hasCoordinates[event.type]) {
+            event.visits.push_back(event.ordinal); event.ordinal = arena->constant(0);
+        }
+        return event;
+    };
+    auto oldPresence = result->presence;
+    auto oldReach = result->reachability;
+    auto oldBefore = result->referenceBefore;
+    result->presence = [oldPresence, canonical](RegionalEvent event) { return oldPresence(canonical(event)); };
+    result->reachability = [oldReach, canonical](RegionalEvent a, RegionalEvent b) {
+        return oldReach(canonical(a), canonical(b));
+    };
+    result->referenceBefore = [oldBefore, canonical](RegionalEvent a, RegionalEvent b) {
+        return oldBefore(canonical(a), canonical(b));
+    };
+    auto mapSelected = [original](auto& selected) {
+        for (auto& choice : selected) { choice.event = original(choice.event); }
+    };
+    for (auto* table : {&result->firstPayloads, &result->lastPayloads, &result->firstSitePayloads}) {
+        for (auto& [key, selected] : *table) { (void)key; mapSelected(selected); }
+    }
+    for (auto* boundaries : {&result->accessBoundary, &result->deferredAccessBoundary}) {
+        for (auto& boundary : *boundaries) {
+            boundary.first.event = original(boundary.first.event); boundary.last.event = original(boundary.last.event);
+        }
+    }
+    auto oldStorage = result->storageSelectors;
+    result->storageSelectors = [oldStorage, mapSelected](RegionalByteAddress address)
+        -> std::optional<RegionalStorageSelectors> {
+        auto selected = oldStorage(address);
+        if (!selected) { return std::nullopt; }
+        mapSelected(selected->firstWriters); mapSelected(selected->lastWriters);
+        for (auto* table : {&selected->firstReaders, &selected->lastReaders}) {
+            for (auto& [pipe, readers] : *table) { (void)pipe; mapSelected(readers); }
+        }
+        return selected;
+    };
+    auto crossingState = std::make_shared<State>(*state);
+    crossingState->analysis.minimumDemands = relation->newCrossings;
+    // A subset of certified minimum covers retains the endpoint functionality
+    // used by the selector constructor. Internal recipes are emitted separately.
+    crossingState->analysis.exactMinimum = true;
+    crossingState->analysis.generators = relation->newCrossings;
+    crossingState->handoffAllocation.reset();
+    result->prepareWithVisits =
+        [relation, state, crossingState, original, parent = *result](ArrayRef<scf::ForOp> enclosing)
+        -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
+        if (enclosing != ArrayRef<scf::ForOp>(relation->data.enclosing)) { return failure(); }
+        // Use the existing detached sequence import for record identities,
+        // original preparation blocks and allocation provenance. Its crossing
+        // list is empty: relation lowering supplies only the new crossings.
+        SequenceAnalysisState merge(relation->data.context.function, state->arena);
+        merge.completeInvocation = false; merge.requiredOuterLoops.assign(enclosing.begin(), enclosing.end());
+        std::vector<uint32_t> typeBases;
+        uint32_t nextType = 0;
+        for (const auto& child : relation->children) {
+            if (child.anchors.size() > UINT32_MAX - nextType) { return failure(); }
+            typeBases.push_back(nextType); nextType += child.anchors.size();
+            Child imported; imported.regional = child; imported.anchors = child.anchors;
+            merge.children.push_back(std::move(imported));
+        }
+        if (!relation->newCrossings.empty()) {
+            Child crossing;
+            crossing.regional = parent; crossing.regional.relations.reset();
+            crossing.regional.endpointSiteGuard.reset(); crossing.regional.endpointInvocationGuard.reset();
+            crossing.regional.endpointEventGuard = {};
+            crossing.anchors = parent.anchors;
+            crossing.regional.prepareWithVisits = [crossingState, original](ArrayRef<scf::ForOp> frames)
+                -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
+                if (frames != ArrayRef<scf::ForOp>(crossingState->enclosing)) { return failure(); }
+                auto prepared = prepareGeneralArithmeticRegionalInsertion(crossingState->program.context.function,
+                    crossingState->program, crossingState->analysis, crossingState->emissionError);
+                if (succeeded(prepared)) {
+                    (*prepared)->regionalAllocation = crossingState->allocation(**prepared);
+                    if ((*prepared)->regionalAllocation) {
+                        for (auto& group : (*prepared)->regionalAllocation->groups) {
+                            for (auto& member : group.members) {
+                                member.firstSource = original(member.firstSource);
+                                member.lastTarget = original(member.lastTarget);
+                            }
+                            for (auto& lane : group.lanes) {
+                                for (auto* choices : {&lane.firstSources, &lane.lastTargets}) {
+                                    for (auto& choice : *choices) { choice.event = original(choice.event); }
+                                }
+                            }
+                        }
+                    }
+                }
+                return prepared;
+            };
+            crossing.regional.prepare = [prepare = crossing.regional.prepareWithVisits]() { return prepare({}); };
+            merge.children.push_back(std::move(crossing));
+            typeBases.push_back(0); // Crossings already name the parent's original site table.
+        }
+        return merge.prepareWithTypeBases(enclosing, typeBases);
+    };
+    result->prepare = [prepare = result->prepareWithVisits]() { return prepare({}); };
+    result->capabilities.endpointRecipes = llvm::all_of(relation->children, [](const auto& child) {
+        return child.capabilities.endpointRecipes && (child.prepare || child.prepareWithVisits);
+    });
+    result->cost = {};
+    for (auto member : {&RegionalCost::repeatedRegions, &RegionalCost::phaseDescriptions,
+        &RegionalCost::cells, &RegionalCost::ports, &RegionalCost::crossings, &RegionalCost::physicalFragments,
+        &RegionalCost::rotatingResidues, &RegionalCost::numericVisits, &RegionalCost::arithmeticRegions,
+        &RegionalCost::boundaryBytes, &RegionalCost::selectorComparisons, &RegionalCost::crossingCandidates,
+        &RegionalCost::implicationChecks, &RegionalCost::numericalLeafQueries, &RegionalCost::numericalIndexOperations,
+        &RegionalCost::numericalMerges, &RegionalCost::numericalReusedChildren,
+        &RegionalCost::retainedExpressionNodes}) {
+        for (const auto& child : relation->children) {
+            if (child.cost.*member > UINT64_MAX - result->cost.*member) {
+                error = "symbolic parent construction cost exceeds representation"; return failure();
+            }
+            result->cost.*member += child.cost.*member;
+        }
+    }
+    result->cost.children = relation->children.size(); result->cost.expressionNodes = state->arena->size();
+    return result;
 }
 } // namespace mlir::pto::frontiersynch

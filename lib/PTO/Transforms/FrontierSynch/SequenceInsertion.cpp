@@ -12,6 +12,14 @@
 namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(ArrayRef<scf::ForOp> enclosing)
 {
+    return prepareWithTypeBases(enclosing, {});
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWithTypeBases(
+    ArrayRef<scf::ForOp> enclosing, ArrayRef<uint32_t> typeBases)
+{
+    if (!typeBases.empty() && typeBases.size() != children.size()) {
+        fail("regional endpoint owner type-base count differs"); return failure();
+    }
     childPreparationOperations = 0;
     crossingPreparationOperations = 0;
     if (ArrayRef<scf::ForOp>(requiredOuterLoops) != enclosing) {
@@ -47,7 +55,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
     uint32_t nextRecord = 0;
     int64_t nextPiece = 0;
     for (auto& child : children) {
-        typeOffsets.push_back(nextType);
+        const uint32_t typeBase = typeBases.empty() ? nextType : typeBases[typeOffsets.size()];
+        typeOffsets.push_back(typeBase);
         for (auto loop : child.regional.occurrenceLoops) {
             if (!loop) { continue; }
             auto step = sequenceInteger(loop.getStep());
@@ -96,21 +105,21 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(A
                 exportConstantRegionalLanes(group);
                 for (auto& member : group.members) {
                     if (member.record > UINT32_MAX - nextRecord ||
-                        member.firstSource.type > UINT32_MAX - nextType ||
-                        member.lastTarget.type > UINT32_MAX - nextType) {
+                        member.firstSource.type > UINT32_MAX - typeBase ||
+                        member.lastTarget.type > UINT32_MAX - typeBase) {
                         fail("regional allocation identity overflow"); return failure();
                     }
                     member.record += nextRecord;
-                    member.firstSource.type += nextType;
-                    member.lastTarget.type += nextType;
+                    member.firstSource.type += typeBase;
+                    member.lastTarget.type += typeBase;
                 }
                 for (auto& lane : group.lanes) {
                     for (auto* selectors : {&lane.firstSources, &lane.lastTargets}) {
                         for (auto& selector : *selectors) {
-                            if (selector.event.type > UINT32_MAX - nextType) {
+                            if (selector.event.type > UINT32_MAX - typeBase) {
                                 fail("regional lane identity overflow"); return failure();
                             }
-                            selector.event.type += nextType;
+                            selector.event.type += typeBase;
                         }
                     }
                 }

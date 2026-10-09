@@ -378,6 +378,9 @@ int runCompactBoundaryRanksChecks(func::FuncOp function, const pto::SyncInput& i
 int runFiniteRequirementReplacementChecks(func::FuncOp function, const pto::SyncInput& input);
 int runPeriodicSharedAllocationChecks();
 bool runRepeatedReadOnlyStorageChecks(MLIRContext*);
+bool runExpressionRelationChecks(MLIRContext*);
+int runRegionalRelationChecks();
+int runMixedSymbolicRegionChecks(func::FuncOp);
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
 int main(int argc, char **argv) {
   if (argc == 2 && StringRef(argv[1]) == "--repeated-excess-checks") {
@@ -495,6 +498,7 @@ int main(int argc, char **argv) {
   const bool storageEffects = argc == 3 && StringRef(argv[1]) == "--storage-effects";
   const bool rotatingAnalysis = argc == 3 && StringRef(argv[1]) == "--rotating-analysis";
   const bool explicitAnalysis = argc == 3 && StringRef(argv[1]) == "--explicit-analysis";
+  const bool mixedSymbolicChecks = argc == 3 && StringRef(argv[1]) == "--mixed-symbolic-checks";
   const bool rotatingRegionChecks = argc == 3 && StringRef(argv[1]) == "--rotating-region-checks";
   const bool finiteVisitInput = argc == 3 && StringRef(argv[1]) == "--finite-visit-input-checks";
   const bool arithmeticPeriodicInput = argc == 3 && StringRef(argv[1]) == "--arithmetic-periodic-input-checks";
@@ -530,7 +534,7 @@ int main(int argc, char **argv) {
   if (argc != 2 && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !recognition &&
       !numericAnalysis && !insertLogical &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
-      !rotatingRegionChecks && !finiteVisitInput && !arithmeticPeriodicInput &&
+      !mixedSymbolicChecks && !rotatingRegionChecks && !finiteVisitInput && !arithmeticPeriodicInput &&
       !expressionChecks && !hierarchyChecks && !boundingChecks &&
       !compactInputChecks && !compactBoundsChecks &&
       !balancedCompactChecks && !guardedCompactChecks && !conditionalCompactChecks && !finiteReplacementChecks &&
@@ -560,6 +564,13 @@ int main(int argc, char **argv) {
   DialectRegistry dialects;
   dialects.insert<pto::PTODialect, func::FuncDialect, arith::ArithDialect, scf::SCFDialect, LLVM::LLVMDialect>();
   MLIRContext context(dialects);
+  if (argc == 2 && StringRef(argv[1]) == "--regional-relation-checks") {
+    return runRegionalRelationChecks();
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--expression-relation-checks") {
+    context.disableMultithreading();
+    return runExpressionRelationChecks(&context) ? 0 : 1;
+  }
   if (argc == 2 && StringRef(argv[1]) == "--finite-visit-checks") {
     context.disableMultithreading();
     return runFiniteVisitChecks(&context) ? 0 : 1;
@@ -569,7 +580,8 @@ int main(int argc, char **argv) {
     return runRepeatedReadOnlyStorageChecks(&context) ? 0 : 1;
   }
   context.disableMultithreading();
-  const bool hasOption = rotatingAnalysis || explicitAnalysis || expectFailure || capabilities || phaseIndex ||
+  const bool hasOption = mixedSymbolicChecks || rotatingAnalysis || explicitAnalysis || expectFailure ||
+                         capabilities || phaseIndex ||
                          storageEffects || recognition || numericAnalysis || insertLogical ||
                          insertionTrace || physicalTrace ||
                          structuredTrace || sequenceAnalysis || finiteGuardedAnalysis || finiteOverlayInsertion ||
@@ -616,6 +628,12 @@ int main(int argc, char **argv) {
   if (sequenceAnalysis) {
     for (auto function : module->getOps<func::FuncOp>()) {
       if (failed(runSequenceAnalysisChecks(function, policy))) { return 1; }
+    }
+    return 0;
+  }
+  if (mixedSymbolicChecks) {
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (runMixedSymbolicRegionChecks(function)) { return 1; }
     }
     return 0;
   }

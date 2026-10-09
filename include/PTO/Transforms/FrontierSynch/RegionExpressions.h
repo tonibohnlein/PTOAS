@@ -45,6 +45,13 @@ public:
     Id constant(uint64_t value);
     Id boolean(bool value);
     Id input(Value value);
+    // Symbolic query adapters can cache expressions containing fresh SSA
+    // variables even when export later fails. Keep those variable owners alive
+    // for the whole arena lifetime; source IR itself remains caller-owned.
+    void retainInputOwner(std::shared_ptr<void> owner)
+    {
+        if (owner) { inputOwners.push_back(std::move(owner)); }
+    }
     // Inputs reachable from one circuit root, in DAG order.
     SmallVector<std::pair<Id, Value>> referencedInputs(Id expression) const;
     // Simultaneous, typed DAG substitution. Bindings are immutable; the memo
@@ -97,6 +104,19 @@ public:
     Id integerWitness(const IntegerAffine& numerator, const BoundInteger& denominator,
                       llvm::ArrayRef<Id> inputs, uint64_t period,
                       llvm::ArrayRef<uint64_t> residues, uint64_t outputResidue);
+    struct RelationCost {
+        uint64_t gates = 0, pieces = 0, projections = 0;
+        uint64_t formulaProducts = 0, peakClauses = 0;
+    };
+    // Exact domain intersection with a Boolean circuit. Columns are the signed
+    // i64 bit interpretations of distinct supplied Input nodes. Narrow integer
+    // inputs retain emission's zero extension (i1 columns are 0/1). Base
+    // circuit arithmetic retains uint64 wrapping semantics. Every reachable
+    // input must be supplied. The result owns its integer systems; no callback
+    // or source operation is evaluated. Relation/output work is charged, not
+    // claimed to inherit a finite-boundary circuit's construction bound.
+    FailureOr<std::vector<IntegerSystem>> integerRelation(Id predicate, ArrayRef<Id> variables,
+        const IntegerSystem& domain, std::string& diagnostic, RelationCost* cost = nullptr) const;
     const std::string& error() const { return constructionMessage.empty() ? emissionMessage : constructionMessage; }
     const std::string& constructionError() const { return constructionMessage; }
     const std::string& lastEmissionError() const { return emissionMessage; }
@@ -150,6 +170,7 @@ public:
 private:
     enum class Kind { Constant, Input, Add, Sub, Div, Rem, Lt, Le, Eq, SLt, SLe, And, Or, Not, Select, Integer };
     struct IntegerRecipe;
+    class RelationBuilder;
     struct Node {
         Kind kind = Kind::Constant;
         bool boolean = false;
@@ -183,6 +204,7 @@ private:
     Value emitNode(const Node& node, OpBuilder& builder, Location location,
                    const llvm::DenseMap<Id, Value>& memo) const;
     Id cofactorAtCut(Id expression, Operation* cut, llvm::DenseMap<Id, Id>& memo);
+    std::vector<std::shared_ptr<void>> inputOwners;
     llvm::DenseSet<Operation*> forbiddenRecomputation;
     std::vector<Node> nodes;
     std::unordered_map<Node, Id, Hash> interned;
