@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Structured test output for independent finite checks of derived relations.
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/ArithmeticProgramInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/FiniteGuardedInternal.h"
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "llvm/Support/JSON.h"
@@ -94,6 +96,85 @@ void dumpArithmeticJSON(func::FuncOp function, const fs::ArithmeticProgram& prog
     llvm::outs() << "arithmetic-json " << llvm::json::Value(std::move(document)) << "\n";
 }
 
+namespace {
+bool checkFiniteTranslation(const fs::ArithmeticProgram& form)
+{
+    auto normalized = fs::detail::normalizeFiniteDemandAccesses(form);
+    const bool small = normalized && form.parameters.size() <= 3;
+    if (!small) { return false; }
+    const auto protection = fs::structuredProtection(form.modeledInput->accesses());
+    auto original = fs::analyzeGeneralArithmeticGenerators(form, &protection);
+    auto shifted = fs::analyzeGeneralArithmeticGenerators(*normalized, &protection);
+    const bool valid = original.analysis().error.empty() && shifted.analysis().error.empty();
+    if (!valid) { return false; }
+    fs::RegionExpressions arena;
+    unsigned samples = 1;
+    for (unsigned i = 0; i < form.parameters.size(); ++i) { samples *= 6; }
+    using Key = std::tuple<std::size_t, fs::ArithmeticEvent, std::size_t, fs::ArithmeticEvent>;
+    bool concrete = true;
+    auto evaluate = [&](const fs::GeneralArithmeticRelation& relation,
+                        ArrayRef<fs::RegionExpressions::Id> parameters) {
+        std::map<Key, bool> answers;
+        for (const auto& [key, pieces] : relation) {
+            for (const auto& piece : pieces) {
+                auto guard = arena.integerPredicate(piece, parameters, form.primitives.period, key.parameterResidues);
+                auto answer = arena.constantValue(guard);
+                concrete &= answer.has_value();
+                const bool active = answer == 1;
+                if (active) {
+                    answers[{key.source.site, key.source.event, key.target.site, key.target.event}] = true;
+                }
+            }
+        }
+        return answers;
+    };
+    for (unsigned sample = 0; sample < samples; ++sample) {
+        SmallVector<fs::RegionExpressions::Id> parameters;
+        auto digits = sample;
+        for (unsigned i = 0; i < form.parameters.size(); ++i) {
+            parameters.push_back(arena.constant(static_cast<int64_t>(digits % 6) - 2));
+            digits /= 6;
+        }
+        const bool generators = evaluate(original.analysis().generators, parameters) ==
+            evaluate(shifted.analysis().generators, parameters);
+        const bool native = evaluate(original.analysis().nativeOrder, parameters) ==
+            evaluate(shifted.analysis().nativeOrder, parameters);
+        if (!generators || !native || !concrete) {
+            return false;
+        }
+    }
+    auto capped = form;
+    capped.expansionFragmentLimit = normalized->expandedFragments / 2;
+    uint64_t attempted = 0;
+    const bool refused = !fs::detail::normalizeFiniteDemandAccesses(capped, &attempted);
+    if (!refused || !attempted) { return false; }
+    auto missing = form;
+    missing.finiteAccessRecipes.clear();
+    if (fs::detail::normalizeFiniteDemandAccesses(missing)) { return false; }
+    auto mismatched = form;
+    bool changed = false;
+    for (auto& recipe : mismatched.finiteAccessRecipes) {
+        if (form.primitives.relations[recipe.relation].storageSpace == pto::AddressSpace::LEFT) {
+            recipe.translation = recipe.translation + 1;
+            changed = true;
+            break;
+        }
+    }
+    auto alternative = fs::detail::normalizeFiniteDemandAccesses(mismatched);
+    if (!changed || !alternative) { return false; }
+    for (auto [id, relation] : llvm::enumerate(form.primitives.relations)) {
+        if (relation.storageSpace != pto::AddressSpace::LEFT) { continue; }
+        const auto& retained = alternative->primitives.relations[id];
+        const bool sameSize = retained.pieces.size() == relation.pieces.size();
+        if (!sameSize) { return false; }
+        for (auto [a, b] : llvm::zip(relation.pieces, retained.pieces)) {
+            if (a.system != b.system || a.residues != b.residues) { return false; }
+        }
+    }
+    return arena.constructionError().empty();
+}
+} // namespace
+
 // Exercise the regional API only on explicit test annotations. Production
 // dispatch does not claim this extraction supplies a composable plan.
 void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
@@ -151,6 +232,12 @@ void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
                         smaller.recognition.state == fs::RecognitionState::Applicable && smaller.primitives.period == 1;
                 }
                 document["visits"] = form.expandedVisits;
+                document["fold_operations"] = form.expandedFoldOperations;
+                document["pruned_arms"] = form.expandedPrunedArms;
+                document["translation_fragments"] = form.expandedTranslationFragments;
+                if (function->hasAttr("test.translation_compare")) {
+                    document["translation_checked"] = checkFiniteTranslation(form);
+                }
                 document["fragments"] = form.expandedFragments;
                 document["overlap_joins"] = state.cost.crossingCandidates;
                 document["circuit_nodes"] = state.cost.expressionNodes;

@@ -28,7 +28,8 @@ struct ProgramBuilder {
     bool prepareBound(Value input, const ArithmeticSite& site);
     // Conjoin both endpoint guard domains at their respective coordinate offsets.
     void emitForSites(PrimitiveRelation& relation, ArrayRef<AffineExpr> rows,
-                      ArrayRef<std::pair<const ArithmeticSite*, unsigned>> endpoints);
+                      ArrayRef<std::pair<const ArithmeticSite*, unsigned>> endpoints,
+                      SmallVector<SmallVector<AffineExpr>>* recipes = nullptr);
     AffineExpr value(Value input, const ArithmeticSite& site, unsigned offset) const;
     SmallVector<AffineExpr> domain(const ArithmeticSite& site, unsigned offset) const;
     // All rows are >= 0. Filter optionally restricts one original coordinate
@@ -38,6 +39,10 @@ struct ProgramBuilder {
               uint64_t modulus = 1);
 };
 void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limits);
+// Demand-only byte-coordinate translation; original physical primitives stay
+// unchanged. An unavailable or unnecessary adapter returns no alternative.
+std::optional<ArithmeticProgram> normalizeFiniteDemandAccesses(
+    const ArithmeticProgram& program, uint64_t* attemptedFragments = nullptr);
 void extractAccesses(ProgramBuilder& builder, const SyncInput& input, const SyncStorageEffects& effects);
 } // namespace mlir::pto::frontiersynch::detail
 #endif

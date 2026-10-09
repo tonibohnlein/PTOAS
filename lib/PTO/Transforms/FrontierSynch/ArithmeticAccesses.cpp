@@ -11,6 +11,7 @@
 #include "../InsertSync/SyncEffectRanges.h"
 #include "../InsertSync/SyncRegionArithmetic.h"
 #include "mlir/IR/Matchers.h"
+#include "llvm/ADT/MapVector.h"
 #include <algorithm>
 namespace mlir::pto::frontiersynch::detail {
 namespace {
@@ -153,7 +154,23 @@ void emitRange(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEff
     auto end = add(origin, getAffineConstantExpr(range.end - 1, builder.context));
     rows.push_back(add(byte, negate(begin)));
     rows.push_back(add(end, -byte));
-    builder.emitForSites(relation, rows, {{&site, 0}});
+    FiniteAccessRecipe recipe;
+    if (builder.output.finiteExpansion && !depth) {
+        SmallVector<AffineExpr> zeros(builder.output.parameters.size(), getAffineConstantExpr(0, builder.context));
+        auto atZero = mlir::pto::detail::substitute(origin, {}, zeros);
+        auto fixed = dyn_cast_or_null<AffineConstantExpr>(atZero ? simplifyAffineExpr(atZero, 0, 0) : AffineExpr{});
+        if (fixed) {
+            const auto translation = add(origin, negate(fixed));
+            if (translation) {
+                recipe.translation = simplifyAffineExpr(translation, 0, builder.output.parameters.size());
+            }
+        }
+    }
+    builder.emitForSites(relation, rows, {{&site, 0}}, recipe.translation ? &recipe.rows : nullptr);
+    if (recipe.translation) {
+        recipe.relation = builder.output.primitives.relations.size();
+        builder.output.finiteAccessRecipes.push_back(std::move(recipe));
+    }
     builder.output.primitives.relations.push_back(std::move(relation));
 }
 bool symbolicRegion(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEffect& effect,
@@ -244,5 +261,66 @@ void extractAccesses(ProgramBuilder& builder, const SyncInput& input, const Sync
             }
         }
     }
+}
+std::optional<ArithmeticProgram> normalizeFiniteDemandAccesses(
+    const ArithmeticProgram& program, uint64_t* attemptedFragments)
+{
+    if (attemptedFragments) { *attemptedFragments = 0; }
+    if (!program.finiteExpansion || !program.phaseIndex) { return std::nullopt; }
+    using Key = std::pair<AddressSpace, Value>;
+    llvm::MapVector<Key, AffineExpr> translations;
+    DenseMap<std::size_t, const FiniteAccessRecipe*> recipes;
+    for (const auto& recipe : program.finiteAccessRecipes) {
+        const bool valid = recipe.relation < program.primitives.relations.size();
+        if (!valid) { return std::nullopt; }
+        const bool inserted = recipes.try_emplace(recipe.relation, &recipe).second;
+        if (!inserted) { return std::nullopt; }
+    }
+    for (auto [id, relation] : llvm::enumerate(program.primitives.relations)) {
+        const bool access = relation.kind == PrimitiveKind::Reads || relation.kind == PrimitiveKind::Writes;
+        const bool relevant = access && !relation.pieces.empty() && relation.storageSpace.has_value();
+        if (!relevant) { continue; }
+        const Key key{*relation.storageSpace, relation.storageBase};
+        const auto found = recipes.find(id);
+        auto translation = found == recipes.end() ? AffineExpr{} : found->second->translation;
+        const bool valid = translation && !relation.sourceDimensions && !relation.targetDimensions &&
+            relation.dimensions == 1 && !found->second->rows.empty();
+        if (!valid) { translation = {}; }
+        auto [entry, inserted] = translations.try_emplace(key, translation);
+        if (!inserted && entry->second != translation) { entry->second = {}; }
+    }
+    const bool useful = llvm::any_of(translations, [](const auto& entry) {
+        return entry.second && !isa<AffineConstantExpr>(entry.second);
+    });
+    if (!useful) { return std::nullopt; }
+    auto normalized = program;
+    normalized.expandedFragments = 0;
+    // These are representation bounds, as in finite expansion, never a new
+    // arithmetic class selected from this input's observed coefficients.
+    const ArithmeticLimits limits{UINT_MAX, UINT_MAX, program.primitives.period, UINT64_MAX};
+    ProgramBuilder builder{normalized, limits, normalized.context.function.getContext(),
+                           *program.phaseIndex, DenseMap<Value, unsigned>(), {}};
+    for (const auto& [id, recipe] : recipes) {
+        auto& relation = normalized.primitives.relations[id];
+        if (!relation.storageSpace) { continue; }
+        const auto translation = translations[{*relation.storageSpace, relation.storageBase}];
+        if (!translation || isa<AffineConstantExpr>(translation)) { continue; }
+        relation.pieces.clear();
+        SmallVector<AffineExpr> symbols;
+        for (unsigned i = 0; i < normalized.parameters.size(); ++i) {
+            symbols.push_back(getAffineSymbolExpr(i, builder.context));
+        }
+        const auto byte = add(getAffineDimExpr(0, builder.context), translation);
+        for (const auto& rows : recipe->rows) {
+            SmallVector<AffineExpr> shifted;
+            for (auto row : rows) { shifted.push_back(mlir::pto::detail::substitute(row, {byte}, symbols)); }
+            builder.emit(relation, shifted);
+        }
+    }
+    if (attemptedFragments) { *attemptedFragments = normalized.expandedFragments; }
+    normalized.recognition = recognizeArithmetic(normalized.primitives, limits);
+    const bool accepted = normalized.extraction.state == RecognitionState::Applicable &&
+        normalized.recognition.state == RecognitionState::Applicable;
+    return accepted ? std::optional<ArithmeticProgram>(std::move(normalized)) : std::nullopt;
 }
 } // namespace mlir::pto::frontiersynch::detail
