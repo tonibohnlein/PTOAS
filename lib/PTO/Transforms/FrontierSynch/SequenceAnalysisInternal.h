@@ -25,6 +25,9 @@
 #include <tuple>
 namespace mlir::pto::frontiersynch {
 RegionalAnalysis guardRegionalArm(RegionalAnalysis body, RegionExpressions::Id guard);
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> maskRegionalArmPlan(
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepared,
+    const std::shared_ptr<RegionExpressions>& arena, RegionExpressions::Id guard);
 using Expr = RegionExpressions::Id;
 struct Pattern {
     SyncStorageCell range;
@@ -46,6 +49,7 @@ struct Child {
     PeriodicAnalysis periodic;
     NumericTemplateEndpoints endpoints;
     std::optional<std::size_t> originalNode;
+    std::optional<Expr> originalArmGuard;
 };
 struct Port {
     uint32_t child = 0;

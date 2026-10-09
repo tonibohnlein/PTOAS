@@ -107,6 +107,12 @@ RegionalAnalysis guardedArm(RegionalAnalysis body, Expr guard)
     return out;
 }
 } // namespace
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> maskRegionalArmPlan(
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepared,
+    const std::shared_ptr<RegionExpressions>& arena, RegionExpressions::Id guard)
+{
+    return maskPlan(std::move(prepared), arena, guard);
+}
 RegionalAnalysis guardRegionalArm(RegionalAnalysis body, RegionExpressions::Id guard)
 {
     return guardedArm(std::move(body), guard);
@@ -130,6 +136,10 @@ bool SequenceAnalysisState::conditionalChild(const StructureNode& node)
         bool thenArm = arm.region == &branch.getThenRegion();
         auto guard = thenArm ? condition : negate(condition);
         Child child;
+        if (resolveOriginal) {
+            child.originalNode = id;
+            child.originalArmGuard = guard;
+        }
         child.regional = guardedArm(std::move(body), guard);
         child.anchors = child.regional.anchors;
         children.push_back(std::move(child));
