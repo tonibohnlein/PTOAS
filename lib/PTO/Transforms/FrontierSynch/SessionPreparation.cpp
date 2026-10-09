@@ -82,7 +82,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
         return prepareCompactBoundingLogicalInsertion(function, demands.compactDemands, error);
     }
     if (demands.boundedDemands) {
-        return prepareBoundedLifetimeResult(demands.boundedDemands, error, demands.region == 0);
+        return prepareBoundedLifetimeLogicalResult(demands.boundedDemands, error, demands.region == 0);
     }
     if (demands.sequenceDemands) { return prepareSequenceLogicalInsertion(*demands.sequenceDemands); }
     if (demands.regionalDemands) {

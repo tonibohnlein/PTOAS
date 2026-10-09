@@ -179,98 +179,145 @@ FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> cachedBoundedLifetimeReg
     }
     return node.boundedDemands;
 }
-namespace {
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
-    const std::shared_ptr<BoundedLifetimeDemandResult>& demands, std::string& error,
-    bool completeInvocation, bool allowStorageLanes = true)
-{
-    auto function = demands->function;
-    auto& e = demands->expressions;
-    auto& window = demands->window;
-    auto& analysis = demands->analysis;
-    auto& predicates = *demands->predicates;
-    auto& anchors = demands->anchors;
-    const auto m = anchors.size();
-    const auto base = demands->base, ordinal = demands->ordinal;
-    const auto& physicalCells = demands->physicalCells;
-    const auto& predicateBindings = demands->predicateBindings;
-    const auto& unconditional = demands->unconditional;
+struct BoundedLifetimeAllocationRecipe {
     StorageLaneAllocation storage;
     DictionaryAttr storageCertificate;
-    if (completeInvocation && allowStorageLanes) {
-        storage = buildStorageLaneAllocation(e, window, analysis, physicalCells, base, true);
-        if (storage.error.empty() && storage.budget && !storage.records.empty()) {
-            SmallVector<GuardedRankEdge> residual;
-            SmallVector<uint32_t> originalRecords;
-            for (std::size_t r = 0; r < analysis.sourceDemands.size(); ++r) {
-                if (!std::binary_search(storage.records.begin(), storage.records.end(), r)) {
-                    if (r > UINT32_MAX) { error = "bounded lifetime record identity overflow"; return failure(); }
-                    residual.push_back(analysis.sourceDemands[r]); originalRecords.push_back(r);
-                }
-            }
-            auto storageOnly = storageLaneAllocationCertificate(function, window, analysis.sourceDemands, storage, 0);
-            auto remainder = boundedLifetimeAllocationCertificate(
-                function, e, window, unconditional, residual, 0, originalRecords);
-            storageCertificate = combineStorageLaneCertificates(storageOnly, remainder);
+    std::optional<DictionaryAttr> ordinaryCertificate;
+    std::optional<bool> storageCoordinatesAvailable;
+};
+namespace {
+Id bindBoundedExpression(BoundedLifetimeDemandResult& demands, Id root, uint64_t distance, bool consumer)
+{
+    auto& e = demands.expressions;
+    const auto ordinal = demands.ordinal;
+    auto target = consumer ? e.sub(ordinal, e.constant(distance)) : ordinal;
+    std::vector<std::pair<Id, Id>> bindings{{demands.base, target}};
+    for (auto [id, recipe] : demands.predicateBindings) {
+        auto shift = static_cast<int64_t>(recipe.second) - (consumer ? int64_t(distance) : 0);
+        auto evaluation = shift < 0 ? e.sub(ordinal, e.constant(-shift)) : e.add(ordinal, e.constant(shift));
+        bindings.push_back({id, demands.predicates->at(recipe.first, evaluation)});
+    }
+    RegionExpressions::Substitution substitution(bindings);
+    return e.substitute(root, substitution);
+}
+std::shared_ptr<BoundedLifetimeAllocationRecipe> boundedAllocationRecipe(BoundedLifetimeDemandResult& demands)
+{
+    if (demands.allocationRecipe) { return demands.allocationRecipe; }
+    auto recipe = std::make_shared<BoundedLifetimeAllocationRecipe>();
+    demands.allocationRecipe = recipe;
+    auto& storage = recipe->storage;
+    storage = buildStorageLaneAllocation(demands.expressions, demands.window, demands.analysis,
+                                         demands.physicalCells, demands.base, true);
+    const bool storageAvailable = storage.error.empty() && storage.budget && !storage.records.empty();
+    if (!storageAvailable) { return recipe; }
+    SmallVector<GuardedRankEdge> residual;
+    SmallVector<uint32_t> originalRecords;
+    const auto& edges = demands.analysis.sourceDemands;
+    for (std::size_t r = 0; r < edges.size(); ++r) {
+        if (!std::binary_search(storage.records.begin(), storage.records.end(), r)) {
+            if (r > UINT32_MAX) { return recipe; }
+            residual.push_back(edges[r]); originalRecords.push_back(r);
         }
     }
-    const bool useStorageLanes = bool(storageCertificate);
-    CircuitEndpoints emitter(function, e, anchors);
-    emitter.recover = [&](Id root, OpBuilder& builder, Operation* cut, RegionExpressions::CutEmission& context) {
-        return predicates.recover(root, builder, cut, context);
-    };
-    for (std::size_t record = 0; record < analysis.sourceDemands.size(); ++record) {
-        const auto edge = analysis.sourceDemands[record];
-        auto distance = edge.target / m;
-        auto source = ordinal, target = e.sub(ordinal, e.constant(distance));
-        auto bind = [&](Id root, bool consumer) {
-            std::vector<std::pair<Id, Id>> bindings{{base, consumer ? target : source}};
-            for (auto [id, recipe] : predicateBindings) {
-                auto shift = static_cast<int64_t>(recipe.second) - (consumer ? int64_t(distance) : 0);
-                auto evaluation = shift < 0 ? e.sub(ordinal, e.constant(-shift)) : e.add(ordinal, e.constant(shift));
-                bindings.push_back({id, predicates.at(recipe.first, evaluation)});
-            }
-            RegionExpressions::Substitution substitution(bindings);
-            return e.substitute(root, substitution);
-        };
-        auto sourceGuard = bind(edge.guard, false), targetGuard = bind(edge.guard, true);
-        targetGuard = e.land(e.le(e.constant(distance), ordinal), targetGuard);
-        SmallVector<Id> sourceCoordinates, targetCoordinates;
-        if (useStorageLanes && std::binary_search(storage.records.begin(), storage.records.end(), record)) {
-            // A paired derived selector, not an enclosing visit. This path is
-            // intentionally available only to the whole-function producer.
-            sourceCoordinates.push_back(bind(storage.lanes[record], false));
-            targetCoordinates.push_back(bind(storage.lanes[record], true));
+    auto storageOnly = storageLaneAllocationCertificate(demands.function, demands.window, edges, storage, 0);
+    auto remainder = boundedLifetimeAllocationCertificate(demands.function, demands.expressions, demands.window,
+                                                          demands.unconditional, residual, 0, originalRecords);
+    recipe->storageCertificate = combineStorageLaneCertificates(storageOnly, remainder);
+    return recipe;
+}
+DictionaryAttr bindAllocationPlan(DictionaryAttr certificate, int64_t plan, MLIRContext* context)
+{
+    if (!certificate) { return {}; }
+    NamedAttrList attributes(certificate);
+    attributes.set("plan", Builder(context).getI64IntegerAttr(plan));
+    return attributes.getDictionary(context);
+}
+bool attachStorageCoordinates(BoundedLifetimeDemandResult& demands, const StorageLaneAllocation& storage,
+                              PreparedLogicalPlan& plan)
+{
+    // Stage every extra value before changing a selected endpoint. Destruction
+    // drops all detached uses if any original cut cannot evaluate its lane.
+    PreparedLogicalPlan staged(plan.planId);
+    std::vector<std::pair<std::size_t, Value>> coordinates;
+    std::map<Operation*, RegionExpressions::CutEmission> contexts;
+    for (auto [index, endpoint] : llvm::enumerate(plan.endpoints)) {
+        if (endpoint.kind == LogicalCommandKind::Barrier) { continue; }
+        const bool singleRecord = endpoint.records.size() == 1;
+        if (!singleRecord) { return false; }
+        const auto record = endpoint.records.front();
+        if (!std::binary_search(storage.records.begin(), storage.records.end(), record)) { continue; }
+        const bool validRecord = record < demands.analysis.sourceDemands.size() && record < storage.lanes.size();
+        if (!validRecord) { return false; }
+        const auto& edge = demands.analysis.sourceDemands[record];
+        auto lane = bindBoundedExpression(demands, storage.lanes[record], edge.target / demands.anchors.size(),
+                                         endpoint.kind == LogicalCommandKind::Wait);
+        auto& block = staged.addPreparation(endpoint.before);
+        OpBuilder builder(demands.function.getContext());
+        builder.setInsertionPointToEnd(&block);
+        auto& context = contexts[endpoint.before];
+        if (failed(demands.predicates->recover(lane, builder, endpoint.before, context))) { return false; }
+        auto value = demands.expressions.emitContextual(lane, builder, endpoint.before, context);
+        if (failed(value)) { return false; }
+        coordinates.emplace_back(index, *value);
+    }
+    for (auto& stage : staged.preparation) { plan.preparation.push_back(std::move(stage)); }
+    for (auto [index, value] : coordinates) { plan.endpoints[index].memberCoordinates.push_back(value); }
+    return true;
+}
+void attachBoundedAllocation(BoundedLifetimeDemandResult& demands, PreparedLogicalPlan& plan)
+{
+    auto recipe = boundedAllocationRecipe(demands);
+    DictionaryAttr certificate;
+    const bool tryStorage = recipe->storageCertificate && recipe->storageCoordinatesAvailable.value_or(true);
+    const bool storageReady = tryStorage && attachStorageCoordinates(demands, recipe->storage, plan);
+    if (tryStorage) { recipe->storageCoordinatesAvailable = storageReady; }
+    if (storageReady) {
+        certificate = recipe->storageCertificate;
+    } else {
+        if (!recipe->ordinaryCertificate) {
+            recipe->ordinaryCertificate = boundedLifetimeAllocationCertificate(demands.function,
+                demands.expressions, demands.window, demands.unconditional, demands.analysis.sourceDemands, 0);
         }
-        sourceCoordinates.push_back(source); targetCoordinates.push_back(target);
-        if (!emitter.add(edge.source, edge.target % m, sourceGuard, targetGuard,
-                         sourceCoordinates, targetCoordinates)) {
-            if (useStorageLanes) {
-                // Witness choice has its own endpoint-availability obligation.
-                // Retain the original logical plan if that extra recipe fails.
-                return prepareEndpoints(demands, error, completeInvocation, false);
-            }
-            error = predicates.error.empty() ? e.lastEmissionError() : predicates.error;
+        certificate = *recipe->ordinaryCertificate;
+    }
+    plan.allocationCertificate = bindAllocationPlan(certificate, plan.planId, demands.function.getContext());
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
+    const std::shared_ptr<BoundedLifetimeDemandResult>& demands, std::string& error, bool completeInvocation)
+{
+    auto& e = demands->expressions;
+    const auto m = demands->anchors.size();
+    const auto ordinal = demands->ordinal;
+    CircuitEndpoints emitter(demands->function, e, demands->anchors);
+    emitter.recover = [&](Id root, OpBuilder& builder, Operation* cut, RegionExpressions::CutEmission& context) {
+        return demands->predicates->recover(root, builder, cut, context);
+    };
+    for (const auto& edge : demands->analysis.sourceDemands) {
+        auto distance = edge.target / m;
+        auto target = e.sub(ordinal, e.constant(distance));
+        auto sourceGuard = bindBoundedExpression(*demands, edge.guard, distance, false);
+        auto targetGuard = bindBoundedExpression(*demands, edge.guard, distance, true);
+        targetGuard = e.land(e.le(e.constant(distance), ordinal), targetGuard);
+        if (!emitter.add(edge.source, edge.target % m, sourceGuard, targetGuard, {ordinal}, {target})) {
+            error = demands->predicates->error.empty() ? e.lastEmissionError() : demands->predicates->error;
             return failure();
         }
     }
     auto result = emitter.take();
     result->completeInvocation = completeInvocation;
-    if (useStorageLanes) {
-        NamedAttrList attributes(storageCertificate);
-        attributes.set("plan", Builder(function.getContext()).getI64IntegerAttr(result->planId));
-        result->allocationCertificate = attributes.getDictionary(function.getContext());
-    } else if (completeInvocation) {
-        result->allocationCertificate = boundedLifetimeAllocationCertificate(
-            function, e, window, unconditional, analysis.sourceDemands, result->planId);
+    if (completeInvocation) {
+        result->allocationPreparation = [demands](PreparedLogicalPlan& plan) {
+            attachBoundedAllocation(*demands, plan);
+        };
     }
     return result;
 }
 } // namespace
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeResult(
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeLogicalResult(
     std::shared_ptr<BoundedLifetimeDemandResult> demands, std::string& error, bool completeInvocation)
 {
-    if (!demands || !demands->predicates || !demands->analysis.error.empty()) {
+    const bool valid = demands && demands->predicates && demands->analysis.error.empty() && !demands->anchors.empty();
+    if (!valid) {
         error = "bounded endpoint preparation requires an owned successful analysis"; return failure();
     }
     if (completeInvocation && llvm::any_of(demands->input->instructions(), [&](const auto* phase) {
@@ -279,6 +326,13 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeResult(
         error = "bounded regional result does not cover the whole invocation"; return failure();
     }
     return prepareEndpoints(demands, error, completeInvocation);
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeResult(
+    std::shared_ptr<BoundedLifetimeDemandResult> demands, std::string& error, bool completeInvocation)
+{
+    auto prepared = prepareBoundedLifetimeLogicalResult(std::move(demands), error, completeInvocation);
+    if (succeeded(prepared)) { prepareAllocationSupport(**prepared); }
+    return prepared;
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeInsertion(
     func::FuncOp function, const SyncInput& input, const ProgramRecognition& program, std::string& error,

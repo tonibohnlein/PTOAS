@@ -209,10 +209,11 @@ LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, 
     if (plan.allocationCertificate) { return success(); }
     auto& attempt = selected->second;
     auto cached = attempt.allocation.find(plan.planId);
+    prepareAllocationSupport(plan);
     if (cached == attempt.allocation.end()) {
         if (construction.allocationExports != UINT64_MAX) { ++construction.allocationExports; }
-        auto certificate = allocateRetained(*result.mathematical, *program, attempt,
-                                           plan, function.getContext());
+        auto certificate = plan.allocationCertificate ? plan.allocationCertificate :
+            allocateRetained(*result.mathematical, *program, attempt, plan, function.getContext());
         cached = attempt.allocation.emplace(plan.planId, certificate).first;
     }
     plan.allocationCertificate = cached->second;

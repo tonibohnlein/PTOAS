@@ -16,6 +16,7 @@
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/ClosedCallees.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingInsertion.h"
+#include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
 #include "PTO/IR/PTO.h"
 #include "SyncPhaseCopyChecks.h"
 #include "SyncLogicalInsertionChecks.h"
@@ -59,6 +60,10 @@ LogicalResult checkAllocationSession(func::FuncOp function, pto::GMAliasPolicy p
   if ((*left)->allocationCertificate || (*right)->allocationCertificate ||
       session.constructionCounts().allocationExports) {
     return function.emitError("logical preparation constructed physical allocation");
+  }
+  const auto bounded = logical.mathematical->boundedDemands;
+  if (bounded && bounded->allocationRecipe) {
+    return function.emitError("bounded logical preparation constructed an allocation proof");
   }
   const auto work = session.constructionCounts().mathematicalAttempts;
   const auto endpoints = (*left)->endpoints.size();
