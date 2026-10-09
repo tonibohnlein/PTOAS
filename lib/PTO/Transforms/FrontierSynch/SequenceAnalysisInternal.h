@@ -45,7 +45,7 @@ struct Child {
     ExplicitAnalysis explicitAnalysis;
     PeriodicAnalysis periodic;
     NumericTemplateEndpoints endpoints;
-    std::unique_ptr<PreparedLogicalPlan> prepared;
+    std::optional<std::size_t> originalNode;
 };
 struct Port {
     uint32_t child = 0;
@@ -208,9 +208,11 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
         SequenceEvent event, bool reverse, NumericalChainQueryCost& cost);
     std::optional<Expr> numericalReachability(
         SequenceEvent source, SequenceEvent target, NumericalChainQueryCost& cost);
-    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare(ArrayRef<scf::ForOp> enclosing = {});
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare(ArrayRef<scf::ForOp> enclosing = {},
+        const SequenceEndpointResolver& resolver = {});
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareWithTypeBases(
-        ArrayRef<scf::ForOp> enclosing, ArrayRef<uint32_t> typeBases);
+        ArrayRef<scf::ForOp> enclosing, ArrayRef<uint32_t> typeBases,
+        const SequenceEndpointResolver& resolver = {});
 };
 std::optional<int64_t> sequenceInteger(Value value);
 } // namespace mlir::pto::frontiersynch

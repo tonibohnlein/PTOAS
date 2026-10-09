@@ -20,6 +20,38 @@
 #include "PTO/Transforms/FrontierSynch/PeriodicSharedCertificate.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 namespace mlir::pto::frontiersynch {
+namespace {
+bool sameOriginalCoordinates(const RegionalAnalysis& a, const RegionalAnalysis& b)
+{
+    const bool sameDomain = a.expressions == b.expressions && a.anchors.size() == b.anchors.size() &&
+        a.occurrenceLoops == b.occurrenceLoops && a.accessModel == b.accessModel &&
+        a.gmAliasPolicy == b.gmAliasPolicy;
+    if (!sameDomain) { return false; }
+    // Specialized phase views need their own explicit coordinate adapter.
+    if (a.firstOrdinal != b.firstOrdinal || a.endpointSiteGuard != b.endpointSiteGuard ||
+        a.endpointInvocationGuard != b.endpointInvocationGuard) { return false; }
+    for (std::size_t i = 0; i < a.anchors.size(); ++i) {
+        const auto& x = a.anchors[i];
+        const auto& y = b.anchors[i];
+        if (x.phase != y.phase || x.before.block != y.before.block || x.before.before != y.before.before ||
+            x.after.block != y.after.block || x.after.before != y.after.before ||
+            x.coordinates.size() != y.coordinates.size()) { return false; }
+        for (std::size_t j = 0; j < x.coordinates.size(); ++j) {
+            if (x.coordinates[j].loop != y.coordinates[j].loop ||
+                x.coordinates[j].induction != y.coordinates[j].induction) { return false; }
+        }
+        const auto ax = a.outerLoops.empty() ? ArrayRef<scf::ForOp>() : ArrayRef<scf::ForOp>(a.outerLoops[i]);
+        const auto bx = b.outerLoops.empty() ? ArrayRef<scf::ForOp>() : ArrayRef<scf::ForOp>(b.outerLoops[i]);
+        if (ax != bx) { return false; }
+        for (std::size_t j = 0; j < ax.size(); ++j) {
+            const auto ad = a.outerDivisors.empty() ? 1 : a.outerDivisors[i][j];
+            const auto bd = b.outerDivisors.empty() ? 1 : b.outerDivisors[i][j];
+            if (ad != bd) { return false; }
+        }
+    }
+    return true;
+}
+} // namespace
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetained(const MathematicalResult& demands)
 {
     std::string error;
@@ -84,10 +116,33 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
     if (demands.boundedDemands) {
         return prepareBoundedLifetimeLogicalResult(demands.boundedDemands, error, demands.region == 0);
     }
-    if (demands.sequenceDemands) { return prepareSequenceLogicalInsertion(*demands.sequenceDemands); }
+    if (demands.sequenceDemands) {
+        SequenceEndpointResolver resolver = [this](std::size_t region, const RegionalAnalysis& retained,
+            ArrayRef<scf::ForOp> enclosing) -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
+            const bool sameFrame = ArrayRef<scf::ForOp>(program->nodes[region].loops) == enclosing;
+            if (!sameFrame) { return failure(); }
+            AnalysisRequest request;
+            request.region = region;
+            request.needs.queries = request.needs.selectors = request.needs.synchronization = true;
+            auto selected = analyze(request);
+            const bool available = selected.status == AnalysisStatus::Ready && selected.mathematical &&
+                                   selected.mathematical->regionalDemands;
+            if (!available) { return failure(); }
+            // Both results certify the exact order for this unchanged original
+            // region. Reuse crossing queries only with identical event identities;
+            // query callbacks may differ while describing the same exact order.
+            if (!sameOriginalCoordinates(retained, *selected.mathematical->regionalDemands)) { return failure(); }
+            return prepareLogical(selected);
+        };
+        return prepareSequenceLogicalInsertion(*demands.sequenceDemands, program->nodes[demands.region].loops,
+                                                resolver);
+    }
     if (demands.regionalDemands) {
         const auto& regional = *demands.regionalDemands;
-        if (regional.prepare) { return regional.prepare(); }
+        const auto& enclosing = program->nodes[demands.region].loops;
+        if (regional.prepareWithVisits) { return regional.prepareWithVisits(enclosing); }
+        const bool flatRecipe = enclosing.empty() && regional.prepare;
+        if (flatRecipe) { return regional.prepare(); }
         return failure();
     }
     if (demands.arithmeticPeriodicDemands) {

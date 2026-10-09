@@ -10,12 +10,13 @@
 #include "PTO/Transforms/FrontierSynch/RegionalLaneExports.h"
 #include "mlir/IR/Dominance.h"
 namespace mlir::pto::frontiersynch {
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(ArrayRef<scf::ForOp> enclosing)
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(ArrayRef<scf::ForOp> enclosing,
+    const SequenceEndpointResolver& resolver)
 {
-    return prepareWithTypeBases(enclosing, {});
+    return prepareWithTypeBases(enclosing, {}, resolver);
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWithTypeBases(
-    ArrayRef<scf::ForOp> enclosing, ArrayRef<uint32_t> typeBases)
+    ArrayRef<scf::ForOp> enclosing, ArrayRef<uint32_t> typeBases, const SequenceEndpointResolver& resolver)
 {
     const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
     const bool unsupportedWidth = bits.isScalable() || bits.getFixedValue() != 64;
@@ -39,6 +40,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         return result;
     }
     for (const auto& child : children) {
+        if (resolver && child.originalNode) { continue; }
         if (!child.regional.capabilities.endpointRecipes ||
             (!child.regional.prepare && !child.regional.prepareWithVisits)) {
             fail("regional child has no endpoint recipe"); return failure();
@@ -75,8 +77,13 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
                 fail("regional endpoint loop requires an available constant positive index step"); return failure();
             }
         }
-        auto supplied = child.regional.prepareWithVisits ? child.regional.prepareWithVisits(enclosing) :
-                                                          child.regional.prepare();
+        FailureOr<std::unique_ptr<PreparedLogicalPlan>> supplied = failure();
+        if (resolver && child.originalNode) {
+            supplied = resolver(*child.originalNode, child.regional, enclosing);
+        } else {
+            supplied = child.regional.prepareWithVisits ? child.regional.prepareWithVisits(enclosing) :
+                                                         child.regional.prepare();
+        }
         if (failed(supplied)) {
             fail("regional child endpoint preparation failed");
             if (!expressions.error().empty()) { error += ": " + expressions.error(); }
