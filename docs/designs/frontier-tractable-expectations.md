@@ -653,3 +653,35 @@ exact-result, certification, class, representation and interface availability:
 mutation; the slowest run is 14.0 seconds. Compliance and whitespace checks pass.
 This is focused milestone validation, not the final paired optimized corpus
 campaign.
+
+### Arithmetic reducer ranking before generator construction
+
+Arithmetic reducer selection now estimates work from the certified primitive
+schemas, access-pair joins, residue pieces, normalized row sizes, coordinate
+dimensions and requested interfaces. Ranking performs no generator projection
+or reduction. Counts use checked arithmetic; unknown or overflowing estimates
+remain available in stable method order after known estimates. These are
+selection heuristics, not certified output-size or complexity bounds.
+
+Root requests retain the implemented periodic-conversion and arithmetic paths.
+A periodic skeleton failure retains its adapter diagnostic separately from
+cost availability. Regional requests list the implemented arithmetic adapter;
+regional periodic conversion remains unsupported. Ranking caches include region
+and requested capabilities/mode, and regional construction records consult the
+canonical cache shared with composition. Alias-context reset clears all ranks.
+
+A failed sequence attempt no longer scans every finite-visit candidate. The
+common dispatcher requests the relevant region's cached finite-visit analysis;
+the explicit compatibility operation remains available when intentionally asked.
+This milestone does not implement original-versus-expanded candidate ordering.
+Section 8 was reread and its pinned content hash remains unchanged.
+
+Both optimized builds and links pass (12 translation units, then two final
+units). All 35 focused checks pass, including zero producer construction during
+repeated root/regional ranking, stronger-request separation, overflow/unknown
+ordering, one shared generator construction across reducers and alias reset.
+All 22 serial pinned-input runs preserve per-region classes, representations,
+exact-result status and query/selector availability: 227/240 under MayNotAlias,
+213/240 under MayAlias. No timeout or source mutation occurs; the slowest run is
+14.0 seconds. Compliance and whitespace checks pass. Final paired corpus
+performance acceptance remains a separate integration gate.

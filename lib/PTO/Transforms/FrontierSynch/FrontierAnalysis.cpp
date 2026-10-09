@@ -156,7 +156,6 @@ SequenceAnalysis* FrontierAnalysis::analyzeSequenceFunction() {
         }
         refreshProgramContractAudit(*program);
     }
-    if (!sequenceAnalysis->error.empty()) { (void)analyzeFiniteVisitCandidates(); }
     return &*sequenceAnalysis;
 }
 LogicalResult FrontierAnalysis::analyzeFiniteVisitCandidates()

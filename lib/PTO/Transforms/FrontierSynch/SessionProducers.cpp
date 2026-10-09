@@ -436,7 +436,11 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
         return owned;
     }
     case AnalysisBackend::ArithmeticPeriodic:
-        if (failed(analyzeArithmeticPeriodicFunction())) { return {}; }
+        if (failed(analyzeArithmeticPeriodicFunction())) {
+            error = arithmeticPeriodicAnalysis ? arithmeticPeriodicAnalysis->conversion.diagnostic :
+                "arithmetic periodic form is unavailable";
+            return {};
+        }
         owned->arithmeticPeriodicDemands = arithmeticPeriodicAnalysis;
         owned->backend = "arithmetic-periodic";
         return owned;
