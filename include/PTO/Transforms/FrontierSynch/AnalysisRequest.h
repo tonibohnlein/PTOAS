@@ -10,8 +10,20 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ANALYSISREQUEST_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ANALYSISREQUEST_H
 #include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
 #include <memory>
 namespace mlir::pto::frontiersynch {
+struct ProgramRecognition;
+struct RotatingAnalysis;
+struct GuardedRotatingAnalysis;
+struct BoundedLifetimeDemandResult;
+struct SequenceAnalysis;
+struct FiniteGuardedAnalysis;
+struct ArithmeticPeriodicProgram;
+enum class AnalysisBackend {
+    Explicit, NumericalPeriodic, Rotating, GuardedRotating, BoundedLifetime,
+    Sequence, ArithmeticPeriodic, Arithmetic, FiniteGuarded
+};
 enum class AnalysisMode { MinimumExact, Fallback };
 enum class AnalysisEvaluation { Uniform, Stateful };
 enum class AnalysisStatus { Ready, NotApplicable, UnmetObligation };
@@ -42,6 +54,16 @@ struct AnalysisObligation {
 struct MathematicalResult {
     std::shared_ptr<const SyncInput> input;
     std::shared_ptr<const ExplicitAnalysis> explicitDemands;
+    std::shared_ptr<const ProgramRecognition> recognition;
+    std::shared_ptr<const RotatingAnalysis> rotatingDemands;
+    std::shared_ptr<GuardedRotatingAnalysis> guardedRotatingDemands;
+    std::shared_ptr<BoundedLifetimeDemandResult> boundedDemands;
+    std::shared_ptr<SequenceAnalysis> sequenceDemands;
+    std::shared_ptr<FiniteGuardedAnalysis> finiteGuardedDemands;
+    std::shared_ptr<const ArithmeticPeriodicProgram> arithmeticPeriodicDemands;
+    std::shared_ptr<const ArithmeticDemandAnalysis> arithmeticDemands;
+    std::shared_ptr<const GeneralArithmeticDemandAnalysis> generalArithmeticDemands;
+    std::optional<std::size_t> numericNode;
     std::size_t region = 0;
     std::string backend;
 };
@@ -54,6 +76,7 @@ struct AnalysisOutcome {
 };
 struct AnalysisConstructionCounts {
     uint64_t structuralIndices = 0;
+    uint64_t mathematicalAttempts = 0;
     uint64_t explicitReductions = 0;
     uint64_t logicalPreparations = 0;
     uint64_t allocationExports = 0;

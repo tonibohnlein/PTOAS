@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Request protocol adapters. Cache mathematical construction independently of
 // export checks; detached command fragments always have fresh ownership.
-#include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
+#include "AnalysisSessionInternal.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 namespace mlir::pto::frontiersynch {
 AnalysisOutcome FrontierAnalysis::minimumDemands(std::size_t region, AnalysisNeeds exports)
@@ -15,71 +15,106 @@ AnalysisOutcome FrontierAnalysis::minimumDemands(std::size_t region, AnalysisNee
     exports.synchronization = false;
     return analyze({region, AnalysisMode::MinimumExact, exports});
 }
+AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const AnalysisRequest& request)
+{
+    auto& attempt = sessionState->rootAttempts[backend];
+    if (!attempt.produced) {
+        attempt.produced = true;
+        if (construction.mathematicalAttempts != UINT64_MAX) { ++construction.mathematicalAttempts; }
+        attempt.mathematical = produceBackend(backend, attempt.demandError);
+    }
+    AnalysisOutcome result;
+    result.mathematical = attempt.mathematical;
+    if (result.mathematical) { recordWholeRegion(backend); }
+    if (!result.mathematical) {
+        result.stage = AnalysisStage::Demands;
+        result.obligations.push_back({result.stage, attempt.demandError});
+        return result;
+    }
+    const auto& demands = *result.mathematical;
+    result.available.queries = demands.explicitDemands || demands.rotatingDemands ||
+        demands.guardedRotatingDemands || demands.numericNode || demands.sequenceDemands ||
+        demands.finiteGuardedDemands;
+    result.available.selectors = demands.explicitDemands || demands.sequenceDemands || demands.finiteGuardedDemands;
+    if (demands.backend == "native-scalar") { result.available = {}; }
+    result.available.synchronization = attempt.endpoints.value_or(false);
+    result.status = AnalysisStatus::Ready;
+    result.stage = AnalysisStage::None;
+    if (request.needs.queries && !result.available.queries) { result.stage = AnalysisStage::Queries; }
+    if (request.needs.selectors && !result.available.selectors) { result.stage = AnalysisStage::Selectors; }
+    if (request.needs.evaluation == AnalysisEvaluation::Stateful) { result.stage = AnalysisStage::Demands; }
+    if (result.stage == AnalysisStage::None && request.needs.synchronization) {
+        if (!attempt.endpoints) {
+            auto prepared = prepareLogical(result);
+            attempt.endpoints = succeeded(prepared);
+        }
+        result.available.synchronization = *attempt.endpoints;
+        if (!*attempt.endpoints) { result.stage = AnalysisStage::Synchronization; }
+    }
+    if (result.stage != AnalysisStage::None) {
+        result.status = AnalysisStatus::UnmetObligation;
+        result.obligations.push_back({result.stage, demands.backend + ": requested export is unavailable"});
+    }
+    return result;
+}
 AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
 {
     AnalysisOutcome result;
-    if (!storage || !structuralIndex) {
-        result.obligations.push_back({AnalysisStage::Form, "analysis session is not initialized"});
+    if (!storage || !structuralIndex || request.region != 0) {
+        result.obligations.push_back({AnalysisStage::Form, "original region request is unavailable"});
         return result;
     }
-    if (request.region != 0) {
-        result.obligations.push_back({AnalysisStage::Form, "regional request adapter is unavailable"});
+    if (failed(recognizeStructure())) {
+        result.obligations.push_back({AnalysisStage::Form, "original region request is unavailable"});
         return result;
     }
-    if (failed(analyzeExplicitFunction())) {
-        result.status = explicitAnalysis ? AnalysisStatus::UnmetObligation : AnalysisStatus::NotApplicable;
-        result.stage = explicitAnalysis ? AnalysisStage::Demands : AnalysisStage::Form;
-        result.obligations.push_back({result.stage,
-            explicitAnalysis ? explicitAnalysis->error : "explicit function form is unavailable"});
-        return result;
-    }
-    if (!explicitMathematical) {
-        auto owned = std::make_shared<MathematicalResult>();
-        owned->input = storage;
-        owned->explicitDemands = explicitAnalysis;
-        owned->backend = "explicit";
-        explicitMathematical = std::move(owned);
-    }
-    result.mathematical = explicitMathematical;
-    result.available.queries = true;
-    result.available.selectors = true;
-    result.status = AnalysisStatus::Ready;
-    result.stage = AnalysisStage::None;
     if (request.needs.evaluation == AnalysisEvaluation::Stateful) {
-        result.status = AnalysisStatus::UnmetObligation;
-        result.stage = AnalysisStage::Demands;
-        result.obligations.push_back({result.stage, "stateful evaluation is unavailable"});
-    } else if (request.needs.synchronization) {
-        if (!explicitEndpointOutcome) {
-            auto prepared = prepareLogical(result);
-            explicitEndpointOutcome = succeeded(prepared);
-        }
-        result.available.synchronization = *explicitEndpointOutcome;
-        if (!result.available.synchronization) {
-            result.status = AnalysisStatus::UnmetObligation;
-            result.stage = AnalysisStage::Synchronization;
-            result.obligations.push_back({result.stage, "explicit endpoint preparation is unavailable"});
-        }
+        auto uniform = request;
+        uniform.needs.evaluation = AnalysisEvaluation::Uniform;
+        uniform.needs.synchronization = false;
+        auto retained = analyze(uniform);
+        retained.status = AnalysisStatus::UnmetObligation;
+        retained.stage = AnalysisStage::Demands;
+        retained.obligations.push_back({retained.stage, "stateful evaluation is unavailable"});
+        return retained;
     }
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    for (auto backend : {AnalysisBackend::Explicit, AnalysisBackend::NumericalPeriodic,
+            AnalysisBackend::Rotating, AnalysisBackend::GuardedRotating, AnalysisBackend::BoundedLifetime,
+            AnalysisBackend::Sequence, AnalysisBackend::ArithmeticPeriodic, AnalysisBackend::Arithmetic,
+            AnalysisBackend::FiniteGuarded}) {
+        auto attempt = requestBackend(backend, request);
+        if (attempt.status == AnalysisStatus::Ready) { return attempt; }
+        if (!result.mathematical && attempt.mathematical) {
+            result.mathematical = attempt.mathematical;
+            result.available = attempt.available;
+            result.status = AnalysisStatus::UnmetObligation;
+            result.stage = attempt.stage;
+        }
+        llvm::append_range(result.obligations, attempt.obligations);
+    }
+    // Fallback may not weaken a retained exact result. Conservative adapters
+    // are registered separately from these mathematical producers.
     return result;
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical(const AnalysisOutcome& result)
 {
-    if (!result.mathematical || result.mathematical != explicitMathematical ||
-        result.mathematical->input != storage) {
-        return failure();
-    }
+    if (!result.mathematical || !sessionState || result.mathematical->input != storage) { return failure(); }
+    const bool retained = llvm::any_of(sessionState->rootAttempts, [&](const auto& attempt) {
+        return attempt.second.mathematical == result.mathematical;
+    });
+    if (!retained) { return failure(); }
     if (construction.logicalPreparations != UINT64_MAX) { ++construction.logicalPreparations; }
-    auto prepared = prepareExplicitInsertion(function, *result.mathematical->explicitDemands, false);
+    auto prepared = prepareRetained(*result.mathematical);
     if (succeeded(prepared)) { (*prepared)->mathematicalOwner = result.mathematical; }
     return prepared;
 }
 LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan)
 {
-    if (!result.mathematical || result.mathematical != explicitMathematical ||
-        result.mathematical->input != storage || plan.mathematicalOwner != result.mathematical) {
-        return failure();
-    }
+    if (!result.mathematical || result.mathematical->input != storage ||
+        plan.mathematicalOwner != result.mathematical) { return failure(); }
+    if (plan.allocationCertificate) { return success(); }
+    if (!result.mathematical->explicitDemands) { return failure(); }
     if (construction.allocationExports != UINT64_MAX) { ++construction.allocationExports; }
     plan.allocationCertificate = explicitAllocationCertificate(
         *result.mathematical->explicitDemands, plan.planId, function.getContext());
@@ -101,6 +136,7 @@ void FrontierAnalysis::invalidate()
     finiteVisitAnalyses.clear();
     periodicExports = {};
     nativeScalarOnly = false;
+    sessionState.reset();
     program.reset();
     structuralIndex.reset();
     storage.reset();
