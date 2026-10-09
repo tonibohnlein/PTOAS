@@ -382,7 +382,8 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
                 llvm::erase_if(view.deferredAccessBoundary,
                     [&](const auto& access) { return projected(access.effect); });
                 view.symbolicStorageEffects.clear();
-                view.storageSelectors = {}; view.symbolicStorage.reset(); view.arithmeticRelations.reset();
+                view.storageSelectors = {}; view.symbolicStorage.reset();
+                view.arithmeticRelations.reset(); view.relations.reset();
             }
         }
         const SyncStorageEffects* model = nullptr;
@@ -477,7 +478,7 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
     out.lastPayloads = std::move(full.lastPayloads);
     appendPartial(out, phases, starts, periods, remainder);
     out.numerical.reset();
-    out.arithmeticRelations.reset();
+    out.arithmeticRelations.reset(); out.relations.reset();
     out.symbolicStorage.reset();
     auto originalPresence = out.presence;
     auto originalQuery = out.reachability;

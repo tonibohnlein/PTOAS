@@ -17,7 +17,7 @@ two independent accepting reviews, and its own commit before proceeding.
 | 6 | Numerical composition for general sequences without unnecessary dense port closure | Accepted |
 | 7 | Original-IR contract audit and pinned corpus validation through available emission/allocation | Accepted |
 | 8 | Rotating compact children without common-period expansion | Accepted |
-| 9 | Structured symbolic crossing exports for mixed regional backends | Pending |
+| 9 | Structured symbolic crossing exports for mixed regional backends | Accepted |
 | 10 | Compact guarded-periodic regional exports using shared counted domains | Pending |
 | 11 | Production bounded-lifetime evaluation and charged global profiles | Pending |
 | 12 | Executable finite-visit type selection when endpoint values are available | Pending |
@@ -705,3 +705,74 @@ with an opaque-call rejection regression. Serial incremental builds and both
 tool links passed. Two independent reviewers accepted the final source. The
 36 brace-prefilter findings were inspected: all affected control bodies are
 braced. No line-width warnings or whitespace findings remain.
+
+
+## Integration milestone 9: mixed symbolic regional relations
+
+The common relation carrier separates exact required reachability from the
+representation of internal minimum demands. Arithmetic producers adapt their
+existing relations directly. Other regional producers are queried on owned
+symbolic coordinates; a checked `RegionExpressions` translator converts their
+Boolean circuits to exact integer relations. These requests are lazy, after
+finite and numerical sequence adapters. An unsupported expression is a missing
+export capability, and does not discard the child's demand result.
+
+The carrier records original sites, invocation/input identity, parameter bindings,
+occurrence domains, certified native order, strict required order and functional
+byte-to-boundary selectors. Callback exports derive the documented native pipe
+order and retain exact required queries; they do not infer native completion
+edges from a completion profile. Explicit scalar prerequisites without an
+adapter remain an export obligation. Original coordinate maps that cannot yet
+be expressed through counted-loop raw coordinates also remain explicit.
+
+Quotient coordinates are converted to original coordinates by affine
+substitution and congruences. Parameter columns are aligned by original identity
+and binding. This does not enumerate bytes, visits or a joint address period.
+The shared crossing composer joins selectors on a common physical byte, projects
+that byte, and subtracts alternatives through the children's strict required
+relations. The parent retains reusable relations for subsequent composition.
+
+Internal endpoint recipes remain owned by the original children. Only newly
+retained crossings use the arithmetic endpoint lowerer; preparation imports
+those records with the parent's original type numbering and coordinate shape.
+Missing endpoint or query exports retain the mathematical carrier and report
+an export obligation separately. Relation construction success is not an
+allocation certificate or a claim that six physical IDs suffice.
+
+Costs have three separate ledgers: `RegionalAnalysis::cost` retains child and
+expression-DAG work; `RegionalRelationData::analysis.cost` records exact relation
+joins, projections, differences and output pieces; `translationCost` records
+translated gates, formula products, projected clauses and peak clause count.
+The byte-indexed path does not claim the manuscript's finite-list crossing
+circuit bound. Fresh symbolic input owners remain attached to their expression
+arena, including on unsuccessful exports, because existing child query caches
+can retain their expression IDs.
+
+The original-IR acceptance case has a numerical inner count, a symbolic outer
+trip count and visit-owned GM bytes, followed by two arithmetic siblings. It
+forces the mixed producer path, then reuses the parent's queries and selectors.
+The fixture uses aligned full-vector accesses from the existing shared interface;
+a sub-vector DMA footprint is deliberately not assumed exact.
+
+The corresponding case with a parametric inner count remains an open performance
+limitation. Its nested min-plus query produces excessive alternatives in generic
+circuit-to-relation lowering. Initial validation hit a 6 GiB process limit;
+subsequent instrumented runs were stopped after isolating that expansion.
+No address-precision gate or analysis-budget fallback was introduced. This
+milestone does not claim economical conversion of every nested symbolic circuit.
+
+Focused validation includes residue/parameter remapping, symbolic-byte associative
+composition, 4,536 independent original-IR event queries, eight independent
+command closures (including zero trips and holes), and unchanged generated code
+when the symbolic outer count increases. Missing endpoint export preserves the
+mathematical result and its recognition status. The final translator oracle passes
+3,279 signed/unsigned points, including wrapped minima, necessary versus optional
+domain facts and cancellation. Existing regional regression checks pass 27,776
+phase queries and 125,856 repeated-region event pairs, alongside storage selectors
+and allocation envelopes. Arithmetic selector checks also pass.
+
+The serial incremental build and both links succeeded. Two independent source
+reviewers accepted the final changes. The changed-source prefilter's 65 brace
+matches were inspected; their control bodies are braced. No line-width warnings
+or whitespace findings remain. No full-corpus or device performance claim is
+made by these focused tests.

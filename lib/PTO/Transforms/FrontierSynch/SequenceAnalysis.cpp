@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
+#include "PTO/Transforms/FrontierSynch/RegionalRelations.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
@@ -44,18 +45,27 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
         const bool symbolic = llvm::any_of(composer.children, [](const Child& child) {
             return !child.regional.symbolicStorageEffects.empty();
         });
-        const bool relations = llvm::all_of(composer.children, [](const Child& child) {
-            return bool(child.regional.arithmeticRelations);
-        });
-        if (symbolic && relations && !composer.children.empty()) {
+        const SyncInput* input = composer.input;
+        for (const auto& child : composer.children) {
+            if (!input && child.regional.relations) { input = child.regional.relations->data.input; }
+            if (!input && child.regional.arithmeticRelations) { input = child.regional.arithmeticRelations->input; }
+        }
+        if (symbolic && input && !composer.children.empty()) {
             std::vector<RegionalAnalysis> children;
             for (const auto& child : composer.children) { children.push_back(child.regional); }
             std::string diagnostic;
-            auto composed = composeArithmeticRegionalSequence(children, composer.function, diagnostic);
-            if (succeeded(composed) && composer.requireEndpoints &&
-                (!composed->capabilities.endpointRecipes || (!composed->prepare && !composed->prepareWithVisits))) {
-                result.error = "symbolic sequence demands are available but endpoint recipes are unavailable";
-                return result;
+            if (!composer.indexReady) {
+                if (failed(composer.index.build(composer.function, *input))) {
+                    result.error = "symbolic composition shared prerequisite index unavailable"; return result;
+                }
+                composer.indexReady = true;
+            }
+            auto composed = composeSymbolicRegionalSequence(children, composer.function, *input,
+                                                             composer.index, diagnostic);
+            if (succeeded(composed) && (!composed->capabilities.endpointRecipes ||
+                (!composed->prepare && !composed->prepareWithVisits))) {
+                result.insertionError = composed->relations && !composed->relations->exportObligation.empty() ?
+                    composed->relations->exportObligation : "symbolic sequence endpoint recipes are unavailable";
             }
             if (succeeded(composed)) {
                 composer.error.clear();
@@ -170,8 +180,16 @@ void recordSequenceContractAttempt(ProgramRecognition& program, const SyncInput&
         !program.nodes.empty() && program.nodes[0].kind == StructureKind::Sequence && !program.nodes[0].parent &&
         program.nodes[0].anchor == state->function.getOperation() &&
         program.nodes[0].region == &state->function.getBody();
-    const bool established = original && analysis.error.empty() && analysis.insertionError.empty() &&
-        state->error.empty() && state->expressions.constructionError().empty();
+    const bool retainedRelations = state && state->relationalResult && state->relationalResult->relations &&
+        state->relationalResult->relations->data.completeRequiredOrder;
+    const bool established = original && analysis.error.empty() && (retainedRelations ||
+        (analysis.insertionError.empty() && state->error.empty() && state->expressions.constructionError().empty()));
+    // A failed endpoint/export attempt cannot erase an already owned exact
+    // relational result. Keep its diagnostic separate from class membership.
+    if (established && !analysis.insertionError.empty()) {
+        candidate.implementationError = analysis.insertionError;
+        candidate.endpointRecipes = ContractImplementation::Unavailable;
+    }
     // finishSequence publishes a state only after importing exact child
     // queries/selectors, reconciling shared storage, reconstructing original
     // value prerequisites and completing the crossing closure. Composed views

@@ -7,4 +7,6 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --arithmetic-storage-selector-checks | FileCheck %s
 // CHECK: arithmetic storage boundary selectors match independent byte lifetimes
+// RUN: pto-sync-input-test --regional-relation-checks | FileCheck %s --check-prefix=RELATIONS
+// RELATIONS: regional relations: raw coordinates, parameter permutations, symbolic bytes and associative covers passed
 module {}

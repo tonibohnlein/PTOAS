@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegionalComposition.h"
+#include "PTO/Transforms/FrontierSynch/RegionalRelations.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include <numeric>
 #include <set>
@@ -44,15 +45,15 @@ Relation renamed(const Relation& input, std::size_t offset)
 }
 class Composer {
 public:
-    Composer(const ArithmeticRegionalRelations& left, const ArithmeticRegionalRelations& right)
-        : left(left), right(right), split(left.program.sites.size()), p(left.analysis.parameterCount) {}
-    FailureOr<ArithmeticRegionalRelations> run(ArithmeticRegionContext context);
+    Composer(const RegionalRelationData& left, const RegionalRelationData& right)
+        : left(left), right(right), split(left.sites.size()), p(left.analysis.parameterCount) {}
+    FailureOr<RegionalRelationData> run(ArithmeticRegionContext context);
     std::string error;
 private:
-    const ArithmeticRegionalRelations &left, &right;
+    const RegionalRelationData &left, &right;
     std::size_t split;
     unsigned p;
-    ArithmeticRegionalRelations out;
+    RegionalRelationData out;
     bool failedOperation = false;
     FailureOr<Systems> join(const IntegerSystem& a, ArrayRef<unsigned> am,
                            const IntegerSystem& b, ArrayRef<unsigned> bm,
@@ -148,7 +149,7 @@ private:
         for (const auto& a : left.occurrences) {
             for (const auto& b : right.occurrences) {
                 if (a.parameterResidues != b.parameterResidues ||
-                    left.program.sites[a.site].phase->kPipeValue != right.program.sites[b.site].phase->kPipeValue) {
+                    left.sites[a.site].phase->kPipeValue != right.sites[b.site].phase->kPipeValue) {
                         continue; }
                 const unsigned x = a.residues.size(), y = b.residues.size(), dims = x + y + p;
                 std::vector<unsigned> am(x + p), bm(y + p), keep(dims);
@@ -212,8 +213,8 @@ private:
                     for (const auto& y : b.selector.pieces) {
                         if (x.inputResidues != y.inputResidues ||
                             x.parameterResidues != y.parameterResidues) { continue; }
-                        auto* source = left.program.sites[x.outputSite].phase;
-                        auto* target = right.program.sites[y.outputSite].phase;
+                        auto* source = left.sites[x.outputSite].phase;
+                        auto* target = right.sites[y.outputSite].phase;
                         auto sourcePipe = static_cast<uint32_t>(source->kPipeValue);
                         auto targetPipe = static_cast<uint32_t>(target->kPipeValue);
                         if (ptoStorageProtection().protectsScalar(sourcePipe, targetPipe)) { continue; }
@@ -303,19 +304,19 @@ bool Composer::selectors()
     }
     return true;
 }
-bool validExport(const ArithmeticRegionalRelations& region)
+bool validExport(const RegionalRelationData& region)
 {
     const auto period = region.analysis.period;
     const auto parameters = region.analysis.parameterCount;
     if (!period || region.parameters.size() != parameters ||
-        llvm::any_of(region.program.sites, [](const auto& site) { return !site.phase; })) { return false; }
+        llvm::any_of(region.sites, [](const auto& site) { return !site.phase; })) { return false; }
     auto residues = [&](ArrayRef<uint64_t> values) {
         return llvm::all_of(values, [&](uint64_t value) { return value < period; });
     };
     auto endpoint = [&](const ArithmeticEventKey& event) {
-        return event.site < region.program.sites.size() &&
-            region.program.sites[event.site].phase &&
-            event.residues.size() == region.program.sites[event.site].loops.size() && residues(event.residues) &&
+        return event.site < region.sites.size() &&
+            region.sites[event.site].phase &&
+            event.residues.size() == region.sites[event.site].loops.size() && residues(event.residues) &&
             (event.event == ArithmeticEvent::Start || event.event == ArithmeticEvent::Completion);
     };
     for (const auto* relation : {&region.analysis.nativeOrder, &region.analysis.requiredOrder,
@@ -342,10 +343,10 @@ bool validExport(const ArithmeticRegionalRelations& region)
     for (const auto& boundary : region.selectors.boundaries) {
         const auto inputs = boundary.storageSpace ? 1U : 0U;
         if (boundary.selector.inputDimensions != inputs || boundary.selector.parameterCount != parameters ||
-            (boundary.site && *boundary.site >= region.program.sites.size())) { return false; }
+            (boundary.site && *boundary.site >= region.sites.size())) { return false; }
         for (const auto& piece : boundary.selector.pieces) {
-            if (piece.outputSite >= region.program.sites.size() ||
-                piece.outputs.size() != region.program.sites[piece.outputSite].loops.size() ||
+            if (piece.outputSite >= region.sites.size() ||
+                piece.outputs.size() != region.sites[piece.outputSite].loops.size() ||
                 piece.inputResidues.size() != inputs || piece.parameterResidues.size() != parameters ||
                 !residues(piece.inputResidues) || !residues(piece.parameterResidues) ||
                 piece.domain.dimensions() != inputs + parameters) { return false; }
@@ -357,22 +358,23 @@ bool validExport(const ArithmeticRegionalRelations& region)
     }
     return true;
 }
-FailureOr<ArithmeticRegionalRelations> Composer::run(ArithmeticRegionContext context)
+FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
 {
     if (!validExport(left) || !validExport(right) ||
-        !left.analysis.exactMinimum || !right.analysis.exactMinimum ||
+        !left.completeRequiredOrder || !right.completeRequiredOrder ||
         !left.analysis.error.empty() || !right.analysis.error.empty() ||
         !left.selectors.error.empty() || !right.selectors.error.empty() ||
         left.analysis.period != right.analysis.period || left.analysis.period != left.selectors.period ||
         right.analysis.period != right.selectors.period || !left.analysis.period ||
         left.input != right.input || !left.input || left.enclosing != right.enclosing ||
-        left.program.parameters != right.program.parameters || left.parameters != right.parameters ||
+        left.parameterValues != right.parameterValues || left.parameters != right.parameters ||
         left.analysis.parameterCount != right.analysis.parameterCount ||
-        p != left.program.parameters.size() || p != left.selectors.parameterCount ||
+        p != left.parameterValues.size() || p != left.selectors.parameterCount ||
             p != right.selectors.parameterCount) {
-        error = "symbolic sibling composition requires compatible exact parameter and residue interfaces"; return failure();
+        error = "symbolic sibling composition requires compatible exact parameter and residue interfaces";
+        return failure();
     }
-    if (!left.program.incomingPrerequisites.empty() || !right.program.incomingPrerequisites.empty()) {
+    if (!left.incomingPrerequisites.empty() || !right.incomingPrerequisites.empty()) {
         error = "symbolic sibling scalar prerequisite relation adapter unavailable"; return failure();
     }
     SmallVector<SyncStorageCell> domains;
@@ -387,8 +389,8 @@ FailureOr<ArithmeticRegionalRelations> Composer::run(ArithmeticRegionContext con
     if (!storageBasesAreComparable(domains, left.input->memory().gmPolicy())) {
         error = "symbolic sibling physical-base relation adapter unavailable"; return failure();
     }
-    if (left.program.context.function != right.program.context.function ||
-        context.function != left.program.context.function) {
+    if (left.context.function != right.context.function ||
+        context.function != left.context.function) {
         error = "symbolic sibling invocation contexts differ"; return failure();
     }
     // Cumulative work is retained by the reusable parent export. outputPieces
@@ -401,26 +403,31 @@ FailureOr<ArithmeticRegionalRelations> Composer::run(ArithmeticRegionContext con
         }
         out.analysis.cost.*member = left.analysis.cost.*member + right.analysis.cost.*member;
     }
-    out.program.context = context;
-    out.program.extraction.dischargedEffects = left.program.extraction.dischargedEffects;
-    for (auto effect : right.program.extraction.dischargedEffects) {
-        if (!llvm::is_contained(out.program.extraction.dischargedEffects, effect)) {
-            out.program.extraction.dischargedEffects.push_back(effect);
+    for (auto member : {&RegionExpressions::RelationCost::gates, &RegionExpressions::RelationCost::pieces,
+        &RegionExpressions::RelationCost::projections, &RegionExpressions::RelationCost::formulaProducts}) {
+        if (left.translationCost.*member > UINT64_MAX - right.translationCost.*member) {
+            error = "symbolic relation translation cost exceeds representation"; return failure();
+        }
+        out.translationCost.*member = left.translationCost.*member + right.translationCost.*member;
+    }
+    out.translationCost.peakClauses = std::max(left.translationCost.peakClauses, right.translationCost.peakClauses);
+    out.context = context;
+    out.dischargedEffects = left.dischargedEffects;
+    for (auto effect : right.dischargedEffects) {
+        if (!llvm::is_contained(out.dischargedEffects, effect)) {
+            out.dischargedEffects.push_back(effect);
         }
     }
-    out.program.parameters = left.program.parameters;
-    out.program.primitives.parameters = left.program.primitives.parameters;
-    out.program.primitives.period = left.analysis.period;
-    out.program.sites = left.program.sites;
-    out.program.sites.append(right.program.sites.begin(), right.program.sites.end());
+    out.parameterValues = left.parameterValues;
+    out.sites = left.sites;
+    out.sites.append(right.sites.begin(), right.sites.end());
     std::set<uint32_t> pipes;
-    for (const auto& site : out.program.sites) { pipes.insert(static_cast<uint32_t>(site.phase->kPipeValue)); }
-    out.program.primitives.pipeCount = pipes.size();
+    for (const auto& site : out.sites) { pipes.insert(static_cast<uint32_t>(site.phase->kPipeValue)); }
     out.parameters = left.parameters; out.input = left.input; out.enclosing = left.enclosing;
     out.occurrences = left.occurrences;
     for (auto domain : right.occurrences) { domain.site += split; out.occurrences.push_back(std::move(domain)); }
     out.analysis.period = left.analysis.period; out.analysis.parameterCount = p;
-    out.analysis.pipeCount = out.program.primitives.pipeCount;
+    out.analysis.pipeCount = pipes.size();
     auto lh = left.analysis.requiredOrder, rh = renamed(right.analysis.requiredOrder, split);
     auto lid = identities(left.occurrences);
     auto rid = renamed(identities(right.occurrences), split);
@@ -451,7 +458,8 @@ FailureOr<ArithmeticRegionalRelations> Composer::run(ArithmeticRegionContext con
     out.analysis.requiredOrder = lh; unite(out.analysis.requiredOrder, rh); unite(out.analysis.requiredOrder, allCross);
     for (auto* relation : {&out.analysis.generators, &out.analysis.minimumDemands,
                            &out.analysis.nativeOrder, &out.analysis.requiredOrder}) { removeEmpty(*relation); }
-    out.analysis.exactMinimum = true;
+    out.completeRequiredOrder = true;
+    out.analysis.exactMinimum = left.analysis.exactMinimum && right.analysis.exactMinimum;
     // This adapter does not certify adjacency; insertion may use consumer cuts.
     out.analysis.adjacentLocalDemands = false;
     for (const auto& [key, pieces] : out.analysis.minimumDemands) {
@@ -460,13 +468,41 @@ FailureOr<ArithmeticRegionalRelations> Composer::run(ArithmeticRegionContext con
     return std::move(out);
 }
 } // namespace
-FailureOr<ArithmeticRegionalRelations> composeArithmeticRegionalRelations(
-    const ArithmeticRegionalRelations& left, const ArithmeticRegionalRelations& right,
+FailureOr<RegionalRelationData> composeRegionalRelationData(
+    const RegionalRelationData& left, const RegionalRelationData& right,
     ArithmeticRegionContext context, std::string& error)
 {
     Composer composer(left, right);
     auto result = composer.run(context);
     if (failed(result)) { error = std::move(composer.error); }
     return result;
+}
+RegionalRelationData arithmeticRelationData(const ArithmeticRegionalRelations& in)
+{
+    RegionalRelationData out;
+    out.input = in.input; out.context = in.program.context; out.sites = in.program.sites;
+    out.parameterValues = in.program.parameters; out.parameters = in.parameters; out.enclosing = in.enclosing;
+    out.incomingPrerequisites = in.program.incomingPrerequisites;
+    out.dischargedEffects = in.program.extraction.dischargedEffects;
+    out.analysis = in.analysis; out.selectors = in.selectors; out.occurrences = in.occurrences;
+    out.completeRequiredOrder = in.analysis.exactMinimum && in.analysis.error.empty();
+    return out;
+}
+FailureOr<ArithmeticRegionalRelations> composeArithmeticRegionalRelations(
+    const ArithmeticRegionalRelations& left, const ArithmeticRegionalRelations& right,
+    ArithmeticRegionContext context, std::string& error)
+{
+    auto data = composeRegionalRelationData(
+        arithmeticRelationData(left), arithmeticRelationData(right), context, error);
+    if (failed(data)) { return failure(); }
+    ArithmeticRegionalRelations out;
+    out.input = data->input; out.program.context = data->context; out.program.sites = data->sites;
+    out.program.parameters = data->parameterValues; out.parameters = data->parameters; out.enclosing = data->enclosing;
+    out.program.extraction.dischargedEffects = data->dischargedEffects;
+    out.program.primitives.parameters = left.program.primitives.parameters;
+    out.program.primitives.period = data->analysis.period; out.program.primitives.pipeCount = data->analysis.pipeCount;
+    out.analysis = std::move(data->analysis); out.selectors = std::move(data->selectors);
+    out.occurrences = std::move(data->occurrences);
+    return out;
 }
 } // namespace mlir::pto::frontiersynch

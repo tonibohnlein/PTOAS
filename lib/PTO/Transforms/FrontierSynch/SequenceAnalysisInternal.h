@@ -206,6 +206,8 @@ struct SequenceAnalysisState {
     std::optional<Expr> numericalReachability(
         SequenceEvent source, SequenceEvent target, NumericalChainQueryCost& cost);
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare(ArrayRef<scf::ForOp> enclosing = {});
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareWithTypeBases(
+        ArrayRef<scf::ForOp> enclosing, ArrayRef<uint32_t> typeBases);
 };
 std::optional<int64_t> sequenceInteger(Value value);
 } // namespace mlir::pto::frontiersynch

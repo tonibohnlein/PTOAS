@@ -183,7 +183,8 @@ bool familyBridges(RepeatedRegionState& state, const FamilySelectors& family)
         child.regional.storageBoundary = family.cells;
         child.regional.accessBoundary.clear(); child.regional.deferredAccessBoundary.clear();
         child.regional.storageSelectors = {}; child.regional.symbolicStorageEffects.clear();
-        child.regional.symbolicStorage.reset(); child.regional.arithmeticRelations.reset();
+        child.regional.symbolicStorage.reset();
+        child.regional.arithmeticRelations.reset(); child.regional.relations.reset();
         child.anchors = state.body.anchors;
         pair.children.push_back(std::move(child));
     }
@@ -361,7 +362,7 @@ RepeatedRegionAnalysis repeatRotatingRegion(func::FuncOp function, scf::ForOp lo
     auto result = exportRepeatedRegion(state);
     if (!result.error.empty()) { return result; }
     auto& out = result.regional;
-    out.storageBoundary.clear(); out.arithmeticRelations.reset(); out.symbolicStorage.reset();
+    out.storageBoundary.clear(); out.arithmeticRelations.reset(); out.relations.reset(); out.symbolicStorage.reset();
     storage->before = out.referenceBefore;
     out.storageSelectors = [storage](RegionalByteAddress address) { return storage->query(address); };
     effects.insert(residualEffects.begin(), residualEffects.end());

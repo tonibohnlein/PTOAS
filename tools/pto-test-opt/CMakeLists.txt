@@ -121,6 +121,7 @@ add_llvm_executable(pto-sync-input-test
   BoundedLifetimeProvenanceChecks.cpp
   BoundedLifetimeAllocationChecks.cpp
   ArithmeticStorageSelectorChecks.cpp
+  RegionalRelationChecks.cpp
   ArithmeticDemandChecks.cpp
   ArithmeticSelectorChecks.cpp
   ArithmeticProgramDump.cpp
@@ -152,6 +153,8 @@ add_llvm_executable(pto-sync-input-test
   RepeatedPhaseChecks.cpp
   NestedRegionalChecks.cpp
   RegionExpressionChecks.cpp
+  ExpressionRelationChecks.cpp
+  MixedSymbolicRegionChecks.cpp
   ProgramStructureChecks.cpp
   SyncAliasChecks.cpp
   SyncRegionContractChecks.cpp
