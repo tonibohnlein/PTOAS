@@ -11,7 +11,15 @@
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRanks.h"
+#include "llvm/ADT/MapVector.h"
 namespace mlir::pto::frontiersynch {
+namespace detail {
+// Validate exactly the eventual predicate construction in a private arena.
+// The physical byte is symbolic; parameter inputs retain their actual SSA form.
+bool preflightFiniteStoragePredicate(func::FuncOp function, const IntegerSystem& domain,
+    ArrayRef<Value> parameters, bool physicalByte, uint64_t period, ArrayRef<uint64_t> residues,
+    ArrayRef<AffineExpr> coordinates, std::string& error);
+} // namespace detail
 struct GuardedDemand { uint32_t source = 0, target = 0; RegionExpressions::Id guard = 0; };
 struct FiniteGuardedState {
     using Expr = RegionExpressions::Id;
@@ -21,6 +29,9 @@ struct FiniteGuardedState {
     std::vector<Expr> presence;
     std::vector<ExplicitEffects> effects;
     GuardedRanks rankIndex;
+    // One retained alternative shared by demand and later storage construction.
+    std::shared_ptr<const ArithmeticProgram> expandedStorageProgram;
+    llvm::MapVector<std::pair<AddressSpace, Value>, AffineExpr> expandedStorageTranslations;
     std::vector<GuardedDemand> retained;
     std::vector<StorageGenerator> residual;
     std::vector<GuardedDemand> guardedResidual, guardedNative;

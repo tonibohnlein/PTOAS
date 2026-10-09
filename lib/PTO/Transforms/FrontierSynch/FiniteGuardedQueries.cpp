@@ -6,7 +6,29 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "FiniteGuardedInternal.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticStorageSelectors.h"
+#include "../InsertSync/SyncRegionArithmetic.h"
+#include "llvm/ADT/MapVector.h"
 namespace mlir::pto::frontiersynch {
+bool detail::preflightFiniteStoragePredicate(func::FuncOp function, const IntegerSystem& domain,
+    ArrayRef<Value> parameters, bool physicalByte, uint64_t period, ArrayRef<uint64_t> residues,
+    ArrayRef<AffineExpr> coordinates, std::string& error)
+{
+    Block inputs;
+    RegionExpressions scratch;
+    std::vector<RegionExpressions::Id> values;
+    if (physicalByte) {
+        auto byte = inputs.addArgument(IndexType::get(function.getContext()), function.getLoc());
+        values.push_back(scratch.input(byte));
+    }
+    for (auto parameter : parameters) { values.push_back(scratch.input(parameter)); }
+    auto result = coordinates.empty() ? scratch.integerPredicate(domain, values, period, residues) :
+        scratch.integerMappedPredicate(domain, values, coordinates, period, residues, error)
+            .value_or(RegionExpressions::invalid);
+    const bool accepted = result != RegionExpressions::invalid && scratch.constructionError().empty();
+    if (!accepted && error.empty()) { error = scratch.constructionError(); }
+    return accepted;
+}
 void FiniteGuardedState::closeAndReduce()
 {
     const auto count = effects.size();
@@ -141,5 +163,259 @@ void FiniteGuardedState::summarize(const SyncInput& input)
         }
         storageBoundary.push_back(std::move(boundary));
     }
+}
+namespace {
+// A storage-only owner: selected boundaries borrow neither temporary producer
+// relations nor the session. Every expression remains in the query arena.
+struct ExpandedStorage {
+    using Key = std::pair<AddressSpace, Value>;
+    std::shared_ptr<const ArithmeticProgram> program;
+    std::shared_ptr<FiniteGuardedState> state;
+    std::shared_ptr<const SyncInput> input;
+    ArithmeticStorageSelectors selectors;
+    std::vector<RegionExpressions::Id> parameters;
+    llvm::MapVector<Key, SmallVector<AffineExpr>> coordinateMaps;
+    RegionExpressions::Id predicate(RegionExpressions& arena, const IntegerSystem& domain,
+        ArrayRef<RegionExpressions::Id> values, ArrayRef<uint64_t> residues,
+        std::optional<Key> family, std::string& error) const
+    {
+        if (!family) { return arena.integerPredicate(domain, values, selectors.period, residues); }
+        auto found = coordinateMaps.find(*family);
+        if (found == coordinateMaps.end()) {
+            return arena.integerPredicate(domain, values, selectors.period, residues);
+        }
+        return arena.integerMappedPredicate(domain, values, found->second, selectors.period, residues, error)
+            .value_or(RegionExpressions::invalid);
+    }
+    bool preflight(std::string& error, uint64_t* checkedPredicates)
+    {
+        auto check = [&](const IntegerSystem& domain, ArrayRef<uint64_t> residues, std::optional<Key> key) {
+            if (checkedPredicates && *checkedPredicates != UINT64_MAX) { ++*checkedPredicates; }
+            ArrayRef<AffineExpr> coordinates;
+            if (key) {
+                auto found = coordinateMaps.find(*key);
+                if (found != coordinateMaps.end()) { coordinates = found->second; }
+            }
+            return detail::preflightFiniteStoragePredicate(program->context.function, domain,
+                program->parameters, key.has_value(), selectors.period, residues, coordinates, error);
+        };
+        for (const auto& support : selectors.support) {
+            std::vector<uint64_t> residues{support.byteResidue};
+            llvm::append_range(residues, support.parameterResidues);
+            if (!check(support.domain, residues, Key{support.space, support.base})) { return false; }
+        }
+        for (const auto& boundary : selectors.boundaries) {
+            std::optional<Key> key;
+            if (boundary.storageSpace) { key = Key{*boundary.storageSpace, boundary.storageBase}; }
+            for (const auto& piece : boundary.selector.pieces) {
+                auto residues = piece.inputResidues;
+                llvm::append_range(residues, piece.parameterResidues);
+                if (!check(piece.domain, residues, key)) { return false; }
+            }
+        }
+        return true;
+    }
+    std::optional<std::vector<RegionalSelector>> select(const ArithmeticBoundarySelector& boundary,
+        std::optional<RegionExpressions::Id> byte = {}) const
+    {
+        auto& arena = *state->arena;
+        std::vector<RegionExpressions::Id> values;
+        if (byte) { values.push_back(*byte); }
+        llvm::append_range(values, parameters);
+        std::map<std::size_t, RegionExpressions::Id> guards;
+        for (const auto& piece : boundary.selector.pieces) {
+            auto residues = piece.inputResidues;
+            llvm::append_range(residues, piece.parameterResidues);
+            std::optional<Key> key;
+            if (byte) { key = Key{*boundary.storageSpace, boundary.storageBase}; }
+            std::string error;
+            auto present = predicate(arena, piece.domain, values, residues, key, error);
+            if (present == RegionExpressions::invalid) { return std::nullopt; }
+            auto [entry, inserted] = guards.emplace(piece.outputSite, present);
+            if (!inserted) { entry->second = arena.lor(entry->second, present); }
+        }
+        std::vector<RegionalSelector> result;
+        for (auto [site, present] : guards) {
+            result.push_back({{static_cast<uint32_t>(site), arena.constant(0), PeriodicEventKind::Start}, present});
+        }
+        return result;
+    }
+    RegionExpressions::Id membership(RegionalByteAddress address) const
+    {
+        auto& arena = *state->arena;
+        auto result = arena.boolean(false);
+        std::vector<RegionExpressions::Id> values{address.offset};
+        llvm::append_range(values, parameters);
+        for (const auto& piece : selectors.support) {
+            if (piece.space != address.space || piece.base != address.base) { continue; }
+            std::vector<uint64_t> residues{piece.byteResidue};
+            llvm::append_range(residues, piece.parameterResidues);
+            std::string error;
+            auto member = predicate(arena, piece.domain, values, residues, Key{piece.space, piece.base}, error);
+            if (member == RegionExpressions::invalid) { return member; }
+            result = arena.lor(result, member);
+        }
+        return result;
+    }
+};
+} // namespace
+FailureOr<RegionalAnalysis> expandedFiniteRegionalSelectors(const FiniteGuardedAnalysis& analysis,
+    const RegionalAnalysis& queries, std::string& error, std::shared_ptr<const SyncInput> inputOwner,
+    uint64_t* checkedPredicates)
+{
+    const auto program = analysis.expandedProgram;
+    const auto state = analysis.state;
+    const bool compatible = program && state && analysis.error.empty() && queries.capabilities.exactQueries &&
+        queries.expressions == state->arena && queries.accessModel == state->accessModel &&
+        queries.gmAliasPolicy == state->gmAliasPolicy && queries.anchors.size() == program->sites.size() &&
+        (!inputOwner || &inputOwner->accesses() == state->accessModel);
+    if (!compatible) { error = "finite storage exports require the original query/input context"; return failure(); }
+    if (!program->extraction.dischargedEffects.empty()) {
+        error = "finite storage exports for discharged effects not implemented yet"; return failure();
+    }
+    for (auto [id, site] : llvm::enumerate(program->sites)) {
+        const auto& anchor = queries.anchors[id];
+        const bool same = anchor.phase == site.phase && anchor.coordinates.size() == site.fixedCoordinates.size();
+        if (!same) { error = "finite storage exports require original occurrence identities"; return failure(); }
+        for (auto [coordinate, fixed] : llvm::zip(anchor.coordinates, site.fixedCoordinates)) {
+            if (coordinate.loop != fixed.loop || coordinate.induction != fixed.induction) {
+                error = "finite storage exports require original fixed coordinates"; return failure();
+            }
+        }
+        for (auto effectID : state->accessModel->effectsFor(site.phase)) {
+            const auto& effect = state->accessModel->effects()[effectID];
+            const bool described = effect.rangesMaterialized || !effect.regions.empty();
+            if (!described) {
+                error = "finite storage export is missing a modeled access description"; return failure();
+            }
+        }
+    }
+    auto storage = std::make_shared<ExpandedStorage>();
+    storage->program = state->expandedStorageProgram ? state->expandedStorageProgram : program;
+    storage->state = state; storage->input = std::move(inputOwner);
+    std::vector<uint32_t> pipes;
+    for (const auto& site : program->sites) { pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue)); }
+    storage->selectors = buildArithmeticStorageSelectors(*storage->program, pipes);
+    if (!storage->selectors.error.empty()) { error = storage->selectors.error; return failure(); }
+    for (const auto& boundary : storage->selectors.boundaries) {
+        for (const auto& piece : boundary.selector.pieces) {
+            const bool mapped = piece.outputSite < program->sites.size() && piece.outputs.empty();
+            if (!mapped) { error = "finite storage selector has unmapped occurrence coordinates"; return failure(); }
+        }
+    }
+    for (auto parameter : program->parameters) { storage->parameters.push_back(state->arena->input(parameter)); }
+    SmallVector<AffineExpr> identity, symbols;
+    auto function = program->context.function;
+    auto* context = function.getContext();
+    identity.push_back(getAffineDimExpr(0, context));
+    for (unsigned i = 0; i < program->parameters.size(); ++i) {
+        identity.push_back(getAffineDimExpr(i + 1, context));
+        symbols.push_back(identity.back());
+    }
+    for (const auto& support : storage->selectors.support) {
+        ExpandedStorage::Key key{support.space, support.base};
+        auto translation = state->expandedStorageTranslations.find(key);
+        if (translation == state->expandedStorageTranslations.end()) { continue; }
+        auto [entry, inserted] = storage->coordinateMaps.try_emplace(key, identity);
+        if (!inserted) { continue; }
+        auto shifted = mlir::pto::detail::substitute(translation->second, {}, symbols);
+        auto negative = mlir::pto::detail::checkedMul(shifted, getAffineConstantExpr(-1, context));
+        entry->second[0] = mlir::pto::detail::checkedAdd(identity[0], negative);
+        if (!entry->second[0]) {
+            error = "finite physical coordinate adapter is not representable safely"; return failure();
+        }
+    }
+    if (!storage->preflight(error, checkedPredicates)) { return failure(); }
+    auto out = queries;
+    auto certificate = std::make_shared<RegionalSymbolicStorageCertificate>();
+    certificate->expressions = state->arena; certificate->accessModel = state->accessModel;
+    certificate->gmAliasPolicy = state->gmAliasPolicy;
+    using Key = std::pair<AddressSpace, Value>;
+    llvm::MapVector<Key, std::vector<std::size_t>> families;
+    for (uint32_t site = 0; site < program->sites.size(); ++site) {
+        out.firstSitePayloads[site] = {};
+        RegionalSelector occurrence{{site, state->arena->constant(0), PeriodicEventKind::Start}, state->presence[site]};
+        for (auto id : state->accessModel->effectsFor(program->sites[site].phase)) {
+            const auto& effect = state->accessModel->effects()[id];
+            out.accessBoundary.push_back({id, occurrence, occurrence, false});
+            if (!llvm::is_contained(out.symbolicStorageEffects, id)) { out.symbolicStorageEffects.push_back(id); }
+            auto add = [&](Key key) {
+                auto& effects = families[key];
+                if (!llvm::is_contained(effects, id)) { effects.push_back(id); }
+            };
+            for (const auto& range : effect.ranges) { add({range.space, range.base}); }
+            for (const auto& region : effect.regions) { add({effect.memory->scope, region.base}); }
+        }
+    }
+    for (const auto& entry : families) {
+        const auto key = entry.first;
+        const auto& effects = entry.second;
+        RegionalStorageFamily family;
+        family.space = key.first; family.base = key.second; family.effects = effects;
+        family.membership = [storage, key](RegionalByteAddress address) -> std::optional<RegionExpressions::Id> {
+            auto& arena = *storage->state->arena;
+            const bool valid = address.offset < arena.size() && !arena.isBoolean(address.offset);
+            if (!valid) { return std::nullopt; }
+            if (address.space != key.first) { return arena.boolean(false); }
+            if (address.base != key.second) {
+                SmallVector<SyncStorageCell> domains{{key.first, 0, 1, key.second},
+                                                    {address.space, 0, 1, address.base}};
+                if (!storageBasesAreComparable(domains, storage->state->gmAliasPolicy)) { return std::nullopt; }
+                return arena.boolean(false);
+            }
+            auto present = storage->membership(address);
+            return present == RegionExpressions::invalid ? std::nullopt :
+                std::optional<RegionExpressions::Id>(present);
+        };
+        certificate->families.push_back(std::move(family));
+    }
+    out.symbolicStorage = certificate;
+    out.storageSelectors = [storage](RegionalByteAddress address) -> std::optional<RegionalStorageSelectors> {
+        auto& arena = *storage->state->arena;
+        const bool valid = address.offset < arena.size() && !arena.isBoolean(address.offset);
+        if (!valid) { return std::nullopt; }
+        RegionalStorageSelectors result;
+        for (const auto& boundary : storage->selectors.boundaries) {
+            if (boundary.storageSpace != address.space) { continue; }
+            if (boundary.storageBase != address.base) {
+                SmallVector<SyncStorageCell> domains{{address.space, 0, 1, boundary.storageBase},
+                                                    {address.space, 0, 1, address.base}};
+                if (!storageBasesAreComparable(domains, storage->state->gmAliasPolicy)) { return std::nullopt; }
+                continue;
+            }
+            auto selected = storage->select(boundary, address.offset);
+            if (!selected) { return std::nullopt; }
+            switch (boundary.kind) {
+            case ArithmeticBoundaryKind::FirstWriter: llvm::append_range(result.firstWriters, *selected); break;
+            case ArithmeticBoundaryKind::LastWriter: llvm::append_range(result.lastWriters, *selected); break;
+            case ArithmeticBoundaryKind::FirstReaderBeforeWrite:
+                llvm::append_range(result.firstReaders[*boundary.pipe], *selected); break;
+            case ArithmeticBoundaryKind::LastReaderAfterWrite:
+                llvm::append_range(result.lastReaders[*boundary.pipe], *selected); break;
+            default: break;
+            }
+        }
+        if (!arena.constructionError().empty()) { return std::nullopt; }
+        return result;
+    };
+    for (const auto& boundary : storage->selectors.boundaries) {
+        if (boundary.storageSpace) { continue; }
+        auto selected = storage->select(boundary);
+        if (!selected) { error = "finite native storage selector preparation failed"; return failure(); }
+        switch (boundary.kind) {
+        case ArithmeticBoundaryKind::FirstPayload:
+            llvm::append_range(out.firstPayloads[*boundary.pipe], *selected); break;
+        case ArithmeticBoundaryKind::LastPayload:
+            llvm::append_range(out.lastPayloads[*boundary.pipe], *selected); break;
+        case ArithmeticBoundaryKind::FirstSite:
+            llvm::append_range(out.firstSitePayloads[*boundary.site], *selected); break;
+        default: break;
+        }
+    }
+    if (!state->arena->constructionError().empty()) { error = state->arena->constructionError(); return failure(); }
+    out.capabilities.completeStorageModel = true;
+    out.capabilities.exactSelectors = true;
+    out.cost.expressionNodes = state->arena->size();
+    return out;
 }
 } // namespace mlir::pto::frontiersynch

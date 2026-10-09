@@ -23,7 +23,9 @@ struct BackendAttempt {
     bool varyingQueriesAttempted = false, varyingSelectorsAttempted = false;
     std::shared_ptr<VaryingRegionalExports> varyingExports;
     std::string varyingQueryError;
-    std::shared_ptr<const RegionalAnalysis> expandedQueries;
+    std::shared_ptr<const RegionalAnalysis> expandedQueries, expandedSelectors;
+    bool expandedSelectorsAttempted = false;
+    std::string expandedSelectorError;
     std::optional<bool> endpoints;
     // The first successful synchronization request owns its detached fragment
     // until PrepareLogical consumes it. Later preparations instantiate afresh.

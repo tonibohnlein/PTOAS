@@ -318,7 +318,7 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
   if (failed(session.initialize(policy))) { return failure(); }
   bool checked = false, bodyChecked = false, runChecked = false;
   std::shared_ptr<const MathematicalResult> retainedOwner;
-  std::shared_ptr<const RegionalAnalysis> retainedQueries;
+  std::shared_ptr<const RegionalAnalysis> retainedQueries, retainedStorage;
   for (auto [id, node] : llvm::enumerate(session.result()->nodes)) {
     if (id == 0) { continue; }
     auto first = session.analyzeFiniteExpansion({id});
@@ -361,9 +361,21 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
       stronger.needs.queries = true;
       stronger.needs.selectors = capability == 1;
       stronger.needs.synchronization = capability == 2;
+      const auto selectorsBefore = session.constructionCounts().expandedSelectorBuilds;
+      const auto checksBefore = session.constructionCounts().expandedSelectorChecks;
       auto outcome = session.analyzeFiniteExpansion(stronger);
+      const auto selectorsAfter = session.constructionCounts().expandedSelectorBuilds;
+      const auto checksAfter = session.constructionCounts().expandedSelectorChecks;
       auto retry = session.analyzeFiniteExpansion(stronger);
-      const auto expectedStatus = capability == 0 ? AnalysisStatus::Ready : AnalysisStatus::UnmetObligation;
+      const auto expectedSelectorCount = selectorsBefore + (capability == 1 ? 1 : 0);
+      if (selectorsAfter != expectedSelectorCount ||
+          session.constructionCounts().expandedSelectorBuilds != selectorsAfter ||
+          session.constructionCounts().expandedSelectorChecks != checksAfter ||
+          (capability != 1 && checksAfter != checksBefore)) {
+        return function.emitError("expanded selector request repeated construction or polluted weaker requests");
+      }
+      const auto expectedStatus = capability == 0 || (capability == 1 && outcome.available.selectors) ?
+          AnalysisStatus::Ready : AnalysisStatus::UnmetObligation;
       const bool retained = outcome.status == expectedStatus && outcome.mathematical == first.mathematical &&
           retry.mathematical == first.mathematical && outcome.available.queries &&
           outcome.regionalExports && outcome.regionalExports == retry.regionalExports &&
@@ -371,8 +383,18 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
       if (!retained) {
         return function.emitError("finite expansion export retry discarded or reconstructed demands or queries");
       }
-      if (queries && queries != outcome.regionalExports) { return failure(); }
-      queries = outcome.regionalExports;
+      if (capability != 1 && queries && queries != outcome.regionalExports) { return failure(); }
+      if (capability != 1) { queries = outcome.regionalExports; }
+      if (capability == 1 && outcome.available.selectors) {
+        const auto& selected = *outcome.regionalExports;
+        const bool complete = selected.capabilities.completeStorageModel && selected.capabilities.exactSelectors &&
+            selected.storageSelectors && selected.symbolicStorage && !selected.prepare &&
+            !selected.capabilities.endpointRecipes;
+        retainedStorage = outcome.regionalExports;
+        if (!complete) {
+          return function.emitError("expanded storage export has incomplete support or unexpected recipes");
+        }
+      }
       const bool queryOnly = !queries->capabilities.exactSelectors && !queries->capabilities.endpointRecipes &&
           !queries->capabilities.completeStorageModel && queries->storageBoundary.empty() && !queries->prepare;
       if (!queryOnly) {
@@ -430,8 +452,20 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
   if (failed(session.initialize(otherPolicy))) { return failure(); }
   auto foreign = expandedFiniteRegionalQueries(*retainedOwner->finiteGuardedDemands, session.sharedInput());
   if (foreign.capabilities.exactQueries) { return function.emitError("expanded query accepted a foreign input owner"); }
+  std::string foreignError;
+  auto foreignStorage = expandedFiniteRegionalSelectors(*retainedOwner->finiteGuardedDemands,
+      *retainedQueries, foreignError, session.sharedInput());
+  if (succeeded(foreignStorage)) { return function.emitError("expanded selectors accepted a foreign input owner"); }
+  if (!retainedStorage) { return function.emitError("finite expansion fixture produced no storage selectors"); }
+  RegionalByteAddress savedByte{pto::AddressSpace::LEFT, {}, retainedStorage->expressions->constant(512)};
+  auto savedSelectors = retainedStorage->storageSelectors(savedByte);
   retainedOwner.reset();
   session.invalidate();
+  auto survivingSelectors = retainedStorage->storageSelectors(savedByte);
+  const bool sameSelectors = savedSelectors && survivingSelectors &&
+      savedSelectors->firstWriters.size() == survivingSelectors->firstWriters.size() &&
+      savedSelectors->lastWriters.size() == survivingSelectors->lastWriters.size();
+  if (!sameSelectors) { return function.emitError("expanded storage owner did not survive session reset"); }
   const bool surviving = savedPresence && savedReachability && retainedQueries->presence(saved) == savedPresence &&
       retainedQueries->reachability(saved, saved) == savedReachability;
   if (!surviving) { return function.emitError("expanded query handle did not survive isolated session reset"); }
