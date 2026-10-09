@@ -21,6 +21,7 @@
 #include "SyncLogicalInsertionChecks.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/DLTI/DLTI.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Verifier.h"
@@ -41,6 +42,41 @@ int runGuardedPeriodicChecks(llvm::StringRef path);
 int runSyncAliasChecks(func::FuncOp function, const pto::SyncInput &input);
 LogicalResult auditSyncStep0(func::FuncOp function, const pto::SyncInput &input);
 namespace {
+LogicalResult checkRetainedDemands(func::FuncOp function, pto::GMAliasPolicy policy) {
+  using namespace pto::frontiersynch;
+  FrontierAnalysis session(function);
+  if (failed(session.initialize(policy))) { return failure(); }
+  auto first = session.minimumDemands();
+  if (first.status != AnalysisStatus::Ready || !first.mathematical || !session.hasWholeFunctionMinimumDemands()) {
+    return function.emitError("uniform exact demands unavailable");
+  }
+  const auto& counts = session.constructionCounts();
+  if (counts.logicalPreparations || counts.allocationExports) {
+    return function.emitError("mathematical request constructed logical or allocation exports");
+  }
+  for (const auto& node : session.result()->nodes) {
+    if (node.logicalEndpoints || node.periodicAllocation) {
+      return function.emitError("numerical analysis eagerly constructed exports");
+    }
+  }
+  AnalysisRequest logical;
+  logical.needs.synchronization = true;
+  auto unsupported = session.analyze(logical);
+  const auto work = counts.mathematicalAttempts;
+  auto retry = session.analyze(logical);
+  auto again = session.minimumDemands();
+  if (unsupported.status != AnalysisStatus::UnmetObligation || !unsupported.mathematical ||
+      unsupported.mathematical != first.mathematical || retry.mathematical != first.mathematical ||
+      again.mathematical != first.mathematical || counts.mathematicalAttempts != work) {
+    return function.emitError("endpoint failure lost exact demands or repeated mathematical construction");
+  }
+  logical.mode = AnalysisMode::Fallback;
+  auto fallback = session.analyze(logical);
+  if (fallback.status != AnalysisStatus::UnmetObligation || fallback.mathematical != first.mathematical) {
+    return function.emitError("fallback replaced the retained exact result");
+  }
+  return success();
+}
 LogicalResult checkAnalysisSession(func::FuncOp function, pto::GMAliasPolicy policy) {
   using namespace pto::frontiersynch;
   FrontierAnalysis session(function);
@@ -545,6 +581,7 @@ int main(int argc, char **argv) {
     }
     --argc;
   }
+  const bool retainedChecks = argc == 3 && StringRef(argv[1]) == "--retained-demand-checks";
   const bool sessionChecks = argc == 3 && StringRef(argv[1]) == "--analysis-session-checks";
   const bool phaseCopies = argc == 3 && StringRef(argv[1]) == "--phase-copy-checks";
   const bool regionChecks = argc == 3 && StringRef(argv[1]) == "--region-contract-checks";
@@ -592,7 +629,8 @@ int main(int argc, char **argv) {
   const bool sequenceAnalysis = argc == 3 && StringRef(argv[1]) == "--sequence-analysis";
   const bool structuredTrace = argc == 3 && StringRef(argv[1]) == "--structured-trace";
   const bool physicalTrace = argc == 3 && StringRef(argv[1]) == "--physical-trace";
-  if (argc != 2 && !sessionChecks && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !recognition &&
+  if (argc != 2 && !retainedChecks && !sessionChecks && !rotatingAnalysis && !explicitAnalysis &&
+      !arithmetic && !recognition &&
       !numericAnalysis && !insertLogical &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
       !mixedSymbolicChecks && !rotatingRegionChecks && !finiteVisitInput && !arithmeticPeriodicInput &&
@@ -608,7 +646,7 @@ int main(int argc, char **argv) {
     llvm::errs() << "usage: pto-sync-input-test "
                  << "[--gm-alias=may-alias|may-not-alias] "
                  << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
-                 "--analysis-session-checks|--recognize|--numeric-analysis|--insert-logical|"
+                 "--retained-demand-checks|--analysis-session-checks|--recognize|--numeric-analysis|--insert-logical|"
                  "--prepared-insertion-checks|--insertion-trace|"
                  "--finite-guarded-analysis|--finite-overlay-insertion|--region-expression-checks|--sequence-analysis|"
                  "--structured-trace|--physical-trace|--numerical-hierarchy-checks|--bounding-contract-checks|"
@@ -624,7 +662,8 @@ int main(int argc, char **argv) {
     return 1;
   }
   DialectRegistry dialects;
-  dialects.insert<pto::PTODialect, func::FuncDialect, arith::ArithDialect, scf::SCFDialect, LLVM::LLVMDialect>();
+  dialects.insert<pto::PTODialect, func::FuncDialect, arith::ArithDialect,
+                  scf::SCFDialect, LLVM::LLVMDialect, DLTIDialect>();
   MLIRContext context(dialects);
   if (argc == 2 && StringRef(argv[1]) == "--regional-relation-checks") {
     return runRegionalRelationChecks();
@@ -642,7 +681,7 @@ int main(int argc, char **argv) {
     return runRepeatedReadOnlyStorageChecks(&context) ? 0 : 1;
   }
   context.disableMultithreading();
-  const bool hasOption = sessionChecks || mixedSymbolicChecks || rotatingAnalysis ||
+  const bool hasOption = retainedChecks || sessionChecks || mixedSymbolicChecks || rotatingAnalysis ||
                          explicitAnalysis || expectFailure ||
                          capabilities || phaseIndex ||
                          storageEffects || recognition || numericAnalysis || insertLogical ||
@@ -661,6 +700,16 @@ int main(int argc, char **argv) {
   auto module = parseSourceFile<ModuleOp>(filename, &context);
   if (!module || failed(verify(*module))) {
     return 1;
+  }
+  if (retainedChecks) {
+    const auto before = render(module->getOperation());
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (failed(checkRetainedDemands(function, policy))) { return 1; }
+    }
+    const auto after = render(module->getOperation());
+    if (before != after) { return 1; }
+    llvm::outs() << "retained-demands: endpoint-failure cached-retry exact-fallback source-unchanged\n";
+    return 0;
   }
   if (sessionChecks) {
     auto before = render(module->getOperation());
@@ -820,7 +869,7 @@ int main(int argc, char **argv) {
         function.emitError("recognition unexpectedly executed a numeric backend");
         return 1;
       }
-      if (numericAnalysis && failed(analysis.analyzeNumericCandidates())) { return 1; }
+      if (numericAnalysis && failed(analysis.prepareNumericCandidateExports())) { return 1; }
       const auto& input = *analysis.input();
       const auto& program = *analysis.result();
       if (failed(verifyProgramStructure(function, input, program)) ||

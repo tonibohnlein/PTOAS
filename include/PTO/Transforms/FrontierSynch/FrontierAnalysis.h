@@ -27,6 +27,7 @@ struct ArithmeticPeriodicExports {
 };
 struct FiniteVisitAnalysis;
 struct BoundedLifetimeDemandResult;
+struct AnalysisSessionState;
 class FrontierAnalysis {
 public:
     explicit FrontierAnalysis(Operation* operation) : function(dyn_cast<func::FuncOp>(operation)) {}
@@ -49,6 +50,8 @@ public:
     // Demand reduction, endpoint recipes and allocation are backend work.
     // Cache both successful and failed numeric attempts without changing recognition.
     LogicalResult analyzeNumericCandidates();
+    LogicalResult prepareNumericCandidateExports();
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareRotatingFunction(bool guarded);
     bool hasOnlyNativeScalarRequirements() const { return nativeScalarOnly; }
     LogicalResult analyzeExplicitFunction();
     SequenceAnalysis* analyzeSequenceFunction();
@@ -85,23 +88,29 @@ public:
     const ProgramRecognition* result() const { return program ? &*program : nullptr; }
 private:
     LogicalResult recognizeStructure();
+    void recordWholeRegion(AnalysisBackend backend);
+    AnalysisOutcome requestBackend(AnalysisBackend backend, const AnalysisRequest& request);
+    std::shared_ptr<const MathematicalResult> produceBackend(AnalysisBackend backend, std::string& error);
+    std::shared_ptr<const MathematicalResult> produceLoopBackend(AnalysisBackend backend, std::string& error);
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareRetained(const MathematicalResult& demands);
+    std::shared_ptr<AnalysisSessionState> sessionState;
     func::FuncOp function;
     bool initialized = false;
     bool nativeScalarOnly = false;
     GMAliasPolicy policy = GMAliasPolicy::MayNotAlias;
     std::shared_ptr<SyncInput> storage;
-    std::optional<ProgramRecognition> program;
+    std::shared_ptr<ProgramRecognition> program;
     std::shared_ptr<PhaseIndex> structuralIndex;
     std::shared_ptr<ExplicitAnalysis> explicitAnalysis;
     std::shared_ptr<const MathematicalResult> explicitMathematical;
     AnalysisConstructionCounts construction;
     std::optional<bool> explicitEndpointOutcome;
     std::shared_ptr<BoundedLifetimeDemandResult> boundedAnalysis;
-    std::optional<SequenceAnalysis> sequenceAnalysis;
-    std::optional<ArithmeticDemandAnalysis> arithmeticAnalysis;
-    std::optional<GeneralArithmeticDemandAnalysis> generalArithmeticAnalysis;
+    std::shared_ptr<SequenceAnalysis> sequenceAnalysis;
+    std::shared_ptr<ArithmeticDemandAnalysis> arithmeticAnalysis;
+    std::shared_ptr<GeneralArithmeticDemandAnalysis> generalArithmeticAnalysis;
     std::optional<GeneralArithmeticGeneratorStage> arithmeticGeneratorStage;
-    std::optional<ArithmeticPeriodicProgram> arithmeticPeriodicAnalysis;
+    std::shared_ptr<ArithmeticPeriodicProgram> arithmeticPeriodicAnalysis;
     ArithmeticPeriodicExports periodicExports;
     std::map<std::size_t, std::shared_ptr<const FiniteVisitAnalysis>> finiteVisitAnalyses;
 };

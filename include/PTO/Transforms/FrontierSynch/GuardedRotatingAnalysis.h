@@ -49,5 +49,10 @@ struct GuardedRotatingAnalysis {
 GuardedRotatingAnalysis analyzeGuardedRotating(scf::ForOp loop, const SyncInput& input,
     const GuardedRecognition& recognition, std::shared_ptr<RegionExpressions> expressions = {},
     const DenseMap<Value, RegionExpressions::Id>& guardBindings = DenseMap<Value, RegionExpressions::Id>());
+// Session adapter: reuse the unchanged invocation's prerequisite index.
+GuardedRotatingAnalysis analyzeGuardedRotating(scf::ForOp loop, const SyncInput& input,
+    const GuardedRecognition& recognition, const PhaseIndex& index,
+    std::shared_ptr<RegionExpressions> expressions = {},
+    const DenseMap<Value, RegionExpressions::Id>& guardBindings = DenseMap<Value, RegionExpressions::Id>());
 } // namespace mlir::pto::frontiersynch
 #endif

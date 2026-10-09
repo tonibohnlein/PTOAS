@@ -373,7 +373,7 @@ LogicalResult runLogicalInsertionChecks(func::FuncOp function, pto::GMAliasPolic
     if (failed(analysis.initialize(policy))) {
         return failure();
     }
-    if (failed(analysis.analyzeNumericCandidates())) {
+    if (failed(analysis.prepareNumericCandidateExports())) {
         return failure();
     }
     const auto* program = analysis.result();

@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Per-function recognition and detached demand production. The public pass
 // coordinates module closure before committing logical synchronization.
-#include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
+#include "AnalysisSessionInternal.h"
 #include "PTO/Transforms/FrontierSynch/ExecutionContexts.h"
 #include "PTO/Transforms/FrontierSynch/ClosedCallees.h"
 #include "PTO/Transforms/Passes.h"
@@ -91,7 +91,7 @@ LogicalResult FrontierAnalysis::recognizeStructure() {
     if (!storage) { return failure(); }
     auto recognized = recognizeProgram(function, *storage, *structuralIndex);
     if (failed(recognized)) { return failure(); }
-    program = std::move(*recognized);
+    program = std::make_shared<ProgramRecognition>(std::move(*recognized));
     return success();
 }
 LogicalResult FrontierAnalysis::analyzeNumericCandidates() {
@@ -105,9 +105,26 @@ LogicalResult FrontierAnalysis::analyzeNumericCandidates() {
         if (!node.numericTemplate || node.periodicAnalysis ||
             node.numericTemplate->result.state != RecognitionState::Applicable) { continue; }
         node.periodicAnalysis = analyzeNumericTemplate(*node.numericTemplate);
-        if (!node.periodicAnalysis->error.empty()) { continue; }
-        node.logicalEndpoints = buildNumericTemplateEndpoints(*node.numericTemplate, *node.periodicAnalysis);
-        if (!node.logicalEndpoints->logical.error.empty()) { continue; }
+        const auto& numeric = *node.numericTemplate;
+        const bool whole = !node.unsupportedContext && !numeric.specializedBody && numeric.outer &&
+            numeric.outer->getParentOp() == function.operator->() &&
+            llvm::all_of(program->payloads, [&](const auto& payload) {
+                return numeric.outer->isProperAncestor(payload.phase->elementOp);
+            });
+        if (whole && node.periodicAnalysis->error.empty()) { recordWholeRegion(AnalysisBackend::NumericalPeriodic); }
+    }
+    refreshProgramContractAudit(*program);
+    return success();
+}
+LogicalResult FrontierAnalysis::prepareNumericCandidateExports() {
+    if (failed(analyzeNumericCandidates())) { return failure(); }
+    for (auto& node : program->nodes) {
+        if (!node.numericTemplate || !node.periodicAnalysis || !node.periodicAnalysis->error.empty()) { continue; }
+        if (!node.logicalEndpoints) {
+            node.logicalEndpoints = buildNumericTemplateEndpoints(*node.numericTemplate, *node.periodicAnalysis);
+        }
+        const bool endpointsAvailable = node.logicalEndpoints->logical.error.empty();
+        if (!endpointsAvailable || node.periodicAllocation) { continue; }
         node.periodicAllocation = buildPeriodicAllocation(*node.periodicAnalysis);
     }
     refreshProgramContractAudit(*program);
@@ -122,14 +139,19 @@ LogicalResult FrontierAnalysis::analyzeExplicitFunction() {
         explicitAnalysis = std::make_shared<ExplicitAnalysis>(
             analyzeExplicit(function.front(), *structuralIndex, *storage));
     }
+    if (explicitAnalysis->error.empty()) { recordWholeRegion(AnalysisBackend::Explicit); }
     return success(explicitAnalysis->error.empty());
 }
 SequenceAnalysis* FrontierAnalysis::analyzeSequenceFunction() {
     if (failed(recognizeStructure())) { return nullptr; }
     if (!sequenceAnalysis) {
-        sequenceAnalysis = analyzeSequenceRegion(function, *storage, *program, 0,
-            std::make_shared<RegionExpressions>(), structuralIndex);
+        sequenceAnalysis = std::make_shared<SequenceAnalysis>(analyzeSequenceRegion(
+            function, *storage, *program, 0, std::make_shared<RegionExpressions>(), structuralIndex, false));
         recordSequenceContractAttempt(*program, *storage, *sequenceAnalysis);
+        if (program->sequenceContract && program->sequenceContract->membership == ContractStatus::Established &&
+            program->sequenceContract->demands == ContractImplementation::Available) {
+            recordWholeRegion(AnalysisBackend::Sequence);
+        }
         refreshProgramContractAudit(*program);
     }
     if (!sequenceAnalysis->error.empty()) { (void)analyzeFiniteVisitCandidates(); }
@@ -159,7 +181,9 @@ LogicalResult FrontierAnalysis::analyzeFiniteVisitCandidates()
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareBoundedLifetimeFunction(std::string& error)
 {
     if (failed(recognizeStructure())) { return failure(); }
-    return prepareBoundedLifetimeInsertion(function, *storage, *program, error, &boundedAnalysis);
+    auto prepared = prepareBoundedLifetimeInsertion(function, *storage, *program, error, &boundedAnalysis);
+    if (boundedAnalysis) { recordWholeRegion(AnalysisBackend::BoundedLifetime); }
+    return prepared;
 }
 LogicalResult FrontierAnalysis::analyzeArithmeticPeriodicFunction()
 {
@@ -167,7 +191,7 @@ LogicalResult FrontierAnalysis::analyzeArithmeticPeriodicFunction()
     if (!arithmeticPeriodicAnalysis) {
         std::string diagnostic;
         if (!checkArithmeticPeriodicSkeleton(*program->arithmetic, diagnostic)) {
-            arithmeticPeriodicAnalysis.emplace();
+            arithmeticPeriodicAnalysis = std::make_shared<ArithmeticPeriodicProgram>();
             arithmeticPeriodicAnalysis->conversion.status = ArithmeticPeriodicStatus::AdapterUnavailable;
             arithmeticPeriodicAnalysis->conversion.diagnostic = std::move(diagnostic);
             return failure();
@@ -176,11 +200,14 @@ LogicalResult FrontierAnalysis::analyzeArithmeticPeriodicFunction()
             const auto protection = structuredProtection(storage->accesses());
             arithmeticGeneratorStage.emplace(analyzeGeneralArithmeticGenerators(*program->arithmetic, &protection));
         }
-        arithmeticPeriodicAnalysis = convertArithmeticPeriodicProgram(*program->arithmetic, *arithmeticGeneratorStage);
+        arithmeticPeriodicAnalysis = std::make_shared<ArithmeticPeriodicProgram>(
+            convertArithmeticPeriodicProgram(*program->arithmetic, *arithmeticGeneratorStage));
     }
     const auto& conversion = arithmeticPeriodicAnalysis->conversion;
-    return success(conversion.status == ArithmeticPeriodicStatus::Applicable && conversion.guarded &&
-                   conversion.guarded->error.empty());
+    const bool exact = conversion.status == ArithmeticPeriodicStatus::Applicable && conversion.guarded &&
+                       conversion.guarded->error.empty();
+    if (exact) { recordWholeRegion(AnalysisBackend::ArithmeticPeriodic); }
+    return success(exact);
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareArithmeticPeriodicFunction()
 {
@@ -213,56 +240,40 @@ LogicalResult FrontierAnalysis::analyzeArithmeticFunction()
         arithmeticGeneratorStage.reset();
         if (!arithmeticAnalysis) {
             const auto protection = structuredProtection(storage->accesses());
-            arithmeticAnalysis = analyzeArithmeticDemandsWithProtection(arithmetic, protection);
+            arithmeticAnalysis = std::make_shared<ArithmeticDemandAnalysis>(
+                analyzeArithmeticDemandsWithProtection(arithmetic, protection));
         }
-        return success(arithmeticAnalysis->error.empty() && arithmeticAnalysis->exactMinimum);
+        const bool exact = arithmeticAnalysis->error.empty() && arithmeticAnalysis->exactMinimum;
+        if (exact) { recordWholeRegion(AnalysisBackend::Arithmetic); }
+        return success(exact);
     }
     if (arithmeticGeneratorStage) {
         if (!generalArithmeticAnalysis) {
-            generalArithmeticAnalysis = completeGeneralArithmeticDemands(std::move(*arithmeticGeneratorStage));
+            generalArithmeticAnalysis = std::make_shared<GeneralArithmeticDemandAnalysis>(
+                completeGeneralArithmeticDemands(std::move(*arithmeticGeneratorStage)));
         }
         arithmeticGeneratorStage.reset();
-        return success(generalArithmeticAnalysis->error.empty() && generalArithmeticAnalysis->exactMinimum);
+        const bool exact = generalArithmeticAnalysis->error.empty() && generalArithmeticAnalysis->exactMinimum;
+        if (exact) { recordWholeRegion(AnalysisBackend::Arithmetic); }
+        return success(exact);
     }
     if (generalArithmeticAnalysis) {
-        return success(generalArithmeticAnalysis->error.empty() && generalArithmeticAnalysis->exactMinimum);
+        const bool exact = generalArithmeticAnalysis->error.empty() && generalArithmeticAnalysis->exactMinimum;
+        if (exact) { recordWholeRegion(AnalysisBackend::Arithmetic); }
+        return success(exact);
     }
     const auto protection = structuredProtection(storage->accesses());
     if (!generalArithmeticAnalysis) {
-        generalArithmeticAnalysis = analyzeGeneralArithmeticDemandsWithProtection(arithmetic, protection);
+        generalArithmeticAnalysis = std::make_shared<GeneralArithmeticDemandAnalysis>(
+            analyzeGeneralArithmeticDemandsWithProtection(arithmetic, protection));
     }
-    return success(generalArithmeticAnalysis->error.empty() && generalArithmeticAnalysis->exactMinimum);
+    const bool exact = generalArithmeticAnalysis->error.empty() && generalArithmeticAnalysis->exactMinimum;
+    if (exact) { recordWholeRegion(AnalysisBackend::Arithmetic); }
+    return success(exact);
 }
 bool FrontierAnalysis::hasWholeFunctionMinimumDemands() const
 {
-    if (boundedAnalysis) { return true; }
-    if (explicitAnalysis && explicitAnalysis->error.empty()) { return true; }
-    if (arithmeticPeriodicAnalysis) {
-        const auto& converted = arithmeticPeriodicAnalysis->conversion;
-        if (converted.status == ArithmeticPeriodicStatus::Applicable &&
-            ((converted.guarded && converted.guarded->error.empty()) ||
-             (converted.numerical && converted.numerical->error.empty()))) { return true; }
-    }
-    if ((arithmeticAnalysis && arithmeticAnalysis->error.empty() && arithmeticAnalysis->exactMinimum) ||
-        (generalArithmeticAnalysis && generalArithmeticAnalysis->error.empty() &&
-         generalArithmeticAnalysis->exactMinimum)) { return true; }
-    if (!program) { return false; }
-    // This snapshot is recorded before preparation and verifies original input,
-    // root coverage and prerequisites. Preparation may set the state's error.
-    if (program->sequenceContract && program->sequenceContract->membership == ContractStatus::Established &&
-        program->sequenceContract->demands == ContractImplementation::Available) { return true; }
-    for (const auto& node : program->nodes) {
-        if (node.unsupportedContext || !node.numericTemplate || !node.periodicAnalysis ||
-            !node.periodicAnalysis->error.empty()) { continue; }
-        const auto& numeric = *node.numericTemplate;
-        if (numeric.result.state != RecognitionState::Applicable || numeric.specializedBody ||
-            !numeric.outer || numeric.outer->getParentOp() != function.operator->()) { continue; }
-        const bool complete = llvm::all_of(program->payloads, [&](const auto& payload) {
-            return numeric.outer->isProperAncestor(payload.phase->elementOp);
-        });
-        if (complete) { return true; }
-    }
-    return false;
+    return sessionState && !sessionState->wholeRegionEvidence.empty();
 }
 void FrontierAnalysis::noteSequenceEndpointOutcome(StringRef error) {
     if (!program) { return; }
@@ -428,14 +439,14 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
         // Preserve the existing certified numerical route (including its
         // allocation export) when available. Direct rotating extraction
         // covers symbolic rotations which have no fixed local effect word.
-        if (succeeded(analysis.analyzeNumericCandidates())) {
+        if (succeeded(analysis.prepareNumericCandidateExports())) {
             const bool numerical = llvm::any_of(analysis.result()->nodes, [](const auto& node) {
                 return node.numericTemplate &&
                     node.numericTemplate->result.state == frontiersynch::RecognitionState::Applicable &&
                     node.logicalEndpoints && node.logicalEndpoints->logical.error.empty();
             });
             if (!numerical) {
-                prepared = frontiersynch::prepareRotatingInsertion(function, *analysis.input(), *analysis.result());
+                prepared = analysis.prepareRotatingFunction(false);
                 if (succeeded(prepared)) { logicalBackend = "rotating"; }
             }
             if (failed(prepared) && numerical) {
@@ -450,8 +461,7 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
                 if (failed(prepared) && !mixedError.empty()) { routeError += "; " + mixedError; }
             }
             if (failed(prepared)) {
-                prepared = frontiersynch::prepareGuardedRotatingInsertion(
-                    function, *analysis.input(), *analysis.result());
+                prepared = analysis.prepareRotatingFunction(true);
                 if (succeeded(prepared)) { logicalBackend = "guarded-rotating"; }
             }
             if (failed(prepared)) {
