@@ -152,7 +152,8 @@ RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analys
 {
     RegionalAnalysis out;
     auto state = analysis.state;
-    if (!state || !analysis.error.empty()) { return out; }
+    const bool unavailable = !state || !analysis.error.empty() || analysis.expandedProgram;
+    if (unavailable) { return out; }
     out.expressions = state->arena;
     out.anchors = state->anchors;
     out.occurrenceLoops.resize(out.anchors.size());
@@ -192,7 +193,11 @@ RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analys
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedLogicalInsertion(FiniteGuardedAnalysis& analysis)
 {
-    if (!analysis.error.empty() || !analysis.state) { return failure(); }
+    const bool unavailable = !analysis.error.empty() || !analysis.state || analysis.expandedProgram;
+    if (unavailable) {
+        analysis.insertionError = "expanded original-coordinate endpoint adapter not implemented yet";
+        return failure();
+    }
     auto result = analysis.state->prepare();
     analysis.insertionError = analysis.state->insertionError;
     return result;

@@ -23,6 +23,7 @@ struct FiniteGuardedState {
     GuardedRanks rankIndex;
     std::vector<GuardedDemand> retained;
     std::vector<StorageGenerator> residual;
+    std::vector<GuardedDemand> guardedResidual, guardedNative;
     std::vector<StorageGenerator> nativePrerequisites;
     std::vector<RegionalStorageBoundary> storageBoundary;
     std::map<uint32_t, std::vector<RegionalSelector>> firstPayloads, lastPayloads;
