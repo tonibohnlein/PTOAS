@@ -186,6 +186,7 @@ DictionaryAttr allocateRetained(const MathematicalResult& demands, const Program
     }
     if (demands.arithmeticPeriodicDemands) {
         const auto& conversion = demands.arithmeticPeriodicDemands->conversion;
+        if (!conversion.guarded) { return {}; }
         return guardedPeriodicAllocationCertificate(*conversion.expressions, conversion.payloads,
             conversion.generators, *conversion.guarded, plan, context);
     }
