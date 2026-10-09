@@ -79,6 +79,7 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
         if (!attempt.endpoints) {
             auto prepared = prepareLogical(result);
             attempt.endpoints = succeeded(prepared);
+            if (succeeded(prepared)) { attempt.pendingLogical = std::move(*prepared); }
         }
         result.available.synchronization = *attempt.endpoints;
         if (!*attempt.endpoints) { result.stage = AnalysisStage::Synchronization; }
@@ -141,10 +142,12 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical(const AnalysisOutcome& result)
 {
     if (!result.mathematical || !sessionState || result.mathematical->input != storage) { return failure(); }
-    const bool retained = llvm::any_of(sessionState->attempts[result.mathematical->region], [&](const auto& attempt) {
+    auto& attempts = sessionState->attempts[result.mathematical->region];
+    auto retained = llvm::find_if(attempts, [&](const auto& attempt) {
         return attempt.second.mathematical == result.mathematical;
     });
-    if (!retained) { return failure(); }
+    if (retained == attempts.end()) { return failure(); }
+    if (retained->second.pendingLogical) { return std::move(retained->second.pendingLogical); }
     if (construction.logicalPreparations != UINT64_MAX) { ++construction.logicalPreparations; }
     auto prepared = prepareRetained(*result.mathematical);
     if (succeeded(prepared)) { (*prepared)->mathematicalOwner = result.mathematical; }
