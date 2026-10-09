@@ -345,3 +345,32 @@ in certification runs. The slowest corpus invocation takes 13.9 seconds.
 Compiler-generated dependency records now cover all 248 units for subsequent
 header-aware rebuilds; command flags, hashes and detailed results remain in the
 tractable-certification artifact directory.
+
+## Independent repeating-boundary exports
+
+The next milestone separates repeating-boundary event queries from physical
+storage selectors. `AnalysisOutcome.regionalExports` carries an immutable
+capability snapshot independently of the mathematical demand owner. Original
+root, regional and sequence requests share the canonical loop provider and its
+once-only query and selector attempts. A query-only request builds the port
+transfer index but no storage selectors, detached commands or allocation.
+Selector extension publishes a new snapshot including both native entry and
+exit payloads; previously returned query snapshots remain unchanged.
+
+Selector failures retain the query snapshot and original exact demands.
+Foreign modeled-input or alias contexts are rejected before caching an export
+attempt. Session providers retain their shared input and mathematical certificate
+across session reset. Legacy standalone adapters retain their existing borrowed
+input lifetime contract and now use the same split exporter. Synchronization
+requests instantiate detached fragments from cached factories, while allocation
+remains deferred. The three pinned paper hashes are unchanged.
+
+Validation for the split exporter passes all 32 focused checks, the independent
+20-execution varying command/allocation/query oracle and 22 serial pinned corpus
+runs. Every case preserves its prior exact coverage: 227/240 under MayNotAlias,
+212/240 under MayAlias, with no timeout or original IR mutation. The slowest run
+is 14.5 seconds. The session probe additionally retains two independently
+prepared detached plans, destroys one, and checks the other's surviving code,
+unchanged original IR and once-only mathematical/query/selector construction.
+Both the original-context retry after foreign-input rejection and old export
+ownership across session reset are covered under both alias policies.

@@ -10,6 +10,7 @@
 #include "PTO/Transforms/Passes.h"
 #include "mlir/Pass/PassManager.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
+#include "PTO/Transforms/FrontierSynch/VaryingRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
@@ -70,25 +71,92 @@ LogicalResult checkVaryingBoundarySession(func::FuncOp function, pto::GMAliasPol
   const auto owner = child.mathematical;
   const bool exact = child.status == AnalysisStatus::Ready && owner && owner->varyingBoundaryDemands &&
       owner->varyingNode == id && !session.hasWholeFunctionMinimumDemands() &&
-      session.constructionCounts().logicalPreparations == 0 && session.constructionCounts().allocationExports == 0;
+      session.constructionCounts().logicalPreparations == 0 && session.constructionCounts().allocationExports == 0 &&
+      session.constructionCounts().varyingQueryBuilds == 0 && session.constructionCounts().varyingSelectorBuilds == 0;
   if (!exact) { return function.emitError("repeating-boundary child did not retain exact demands"); }
   const auto& certificate = *owner->varyingBoundaryDemands;
   const bool complete = certificate.error.empty() && certificate.child.quotient.error.empty() &&
       certificate.startupCrossings.size() == certificate.startup &&
       certificate.suffixCrossings.size() == certificate.period && !certificate.child.fragments.empty();
   if (!complete) { return function.emitError("repeating-boundary child/crossing certificate incomplete"); }
+  std::string originalIR;
+  llvm::raw_string_ostream originalStream(originalIR);
+  function.print(originalStream);
+  AnalysisRequest queryRequest;
+  queryRequest.region = id;
+  queryRequest.needs.queries = true;
+  auto queries = session.analyzeVaryingBoundary(queryRequest);
+  const bool queryOnly = queries.status == AnalysisStatus::Ready && queries.mathematical == owner &&
+      queries.regionalExports && queries.available.queries && !queries.available.selectors &&
+      queries.regionalExports->storageBoundary.empty() && queries.regionalExports->lastPayloads.empty() &&
+      session.constructionCounts().varyingQueryBuilds == 1 && session.constructionCounts().varyingSelectorBuilds == 0;
+  if (!queryOnly) { return function.emitError("repeating-boundary query request built selectors or lost demands"); }
+  std::shared_ptr<const RegionalAnalysis> selectors;
   for (unsigned capability = 0; capability < 6; ++capability) {
     AnalysisRequest request;
     request.region = id;
     request.needs.queries = capability % 3 == 0;
     request.needs.selectors = capability % 3 == 1;
     request.needs.synchronization = capability % 3 == 2;
-    auto unavailable = session.analyzeVaryingBoundary(request);
-    const bool retained = unavailable.mathematical == owner &&
-        unavailable.status == AnalysisStatus::UnmetObligation &&
-        session.constructionCounts().varyingBoundaryReductions == 1;
+    auto exported = session.analyzeVaryingBoundary(request);
+    const bool retained = exported.mathematical == owner && exported.status == AnalysisStatus::Ready &&
+        session.constructionCounts().varyingBoundaryReductions == 1 &&
+        session.constructionCounts().varyingQueryBuilds == 1;
     if (!retained) { return function.emitError("repeating-boundary export discarded or recomputed demands"); }
+    if (request.needs.queries && exported.regionalExports != queries.regionalExports) { return failure(); }
+    if (request.needs.selectors) {
+      if (selectors && selectors != exported.regionalExports) { return failure(); }
+      selectors = exported.regionalExports;
+      const bool completeSelectors = selectors && !selectors->lastPayloads.empty() &&
+          !selectors->storageBoundary.empty();
+      if (!completeSelectors) {
+        return function.emitError("repeating-boundary selectors omitted native or storage boundary");
+      }
+    }
   }
+  if (session.constructionCounts().varyingSelectorBuilds != 1 ||
+      !queries.regionalExports->storageBoundary.empty() || !queries.regionalExports->lastPayloads.empty()) {
+    return function.emitError("selector extension changed an immutable query result");
+  }
+  AnalysisRequest logicalRequest;
+  logicalRequest.region = id;
+  logicalRequest.needs.synchronization = true;
+  auto logical = session.analyzeVaryingBoundary(logicalRequest);
+  auto firstPlan = session.prepareLogical(logical);
+  auto secondPlan = session.prepareLogical(logical);
+  const bool distinctPlans = succeeded(firstPlan) && succeeded(secondPlan) &&
+      firstPlan->get() != secondPlan->get() && !(*firstPlan)->preparation.empty() &&
+      !(*secondPlan)->preparation.empty();
+  if (!distinctPlans) { return function.emitError("varying preparation did not instantiate fresh detached plans"); }
+  llvm::DenseSet<Operation*> firstOperations;
+  for (const auto& preparation : (*firstPlan)->preparation) {
+    if (preparation.code->getParent()) { return failure(); }
+    preparation.code->walk([&](Operation* operation) { firstOperations.insert(operation); });
+  }
+  for (const auto& preparation : (*secondPlan)->preparation) {
+    if (preparation.code->getParent()) { return failure(); }
+    bool sharedOperation = false;
+    preparation.code->walk([&](Operation* operation) { sharedOperation |= firstOperations.contains(operation); });
+    if (sharedOperation) { return function.emitError("varying plans share detached operations"); }
+  }
+  auto printPlan = [](const PreparedLogicalPlan& plan) {
+    std::string text;
+    llvm::raw_string_ostream stream(text);
+    for (const auto& preparation : plan.preparation) {
+      for (auto& operation : *preparation.code) { operation.print(stream); }
+    }
+    return text;
+  };
+  const auto secondText = printPlan(**secondPlan);
+  firstPlan->reset();
+  std::string unchangedIR;
+  llvm::raw_string_ostream unchangedStream(unchangedIR);
+  function.print(unchangedStream);
+  const bool freshOwnership = printPlan(**secondPlan) == secondText && unchangedIR == originalIR &&
+      session.constructionCounts().varyingBoundaryReductions == 1 &&
+      session.constructionCounts().varyingQueryBuilds == 1 && session.constructionCounts().varyingSelectorBuilds == 1 &&
+      session.constructionCounts().allocationExports == 0;
+  if (!freshOwnership) { return function.emitError("varying plan lifetime changed IR or repeated mathematical work"); }
   auto root = session.analyzeVaryingBoundary({});
   const bool childOnly = function->hasAttr("test.varying_boundary_child");
   if (childOnly) {
@@ -103,6 +171,14 @@ LogicalResult checkVaryingBoundarySession(func::FuncOp function, pto::GMAliasPol
       session.constructionCounts().varyingBoundaryReductions == 1 &&
       session.constructionCounts().allocationExports == 0;
   if (!unchanged) { return failure(); }
+  std::string exportError;
+  auto privateArena = std::make_shared<RegionExpressions>();
+  PhaseIndex exportIndex;
+  if (failed(exportIndex.build(function, *session.input()))) { return failure(); }
+  auto provider = buildVaryingQueries(function, *node->varyingRotating, exportIndex, *session.input(),
+      privateArena, owner->varyingBoundaryDemands, exportError, owner->input);
+  if (!provider) { return function.emitError(exportError); }
+  const auto oldQuery = varyingQueryResult(*provider);
   const auto otherPolicy = policy == pto::GMAliasPolicy::MayAlias ?
       pto::GMAliasPolicy::MayNotAlias : pto::GMAliasPolicy::MayAlias;
   if (failed(session.initialize(otherPolicy))) { return failure(); }
@@ -111,6 +187,17 @@ LogicalResult checkVaryingBoundarySession(func::FuncOp function, pto::GMAliasPol
       isolated.mathematical->varyingBoundaryDemands != owner->varyingBoundaryDemands &&
       certificate.error.empty() && certificate.child.quotient.error.empty();
   if (!independent) { return function.emitError("repeating-boundary owner did not survive isolated context reset"); }
+  auto foreign = varyingSelectedResult(*provider, *session.input(), exportError);
+  const bool contextRejected = !foreign && !exportError.empty() && varyingQueryResult(*provider) == oldQuery;
+  if (!contextRejected) {
+    return function.emitError("varying selectors accepted or poisoned a foreign modeled input");
+  }
+  auto originalSelectors = varyingSelectedResult(*provider, *owner->input, exportError);
+  const bool recovered = originalSelectors && exportError.empty() && !originalSelectors->lastPayloads.empty() &&
+      oldQuery->lastPayloads.empty();
+  if (!recovered) {
+    return function.emitError("foreign context rejection poisoned original selector export");
+  }
   llvm::outs() << "repeating-boundary-session: owned-child-startup-seam-suffix cached-exports original-scope\n";
   return success();
 }

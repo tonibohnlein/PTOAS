@@ -108,6 +108,8 @@ private:
     const ArithmeticProgram* recognizeArithmeticRegion(std::size_t region);
     std::vector<AnalysisBackend> arithmeticMethods(const AnalysisRequest& request);
     SequenceRegionResolver regionalResolver();
+    std::shared_ptr<const RegionalAnalysis> varyingExports(
+        const MathematicalResult& demands, bool selectors, std::string& error);
     void recordWholeRegion(AnalysisBackend backend);
     AnalysisOutcome requestBackend(AnalysisBackend backend, const AnalysisRequest& request);
     std::shared_ptr<const MathematicalResult> produceBackend(AnalysisBackend backend, std::string& error);
