@@ -219,9 +219,15 @@ FiniteVisitRecognition recognizeFiniteVisitLoop(func::FuncOp function, const Syn
 FiniteVisitAnalysis analyzeFiniteVisitLoop(func::FuncOp function, const SyncInput& input,
     const ProgramRecognition& program, std::size_t node)
 {
+    return analyzeFiniteVisitLoop(function, input, program, node, {});
+}
+FiniteVisitAnalysis analyzeFiniteVisitLoop(func::FuncOp function, const SyncInput& input,
+    const ProgramRecognition& program, std::size_t node, std::shared_ptr<PhaseIndex> index)
+{
     FiniteVisitAnalysis out;
-    auto index = std::make_shared<PhaseIndex>();
-    if (failed(index->build(function, input))) {
+    const bool needsIndex = !index;
+    if (needsIndex) { index = std::make_shared<PhaseIndex>(); }
+    if (needsIndex && failed(index->build(function, input))) {
         out.recognition.error = "finite visit phase bindings are unavailable";
         out.recognition.contract.kind = ContractClass::FiniteVisitTypes;
         out.recognition.contract.node = node;

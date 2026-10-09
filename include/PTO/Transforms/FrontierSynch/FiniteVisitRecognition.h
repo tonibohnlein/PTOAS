@@ -46,5 +46,7 @@ FiniteVisitRecognition recognizeFiniteVisitLoop(func::FuncOp function, const Syn
 // unchanged and outlive the result, as for the underlying regional analyses.
 FiniteVisitAnalysis analyzeFiniteVisitLoop(func::FuncOp function, const SyncInput& input,
     const ProgramRecognition& program, std::size_t node);
+FiniteVisitAnalysis analyzeFiniteVisitLoop(func::FuncOp function, const SyncInput& input,
+    const ProgramRecognition& program, std::size_t node, std::shared_ptr<PhaseIndex> index);
 } // namespace mlir::pto::frontiersynch
 #endif

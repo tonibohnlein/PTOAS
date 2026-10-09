@@ -38,6 +38,9 @@ public:
     // owned mathematical result; stateful evaluation is a separate capability.
     AnalysisOutcome minimumDemands(std::size_t region = 0, AnalysisNeeds exports = {});
     AnalysisOutcome analyze(const AnalysisRequest& request);
+    // Explicit finite-visit adapter for callers selecting this representation.
+    // Missing arbitrary-word interfaces retain the exact demand templates.
+    AnalysisOutcome analyzeFiniteVisit(const AnalysisRequest& request);
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareLogical(const AnalysisOutcome& result);
     LogicalResult attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan);
     const AnalysisConstructionCounts& constructionCounts() const { return construction; }
