@@ -151,6 +151,25 @@ bool symbolicBounds()
     }
     return true;
 }
+bool numericalWithoutGuardedExport()
+{
+    fs::ArithmeticPeriodicInput input;
+    input.expressions = std::make_shared<fs::RegionExpressions>();
+    input.payloads = {{0, input.expressions->boolean(true)}, {1, input.expressions->boolean(true)}};
+    constexpr uint64_t distance = uint64_t(1) << 62;
+    input.pieces.push_back({0, 1, relation(2, {{{B(1), B(-1)}, -B(int64_t(distance))}}),
+                           {}, {}, {}, false, 0});
+    auto result = fs::convertArithmeticPeriodicIntervals(input);
+    const bool retained = result.hasExactDemands() && result.numerical && !result.guarded &&
+                          !result.exportError.empty();
+    if (!retained) {
+        return false;
+    }
+    const auto& numeric = *result.numerical;
+    auto threshold = numeric.completionThreshold(0, {1, fs::PeriodicEventKind::Start});
+    return numeric.retained.size() == 1 && threshold.error == fs::PeriodicQueryError::None &&
+        threshold.displacement == distance && input.expressions->constructionError().empty();
+}
 bool rejectedAndEmpty()
 {
     fs::ArithmeticPeriodicInput input;
@@ -187,7 +206,9 @@ int runArithmeticPeriodicConversionChecks()
             llvm::errs() << "arithmetic periodic interval closure failed pattern " << pattern << "\n"; return 1;
         }
     }
-    if (!parameterBounds() || !symbolicBounds() || !rejectedAndEmpty()) {
+    const bool exports = parameterBounds() && symbolicBounds() && rejectedAndEmpty() &&
+                         numericalWithoutGuardedExport();
+    if (!exports) {
         llvm::errs() << "arithmetic periodic cutoff/empty checks failed\n"; return 1;
     }
     llvm::outs() << "arithmetic periodic: " << comparisons << " finite-prefix closure comparisons passed\n";

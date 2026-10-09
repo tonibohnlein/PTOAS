@@ -64,6 +64,12 @@ struct ArithmeticPeriodicConversion {
     std::optional<GuardedPeriodicQuotient> guarded;
     std::optional<PeriodicAnalysis> numerical;
     ArithmeticPeriodicConversionCost cost;
+    bool hasExactDemands() const
+    {
+        const bool numeric = numerical && numerical->error.empty();
+        const bool symbolic = guarded && guarded->error.empty();
+        return status == ArithmeticPeriodicStatus::Applicable && (numeric || symbolic);
+    }
 };
 // After factored row descriptions, normalization is linear in row size plus
 // charged domain-atom comparisons. Each interval produces at most one record.
