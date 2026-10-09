@@ -298,18 +298,182 @@ LogicalResult checkArithmeticExportFailure(func::FuncOp function, pto::GMAliasPo
   auto node = llvm::find_if(session.result()->nodes, [&](const auto& n) { return n.anchor == root; });
   if (node == session.result()->nodes.end()) { return failure(); }
   const auto id = static_cast<std::size_t>(node - session.result()->nodes.begin());
-  auto demands = session.minimumDemands(id);
+  auto demands = session.analyzeArithmeticRegional({id});
   if (!demands.mathematical || !demands.mathematical->arithmeticRegionalDemands) { return failure(); }
   const auto constructions = session.arithmeticRegionConstructions();
+  if (session.constructionCounts().arithmeticQueryBuilds || session.constructionCounts().arithmeticSelectorBuilds) {
+    return function.emitError("demands-only regional arithmetic constructed optional exports");
+  }
   AnalysisNeeds needs; needs.queries = needs.selectors = true;
-  auto unavailable = session.minimumDemands(id, needs);
-  auto retry = session.minimumDemands(id, needs);
+  auto unavailable = session.analyzeArithmeticRegional({id, AnalysisMode::MinimumExact, needs});
+  auto retry = session.analyzeArithmeticRegional({id, AnalysisMode::MinimumExact, needs});
   if (unavailable.status != AnalysisStatus::UnmetObligation ||
       retry.mathematical != demands.mathematical || unavailable.mathematical != demands.mathematical ||
       session.arithmeticRegionConstructions() != constructions) {
     return function.emitError("arithmetic export retry lost demands or repeated the producer");
   }
   llvm::outs() << "arithmetic-export-failure: exact-demands-retained cached-retry isolated-context\n";
+  return success();
+}
+LogicalResult checkArithmeticRequests(func::FuncOp function, pto::GMAliasPolicy policy) {
+  using namespace pto::frontiersynch;
+  std::string originalIR;
+  llvm::raw_string_ostream originalStream(originalIR);
+  function.print(originalStream);
+  auto input = std::make_shared<pto::SyncInput>(policy);
+  PhaseIndex index;
+  const bool invalidInput = failed(input->build(function, pto::SyncInstructionView::PipeEnvelopes)) ||
+      failed(index.build(function, *input));
+  if (invalidInput) { return failure(); }
+  auto root = *function.getOps<scf::ForOp>().begin();
+  auto form = recognizeArithmeticProgram({function, root}, index, *input, input->accesses(), {8, 8, 1, 4096});
+  std::string error;
+  auto demands = analyzeArithmeticRegionDemands({function, root}, index, *input, &form, error);
+  const bool impureDemands = !demands || !demands->analysis.exactMinimum || !demands->parameters.empty() ||
+      !demands->occurrences.empty() || !demands->selectors.boundaries.empty() || !demands->enclosing.empty();
+  if (impureDemands) {
+    return function.emitError("demands-only arithmetic constructed optional export state");
+  }
+  FrontierAnalysis session(function);
+  if (failed(session.initialize(policy))) { return failure(); }
+  auto node = llvm::find_if(session.result()->nodes, [&](const auto& n) { return n.anchor == root; });
+  if (node == session.result()->nodes.end()) { return failure(); }
+  const auto id = static_cast<std::size_t>(node - session.result()->nodes.begin());
+  auto retained = session.analyzeArithmeticRegional({id});
+  if (!retained.mathematical || !retained.mathematical->arithmeticRegionalDemands ||
+      session.constructionCounts().arithmeticQueryBuilds || session.constructionCounts().arithmeticSelectorBuilds) {
+    return function.emitError("session did not retain pure regional arithmetic mathematics");
+  }
+  const auto reductions = session.arithmeticRegionConstructions();
+  AnalysisNeeds needs; needs.queries = true;
+  auto query = session.analyzeArithmeticRegional({id, AnalysisMode::MinimumExact, needs});
+  needs.selectors = true;
+  auto storage = session.analyzeArithmeticRegional({id, AnalysisMode::MinimumExact, needs});
+  auto retry = session.analyzeArithmeticRegional({id, AnalysisMode::MinimumExact, needs});
+  if (query.status != AnalysisStatus::Ready || storage.status != AnalysisStatus::Ready ||
+      retry.regionalExports != storage.regionalExports || retry.mathematical != retained.mathematical ||
+      query.mathematical != retained.mathematical || storage.mathematical != retained.mathematical ||
+      session.arithmeticRegionConstructions() != reductions ||
+      session.constructionCounts().arithmeticQueryBuilds != 1 ||
+      session.constructionCounts().arithmeticSelectorBuilds != 1) {
+    return function.emitError("session arithmetic export retry reconstructed mathematics or exports");
+  }
+  needs.evaluation = AnalysisEvaluation::Stateful;
+  auto stateful = session.analyzeArithmeticRegional({id, AnalysisMode::MinimumExact, needs});
+  if (stateful.status != AnalysisStatus::UnmetObligation || stateful.mathematical != retained.mathematical) {
+    return function.emitError("uniform arithmetic exports incorrectly satisfied stateful evaluation");
+  }
+  auto queryArena = query.regionalExports->expressions;
+  auto zero = queryArena->constant(0);
+  RegionalEvent cachedEvent{0, zero, PeriodicEventKind::Start, {zero}};
+  auto cachedPresence = query.regionalExports->presence(cachedEvent);
+  session.invalidate();
+  const bool expiredSessionQuery = !cachedPresence || query.regionalExports->presence(cachedEvent) != cachedPresence;
+  if (expiredSessionQuery) { return function.emitError("arithmetic queries lost their owner after session reset"); }
+  auto arena = std::make_shared<RegionExpressions>();
+  auto queries = exportArithmeticRegion(*demands, arena, false, error, input);
+  const bool invalidQueries =
+      failed(queries) || !queries->capabilities.exactQueries || queries->capabilities.exactSelectors ||
+      queries->storageSelectors || queries->prepare || queries->capabilities.endpointRecipes ||
+      !queries->arithmeticRelations->selectors.boundaries.empty();
+  if (invalidQueries) {
+    return function.emitError("query-only arithmetic constructed storage or endpoint exports");
+  }
+  RegionalEvent event{0, arena->constant(0), PeriodicEventKind::Start, {arena->constant(0)}};
+  auto presence = queries->presence(event);
+  if (!presence) { return failure(); }
+  // A deliberately unsupported access adapter must not obstruct occurrence
+  // queries or poison already published IDs. No source IR is modified.
+  auto unsupported = *demands;
+  bool changed = false;
+  for (auto& relation : unsupported.program.primitives.relations) {
+    if (relation.kind == PrimitiveKind::Reads || relation.kind == PrimitiveKind::Writes) {
+      relation.storageSpace.reset(); changed = true;
+    }
+  }
+  if (!changed) { return failure(); }
+  const auto nodes = arena->size();
+  error.clear();
+  auto failedSelectors = exportArithmeticRegion(unsupported, arena, true, error, input);
+  const bool damagedQueries = succeeded(failedSelectors) || error.empty() || arena->size() != nodes ||
+      !arena->constructionError().empty() || queries->presence(event) != presence;
+  if (damagedQueries) { return function.emitError("failed arithmetic selectors corrupted retained queries"); }
+  error.clear();
+  auto weaker = exportArithmeticRegion(unsupported, arena, false, error, input);
+  auto selected = exportArithmeticRegion(*demands, arena, true, error, input);
+  const bool inconsistentExports =
+      failed(weaker) || failed(selected) || selected->expressions != queries->expressions ||
+      !selected->capabilities.exactSelectors || queries->capabilities.exactSelectors ||
+      selected->presence(event) != presence;
+  if (inconsistentExports) {
+    return function.emitError("arithmetic stronger and weaker exports disagree in the common arena");
+  }
+  auto first = prepareArithmeticRegion(*demands, arena, {}, error, input);
+  auto second = prepareArithmeticRegion(*demands, arena, {}, error, input);
+  const bool preparation = succeeded(first) && succeeded(second) && first->get() != second->get() &&
+      !(*first)->preparation.empty() && !(*second)->preparation.empty();
+  if (!preparation) { return function.emitError("arithmetic preparation did not create distinct owned plans"); }
+  llvm::DenseSet<Operation*> firstOperations;
+  for (const auto& fragment : (*first)->preparation) {
+    if (fragment.code->getParent()) { return failure(); }
+    fragment.code->walk([&](Operation* operation) { firstOperations.insert(operation); });
+  }
+  for (const auto& fragment : (*second)->preparation) {
+    if (fragment.code->getParent()) { return failure(); }
+    bool shared = false;
+    fragment.code->walk([&](Operation* operation) { shared |= firstOperations.contains(operation); });
+    if (shared) { return function.emitError("arithmetic plans share detached operations"); }
+  }
+  auto printPlan = [](const PreparedLogicalPlan& plan) {
+    std::string text;
+    llvm::raw_string_ostream stream(text);
+    for (const auto& fragment : plan.preparation) {
+      for (auto& operation : *fragment.code) { operation.print(stream); }
+    }
+    return text;
+  };
+  const auto secondText = printPlan(**second);
+  first->reset();
+  auto invalidContext = prepareArithmeticRegion(*demands, arena, {root}, error, input);
+  std::string unchangedIR;
+  llvm::raw_string_ostream unchangedStream(unchangedIR);
+  function.print(unchangedStream);
+  const bool changedPreparation =
+      succeeded(invalidContext) || printPlan(**second) != secondText || unchangedIR != originalIR;
+  if (changedPreparation) {
+    return function.emitError("arithmetic failed preparation or fragment lifetime changed original IR");
+  }
+  const auto beforeAllocation = printPlan(**second);
+  prepareAllocationSupport(**second);
+  const bool invalidAllocation = !(*second)->regionalAllocation || printPlan(**second) != beforeAllocation ||
+      !arena->constructionError().empty() || queries->presence(event) != presence;
+  if (invalidAllocation) {
+    return function.emitError("successful arithmetic allocation damaged logical fragments or queries");
+  }
+  auto noAllocation = *demands;
+  noAllocation.analysis.requiredOrder.clear(); // Deliberately unavailable handoff-reuse certificate.
+  auto unavailablePlan = prepareArithmeticRegion(noAllocation, arena, {}, error, input);
+  if (failed(unavailablePlan)) { return function.emitError("allocation refusal prevented logical preparation"); }
+  const auto unavailableText = printPlan(**unavailablePlan);
+  const auto allocationNodes = arena->size();
+  prepareAllocationSupport(**unavailablePlan);
+  prepareAllocationSupport(**unavailablePlan); // The one-shot attempt does not run twice.
+  const bool damagedAllocation =
+      (*unavailablePlan)->regionalAllocation || printPlan(**unavailablePlan) != unavailableText ||
+      arena->size() != allocationNodes || !arena->constructionError().empty() ||
+      queries->presence(event) != presence;
+  if (damagedAllocation) {
+    return function.emitError("arithmetic allocation refusal corrupted logical fragments or queries");
+  }
+  unavailablePlan->reset();
+  second->reset(); selected = failure(); weaker = failure();
+  std::weak_ptr<const pto::SyncInput> lifetime = input;
+  input.reset(); demands.reset();
+  const bool expiredOwner = lifetime.expired() || queries->presence(event) != presence;
+  if (expiredOwner) {
+    return function.emitError("arithmetic query lost its modeled input owner");
+  }
+  llvm::outs() << "arithmetic-requests: demands-only query-only isolated-selector-failure fresh-plans retained-owner\n";
   return success();
 }
 LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPolicy policy) {
@@ -1477,6 +1641,11 @@ int main(int argc, char **argv) {
         const bool exportProbeFailed = function->hasAttr("test.export_failure") &&
             failed(checkArithmeticExportFailure(function, policy));
         if (exportProbeFailed) {
+          return 1;
+        }
+        const bool arithmeticProbeFailed = function->hasAttr("test.arithmetic_requests") &&
+            failed(checkArithmeticRequests(function, policy));
+        if (arithmeticProbeFailed) {
           return 1;
         }
         if (function->hasAttr("test.native_only")) {

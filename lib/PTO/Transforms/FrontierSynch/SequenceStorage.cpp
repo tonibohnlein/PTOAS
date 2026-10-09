@@ -303,11 +303,9 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         if (numeric.result.state != RecognitionState::Applicable) {
             std::string arithmeticError;
             FailureOr<RegionalAnalysis> regional = failure();
-            if (resolveOriginal.demands) {
+            if (resolveOriginal.exports) {
                 const auto id = static_cast<std::size_t>(&node - program->nodes.data());
-                auto retained = resolveOriginal.demands(id, AnalysisBackend::Arithmetic);
-                if (retained && retained->regionalDemands) { regional = *retained->regionalDemands; }
-                else { arithmeticError = "cached arithmetic regional interfaces unavailable"; }
+                regional = resolveOriginal.exports(id, AnalysisBackend::Arithmetic, arithmeticError);
             } else {
                 regional = analyzeArithmeticRegionWithProfiles({function, child.loop}, index, *input, arena,
                     arithmeticError, program->regionalArithmeticProfiles);
