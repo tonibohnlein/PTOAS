@@ -141,6 +141,12 @@ ArithmeticDemandAnalysis analyzeArithmeticDemands(const ArithmeticProgram& progr
 // Exact integer projection extends the same relational engine to recognized
 // octagons and bounded coefficients. Projected unions retain their congruences;
 // generated coefficients are not rechecked against the primitive-input bound.
+// Supplied core native relation is reflexive and closed. Additional C->I
+// prerequisites are reference-forward under the same pipe-chain shortcut
+// bound used by exact demand reduction. Reuses that native closure engine.
+FailureOr<GeneralArithmeticRelation> completeGeneralArithmeticNativeOrder(
+    GeneralArithmeticRelation native, unsigned pipeCount, unsigned parameterCount,
+    ArithmeticAnalysisCost& cost, std::string& error);
 GeneralArithmeticDemandAnalysis analyzeGeneralArithmeticDemands(const ArithmeticProgram& program);
 } // namespace mlir::pto::frontiersynch
 #endif

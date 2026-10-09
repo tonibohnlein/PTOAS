@@ -163,7 +163,7 @@ public:
         }
         return domains;
     }
-    void complete()
+    void completeNative()
     {
         if (!result.error.empty()) { return; }
         Relation nativeCompletions;
@@ -181,6 +181,11 @@ public:
                 unite(result.nativeOrder, next);
             }
         }
+    }
+    void complete()
+    {
+        completeNative();
+        if (!result.error.empty()) { return; }
         auto step = compose(result.generators, result.nativeOrder);
         auto reach = result.nativeOrder;
         for (unsigned round = 0; round < result.pipeCount && result.error.empty(); ++round) {
@@ -816,6 +821,24 @@ ArithmeticDemandAnalysis analyzeArithmeticDemandsWithProtection(const Arithmetic
                                                                const StructuredProtection& protection)
 {
     return analyze<DifferencePolicy>(program, &protection);
+}
+FailureOr<GeneralArithmeticRelation> completeGeneralArithmeticNativeOrder(
+    GeneralArithmeticRelation native, unsigned pipeCount, unsigned parameterCount,
+    ArithmeticAnalysisCost& cost, std::string& error)
+{
+    if (!pipeCount) { error = "native closure requires a positive pipe count"; return failure(); }
+    // The same relation engine closes the supplied core native order plus
+    // reference-forward completion prerequisites. No producer or reducer runs.
+    ArithmeticProgram metadata;
+    metadata.primitives.pipeCount = pipeCount;
+    metadata.primitives.parameters.resize(parameterCount);
+    Analysis<IntegerPolicy> engine(metadata, nullptr);
+    engine.result.nativeOrder = std::move(native);
+    engine.result.cost = cost;
+    engine.completeNative();
+    cost = engine.result.cost;
+    if (!engine.result.error.empty()) { error = engine.result.error; return failure(); }
+    return std::move(engine.result.nativeOrder);
 }
 GeneralArithmeticDemandAnalysis analyzeGeneralArithmeticDemandsWithProtection(const ArithmeticProgram& program,
                                                                              const StructuredProtection& protection)

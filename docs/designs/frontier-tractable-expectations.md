@@ -562,3 +562,37 @@ zero errors and warnings. The three paper hashes were rechecked and unchanged.
 This milestone separates regional arithmetic capabilities; it does not complete
 normalization ordering, specialized-context migration or the final paired corpus
 campaign.
+
+### Original-occurrence scalar prerequisite composition
+
+The structural index now records whether every traced SSA path is direct data
+flow. Control paths, conditional results, loop bounds and carried values cannot
+acquire that certificate by merging with a direct path. A producer/consumer pair
+keeps its original identities and synchronous/native classification. This is a
+dependency certificate, not an instruction replay contract.
+
+Regional relation exports preserve prerequisites whose producers lie outside
+the region. Sequential composition retains these through intermediate merges,
+then resolves an entering producer against the original consumer occurrence.
+Direct prerequisites join exact occurrence domains at shared parameter bindings;
+native prerequisites enter native order and asynchronous ones enter the complete
+crossing requirements before joint reduction. Native export closure reuses the
+existing arithmetic relation engine rather than rerunning its producer/reducer.
+
+Cartesian crossing construction now explicitly checks all represented source and
+target scopes, including accumulated children. Whole-left-before-whole-right
+order requires distinct sequential scopes in the already certified supported
+structured control. Shared dynamically enumerated loops, reversed siblings,
+overlapping scopes and opposite conditional arms are rejected. Body-local
+siblings may share a bound outer invocation; fiberwise repetition composition
+requires a separate adapter. Missing mapping support leaves retained exact
+mathematics available.
+
+The stable optimized rebuild and final one-unit rebuild pass. All 35 focused
+checks pass, including 18 source-derived provenance checks across both alias
+policies and the independent all-event native closure oracle. All 22 serial
+pinned-input runs preserve per-case coverage: 227/240 under MayNotAlias and
+213/240 under MayAlias, with no timeout or source mutation. The slowest run is
+13.7 seconds. Compliance and whitespace checks pass; the three paper hashes
+remain unchanged. This is focused milestone validation, not the final paired
+optimized corpus campaign.

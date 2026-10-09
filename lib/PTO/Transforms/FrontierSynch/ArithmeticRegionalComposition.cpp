@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegionalComposition.h"
 #include "PTO/Transforms/FrontierSynch/RegionalRelations.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
+#include "ScalarPrerequisiteMapping.h"
 #include <numeric>
 #include <set>
 namespace mlir::pto::frontiersynch {
@@ -47,13 +48,15 @@ Relation renamed(const Relation& input, std::size_t offset)
 class Composer {
 public:
     Composer(const RegionalRelationData& left, const RegionalRelationData& right)
-        : left(left), right(right), split(left.sites.size()), p(left.analysis.parameterCount) {}
+        : left(left), right(right), split(left.sites.size()), p(left.analysis.parameterCount),
+          dominance(left.context.function) {}
     FailureOr<RegionalRelationData> run(ArithmeticRegionContext context);
     std::string error;
 private:
     const RegionalRelationData &left, &right;
     std::size_t split;
     unsigned p;
+    DominanceInfo dominance;
     RegionalRelationData out;
     bool failedOperation = false;
     FailureOr<Systems> join(const IntegerSystem& a, ArrayRef<unsigned> am,
@@ -246,8 +249,99 @@ private:
         }
         return result;
     }
+    LogicalResult prerequisiteCrossings(Relation& demands, Relation& native);
+    LogicalResult addPrerequisite(const ValuePrerequisite& edge, unsigned source, unsigned target,
+        Relation& relation);
     bool selectors();
 };
+LogicalResult Composer::addPrerequisite(const ValuePrerequisite& edge, unsigned source, unsigned target,
+    Relation& relation)
+{
+    const auto& aSite = out.sites[source];
+    const auto& bSite = out.sites[target];
+    if (!detail::directPrerequisiteMapping(edge, aSite, bSite, dominance)) {
+        error = "symbolic scalar prerequisite needs a direct original-occurrence mapping certificate";
+        return failure();
+    }
+    for (const auto& a : left.occurrences) {
+        if (a.site != source) { continue; }
+        for (const auto& b : right.occurrences) {
+            if (split + b.site != target || a.parameterResidues != b.parameterResidues) { continue; }
+            const unsigned x = a.residues.size(), y = b.residues.size(), dimensions = x + y + p;
+            const bool dimensionsMatch = x == aSite.loops.size() && y == bSite.loops.size();
+            if (!dimensionsMatch) {
+                error = "scalar prerequisite occurrence dimensions differ from original loop coordinates";
+                return failure();
+            }
+            if (!std::equal(a.residues.begin(), a.residues.end(), b.residues.begin())) { continue; }
+            std::vector<unsigned> am(x + p), bm(y + p), keep(dimensions);
+            std::iota(am.begin(), am.begin() + x, 0);
+            std::iota(am.begin() + x, am.end(), x + y);
+            std::iota(bm.begin(), bm.end(), x);
+            std::iota(keep.begin(), keep.end(), 0);
+            auto products = join(a.system, am, b.system, bm, dimensions, keep);
+            if (failed(products)) { error = "scalar prerequisite occurrence join unavailable"; return failure(); }
+            std::vector<IntegerConstraint> rows;
+            for (unsigned i = 0; i < x; ++i) {
+                IntegerConstraint row{std::vector<BoundInteger>(dimensions), BoundInteger(0)};
+                row.coefficients[i] = BoundInteger(1); row.coefficients[x+i] = BoundInteger(-1);
+                rows.push_back(row);
+                for (auto& coefficient : row.coefficients) { coefficient = -coefficient; }
+                rows.push_back(std::move(row));
+            }
+            auto equalities = IntegerSystem::create(dimensions, rows);
+            if (failed(equalities)) {
+                error = "scalar prerequisite common-coordinate equality unavailable"; return failure();
+            }
+            ArithmeticRelationKey key{{source, ArithmeticEvent::Completion, a.residues},
+                {target, ArithmeticEvent::Start, b.residues}, a.parameterResidues};
+            for (const auto& product : *products) {
+                auto present = product.intersect(*equalities);
+                ++out.analysis.cost.pieceJoins;
+                if (failed(present)) {
+                    error = "scalar prerequisite occurrence intersection unavailable"; return failure();
+                }
+                append(relation[key], *present);
+            }
+        }
+    }
+    return success();
+}
+LogicalResult Composer::prerequisiteCrossings(Relation& demands, Relation& native)
+{
+    for (const auto* child : {&left, &right}) {
+        for (const auto& edge : child->incomingPrerequisites) {
+            std::optional<unsigned> source, target;
+            for (unsigned site = 0; site < out.sites.size(); ++site) {
+                if (out.sites[site].phase == edge.producer) {
+                    if (source) {
+                        error = "scalar prerequisite producer occurrence identity is ambiguous"; return failure();
+                    }
+                    source = site;
+                }
+                if (out.sites[site].phase && out.sites[site].phase->elementOp == edge.consumer) {
+                    if (target) {
+                        error = "scalar prerequisite consumer occurrence identity is ambiguous"; return failure();
+                    }
+                    target = site;
+                }
+            }
+            if (!source) {
+                auto old = llvm::find_if(out.incomingPrerequisites, [&](const auto& entry) {
+                    return entry.producer == edge.producer && entry.consumer == edge.consumer;
+                });
+                if (old == out.incomingPrerequisites.end()) { out.incomingPrerequisites.push_back(edge); }
+                else { old->directSSA &= edge.directSSA; }
+                continue;
+            }
+            if (!target || *source >= split || *target < split) {
+                error = "scalar prerequisite is not a forward sibling payload crossing"; return failure();
+            }
+            if (failed(addPrerequisite(edge, *source, *target, edge.native ? native : demands))) { return failure(); }
+        }
+    }
+    return success();
+}
 bool Composer::selectors()
 {
     out.selectors.period = left.selectors.period; out.selectors.parameterCount = p;
@@ -359,6 +453,37 @@ bool validExport(const RegionalRelationData& region)
     }
     return true;
 }
+// Cartesian crossing relations require whole-left-before-whole-right order.
+// Inputs already carry the supported structured-control certificates. A shared
+// dynamically enumerated loop needs a separate fiberwise adapter.
+bool sequentialSiblings(const RegionalRelationData& left, const RegionalRelationData& right)
+{
+    for (const auto& source : left.sites) {
+        for (const auto& target : right.sites) {
+            for (auto loop : source.loops) {
+                if (llvm::is_contained(target.loops, loop)) { return false; }
+            }
+            auto* a = source.phase->elementOp;
+            auto* b = target.phase->elementOp;
+            if (!a || !b) { return false; }
+            bool ordered = false;
+            for (auto* x = a; x; x = x->getParentOp()) {
+                for (auto* y = b; y; y = y->getParentOp()) {
+                    const bool commonBlock = x->getBlock() && x->getBlock() == y->getBlock();
+                    if (!commonBlock) { continue; }
+                    if (x == y) { continue; }
+                    const bool singleBlock = x->getBlock()->getParent()->hasOneBlock();
+                    if (!singleBlock) { return false; }
+                    ordered = x->isBeforeInBlock(y);
+                    break;
+                }
+                if (ordered) { break; }
+            }
+            if (!ordered) { return false; }
+        }
+    }
+    return true;
+}
 FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
 {
     if (!validExport(left) || !validExport(right) ||
@@ -375,8 +500,9 @@ FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
         error = "symbolic sibling composition requires compatible exact parameter and residue interfaces";
         return failure();
     }
-    if (!left.incomingPrerequisites.empty() || !right.incomingPrerequisites.empty()) {
-        error = "symbolic sibling scalar prerequisite relation adapter unavailable"; return failure();
+    if (!sequentialSiblings(left, right)) {
+        error = "symbolic sibling composition requires disjoint sequential invocation scopes";
+        return failure();
     }
     SmallVector<SyncStorageCell> domains;
     for (const auto* child : {&left, &right}) {
@@ -431,6 +557,7 @@ FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
     auto lref = lh, rref = rh;
     unite(lref, lid); unite(rref, rid);
     auto bridge = bridges(), nativeEdges = nativeCrossings();
+    if (failed(prerequisiteCrossings(bridge, nativeEdges))) { return failure(); }
     auto native = compose(compose(left.analysis.nativeOrder, nativeEdges),
                           renamed(right.analysis.nativeOrder, split));
     auto crossings = bridge;
@@ -496,6 +623,7 @@ FailureOr<ArithmeticRegionalRelations> composeArithmeticRegionalRelations(
     out.input = data->input; out.program.context = data->context; out.program.sites = data->sites;
     out.program.parameters = data->parameterValues; out.parameters = data->parameters; out.enclosing = data->enclosing;
     out.program.extraction.dischargedEffects = data->dischargedEffects;
+    out.program.incomingPrerequisites = data->incomingPrerequisites;
     out.program.primitives.parameters = left.program.primitives.parameters;
     out.program.primitives.period = data->analysis.period; out.program.primitives.pipeCount = data->analysis.pipeCount;
     out.analysis = std::move(data->analysis); out.selectors = std::move(data->selectors);

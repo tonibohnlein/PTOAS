@@ -912,6 +912,7 @@ FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalR
     auto state = std::make_shared<State>();
     state->input = data.input; state->program.context = data.context; state->program.sites = data.sites;
     state->program.parameters = data.parameterValues; state->parameters = data.parameters;
+    state->program.incomingPrerequisites = data.incomingPrerequisites;
     state->program.extraction.dischargedEffects = data.dischargedEffects;
     state->program.primitives.period = data.analysis.period;
     state->program.primitives.pipeCount = data.analysis.pipeCount;
