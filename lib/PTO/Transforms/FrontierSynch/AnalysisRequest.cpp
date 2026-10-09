@@ -8,6 +8,8 @@
 // Request protocol adapters. Cache mathematical construction independently of
 // export checks; detached command fragments always have fresh ownership.
 #include "AnalysisSessionInternal.h"
+#include "PTO/Transforms/FrontierSynch/MixedStrideAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/CompactBoundingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/CompactAllocation.h"
 #include "PTO/Transforms/FrontierSynch/GeneralArithmeticAllocation.h"
@@ -44,7 +46,9 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
     }
     AnalysisOutcome result;
     result.mathematical = attempt.mathematical;
-    if (result.mathematical && request.region == 0) { recordWholeRegion(backend); }
+    if (result.mathematical && request.region == 0 && backend != AnalysisBackend::CompactBounding) {
+        recordWholeRegion(backend);
+    }
     if (!result.mathematical) {
         result.stage = AnalysisStage::Demands;
         result.obligations.push_back({result.stage, attempt.demandError});
@@ -58,6 +62,11 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
     if (demands.regionalDemands) {
         result.available.queries = demands.regionalDemands->capabilities.exactQueries;
         result.available.selectors = demands.regionalDemands->capabilities.exactSelectors;
+    }
+    if (demands.compactDemands) {
+        const auto& exports = demands.compactDemands->boundary->nativeExports();
+        result.available.queries = exports.capabilities.exactQueries;
+        result.available.selectors = exports.capabilities.exactSelectors;
     }
     if (demands.backend == "native-scalar") { result.available = {}; }
     result.available.synchronization = attempt.endpoints.value_or(false);
@@ -107,7 +116,8 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
     }
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
     for (auto backend : {AnalysisBackend::Explicit, AnalysisBackend::NumericalPeriodic,
-            AnalysisBackend::Rotating, AnalysisBackend::GuardedRotating, AnalysisBackend::BoundedLifetime,
+            AnalysisBackend::Rotating, AnalysisBackend::MixedStride, AnalysisBackend::GuardedRotating,
+            AnalysisBackend::BoundedLifetime,
             AnalysisBackend::Sequence, AnalysisBackend::ArithmeticPeriodic, AnalysisBackend::Arithmetic,
             AnalysisBackend::FiniteGuarded}) {
         auto attempt = requestBackend(backend, request);
@@ -120,8 +130,12 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
         }
         llvm::append_range(result.obligations, attempt.obligations);
     }
-    // Fallback may not weaken a retained exact result. Conservative adapters
-    // are registered separately from these mathematical producers.
+    // A missing export can never authorize weakening an exact whole-region order.
+    if (!result.mathematical && request.mode == AnalysisMode::Fallback && request.region == 0) {
+        auto conservative = requestBackend(AnalysisBackend::CompactBounding, request);
+        llvm::append_range(conservative.obligations, result.obligations);
+        return conservative;
+    }
     return result;
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical(const AnalysisOutcome& result)
@@ -134,6 +148,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical
     if (construction.logicalPreparations != UINT64_MAX) { ++construction.logicalPreparations; }
     auto prepared = prepareRetained(*result.mathematical);
     if (succeeded(prepared)) { (*prepared)->mathematicalOwner = result.mathematical; }
+    refreshProgramContractAudit(*program);
     return prepared;
 }
 namespace {
@@ -148,6 +163,10 @@ DictionaryAttr allocateRetained(const MathematicalResult& demands, const Program
     if (demands.rotatingDemands) {
         return encodePeriodicSharedAllocation(demands.rotatingDemands->periodic, plan, context);
     }
+    if (demands.mixedStrideDemands) {
+        return mixedStrideAllocationCertificate(*demands.mixedStrideDemands, plan, context);
+    }
+    if (demands.compactDemands) { return compactBoundingAllocationCertificate(*demands.compactDemands, prepared); }
     if (demands.guardedRotatingDemands) {
         return guardedAllocationCertificate(*demands.guardedRotatingDemands, plan, context);
     }

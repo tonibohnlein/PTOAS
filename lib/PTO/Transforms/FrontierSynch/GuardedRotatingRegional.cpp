@@ -356,7 +356,13 @@ private:
                     expressions.le(threshold->distance, expressions.sub(b.ordinal, a.ordinal)))));
         };
         const auto parent = function;
-        const auto allocation = sliceAllocation(*owned, begin, trips);
+        // Query/selector requests do not need a physical reuse proof. Cache
+        // that optional export only when a prepared regional plan requests it.
+        auto allocationCache = std::make_shared<std::optional<std::shared_ptr<RegionalAllocationSummary>>>();
+        const auto allocation = [owned, firstOrdinal, count, allocationCache]() {
+            if (!*allocationCache) { *allocationCache = sliceAllocation(*owned, firstOrdinal, count); }
+            return **allocationCache;
+        };
         RegionalDemandFilter domainFilter;
         if (slice) {
             domainFilter = [presence, owned](RegionalEvent a, RegionalEvent b) -> std::optional<Expr> {
@@ -371,7 +377,7 @@ private:
             auto prepared = prepareGuardedRotatingEndpoints(parent, *owned, error, domainFilter);
             if (succeeded(prepared)) {
                 (*prepared)->completeInvocation = false;
-                (*prepared)->regionalAllocation = allocation;
+                (*prepared)->regionalAllocation = allocation();
             }
             return prepared;
         };
@@ -389,7 +395,7 @@ private:
             auto prepared = prepareGuardedRotatingEndpoints(parent, *owned, error, combined);
             if (succeeded(prepared)) {
                 (*prepared)->completeInvocation = false;
-                (*prepared)->regionalAllocation = allocation;
+                (*prepared)->regionalAllocation = allocation();
             }
             return prepared;
         };

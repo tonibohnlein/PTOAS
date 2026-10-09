@@ -18,7 +18,8 @@ struct CompactBoundingOwner {
     std::vector<CompactClasses> captured;
     bool placementMayStrengthen = true;
     // Describes missing exports only; never a physical scarcity/minimality claim.
-    std::string allocationError;
+    mutable std::string allocationError;
+    std::shared_ptr<std::string> preparationError;
 };
 struct CompactBoundingPreparation {
     std::string error, exportError;
@@ -32,6 +33,11 @@ struct CompactBoundingPreparation {
 // Failed endpoint/allocation exports preserve the mathematical owner. A root
 // balanced loop is distributed across its original cuts; mixed/nested balanced
 // slots still need a regional multiple-cut interface and remain unavailable.
+CompactBoundingPreparation analyzeCompactBounding(
+    func::FuncOp function, std::shared_ptr<const SyncInput> input, const PhaseIndex& index);
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareCompactBoundingLogicalInsertion(
+    func::FuncOp function, std::shared_ptr<const CompactBoundingOwner> owner, std::string& error);
+DictionaryAttr compactBoundingAllocationCertificate(const CompactBoundingOwner& owner, PreparedLogicalPlan& plan);
 CompactBoundingPreparation prepareCompactBoundingInsertion(
     func::FuncOp function, std::shared_ptr<const SyncInput> input);
 } // namespace mlir::pto::frontiersynch

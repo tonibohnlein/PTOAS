@@ -29,6 +29,19 @@ MixedStrideExpansion expandMixedStride(ArrayRef<PeriodicPayload> payloads,
 // Both endpoint phases and the superperiod displacement are preserved exactly.
 std::optional<std::vector<PeriodicRecord>> expandMixedStrideRecords(
     ArrayRef<PeriodicRecord> records, uint64_t payloadCount, uint64_t period);
+struct MixedStrideDemands {
+    scf::ForOp loop;
+    std::vector<const CompoundInstanceElement*> phases;
+    uint64_t period = 1;
+    PeriodicAnalysis periodic;
+};
+FailureOr<std::shared_ptr<MixedStrideDemands>> analyzeMixedStrideFunction(
+    func::FuncOp function, const SyncInput& input, const ProgramRecognition& program,
+    const PhaseIndex& index, std::string& error);
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareMixedStrideLogicalInsertion(
+    func::FuncOp function, const MixedStrideDemands& demands, std::string& error);
+DictionaryAttr mixedStrideAllocationCertificate(
+    const MixedStrideDemands& demands, int64_t plan, MLIRContext* context);
 // Whole-function fixed-body adapter. Only the common-stride diagnostic may be
 // discharged by expansion; every other shared recognition obligation remains.
 // Endpoint guards check the original source and consumer against the original
