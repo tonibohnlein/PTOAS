@@ -72,7 +72,13 @@ LogicalResult checkRegionalSession(func::FuncOp function, pto::GMAliasPolicy pol
     }
     ++checked;
   }
+  const auto rotating = session.constructionCounts().rotatingReductions;
+  const auto guarded = session.constructionCounts().guardedRotatingReductions;
   auto root = session.minimumDemands();
+  if (session.constructionCounts().rotatingReductions != rotating ||
+      session.constructionCounts().guardedRotatingReductions != guarded) {
+    return function.emitError("composition repeated a cached loop reduction");
+  }
   if (!checked || root.status != AnalysisStatus::Ready || !root.mathematical || root.mathematical->region ||
       !session.hasWholeFunctionMinimumDemands()) {
     return function.emitError("whole-function request did not establish independent exact evidence");
