@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/ArithmeticProgramInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/FiniteExpansionPlan.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/FiniteGuardedInternal.h"
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "llvm/Support/JSON.h"
@@ -266,12 +267,42 @@ void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
                     roots.resize(take.getInt());
                 }
             } else if (!body) { roots.push_back(root); }
-            auto expanded = fs::analyzeExpandedFinite(function, roots, index, input);
+            fs::ArithmeticRegionContext context{function, roots.empty() ? nullptr : roots.front()};
+            context.roots = roots;
+            const auto plan = fs::preflightFiniteExpansion(context, index, input);
+            auto expanded = fs::analyzeExpandedFinite(plan, index, input);
             llvm::json::Object document{{"function", function.getSymName()}, {"error", expanded.error}};
             if (expanded.state) {
+                document["preflight_sites"] = plan.sites.size();
+                document["preflight_visits"] = plan.visits.size();
+                pto::SyncInput foreign;
+                auto refused = fs::materializeFiniteExpansion(plan, index, foreign);
+                document["foreign_preflight_rejected"] = refused.extraction.state != fs::RecognitionState::Applicable;
+                fs::PhaseIndex foreignIndex;
+                auto indexRefused = fs::materializeFiniteExpansion(plan, foreignIndex, input);
+                document["foreign_index_rejected"] = indexRefused.extraction.state != fs::RecognitionState::Applicable;
                 auto& state = *expanded.state;
                 const auto& form = *expanded.expandedProgram;
                 dumpArithmeticJSON(function, form);
+                const auto compatibility = fs::expandFiniteArithmeticProgram(
+                    form.context, index, input, input.accesses());
+                bool mappings = compatibility.sites.size() == form.sites.size() &&
+                    compatibility.expandedVisits == form.expandedVisits &&
+                    compatibility.expandedFoldOperations == form.expandedFoldOperations &&
+                    compatibility.expandedPrunedArms == form.expandedPrunedArms &&
+                    compatibility.parameters == form.parameters &&
+                    compatibility.primitives.period == form.primitives.period;
+                for (auto [a, b] : llvm::zip(compatibility.sites, form.sites)) {
+                    mappings &= a.phase == b.phase && a.loops == b.loops && a.guards.size() == b.guards.size() &&
+                        a.fixedCoordinates.size() == b.fixedCoordinates.size();
+                    for (auto [x, y] : llvm::zip(a.guards, b.guards)) {
+                        mappings &= x.branch == y.branch && x.takeThen == y.takeThen && x.provenTaken == y.provenTaken;
+                    }
+                    for (auto [x, y] : llvm::zip(a.fixedCoordinates, b.fixedCoordinates)) {
+                        mappings &= x.loop == y.loop && x.induction == y.induction;
+                    }
+                }
+                document["preflight_mapping_matches"] = mappings;
                 document["root_count"] = form.context.roots.size();
                 document["incoming_prerequisites"] = form.incomingPrerequisites.size();
                 bool invalidRejected = true;

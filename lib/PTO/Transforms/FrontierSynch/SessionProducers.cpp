@@ -8,6 +8,7 @@
 // Existing mathematical producers behind the session request protocol. No
 // endpoint code or allocation is constructed by these adapters.
 #include "AnalysisSessionInternal.h"
+#include "FiniteExpansionPlan.h"
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
@@ -20,6 +21,10 @@
 #include "PTO/Transforms/FrontierSynch/VaryingRotatingRecognition.h"
 #include "PTO/Transforms/FrontierSynch/VaryingRotatingRegional.h"
 namespace mlir::pto::frontiersynch {
+uint64_t FrontierAnalysis::finiteExpansionPreflights() const
+{
+    return sessionState ? sessionState->finiteExpansionPlans.size() : 0;
+}
 void FrontierAnalysis::recordWholeRegion(AnalysisBackend backend)
 {
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
@@ -36,6 +41,28 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRotatin
     return prepared;
 }
 namespace {
+const FiniteExpansionPlan& expansionPlan(AnalysisSessionState& session, func::FuncOp function,
+    const ProgramRecognition& program, std::size_t region, const PhaseIndex& index, const SyncInput& input)
+{
+    auto found = session.finiteExpansionPlans.find(region);
+    if (found != session.finiteExpansionPlans.end()) { return *found->second; }
+    ArithmeticRegionContext context{function, function};
+    if (region) {
+        const auto& node = program.nodes[region];
+        if (node.kind == StructureKind::ExplicitRun) { context.roots = node.operations; }
+        else if (node.kind == StructureKind::Sequence && node.region && node.region->hasOneBlock()) {
+            for (auto& operation : node.region->front()) {
+                if (!operation.hasTrait<OpTrait::IsTerminator>()) { context.roots.push_back(&operation); }
+            }
+        } else if (node.kind == StructureKind::Loop || node.kind == StructureKind::Conditional) {
+            context.roots.push_back(node.anchor);
+        }
+        context.root = context.roots.empty() ? nullptr : context.roots.front();
+    }
+    auto plan = std::make_shared<const FiniteExpansionPlan>(preflightFiniteExpansion(context, index, input));
+    auto inserted = session.finiteExpansionPlans.emplace(region, std::move(plan));
+    return *inserted.first->second;
+}
 const StructureNode* wholeLoop(func::FuncOp function, const SyncInput& input,
                               const ProgramRecognition& program, const PhaseIndex& index)
 {
@@ -286,18 +313,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend
         if (node.unsupportedContext) {
             error = "finite expansion requires a supported original region"; return {};
         }
-        SmallVector<Operation*> roots;
-        if (node.kind == StructureKind::ExplicitRun) { roots = node.operations; }
-        else if (node.kind == StructureKind::Sequence && node.region && node.region->hasOneBlock()) {
-            for (auto& operation : node.region->front()) {
-                if (!operation.hasTrait<OpTrait::IsTerminator>()) { roots.push_back(&operation); }
-            }
-        } else if (node.kind == StructureKind::Loop || node.kind == StructureKind::Conditional) {
-            roots.push_back(node.anchor);
-        }
-        if (roots.empty()) { error = "finite expansion has no original roots"; return {}; }
-        auto demands = std::make_shared<FiniteGuardedAnalysis>(
-            analyzeExpandedFinite(function, roots, *structuralIndex, *storage));
+        const auto& plan = expansionPlan(*sessionState, function, *program, region, *structuralIndex, *storage);
+        auto demands = std::make_shared<FiniteGuardedAnalysis>(analyzeExpandedFinite(plan, *structuralIndex, *storage));
         if (!demands->error.empty()) { error = demands->error; return {}; }
         owned->finiteGuardedDemands = std::move(demands);
         owned->backend = "expanded-finite-guarded";
@@ -411,7 +428,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
         return owned;
     case AnalysisBackend::ExpandedFinite: {
         auto demands = std::make_shared<FiniteGuardedAnalysis>(
-            analyzeExpandedFinite(function, function.getOperation(), *structuralIndex, *storage));
+            analyzeExpandedFinite(expansionPlan(*sessionState, function, *program, 0, *structuralIndex, *storage),
+                *structuralIndex, *storage));
         if (!demands->error.empty()) { error = demands->error; return {}; }
         owned->finiteGuardedDemands = std::move(demands);
         owned->backend = "expanded-finite-guarded";

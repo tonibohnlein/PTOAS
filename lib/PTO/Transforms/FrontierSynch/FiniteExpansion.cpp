@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // A finite occurrence representation over the unchanged shared access model.
 #include "ArithmeticProgramInternal.h"
+#include "FiniteExpansionPlan.h"
 #include "FiniteGuardedInternal.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
 #include "RecognitionInternal.h"
@@ -109,12 +110,36 @@ std::optional<int64_t> fixedValue(Value value, const ArithmeticSite& site, MLIRC
     return constant ? std::optional<int64_t>(constant.getValue()) : std::nullopt;
 }
 }
-void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limits)
+} // namespace mlir::pto::frontiersynch::detail
+namespace mlir::pto::frontiersynch {
+FiniteExpansionPlan preflightFiniteExpansion(ArithmeticRegionContext context,
+    const PhaseIndex& index, const SyncInput& input, const FiniteExpansionLimits& limits)
 {
-    auto& output = builder.output;
-    SmallVector<ArithmeticSite> sites;
-    struct Visit { Operation* op; ArithmeticSite context; bool fixedBranch = false; };
-    SmallVector<Visit> visits;
+    FiniteExpansionPlan plan;
+    plan.context = std::move(context); plan.index = &index; plan.input = &input; plan.limits = limits;
+    auto& sites = plan.sites;
+    auto& visits = plan.visits;
+    auto region = plan.context;
+    const bool valid = region.function && region.root && !region.function.isDeclaration() &&
+        region.function.getBody().hasOneBlock() &&
+        (region.root == region.function.getOperation() || region.function->isProperAncestor(region.root));
+    if (!valid) {
+        plan.result.note(RecognitionIssue::UnsupportedControl, region.root, true);
+        return plan;
+    }
+    if (!region.roots.empty()) {
+        auto* previous = region.roots.front();
+        bool adjacent = previous == region.root;
+        for (auto* selected : llvm::drop_begin(region.roots)) {
+            adjacent = adjacent && selected && previous && previous->getNextNode() == selected;
+            if (!adjacent) { break; }
+            previous = selected;
+        }
+        if (!adjacent) {
+            plan.result.note(RecognitionIssue::UnsupportedControl, region.root, true);
+            return plan;
+        }
+    }
     bool admitted = true;
     auto issue = RecognitionIssue::TemplateExpansionLimit;
     std::function<void(Operation*, ArithmeticSite, unsigned)> walk;
@@ -127,9 +152,10 @@ void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limit
         }
         visits.push_back({op, context});
         if (auto loop = dyn_cast<scf::ForOp>(op)) {
-            auto lower = fixedValue(loop.getLowerBound(), context, builder.context);
-            auto upper = fixedValue(loop.getUpperBound(), context, builder.context);
-            auto step = fixedValue(loop.getStep(), context, builder.context);
+            plan.expandsLoops = true;
+            auto lower = detail::fixedValue(loop.getLowerBound(), context, region.function.getContext());
+            auto upper = detail::fixedValue(loop.getUpperBound(), context, region.function.getContext());
+            auto step = detail::fixedValue(loop.getStep(), context, region.function.getContext());
             if (!lower || !upper || !step || *step <= 0) {
                 issue = RecognitionIssue::LoopDomain; admitted = false; return;
             }
@@ -148,13 +174,13 @@ void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limit
             return;
         }
         if (auto branch = dyn_cast<scf::IfOp>(op)) {
-            FixedCondition condition(context, output.expandedFoldOperations);
+            detail::FixedCondition condition(context, plan.foldOperations);
             const auto selected = condition.evaluate(branch.getCondition());
             visits.back().fixedBranch = selected.has_value();
             for (auto [arm, region] : llvm::enumerate(op->getRegions())) {
                 const bool inactive = selected && ((arm == 0) != *selected);
                 if (inactive) {
-                    if (output.expandedPrunedArms != UINT64_MAX) { ++output.expandedPrunedArms; }
+                    if (plan.prunedArms != UINT64_MAX) { ++plan.prunedArms; }
                     continue;
                 }
                 auto body = context;
@@ -165,12 +191,12 @@ void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limit
             }
             return;
         }
-        if (op == output.context.function.getOperation()) {
-            for (auto& child : output.context.function.front()) { walk(&child, context, depth); }
+        if (op == region.function.getOperation()) {
+            for (auto& child : region.function.front()) { walk(&child, context, depth); }
             return;
         }
         if (op->getNumRegions()) { issue = RecognitionIssue::UnsupportedControl; admitted = false; return; }
-        auto phases = builder.index.phasesFor(op);
+        auto phases = index.phasesFor(op);
         const bool multiplePhases = phases.size() > 1;
         if (multiplePhases) { issue = RecognitionIssue::UnsupportedControl; admitted = false; return; }
         const bool payload = phases.size() == 1;
@@ -181,21 +207,38 @@ void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limit
             sites.push_back(std::move(context));
         }
     };
-    if (output.context.roots.empty()) { walk(output.context.root, {}, 0); }
+    if (region.roots.empty()) { walk(region.root, {}, 0); }
     else {
-        for (auto* selected : output.context.roots) { walk(selected, {}, 0); }
+        for (auto* selected : region.roots) { walk(selected, {}, 0); }
     }
     const auto count = static_cast<uint64_t>(sites.size());
     const bool pairsFit = !count || count <= limits.pairs / count;
     if (!admitted || !pairsFit) {
-        output.extraction.note(issue, output.context.root);
-        return;
+        plan.result.note(issue, region.root);
+        plan.sites.clear(); plan.visits.clear();
+        return plan;
     }
-    // Only bounded scalar folding precedes the complete control/payload and
-    // quadratic-pair preflight. Relation/access construction follows it.
-    output.expandedVisits = visits.size();
-    output.sites = std::move(sites);
-    for (const auto& [op, context, fixedBranch] : visits) {
+    return plan;
+}
+} // namespace mlir::pto::frontiersynch
+namespace mlir::pto::frontiersynch::detail {
+void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limits,
+    const FiniteExpansionPlan* supplied)
+{
+    std::optional<FiniteExpansionPlan> local;
+    if (!supplied) {
+        local = preflightFiniteExpansion(builder.output.context, builder.index, *builder.output.modeledInput, limits);
+        supplied = &*local;
+    }
+    const auto& plan = *supplied;
+    auto& output = builder.output;
+    output.extraction = plan.result;
+    if (plan.result.state != RecognitionState::Applicable) { return; }
+    output.expandedVisits = plan.visits.size();
+    output.expandedFoldOperations = plan.foldOperations;
+    output.expandedPrunedArms = plan.prunedArms;
+    output.sites = plan.sites;
+    for (const auto& [op, context, fixedBranch] : plan.visits) {
         for (auto prerequisite : builder.index.prerequisitesFor(op)) {
             auto* producer = prerequisite.producer->elementOp;
             const bool internal = output.context.roots.empty() ? output.context.root->isAncestor(producer) :
@@ -222,11 +265,12 @@ void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limit
 
 namespace mlir::pto::frontiersynch {
 static FiniteGuardedAnalysis analyzeExpandedFiniteContext(ArithmeticRegionContext context,
-    const PhaseIndex& index, const SyncInput& input)
+    const PhaseIndex& index, const SyncInput& input, const FiniteExpansionPlan* plan = nullptr)
 {
     FiniteGuardedAnalysis result;
     auto program = std::make_shared<ArithmeticProgram>(
-        expandFiniteArithmeticProgram(std::move(context), index, input, input.accesses()));
+        plan ? materializeFiniteExpansion(*plan, index, input) :
+            expandFiniteArithmeticProgram(std::move(context), index, input, input.accesses()));
     if (program->extraction.state != RecognitionState::Applicable ||
         program->recognition.state != RecognitionState::Applicable) {
         result.error = "finite expansion requires a bounded exact occurrence/access adapter";
@@ -246,7 +290,7 @@ static FiniteGuardedAnalysis analyzeExpandedFiniteContext(ArithmeticRegionContex
         auto& count = groups[relation.storageBase][static_cast<unsigned>(*relation.storageSpace)];
         (read ? count.first : count.second) += relation.pieces.size();
     }
-    const FiniteExpansionLimits limits;
+    const auto limits = plan ? plan->limits : FiniteExpansionLimits{};
     for (const auto& entry : groups) {
         for (auto [space, count] : entry.second) {
             (void)space;
@@ -323,6 +367,11 @@ static FiniteGuardedAnalysis analyzeExpandedFiniteContext(ArithmeticRegionContex
     result.expandedProgram = std::move(program);
     result.cost = result.state->cost;
     return result;
+}
+FiniteGuardedAnalysis analyzeExpandedFinite(const FiniteExpansionPlan& plan,
+    const PhaseIndex& index, const SyncInput& input)
+{
+    return analyzeExpandedFiniteContext(plan.context, index, input, &plan);
 }
 FiniteGuardedAnalysis analyzeExpandedFinite(func::FuncOp function, Operation* root,
     const PhaseIndex& index, const SyncInput& input)

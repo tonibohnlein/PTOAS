@@ -26,6 +26,11 @@ def invoke(tool, path, policy):
     form = next(item for item in documents if item.get("region") == "anonymous")
     assert expanded["exports_blocked"]
     assert expanded["invalid_roots_rejected"]
+    assert expanded["foreign_preflight_rejected"]
+    assert expanded["foreign_index_rejected"]
+    assert expanded["preflight_mapping_matches"]
+    assert expanded["preflight_sites"] == expanded["sites"]
+    assert expanded["preflight_visits"] == expanded["visits"]
     assert expanded["exact_queries"] and expanded["invalid_queries_rejected"]
     for sample in expanded["samples"]:
         if len(form["sites"]) > 64:

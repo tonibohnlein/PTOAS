@@ -8,6 +8,7 @@
 // Derive domains and strict order from the original structured loop tree.
 // Native primitives denote its strict native closure, not adjacent edges.
 #include "ArithmeticProgramInternal.h"
+#include "FiniteExpansionPlan.h"
 #include "../InsertSync/SyncRegionArithmetic.h"
 #include "RecognitionInternal.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -216,7 +217,8 @@ void clearExports(ArithmeticProgram& output)
 static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, const PhaseIndex& index,
                                              const SyncInput& input, const SyncStorageEffects& effects,
                                              const ArithmeticLimits& limits, ArithmeticEntryConstant entryConstant,
-                                             const FiniteExpansionLimits* expansion)
+                                             const FiniteExpansionLimits* expansion,
+                                             const FiniteExpansionPlan* plan = nullptr)
 {
     ArithmeticProgram output;
     output.context = region;
@@ -261,7 +263,7 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
     auto configured = limits;
     detail::ProgramBuilder builder{output, configured, function.getContext(), index, DenseMap<Value, unsigned>(),
                                    std::move(entryConstant)};
-    if (expansion) { detail::collectExpanded(builder, *expansion); }
+    if (expansion) { detail::collectExpanded(builder, *expansion, plan); }
     else { collect(index, builder); }
     if (output.extraction.state != RecognitionState::Applicable) {
         clearExports(output);
@@ -452,6 +454,17 @@ ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, con
     ArithmeticEntryConstant entryConstant)
 {
     return buildArithmeticProgram(region, index, input, effects, limits, std::move(entryConstant), nullptr);
+}
+ArithmeticProgram materializeFiniteExpansion(const FiniteExpansionPlan& plan,
+    const PhaseIndex& index, const SyncInput& input)
+{
+    if (plan.index != &index || plan.input != &input) {
+        ArithmeticProgram result;
+        result.extraction.note(RecognitionIssue::UnsupportedControl, plan.context.root, true);
+        return result;
+    }
+    const ArithmeticLimits adapter{UINT_MAX, UINT_MAX, 1, UINT64_MAX};
+    return buildArithmeticProgram(plan.context, index, input, input.accesses(), adapter, {}, &plan.limits, &plan);
 }
 ArithmeticProgram expandFiniteArithmeticProgram(ArithmeticRegionContext region, const PhaseIndex& index,
     const SyncInput& input, const SyncStorageEffects& effects, const FiniteExpansionLimits& limits)

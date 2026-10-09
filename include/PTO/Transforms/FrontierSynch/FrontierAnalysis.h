@@ -49,6 +49,7 @@ public:
     const AnalysisConstructionCounts& constructionCounts() const { return construction; }
     uint64_t arithmeticGeneratorConstructions() const;
     uint64_t arithmeticRegionConstructions() const;
+    uint64_t finiteExpansionPreflights() const;
     std::vector<AnalysisCostRecord> costRecords() const;
     // Call before reusing this object after original IR mutation. Previously
     // returned handles must no longer be queried against that IR.
