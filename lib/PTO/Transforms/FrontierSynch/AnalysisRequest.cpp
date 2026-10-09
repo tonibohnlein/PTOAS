@@ -144,8 +144,6 @@ void FrontierAnalysis::invalidate()
 {
     // Dropping modeled input makes all old handles ineligible for preparation.
     // initialize rebuilds every dependent cache before accepting another request.
-    explicitMathematical.reset();
-    explicitEndpointOutcome.reset();
     explicitAnalysis.reset();
     boundedAnalysis.reset();
     sequenceAnalysis.reset();

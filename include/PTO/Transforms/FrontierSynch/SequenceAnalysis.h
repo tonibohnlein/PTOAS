@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/ChainInterface.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
 using SequenceCost = RegionalCost;
@@ -70,7 +71,13 @@ SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& i
     std::shared_ptr<PhaseIndex> index = {}, bool requireEndpoints = true);
 // The resolver is construction-only and receives proper original descendants.
 // Specialized phase views retain their own arena/context adapters.
-using SequenceRegionResolver = std::function<FailureOr<RegionalAnalysis>(std::size_t, bool, std::string&)>;
+struct SequenceRegionResolver {
+    std::function<FailureOr<RegionalAnalysis>(std::size_t, bool, std::string&)> region;
+    std::function<std::shared_ptr<const MathematicalResult>(std::size_t, AnalysisBackend)> demands;
+    explicit operator bool() const { return static_cast<bool>(region); }
+    FailureOr<RegionalAnalysis> operator()(std::size_t node, bool endpoints, std::string& error) const
+    { return region(node, endpoints, error); }
+};
 SequenceAnalysis analyzeSequenceRegionWithResolver(func::FuncOp function, const SyncInput& input,
     const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions,
     std::shared_ptr<PhaseIndex> index, bool requireEndpoints, SequenceRegionResolver resolver);
