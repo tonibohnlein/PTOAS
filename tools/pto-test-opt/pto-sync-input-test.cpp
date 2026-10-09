@@ -125,6 +125,22 @@ LogicalResult checkRegionalSession(func::FuncOp function, pto::GMAliasPolicy pol
       !session.hasWholeFunctionMinimumDemands()) {
     return function.emitError("whole-function request did not establish independent exact evidence");
   }
+  AnalysisRequest logical;
+  logical.needs.queries = logical.needs.selectors = logical.needs.synchronization = true;
+  auto complete = session.analyze(logical);
+  if (complete.status != AnalysisStatus::Ready) {
+    return function.emitError("whole-region logical export did not complete");
+  }
+  const auto preparations = session.constructionCounts().logicalPreparations;
+  for (auto [id, node] : llvm::enumerate(session.result()->nodes)) {
+    if (node.kind != StructureKind::Loop || !node.loops.empty()) { continue; }
+    logical.region = id;
+    auto child = session.analyze(logical);
+    if (child.status != AnalysisStatus::Ready ||
+        session.constructionCounts().logicalPreparations != preparations) {
+      return function.emitError("whole-region preparation bypassed the child export cache");
+    }
+  }
   return success();
 }
 LogicalResult checkRetainedDemands(func::FuncOp function, pto::GMAliasPolicy policy) {

@@ -316,11 +316,12 @@ std::optional<RegionExpressions::Id> sequenceEventReachability(SequenceAnalysis&
     }
     return state.eventReachability(std::move(source), std::move(target));
 }
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceLogicalInsertion(SequenceAnalysis& analysis)
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceLogicalInsertion(SequenceAnalysis& analysis,
+    ArrayRef<scf::ForOp> enclosing, const SequenceEndpointResolver& resolver)
 {
     if (!analysis.state || !analysis.error.empty()) { return failure(); }
     analysis.insertionError.clear();
-    auto result = analysis.state->prepare();
+    auto result = analysis.state->prepare(enclosing, resolver);
     if (failed(result)) { analysis.insertionError = analysis.state->error; }
     return result;
 }

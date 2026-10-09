@@ -91,7 +91,12 @@ std::optional<RegionExpressions::Id> sequenceEventReachability(const SequenceAna
     uint32_t sourcePort, PeriodicEventKind sourceKind, uint32_t targetPort, PeriodicEventKind targetKind);
 std::optional<RegionExpressions::Id> sequenceEventReachability(SequenceAnalysis& analysis,
     SequenceEvent source, SequenceEvent target);
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceLogicalInsertion(SequenceAnalysis& analysis);
+// Preparation-only resolver. It must preserve the supplied exact selected
+// order and original occurrence coordinates; it is never retained by a result.
+using SequenceEndpointResolver = std::function<FailureOr<std::unique_ptr<PreparedLogicalPlan>>(
+    std::size_t, const RegionalAnalysis&, ArrayRef<scf::ForOp>)>;
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceLogicalInsertion(SequenceAnalysis& analysis,
+    ArrayRef<scf::ForOp> enclosing = {}, const SequenceEndpointResolver& resolver = {});
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceInsertion(SequenceAnalysis& analysis);
 // Analyze children independently, reconcile their physical ranges, then reduce
 // crossings in one shared all-event port graph. Child internals stay intact.

@@ -35,6 +35,7 @@ bool SequenceAnalysisState::resolvedChild(std::size_t node)
     if (failed(regional)) { return fail(diagnostic); }
     Child child;
     child.regional = std::move(*regional);
+    child.originalNode = node;
     child.anchors = child.regional.anchors;
     children.push_back(std::move(child));
     return true;
