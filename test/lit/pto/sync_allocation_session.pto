@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --allocation-session-checks %S/sync_analysis_session.pto | FileCheck %s --check-prefix=EXPLICIT
+// EXPLICIT: allocation-session: explicit available=1 retained-demands cached-export
+// RUN: pto-sync-input-test --allocation-session-checks %S/sync_loop_session_cache.pto | FileCheck %s --check-prefix=GUARDED
+// GUARDED: allocation-session: guarded-rotating available=0 retained-demands cached-export
+// RUN: pto-sync-input-test --allocation-session-checks %S/sync_arithmetic_periodic_conversion.pto | FileCheck %s --check-prefix=NUMERICAL
+// NUMERICAL: allocation-session: numerical-periodic available=1 retained-demands cached-export
+// RUN: pto-sync-input-test --allocation-session-checks %S/sync_arithmetic_insertion.pto | FileCheck %s --check-prefix=SEQUENCE
+// SEQUENCE: allocation-session: sequence available=1 retained-demands cached-export
+// RUN: pto-sync-input-test --allocation-session-checks %S/sync_rotating_analysis.pto | FileCheck %s --check-prefix=ROTATING
+// ROTATING: allocation-session: rotating available=1 retained-demands cached-export

@@ -198,8 +198,9 @@ LogicalResult prepareCountedEndpointCode(func::FuncOp function, const NumericTem
     prepared.families = std::move(families.families);
     return prepareFamilyEndpointCode(endpoints, prepared);
 }
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplateInsertion(
-    func::FuncOp function, const ProgramRecognition& program, int64_t planId)
+namespace {
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplate(
+    func::FuncOp function, const ProgramRecognition& program, int64_t planId, bool allocation)
 {
     if (!function) {
         return failure();
@@ -218,10 +219,21 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplateInsertion(
     if (failed(prepareFamilyEndpointCode(*node->logicalEndpoints, *prepared))) {
         return failure();
     }
-    if (node->periodicAnalysis && node->periodicAnalysis->error.empty()) {
+    if (allocation && node->periodicAnalysis && node->periodicAnalysis->error.empty()) {
         prepared->allocationCertificate = encodePeriodicSharedAllocation(*node->periodicAnalysis, planId,
                                                                  function.getContext());
     }
     return prepared;
+}
+} // namespace
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplateLogicalInsertion(
+    func::FuncOp function, const ProgramRecognition& program, int64_t planId)
+{
+    return prepareNumericTemplate(function, program, planId, false);
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplateInsertion(
+    func::FuncOp function, const ProgramRecognition& program, int64_t planId)
+{
+    return prepareNumericTemplate(function, program, planId, true);
 }
 } // namespace mlir::pto::frontiersynch

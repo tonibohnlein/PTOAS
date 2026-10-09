@@ -335,13 +335,19 @@ std::optional<RegionExpressions::Id> sequenceEventReachability(SequenceAnalysis&
     }
     return state.eventReachability(std::move(source), std::move(target));
 }
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceInsertion(SequenceAnalysis& analysis)
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceLogicalInsertion(SequenceAnalysis& analysis)
 {
     if (!analysis.state || !analysis.error.empty()) { return failure(); }
     analysis.insertionError.clear();
     auto result = analysis.state->prepare();
     if (failed(result)) { analysis.insertionError = analysis.state->error; }
-    else if (!(*result)->allocationCertificate) {
+    return result;
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceInsertion(SequenceAnalysis& analysis)
+{
+    auto result = prepareSequenceLogicalInsertion(analysis);
+    const bool needsAllocation = succeeded(result) && !(*result)->allocationCertificate;
+    if (needsAllocation) {
         (*result)->allocationCertificate = regionalAllocationCertificate(sequenceRegionalResult(analysis), **result);
         if (!(*result)->allocationCertificate) {
             (*result)->allocationCertificate =

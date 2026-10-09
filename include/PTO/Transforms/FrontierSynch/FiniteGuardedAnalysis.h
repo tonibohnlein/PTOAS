@@ -24,6 +24,7 @@ struct FiniteGuardedAnalysis {
 FiniteGuardedAnalysis analyzeFiniteGuarded(func::FuncOp function, ArrayRef<Operation*> roots,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions = {});
 RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analysis);
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedLogicalInsertion(FiniteGuardedAnalysis& analysis);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedInsertion(FiniteGuardedAnalysis& analysis);
 } // namespace mlir::pto::frontiersynch
 #endif

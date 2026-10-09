@@ -17,6 +17,8 @@ namespace mlir::pto::frontiersynch {
 // and matching original cuts; no numeric effect-template assumption is made.
 LogicalResult prepareCountedEndpointCode(func::FuncOp function, const NumericTemplateEndpoints& endpoints,
                                          PreparedLogicalPlan& prepared);
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplateLogicalInsertion(
+    func::FuncOp function, const ProgramRecognition& program, int64_t planId = 0);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplateInsertion(
     func::FuncOp function, const ProgramRecognition& program, int64_t planId = 0);
 } // namespace mlir::pto::frontiersynch
