@@ -374,10 +374,12 @@ private:
         result.prepare = [owned, parent, domainFilter, allocation]()
             -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
             std::string error;
-            auto prepared = prepareGuardedRotatingEndpoints(parent, *owned, error, domainFilter);
+            auto prepared = prepareGuardedRotatingEndpoints(parent, *owned, error, domainFilter, false);
             if (succeeded(prepared)) {
                 (*prepared)->completeInvocation = false;
-                (*prepared)->regionalAllocation = allocation();
+                (*prepared)->allocationPreparation = [allocation](PreparedLogicalPlan& plan) {
+                    plan.regionalAllocation = allocation();
+                };
             }
             return prepared;
         };
@@ -392,10 +394,12 @@ private:
                 if (!first || !second) { return std::nullopt; }
                 return owned->expressions->land(*first, *second);
             };
-            auto prepared = prepareGuardedRotatingEndpoints(parent, *owned, error, combined);
+            auto prepared = prepareGuardedRotatingEndpoints(parent, *owned, error, combined, false);
             if (succeeded(prepared)) {
                 (*prepared)->completeInvocation = false;
-                (*prepared)->regionalAllocation = allocation();
+                (*prepared)->allocationPreparation = [allocation](PreparedLogicalPlan& plan) {
+                    plan.regionalAllocation = allocation();
+                };
             }
             return prepared;
         };

@@ -616,7 +616,9 @@ FailureOr<RegionalAnalysis> exportState(const std::shared_ptr<State>& state,
                                                        state->analysis, state->emissionError);
         if (succeeded(plan)) {
             (*plan)->completeInvocation = false;
-            (*plan)->regionalAllocation = state->allocation(**plan);
+            (*plan)->allocationPreparation = [state](PreparedLogicalPlan& prepared) {
+                prepared.regionalAllocation = state->allocation(prepared);
+            };
         }
         return plan;
     };
@@ -858,15 +860,15 @@ FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalR
         // Use the existing detached sequence import for record identities,
         // original preparation blocks and allocation provenance. Its crossing
         // list is empty: relation lowering supplies only the new crossings.
-        SequenceAnalysisState merge(relation->data.context.function, state->arena);
-        merge.completeInvocation = false; merge.requiredOuterLoops.assign(enclosing.begin(), enclosing.end());
+        auto merge = std::make_shared<SequenceAnalysisState>(relation->data.context.function, state->arena);
+        merge->completeInvocation = false; merge->requiredOuterLoops.assign(enclosing.begin(), enclosing.end());
         std::vector<uint32_t> typeBases;
         uint32_t nextType = 0;
         for (const auto& child : relation->children) {
             if (child.anchors.size() > UINT32_MAX - nextType) { return failure(); }
             typeBases.push_back(nextType); nextType += child.anchors.size();
             Child imported; imported.regional = child; imported.anchors = child.anchors;
-            merge.children.push_back(std::move(imported));
+            merge->children.push_back(std::move(imported));
         }
         if (!relation->newCrossings.empty()) {
             Child crossing;
@@ -880,9 +882,10 @@ FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalR
                 auto prepared = prepareGeneralArithmeticRegionalInsertion(crossingState->program.context.function,
                     crossingState->program, crossingState->analysis, crossingState->emissionError);
                 if (succeeded(prepared)) {
-                    (*prepared)->regionalAllocation = crossingState->allocation(**prepared);
-                    if ((*prepared)->regionalAllocation) {
-                        for (auto& group : (*prepared)->regionalAllocation->groups) {
+                    (*prepared)->allocationPreparation = [crossingState, original](PreparedLogicalPlan& plan) {
+                        plan.regionalAllocation = crossingState->allocation(plan);
+                        if (!plan.regionalAllocation) { return; }
+                        for (auto& group : plan.regionalAllocation->groups) {
                             for (auto& member : group.members) {
                                 member.firstSource = original(member.firstSource);
                                 member.lastTarget = original(member.lastTarget);
@@ -893,15 +896,15 @@ FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalR
                                 }
                             }
                         }
-                    }
+                    };
                 }
                 return prepared;
             };
             crossing.regional.prepare = [prepare = crossing.regional.prepareWithVisits]() { return prepare({}); };
-            merge.children.push_back(std::move(crossing));
+            merge->children.push_back(std::move(crossing));
             typeBases.push_back(0); // Crossings already name the parent's original site table.
         }
-        return merge.prepareWithTypeBases(enclosing, typeBases);
+        return merge->prepareWithTypeBases(enclosing, typeBases);
     };
     result->prepare = [prepare = result->prepareWithVisits]() { return prepare({}); };
     result->capabilities.endpointRecipes = llvm::all_of(relation->children, [](const auto& child) {

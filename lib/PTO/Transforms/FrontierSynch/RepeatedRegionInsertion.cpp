@@ -39,9 +39,7 @@ class RepeatedPreparation
         plan->completeInvocation = false;
         plan->nestedIdentities = true;
         plan->allocationCertificate = {};
-        auto childAllocation = plan->regionalAllocation;
-        if (!childAllocation) { childAllocation = finiteRegionalAllocation(body, *plan); }
-        plan->regionalAllocation.reset();
+        auto childView = takeRegionalAllocationView(*plan);
         current = ordinal(loop);
         if (!current)
         {
@@ -56,8 +54,16 @@ class RepeatedPreparation
         }
         const bool unitCrossings = llvm::all_of(state.crossings,
             [](const RepeatedCrossing& crossing) { return crossing.displacement == 1; });
-        if (childAllocation && unitCrossings) {
-            plan->regionalAllocation = repeatedRegionalAllocation(state, *childAllocation, allocationCrossings);
+        if (unitCrossings) {
+            plan->allocationPreparation = [owner = state.shared_from_this(), childView,
+                crossings = std::move(allocationCrossings)](PreparedLogicalPlan& prepared) {
+                prepareAllocationSupport(*childView);
+                auto allocation = childView->regionalAllocation;
+                if (!allocation) { allocation = finiteRegionalAllocation(owner->body, *childView); }
+                if (allocation) {
+                    prepared.regionalAllocation = repeatedRegionalAllocation(*owner, *allocation, crossings);
+                }
+            };
         }
         renameFamilies();
         return std::move(plan);

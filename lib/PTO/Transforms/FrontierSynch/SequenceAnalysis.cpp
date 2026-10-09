@@ -346,6 +346,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceLogicalInsertion(
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceInsertion(SequenceAnalysis& analysis)
 {
     auto result = prepareSequenceLogicalInsertion(analysis);
+    if (succeeded(result)) { prepareAllocationSupport(**result); }
     const bool needsAllocation = succeeded(result) && !(*result)->allocationCertificate;
     if (needsAllocation) {
         (*result)->allocationCertificate = regionalAllocationCertificate(sequenceRegionalResult(analysis), **result);

@@ -62,7 +62,7 @@ struct CellBoundary {
 };
 struct Crossing { uint32_t source = 0, target = 0; Expr guard = 0; };
 struct SequenceNumericalNode;
-struct SequenceAnalysisState {
+struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisState> {
     func::FuncOp function;
     const SyncInput* input = nullptr;
     const ProgramRecognition* program = nullptr;

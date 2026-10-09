@@ -12,13 +12,14 @@
 namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGuardedRotatingEndpoints(
     func::FuncOp function, GuardedRotatingAnalysis& analysis, std::string& error,
-    const RegionalDemandFilter& filter)
+    const RegionalDemandFilter& filter, bool includeAllocation)
 {
     if (!analysis.error.empty()) { error = analysis.error; return failure(); }
     GuardedPeriodicEndpointInput input{analysis.loop, analysis.expressions, analysis.phases,
         analysis.payloads, analysis.generators, &analysis.periodic};
     auto plan = prepareGuardedPeriodicEndpoints(function, input, error, filter);
-    if (succeeded(plan) && !filter) {
+    const bool allocate = succeeded(plan) && !filter && includeAllocation;
+    if (allocate) {
         (*plan)->allocationCertificate = guardedAllocationCertificate(analysis, (*plan)->planId, function.getContext());
     }
     return plan;

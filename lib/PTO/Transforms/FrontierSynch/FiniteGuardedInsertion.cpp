@@ -13,7 +13,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
     insertionError.clear();
     bool terminalCleanup = false;
     auto plan = std::make_unique<PreparedLogicalPlan>(0);
-    plan->regionalAllocation = std::make_shared<RegionalAllocationSummary>();
+    std::vector<RegionalAllocationGroup> allocationGroups;
     plan->groupedFamilies = true;
     plan->independentPieces = true;
     std::map<Operation*, RegionExpressions::CutEmission> contexts;
@@ -59,7 +59,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
             continue;
         }
         auto zero = arena->constant(0);
-        plan->regionalAllocation->groups.push_back({p, q, 1, {{record, 0, 0,
+        allocationGroups.push_back({p, q, 1, {{record, 0, 0,
             {demand.source, zero, PeriodicEventKind::Start},
             {demand.target, zero, PeriodicEventKind::Completion}, demand.guard}}});
         auto sourceGuard = emit(demand.guard,a.after.before);
@@ -116,7 +116,14 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
     }
     // The ordinary envelope ends at the consumer and would allow premature
     // reuse. Finite allocation recognizes the terminal alternative explicitly.
-    if (terminalCleanup) { plan->regionalAllocation.reset(); }
+    if (!terminalCleanup) {
+        plan->allocationPreparation = [owner = arena, groups = std::move(allocationGroups)](
+            PreparedLogicalPlan& prepared) {
+            auto summary = std::make_shared<RegionalAllocationSummary>();
+            summary->groups = groups;
+            prepared.regionalAllocation = std::move(summary);
+        };
+    }
     return plan;
 }
 } // namespace mlir::pto::frontiersynch

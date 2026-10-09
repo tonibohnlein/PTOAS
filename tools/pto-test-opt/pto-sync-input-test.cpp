@@ -61,6 +61,9 @@ LogicalResult checkAllocationSession(func::FuncOp function, pto::GMAliasPolicy p
       session.constructionCounts().allocationExports) {
     return function.emitError("logical preparation constructed physical allocation");
   }
+  if ((*left)->regionalAllocation || (*right)->regionalAllocation) {
+    return function.emitError("logical preparation constructed a regional allocation summary");
+  }
   const auto bounded = logical.mathematical->boundedDemands;
   if (bounded && bounded->allocationRecipe) {
     return function.emitError("bounded logical preparation constructed an allocation proof");

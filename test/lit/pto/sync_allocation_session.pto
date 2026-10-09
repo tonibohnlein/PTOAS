@@ -17,3 +17,5 @@
 // ROTATING: allocation-session: rotating available=1 retained-demands cached-export
 // RUN: pto-sync-input-test --allocation-session-checks %S/sync_mixed_stride.pto | FileCheck %s --check-prefix=MIXED
 // MIXED: allocation-session: mixed-stride available=1 retained-demands cached-export
+// RUN: pto-sync-input-test --allocation-session-checks %S/sync_finite_guarded_analysis.pto | FileCheck %s --check-prefix=SEQUENCE
+// RUN: pto-sync-input-test --allocation-session-checks %S/sync_varying_rotating.pto | FileCheck %s --check-prefix=SEQUENCE

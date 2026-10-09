@@ -27,6 +27,24 @@ void prepareAllocationSupport(PreparedLogicalPlan& plan)
     plan.allocationPreparation = {};
     if (prepare) { prepare(plan); }
 }
+std::shared_ptr<PreparedLogicalPlan> takeRegionalAllocationView(PreparedLogicalPlan& plan)
+{
+    auto view = std::make_shared<PreparedLogicalPlan>(plan.planId);
+    view->completeInvocation = plan.completeInvocation;
+    view->nestedIdentities = plan.nestedIdentities;
+    view->independentPieces = plan.independentPieces;
+    view->groupedFamilies = plan.groupedFamilies;
+    view->endpoints = plan.endpoints;
+    view->families = plan.families;
+    view->mathematicalOwner = plan.mathematicalOwner;
+    view->compactBoundingOwner = plan.compactBoundingOwner;
+    view->regionalAllocation = std::move(plan.regionalAllocation);
+    view->allocationPreparation = std::move(plan.allocationPreparation);
+    plan.allocationPreparation = {};
+    // Certificates describe the child graph and cannot survive composition.
+    plan.allocationCertificate = {};
+    return view;
+}
 PreparedLogicalPlan::~PreparedLogicalPlan()
 {
     // Detached blocks can reference each other. Drop uses before destroying any.

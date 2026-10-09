@@ -58,6 +58,7 @@ struct State : std::enable_shared_from_this<State> {
     std::optional<std::vector<VaryingAllocationRecord>> allocationRecords;
     std::shared_ptr<RegionalAllocationSummary> allocation;
     uint64_t allocationQueries = 0;
+    bool allocationAttempted = false;
     RegionExpressions& e() { return *arena; }
     Id c(uint64_t x) { return e().constant(x); }
     Id mul(Id x, uint64_t n)
@@ -437,6 +438,8 @@ struct State : std::enable_shared_from_this<State> {
 };
 void State::buildAllocation()
 {
+    if (allocationAttempted) { return; }
+    allocationAttempted = true;
     allocationRecords = enumerateVaryingAllocationRecords(visits, allocationError);
     if (!allocationRecords) { return; }
     VaryingBoundaryQuery queries(visits, ports, startup, suffix, powers);
@@ -506,18 +509,24 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> State::prepare()
         }
     }
     auto prepared = emit.take();
-    if (allocation && allocationRecords && prepared->families.size() == allocationRecords->size()) {
-        bool identitiesMatch = true;
-        for (std::size_t i = 0; i < allocationRecords->size(); ++i) {
-            const auto& expected = (*allocationRecords)[i];
-            const auto& family = prepared->families[i];
-            identitiesMatch &= expected.record == i && family.id == i && family.members.size() == 1 &&
-                family.members.front().record == expected.record && family.members.front().source == expected.source &&
-                family.members.front().target == expected.target;
+    prepared->allocationPreparation = [owner = shared_from_this()](PreparedLogicalPlan& plan) {
+        owner->buildAllocation();
+        const bool matchingCount = owner->allocation && owner->allocationRecords &&
+            plan.families.size() == owner->allocationRecords->size();
+        if (matchingCount) {
+            bool identitiesMatch = true;
+            for (std::size_t i = 0; i < owner->allocationRecords->size(); ++i) {
+                const auto& expected = (*owner->allocationRecords)[i];
+                const auto& family = plan.families[i];
+                identitiesMatch &= expected.record == i && family.id == i && family.members.size() == 1 &&
+                    family.members.front().record == expected.record &&
+                    family.members.front().source == expected.source &&
+                    family.members.front().target == expected.target;
+            }
+            if (identitiesMatch) { plan.regionalAllocation = owner->allocation; }
+            else { owner->allocationError = "varying allocation and endpoint record identities disagree"; }
         }
-        if (identitiesMatch) { prepared->regionalAllocation = allocation; }
-        else { allocationError = "varying allocation and endpoint record identities disagree"; }
-    }
+    };
     return prepared;
 }
 } // namespace
@@ -576,9 +585,6 @@ FailureOr<RegionalAnalysis> varyingRotatingRegionalResult(
         error = state->error;
         return failure();
     }
-    // Construct the numerical allocation proof once, before publishing its
-    // cost. Failure preserves the logical interface and original endpoint plan.
-    state->buildAllocation();
     // Closures own state. Keep them out of state's prototype to avoid cycles.
     auto result = out;
     result.presence = [state](RegionalEvent x) -> std::optional<Id> {
