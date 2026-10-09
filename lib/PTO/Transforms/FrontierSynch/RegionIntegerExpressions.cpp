@@ -6,22 +6,13 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exact signed arithmetic adapters for relational regional queries.
-#include "PTO/Transforms/FrontierSynch/RegionExpressions.h"
+#include "RegionIntegerExpressionsInternal.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 namespace mlir::pto::frontiersynch {
-struct RegionExpressions::IntegerRecipe {
-    bool predicate = true;
-    IntegerSystem system;
-    IntegerAffine numerator;
-    BoundInteger denominator{1};
-    std::vector<Id> inputs;
-    std::vector<uint64_t> residues;
-    uint64_t period = 1, outputResidue = 0;
-    std::string signature;
-};
+
 namespace {
 BoundInteger powerOfTwo(unsigned bits)
 {

@@ -98,7 +98,7 @@ void bindLogicalPhase(RegionalAnalysis& view, ArrayRef<std::pair<Expr, Expr>> pa
     for (auto* side : {&view.accessBoundary, &view.deferredAccessBoundary}) {
         for (auto& access : *side) { rewrite(access.first); rewrite(access.last); }
     }
-    view.arithmeticRelations.reset(); view.symbolicStorage.reset(); view.numerical.reset();
+    view.arithmeticRelations.reset(); view.relations.reset(); view.symbolicStorage.reset(); view.numerical.reset();
 }
 std::optional<Expr> phaseTripCount(scf::ForOp loop, PhaseNormalization& normalizer,
     RegionExpressions& expressions, uint64_t phase, uint64_t period,
