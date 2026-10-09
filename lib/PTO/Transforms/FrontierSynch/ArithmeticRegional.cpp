@@ -20,6 +20,7 @@
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -28,6 +29,7 @@ namespace mlir::pto::frontiersynch {
 namespace {
 using Id = RegionExpressions::Id;
 struct State : ArithmeticRegionalRelations {
+    std::shared_ptr<const SyncInput> inputOwner;
     std::optional<ArithmeticHandoffAllocation> handoffAllocation;
     std::vector<ArithmeticIntegerPiece> primitives;
     using StorageKey = std::pair<AddressSpace, Value>;
@@ -255,6 +257,10 @@ struct State : ArithmeticRegionalRelations {
     }
     std::shared_ptr<RegionalAllocationSummary> allocation(const PreparedLogicalPlan& plan)
     {
+        RegionExpressions::Transaction transaction(*arena);
+        const auto previousError = error;
+        bool accepted = false;
+        auto restore = llvm::make_scope_exit([&] { if (!accepted) { error = previousError; } });
         if (!handoffAllocation) { handoffAllocation = buildArithmeticHandoffAllocation(analysis, pipes, 1); }
         if (!handoffAllocation->error.empty()) { return {}; }
         std::map<std::pair<std::size_t, std::size_t>, uint32_t> records;
@@ -280,6 +286,9 @@ struct State : ArithmeticRegionalRelations {
             group.members.push_back(std::move(member)); group.lanes.push_back({std::move(first), std::move(last)});
             result->groups.push_back(std::move(group));
         }
+        const bool failedExport = !error.empty() || !arena->constructionError().empty();
+        if (failedExport) { return {}; }
+        transaction.commit(); accepted = true;
         return result;
     }
     RegionalStorageSelectors storage(AddressSpace space, Value base, Id byte)
@@ -492,7 +501,7 @@ bool finiteBoundaries(State& state, RegionalAnalysis& out)
     return true;
 }
 FailureOr<RegionalAnalysis> exportState(const std::shared_ptr<State>& state,
-    const SyncInput& input, std::string& error, bool finite)
+    const SyncInput& input, std::string& error, bool finite, bool selectors = true)
 {
     RegionalAnalysis out; out.expressions = state->arena;
     out.accessModel = &input.accesses(); out.gmAliasPolicy = input.memory().gmPolicy();
@@ -517,6 +526,18 @@ FailureOr<RegionalAnalysis> exportState(const std::shared_ptr<State>& state,
         auto value = state->reach(a,b);
         return value == RegionExpressions::invalid ? std::nullopt : std::optional<Id>(value);
     };
+    // Query snapshots deliberately contain no storage projection, extrema or
+    // endpoint recipe. A stronger request constructs its own callback state.
+    if (!selectors) {
+        out.arithmeticRelations = state;
+        out.capabilities.exactQueries = true;
+        out.cost.children = 1; out.cost.arithmeticRegions = 1;
+        out.cost.expressionNodes = state->arena->size();
+        if (!state->arena->constructionError().empty()) {
+            error = state->arena->constructionError(); return failure();
+        }
+        return out;
+    }
     out.storageSelectors = [state](RegionalByteAddress byte) -> std::optional<RegionalStorageSelectors> {
         auto selected = state->storage(byte.space, byte.base, byte.offset);
         if (!state->error.empty() || !state->arena->constructionError().empty()) { return std::nullopt; }
@@ -633,7 +654,50 @@ FailureOr<RegionalAnalysis> exportState(const std::shared_ptr<State>& state,
 }
 } // namespace
 namespace {
-enum class StorageExportRequest { Finite, SymbolicAllowed };
+enum class StorageExportRequest { Demands, Finite, SymbolicAllowed };
+FailureOr<RegionalAnalysis> initializeExports(const std::shared_ptr<State>& state,
+    const SyncInput& input, std::string& error, bool selectors, StorageExportRequest request,
+    const std::function<std::optional<Id>(Value)>& parameterBinding,
+    const std::function<bool()>& reduce = {})
+{
+    if (!state->initialize()) { error = state->error; return failure(); }
+    auto imported = importArithmeticIntegerPieces(state->program, !selectors);
+    if (failed(imported)) { error = "regional arithmetic primitive import failed"; return failure(); }
+    state->primitives = std::move(*imported);
+    if (selectors && !collectFiniteStorage(*state)) { error = state->error; return failure(); }
+    const bool finite = state->finiteStorageComplete;
+    if (request == StorageExportRequest::Finite && !finite) {
+        error = "finite regional export deferred: symbolic storage support remains available to other routes";
+        return failure();
+    }
+    for (const auto& piece : state->primitives) {
+        if (piece.schema->kind != PrimitiveKind::Occurrences || !piece.schema->sourceSite) { continue; }
+        const auto dimensions = piece.schema->sourceDimensions;
+        state->occurrences.push_back({*piece.schema->sourceSite,
+            {piece.residues.begin(), piece.residues.begin() + dimensions},
+            {piece.residues.begin() + dimensions, piece.residues.end()}, piece.system});
+    }
+    for (Value parameter : state->program.parameters) {
+        auto binding = parameterBinding ? parameterBinding(parameter) :
+            std::optional<Id>(state->arena->input(parameter));
+        if (!binding || *binding >= state->arena->size()) {
+            error = "regional arithmetic phase parameter has no exact binding";
+            return failure();
+        }
+        state->parameters.push_back(*binding);
+    }
+    for (const auto& site : state->program.sites) {
+        state->pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue));
+    }
+
+    if (reduce && !reduce()) { return failure(); }
+    if (selectors) {
+        state->selectors = buildArithmeticStorageSelectors(state->program, state->pipes);
+        if (!state->selectors.error.empty()) { error = state->selectors.error; return failure(); }
+    }
+    return exportState(state, input, error, finite, selectors);
+
+}
 FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
     std::string& error, std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding,
@@ -712,42 +776,74 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext 
     // The retained session route always computes demands first. The finite-only
     // compatibility probe can still defer symbolic exports before construction.
     if (retained && !reduce()) { return failure(); }
-    if (!state->initialize()) { error = state->error; return failure(); }
-    auto imported = importArithmeticIntegerPieces(state->program);
-    if (failed(imported)) { error = "regional arithmetic primitive import failed"; return failure(); }
-    state->primitives = std::move(*imported);
-    if (!collectFiniteStorage(*state)) { error = state->error; return failure(); }
-    const bool finite = state->finiteStorageComplete;
-    if (request == StorageExportRequest::Finite && !finite) {
-        error = "finite regional export deferred: symbolic storage support remains available to other routes";
-        return failure();
-    }
-    for (const auto& piece : state->primitives) {
-        if (piece.schema->kind != PrimitiveKind::Occurrences || !piece.schema->sourceSite) { continue; }
-        const auto dimensions = piece.schema->sourceDimensions;
-        state->occurrences.push_back({*piece.schema->sourceSite,
-            {piece.residues.begin(), piece.residues.begin() + dimensions},
-            {piece.residues.begin() + dimensions, piece.residues.end()}, piece.system});
-    }
-    for (Value parameter : state->program.parameters) {
-        auto binding = parameterBinding ? parameterBinding(parameter) :
-            std::optional<Id>(state->arena->input(parameter));
-        if (!binding || *binding >= state->arena->size()) {
-            error = "regional arithmetic phase parameter has no exact binding";
-            return failure();
-        }
-        state->parameters.push_back(*binding);
-    }
-    for (const auto& site : state->program.sites) {
-        state->pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue));
-    }
-    if (!retained && !reduce()) { return failure(); }
-    state->selectors = buildArithmeticStorageSelectors(state->program, state->pipes);
-    if (!state->selectors.error.empty()) { error = state->selectors.error; return failure(); }
-    return exportState(state, input, error, finite);
+    if (request == StorageExportRequest::Demands) { return RegionalAnalysis{}; }
+    return initializeExports(state, input, error, true, request, parameterBinding,
+        retained ? std::function<bool()>{} : reduce);
 
 }
 } // namespace
+std::shared_ptr<const ArithmeticRegionalRelations> analyzeArithmeticRegionDemands(
+    ArithmeticRegionContext context, const PhaseIndex& index, const SyncInput& input,
+    const ArithmeticProgram* certified, std::string& error)
+{
+    std::shared_ptr<const ArithmeticRegionalRelations> demands;
+    (void)analyzeArithmeticRegionImpl(context, index, input, std::make_shared<RegionExpressions>(),
+        error, {}, StorageExportRequest::Demands, &demands, certified);
+    return demands;
+}
+FailureOr<RegionalAnalysis> exportArithmeticRegion(
+    const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
+    bool selectors, std::string& error, std::shared_ptr<const SyncInput> inputOwner)
+{
+    const bool valid = demands.input && expressions && expressions->constructionError().empty() &&
+        demands.analysis.exactMinimum && demands.analysis.error.empty() &&
+        (!inputOwner || inputOwner.get() == demands.input);
+    if (!valid) {
+        error = "arithmetic export requires exact mathematics in its modeled input context"; return failure();
+    }
+    // Session requests are synchronous. No previously published callback runs
+    // inside this transaction, and no rejected state or appended ID escapes.
+    RegionExpressions::Transaction transaction(*expressions);
+    auto state = std::make_shared<State>();
+    state->input = demands.input; state->inputOwner = std::move(inputOwner);
+    state->program = demands.program; state->analysis = demands.analysis;
+    state->arena = expressions;
+    auto exported = initializeExports(state, *demands.input, error, selectors,
+        StorageExportRequest::SymbolicAllowed, {});
+    if (failed(exported)) { return failure(); }
+    transaction.commit();
+    return exported;
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticRegion(
+    const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
+    ArrayRef<scf::ForOp> enclosing, std::string& error, std::shared_ptr<const SyncInput> inputOwner)
+{
+    const bool valid = demands.input && expressions && expressions->constructionError().empty() &&
+        demands.analysis.exactMinimum && (!inputOwner || inputOwner.get() == demands.input);
+    if (!valid) { error = "arithmetic preparation requires its retained original context"; return failure(); }
+    RegionExpressions::Transaction transaction(*expressions);
+    auto state = std::make_shared<State>();
+    state->input = demands.input; state->inputOwner = std::move(inputOwner);
+    state->program = demands.program; state->analysis = demands.analysis;
+    state->arena = expressions; state->selectors.period = state->program.primitives.period;
+    if (!state->initialize()) { error = state->error; return failure(); }
+    if (enclosing != ArrayRef<scf::ForOp>(state->enclosing)) {
+        error = "arithmetic regional endpoint requires its original enclosing visit context"; return failure();
+    }
+    for (Value parameter : state->program.parameters) { state->parameters.push_back(state->arena->input(parameter)); }
+    for (const auto& site : state->program.sites) {
+        state->pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue));
+    }
+    auto plan = prepareGeneralArithmeticRegionalInsertion(state->program.context.function,
+        state->program, state->analysis, error);
+    if (failed(plan)) { return failure(); }
+    (*plan)->completeInvocation = false;
+    (*plan)->allocationPreparation = [state](PreparedLogicalPlan& prepared) {
+        prepared.regionalAllocation = state->allocation(prepared);
+    };
+    transaction.commit();
+    return plan;
+}
 FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
     std::string& error, std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding)

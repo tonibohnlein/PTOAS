@@ -9,6 +9,7 @@
 // CHECK: arithmetic-export-failure: exact-demands-retained cached-retry isolated-context
 // CHECK: certification-json {"allocation_exports":0
 // CHECK-SAME: "logical_preparations":0
+// CHECK: arithmetic-requests: demands-only query-only isolated-selector-failure fresh-plans retained-owner
 // CHECK: source-unchanged; synchronization-insertion-not-run
 !tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 module {
@@ -26,4 +27,20 @@ module {
     }
     return
   }
+  func.func @request_exports(%n: index) attributes {test.arithmetic_requests} {
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %value = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %addr : !tile
+    scf.for %i = %zero to %n step %one {
+      scf.for %j = %zero to %i step %one {
+      pto.tsetval ins(%zero, %value : index, f32) outs(%tile : !tile)
+      pto.tadds ins(%tile, %value : !tile, f32) outs(%tile : !tile)
+      %read = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+
 }

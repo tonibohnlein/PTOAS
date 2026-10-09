@@ -520,3 +520,45 @@ pass. All 22 pinned corpus invocations preserve coverage at 227/240 under
 MayNotAlias and 213/240 under MayAlias, with no per-case loss, timeout or source
 mutation. The slowest invocation is 13.8 seconds. The three pinned paper hashes
 remain unchanged.
+
+### Request-driven regional arithmetic exports
+
+The canonical regional arithmetic producer now retains only the accepted program
+and its exact reduced demands. Demand-only requests do not initialize coordinate
+geometry, import query relations, project storage, build selectors or prepare
+commands. Queries and selectors have separate attempted/success/error caches;
+stronger requests reuse the same mathematical owner without repeating reduction.
+Sequence composition uses the same canonical cache through its export resolver.
+
+Each export snapshot has independent callback state in the common expression
+arena. Query-only construction imports occurrence/context primitives and skips
+access projection and selector construction. A stronger snapshot imports its own
+program-relative pointers and builds storage interfaces. A rejected transaction
+publishes no callbacks or IDs, rolls back appended expressions and diagnostics,
+and preserves prior queries. Original input owners survive session reset. The
+finite-only compatibility probe keeps its early symbolic-storage deferral before
+reduction; specialized entry bindings remain in the compatibility adapter.
+
+Logical preparation consumes the retained demands independently and creates
+fresh detached fragments. Deferred handoff allocation also uses a transaction,
+including legacy and composed crossing recipes. A missing allocation certificate
+leaves the logical fragments and existing query arena unchanged. Successful
+allocation publishes its complete summary before committing the new expressions.
+
+The focused regression checks empty optional state after demand construction,
+query-only interfaces, separate query/selector retries through the session,
+stateful-evaluation refusal, unchanged mathematical owners, selector failure
+followed by weaker queries, common-arena identity, surviving session reset and
+isolated input ownership. It compares disjoint detached operations in two live
+plans, destroys one, rejects a wrong enclosing visit context, and checks original
+IR and the remaining plan. Both allocation success and deliberately unavailable
+reuse support preserve logical fragments and query results.
+
+The stable optimized rebuild and final three-unit rebuild pass. All 32 focused
+checks and 22 serial pinned-input invocations pass, with no per-case coverage
+loss, source mutation or timeout. Coverage remains 227/240 under MayNotAlias and
+213/240 under MayAlias; the slowest invocation is 13.7 seconds. Compliance reports
+zero errors and warnings. The three paper hashes were rechecked and unchanged.
+This milestone separates regional arithmetic capabilities; it does not complete
+normalization ordering, specialized-context migration or the final paired corpus
+campaign.

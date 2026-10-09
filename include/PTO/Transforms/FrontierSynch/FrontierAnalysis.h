@@ -43,6 +43,7 @@ public:
     AnalysisOutcome analyzeFiniteVisit(const AnalysisRequest& request);
     AnalysisOutcome analyzeVaryingBoundary(const AnalysisRequest& request);
     AnalysisOutcome analyzeFiniteExpansion(const AnalysisRequest& request);
+    AnalysisOutcome analyzeArithmeticRegional(const AnalysisRequest& request);
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareLogical(const AnalysisOutcome& result);
     LogicalResult attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan);
     const AnalysisConstructionCounts& constructionCounts() const { return construction; }
@@ -108,6 +109,8 @@ private:
     const ArithmeticProgram* recognizeArithmeticRegion(std::size_t region);
     std::vector<AnalysisBackend> arithmeticMethods(const AnalysisRequest& request);
     SequenceRegionResolver regionalResolver();
+    std::shared_ptr<const RegionalAnalysis> arithmeticExports(
+        const MathematicalResult& demands, bool selectors, std::string& error);
     std::shared_ptr<const RegionalAnalysis> varyingExports(
         const MathematicalResult& demands, bool selectors, std::string& error);
     void recordWholeRegion(AnalysisBackend backend);
