@@ -49,6 +49,82 @@ BoundInteger affineValue(const IntegerAffine& expression, ArrayRef<BoundInteger>
     for (auto [coefficient, value] : llvm::zip(expression.coefficients, inputs)) { result += coefficient * value; }
     return result;
 }
+// Every mapped operation is evaluated mathematically, before any index
+// truncation. A postorder memo keeps expression-DAG work linear in its size.
+bool mappedBounds(ArrayRef<AffineExpr> maps, unsigned inputs,
+                  SmallVectorImpl<AffineExpr>& order, SmallVectorImpl<BoundInteger>& magnitudes)
+{
+    const auto limit = powerOfTwo(126);
+    DenseMap<AffineExpr, BoundInteger> bounds;
+    SmallVector<std::pair<AffineExpr, bool>> stack;
+    for (auto expression : maps) {
+        if (!expression) { return false; }
+        stack.push_back({expression, false});
+        while (!stack.empty()) {
+            const auto [current, ready] = stack.pop_back_val();
+            if (bounds.count(current)) { continue; }
+            BoundInteger bound(0);
+            if (auto dim = dyn_cast<AffineDimExpr>(current)) {
+                const bool valid = dim.getPosition() < inputs;
+                if (!valid) { return false; }
+                bound = powerOfTwo(63);
+            } else if (auto constant = dyn_cast<AffineConstantExpr>(current)) {
+                bound = llvm::abs(BoundInteger(constant.getValue()));
+            } else if (auto binary = dyn_cast<AffineBinaryOpExpr>(current)) {
+                if (!ready) {
+                    stack.push_back({current, true});
+                    stack.push_back({binary.getRHS(), false});
+                    stack.push_back({binary.getLHS(), false});
+                    continue;
+                }
+                const auto left = bounds.lookup(binary.getLHS()), right = bounds.lookup(binary.getRHS());
+                auto divisor = dyn_cast<AffineConstantExpr>(binary.getRHS());
+                const auto kind = current.getKind();
+                if (kind == AffineExprKind::Add) { bound = left + right; }
+                else if (kind == AffineExprKind::Mul && divisor) { bound = left * right; }
+                else if (divisor && divisor.getValue() > 0 &&
+                         (kind == AffineExprKind::FloorDiv ||
+                          kind == AffineExprKind::CeilDiv || kind == AffineExprKind::Mod)) {
+                    if (left + right >= limit) { return false; }
+                    bound = kind == AffineExprKind::Mod ? right - BoundInteger(1) :
+                        floorDiv(left, right) + BoundInteger(1);
+                } else { return false; }
+            } else { return false; }
+            if (bound >= limit) { return false; }
+            bounds.try_emplace(current, bound); order.push_back(current);
+        }
+        magnitudes.push_back(bounds.lookup(expression));
+    }
+    return true;
+}
+SmallVector<BoundInteger> mappedValues(ArrayRef<AffineExpr> maps, ArrayRef<AffineExpr> order,
+                                      ArrayRef<BoundInteger> inputs)
+{
+    DenseMap<AffineExpr, BoundInteger> values;
+    for (auto expression : order) {
+        BoundInteger value(0);
+        if (auto dim = dyn_cast<AffineDimExpr>(expression)) { value = inputs[dim.getPosition()]; }
+        else if (auto constant = dyn_cast<AffineConstantExpr>(expression)) {
+            value = BoundInteger(constant.getValue());
+        }
+        else {
+            auto binary = cast<AffineBinaryOpExpr>(expression);
+            const auto left = values.lookup(binary.getLHS()), right = values.lookup(binary.getRHS());
+            switch (expression.getKind()) {
+            case AffineExprKind::Add: value = left + right; break;
+            case AffineExprKind::Mul: value = left * right; break;
+            case AffineExprKind::FloorDiv: value = floorDiv(left, right); break;
+            case AffineExprKind::CeilDiv: value = -floorDiv(-left, right); break;
+            case AffineExprKind::Mod: value = left - floorDiv(left, right) * right; break;
+            default: llvm_unreachable("validated mapped coordinate kind");
+            }
+        }
+        values.try_emplace(expression, value);
+    }
+    SmallVector<BoundInteger> result;
+    for (auto expression : maps) { result.push_back(values.lookup(expression)); }
+    return result;
+}
 } // namespace
 bool RegionExpressions::equalInteger(const Node& a, const Node& b)
 {
@@ -73,10 +149,16 @@ std::optional<uint64_t> RegionExpressions::foldInteger(const IntegerRecipe& reci
     SmallVector<BoundInteger> quotients;
     const BoundInteger period(static_cast<int64_t>(recipe.period));
     bool residueMatch = true;
-    for (auto [input, residue] : llvm::zip(recipe.inputs, recipe.residues)) {
+    SmallVector<BoundInteger> originals;
+    for (auto input : recipe.inputs) {
         auto bits = constantValue(input);
         if (!bits) { return std::nullopt; }
-        BoundInteger original(APInt(64, *bits).getSExtValue());
+        originals.push_back(BoundInteger(APInt(64, *bits).getSExtValue()));
+    }
+    if (!recipe.coordinates.empty()) {
+        originals = mappedValues(recipe.coordinates, recipe.coordinateOrder, originals);
+    }
+    for (auto [original, residue] : llvm::zip(originals, recipe.residues)) {
         auto quotient = floorDiv(original, period);
         residueMatch &= original - quotient * period == BoundInteger(static_cast<int64_t>(residue));
         quotients.push_back(quotient);
@@ -113,6 +195,11 @@ RegionExpressions::Id RegionExpressions::rebuildInteger(const Node& node, const 
     std::vector<Id> inputs(recipe.inputs);
     for (auto& input : inputs) { input = bindings.lookup(input); }
     if (inputs == recipe.inputs) { return intern(node); }
+    if (!recipe.coordinates.empty()) {
+        auto mapped = std::make_shared<IntegerRecipe>(recipe);
+        mapped->inputs = std::move(inputs);
+        return internInteger(std::move(mapped));
+    }
     return recipe.predicate ? integerPredicate(recipe.system, inputs, recipe.period, recipe.residues) :
         integerWitness(recipe.numerator, recipe.denominator, inputs,
                        recipe.period, recipe.residues, recipe.outputResidue);
@@ -262,6 +349,73 @@ RegionExpressions::Id RegionExpressions::integerPredicate(const IntegerSystem& s
     }
     return internInteger(std::move(recipe));
 }
+std::optional<RegionExpressions::Id> RegionExpressions::integerMappedPredicate(const IntegerSystem& system,
+    ArrayRef<Id> inputs, ArrayRef<AffineExpr> coordinates, uint64_t period,
+    ArrayRef<uint64_t> residues, std::string& diagnostic)
+{
+    diagnostic.clear();
+    const bool shape = period && period <= INT64_MAX && coordinates.size() == residues.size() &&
+        coordinates.size() == system.dimensions() && inputs.size() <= UINT_MAX;
+    if (!shape) { diagnostic = "mapped integer predicate has inconsistent dimensions or period"; return std::nullopt; }
+    for (auto input : inputs) {
+        if (!valid(input)) { diagnostic = "mapped integer predicate has an invalid input"; return std::nullopt; }
+    }
+    for (auto residue : residues) {
+        if (residue >= period) { diagnostic = "mapped integer predicate has an invalid residue"; return std::nullopt; }
+    }
+    if (coordinates.empty()) { return integerPredicate(system, {}, period, {}); }
+    SmallVector<AffineExpr> order;
+    SmallVector<BoundInteger> magnitudes;
+    if (!mappedBounds(coordinates, inputs.size(), order, magnitudes)) {
+        diagnostic = "mapped integer coordinates exceed the supported proven i128 range"; return std::nullopt;
+    }
+    const BoundInteger modulus(static_cast<int64_t>(period)), limit = powerOfTwo(126);
+    for (auto& bound : magnitudes) {
+        bound = floorDiv(bound, modulus) + BoundInteger(1);
+    }
+    auto magnitude = [&](ArrayRef<BoundInteger> coefficients) {
+        BoundInteger bound(0);
+        for (auto [coefficient, input] : llvm::zip(coefficients, magnitudes)) {
+            bound += llvm::abs(coefficient) * input;
+        }
+        return bound;
+    };
+    for (const auto& atom : system.constraints()) {
+        const bool safe = llvm::abs(atom.bound) < limit && magnitude(atom.coefficients) < limit;
+        if (!safe) {
+            diagnostic = "mapped integer constraint exceeds the proven i128 range"; return std::nullopt;
+        }
+    }
+    for (const auto& atom : system.congruences()) {
+        const bool safe = atom.modulus > 0 && llvm::abs(atom.residue) < limit &&
+            magnitude(atom.coefficients) + atom.modulus < limit;
+        if (!safe) { diagnostic = "mapped integer congruence exceeds the proven i128 range"; return std::nullopt; }
+    }
+    if (system.isKnownEmpty()) { return boolean(false); }
+    auto recipe = std::make_shared<IntegerRecipe>();
+    recipe->system = system; recipe->period = period;
+    recipe->inputs.assign(inputs.begin(), inputs.end());
+    recipe->residues.assign(residues.begin(), residues.end());
+    recipe->coordinates.assign(coordinates.begin(), coordinates.end());
+    recipe->coordinateOrder.assign(order.begin(), order.end());
+    {
+        llvm::raw_string_ostream stream(recipe->signature);
+        stream << "mapped-predicate:" << period << ':';
+        for (auto map : coordinates) { stream << map << ';'; }
+        for (auto residue : residues) { stream << residue << ','; }
+        for (const auto& atom : system.constraints()) {
+            stream << '[';
+            for (const auto& coefficient : atom.coefficients) { stream << coefficient << ','; }
+            stream << "<=" << atom.bound << ']';
+        }
+        for (const auto& atom : system.congruences()) {
+            stream << '[';
+            for (const auto& coefficient : atom.coefficients) { stream << coefficient << ','; }
+            stream << '=' << atom.residue << '%' << atom.modulus << ']';
+        }
+    }
+    return internInteger(std::move(recipe));
+}
 RegionExpressions::Id RegionExpressions::integerFloor(const IntegerAffine& numerator, const BoundInteger& denominator,
     ArrayRef<Id> inputs, uint64_t period, ArrayRef<uint64_t> residues)
 {
@@ -374,14 +528,44 @@ Value RegionExpressions::emitInteger(const Node& node, OpBuilder& builder, Locat
     auto addGuard = [&](Value predicate) {
         guard = guard ? Value(builder.create<arith::AndIOp>(loc, guard, predicate)) : predicate;
     };
-    SmallVector<Value> quotients;
-    for (auto [id, residue] : llvm::zip(recipe.inputs, recipe.residues)) {
+    SmallVector<Value> originals;
+    for (auto id : recipe.inputs) {
         Value input = memo.lookup(id);
-        Value original = isBoolean(id) ? Value(builder.create<arith::ExtUIOp>(loc, wide, input)) :
-            Value(builder.create<arith::IndexCastOp>(loc, wide, input));
+        originals.push_back(isBoolean(id) ? Value(builder.create<arith::ExtUIOp>(loc, wide, input)) :
+            Value(builder.create<arith::IndexCastOp>(loc, wide, input)));
+    }
+    if (!recipe.coordinates.empty()) {
+        DenseMap<AffineExpr, Value> values;
+        for (auto expression : recipe.coordinateOrder) {
+            Value value;
+            if (auto dim = dyn_cast<AffineDimExpr>(expression)) { value = originals[dim.getPosition()]; }
+            else if (auto constant = dyn_cast<AffineConstantExpr>(expression)) {
+                value = number(BoundInteger(constant.getValue()));
+            } else {
+                auto binary = cast<AffineBinaryOpExpr>(expression);
+                const auto left = values.lookup(binary.getLHS()), right = values.lookup(binary.getRHS());
+                switch (expression.getKind()) {
+                case AffineExprKind::Add: value = builder.create<arith::AddIOp>(loc, left, right); break;
+                case AffineExprKind::Mul: value = builder.create<arith::MulIOp>(loc, left, right); break;
+                case AffineExprKind::FloorDiv: value = builder.create<arith::FloorDivSIOp>(loc, left, right); break;
+                case AffineExprKind::CeilDiv: value = builder.create<arith::CeilDivSIOp>(loc, left, right); break;
+                case AffineExprKind::Mod: {
+                    auto quotient = builder.create<arith::FloorDivSIOp>(loc, left, right);
+                    auto multiple = builder.create<arith::MulIOp>(loc, quotient, right);
+                    value = builder.create<arith::SubIOp>(loc, left, multiple); break;
+                }
+                default: llvm_unreachable("validated mapped coordinate kind");
+                }
+            }
+            values.try_emplace(expression, value);
+        }
+        originals.clear();
+        for (auto expression : recipe.coordinates) { originals.push_back(values.lookup(expression)); }
+    }
+    SmallVector<Value> quotients;
+    for (auto [original, residue] : llvm::zip(originals, recipe.residues)) {
         Value quotient = period ? Value(builder.create<arith::FloorDivSIOp>(loc, original, period)) : original;
         quotients.push_back(quotient);
-        // Period one has only residue zero, checked at construction time.
         if (recipe.predicate && period) {
             Value multiple = builder.create<arith::MulIOp>(loc, quotient, period);
             Value remainder = builder.create<arith::SubIOp>(loc, original, multiple);

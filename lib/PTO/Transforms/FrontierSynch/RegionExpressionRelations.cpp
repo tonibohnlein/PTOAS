@@ -317,6 +317,9 @@ private:
     }
     Formula integerPredicate(const IntegerRecipe& recipe, bool truth)
     {
+        if (!recipe.coordinates.empty()) {
+            reject("relational lowering for mapped integer predicates not implemented yet"); return {};
+        }
         auto inputs = integerInputs(recipe);
         Clause conditions;
         for (auto [input, residue] : llvm::zip(recipe.inputs, recipe.residues)) {

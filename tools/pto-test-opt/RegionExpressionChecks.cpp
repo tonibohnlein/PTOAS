@@ -750,7 +750,8 @@ bool checkPartialIntegerAdapters(Value index, Value predicate)
     return expressions.substitute(dynamic, binding) == expressions.integerPredicate(*single, {unused}, 1, {0}) &&
         expressions.error().empty();
 }
-bool evaluateIntegerCode(Block& code, Value input, int64_t coordinate, Value guard, Value witness)
+bool evaluateIntegerCode(Block& code, Value input, int64_t coordinate, Value guard, Value witness,
+                         std::optional<bool> mappedExpected = {})
 {
     llvm::DenseMap<Value, APInt> values;
     values[input] = APInt(64, static_cast<uint64_t>(coordinate));
@@ -772,6 +773,10 @@ bool evaluateIntegerCode(Block& code, Value input, int64_t coordinate, Value gua
         } else if (isa<arith::FloorDivSIOp>(operation)) {
             result = operands[0].sdiv(operands[1]);
             if (operands[0].isNegative() && !operands[0].srem(operands[1]).isZero()) { --result; }
+        } else if (isa<arith::CeilDivSIOp>(operation)) {
+            result = operands[0].sdiv(operands[1]);
+            const bool roundUp = !operands[0].isNegative() && !operands[0].srem(operands[1]).isZero();
+            if (roundUp) { ++result; }
         } else if (isa<arith::MulIOp>(operation)) {
             result = operands[0] * operands[1];
         } else if (isa<arith::AddIOp>(operation)) {
@@ -789,12 +794,101 @@ bool evaluateIntegerCode(Block& code, Value input, int64_t coordinate, Value gua
         } else { return false; }
         values[operation.getResult(0)] = result;
     }
+    if (mappedExpected) {
+        return values.lookup(guard).getZExtValue() == *mappedExpected;
+    }
     const int64_t q = coordinate / 2 - (coordinate % 2 < 0);
     const bool expectedGuard = coordinate - q * 2 == 1 && 2 * q <= 7;
     const int64_t numerator = 3 * q - 2;
     const int64_t expectedWitness = (numerator / 2 - (numerator % 2 < 0)) * 2 + 1;
     return values.lookup(guard).getZExtValue() == expectedGuard &&
         values.lookup(witness).getSExtValue() == expectedWitness;
+}
+bool checkMappedIntegerAdapters(func::FuncOp function, ArrayRef<Operation*> cuts)
+{
+    fs::RegionExpressions arena;
+    const auto x = arena.input(function.getArgument(0));
+    auto* context = function.getContext();
+    const auto a = getAffineDimExpr(0, context), b = getAffineDimExpr(1, context);
+    SmallVector<AffineExpr> maps{a - 1, a + 1, a * 2 - b,
+        a - (b.floorDiv(3) * 5 + 7), a - b % 5, a.ceilDiv(3)};
+    auto relation = fs::IntegerSystem::create(1, {{{fs::BoundInteger(1)}, fs::BoundInteger(3)},
+        {{fs::BoundInteger(-1)}, fs::BoundInteger(5)}});
+    auto domain = fs::IntegerSystem::create(1, {});
+    const bool systemsReady = succeeded(relation) && succeeded(domain);
+    if (!systemsReady) { return false; }
+    std::string diagnostic;
+    fs::RegionExpressions::Id previous = fs::RegionExpressions::invalid;
+    for (auto [caseID, map] : llvm::enumerate(maps)) {
+        auto query = arena.integerMappedPredicate(*relation, {x, x}, {map}, 2, {1}, diagnostic);
+        const bool queryReady = query && diagnostic.empty() && *query != previous;
+        if (!queryReady) { return false; }
+        previous = *query;
+        fs::PreparedLogicalPlan plan(0);
+        auto& code = plan.addPreparation(cuts[0]);
+        OpBuilder builder(context); builder.setInsertionPointToEnd(&code);
+        fs::RegionExpressions::CutEmission emission;
+        auto emitted = arena.emitContextual(*query, builder, cuts[0], emission);
+        if (failed(emitted)) { return false; }
+        for (auto& operation : code) { if (failed(verify(&operation))) { return false; } }
+        for (int64_t sample : {INT64_MIN, INT64_MAX, int64_t(-11), int64_t(-9), int64_t(-3), int64_t(-1),
+                               int64_t(0), int64_t(1), int64_t(2), int64_t(9), int64_t(11)}) {
+            const fs::BoundInteger value(sample), divisor(3);
+            fs::BoundInteger mapped(0);
+            switch (caseID) {
+            case 0: mapped = value - fs::BoundInteger(1); break;
+            case 1: mapped = value + fs::BoundInteger(1); break;
+            case 2: mapped = value; break;
+            case 3: mapped = value - (floorDiv(value, divisor) * fs::BoundInteger(5) + fs::BoundInteger(7)); break;
+            case 4: mapped = floorDiv(value, fs::BoundInteger(5)) * fs::BoundInteger(5); break;
+            case 5: mapped = -floorDiv(-value, divisor); break;
+            default: return false;
+            }
+            const auto quotient = floorDiv(mapped, fs::BoundInteger(2));
+            const bool expected = mapped - quotient * fs::BoundInteger(2) == 1 && quotient >= -5 && quotient <= 3;
+            const auto fixed = arena.constant(static_cast<uint64_t>(sample));
+            fs::RegionExpressions::Substitution substitution({{x, fixed}});
+            const auto folded = arena.substitute(*query, substitution);
+            auto direct = arena.integerMappedPredicate(*relation, {fixed, fixed}, {map}, 2, {1}, diagnostic);
+            const bool agrees = direct && arena.constantValue(folded) == expected &&
+                arena.constantValue(*direct) == expected &&
+                evaluateIntegerCode(code, function.getArgument(0), sample, *emitted, *emitted, expected);
+            if (!agrees) {
+                return false;
+            }
+        }
+        const auto shifted = arena.add(x, arena.constant(1));
+        fs::RegionExpressions::Substitution rebind({{x, shifted}}), fix({{x, arena.constant(5)}});
+        const auto nested = arena.substitute(arena.substitute(*query, rebind), fix);
+        auto directSix = arena.integerMappedPredicate(*relation, {arena.constant(6), arena.constant(6)},
+            {map}, 2, {1}, diagnostic);
+        const bool rebound = directSix && arena.constantValue(nested) == arena.constantValue(*directSix);
+        if (!rebound) { return false; }
+        for (auto predicate : {*query, arena.lnot(*query)}) {
+            diagnostic.clear();
+            auto lowered = arena.integerRelation(predicate, {x}, *domain, diagnostic);
+            const bool refusedLowering = failed(lowered) && StringRef(diagnostic).contains("mapped");
+            if (!refusedLowering) { return false; }
+        }
+    }
+    auto scalar = fs::IntegerSystem::create(0, {});
+    if (failed(scalar)) { return false; }
+    auto scalarQuery = arena.integerMappedPredicate(*scalar, {}, {}, 1, {}, diagnostic);
+    const bool scalarReady = scalarQuery && arena.constantValue(*scalarQuery) == 1;
+    if (!scalarReady) { return false; }
+    const auto before = arena.size();
+    const auto huge = a * INT64_MAX + b * INT64_MAX;
+    auto refused = arena.integerMappedPredicate(*relation, {x, x}, {huge}, 1, {0}, diagnostic);
+    auto amplified = fs::IntegerSystem::create(2,
+        {{{fs::BoundInteger(2), fs::BoundInteger(1)}, fs::BoundInteger(0)}});
+    if (failed(amplified)) { return false; }
+    auto coefficientOverflow = arena.integerMappedPredicate(*amplified, {x, x},
+        {a * INT64_MAX, b}, 1, {0, 0}, diagnostic);
+    auto invalidDimension = arena.integerMappedPredicate(*relation, {x}, {b}, 1, {0}, diagnostic);
+    auto invalidSymbol = arena.integerMappedPredicate(*relation, {x}, {getAffineSymbolExpr(0, context)},
+        1, {0}, diagnostic);
+    return !refused && !coefficientOverflow && !invalidDimension && !invalidSymbol &&
+        arena.size() == before && arena.constructionError().empty();
 }
 bool checkIntegerEmission(func::FuncOp function, ArrayRef<Operation*> cuts, Value hidden)
 {
@@ -1033,6 +1127,7 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
         !checked("checkIntegerAdapters", checkIntegerAdapters(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkPartialIntegerAdapters",
                  checkPartialIntegerAdapters(function.getArgument(0), function.getArgument(1))) ||
+        !checked("checkMappedIntegerAdapters", checkMappedIntegerAdapters(function, cuts)) ||
         !checked("checkIntegerEmission", checkIntegerEmission(function, cuts, hidden)) ||
         !checked("checkPlacementRetry", checkPlacementRetry(function, cuts)) ||
         !checked("checkSubstitution", checkSubstitution(function.getArgument(0), function.getArgument(1))) ||
