@@ -42,8 +42,9 @@ class Extractor {
 public:
     GuardedRotatingAnalysis result;
     Extractor(scf::ForOp loop, const SyncInput& input, const GuardedRecognition& recognized,
-              std::shared_ptr<RegionExpressions> expressions, const DenseMap<Value, Expr>& guardBindings)
-        : input(input), recognized(recognized), guardBindings(guardBindings)
+              std::shared_ptr<RegionExpressions> expressions, const DenseMap<Value, Expr>& guardBindings,
+              const PhaseIndex* sharedIndex)
+        : input(input), recognized(recognized), guardBindings(guardBindings), sharedIndex(sharedIndex)
     {
         result.loop = loop;
         result.expressions = expressions ? std::move(expressions) : std::make_shared<RegionExpressions>();
@@ -88,10 +89,11 @@ public:
             }
         }
         if (!dag().constructionError().empty()) { fail(dag().constructionError()); return; }
-        PhaseIndex index;
-        if (failed(index.build(result.loop->getParentOfType<func::FuncOp>(), input))) {
+        PhaseIndex localIndex;
+        if (!sharedIndex && failed(localIndex.build(result.loop->getParentOfType<func::FuncOp>(), input))) {
             fail("guarded scalar prerequisite index unavailable"); return;
         }
+        const auto& index = sharedIndex ? *sharedIndex : localIndex;
         const auto prerequisites = index.mapPrerequisites(result.phases);
         if (!prerequisites.error.empty()) { fail(prerequisites.error); return; }
         std::vector<GuardedPeriodicRecord> native;
@@ -109,6 +111,7 @@ private:
     const SyncInput& input;
     const GuardedRecognition& recognized;
     const DenseMap<Value, Expr>& guardBindings;
+    const PhaseIndex* sharedIndex = nullptr;
     std::vector<Expr> guards;
     std::vector<Fragment> fragments;
     RegionExpressions& dag() { return *result.expressions; }
@@ -388,18 +391,30 @@ private:
         }
     }
 };
-} // namespace
-GuardedRotatingAnalysis analyzeGuardedRotating(scf::ForOp loop, const SyncInput& input,
+GuardedRotatingAnalysis analyzeGuardedRotatingImpl(scf::ForOp loop, const SyncInput& input,
     const GuardedRecognition& recognition, std::shared_ptr<RegionExpressions> expressions,
-    const DenseMap<Value, RegionExpressions::Id>& guardBindings)
+    const DenseMap<Value, RegionExpressions::Id>& guardBindings, const PhaseIndex* index)
 {
     if (!expressions && !guardBindings.empty()) {
         GuardedRotatingAnalysis failure;
         failure.error = "guard substitutions require their originating expression arena";
         return failure;
     }
-    Extractor extractor(loop, input, recognition, std::move(expressions), guardBindings);
+    Extractor extractor(loop, input, recognition, std::move(expressions), guardBindings, index);
     extractor.run();
     return std::move(extractor.result);
+}
+} // namespace
+GuardedRotatingAnalysis analyzeGuardedRotating(scf::ForOp loop, const SyncInput& input,
+    const GuardedRecognition& recognition, std::shared_ptr<RegionExpressions> expressions,
+    const DenseMap<Value, RegionExpressions::Id>& guardBindings)
+{
+    return analyzeGuardedRotatingImpl(loop, input, recognition, std::move(expressions), guardBindings, nullptr);
+}
+GuardedRotatingAnalysis analyzeGuardedRotating(scf::ForOp loop, const SyncInput& input,
+    const GuardedRecognition& recognition, const PhaseIndex& index,
+    std::shared_ptr<RegionExpressions> expressions, const DenseMap<Value, RegionExpressions::Id>& guardBindings)
+{
+    return analyzeGuardedRotatingImpl(loop, input, recognition, std::move(expressions), guardBindings, &index);
 }
 } // namespace mlir::pto::frontiersynch

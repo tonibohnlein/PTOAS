@@ -163,6 +163,7 @@ add_llvm_executable(pto-sync-input-test
   PARTIAL_SOURCES_INTENDED
 )
 target_link_libraries(pto-sync-input-test PRIVATE
+  MLIRDLTIDialect
   PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
   MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRLLVMDialect
 )
