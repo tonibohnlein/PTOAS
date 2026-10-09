@@ -8,7 +8,7 @@
 #include "AnalysisSessionInternal.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticPeriodicConversion.h"
 #include <algorithm>
-#include <type_traits>
+#include <tuple>
 namespace mlir::pto::frontiersynch {
 namespace {
 uint8_t requestKey(const AnalysisRequest& request)
@@ -20,30 +20,32 @@ struct GeneratorShape {
     EstimatedCount pieces = 0, native = 0, rows = 0, domains = 0;
     uint64_t dimensions = 0;
 };
-template<class Stage>
-GeneratorShape generatorShape(const Stage& stage)
+// Estimate joins from certified primitive descriptions before projection or
+// generator construction. These are selection estimates, not output bounds.
+GeneratorShape primitiveShape(const ArithmeticProgram& program)
 {
     GeneratorShape shape;
-    if (!stage.analysis().error.empty()) { shape.pieces.reset(); return shape; }
-    shape.domains = stage.occurrences().size();
-    for (const auto* relation : {&stage.analysis().generators, &stage.analysis().nativeOrder}) {
-        for (const auto& [key, pieces] : *relation) {
-            (void)key;
-            auto& count = relation == &stage.analysis().generators ? shape.pieces : shape.native;
-            count = estimatedAdd(count, pieces.size());
-            for (const auto& piece : pieces) {
-                shape.dimensions = std::max(shape.dimensions, uint64_t(piece.dimensions()));
-                EstimatedCount rows;
-                if constexpr (std::is_same_v<typename Stage::System, DifferenceBoundSystem>) {
-                    auto dimensions = estimatedAdd(piece.dimensions(), 1);
-                    rows = estimatedMultiply(dimensions, dimensions);
-                } else {
-                    rows = estimatedAdd(piece.constraints().size(), piece.congruences().size());
-                }
-                shape.rows = estimatedAdd(shape.rows, rows);
-            }
+    shape.domains = program.sites.size();
+    shape.dimensions = program.recognition.observedDimensions;
+    EstimatedCount reads = 0, writes = 0, prerequisite = 0, rows = 0, pieces = 0;
+    for (const auto& relation : program.primitives.relations) {
+        const auto count = EstimatedCount(relation.pieces.size());
+        if (relation.kind == PrimitiveKind::Reads) { reads = estimatedAdd(reads, count); }
+        if (relation.kind == PrimitiveKind::Writes) { writes = estimatedAdd(writes, count); }
+        if (relation.kind == PrimitiveKind::Prerequisites) { prerequisite = estimatedAdd(prerequisite, count); }
+        if (relation.kind == PrimitiveKind::Native) { shape.native = estimatedAdd(shape.native, count); }
+        pieces = estimatedAdd(pieces, count);
+        for (const auto& piece : relation.pieces) {
+            rows = estimatedAdd(rows, piece.system.getNumConstraints());
         }
     }
+    shape.pieces = estimatedAdd(prerequisite, estimatedMultiply(writes, estimatedAdd(reads, writes)));
+    // Joining accesses includes their domain/order descriptions. Projection can
+    // increase the normalized description; use its class dimensions in costs.
+    const auto averageRows = rows && pieces && *pieces ?
+        EstimatedCount(*rows / *pieces + uint64_t(*rows % *pieces != 0)) : EstimatedCount{};
+    shape.rows = estimatedMultiply(estimatedAdd(shape.pieces, shape.native),
+        estimatedMultiply(averageRows, 3));
     return shape;
 }
 std::pair<AnalysisCostEstimate, AnalysisCostEstimate> estimates(
@@ -92,26 +94,38 @@ std::pair<AnalysisCostEstimate, AnalysisCostEstimate> estimates(
 } // namespace
 std::vector<AnalysisBackend> FrontierAnalysis::arithmeticMethods(const AnalysisRequest& request)
 {
-    std::vector<AnalysisBackend> order{AnalysisBackend::ArithmeticPeriodic, AnalysisBackend::Arithmetic};
-    if (request.region || failed(ensureArithmeticGenerators())) { return order; }
+    const bool valid = storage && succeeded(recognizeStructure()) && request.region < program->nodes.size();
+    if (!valid) { return {}; }
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
     const auto key = requestKey(request);
-    if (auto found = sessionState->arithmeticOrders.find(key); found != sessionState->arithmeticOrders.end()) {
+    const auto identity = std::make_pair(request.region, key);
+    if (auto found = sessionState->arithmeticOrders.find(identity); found != sessionState->arithmeticOrders.end()) {
         return found->second;
     }
-    const auto shape = sessionState->differenceGenerators ? generatorShape(*sessionState->differenceGenerators) :
-                                                          generatorShape(*arithmeticGeneratorStage);
-    auto [periodic, arithmetic] = estimates(*program->arithmetic, shape, request.needs);
-    std::string diagnostic;
-    if (!checkArithmeticPeriodicSkeleton(*program->arithmetic, diagnostic)) {
-        periodic.work.reset(); periodic.representation.reset();
+    // The regional periodic adapter is not implemented. Do not advertise it as
+    // a reducer choice; the available regional arithmetic path stays eligible.
+    std::vector<AnalysisBackend> order = request.region ? std::vector<AnalysisBackend>{AnalysisBackend::Arithmetic} :
+        std::vector<AnalysisBackend>{AnalysisBackend::ArithmeticPeriodic, AnalysisBackend::Arithmetic};
+    const ArithmeticProgram* form = nullptr;
+    if (request.region) { form = recognizeArithmeticRegion(request.region); }
+    else if (succeeded(recognizeArithmetic()) && program->arithmetic) { form = &*program->arithmetic; }
+    AnalysisCostEstimate periodic, arithmetic;
+    const bool certified = form && form->extraction.state == RecognitionState::Applicable &&
+        form->recognition.state == RecognitionState::Applicable;
+    if (certified) {
+        std::tie(periodic, arithmetic) = estimates(*form, primitiveShape(*form), request.needs);
+        std::string diagnostic;
+        if (!request.region && !checkArithmeticPeriodicSkeleton(*form, diagnostic)) {
+            periodic.work.reset(); periodic.representation.reset();
+        }
     }
-    if (estimatedCostLess(arithmetic, periodic)) { std::reverse(order.begin(), order.end()); }
+    if (!request.region && estimatedCostLess(arithmetic, periodic)) { std::reverse(order.begin(), order.end()); }
     for (auto method : order) {
         const bool periodicMethod = method == AnalysisBackend::ArithmeticPeriodic;
-        sessionState->costs.push_back({0, key, periodicMethod ? "arithmetic-periodic" : "arithmetic",
+        sessionState->costs.push_back({request.region, key, periodicMethod ? "arithmetic-periodic" : "arithmetic",
                                       periodicMethod ? periodic : arithmetic});
     }
-    sessionState->arithmeticOrders.emplace(key, order);
+    sessionState->arithmeticOrders.emplace(identity, order);
     return order;
 }
 std::vector<AnalysisCostRecord> FrontierAnalysis::costRecords() const
@@ -121,6 +135,12 @@ std::vector<AnalysisCostRecord> FrontierAnalysis::costRecords() const
     for (auto& record : records) {
         const auto backend = record.method == "arithmetic-periodic" ? AnalysisBackend::ArithmeticPeriodic :
                                                                      AnalysisBackend::Arithmetic;
+        if (record.region && backend == AnalysisBackend::Arithmetic) {
+            const auto attempt = sessionState->arithmeticRegionAttempts.find(record.region);
+            record.attemptConstructions = attempt != sessionState->arithmeticRegionAttempts.end() &&
+                attempt->second.produced;
+            continue;
+        }
         const auto region = sessionState->attempts.find(record.region);
         if (region == sessionState->attempts.end()) { continue; }
         const auto attempt = region->second.find(backend);

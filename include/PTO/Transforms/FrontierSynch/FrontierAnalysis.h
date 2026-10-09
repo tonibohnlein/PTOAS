@@ -51,6 +51,8 @@ public:
     uint64_t arithmeticRegionConstructions() const;
     uint64_t finiteExpansionPreflights() const;
     uint64_t numericTemplatePreflights() const;
+    // Rank supported arithmetic reducers without constructing generators.
+    std::vector<AnalysisBackend> arithmeticMethods(const AnalysisRequest& request);
     std::vector<AnalysisCostRecord> costRecords() const;
     // Call before reusing this object after original IR mutation. Previously
     // returned handles must no longer be queried against that IR.
@@ -110,7 +112,6 @@ private:
     LogicalResult ensureArithmeticGenerators();
     const NumericTemplate& materializeNumericRegion(std::size_t region);
     const ArithmeticProgram* recognizeArithmeticRegion(std::size_t region);
-    std::vector<AnalysisBackend> arithmeticMethods(const AnalysisRequest& request);
     SequenceRegionResolver regionalResolver();
     std::shared_ptr<const RegionalAnalysis> arithmeticExports(
         const MathematicalResult& demands, bool selectors, std::string& error);
