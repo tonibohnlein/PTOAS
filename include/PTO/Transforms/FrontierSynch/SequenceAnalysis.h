@@ -68,6 +68,12 @@ SequenceAnalysis composeRegionalSequenceWithin(func::FuncOp function,
 SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& input,
     const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions,
     std::shared_ptr<PhaseIndex> index = {}, bool requireEndpoints = true);
+// The resolver is construction-only and receives proper original descendants.
+// Specialized phase views retain their own arena/context adapters.
+using SequenceRegionResolver = std::function<FailureOr<RegionalAnalysis>(std::size_t, bool, std::string&)>;
+SequenceAnalysis analyzeSequenceRegionWithResolver(func::FuncOp function, const SyncInput& input,
+    const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions,
+    std::shared_ptr<PhaseIndex> index, bool requireEndpoints, SequenceRegionResolver resolver);
 RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis);
 RegionExpressions* sequenceExpressions(SequenceAnalysis& analysis);
 NumericalChainQueryCost sequenceNumericalQueryCounts(const SequenceAnalysis& analysis);

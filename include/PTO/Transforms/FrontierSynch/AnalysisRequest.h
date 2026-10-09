@@ -14,6 +14,8 @@
 #include <memory>
 namespace mlir::pto::frontiersynch {
 struct ProgramRecognition;
+struct RegionalAnalysis;
+struct ArithmeticRegionalRelations;
 struct RotatingAnalysis;
 struct GuardedRotatingAnalysis;
 struct BoundedLifetimeDemandResult;
@@ -59,6 +61,8 @@ struct MathematicalResult {
     std::shared_ptr<GuardedRotatingAnalysis> guardedRotatingDemands;
     std::shared_ptr<BoundedLifetimeDemandResult> boundedDemands;
     std::shared_ptr<SequenceAnalysis> sequenceDemands;
+    std::shared_ptr<const RegionalAnalysis> regionalDemands;
+    std::shared_ptr<const ArithmeticRegionalRelations> arithmeticRegionalDemands;
     std::shared_ptr<FiniteGuardedAnalysis> finiteGuardedDemands;
     std::shared_ptr<const ArithmeticPeriodicProgram> arithmeticPeriodicDemands;
     std::shared_ptr<const ArithmeticDemandAnalysis> arithmeticDemands;

@@ -634,7 +634,7 @@ enum class StorageExportRequest { Finite, SymbolicAllowed };
 FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
     std::string& error, std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding,
-    StorageExportRequest request)
+    StorageExportRequest request, std::shared_ptr<const ArithmeticRegionalRelations>* retained = nullptr)
 {
     if (!context.function || !context.root || !expressions || !expressions->constructionError().empty()) {
         error = "arithmetic region requires a valid original root and expression arena";
@@ -714,6 +714,10 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext 
     const auto protection = structuredProtection(input.accesses());
     state->analysis = analyzeGeneralArithmeticDemandsWithProtection(state->program, protection);
     if (!state->analysis.error.empty()) { error = state->analysis.error; return failure(); }
+    if (retained) {
+        if (!state->analysis.exactMinimum) { error = "regional exact reduction is unavailable"; return failure(); }
+        *retained = state;
+    }
     state->selectors = buildArithmeticStorageSelectors(state->program, state->pipes);
     if (!state->selectors.error.empty()) { error = state->selectors.error; return failure(); }
     return exportState(state, input, error, finite);
@@ -726,6 +730,14 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext cont
 {
     return analyzeArithmeticRegionImpl(context, index, input, std::move(expressions), error,
                                       std::move(parameterBinding), StorageExportRequest::SymbolicAllowed);
+}
+FailureOr<RegionalAnalysis> analyzeArithmeticRegionRetained(ArithmeticRegionContext context,
+    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
+    std::shared_ptr<const ArithmeticRegionalRelations>& demands, std::string& error)
+{
+    demands.reset();
+    return analyzeArithmeticRegionImpl(context, index, input, std::move(expressions), error, {},
+                                      StorageExportRequest::SymbolicAllowed, &demands);
 }
 FailureOr<RegionalAnalysis> analyzeFiniteArithmeticRegion(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
