@@ -280,14 +280,6 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeResult(
     }
     return prepareEndpoints(demands, error, completeInvocation);
 }
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeEndpoints(
-    func::FuncOp function, scf::ForOp loop, const PhaseIndex& index, const SyncInput& input,
-    const BoundedLifetimeRecognition& recognized, std::string& error)
-{
-    auto demands = analyzeBoundedLifetimeRegion(function, loop, index, input, recognized, error);
-    if (failed(demands)) { return failure(); }
-    return prepareBoundedLifetimeResult(*demands, error);
-}
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeInsertion(
     func::FuncOp function, const SyncInput& input, const ProgramRecognition& program, std::string& error,
     std::shared_ptr<BoundedLifetimeDemandResult>* demands)
