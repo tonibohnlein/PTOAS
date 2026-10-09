@@ -16,6 +16,7 @@
 #include "PTO/Transforms/FrontierSynch/MixedStrideAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/CompactBoundingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
+#include "PTO/Transforms/FrontierSynch/FiniteVisitRecognition.h"
 namespace mlir::pto::frontiersynch {
 void FrontierAnalysis::recordWholeRegion(AnalysisBackend backend)
 {
@@ -86,6 +87,29 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
     owned->recognition = program;
     owned->region = region;
     switch (backend) {
+    case AnalysisBackend::FiniteVisit: {
+        auto found = finiteVisitAnalyses.find(region);
+        if (found == finiteVisitAnalyses.end()) {
+            auto analyzed = std::make_shared<FiniteVisitAnalysis>(
+                analyzeFiniteVisitLoop(function, *storage, *program, region, structuralIndex));
+            found = finiteVisitAnalyses.emplace(region, std::move(analyzed)).first;
+        }
+        const auto& result = *found->second;
+        for (auto& candidate : program->finiteVisitContracts) {
+            if (candidate.node == region) { candidate = result.recognition.contract; }
+        }
+        refreshProgramContractAudit(*program);
+        const bool exact = result.demands && result.demands->error.empty() &&
+            result.recognition.contract.membership == ContractStatus::Established &&
+            result.recognition.contract.demands == ContractImplementation::Available;
+        if (!exact) {
+            error = result.recognition.contract.implementationError;
+            return {};
+        }
+        owned->finiteVisitDemands = found->second;
+        owned->backend = "finite-visit-types";
+        break;
+    }
     case AnalysisBackend::NumericalPeriodic: {
         auto& local = program->nodes[region];
         if (local.numericTemplate && local.numericTemplate->result.state == RecognitionState::Applicable &&
@@ -165,7 +189,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend
     AnalysisBackend backend, std::size_t region, std::string& error)
 {
     if (backend == AnalysisBackend::NumericalPeriodic || backend == AnalysisBackend::Rotating ||
-        backend == AnalysisBackend::GuardedRotating || backend == AnalysisBackend::BoundedLifetime) {
+        backend == AnalysisBackend::GuardedRotating || backend == AnalysisBackend::BoundedLifetime ||
+        backend == AnalysisBackend::FiniteVisit) {
         return produceLoopBackend(backend, error, region);
     }
     auto owned = std::make_shared<MathematicalResult>();
@@ -239,6 +264,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
     case AnalysisBackend::Rotating:
     case AnalysisBackend::GuardedRotating:
     case AnalysisBackend::BoundedLifetime:
+    case AnalysisBackend::FiniteVisit:
         return produceLoopBackend(backend, error);
     case AnalysisBackend::MixedStride: {
         auto result = analyzeMixedStrideFunction(function, *storage, *program, *structuralIndex, error);

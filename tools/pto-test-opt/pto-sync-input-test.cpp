@@ -16,6 +16,7 @@
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/FiniteVisitRecognition.h"
 #include "PTO/Transforms/FrontierSynch/ClosedCallees.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
@@ -1175,6 +1176,67 @@ int main(int argc, char **argv) {
           llvm::outs() << "native-certification: retained-demands unresolved-class\n";
         }
         const auto results = analysis.certifyRegions();
+        const bool childOnly = function->hasAttr("test.finite_visit_child");
+        const bool finiteVisitProbe = function->hasAttr("test.finite_visit_session") || childOnly;
+        if (finiteVisitProbe) {
+          pto::frontiersynch::FrontierAnalysis probe(function);
+          if (failed(probe.initialize(policy))) { return 1; }
+          auto node = llvm::find_if(probe.result()->nodes, [](const auto& candidate) {
+            return candidate.kind == pto::frontiersynch::StructureKind::Loop;
+          });
+          if (node == probe.result()->nodes.end()) { return 1; }
+          const auto id = static_cast<std::size_t>(node - probe.result()->nodes.begin());
+          auto child = probe.analyzeFiniteVisit({id});
+          const bool childExact = child.mathematical && child.mathematical->finiteVisitDemands &&
+              child.mathematical->region == id && !probe.hasWholeFunctionMinimumDemands();
+          if (!childExact) {
+            function.emitError("finite-visit probe: child did not retain finite-type demands independently");
+            return 1;
+          }
+          auto retained = probe.analyzeFiniteVisit({});
+          if (childOnly) {
+            const bool leaked = retained.mathematical || probe.hasWholeFunctionMinimumDemands() ||
+                probe.constructionCounts().structuralIndices != 1;
+            if (leaked) {
+              function.emitError("finite-visit probe: external payload allowed whole-region evidence");
+              return 1;
+            }
+            llvm::outs() << "finite-visit-child: exact-demands no-whole-region-evidence\n";
+          } else {
+            const auto owner = retained.mathematical;
+            const bool exact = owner && owner->finiteVisitDemands && owner->finiteVisitDemands->demands &&
+                owner->finiteVisitDemands->demands->boundaries.size() == 16 &&
+                owner->finiteVisitDemands == child.mathematical->finiteVisitDemands;
+            if (!exact) {
+              function.emitError("finite-visit probe: whole-loop owner was not reused");
+              return 1;
+            }
+            for (unsigned capability = 0; capability < 6; ++capability) {
+              pto::frontiersynch::AnalysisNeeds needs;
+              needs.queries = capability % 3 == 0;
+              needs.selectors = capability % 3 == 1;
+              needs.synchronization = capability % 3 == 2;
+              auto request = pto::frontiersynch::AnalysisRequest{};
+              request.needs = needs;
+              const auto beforeRetry = probe.constructionCounts().mathematicalAttempts;
+              auto unavailable = probe.analyzeFiniteVisit(request);
+              const bool preserved = unavailable.mathematical == owner &&
+                  unavailable.status == pto::frontiersynch::AnalysisStatus::UnmetObligation;
+              if (!preserved) {
+                function.emitError("finite-visit probe: unsupported export did not preserve demands");
+                return 1;
+              }
+              if (capability >= 3 && probe.constructionCounts().mathematicalAttempts != beforeRetry) { return 1; }
+            }
+            const auto afterExports = probe.constructionCounts().mathematicalAttempts;
+            if (probe.analyzeFiniteVisit({}).mathematical != owner ||
+                probe.constructionCounts().mathematicalAttempts != afterExports ||
+                probe.constructionCounts().structuralIndices != 1) {
+              return 1;
+            }
+            llvm::outs() << "finite-visit-session: exact-demands retained-exports cached-retry\n";
+          }
+        }
         llvm::json::Array regions;
         for (const auto& result : results) {
           llvm::json::Array obligations;

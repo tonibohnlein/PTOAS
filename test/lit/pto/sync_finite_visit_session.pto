@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
+// RUN: pto-sync-input-test --gm-alias=may-alias --certify-regions %s | FileCheck %s
+// CHECK: finite-visit-session: exact-demands retained-exports cached-retry
+// CHECK: certification-json {{.*}}"exact_demands":true,"node":0
+// CHECK-SAME: "queries":false
+// CHECK-SAME: "selectors":false
+// CHECK: finite-visit-child: exact-demands no-whole-region-evidence
+// CHECK: source-unchanged; synchronization-insertion-not-run
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+!right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a3"} {
+  func.func @whole_visits(%n: index, %cut: index) attributes {test.finite_visit_session} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %zero to %n step %one {
+      %parity = arith.remui %i, %two : index
+      %choose_first = arith.cmpi eq, %parity, %zero : index
+      %choose_second = arith.cmpi ult, %i, %cut : index
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.label = "prefix"}
+      scf.if %choose_first {
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc) {test.label = "first_then"}
+      } else {
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc) {test.label = "first_else"}
+      }
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.label = "middle"}
+      scf.if %choose_second {
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc) {test.label = "second_then"}
+      } else {
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc) {test.label = "second_else"}
+      }
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.label = "suffix"}
+    }
+    return
+  }
+  func.func @external_payload(%n: index, %cut: index) attributes {test.finite_visit_child} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+    scf.for %i = %zero to %n step %one {
+      %parity = arith.remui %i, %two : index
+      %choose_first = arith.cmpi eq, %parity, %zero : index
+      %choose_second = arith.cmpi ult, %i, %cut : index
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.label = "prefix"}
+      scf.if %choose_first {
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc) {test.label = "first_then"}
+      } else {
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc) {test.label = "first_else"}
+      }
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.label = "middle"}
+      scf.if %choose_second {
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc) {test.label = "second_then"}
+      } else {
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc) {test.label = "second_else"}
+      }
+      pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.label = "suffix"}
+    }
+    return
+  }
+}

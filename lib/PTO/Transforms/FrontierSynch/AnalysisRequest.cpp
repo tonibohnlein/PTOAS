@@ -24,6 +24,19 @@ AnalysisOutcome FrontierAnalysis::minimumDemands(std::size_t region, AnalysisNee
     exports.synchronization = false;
     return analyze({region, AnalysisMode::MinimumExact, exports});
 }
+AnalysisOutcome FrontierAnalysis::analyzeFiniteVisit(const AnalysisRequest& request)
+{
+    AnalysisOutcome result;
+    const bool valid = succeeded(recognizeStructure()) && request.region < program->nodes.size();
+    if (!valid) {
+        result.obligations.push_back({AnalysisStage::Form, "finite-visit original region is unavailable"});
+        return result;
+    }
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    result = requestBackend(AnalysisBackend::FiniteVisit, request);
+    result.costs = costRecords();
+    return result;
+}
 std::vector<RegionCertification> FrontierAnalysis::certifyRegions()
 {
     const bool formsAvailable = succeeded(recognizeStructure()) && succeeded(recognizeArithmetic()) &&
@@ -60,6 +73,8 @@ std::vector<RegionCertification> FrontierAnalysis::certifyRegions()
             result.selectedClass = "restricted-arithmetic";
         } else if (math.finiteGuardedDemands) {
             result.selectedClass = "finite-guarded-occurrences";
+        } else if (math.finiteVisitDemands) {
+            result.selectedClass = "finite-visit-types";
         } else if (math.explicitDemands) {
             result.selectedClass = "finite-occurrences";
         } else if (math.sequenceDemands) {
@@ -190,7 +205,7 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
     };
     for (auto backend : {AnalysisBackend::Explicit, AnalysisBackend::NumericalPeriodic,
             AnalysisBackend::Rotating, AnalysisBackend::MixedStride, AnalysisBackend::GuardedRotating,
-            AnalysisBackend::BoundedLifetime, AnalysisBackend::Sequence,
+            AnalysisBackend::BoundedLifetime, AnalysisBackend::Sequence, AnalysisBackend::FiniteVisit,
             AnalysisBackend::ArithmeticPeriodic, AnalysisBackend::FiniteGuarded}) {
         if (backend == AnalysisBackend::ArithmeticPeriodic) {
             for (auto method : arithmeticMethods(request)) {

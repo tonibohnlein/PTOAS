@@ -24,10 +24,11 @@ struct GuardedRotatingAnalysis;
 struct BoundedLifetimeDemandResult;
 struct SequenceAnalysis;
 struct FiniteGuardedAnalysis;
+struct FiniteVisitAnalysis;
 struct ArithmeticPeriodicProgram;
 enum class AnalysisBackend {
     Explicit, NumericalPeriodic, Rotating, MixedStride, GuardedRotating, BoundedLifetime,
-    Sequence, ArithmeticPeriodic, Arithmetic, FiniteGuarded, CompactBounding
+    Sequence, FiniteVisit, ArithmeticPeriodic, Arithmetic, FiniteGuarded, CompactBounding
 };
 enum class AnalysisMode { MinimumExact, Fallback };
 enum class AnalysisEvaluation { Uniform, Stateful };
@@ -69,6 +70,7 @@ struct MathematicalResult {
     std::shared_ptr<const RegionalAnalysis> regionalDemands;
     std::shared_ptr<const ArithmeticRegionalRelations> arithmeticRegionalDemands;
     std::shared_ptr<FiniteGuardedAnalysis> finiteGuardedDemands;
+    std::shared_ptr<const FiniteVisitAnalysis> finiteVisitDemands;
     std::shared_ptr<const ArithmeticPeriodicProgram> arithmeticPeriodicDemands;
     std::shared_ptr<const ArithmeticDemandAnalysis> arithmeticDemands;
     std::shared_ptr<const GeneralArithmeticDemandAnalysis> generalArithmeticDemands;
