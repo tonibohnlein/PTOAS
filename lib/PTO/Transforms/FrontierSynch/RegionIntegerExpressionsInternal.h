@@ -15,6 +15,7 @@ struct RegionExpressions::IntegerRecipe {
     IntegerAffine numerator;
     BoundInteger denominator{1};
     std::vector<Id> inputs;
+    std::vector<AffineExpr> coordinates, coordinateOrder;
     std::vector<uint64_t> residues;
     uint64_t period = 1, outputResidue = 0;
     std::string signature;

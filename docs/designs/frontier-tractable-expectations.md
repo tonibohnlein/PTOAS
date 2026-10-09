@@ -453,3 +453,27 @@ timing-out elementwise MayAlias case completes in 0.08 seconds and gains one
 exact regional certificate. All 22 serial pinned corpus invocations pass with
 227/240 and 213/240 recognized regions; no case loses coverage, times out or
 mutates the original IR. The slowest invocation is 14.1 seconds.
+
+### Exact mapped integer predicates
+
+The coordinate adapter for future finite storage exports evaluates affine maps
+of original signed inputs before applying the relation's period quotient and
+residue. This order preserves negative offsets, residue carries and mathematical
+coordinates outside signed 64-bit range. It retains the existing integer-system
+representation and shared expression arena; it does not introduce a demand
+representation or relational conversion.
+
+Acceptance checks every coordinate intermediate and relation expression against
+a uniform signed-128-bit bound. Unsupported maps or unsafe bounds return a
+separate diagnostic without changing or poisoning the expression arena. Folding
+uses exact integers, emission uses signed 128-bit arithmetic, substitution retains
+the maps, and expression identity includes them. Generic relational lowering
+explicitly reports that this adapter is not implemented there.
+
+The regression compares folding, substitution and emitted arithmetic against an
+independent integer oracle at both signed 64-bit extrema and negative/positive
+samples, including floor, ceil and Euclidean remainder. It checks overflow refusal,
+invalid dimensions/symbols, zero-dimensional predicates and both polarities of
+the explicit relational-lowering failure. This prerequisite does not yet change
+regional recognition coverage or advertise finite storage exports. Section 8 and
+the pinned paper hashes were rechecked and remain unchanged.
