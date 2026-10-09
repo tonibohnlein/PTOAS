@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_REGIONEXPRESSIONS_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_REGIONEXPRESSIONS_H
 #include "PTO/Transforms/FrontierSynch/IntegerRelations.h"
+#include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseMap.h"
@@ -92,6 +93,14 @@ public:
     // over the entire input range before a node is accepted.
     Id integerPredicate(const IntegerSystem& system, llvm::ArrayRef<Id> inputs,
                         uint64_t period, llvm::ArrayRef<uint64_t> residues);
+    // Apply exact floor-affine coordinates to signed original inputs BEFORE
+    // residue/quotient conversion. Coordinates may exceed i64; all intermediates
+    // are proved to fit i128. Unavailable maps leave the arena error unchanged.
+    // Maps use dimensions indexing inputs, without symbols. Relational lowering
+    // of mapped recipes is an explicit unsupported adapter.
+    std::optional<Id> integerMappedPredicate(const IntegerSystem& system, llvm::ArrayRef<Id> inputs,
+        llvm::ArrayRef<AffineExpr> coordinates, uint64_t period, llvm::ArrayRef<uint64_t> residues,
+        std::string& diagnostic);
     // Exact floor-affine value over the supplied original signed parameters.
     // Uses the same checked i128 intermediates as integerWitness; final index
     // bits are total even if the mathematical value is outside signed i64.
