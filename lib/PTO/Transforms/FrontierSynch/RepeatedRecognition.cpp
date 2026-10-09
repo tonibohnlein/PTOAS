@@ -139,12 +139,10 @@ bool SequenceAnalysisState::repeatedChild(const StructureNode& node, Expr trips)
             }
         }
     }
-    auto analyzed = analyzeSequenceRegion(function, *input, *program, node.children.front(),
-                                          arena, indexOwner, requireEndpoints);
-    if (!analyzed.error.empty()) {
-        return unavailable("q1 repeat body interface: " + analyzed.error);
-    }
-    auto body = sequenceRegionalResult(analyzed);
+    std::string diagnostic;
+    auto analyzed = originalRegion(node.children.front(), diagnostic);
+    if (failed(analyzed)) { return unavailable("q1 repeat body interface: " + diagnostic); }
+    auto body = std::move(*analyzed);
     if (evolving || !body.deferredAccessBoundary.empty()) {
         auto exported = body;
         exported.accessBoundary.insert(exported.accessBoundary.end(), exported.deferredAccessBoundary.begin(),

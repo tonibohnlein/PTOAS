@@ -42,6 +42,43 @@ int runGuardedPeriodicChecks(llvm::StringRef path);
 int runSyncAliasChecks(func::FuncOp function, const pto::SyncInput &input);
 LogicalResult auditSyncStep0(func::FuncOp function, const pto::SyncInput &input);
 namespace {
+LogicalResult checkRegionalSession(func::FuncOp function, pto::GMAliasPolicy policy) {
+  using namespace pto::frontiersynch;
+  FrontierAnalysis session(function);
+  if (failed(session.initialize(policy))) { return failure(); }
+  unsigned checked = 0;
+  for (auto [id, node] : llvm::enumerate(session.result()->nodes)) {
+    if (node.kind != StructureKind::Loop) { continue; }
+    auto demands = session.minimumDemands(id);
+    if (demands.status != AnalysisStatus::Ready || !demands.mathematical ||
+        session.constructionCounts().logicalPreparations || session.constructionCounts().allocationExports) {
+      return function.emitError("regional demands-only request constructed code or lost demands");
+    }
+    AnalysisNeeds interfaces;
+    interfaces.queries = interfaces.selectors = true;
+    auto first = session.minimumDemands(id, interfaces);
+    if (first.status != AnalysisStatus::Ready || !first.mathematical || first.mathematical->region != id ||
+        session.hasWholeFunctionMinimumDemands()) {
+      return function.emitError("regional success lost its identity or established whole-function evidence");
+    }
+    const auto work = session.constructionCounts().mathematicalAttempts;
+    auto retry = session.minimumDemands(id, interfaces);
+    if (retry.mathematical != first.mathematical || session.constructionCounts().mathematicalAttempts != work) {
+      return function.emitError("regional request repeated mathematical construction");
+    }
+    auto retained = session.minimumDemands(id);
+    if (retained.mathematical != demands.mathematical) {
+      return function.emitError("stronger regional request replaced an earlier exact result");
+    }
+    ++checked;
+  }
+  auto root = session.minimumDemands();
+  if (!checked || root.status != AnalysisStatus::Ready || !root.mathematical || root.mathematical->region ||
+      !session.hasWholeFunctionMinimumDemands()) {
+    return function.emitError("whole-function request did not establish independent exact evidence");
+  }
+  return success();
+}
 LogicalResult checkRetainedDemands(func::FuncOp function, pto::GMAliasPolicy policy) {
   using namespace pto::frontiersynch;
   FrontierAnalysis session(function);
@@ -581,6 +618,7 @@ int main(int argc, char **argv) {
     }
     --argc;
   }
+  const bool regionalSessionChecks = argc == 3 && StringRef(argv[1]) == "--regional-session-checks";
   const bool retainedChecks = argc == 3 && StringRef(argv[1]) == "--retained-demand-checks";
   const bool sessionChecks = argc == 3 && StringRef(argv[1]) == "--analysis-session-checks";
   const bool phaseCopies = argc == 3 && StringRef(argv[1]) == "--phase-copy-checks";
@@ -629,7 +667,8 @@ int main(int argc, char **argv) {
   const bool sequenceAnalysis = argc == 3 && StringRef(argv[1]) == "--sequence-analysis";
   const bool structuredTrace = argc == 3 && StringRef(argv[1]) == "--structured-trace";
   const bool physicalTrace = argc == 3 && StringRef(argv[1]) == "--physical-trace";
-  if (argc != 2 && !retainedChecks && !sessionChecks && !rotatingAnalysis && !explicitAnalysis &&
+  if (argc != 2 && !regionalSessionChecks && !retainedChecks && !sessionChecks &&
+      !rotatingAnalysis && !explicitAnalysis &&
       !arithmetic && !recognition &&
       !numericAnalysis && !insertLogical &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
@@ -681,7 +720,8 @@ int main(int argc, char **argv) {
     return runRepeatedReadOnlyStorageChecks(&context) ? 0 : 1;
   }
   context.disableMultithreading();
-  const bool hasOption = retainedChecks || sessionChecks || mixedSymbolicChecks || rotatingAnalysis ||
+  const bool hasOption = regionalSessionChecks || retainedChecks || sessionChecks ||
+                         mixedSymbolicChecks || rotatingAnalysis ||
                          explicitAnalysis || expectFailure ||
                          capabilities || phaseIndex ||
                          storageEffects || recognition || numericAnalysis || insertLogical ||
@@ -700,6 +740,15 @@ int main(int argc, char **argv) {
   auto module = parseSourceFile<ModuleOp>(filename, &context);
   if (!module || failed(verify(*module))) {
     return 1;
+  }
+  if (regionalSessionChecks) {
+    const auto before = render(module->getOperation());
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (failed(checkRegionalSession(function, policy))) { return 1; }
+    }
+    if (before != render(module->getOperation())) { return 1; }
+    llvm::outs() << "regional-session: cached original-identities independent-root-evidence source-unchanged\n";
+    return 0;
   }
   if (retainedChecks) {
     const auto before = render(module->getOperation());

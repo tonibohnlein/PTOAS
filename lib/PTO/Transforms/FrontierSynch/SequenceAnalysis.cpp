@@ -213,6 +213,13 @@ SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& i
     const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions,
     std::shared_ptr<PhaseIndex> sharedIndex, bool requireEndpoints)
 {
+    return analyzeSequenceRegionWithResolver(function, input, program, node, std::move(expressions),
+                                             std::move(sharedIndex), requireEndpoints, {});
+}
+SequenceAnalysis analyzeSequenceRegionWithResolver(func::FuncOp function, const SyncInput& input,
+    const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions,
+    std::shared_ptr<PhaseIndex> sharedIndex, bool requireEndpoints, SequenceRegionResolver resolver)
+{
     SequenceAnalysis result;
     if (!function || function.isDeclaration() || !function.getBody().hasOneBlock() || !expressions ||
         !expressions->constructionError().empty()) {
@@ -225,12 +232,15 @@ SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& i
     auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions), std::move(sharedIndex));
     state->input = &input;
     state->program = &program;
+    state->resolveOriginal = std::move(resolver);
     state->completeInvocation = node == 0;
     // Whole-function membership is mathematical. Endpoint preparation checks
     // its own complete recipe and visit-binding contract independently.
     state->requireEndpoints = node != 0 && requireEndpoints;
     if (node < program.nodes.size()) { state->requiredOuterLoops = program.nodes[node].loops; }
     if (!state->collect(node) || !state->partition()) { result.error = state->error; return result; }
+    // Construction callbacks borrow the session; retained results must not.
+    state->resolveOriginal = {};
     state->summarize();
     state->bindAdapters();
     return finishSequence(std::move(state));

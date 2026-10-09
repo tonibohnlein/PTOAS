@@ -17,15 +17,27 @@ AnalysisOutcome FrontierAnalysis::minimumDemands(std::size_t region, AnalysisNee
 }
 AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const AnalysisRequest& request)
 {
-    auto& attempt = sessionState->rootAttempts[backend];
+    auto& attempt = sessionState->attempts[request.region][backend];
     if (!attempt.produced) {
         attempt.produced = true;
         if (construction.mathematicalAttempts != UINT64_MAX) { ++construction.mathematicalAttempts; }
-        attempt.mathematical = produceBackend(backend, attempt.demandError);
+        bool descends = true;
+        if (!sessionState->activeRegions.empty()) {
+            const auto parent = sessionState->activeRegions.back();
+            auto ancestor = program->nodes[request.region].parent;
+            while (ancestor && *ancestor != parent) { ancestor = program->nodes[*ancestor].parent; }
+            descends = ancestor.has_value();
+        }
+        if (descends) {
+            sessionState->activeRegions.push_back(request.region);
+            attempt.mathematical = request.region == 0 ? produceBackend(backend, attempt.demandError) :
+                produceRegionBackend(backend, request.region, attempt.demandError);
+            sessionState->activeRegions.pop_back();
+        } else { attempt.demandError = "recursive request must descend to an original child"; }
     }
     AnalysisOutcome result;
     result.mathematical = attempt.mathematical;
-    if (result.mathematical) { recordWholeRegion(backend); }
+    if (result.mathematical && request.region == 0) { recordWholeRegion(backend); }
     if (!result.mathematical) {
         result.stage = AnalysisStage::Demands;
         result.obligations.push_back({result.stage, attempt.demandError});
@@ -36,6 +48,10 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
         demands.guardedRotatingDemands || demands.numericNode || demands.sequenceDemands ||
         demands.finiteGuardedDemands;
     result.available.selectors = demands.explicitDemands || demands.sequenceDemands || demands.finiteGuardedDemands;
+    if (demands.regionalDemands) {
+        result.available.queries = demands.regionalDemands->capabilities.exactQueries;
+        result.available.selectors = demands.regionalDemands->capabilities.exactSelectors;
+    }
     if (demands.backend == "native-scalar") { result.available = {}; }
     result.available.synchronization = attempt.endpoints.value_or(false);
     result.status = AnalysisStatus::Ready;
@@ -60,12 +76,16 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
 AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
 {
     AnalysisOutcome result;
-    if (!storage || !structuralIndex || request.region != 0) {
+    if (!storage || !structuralIndex) {
         result.obligations.push_back({AnalysisStage::Form, "original region request is unavailable"});
         return result;
     }
     if (failed(recognizeStructure())) {
         result.obligations.push_back({AnalysisStage::Form, "original region request is unavailable"});
+        return result;
+    }
+    if (request.region >= program->nodes.size()) {
+        result.obligations.push_back({AnalysisStage::Form, "original region identity is invalid"});
         return result;
     }
     if (request.needs.evaluation == AnalysisEvaluation::Stateful) {
@@ -100,7 +120,7 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical(const AnalysisOutcome& result)
 {
     if (!result.mathematical || !sessionState || result.mathematical->input != storage) { return failure(); }
-    const bool retained = llvm::any_of(sessionState->rootAttempts, [&](const auto& attempt) {
+    const bool retained = llvm::any_of(sessionState->attempts[result.mathematical->region], [&](const auto& attempt) {
         return attempt.second.mathematical == result.mathematical;
     });
     if (!retained) { return failure(); }

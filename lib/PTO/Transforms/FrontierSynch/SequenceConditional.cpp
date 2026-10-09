@@ -119,9 +119,10 @@ bool SequenceAnalysisState::conditionalChild(const StructureNode& node)
     for (auto id : node.children) {
         const auto& arm = program->nodes[id];
         if (!arm.payloadCount) { continue; }
-        auto analysis = analyzeSequenceRegion(function, *input, *program, id, arena, indexOwner, requireEndpoints);
-        if (!analysis.error.empty()) { return fail("conditional arm: " + analysis.error); }
-        auto body = sequenceRegionalResult(analysis);
+        std::string diagnostic;
+        auto analyzed = originalRegion(id, diagnostic);
+        if (failed(analyzed)) { return fail("conditional arm: " + diagnostic); }
+        auto body = std::move(*analyzed);
         bool thenArm = arm.region == &branch.getThenRegion();
         auto guard = thenArm ? condition : negate(condition);
         Child child;
