@@ -1591,7 +1591,11 @@ int main(int argc, char **argv) {
     if (finiteExpansion) {
       pto::frontiersynch::PhaseIndex index;
       if (failed(index.build(function, input))) { return 1; }
+      const auto original = render(function);
       dumpRegionalArithmetic(function, index, input);
+      const bool unchanged = render(function) == original;
+      if (!unchanged) { return 1; }
+      llvm::outs() << "finite-expansion: source-unchanged\n";
       continue;
     }
     if (arithmeticPeriodicInput) {
