@@ -267,3 +267,38 @@ are built from current sources based on 64e162fe1, with all 248 linked Frontier
 and test-tool translation units refreshed; repaired units and final links
 passed. Commands, hashes, stage outcomes and per-case timings remain in the
 tractable-certification artifact directory.
+
+## Regional entry expressions
+
+After preserving existing supported integer and Boolean guard forms, the
+arithmetic producer can bind an otherwise unsupported guard to its original
+i1 result when it is a deterministic expression over actual values available
+before the original regional entry cut. These leaves include values supplied
+by preceding payloads and enclosing block arguments. Existing index parameter
+handling remains unchanged. Unsupported integer-comparison predicates or
+operands still report their existing normalization obligations. Interior operations
+must still be deterministic, memory-effect-free and speculatable; their SSA
+results remain the parameter bindings. Floating predicates are not translated
+into integer predicates. Incoming completion prerequisites remain in the
+original shared model, and executable replay is a separate export obligation.
+The memo belongs to one producer and its unchanged region context; its key
+also distinguishes legacy entry checks from the regional-leaf fallback.
+
+Focused finite-expansion checks compare an external scalar with a distinct
+zero threshold under ordered-greater and unordered-equal predicates, binding
+negative/positive finite values, NaN and both signed zeros to the original
+Boolean result. They also check that an enclosing IV is available for one
+body invocation but cannot make an opaque predicate invariant for the whole
+loop; an internal payload result and a non-speculatable integer divide remain
+unavailable. Existing original-coordinate, alias, prerequisite and retained
+export checks remain enabled. All three pinned paper hashes were rechecked
+and remain unchanged for this milestone.
+
+An initial eager-binding prototype added opaque parameters to affine GEMM
+integer guards and exceeded the existing pair budget. The final selection keeps
+those integer/Boolean normal forms and uses the regional-leaf check only at the
+guard fallback. Rebuilding all five consumers of the private producer header
+and both optimized test binaries passes. The final 31 focused/oracle checks and
+22 serial corpus runs pass, with no per-case loss, timeout, IR mutation or
+endpoint/allocation construction. Exact coverage remains 227/240 under
+MayNotAlias and 212/240 under MayAlias. The initial prototype is not committed.
