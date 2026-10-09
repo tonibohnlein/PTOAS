@@ -8,6 +8,7 @@
 #include "PTO/Transforms/FrontierSynch/CompactBoundingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/CompactBoundingAllocation.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -35,8 +36,15 @@ CompactClasses attachLeaf(func::FuncOp function, const PhaseIndex& index, Compac
             if (!matchesInvocation(frame->invocationBlock(), context)) {
                 *error = "finite endpoint context differs from its original invocation"; return failure();
             }
-            auto prepared = prepareExplicitInsertion(function, frame->analysis());
-            if (succeeded(prepared)) { (*prepared)->completeInvocation = false; }
+            auto prepared = prepareExplicitInsertion(function, frame->analysis(), false);
+            if (succeeded(prepared)) {
+                (*prepared)->completeInvocation = false;
+                (*prepared)->allocationPreparation = [frame, context = function->getContext()](
+                    PreparedLogicalPlan& plan) {
+                    plan.allocationCertificate = explicitAllocationCertificate(
+                        frame->analysis(), plan.planId, context);
+                };
+            }
             else { *error = "finite selected endpoint preparation unavailable"; }
             return prepared;
         });
@@ -56,9 +64,11 @@ CompactClasses attachLeaf(func::FuncOp function, const PhaseIndex& index, Compac
             if (failed(prepared)) { return failure(); }
             // This optional proof uses the weaker selected order, hence stays
             // sound when actual local barrier placement adds ordering.
-            std::string allocationError;
-            attachCompactBoundingAllocation(region, compact->upperGraph->analysis(),
-                compact->domain->trips(), **prepared, allocationError);
+            (*prepared)->allocationPreparation = [region, compact](PreparedLogicalPlan& plan) {
+                std::string allocationError;
+                attachCompactBoundingAllocation(region, compact->upperGraph->analysis(),
+                    compact->domain->trips(), plan, allocationError);
+            };
             return prepared;
         });
 }
@@ -120,6 +130,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareCompactBoundingLogicalIns
 }
 DictionaryAttr compactBoundingAllocationCertificate(const CompactBoundingOwner& owner, PreparedLogicalPlan& plan)
 {
+    prepareAllocationSupport(plan);
     auto certificate = plan.allocationCertificate;
     if (!certificate && plan.regionalAllocation) {
         auto selected = owner.boundary->nativeExports();

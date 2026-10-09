@@ -13,6 +13,9 @@ namespace mlir::pto::frontiersynch {
 // original cuts, binding the existing hierarchical occurrence frame. Typed base
 // lifetimes survive filtering; added singleton lifetimes use augmented queries.
 // Local added covers emit a barrier immediately before the consumer.
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayLogicalInsertion(
+    func::FuncOp function, const FiniteOverlayAnalysis& analysis,
+    std::string& error);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(
     func::FuncOp function, const FiniteOverlayAnalysis& analysis,
     std::string& error);

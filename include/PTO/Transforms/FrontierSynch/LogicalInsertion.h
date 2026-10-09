@@ -69,6 +69,10 @@ struct PreparedLogicalPlan {
     std::vector<EndpointFamily> families; // Exact source/target coordinate provenance.
 };
 void prepareAllocationSupport(PreparedLogicalPlan& plan);
+// Preserve a child's allocation namespace before composition rewrites it.
+// The view borrows endpoint Values from the enclosing detached plan, which must
+// outlive it. Allocation exports on regional views must not emit additional IR.
+std::shared_ptr<PreparedLogicalPlan> takeRegionalAllocationView(PreparedLogicalPlan& plan);
 // Producer obligations: certified demands, legal cuts, safely evaluable arithmetic,
 // paired guards and matching identities, and all endpoints sharing a cut in one
 // batch. No original IR may change between preparation and insertion. This API
