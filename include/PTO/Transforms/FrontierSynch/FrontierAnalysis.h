@@ -42,6 +42,7 @@ public:
     LogicalResult attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan);
     const AnalysisConstructionCounts& constructionCounts() const { return construction; }
     uint64_t arithmeticGeneratorConstructions() const;
+    uint64_t arithmeticRegionConstructions() const;
     std::vector<AnalysisCostRecord> costRecords() const;
     // Call before reusing this object after original IR mutation. Previously
     // returned handles must no longer be queried against that IR.
@@ -98,6 +99,7 @@ private:
     std::shared_ptr<const MathematicalResult> produceBackend(AnalysisBackend backend, std::string& error);
     std::shared_ptr<const MathematicalResult> produceRegionBackend(
         AnalysisBackend backend, std::size_t region, std::string& error);
+    std::shared_ptr<const MathematicalResult> produceArithmeticRegion(std::size_t region, std::string& error);
     std::shared_ptr<const MathematicalResult> produceLoopBackend(
         AnalysisBackend backend, std::string& error, std::size_t region = 0);
     std::shared_ptr<const MathematicalResult> constructLoopBackend(

@@ -6,13 +6,14 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: %python %S/Inputs/check_arithmetic_insertion.py pto-sync-input-test %s
+// RUN: pto-sync-input-test --regional-session-checks %s
 !mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
 !left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
 !right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
 !acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
 !ring = !pto.multi_tile_buf<!pto.tile_buf<left, 16x16xf16, slayout=row_major>, count=2>
 module attributes {pto.target_arch = "a3"} {
-  func.func @nested_cross(%g: i1, %n: index) attributes {test.trace_arguments = array<i64: 1, 3>} {
+  func.func @nested_cross(%g: i1, %n: index) attributes {test.trace_arguments = array<i64: 1, 3>, test.expected_arithmetic_regions = 1 : i64} {
     %base = arith.constant 0 : i64
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
