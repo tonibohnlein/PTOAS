@@ -15,6 +15,9 @@ namespace mlir::pto::frontiersynch {
 // the complete template and creates detached arithmetic, leaving original IR intact.
 // Shared counted-loop endpoint arithmetic. Caller supplies certified recipes
 // and matching original cuts; no numeric effect-template assumption is made.
+// Preserve whole-invocation bounds, scope and recipe checks for an owned result.
+LogicalResult validateNumericTemplateInsertion(func::FuncOp function, const NumericalRegionDemands& demands,
+                                              const NumericTemplateEndpoints& endpoints, const SyncInput& input);
 LogicalResult prepareCountedEndpointCode(func::FuncOp function, const NumericTemplateEndpoints& endpoints,
                                          PreparedLogicalPlan& prepared);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplateLogicalInsertion(
