@@ -22,6 +22,10 @@ struct ValuePrerequisite {
     const CompoundInstanceElement* producer = nullptr;
     Operation* consumer = nullptr;
     bool native = false;
+    // Every traced path to this consumer passes only through region-free SSA
+    // data operations. Control, conditional results and carried mappings need
+    // separate occurrence certificates. Unknown dominates when paths merge.
+    bool directSSA = false;
 };
 struct PhasePrerequisiteEdges {
     std::vector<StorageGenerator> native, demands;

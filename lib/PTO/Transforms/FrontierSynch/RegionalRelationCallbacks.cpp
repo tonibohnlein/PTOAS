@@ -8,6 +8,7 @@
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "RegionalRelationsInternal.h"
 #include "CountedLoop.h"
+#include "ScalarPrerequisiteMapping.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include <set>
@@ -52,6 +53,7 @@ private:
     std::vector<Formula> formulas;
     std::vector<SelectorFormula> selectors;
     std::string error;
+    bool nativePrerequisites = false;
     Id c(uint64_t n) { return e.constant(n); }
     Id yes() { return e.boolean(true); }
     Id no() { return e.boolean(false); }
@@ -188,10 +190,17 @@ bool Request::build(std::string& diagnostic)
         if (auto loop = dyn_cast<scf::ForOp>(ancestor)) { data.enclosing.push_back(loop); }
     }
     std::reverse(data.enclosing.begin(), data.enclosing.end());
+    DominanceInfo dominance(function);
     for (const auto& site : data.sites) {
         for (const auto& prerequisite : index.prerequisitesFor(site.phase->elementOp)) {
-            if (prerequisite.producer) {
-                return finish(fail("regional relation additional scalar prerequisite adapter unavailable"));
+            if (!prerequisite.producer) { continue; }
+            auto producer = llvm::find_if(data.sites, [&](const auto& source) {
+                return source.phase == prerequisite.producer;
+            });
+            if (producer == data.sites.end()) {
+                data.incomingPrerequisites.push_back(prerequisite);
+            } else if (!detail::directPrerequisiteMapping(prerequisite, *producer, site, dominance)) {
+                return finish(fail("regional scalar prerequisite needs an original-occurrence mapping certificate"));
             }
         }
     }
@@ -242,6 +251,17 @@ bool Request::build(std::string& diagnostic)
                     auto native = no();
                     if (ak == bk || (ak == PeriodicEventKind::Start && bk == PeriodicEventKind::Completion)) {
                         native = e.lor(equal, samePipe ? *before : no());
+                    }
+                    if (ak == PeriodicEventKind::Completion && bk == PeriodicEventKind::Start) {
+                        for (const auto& edge : index.prerequisitesFor(data.sites[target].phase->elementOp)) {
+                            if (!edge.native || edge.producer != data.sites[source].phase) { continue; }
+                            nativePrerequisites = true;
+                            auto sameVisit = yes();
+                            for (unsigned i = 0; i < first[source].size(); ++i) {
+                                sameVisit = e.land(sameVisit, e.eq(first[source][i], second[target][i]));
+                            }
+                            native = e.lor(native, sameVisit);
+                        }
                     }
                     native = e.land(present, native);
                     if (!observe(native)) { return finish(false); }
@@ -364,6 +384,12 @@ FailureOr<RegionalRelationData> Request::lower(ArrayRef<Value> parameters, std::
                 relation[key].push_back(std::move(system));
             }
         }
+    }
+    if (nativePrerequisites) {
+        auto closed = completeGeneralArithmeticNativeOrder(std::move(data.analysis.nativeOrder),
+            data.analysis.pipeCount, p, data.analysis.cost, diagnostic);
+        if (failed(closed)) { return failure(); }
+        data.analysis.nativeOrder = std::move(*closed);
     }
     for (const auto& formula : selectors) {
         auto values = formula.inputs; llvm::append_range(values, data.parameters);

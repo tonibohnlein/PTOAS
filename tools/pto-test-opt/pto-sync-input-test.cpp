@@ -1057,6 +1057,19 @@ LogicalResult dumpPhaseIndex(func::FuncOp function, const pto::SyncInput &input)
       llvm::outs() << "structured\n";
     }
   }
+  function.walk([&](Operation* operation) {
+    auto label = operation->getAttrOfType<StringAttr>("test.prerequisite");
+    if (!label) { return; }
+    llvm::json::Array edges;
+    for (const auto& edge : index.prerequisitesFor(operation)) {
+      auto source = edge.producer->elementOp->getAttrOfType<StringAttr>("test.label");
+      edges.push_back(llvm::json::Object{{"source", source ? source.getValue() : "unlabeled"},
+          {"native", edge.native}, {"direct_ssa", edge.directSSA}});
+    }
+    llvm::outs() << "prerequisite-json " << llvm::json::Value(llvm::json::Object{
+        {"function", function.getSymName()}, {"consumer", label.getValue()}, {"edges", std::move(edges)},
+        {"mapping_obligation", index.needsValuePrerequisite(operation)}}) << "\n";
+  });
   bool invalidProbe = false;
   function.walk([&](Operation *op) {
     if (auto probe = op->getAttrOfType<StringAttr>("test.probe")) {
