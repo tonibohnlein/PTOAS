@@ -24,6 +24,9 @@ def invoke(tool, path, policy):
     assert not expanded["error"], expanded
     form = next(item for item in documents if item.get("region") == "anonymous")
     assert expanded["exports_blocked"]
+    assert expanded["invalid_roots_rejected"]
+    if form["period"] == 2:
+        assert expanded["period_budget_fallback"]
     return form, expanded
 
 
@@ -34,6 +37,8 @@ def check(form, expanded, coordinates, slots, parameter_reader=False, physical=T
     assert all(site["depth"] == 0 for site in form["sites"])
     for sample in expanded["samples"]:
         value = sample["parameters"][0] if sample["parameters"] else 0
+        sample_slots = slots(sample["parameters"]) if callable(slots) else slots
+        reader_value = value % 2 if parameter_reader == "parity" else value
         present = [i for i, active in enumerate(sample["presence"]) if active]
         expected_presence = []
         for visit, coordinate in enumerate(coordinates):
@@ -52,11 +57,17 @@ def check(form, expanded, coordinates, slots, parameter_reader=False, physical=T
                 for piece in relation["pieces"]:
                     if piece["empty"]:
                         continue
+                    period = form["period"]
+                    residues = piece["residues"]
+                    if any(value % period != residue for value, residue in
+                           zip(sample["parameters"], residues[1:])):
+                        continue
+                    quotient_parameters = [value // period for value in sample["parameters"]]
                     linear = []
                     for row in piece["rows"]:
                         assert len(row["coefficients"]) == 1 + len(sample["parameters"])
                         constant = row["constant"] + sum(a * b for a, b in
-                            zip(row["coefficients"][1:], sample["parameters"]))
+                            zip(row["coefficients"][1:], quotient_parameters))
                         linear.append((row["coefficients"][0], constant, row["equality"]))
                     lower, upper = -1, 2048
                     for coefficient, constant, equality in linear:
@@ -74,12 +85,12 @@ def check(form, expanded, coordinates, slots, parameter_reader=False, physical=T
                             lower = max(lower, -(constant // coefficient))
                         else:
                             upper = min(upper, constant // (-coefficient))
-                    actual_bytes.update(range(lower, upper + 1))
+                    actual_bytes.update(period * value + residues[0] for value in range(lower, upper + 1))
             expected_access = {}
             for i in present:
                 visit, kind = divmod(i, 3)
-                bank = slots[visit]
-                reader = value if parameter_reader else bank
+                bank = sample_slots[visit]
+                reader = reader_value if parameter_reader else bank
                 if kind == 0:
                     expected_access[i, 4, 2] = set(range(512))
                     expected_access[i, 5, 3] = set(range(512 * bank, 512 * (bank + 1)))
@@ -92,8 +103,8 @@ def check(form, expanded, coordinates, slots, parameter_reader=False, physical=T
         effects = []
         for i in present:
             visit, kind = divmod(i, 3)
-            bank = "left" + str(slots[visit])
-            reader = "left" + str(value) if parameter_reader else bank
+            bank = "left" + str(sample_slots[visit])
+            reader = "left" + str(reader_value) if parameter_reader else bank
             effects.append(({"mat"}, {bank}) if kind == 0 else ({reader, "right"}, {"acc"}))
         expected = native(pipes)
         for a, (reads, writes) in enumerate(effects):
@@ -169,6 +180,23 @@ def main():
                 path.write_text(dynamic)
                 form, expanded = invoke(tool, path, policy)
                 check(form, expanded, coordinates, [iv % 2 for iv in coordinates], parameter_reader=True)
+            parity = source.replace("func.func @finite(%outer: index)",
+                                    "func.func @finite(%outer: index, %second: index)")
+            parity = parity.replace("test.finite_expansion_session",
+                                    "test.finite_expansion_session, test.sample_signed")
+            parity = parity.replace("%slot = arith.remui %i, %two : index",
+                                    "%plus = arith.addi %second, %i overflow<nsw> : index\n"
+                                    "      %slot = arith.remui %plus, %two : index")
+            parity = parity.replace("      %first = arith.cmpi",
+                "      %reader = arith.remui %outer, %two : index\n"
+                "      %read = pto.multi_tile_get %banks[%reader] : !banks -> !left\n"
+                "      %first = arith.cmpi").replace("ins(%left, %right", "ins(%read, %right")
+            path.write_text(parity)
+            form, expanded = invoke(tool, path, policy)
+            assert form["period"] == 2 and form["parameters"] == [0, 1], form
+            assert len(expanded["samples"]) == 36
+            check(form, expanded, [1, 3], lambda parameters: [(parameters[1] + i) % 2 for i in (1, 3)],
+                  parameter_reader="parity")
             nested = template.replace(" {frontier.test_expanded_region}", "")
             body = ("    scf.for %j = %zero to %two step %one {\n" + nested +
                     "    } {frontier.test_expanded_region}\n")
@@ -219,6 +247,98 @@ module {
             for sample in expanded["samples"]:
                 assert {(a, b) for a, b, active in sample["native"] if active} == {(0, 1), (2, 3), (4, 5)}
                 assert not any(active for _, _, active in sample["retained"])
+        # One body invocation contains two payloads, independent of its three
+        # parent visits and the payload siblings before/after the loop.
+        body = prerequisite.replace("func.func @prerequisites() {",
+                                    "func.func @prerequisites() attributes {test.finite_expansion_session} {")
+        body = body.replace("    scf.for %i",
+                            "    pto.tsetval ins(%zero, %outside : index, f32) outs(%tile : !tile)\n    scf.for %i")
+        body = body.replace("    %tile = pto.alloc_tile",
+                            "    %outside = arith.constant 1.0 : f32\n    %tile = pto.alloc_tile")
+        body = body.replace("frontier.test_expanded_region", "frontier.test_expanded_body")
+        body = body.replace("    return",
+                            "    pto.tsetval ins(%zero, %outside : index, f32) outs(%tile : !tile)\n    return")
+        path.write_text(body)
+        for policy in ["may-not-alias", "may-alias"]:
+            form, expanded = invoke(tool, path, policy)
+            assert expanded["root_count"] == 2
+            assert [site["op"] for site in form["sites"]] == ["pto.tgetval", "pto.tsetval"]
+            assert [site["fixed"] for site in form["sites"]] == [[], []]
+            for sample in expanded["samples"]:
+                assert sample["presence"] == [1, 1]
+                assert {(a, b) for a, b, active in sample["native"] if active} == {(0, 1)}
+                assert not any(active for _, _, active in sample["retained"])
+            subprocess.run([tool, "--gm-alias=" + policy, "--certify-regions", str(path)],
+                           capture_output=True, text=True, timeout=60, check=True)
+        # Slicing the same body at its second root retains the earlier read
+        # as an incoming scalar prerequisite, rather than an internal payload.
+        path.write_text(body.replace("frontier.test_expanded_body}",
+                        "frontier.test_expanded_body, frontier.test_expanded_skip = 1 : i64}"))
+        for policy in ["may-not-alias", "may-alias"]:
+            form, expanded = invoke(tool, path, policy)
+            assert expanded["root_count"] == 1
+            assert [site["op"] for site in form["sites"]] == ["pto.tsetval"]
+            assert expanded["incoming_prerequisites"] == 1
+            assert form["parameters"] == [], form
+            assert all(not sample["native"] for sample in expanded["samples"])
+        # A body invocation keeps parent IV as an entry binding, expands only
+        # its proper inner loop, and preserves the surrounding payloads once.
+        nested_body = prerequisite.replace("%three step %one {", "%three step %one {\n"
+            "      pto.tsetval ins(%i, %outside : index, f32) outs(%tile : !tile)\n"
+            "      scf.for %j = %zero to %three step %one {")
+        nested_body = nested_body.replace("    %tile = pto.alloc_tile",
+                                          "    %outside = arith.constant 1.0 : f32\n    %tile = pto.alloc_tile")
+        nested_body = nested_body.replace("    } {frontier.test_expanded_region}",
+            "      }\n      pto.tsetval ins(%zero, %outside : index, f32) outs(%tile : !tile)\n"
+            "    } {frontier.test_expanded_body}")
+        path.write_text(nested_body)
+        for policy in ["may-not-alias", "may-alias"]:
+            form, expanded = invoke(tool, path, policy)
+            assert [site["fixed"] for site in form["sites"]] == [[], [0], [0], [1], [1], [2], [2], []]
+            assert form["parameter_kinds"] == ["enclosing"], form
+            expected_ops = ["pto.tsetval"] + ["pto.tgetval", "pto.tsetval"] * 3 + ["pto.tsetval"]
+            assert [site["op"] for site in form["sites"]] == expected_ops
+        path.write_text(nested_body.replace("frontier.test_expanded_body}",
+                        "frontier.test_expanded_body, frontier.test_expanded_skip = 1 : i64, "
+                        "frontier.test_expanded_take = 1 : i64}"))
+        for policy in ["may-not-alias", "may-alias"]:
+            form, expanded = invoke(tool, path, policy)
+            assert expanded["root_count"] == 1
+            assert [site["fixed"] for site in form["sites"]] == [[i] for i in range(3) for _ in range(2)]
+            assert [site["op"] for site in form["sites"]] == ["pto.tgetval", "pto.tsetval"] * 3
+        # An index produced from a payload within the selected roots cannot
+        # become an independent entry parameter and hide a missing access map.
+        local_index = body.replace("      pto.tsetval ins(%zero, %value",
+            "      %integer = arith.fptosi %value : f32 to i64\n"
+            "      %dynamic = arith.index_cast %integer : i64 to index\n"
+            "      pto.tsetval ins(%dynamic, %value")
+        path.write_text(local_index)
+        result = subprocess.run([tool, "--finite-expansion", str(path)], capture_output=True,
+                                text=True, timeout=60, check=True)
+        errors = [json.loads(line.split(" ", 1)[1])["error"] for line in result.stdout.splitlines()
+                  if line.startswith("expanded-json ")]
+        assert errors and all(errors), "local payload-dependent address was promoted to entry input"
+        # Each if arm is analyzed conditional on entry, without enumerating its
+        # sibling or inheriting the enclosing predicate's presence condition.
+        for arm, operation in [(0, "pto.tgetval"), (1, "pto.tsetval")]:
+            branch = prerequisite[:prerequisite.index("    scf.for")] + """
+    %choice = arith.cmpi eq, %zero, %one : index
+    scf.if %choice {
+      %value = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+    } else {
+      %value = arith.constant 1.0 : f32
+      pto.tsetval ins(%zero, %value : index, f32) outs(%tile : !tile)
+    } {frontier.test_expanded_body = ARM : i64}
+    return
+  }
+}
+""".replace("ARM", str(arm))
+            path.write_text(branch)
+            for policy in ["may-not-alias", "may-alias"]:
+                form, expanded = invoke(tool, path, policy)
+                assert [site["op"] for site in form["sites"]] == [operation]
+                assert form["parameters"] == [], form
+                assert [sample["presence"] for sample in expanded["samples"]] == [[1]]
         catalog = json.loads((Path(fixture).resolve().parents[3] /
                               "docs/designs/frontier-tractable-catalog.json").read_text())
         root = Path(fixture).resolve().parents[3]

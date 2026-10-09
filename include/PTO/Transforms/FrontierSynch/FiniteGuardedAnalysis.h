@@ -27,6 +27,8 @@ FiniteGuardedAnalysis analyzeFiniteGuarded(func::FuncOp function, ArrayRef<Opera
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions = {});
 FiniteGuardedAnalysis analyzeExpandedFinite(func::FuncOp function, Operation* root,
     const PhaseIndex& index, const SyncInput& input);
+FiniteGuardedAnalysis analyzeExpandedFinite(func::FuncOp function, ArrayRef<Operation*> roots,
+    const PhaseIndex& index, const SyncInput& input);
 RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analysis);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedLogicalInsertion(FiniteGuardedAnalysis& analysis);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedInsertion(FiniteGuardedAnalysis& analysis);
