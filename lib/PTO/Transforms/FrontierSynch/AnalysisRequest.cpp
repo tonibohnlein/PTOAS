@@ -37,6 +37,19 @@ AnalysisOutcome FrontierAnalysis::analyzeFiniteVisit(const AnalysisRequest& requ
     result.costs = costRecords();
     return result;
 }
+AnalysisOutcome FrontierAnalysis::analyzeVaryingBoundary(const AnalysisRequest& request)
+{
+    AnalysisOutcome result;
+    const bool valid = succeeded(recognizeStructure()) && request.region < program->nodes.size();
+    if (!valid) {
+        result.obligations.push_back({AnalysisStage::Form, "repeating-boundary original region is unavailable"});
+        return result;
+    }
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    result = requestBackend(AnalysisBackend::VaryingBoundary, request);
+    result.costs = costRecords();
+    return result;
+}
 AnalysisOutcome FrontierAnalysis::analyzeFiniteExpansion(const AnalysisRequest& request)
 {
     AnalysisOutcome result;
@@ -89,6 +102,8 @@ std::vector<RegionCertification> FrontierAnalysis::certifyRegions()
             if (math.finiteGuardedDemands->expandedProgram) { result.representation = "small-count-expanded"; }
         } else if (math.finiteVisitDemands) {
             result.selectedClass = "finite-visit-types";
+        } else if (math.varyingBoundaryDemands) {
+            result.selectedClass = "repeating-boundary-interface";
         } else if (math.explicitDemands) {
             result.selectedClass = "finite-occurrences";
         } else if (math.sequenceDemands) {
@@ -219,7 +234,8 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
     };
     for (auto backend : {AnalysisBackend::Explicit, AnalysisBackend::NumericalPeriodic,
             AnalysisBackend::Rotating, AnalysisBackend::MixedStride, AnalysisBackend::GuardedRotating,
-            AnalysisBackend::BoundedLifetime, AnalysisBackend::Sequence, AnalysisBackend::FiniteVisit,
+            AnalysisBackend::BoundedLifetime, AnalysisBackend::Sequence, AnalysisBackend::VaryingBoundary,
+            AnalysisBackend::FiniteVisit,
             AnalysisBackend::ExpandedFinite, AnalysisBackend::ArithmeticPeriodic, AnalysisBackend::FiniteGuarded}) {
         if (backend == AnalysisBackend::ArithmeticPeriodic) {
             for (auto method : arithmeticMethods(request)) {

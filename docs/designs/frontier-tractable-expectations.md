@@ -302,3 +302,46 @@ and both optimized test binaries passes. The final 31 focused/oracle checks and
 22 serial corpus runs pass, with no per-case loss, timeout, IR mutation or
 endpoint/allocation construction. Exact coverage remains 227/240 under
 MayNotAlias and 212/240 under MayAlias. The initial prototype is not committed.
+
+## Retained repeating-boundary demands
+
+Affine-length rotating visits now have their own session backend. Its owned
+mathematical result contains the entire child quotient and startup, seam and
+suffix crossing covers. It also records the original recognized node; the
+shared input and recognition tree supply the original phases, loops and
+access identities. Root and regional requests reuse one canonical loop result.
+The whole-invocation adapter still checks that no payload lies outside that
+loop before recording whole-region evidence.
+
+The independent raw-result request builds no arbitrary-event query, storage
+selector, endpoint code or allocation. Requests for these still-unmigrated
+exports report an explicit obligation without discarding or regenerating
+mathematics. Existing exports remain available through sequence analysis;
+the next integration step separates their query and selector
+attempts as well. This chunk does not claim to complete that export migration.
+
+Sequence repetition now tries the repeating-boundary adapter after rotating
+and invariant-phase attempts. It consumes the retained session certificate;
+a failed session producer cannot silently rerun analysis through the legacy
+optional-certificate path. Existing outside payloads and unsupported additional
+cross-visit prerequisites still require their own complete treatment.
+The three pinned paper hashes are unchanged at this milestone boundary.
+
+The repeating-boundary session probe checks all three unsupported exports and
+retries, one producer reduction across root/child requests, no whole-region
+promotion over external payloads, and retention across an alias-policy reset.
+Both outer and inner payload-produced carried prerequisites are rejected on
+valid VEC scalar-read inputs. The existing independent varying command oracle
+checks 20 explicit execution closures, physical allocations and arbitrary-event
+queries, including short visits and partial periods.
+
+All 248 linked Frontier/tool translation units and both optimized binaries were
+rebuilt successfully; the interrupted build resumed from its 75 verified units,
+and the final CLI test edit was rebuilt before validation. All 32 focused
+checks, the 20-execution varying oracle and 22 serial pinned corpus invocations
+pass. Exact coverage remains 227/240 (MayNotAlias) and 212/240 (MayAlias), with
+no per-case loss, timeout, IR mutation or synchronization/allocation construction
+in certification runs. The slowest corpus invocation takes 13.9 seconds.
+Compiler-generated dependency records now cover all 248 units for subsequent
+header-aware rebuilds; command flags, hashes and detailed results remain in the
+tractable-certification artifact directory.

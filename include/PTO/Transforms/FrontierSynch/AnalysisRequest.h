@@ -25,10 +25,12 @@ struct BoundedLifetimeDemandResult;
 struct SequenceAnalysis;
 struct FiniteGuardedAnalysis;
 struct FiniteVisitAnalysis;
+struct AffineRotatingVisits;
 struct ArithmeticPeriodicProgram;
 enum class AnalysisBackend {
     Explicit, NumericalPeriodic, Rotating, MixedStride, GuardedRotating, BoundedLifetime,
-    Sequence, FiniteVisit, ExpandedFinite, ArithmeticPeriodic, Arithmetic, FiniteGuarded, CompactBounding
+    Sequence, VaryingBoundary, FiniteVisit, ExpandedFinite, ArithmeticPeriodic, Arithmetic,
+    FiniteGuarded, CompactBounding
 };
 enum class AnalysisMode { MinimumExact, Fallback };
 enum class AnalysisEvaluation { Uniform, Stateful };
@@ -71,6 +73,10 @@ struct MathematicalResult {
     std::shared_ptr<const ArithmeticRegionalRelations> arithmeticRegionalDemands;
     std::shared_ptr<FiniteGuardedAnalysis> finiteGuardedDemands;
     std::shared_ptr<const FiniteVisitAnalysis> finiteVisitDemands;
+    // Own the child quotient and all startup/seam/suffix crossings together.
+    // Regional query/selector construction is a separate capability.
+    std::shared_ptr<const AffineRotatingVisits> varyingBoundaryDemands;
+    std::optional<std::size_t> varyingNode;
     std::shared_ptr<const ArithmeticPeriodicProgram> arithmeticPeriodicDemands;
     std::shared_ptr<const ArithmeticDemandAnalysis> arithmeticDemands;
     std::shared_ptr<const GeneralArithmeticDemandAnalysis> generalArithmeticDemands;
@@ -101,6 +107,7 @@ struct AnalysisConstructionCounts {
     uint64_t mathematicalAttempts = 0;
     uint64_t explicitReductions = 0;
     uint64_t rotatingReductions = 0, guardedRotatingReductions = 0;
+    uint64_t varyingBoundaryReductions = 0;
     uint64_t logicalPreparations = 0;
     uint64_t allocationExports = 0;
 };

@@ -18,6 +18,7 @@
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/FiniteVisitRecognition.h"
+#include "PTO/Transforms/FrontierSynch/VaryingRotatingRecognition.h"
 #include "PTO/Transforms/FrontierSynch/ClosedCallees.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
@@ -47,6 +48,72 @@ int runGuardedPeriodicChecks(llvm::StringRef path);
 int runSyncAliasChecks(func::FuncOp function, const pto::SyncInput &input);
 LogicalResult auditSyncStep0(func::FuncOp function, const pto::SyncInput &input, bool envelopes);
 namespace {
+LogicalResult checkVaryingBoundarySession(func::FuncOp function, pto::GMAliasPolicy policy) {
+  using namespace pto::frontiersynch;
+  FrontierAnalysis session(function);
+  if (failed(session.initialize(policy))) { return failure(); }
+  if (function->hasAttr("test.varying_boundary_rejected")) {
+    for (std::size_t id = 0; id < session.result()->nodes.size(); ++id) {
+      if (session.analyzeVaryingBoundary({id}).mathematical) {
+        return function.emitError("unsupported carried prerequisite acquired repeating-boundary demands");
+      }
+    }
+    llvm::outs() << "repeating-boundary-session: unsupported-carried-prerequisites retained-obligation\n";
+    return success();
+  }
+  auto node = llvm::find_if(session.result()->nodes, [](const auto& candidate) {
+    return candidate.varyingRotating && candidate.varyingRotating->result.state == RecognitionState::Applicable;
+  });
+  if (node == session.result()->nodes.end()) { return function.emitError("repeating-boundary form unavailable"); }
+  const auto id = static_cast<std::size_t>(node - session.result()->nodes.begin());
+  auto child = session.analyzeVaryingBoundary({id});
+  const auto owner = child.mathematical;
+  const bool exact = child.status == AnalysisStatus::Ready && owner && owner->varyingBoundaryDemands &&
+      owner->varyingNode == id && !session.hasWholeFunctionMinimumDemands() &&
+      session.constructionCounts().logicalPreparations == 0 && session.constructionCounts().allocationExports == 0;
+  if (!exact) { return function.emitError("repeating-boundary child did not retain exact demands"); }
+  const auto& certificate = *owner->varyingBoundaryDemands;
+  const bool complete = certificate.error.empty() && certificate.child.quotient.error.empty() &&
+      certificate.startupCrossings.size() == certificate.startup &&
+      certificate.suffixCrossings.size() == certificate.period && !certificate.child.fragments.empty();
+  if (!complete) { return function.emitError("repeating-boundary child/crossing certificate incomplete"); }
+  for (unsigned capability = 0; capability < 6; ++capability) {
+    AnalysisRequest request;
+    request.region = id;
+    request.needs.queries = capability % 3 == 0;
+    request.needs.selectors = capability % 3 == 1;
+    request.needs.synchronization = capability % 3 == 2;
+    auto unavailable = session.analyzeVaryingBoundary(request);
+    const bool retained = unavailable.mathematical == owner &&
+        unavailable.status == AnalysisStatus::UnmetObligation &&
+        session.constructionCounts().varyingBoundaryReductions == 1;
+    if (!retained) { return function.emitError("repeating-boundary export discarded or recomputed demands"); }
+  }
+  auto root = session.analyzeVaryingBoundary({});
+  const bool childOnly = function->hasAttr("test.varying_boundary_child");
+  if (childOnly) {
+    if (root.mathematical || session.hasWholeFunctionMinimumDemands()) {
+      return function.emitError("repeating-boundary child promoted across external payloads");
+    }
+  } else if (!root.mathematical || root.mathematical->varyingBoundaryDemands != owner->varyingBoundaryDemands) {
+    return function.emitError("repeating-boundary whole-region owner was not reused");
+  }
+  const bool unchanged = session.analyzeVaryingBoundary({id}).mathematical == owner &&
+      session.constructionCounts().structuralIndices == 1 &&
+      session.constructionCounts().varyingBoundaryReductions == 1 &&
+      session.constructionCounts().allocationExports == 0;
+  if (!unchanged) { return failure(); }
+  const auto otherPolicy = policy == pto::GMAliasPolicy::MayAlias ?
+      pto::GMAliasPolicy::MayNotAlias : pto::GMAliasPolicy::MayAlias;
+  if (failed(session.initialize(otherPolicy))) { return failure(); }
+  auto isolated = session.analyzeVaryingBoundary({id});
+  const bool independent = isolated.mathematical && isolated.mathematical->input != owner->input &&
+      isolated.mathematical->varyingBoundaryDemands != owner->varyingBoundaryDemands &&
+      certificate.error.empty() && certificate.child.quotient.error.empty();
+  if (!independent) { return function.emitError("repeating-boundary owner did not survive isolated context reset"); }
+  llvm::outs() << "repeating-boundary-session: owned-child-startup-seam-suffix cached-exports original-scope\n";
+  return success();
+}
 LogicalResult checkAllocationSession(func::FuncOp function, pto::GMAliasPolicy policy) {
   using namespace pto::frontiersynch;
   FrontierAnalysis session(function);
@@ -1241,6 +1308,9 @@ int main(int argc, char **argv) {
         const bool expansionProbeFailed = function->hasAttr("test.finite_expansion_session") &&
             failed(checkFiniteExpansionSession(function, policy));
         if (expansionProbeFailed) { return 1; }
+        const bool varyingProbeFailed = function->hasAttr("test.varying_boundary_session") &&
+            failed(checkVaryingBoundarySession(function, policy));
+        if (varyingProbeFailed) { return 1; }
         const auto results = analysis.certifyRegions();
         const bool childOnly = function->hasAttr("test.finite_visit_child");
         const bool finiteVisitProbe = function->hasAttr("test.finite_visit_session") || childOnly;

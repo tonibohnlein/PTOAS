@@ -17,6 +17,7 @@
 #include "PTO/Transforms/FrontierSynch/CompactBoundingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/FiniteVisitRecognition.h"
+#include "PTO/Transforms/FrontierSynch/VaryingRotatingRecognition.h"
 namespace mlir::pto::frontiersynch {
 void FrontierAnalysis::recordWholeRegion(AnalysisBackend backend)
 {
@@ -87,6 +88,27 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
     owned->recognition = program;
     owned->region = region;
     switch (backend) {
+    case AnalysisBackend::VaryingBoundary: {
+        auto& local = program->nodes[region];
+        if (!local.varyingRotating || local.varyingRotating->result.state != RecognitionState::Applicable) {
+            error = "affine repeating-boundary form is not established";
+            return {};
+        }
+        if (!local.varyingDemands) {
+            if (construction.varyingBoundaryReductions != UINT64_MAX) { ++construction.varyingBoundaryReductions; }
+            local.varyingDemands = analyzeVaryingRotating(*local.varyingRotating, *structuralIndex, *storage);
+        }
+        if (!local.varyingDemands->error.empty()) {
+            error = local.varyingDemands->error;
+            return {};
+        }
+        // The unchanged recognition tree owns this once-assigned certificate.
+        // An aliasing owner avoids copying the quotient and crossing tables.
+        owned->varyingBoundaryDemands = std::shared_ptr<const AffineRotatingVisits>(program, &*local.varyingDemands);
+        owned->varyingNode = region;
+        owned->backend = "repeating-boundary-interface";
+        break;
+    }
     case AnalysisBackend::FiniteVisit: {
         auto found = finiteVisitAnalyses.find(region);
         if (found == finiteVisitAnalyses.end()) {
@@ -190,7 +212,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend
 {
     if (backend == AnalysisBackend::NumericalPeriodic || backend == AnalysisBackend::Rotating ||
         backend == AnalysisBackend::GuardedRotating || backend == AnalysisBackend::BoundedLifetime ||
-        backend == AnalysisBackend::FiniteVisit) {
+        backend == AnalysisBackend::FiniteVisit || backend == AnalysisBackend::VaryingBoundary) {
         return produceLoopBackend(backend, error, region);
     }
     auto owned = std::make_shared<MathematicalResult>();
@@ -287,6 +309,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
     case AnalysisBackend::GuardedRotating:
     case AnalysisBackend::BoundedLifetime:
     case AnalysisBackend::FiniteVisit:
+    case AnalysisBackend::VaryingBoundary:
         return produceLoopBackend(backend, error);
     case AnalysisBackend::MixedStride: {
         auto result = analyzeMixedStrideFunction(function, *storage, *program, *structuralIndex, error);

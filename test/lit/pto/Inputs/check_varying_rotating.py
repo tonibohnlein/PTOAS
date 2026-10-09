@@ -35,6 +35,41 @@ def main():
     # check_compact_endpoints test validates those stages against unfolded graphs.
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "varying.pto"
+        external = "    pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%first : !left)\n"
+        for child_only in [True, False]:
+            candidate = text if child_only else text.replace(external, "")
+            attributes = "test.varying_boundary_session" + (", test.varying_boundary_child" if child_only else "")
+            candidate = candidate.replace("attributes {test.trace_arguments",
+                                          "attributes {" + attributes + ", test.trace_arguments")
+            path.write_text(candidate)
+            for policy in ["may-not-alias", "may-alias"]:
+                checked = subprocess.run([tool, "--gm-alias=" + policy, "--certify-regions", str(path)],
+                                         capture_output=True, text=True, timeout=60, check=True)
+                assert "repeating-boundary-session: owned-child-startup-seam-suffix" in checked.stdout
+        # Unsupported payload-produced state across either visit boundary
+        # must not bypass the old prerequisite guards through the raw backend.
+        attributes = "test.varying_boundary_session, test.varying_boundary_rejected, "
+        carried = text.replace("attributes {test.trace_arguments", "attributes {" + attributes + "test.trace_arguments")
+        carried = carried.replace("module attributes", "!scalar = !pto.tile_buf<vec, 16x16xf32>\nmodule attributes")
+        carried = carried.replace("    %first =", "    %scalar = pto.alloc_tile addr = %base : !scalar\n    %first =")
+        read = "      %value = pto.tgetval ins(%scalar, %zero : !scalar, index) outs : f32\n"
+        convert = ("      %integer = arith.fptosi %value : f32 to i64\n"
+                   "      %next = arith.index_cast %integer : i64 to index\n")
+        outer = carried.replace("scf.for %visit = %zero to %visits step %one {",
+            "%result = scf.for %visit = %zero to %visits step %one iter_args(%carry = %zero) -> (index) {")
+        outer = outer.replace("%visit, %two", "%visit, %carry")
+        outer = outer.replace("      }\n    }\n",
+                              "      }\n" + read + convert + "      scf.yield %next : index\n    }\n")
+        inner = carried.replace("scf.for %i = %zero to %length step %one {",
+            "%result = scf.for %i = %zero to %length step %one iter_args(%carry = %zero) -> (index) {")
+        inner = inner.replace("arith.remui %i, %two", "arith.remui %carry, %two")
+        inner = inner.replace("      }\n    }\n", read + convert + "      scf.yield %next : index\n      }\n    }\n")
+        for candidate in [outer, inner]:
+            path.write_text(candidate)
+            for policy in ["may-not-alias", "may-alias"]:
+                checked = subprocess.run([tool, "--gm-alias=" + policy, "--certify-regions", str(path)],
+                                         capture_output=True, text=True, timeout=60, check=True)
+                assert "repeating-boundary-session: unsupported-carried-prerequisites" in checked.stdout
         # Wrapped machine arithmetic must not be treated as an affine trip count.
         path.write_text(text.replace("%zero to %visits", "%zero to %n"))
         bad = attempts(report(tool, path), "varying-rotating")

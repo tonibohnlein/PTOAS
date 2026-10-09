@@ -97,6 +97,7 @@ LogicalResult FrontierAnalysis::analyzeNumericCandidates() {
     for (auto& node : program->nodes) {
         if (node.varyingRotating && !node.varyingDemands &&
             node.varyingRotating->result.state == RecognitionState::Applicable) {
+            if (construction.varyingBoundaryReductions != UINT64_MAX) { ++construction.varyingBoundaryReductions; }
             node.varyingDemands = analyzeVaryingRotating(*node.varyingRotating, index, *storage);
         }
         if (!node.numericTemplate || node.periodicAnalysis ||

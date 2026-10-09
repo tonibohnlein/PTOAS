@@ -159,16 +159,6 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
     child.trips = domain->trips(expressions);
     // A proved empty domain needs no body interface.
     if (expressions.constantValue(child.trips) == 0) { return true; }
-    if (node.varyingRotating && node.varyingRotating->result.state == RecognitionState::Applicable) {
-        std::string diagnostic;
-        auto regional = varyingRotatingRegionalResult(function,*node.varyingRotating,index,*input,arena,diagnostic,
-            node.varyingDemands ? &*node.varyingDemands : nullptr);
-        if (succeeded(regional)) {
-            child.regional = std::move(*regional); child.anchors = child.regional.anchors;
-            children.push_back(std::move(child)); return true;
-        }
-        repeatedAttempt = diagnostic;
-    }
     // Each export attempt owns its candidate. Failed storage or endpoint
     // adapters cannot leave partial patterns in the child selected later.
     auto obligation = [&](const std::string& reason) {
@@ -290,6 +280,25 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
             repeatedChild(node, child.trips)) { return true; }
         if ((!cachedNumeric || cachedNumeric->result.state != RecognitionState::Applicable) &&
             phasedChild(node, child.trips)) { return true; }
+        if (node.varyingRotating && node.varyingRotating->result.state == RecognitionState::Applicable) {
+            std::string diagnostic;
+            const auto id = static_cast<std::size_t>(&node - program->nodes.data());
+            auto retained = resolveOriginal.demands ?
+                resolveOriginal.demands(id, AnalysisBackend::VaryingBoundary) : nullptr;
+            const auto* certificate = resolveOriginal.demands ?
+                (retained ? retained->varyingBoundaryDemands.get() : nullptr) :
+                (node.varyingDemands ? &*node.varyingDemands : nullptr);
+            FailureOr<RegionalAnalysis> regional = failure();
+            if (!resolveOriginal.demands || certificate) {
+                regional = varyingRotatingRegionalResult(function, *node.varyingRotating, index, *input, arena,
+                    diagnostic, certificate);
+            } else { diagnostic = "cached repeating-boundary demands unavailable"; }
+            if (succeeded(regional)) {
+                child.regional = std::move(*regional); child.anchors = child.regional.anchors;
+                children.push_back(std::move(child)); return true;
+            }
+            obligation(diagnostic);
+        }
         if (boundaryLoop(child.loop)) { return true; }
         // Reuse even a failed cached recognition; diagnostics must not rerun it.
         if (!cachedNumeric) { cachedNumeric = recognizeRegionalNumericTemplate(child.loop, index, *input); }

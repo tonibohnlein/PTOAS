@@ -41,6 +41,7 @@ public:
     // Explicit finite-visit adapter for callers selecting this representation.
     // Missing arbitrary-word interfaces retain the exact demand templates.
     AnalysisOutcome analyzeFiniteVisit(const AnalysisRequest& request);
+    AnalysisOutcome analyzeVaryingBoundary(const AnalysisRequest& request);
     AnalysisOutcome analyzeFiniteExpansion(const AnalysisRequest& request);
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareLogical(const AnalysisOutcome& result);
     LogicalResult attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan);
