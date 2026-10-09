@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exact arithmetic child interfaces for sequence composition.
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "CountedLoop.h"
 #include "RegionalRelationsInternal.h"
@@ -919,10 +920,7 @@ FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalR
         &RegionalCost::numericalMerges, &RegionalCost::numericalReusedChildren,
         &RegionalCost::retainedExpressionNodes}) {
         for (const auto& child : relation->children) {
-            if (child.cost.*member > UINT64_MAX - result->cost.*member) {
-                error = "symbolic parent construction cost exceeds representation"; return failure();
-            }
-            result->cost.*member += child.cost.*member;
+            accumulateCost(result->cost.*member, child.cost.*member);
         }
     }
     result->cost.children = relation->children.size(); result->cost.expressionNodes = state->arena->size();

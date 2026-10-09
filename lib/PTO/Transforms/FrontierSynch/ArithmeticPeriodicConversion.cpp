@@ -246,12 +246,8 @@ ArithmeticPeriodicConversion convertArithmeticPeriodicIntervals(const Arithmetic
         }
         out.intervals.push_back(std::move(*interval));
     }
-    if (out.cost.pieces == UINT64_MAX || out.cost.constraints == UINT64_MAX ||
-        out.cost.domainComparisons == UINT64_MAX) {
-        out.diagnostic = "arithmetic periodic normalization cost overflow";
-        out.intervals.clear();
-        return out;
-    }
+    // Diagnostic counters saturate; their magnitude does not reject an exact
+    // interval description or prevent a requested reducer/export attempt.
     out.status = ArithmeticPeriodicStatus::Applicable;
     auto& e = *input.expressions;
     RegionExpressions::Transaction transaction(e);

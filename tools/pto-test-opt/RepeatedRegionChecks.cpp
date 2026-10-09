@@ -147,8 +147,13 @@ bool check(func::FuncOp function, Operation* anchor, scf::ForOp outer, scf::ForO
         }
     }
     if (!symbolicEnable && trips == 2 && steps == 2 && mask == 7) {
-        auto joined = fs::composeRegionalSequence(function, arena,
-            {twice.regional, twice.regional}, false, false);
+        auto child = twice.regional;
+        child.cost.arithmeticRegions = UINT64_MAX;
+        child.cost.boundaryBytes = UINT64_MAX;
+        child.cost.retainedExpressionNodes = UINT64_MAX;
+        auto joined = fs::composeRegionalSequence(function, arena, {child, child}, false, false);
+        if (joined.cost.arithmeticRegions != UINT64_MAX || joined.cost.boundaryBytes != UINT64_MAX ||
+            joined.cost.retainedExpressionNodes != UINT64_MAX) { return false; }
         auto region = fs::sequenceRegionalResult(joined);
         if (!joined.error.empty() || !region.numerical) {
             llvm::errs() << "squared children were not reused by numerical composition: " << joined.error << "\n";

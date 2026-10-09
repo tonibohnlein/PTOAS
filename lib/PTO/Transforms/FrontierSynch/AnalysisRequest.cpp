@@ -116,13 +116,9 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
         return retained;
     }
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
-    for (auto backend : {AnalysisBackend::Explicit, AnalysisBackend::NumericalPeriodic,
-            AnalysisBackend::Rotating, AnalysisBackend::MixedStride, AnalysisBackend::GuardedRotating,
-            AnalysisBackend::BoundedLifetime,
-            AnalysisBackend::Sequence, AnalysisBackend::ArithmeticPeriodic, AnalysisBackend::Arithmetic,
-            AnalysisBackend::FiniteGuarded}) {
+    auto attemptBackend = [&](AnalysisBackend backend) {
         auto attempt = requestBackend(backend, request);
-        if (attempt.status == AnalysisStatus::Ready) { return attempt; }
+        if (attempt.status == AnalysisStatus::Ready) { result = std::move(attempt); return true; }
         if (!result.mathematical && attempt.mathematical) {
             result.mathematical = attempt.mathematical;
             result.available = attempt.available;
@@ -130,13 +126,28 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
             result.stage = attempt.stage;
         }
         llvm::append_range(result.obligations, attempt.obligations);
+        return false;
+    };
+    for (auto backend : {AnalysisBackend::Explicit, AnalysisBackend::NumericalPeriodic,
+            AnalysisBackend::Rotating, AnalysisBackend::MixedStride, AnalysisBackend::GuardedRotating,
+            AnalysisBackend::BoundedLifetime, AnalysisBackend::Sequence,
+            AnalysisBackend::ArithmeticPeriodic, AnalysisBackend::FiniteGuarded}) {
+        if (backend == AnalysisBackend::ArithmeticPeriodic) {
+            for (auto method : arithmeticMethods(request)) {
+                if (attemptBackend(method)) { result.costs = costRecords(); return result; }
+            }
+        } else if (attemptBackend(backend)) {
+            result.costs = costRecords(); return result;
+        }
     }
     // A missing export can never authorize weakening an exact whole-region order.
     if (!result.mathematical && request.mode == AnalysisMode::Fallback && request.region == 0) {
         auto conservative = requestBackend(AnalysisBackend::CompactBounding, request);
         llvm::append_range(conservative.obligations, result.obligations);
+        conservative.costs = costRecords();
         return conservative;
     }
+    result.costs = costRecords();
     return result;
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical(const AnalysisOutcome& result)

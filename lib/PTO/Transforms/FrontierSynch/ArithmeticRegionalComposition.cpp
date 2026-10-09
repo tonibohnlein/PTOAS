@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegionalComposition.h"
 #include "PTO/Transforms/FrontierSynch/RegionalRelations.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
@@ -398,17 +399,13 @@ FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
     for (auto member : {&ArithmeticAnalysisCost::primitivePieces, &ArithmeticAnalysisCost::pieceJoins,
         &ArithmeticAnalysisCost::projections, &ArithmeticAnalysisCost::relationCompositions,
         &ArithmeticAnalysisCost::differences}) {
-        if (left.analysis.cost.*member > UINT64_MAX - right.analysis.cost.*member) {
-            error = "symbolic composition cost exceeds representation"; return failure();
-        }
-        out.analysis.cost.*member = left.analysis.cost.*member + right.analysis.cost.*member;
+        out.analysis.cost.*member = left.analysis.cost.*member;
+        accumulateCost(out.analysis.cost.*member, right.analysis.cost.*member);
     }
     for (auto member : {&RegionExpressions::RelationCost::gates, &RegionExpressions::RelationCost::pieces,
         &RegionExpressions::RelationCost::projections, &RegionExpressions::RelationCost::formulaProducts}) {
-        if (left.translationCost.*member > UINT64_MAX - right.translationCost.*member) {
-            error = "symbolic relation translation cost exceeds representation"; return failure();
-        }
-        out.translationCost.*member = left.translationCost.*member + right.translationCost.*member;
+        out.translationCost.*member = left.translationCost.*member;
+        accumulateCost(out.translationCost.*member, right.translationCost.*member);
     }
     out.translationCost.peakClauses = std::max(left.translationCost.peakClauses, right.translationCost.peakClauses);
     out.context = context;

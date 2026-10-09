@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Typed explicit/periodic adapters to the shared regional composition contract.
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 #include "llvm/ADT/MapVector.h"
@@ -152,23 +153,20 @@ bool projectFiniteCrossings(std::vector<Child>& children,
             projected[i].push_back({byte, std::move(selected->firstWriters), std::move(selected->lastWriters),
                 std::move(selected->firstReaders), std::move(selected->lastReaders)});
         }
-        if (source.cost.boundaryBytes > UINT64_MAX - support[i].size()) { return false; }
     }
     uint64_t addedBytes = 0;
     for (const auto& bytes : support) {
-        if (bytes.size() > UINT64_MAX - addedBytes) { return false; }
-        addedBytes += bytes.size();
+        accumulateCost(addedBytes, bytes.size());
     }
-    if (addedBytes > UINT64_MAX - costs.boundaryBytes) { return false; }
     // Publish only after every pair and every point query succeeds. A failed
     // attempt leaves original regional summaries available to relational routes.
     for (uint32_t i = 0; i < children.size(); ++i) {
         if (support[i].empty()) { continue; }
         children[i].regional.storageBoundary = std::move(projected[i]);
         children[i].regional.cost.cells = children[i].regional.storageBoundary.size();
-        children[i].regional.cost.boundaryBytes += support[i].size();
+        accumulateCost(children[i].regional.cost.boundaryBytes, support[i].size());
     }
-    costs.boundaryBytes += addedBytes;
+    accumulateCost(costs.boundaryBytes, addedBytes);
     covered = std::move(pairs);
     return true;
 }

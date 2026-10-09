@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "RegionIntegerExpressionsInternal.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include <map>
@@ -167,10 +168,7 @@ private:
         }
         auto result = conjoin(a, b);
         if (cost) {
-            if (a.size() * b.size() > UINT64_MAX - cost->formulaProducts) {
-                reject("regional relation cost exceeds representation"); return {};
-            }
-            cost->formulaProducts += a.size() * b.size();
+            accumulateCost(cost->formulaProducts, a.size() * b.size());
             cost->peakClauses = std::max<uint64_t>(cost->peakClauses, result.size());
         }
         return result;
