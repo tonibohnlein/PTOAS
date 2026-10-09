@@ -173,6 +173,67 @@ bool checkFiniteTranslation(const fs::ArithmeticProgram& form)
     }
     return arena.constructionError().empty();
 }
+bool checkStoragePreflight(func::FuncOp function, fs::RegionExpressions& retained)
+{
+    Block inputs;
+    auto parameter = inputs.addArgument(IndexType::get(function.getContext()), function.getLoc());
+    auto second = inputs.addArgument(IndexType::get(function.getContext()), function.getLoc());
+    fs::BoundInteger huge(INT64_MAX);
+    huge *= huge;
+    auto domain = fs::IntegerSystem::create(2,
+        {{{huge, fs::BoundInteger(1)}, fs::BoundInteger(0)}});
+    if (failed(domain)) { return false; }
+    const auto before = retained.size();
+    const auto previousError = retained.constructionError();
+    std::string nativeError, byteError;
+    const bool native = fs::detail::preflightFiniteStoragePredicate(function, *domain,
+        {parameter, second}, false, 2, {0, 0}, {}, nativeError);
+    const bool physical = fs::detail::preflightFiniteStoragePredicate(function, *domain,
+        {parameter}, true, 2, {0, 0}, {}, byteError);
+    return !native && !physical && !nativeError.empty() && !byteError.empty() &&
+        retained.size() == before && retained.constructionError() == previousError;
+}
+llvm::json::Object dumpFiniteStorage(const fs::RegionalAnalysis& region,
+    const std::function<uint64_t(fs::RegionExpressions::Id)>& evaluate)
+{
+    auto choices = [&](const std::vector<fs::RegionalSelector>& selectors) {
+        llvm::json::Array result;
+        for (auto selector : selectors) {
+            result.push_back(llvm::json::Array{selector.event.type, evaluate(selector.present)});
+        }
+        return result;
+    };
+    auto pipes = [&](const std::map<uint32_t, std::vector<fs::RegionalSelector>>& selectors) {
+        llvm::json::Array result;
+        for (const auto& [pipe, selected] : selectors) {
+            result.push_back(llvm::json::Array{pipe, choices(selected)});
+        }
+        return result;
+    };
+    llvm::json::Array storage;
+    for (auto space : {pto::AddressSpace::MAT, pto::AddressSpace::LEFT,
+                       pto::AddressSpace::RIGHT, pto::AddressSpace::ACC}) {
+        for (int64_t byte : {-1, 0, 511, 512, 1023, 1024, 2047, 2048}) {
+            fs::RegionalByteAddress address{space, {}, region.expressions->constant(byte)};
+            auto selected = region.storageSelectors(address);
+            auto member = region.expressions->boolean(false);
+            bool membershipAvailable = true;
+            for (const auto& family : region.symbolicStorage->families) {
+                auto present = family.membership(address);
+                membershipAvailable &= present.has_value();
+                if (present) { member = region.expressions->lor(member, *present); }
+            }
+            if (!selected) { continue; }
+            storage.push_back(llvm::json::Object{{"space", static_cast<unsigned>(space)}, {"byte", byte},
+                {"member", membershipAvailable ? evaluate(member) : UINT64_MAX},
+                {"first_writers", choices(selected->firstWriters)},
+                {"last_writers", choices(selected->lastWriters)},
+                {"first_readers", pipes(selected->firstReaders)}, {"last_readers", pipes(selected->lastReaders)}});
+        }
+    }
+    return llvm::json::Object{{"storage", std::move(storage)}, {"first_payloads", pipes(region.firstPayloads)},
+        {"last_payloads", pipes(region.lastPayloads)}, {"first_sites", pipes(region.firstSitePayloads)}};
+}
 } // namespace
 
 // Exercise the regional API only on explicit test annotations. Production
@@ -244,6 +305,50 @@ void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
                 document["sites"] = form.sites.size();
                 auto queries = fs::expandedFiniteRegionalQueries(expanded);
                 document["exact_queries"] = queries.capabilities.exactQueries;
+                std::optional<fs::RegionalAnalysis> selectedStorage;
+                if (function->hasAttr("test.expanded_storage")) {
+                    document["preflight_failure_retained"] = checkStoragePreflight(function, *state.arena);
+                    std::string error;
+                    uint64_t checks = 0;
+                    auto selected = fs::expandedFiniteRegionalSelectors(expanded, queries, error, {}, &checks);
+                    document["selector_checks"] = checks;
+                    document["storage_translation_families"] = state.expandedStorageTranslations.size();
+                    document["selector_error"] = error;
+                    document["exact_selectors"] = succeeded(selected);
+                    if (succeeded(selected)) {
+                        selectedStorage = std::move(*selected);
+                        const auto invalid = fs::RegionExpressions::invalid;
+                        const auto boolean = state.arena->boolean(true);
+                        document["invalid_storage_rejected"] =
+                            !selectedStorage->storageSelectors({pto::AddressSpace::LEFT, {}, invalid}) &&
+                            !selectedStorage->storageSelectors({pto::AddressSpace::LEFT, {}, boolean});
+                    }
+                    document["query_snapshot_unchanged"] = !queries.capabilities.exactSelectors &&
+                        !queries.capabilities.completeStorageModel && !queries.storageSelectors &&
+                        !queries.symbolicStorage;
+                    bool aliasChecked = true;
+                    unsigned aliasQueryCount = 0;
+                    if (selectedStorage) {
+                        for (const auto& family : selectedStorage->symbolicStorage->families) {
+                            if (family.space != pto::AddressSpace::GM) { continue; }
+                            for (auto argument : function.getArguments()) {
+                                const bool foreign = isa<pto::PtrType>(argument.getType()) && argument != family.base;
+                                if (!foreign) { continue; }
+                                ++aliasQueryCount;
+                                fs::RegionalByteAddress address{pto::AddressSpace::GM, argument,
+                                    state.arena->constant(0)};
+                                auto member = family.membership(address);
+                                auto selected = selectedStorage->storageSelectors(address);
+                                const bool comparable = input.memory().gmPolicy() == pto::GMAliasPolicy::MayNotAlias;
+                                aliasChecked &= comparable ? member && state.arena->constantValue(*member) == 0 &&
+                                    selected && selected->firstWriters.empty() && selected->lastWriters.empty() :
+                                    !member && !selected;
+                            }
+                        }
+                    }
+                    document["alias_queries_checked"] = aliasChecked;
+                    document["alias_query_count"] = aliasQueryCount;
+                }
                 const auto zero = state.arena->constant(0);
                 bool invalidQueries = true;
                 if (!form.sites.empty()) {
@@ -307,10 +412,15 @@ void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
                                 eventQueries.push_back(std::move(row));
                             }
                         }
-                        samples.push_back(llvm::json::Object{{"parameters", std::move(values)},
+                        llvm::json::Object sample{{"parameters", std::move(values)},
                             {"presence", std::move(presence)}, {"generators", std::move(edges)},
                             {"native", std::move(native)}, {"retained", std::move(retained)},
-                            {"event_queries", std::move(eventQueries)}});
+                            {"event_queries", std::move(eventQueries)}};
+                        if (selectedStorage) {
+                            auto storage = dumpFiniteStorage(*selectedStorage, evaluate);
+                            for (auto& entry : storage) { sample[entry.first] = std::move(entry.second); }
+                        }
+                        samples.push_back(std::move(sample));
                     }
                 }
                 document["samples"] = std::move(samples);

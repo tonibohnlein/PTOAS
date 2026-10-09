@@ -263,9 +263,11 @@ void extractAccesses(ProgramBuilder& builder, const SyncInput& input, const Sync
     }
 }
 std::optional<ArithmeticProgram> normalizeFiniteDemandAccesses(
-    const ArithmeticProgram& program, uint64_t* attemptedFragments)
+    const ArithmeticProgram& program, uint64_t* attemptedFragments,
+    llvm::MapVector<std::pair<AddressSpace, Value>, AffineExpr>* appliedTranslations)
 {
     if (attemptedFragments) { *attemptedFragments = 0; }
+    if (appliedTranslations) { appliedTranslations->clear(); }
     if (!program.finiteExpansion || !program.phaseIndex) { return std::nullopt; }
     using Key = std::pair<AddressSpace, Value>;
     llvm::MapVector<Key, AffineExpr> translations;
@@ -321,6 +323,12 @@ std::optional<ArithmeticProgram> normalizeFiniteDemandAccesses(
     normalized.recognition = recognizeArithmetic(normalized.primitives, limits);
     const bool accepted = normalized.extraction.state == RecognitionState::Applicable &&
         normalized.recognition.state == RecognitionState::Applicable;
+    if (accepted && appliedTranslations) {
+        for (const auto& entry : translations) {
+            const bool rewritten = entry.second && !isa<AffineConstantExpr>(entry.second);
+            if (rewritten) { appliedTranslations->insert(entry); }
+        }
+    }
     return accepted ? std::optional<ArithmeticProgram>(std::move(normalized)) : std::nullopt;
 }
 } // namespace mlir::pto::frontiersynch::detail

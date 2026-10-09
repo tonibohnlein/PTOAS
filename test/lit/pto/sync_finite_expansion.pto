@@ -10,6 +10,7 @@
 // RUN: %python %S/Inputs/check_finite_expansion.py pto-sync-input-test %s
 // RUN: %python %S/Inputs/check_fixed_branches.py pto-sync-input-test %s
 // RUN: %python %S/Inputs/check_finite_translation.py pto-sync-input-test %s
+// RUN: %python %S/Inputs/check_finite_storage.py pto-sync-input-test %s
 !mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
 !left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
 !right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>

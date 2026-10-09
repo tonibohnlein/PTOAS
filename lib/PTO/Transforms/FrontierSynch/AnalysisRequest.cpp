@@ -166,13 +166,30 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
         result.available.selectors = exports.capabilities.exactSelectors;
     }
     if (demands.backend == "native-scalar" || demands.backend == "expanded-finite-guarded") { result.available = {}; }
-    if (demands.backend == "expanded-finite-guarded" && (request.needs.queries || attempt.expandedQueries)) {
+    const bool expandedExports = request.needs.queries || request.needs.selectors || attempt.expandedQueries;
+    if (demands.backend == "expanded-finite-guarded" && expandedExports) {
         if (!attempt.expandedQueries) {
             attempt.expandedQueries = std::make_shared<const RegionalAnalysis>(
                 expandedFiniteRegionalQueries(*demands.finiteGuardedDemands, storage));
         }
         result.regionalExports = attempt.expandedQueries;
         result.available.queries = result.regionalExports->capabilities.exactQueries;
+        if (request.needs.selectors && !attempt.expandedSelectorsAttempted) {
+            attempt.expandedSelectorsAttempted = true;
+            if (construction.expandedSelectorBuilds != UINT64_MAX) { ++construction.expandedSelectorBuilds; }
+            auto selected = expandedFiniteRegionalSelectors(*demands.finiteGuardedDemands,
+                *attempt.expandedQueries, attempt.expandedSelectorError, storage,
+                &construction.expandedSelectorChecks);
+            if (succeeded(selected)) {
+                attempt.expandedSelectors = std::make_shared<const RegionalAnalysis>(std::move(*selected));
+            }
+        }
+        if (request.needs.selectors && attempt.expandedSelectors) {
+            result.regionalExports = attempt.expandedSelectors;
+            result.available.selectors = result.regionalExports->capabilities.exactSelectors;
+        } else if (request.needs.selectors && !attempt.expandedSelectorError.empty()) {
+            result.obligations.push_back({AnalysisStage::Selectors, attempt.expandedSelectorError});
+        }
     }
     if (demands.varyingBoundaryDemands &&
         (request.needs.queries || request.needs.selectors || request.needs.synchronization)) {

@@ -477,3 +477,46 @@ invalid dimensions/symbols, zero-dimensional predicates and both polarities of
 the explicit relational-lowering failure. This prerequisite does not yet change
 regional recognition coverage or advertise finite storage exports. Section 8 and
 the pinned paper hashes were rechecked and remain unchanged.
+
+### Finite expanded storage exports
+
+A stronger finite-region request now constructs and caches exact storage
+selectors separately from the retained demands and query snapshot. It exports
+byte-family support, first/last writers, readers before the first writer and
+after the last writer per pipe, and native/per-site payload extrema. Original
+phase/effect identities and fixed induction coordinates remain public; read/write
+occurrences do not count as readers before or after their own write.
+
+The demand producer retains its successful common-translation alternative and
+applied-family metadata once. Storage construction reuses that owner; physical
+byte queries apply byte minus the family's translation before quotient/residue
+conversion. Untranslated families and native boundaries keep ordinary integer
+predicates. All support and boundary predicates are preflighted in a private
+arena, with symbolic physical bytes and the actual parameter SSA inputs. Failed
+native or physical bounds checks cannot poison the cached query arena. Checks
+and attempted builds are counted even on failure and are not repeated on retry.
+
+The storage certificate is a general symbolic family certificate, not a uniform
+atom certificate or an additional crossing adapter. Different potentially
+aliasing GM bases return unavailable; no-alias bases and different spaces remain
+disjoint. Discharged-effect storage exports and synchronization preparation remain
+explicitly unavailable. A missing stronger export leaves exact demands and the
+weaker immutable query snapshot available.
+
+The independent storage oracle covers 20 cases across both alias policies,
+including zero trips, runtime/fixed branches, P2 bank selection, read/write
+accumulators, signed translated origins and division/remainder origins. It requires
+all 32 requested physical byte probes, checks every selector against source-derived
+reads/writes, and checks native/physical preflight refusal and unchanged query
+snapshots. Session checks cover cache reuse, foreign input rejection and callbacks
+surviving session destruction. Optimized selector measurements on the three GEMMs
+complete in approximately 0.15 seconds; elementwise MayAlias completes in 0.08
+seconds after previously exceeding the 30-second measurement watchdog. The
+MayNotAlias discharged-effect export remains explicitly unavailable. These are
+focused export measurements, not the final paired corpus campaign.
+
+The optimized rebuild, 32 focused checks and 12 common-translation graph cases
+pass. All 22 pinned corpus invocations preserve coverage at 227/240 under
+MayNotAlias and 213/240 under MayAlias, with no per-case loss, timeout or source
+mutation. The slowest invocation is 13.8 seconds. The three pinned paper hashes
+remain unchanged.

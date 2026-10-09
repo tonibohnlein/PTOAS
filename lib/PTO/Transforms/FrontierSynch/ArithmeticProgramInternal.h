@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICPROGRAMINTERNAL_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICPROGRAMINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
+#include "llvm/ADT/MapVector.h"
 namespace mlir::pto::frontiersynch::detail {
 struct ProgramBuilder {
     ArithmeticProgram& output;
@@ -39,10 +40,12 @@ struct ProgramBuilder {
               uint64_t modulus = 1);
 };
 void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limits);
-// Demand-only byte-coordinate translation; original physical primitives stay
-// unchanged. An unavailable or unnecessary adapter returns no alternative.
+// Byte-coordinate translation; original physical primitives stay unchanged.
+// Applied translations are published only after successful construction.
+// An unavailable or unnecessary adapter returns no alternative.
 std::optional<ArithmeticProgram> normalizeFiniteDemandAccesses(
-    const ArithmeticProgram& program, uint64_t* attemptedFragments = nullptr);
+    const ArithmeticProgram& program, uint64_t* attemptedFragments = nullptr,
+    llvm::MapVector<std::pair<AddressSpace, Value>, AffineExpr>* appliedTranslations = nullptr);
 void extractAccesses(ProgramBuilder& builder, const SyncInput& input, const SyncStorageEffects& effects);
 } // namespace mlir::pto::frontiersynch::detail
 #endif

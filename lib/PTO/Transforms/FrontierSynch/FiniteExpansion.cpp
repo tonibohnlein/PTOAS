@@ -259,10 +259,15 @@ static FiniteGuardedAnalysis analyzeExpandedFiniteContext(ArithmeticRegionContex
         result.error = "finite expansion overlap adapter exceeds its pair budget"; return result;
     }
     auto protection = structuredProtection(input.accesses());
-    auto translated = detail::normalizeFiniteDemandAccesses(*program, &program->expandedTranslationFragments);
+    llvm::MapVector<std::pair<AddressSpace, Value>, AffineExpr> translations;
+    auto translated = detail::normalizeFiniteDemandAccesses(*program, &program->expandedTranslationFragments,
+                                                          &translations);
     auto stage = analyzeGeneralArithmeticGenerators(translated ? *translated : *program, &protection);
     if (!stage.analysis().error.empty()) { result.error = stage.analysis().error; return result; }
     auto state = std::make_shared<FiniteGuardedState>();
+    state->expandedStorageProgram = translated ?
+        std::make_shared<const ArithmeticProgram>(std::move(*translated)) : program;
+    state->expandedStorageTranslations = std::move(translations);
     state->function = program->context.function;
     state->arena = std::make_shared<RegionExpressions>();
     state->accessModel = &input.accesses();
