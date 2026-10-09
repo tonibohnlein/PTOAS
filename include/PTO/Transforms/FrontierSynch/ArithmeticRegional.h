@@ -33,16 +33,27 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext cont
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
     std::string& error,
     std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding = {});
+FailureOr<RegionalAnalysis> analyzeArithmeticRegionWithProfiles(ArithmeticRegionContext context,
+    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
+    std::string& error, ArrayRef<ArithmeticLimits> profiles,
+    std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding = {});
 // Preserve exact reduction independently of selector/query export. The owned
 // result retains its original context and expression arena on export failure.
 FailureOr<RegionalAnalysis> analyzeArithmeticRegionRetained(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
     std::shared_ptr<const ArithmeticRegionalRelations>& demands, std::string& error);
+FailureOr<RegionalAnalysis> analyzeArithmeticRegionRetained(ArithmeticRegionContext context,
+    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
+    std::shared_ptr<const ArithmeticRegionalRelations>& demands, std::string& error,
+    const ArithmeticProgram* certified);
 // Request only the finite boundary representation. Symbolic support defers this
 // optional route before demand/selector construction; callers retain the ordinary
 // symbolic-capable analysis above as a fallback. No occurrence expansion occurs.
 FailureOr<RegionalAnalysis> analyzeFiniteArithmeticRegion(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
     std::string& error);
+FailureOr<RegionalAnalysis> analyzeFiniteArithmeticRegionWithProfiles(ArithmeticRegionContext context,
+    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
+    std::string& error, ArrayRef<ArithmeticLimits> profiles);
 }
 #endif

@@ -206,7 +206,8 @@ private:
                     continue;
                 }
                 error.clear();
-                auto leaf = analyzeArithmeticRegion({function, operation}, index, input, arena, error,
+                auto leaf = analyzeArithmeticRegionWithProfiles({function, operation}, index, input, arena, error,
+                    program.regionalArithmeticProfiles,
                     [&](Value value) -> std::optional<Id> {
                         auto fixed = geometry(value);
                         return fixed ? arena->constant(static_cast<uint64_t>(*fixed)) : arena->input(value);
@@ -219,7 +220,8 @@ private:
             return sequenceRegionalResult(composed);
         }
         if (child.kind == StructureKind::Loop || child.kind == StructureKind::Conditional) {
-            return analyzeArithmeticRegion({function, child.anchor}, index, input, arena, error,
+            return analyzeArithmeticRegionWithProfiles({function, child.anchor}, index, input, arena, error,
+                program.regionalArithmeticProfiles,
                 [&](Value value) -> std::optional<Id> {
                     auto fixed = geometry(value);
                     if (fixed) { return arena->constant(static_cast<uint64_t>(*fixed)); }

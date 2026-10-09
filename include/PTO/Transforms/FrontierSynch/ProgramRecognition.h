@@ -100,6 +100,9 @@ struct ProgramGuard {
     SmallVector<bool> availableBeforeLoops;
 };
 struct ProgramRecognition {
+    // Immutable session configuration for all specialized composition views.
+    // Direct library clients retain the historical regional defaults.
+    SmallVector<ArithmeticLimits> regionalArithmeticProfiles{{8, 8, 1, 4096}, {8, 8, 2, 4096}};
     SmallVector<StructureNode, 0> nodes;
     // Stable identities in worklist order, never execution/reference ranks.
     SmallVector<ProgramPayload> payloads;
@@ -121,6 +124,8 @@ struct ProgramRecognition {
 void refreshProgramContractAudit(ProgramRecognition& program);
 void recordArithmeticContractAttempt(ProgramRecognition& program, const ArithmeticLimits& limits,
                                      const ArithmeticProgram& arithmetic);
+void recordArithmeticContractAttempt(ProgramRecognition& program, const ArithmeticLimits& limits,
+                                     const ArithmeticProgram& arithmetic, std::optional<std::size_t> node);
 // Update only endpoint availability on an existing sequence snapshot. An empty
 // error means successful detached preparation; membership is never changed.
 void recordSequenceEndpointAttempt(ProgramRecognition& program, StringRef error);

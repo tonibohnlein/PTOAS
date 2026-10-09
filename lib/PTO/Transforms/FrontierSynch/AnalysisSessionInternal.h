@@ -43,6 +43,8 @@ struct AnalysisSessionState {
     std::shared_ptr<RegionExpressions> expressions = std::make_shared<RegionExpressions>();
     std::set<AnalysisBackend> wholeRegionEvidence;
     std::vector<std::size_t> activeRegions;
+    std::optional<std::vector<RegionCertification>> certifications;
+    bool certifying = false;
 };
 } // namespace mlir::pto::frontiersynch
 #endif

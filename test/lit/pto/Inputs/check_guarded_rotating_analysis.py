@@ -21,7 +21,7 @@ def invoke(tool, path, mode="--structured-trace"):
     run = subprocess.run([tool, mode, str(path)], capture_output=True,
                          text=True, check=False, timeout=90)
     assert run.returncode == 0, run.stderr + run.stdout
-    return run.stdout if mode == "--insert-logical" else json.loads(run.stdout)
+    return run.stdout if mode == "--insert-logical-library" else json.loads(run.stdout)
 
 
 def validate(report, g, h, n, offset, protected=False):
@@ -107,7 +107,7 @@ def main():
         poison = poison.replace("scf.if %h", "scf.if %poison_guard")
         path.write_text(poison)
         validate(invoke(tool, path), 0, 0, 3, 0)
-        emitted = invoke(tool, path, "--insert-logical")
+        emitted = invoke(tool, path, "--insert-logical-library")
         additions = set(re.findall(r"(%[\w]+) = arith.addi [^\n]+overflow<nsw>", emitted))
         comparisons = {result for result, operand in re.findall(
             r"(%[\w]+) = arith.cmpi slt, (%[\w]+),", emitted) if operand in additions}
@@ -127,7 +127,7 @@ def main():
             + "\n".join(declarations).replace("%i, %offset", "%i, %local_offset"))
         path.write_text(offset_poison)
         validate(invoke(tool, path), 0, 0, 3, 0)
-        emitted = invoke(tool, path, "--insert-logical")
+        emitted = invoke(tool, path, "--insert-logical-library")
         # Exact modular normalization may avoid replaying the flagged addition
         # altogether. If it is replayed before the loop, track its dependency
         # through normalization and require the outer guard to mask that value.

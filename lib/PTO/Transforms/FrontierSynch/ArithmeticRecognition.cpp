@@ -13,6 +13,20 @@
 #include <array>
 
 namespace mlir::pto::frontiersynch {
+FailureOr<ArithmeticLimits> parseArithmeticProfile(StringRef text)
+{
+    SmallVector<StringRef> fields;
+    text.split(fields, ':');
+    ArithmeticLimits result{};
+    const bool invalid = fields.size() != 4 || fields[0].getAsInteger(10, result.pipes) ||
+        fields[1].getAsInteger(10, result.dimensions) || fields[2].getAsInteger(10, result.period) ||
+        fields[3].getAsInteger(10, result.coefficient) || !result.pipes || !result.dimensions ||
+        !result.period || !result.coefficient || result.period > static_cast<uint64_t>(INT64_MAX);
+    if (invalid) {
+        return failure();
+    }
+    return result;
+}
 namespace {
 void reject(ArithmeticRecognition& output, ArithmeticIssue issue, std::size_t relation = 0, std::size_t piece = 0,
             bool missing = false)

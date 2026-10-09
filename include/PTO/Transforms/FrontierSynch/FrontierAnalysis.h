@@ -50,6 +50,14 @@ public:
     // Build and cache the whole-function arithmetic candidate only on request.
     // Requires successful initialization; uses fixed class limits, not input-derived limits.
     LogicalResult recognizeArithmetic();
+    // Profiles are immutable once any arithmetic form is requested. Defaults
+    // preserve the separately declared whole-function and regional classes.
+    LogicalResult configureArithmeticProfiles(ArrayRef<ArithmeticLimits> whole,
+                                              ArrayRef<ArithmeticLimits> regional);
+    LogicalResult recognizeRegionalArithmetic();
+    // Audit every original region, including children of a compact match.
+    // Results own their exact mathematics; no endpoint or allocation is built.
+    std::vector<RegionCertification> certifyRegions();
     // Demand reduction, endpoint recipes and allocation are backend work.
     // Cache both successful and failed numeric attempts without changing recognition.
     LogicalResult analyzeNumericCandidates();
@@ -92,6 +100,7 @@ public:
 private:
     LogicalResult recognizeStructure();
     LogicalResult ensureArithmeticGenerators();
+    const ArithmeticProgram* recognizeArithmeticRegion(std::size_t region);
     std::vector<AnalysisBackend> arithmeticMethods(const AnalysisRequest& request);
     SequenceRegionResolver regionalResolver();
     void recordWholeRegion(AnalysisBackend backend);
@@ -107,6 +116,9 @@ private:
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareRetained(const MathematicalResult& demands);
     std::shared_ptr<AnalysisSessionState> sessionState;
     func::FuncOp function;
+    SmallVector<ArithmeticLimits> wholeArithmeticProfiles{{8, 8, 1, 8}, {8, 8, 2, 8}};
+    SmallVector<ArithmeticLimits> regionalArithmeticProfiles{{8, 8, 1, 4096}, {8, 8, 2, 4096}};
+    std::map<std::size_t, std::shared_ptr<const ArithmeticProgram>> arithmeticForms;
     bool initialized = false;
     bool nativeScalarOnly = false;
     GMAliasPolicy policy = GMAliasPolicy::MayNotAlias;
