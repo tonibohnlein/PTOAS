@@ -21,7 +21,7 @@ from check_periodic_demands import closure, native
 def invoke(tool, mode, path):
     result = subprocess.run([tool, mode, str(path)], capture_output=True, text=True, check=False, timeout=90)
     assert result.returncode == 0, result.stderr + result.stdout
-    return json.loads(result.stdout) if mode != "--insert-logical" else result.stdout
+    return json.loads(result.stdout) if mode != "--insert-logical-library" else result.stdout
 
 
 def load(label="L", destination="left"):
@@ -225,7 +225,7 @@ def main():
         poison = render(source, body, 0, 0).replace("%n: index)", "%n: index, %x: i64)")
         poison = poison.replace("array<i64: 0, 0, 3>", "array<i64: 0, 0, 3, 9223372036854775807>")
         path.write_text(poison)
-        emitted = invoke(tool, "--insert-logical", path)
+        emitted = invoke(tool, "--insert-logical-library", path)
         additions = set(re.findall(r"(%[\w]+) = arith.addi [^\n]+overflow<nsw>", emitted))
         comparisons = {
             result
@@ -245,7 +245,7 @@ def main():
         report = invoke(tool, "--finite-guarded-analysis", path)
         assert not report["error"] and report["prepared"] and report["queries_available"], report
         assert report["unchanged"], report
-        emitted = invoke(tool, "--insert-logical", path)
+        emitted = invoke(tool, "--insert-logical-library", path)
         assert len(re.findall(r"= llvm\.freeze ", emitted)) == 1, "the source predicate must not be replayed"
         # A future region-valued condition is analyzable but is not speculated at an early SET.
         body = (

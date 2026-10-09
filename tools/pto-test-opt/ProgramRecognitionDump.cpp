@@ -72,6 +72,7 @@ llvm::json::Object contract(const fs::ProgramContractCandidate& candidate)
             {"state", fs::contractName(obligation.status)}});
     }
     llvm::json::Object result{{"class", fs::contractName(candidate.kind)},
+        {"representation", candidate.kind == fs::ContractClass::NumericTemplate ? "small-count-expanded" : "original"},
         {"node", candidate.node ? static_cast<int64_t>(*candidate.node) : -1},
         {"scope", candidate.node ? "original-region" : "whole-function-fixed-profile"},
         {"membership", fs::contractName(candidate.membership)},

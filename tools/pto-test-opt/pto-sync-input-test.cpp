@@ -13,7 +13,9 @@
 #include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/ClosedCallees.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
@@ -82,6 +84,76 @@ LogicalResult checkAllocationSession(func::FuncOp function, pto::GMAliasPolicy p
   }
   llvm::outs() << "allocation-session: " << logical.mathematical->backend
                << " available=" << succeeded(allocation) << " retained-demands cached-export\n";
+  return success();
+}
+LogicalResult checkArithmeticExportFailure(func::FuncOp function, pto::GMAliasPolicy policy) {
+  using namespace pto::frontiersynch;
+  pto::SyncInput input(policy);
+  PhaseIndex index;
+  const bool ready = succeeded(input.build(function, pto::SyncInstructionView::PipeEnvelopes)) &&
+      succeeded(index.build(function, input));
+  if (!ready) { return failure(); }
+  scf::ForOp root;
+  for (auto loop : function.getOps<scf::ForOp>()) { root = loop; break; }
+  if (!root) { return failure(); }
+  auto form = recognizeArithmeticProgram({function, root}, index, input, input.accesses(), {8, 8, 1, 4096});
+  std::shared_ptr<const ArithmeticRegionalRelations> retained;
+  std::string error;
+  auto exported = analyzeArithmeticRegionRetained({function, root}, index, input,
+      std::make_shared<RegionExpressions>(), retained, error, &form);
+  const bool lostDemands = succeeded(exported) || !retained || !retained->analysis.exactMinimum ||
+      error.find("entry origin") == std::string::npos;
+  if (lostDemands) {
+    return function.emitError("ordinal export failure did not retain exact arithmetic demands");
+  }
+  pto::SyncInput other(policy == pto::GMAliasPolicy::MayAlias ?
+                       pto::GMAliasPolicy::MayNotAlias : pto::GMAliasPolicy::MayAlias);
+  if (failed(other.build(function, pto::SyncInstructionView::PipeEnvelopes))) { return failure(); }
+  retained.reset(); error.clear();
+  exported = analyzeArithmeticRegionRetained({function, root}, index, other,
+      std::make_shared<RegionExpressions>(), retained, error, &form);
+  const bool mixedContext = succeeded(exported) || retained ||
+      error.find("different entry context") == std::string::npos;
+  if (mixedContext) {
+    return function.emitError("arithmetic certificate crossed modeled input or alias context");
+  }
+  auto specialized = recognizeArithmeticProgram({function, root}, index, input, input.accesses(),
+      {8, 8, 1, 4096}, [&](Value value) -> std::optional<int64_t> {
+        return value == function.getArgument(0) ? std::optional<int64_t>(4) : std::nullopt;
+      });
+  retained.reset(); error.clear();
+  exported = analyzeArithmeticRegionRetained({function, root}, index, input,
+      std::make_shared<RegionExpressions>(), retained, error, &specialized);
+  const bool unboundSpecialization = succeeded(exported) || retained ||
+      error.find("different entry context") == std::string::npos;
+  if (unboundSpecialization) {
+    return function.emitError("specialized arithmetic certificate lost its entry bindings");
+  }
+  FrontierAnalysis direct(function);
+  if (failed(direct.initialize(policy))) { return failure(); }
+  (void)direct.analyzeSequenceFunction();
+  const ArithmeticLimits profile{8, 8, 1, 4096};
+  if (succeeded(direct.configureArithmeticProfiles(ArrayRef<ArithmeticLimits>(&profile, 1),
+                                                  ArrayRef<ArithmeticLimits>(&profile, 1)))) {
+    return function.emitError("direct sequence construction did not freeze its arithmetic context");
+  }
+  FrontierAnalysis session(function);
+  if (failed(session.initialize(policy))) { return failure(); }
+  auto node = llvm::find_if(session.result()->nodes, [&](const auto& n) { return n.anchor == root; });
+  if (node == session.result()->nodes.end()) { return failure(); }
+  const auto id = static_cast<std::size_t>(node - session.result()->nodes.begin());
+  auto demands = session.minimumDemands(id);
+  if (!demands.mathematical || !demands.mathematical->arithmeticRegionalDemands) { return failure(); }
+  const auto constructions = session.arithmeticRegionConstructions();
+  AnalysisNeeds needs; needs.queries = needs.selectors = true;
+  auto unavailable = session.minimumDemands(id, needs);
+  auto retry = session.minimumDemands(id, needs);
+  if (unavailable.status != AnalysisStatus::UnmetObligation ||
+      retry.mathematical != demands.mathematical || unavailable.mathematical != demands.mathematical ||
+      session.arithmeticRegionConstructions() != constructions) {
+    return function.emitError("arithmetic export retry lost demands or repeated the producer");
+  }
+  llvm::outs() << "arithmetic-export-failure: exact-demands-retained cached-retry isolated-context\n";
   return success();
 }
 LogicalResult checkRegionalSession(func::FuncOp function, pto::GMAliasPolicy policy) {
@@ -714,6 +786,18 @@ int main(int argc, char **argv) {
     }
     --argc;
   }
+  std::optional<pto::frontiersynch::ArithmeticLimits> requestedProfile;
+  if (argc > 1 && StringRef(argv[1]).starts_with("--arithmetic-profile=")) {
+    auto profile = pto::frontiersynch::parseArithmeticProfile(
+        StringRef(argv[1]).drop_front(StringRef("--arithmetic-profile=").size()));
+    if (failed(profile)) {
+      llvm::errs() << "invalid arithmetic profile; expected positive k:D:P:C with P<=INT64_MAX\n";
+      return 1;
+    }
+    requestedProfile = *profile;
+    for (int i = 1; i + 1 < argc; ++i) { argv[i] = argv[i + 1]; }
+    --argc;
+  }
   const bool allocationSessionChecks = argc == 3 && StringRef(argv[1]) == "--allocation-session-checks";
   const bool regionalSessionChecks = argc == 3 && StringRef(argv[1]) == "--regional-session-checks";
   const bool retainedChecks = argc == 3 && StringRef(argv[1]) == "--retained-demand-checks";
@@ -737,9 +821,18 @@ int main(int argc, char **argv) {
   const bool finiteVisitInput = argc == 3 && StringRef(argv[1]) == "--finite-visit-input-checks";
   const bool arithmeticPeriodicInput = argc == 3 && StringRef(argv[1]) == "--arithmetic-periodic-input-checks";
   const bool arithmetic = argc == 3 && StringRef(argv[1]) == "--arithmetic";
-  const bool recognition = argc == 3 && StringRef(argv[1]) == "--recognize";
+  const bool certification = argc == 3 && StringRef(argv[1]) == "--certify-regions";
+  const bool regionalRecognition = argc == 3 && StringRef(argv[1]) == "--recognize-regions";
+  const bool recognition = certification || regionalRecognition ||
+      (argc == 3 && StringRef(argv[1]) == "--recognize");
+  if (requestedProfile && !recognition) {
+    llvm::errs() << "arithmetic-profile requires recognize, recognize-regions or certify-regions\n";
+    return 1;
+  }
   const bool numericAnalysis = argc == 3 && StringRef(argv[1]) == "--numeric-analysis";
+  const bool recognitionBoundary = argc == 3 && StringRef(argv[1]) == "--recognition-boundary";
   const bool insertLogical = argc == 3 && StringRef(argv[1]) == "--insert-logical";
+  const bool insertLogicalLibrary = argc == 3 && StringRef(argv[1]) == "--insert-logical-library";
   const bool preparedInsertion = argc == 3 && StringRef(argv[1]) == "--prepared-insertion-checks";
   const bool insertionTrace = argc == 3 && StringRef(argv[1]) == "--insertion-trace";
   const bool expressionChecks = argc == 3 && StringRef(argv[1]) == "--region-expression-checks";
@@ -768,7 +861,7 @@ int main(int argc, char **argv) {
   if (argc != 2 && !allocationSessionChecks && !regionalSessionChecks && !retainedChecks && !sessionChecks &&
       !rotatingAnalysis && !explicitAnalysis &&
       !arithmetic && !recognition &&
-      !numericAnalysis && !insertLogical &&
+      !numericAnalysis && !insertLogical && !insertLogicalLibrary && !recognitionBoundary &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
       !mixedSymbolicChecks && !rotatingRegionChecks && !finiteVisitInput && !arithmeticPeriodicInput &&
       !expressionChecks && !hierarchyChecks && !boundingChecks &&
@@ -784,7 +877,7 @@ int main(int argc, char **argv) {
                  << "[--gm-alias=may-alias|may-not-alias] "
                  << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
                  "--allocation-session-checks|--retained-demand-checks|--analysis-session-checks|"
-                 "--recognize|--numeric-analysis|--insert-logical|"
+                 "--recognize|--recognition-boundary|--numeric-analysis|--insert-logical|--insert-logical-library|"
                  "--prepared-insertion-checks|--insertion-trace|"
                  "--finite-guarded-analysis|--finite-overlay-insertion|--region-expression-checks|--sequence-analysis|"
                  "--structured-trace|--physical-trace|--numerical-hierarchy-checks|--bounding-contract-checks|"
@@ -823,7 +916,8 @@ int main(int argc, char **argv) {
                          mixedSymbolicChecks || rotatingAnalysis ||
                          explicitAnalysis || expectFailure ||
                          capabilities || phaseIndex ||
-                         storageEffects || recognition || numericAnalysis || insertLogical ||
+                         storageEffects || recognition || numericAnalysis || insertLogical || insertLogicalLibrary ||
+                         recognitionBoundary ||
                          insertionTrace || physicalTrace ||
                          structuredTrace || sequenceAnalysis || finiteGuardedAnalysis || finiteOverlayInsertion ||
                          expressionChecks || hierarchyChecks || boundingChecks || compactInputChecks ||
@@ -974,14 +1068,40 @@ int main(int argc, char **argv) {
     }
     return 0;
   }
-  if (insertLogical) {
+  // Library regressions may exercise detached endpoint recipes while the
+  // production pass deliberately stops at mathematical certification.
+  if (insertLogicalLibrary) {
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (function.isDeclaration()) { continue; }
+      pto::frontiersynch::FrontierAnalysis analysis(function);
+      if (failed(analysis.initialize(policy))) { return 1; }
+      pto::frontiersynch::AnalysisRequest request;
+      request.needs.synchronization = true;
+      auto result = analysis.analyze(request);
+      if (result.status != pto::frontiersynch::AnalysisStatus::Ready) { return 1; }
+      auto prepared = analysis.prepareLogical(result);
+      if (failed(prepared)) { return 1; }
+      const bool inserted = succeeded(pto::frontiersynch::insertLogicalSynchronization(function, **prepared));
+      analysis.invalidate();
+      if (!inserted || failed(verify(function))) { return 1; }
+    }
+    module->print(llvm::outs());
+    llvm::outs() << "\n";
+    return 0;
+  }
+  if (insertLogical || recognitionBoundary) {
     PassManager manager(&context);
     pto::PTOFrontierAnalysisOptions options;
     options.gmAlias = policy == pto::GMAliasPolicy::MayAlias ? "may-alias" : "may-not-alias";
     manager.addPass(pto::createPTOFrontierAnalysisPass(options));
-    if (failed(manager.run(*module))) {
-      return 1;
+    const bool rejected = failed(manager.run(*module));
+    if (recognitionBoundary) {
+      const bool preserved = render(module->getOperation()) == before;
+      if (!rejected || !preserved) { return 1; }
+      llvm::outs() << "recognition-boundary: rejected; source-unchanged\n";
+      return 0;
     }
+    if (rejected) { return 1; }
     module->print(llvm::outs());
     llvm::outs() << "\n";
     return 0;
@@ -1009,9 +1129,18 @@ int main(int argc, char **argv) {
       if (failed(analysis.initialize(policy))) {
         return 1;
       }
+      if (requestedProfile && failed(analysis.configureArithmeticProfiles(
+          ArrayRef<pto::frontiersynch::ArithmeticLimits>(&*requestedProfile, 1),
+          ArrayRef<pto::frontiersynch::ArithmeticLimits>(&*requestedProfile, 1)))) { return 1; }
       // Insertion consumes the periodic result without constructing arithmetic.
       // The full recognition report explicitly requests and caches that route.
       if (analysis.result()->arithmetic || failed(analysis.recognizeArithmetic())) {
+        return 1;
+      }
+      if (requestedProfile && succeeded(analysis.configureArithmeticProfiles(
+          ArrayRef<pto::frontiersynch::ArithmeticLimits>(&*requestedProfile, 1),
+          ArrayRef<pto::frontiersynch::ArithmeticLimits>(&*requestedProfile, 1)))) {
+        function.emitError("an arithmetic request did not freeze its profile context");
         return 1;
       }
       const auto* arithmeticCandidate = analysis.result()->arithmetic ? &*analysis.result()->arithmetic : nullptr;
@@ -1024,6 +1153,59 @@ int main(int argc, char **argv) {
           })) {
         function.emitError("recognition unexpectedly executed a numeric backend");
         return 1;
+      }
+      if (regionalRecognition && failed(analysis.recognizeRegionalArithmetic())) { return 1; }
+      if (certification) {
+        const bool exportProbeFailed = function->hasAttr("test.export_failure") &&
+            failed(checkArithmeticExportFailure(function, policy));
+        if (exportProbeFailed) {
+          return 1;
+        }
+        if (function->hasAttr("test.native_only")) {
+          pto::frontiersynch::FrontierAnalysis native(function);
+          if (failed(native.initialize(policy, false))) { return 1; }
+          const auto nativeResults = native.certifyRegions();
+          const bool mislabeled = nativeResults.empty() || !nativeResults.front().analysis.mathematical ||
+              nativeResults.front().status != pto::frontiersynch::CertificationStatus::Unresolved ||
+              !nativeResults.front().selectedClass.empty();
+          if (mislabeled) {
+            function.emitError("native-only demands falsely established finite-list membership");
+            return 1;
+          }
+          llvm::outs() << "native-certification: retained-demands unresolved-class\n";
+        }
+        const auto results = analysis.certifyRegions();
+        llvm::json::Array regions;
+        for (const auto& result : results) {
+          llvm::json::Array obligations;
+          for (const auto& obligation : result.analysis.obligations) {
+            obligations.push_back(obligation.diagnostic);
+          }
+          regions.push_back(llvm::json::Object{{"node", result.region},
+              {"status", result.status == pto::frontiersynch::CertificationStatus::Recognized ?
+                  "recognized" : "unresolved"},
+              {"class", result.selectedClass}, {"representation", result.representation},
+              {"exact_demands", static_cast<bool>(result.analysis.mathematical)},
+              {"queries", result.analysis.available.queries}, {"selectors", result.analysis.available.selectors},
+              {"obligations", std::move(obligations)}});
+        }
+        const auto& counts = analysis.constructionCounts();
+        if (counts.logicalPreparations || counts.allocationExports) {
+          function.emitError("certification unexpectedly prepared code or allocation");
+          return 1;
+        }
+        const auto attempts = counts.mathematicalAttempts;
+        const auto forms = analysis.result()->arithmeticContracts.size();
+        (void)analysis.certifyRegions();
+        if (analysis.constructionCounts().mathematicalAttempts != attempts ||
+            analysis.result()->arithmeticContracts.size() != forms) {
+          function.emitError("repeated certification reconstructed analysis");
+          return 1;
+        }
+        llvm::outs() << "certification-json " << llvm::json::Value(llvm::json::Object{
+            {"function", function.getSymName()}, {"regions", std::move(regions)},
+            {"mathematical_attempts", attempts}, {"logical_preparations", counts.logicalPreparations},
+            {"allocation_exports", counts.allocationExports}}) << "\n";
       }
       if (numericAnalysis && failed(analysis.prepareNumericCandidateExports())) { return 1; }
       const auto& input = *analysis.input();

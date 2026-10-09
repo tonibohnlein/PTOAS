@@ -374,7 +374,9 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                             diagnostic = "root-local outer control requires a recursively selected regional arm";
                             return false;
                         }
-                        auto view = analyzeArithmeticRegion({function, root}, index, *input, arena, diagnostic,
+                        auto view = analyzeArithmeticRegionWithProfiles(
+                            {function, root}, index, *input, arena, diagnostic,
+                            program->regionalArithmeticProfiles,
                             [&](Value parameter) -> std::optional<Expr> {
                                 if (parameter.getType().isInteger(1)) {
                                     if (auto bound = boundaryGuard(

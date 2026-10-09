@@ -204,7 +204,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceArithmeticReg
             owned->backend = "arithmetic";
             if (sessionState->arithmeticRegionBuilds != UINT64_MAX) { ++sessionState->arithmeticRegionBuilds; }
             auto regional = analyzeArithmeticRegionRetained({function, node.anchor}, *structuralIndex, *storage,
-                sessionState->expressions, owned->arithmeticRegionalDemands, cached.demandError);
+                sessionState->expressions, owned->arithmeticRegionalDemands, cached.demandError,
+                recognizeArithmeticRegion(region));
             if (succeeded(regional)) {
                 owned->regionalDemands = std::make_shared<const RegionalAnalysis>(std::move(*regional));
             }

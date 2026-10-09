@@ -210,6 +210,9 @@ ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, con
 {
     ArithmeticProgram output;
     output.context = region;
+    output.modeledInput = &input;
+    output.phaseIndex = &index;
+    output.specializedEntry = static_cast<bool>(entryConstant);
     auto function = region.function;
     output.recognition.state = RecognitionState::MissingPremise;
     if (!function || !region.root ||
@@ -222,15 +225,10 @@ ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, con
         output.extraction.note(RecognitionIssue::ArithmeticConfiguration, function);
         return output;
     }
-    if (limits.period > 2) {
-        output.extraction.note(RecognitionIssue::ArithmeticPeriod, function, true);
-        return output;
-    }
-    // This first producer has a deliberately bounded residue language: P<=2,
-    // D<=8 (at most 256 residue tuples per conjunction). The supplied-bundle
-    // checker is independent of these producer limits.
-    if (limits.dimensions > 8) {
-        output.extraction.note(RecognitionIssue::ArithmeticDimension, function, true);
+    // P and D are declared class parameters, not universal restrictions.
+    // The residue producer checks representability of its actual tuple count.
+    if (limits.period > static_cast<uint64_t>(INT64_MAX)) {
+        output.extraction.note(RecognitionIssue::ArithmeticConfiguration, function);
         return output;
     }
     detail::ProgramBuilder builder{output, limits, function.getContext(), index, DenseMap<Value, unsigned>(),

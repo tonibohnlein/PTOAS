@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
+// CHECK: arithmetic-export-failure: exact-demands-retained cached-retry isolated-context
+// CHECK: certification-json {"allocation_exports":0
+// CHECK-SAME: "logical_preparations":0
+// CHECK: source-unchanged; synchronization-insertion-not-run
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @moving_origin(%n: index) attributes {test.export_failure} {
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %value = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %addr : !tile
+    scf.for %i = %zero to %n step %one {
+      scf.for %j = %i to %n step %one {
+        pto.tsetval ins(%zero, %value : index, f32) outs(%tile : !tile)
+        %read = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+}

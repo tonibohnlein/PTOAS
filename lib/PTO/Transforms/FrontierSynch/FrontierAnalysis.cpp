@@ -6,7 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Per-function recognition and detached demand production. The public pass
-// coordinates module closure before committing logical synchronization.
+// retains exact mathematics and stops before synchronization emission and
+// physical allocation. Detached emission libraries remain available to tests.
 #include "AnalysisSessionInternal.h"
 #include "PTO/Transforms/FrontierSynch/ExecutionContexts.h"
 #include "PTO/Transforms/FrontierSynch/ClosedCallees.h"
@@ -87,6 +88,7 @@ LogicalResult FrontierAnalysis::recognizeStructure() {
     auto recognized = recognizeProgram(function, *storage, *structuralIndex);
     if (failed(recognized)) { return failure(); }
     program = std::make_shared<ProgramRecognition>(std::move(*recognized));
+    program->regionalArithmeticProfiles = regionalArithmeticProfiles;
     return success();
 }
 LogicalResult FrontierAnalysis::analyzeNumericCandidates() {
@@ -285,8 +287,7 @@ LogicalResult FrontierAnalysis::recognizeArithmetic() {
     // Record every configured arithmetic contract before selecting a backend.
     // A later profile never erases membership established by an earlier one.
     std::optional<ArithmeticProgram> selected;
-    for (uint64_t period : {uint64_t{1}, uint64_t{2}}) {
-        const ArithmeticLimits limits{8, 8, period, 8};
+    for (const auto& limits : wholeArithmeticProfiles) {
         auto candidate = recognizeArithmeticProgram(function, index, *storage, storage->accesses(), limits);
         recordArithmeticContractAttempt(*program, limits, candidate);
         const bool alreadyAccepted = selected && selected->extraction.state == RecognitionState::Applicable &&
@@ -295,6 +296,52 @@ LogicalResult FrontierAnalysis::recognizeArithmetic() {
     }
     program->arithmetic = std::move(selected);
     refreshProgramContractAudit(*program);
+    return success();
+}
+LogicalResult FrontierAnalysis::configureArithmeticProfiles(ArrayRef<ArithmeticLimits> whole,
+                                                           ArrayRef<ArithmeticLimits> regional)
+{
+    const bool requested = (program && program->arithmetic) || !arithmeticForms.empty() ||
+        static_cast<bool>(sessionState) || sequenceAnalysis || !finiteVisitAnalyses.empty();
+    const auto valid = [](const ArithmeticLimits& limits) {
+        return limits.pipes && limits.dimensions && limits.period && limits.coefficient &&
+            limits.period <= static_cast<uint64_t>(INT64_MAX);
+    };
+    const bool invalid = requested || whole.empty() || regional.empty() ||
+        !llvm::all_of(whole, valid) || !llvm::all_of(regional, valid);
+    if (invalid) { return failure(); }
+    wholeArithmeticProfiles.assign(whole.begin(), whole.end());
+    regionalArithmeticProfiles.assign(regional.begin(), regional.end());
+    if (program) { program->regionalArithmeticProfiles = regionalArithmeticProfiles; }
+    return success();
+}
+const ArithmeticProgram* FrontierAnalysis::recognizeArithmeticRegion(std::size_t region)
+{
+    if (!program || region >= program->nodes.size()) { return nullptr; }
+    auto found = arithmeticForms.find(region);
+    if (found != arithmeticForms.end()) { return found->second.get(); }
+    const auto& node = program->nodes[region];
+    const bool supported = node.kind == StructureKind::Loop || node.kind == StructureKind::Conditional;
+    if (!supported || !node.anchor) { return nullptr; }
+    std::shared_ptr<const ArithmeticProgram> selected;
+    for (const auto& limits : regionalArithmeticProfiles) {
+        auto candidate = std::make_shared<ArithmeticProgram>(recognizeArithmeticProgram(
+            {function, node.anchor}, *structuralIndex, *storage, storage->accesses(), limits));
+        recordArithmeticContractAttempt(*program, limits, *candidate, region);
+        const bool accepted = selected && selected->extraction.state == RecognitionState::Applicable &&
+            selected->recognition.state == RecognitionState::Applicable;
+        if (!accepted) { selected = std::move(candidate); }
+    }
+    auto stored = arithmeticForms.emplace(region, std::move(selected));
+    refreshProgramContractAudit(*program);
+    return stored.first->second.get();
+}
+LogicalResult FrontierAnalysis::recognizeRegionalArithmetic()
+{
+    if (failed(recognizeStructure())) { return failure(); }
+    for (std::size_t id = 1; id < program->nodes.size(); ++id) {
+        (void)recognizeArithmeticRegion(id);
+    }
     return success();
 }
 } // namespace mlir::pto::frontiersynch
@@ -477,10 +524,82 @@ public:
             return;
         }
         auto policy = gmAlias == "may-alias" ? GMAliasPolicy::MayAlias : GMAliasPolicy::MayNotAlias;
-        if (failed(frontiersynch::insertModuleSynchronization(getOperation(), policy, prepareFunction))) {
-            signalPassFailure();
+        std::optional<frontiersynch::ArithmeticLimits> profile;
+        if (!arithmeticProfile.empty()) {
+            auto parsed = frontiersynch::parseArithmeticProfile(arithmeticProfile);
+            if (failed(parsed)) {
+                getOperation().emitError("arithmetic-profile must be positive k:D:P:C with P<=INT64_MAX");
+                signalPassFailure();
+                return;
+            }
+            profile = *parsed;
         }
-        // Inserted guards and commands invalidate structural analysis.
+        // Mathematical certification uses the session dispatcher. Code and
+        // allocation remain behind the explicit not-implemented boundary.
+        bool unfinished = false;
+        getOperation().walk([&](ModuleOp module) {
+            auto delegation = frontiersynch::recognizeClosedCallees(module);
+            for (auto function : module.getOps<func::FuncOp>()) {
+                const bool skip = function.isDeclaration() || hasManualOnCoreSynchronization(function);
+                if (skip) { continue; }
+                unfinished = true;
+                frontiersynch::FrontierAnalysis analysis(function);
+                const auto contextPolicy = delegation.calledFunctions.contains(function) ?
+                    GMAliasPolicy::MayAlias : policy;
+                if (failed(analysis.initialize(contextPolicy, true))) {
+                    function.emitError("frontier shared-input or structural recognition failed; "
+                                       "compilation not implemented yet");
+                    continue;
+                }
+                if (profile && failed(analysis.configureArithmeticProfiles(
+                    ArrayRef<frontiersynch::ArithmeticLimits>(&*profile, 1),
+                    ArrayRef<frontiersynch::ArithmeticLimits>(&*profile, 1)))) {
+                    function.emitError("frontier arithmetic profile context could not be established");
+                    continue;
+                }
+                const auto certifications = analysis.certifyRegions();
+                const auto& candidates = analysis.result()->contractAudit;
+                const auto wrapper = delegation.wrappers.find(function);
+                auto diagnostic = function.emitError(
+                    "frontier compilation not implemented yet: stopped after mathematical analysis; "
+                    "synchronization emission and allocation are not implemented yet");
+                for (const auto& result : certifications) {
+                    auto& note = diagnostic.attachNote(analysis.result()->nodes[result.region].anchor->getLoc());
+                    note << "region=" << result.region << " ";
+                    if (result.status == frontiersynch::CertificationStatus::Recognized) {
+                        note << "recognized tractable class " << result.selectedClass
+                             << " representation=" << result.representation << "; exact demands retained";
+                    } else {
+                        note << "unresolved tractable-class obligations; further steps not implemented yet";
+                        for (const auto& obligation : result.analysis.obligations) {
+                            if (!obligation.diagnostic.empty()) { note << "; " << obligation.diagnostic; }
+                        }
+                    }
+                }
+                if (wrapper != delegation.wrappers.end()) {
+                    diagnostic.attachNote(function.getLoc()) << "class=closed-callee region=function membership="
+                        << frontiersynch::recognitionName(wrapper->second.result.state)
+                        << "; continuation not implemented yet";
+                }
+                for (const auto& candidate : candidates) {
+                    auto& note = diagnostic.attachNote(function.getLoc());
+                    note << "class=" << frontiersynch::contractName(candidate.kind) << " region=";
+                    if (candidate.node) { note << *candidate.node; }
+                    else { note << "function"; }
+                    note << " membership=" << frontiersynch::contractName(candidate.membership)
+                         << "; continuation not implemented yet";
+                    for (const auto& reason : candidate.diagnostics) {
+                        note << "; " << frontiersynch::recognitionName(reason.issue);
+                    }
+                    for (const auto& reason : candidate.arithmeticDiagnostics) {
+                        note << "; " << frontiersynch::recognitionName(reason.issue);
+                    }
+                }
+                diagnostic.attachNote(function.getLoc()) <<
+                    "mathematical analysis ran; synchronization insertion and allocation were not run; IR unchanged";
+            }
+        });
+        if (unfinished) { signalPassFailure(); }
     }
 };
 } // namespace

@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
+// CHECK: native-certification: retained-demands unresolved-class
+// CHECK: certification-json {{.*}}"function":"native_counted"
+// CHECK-SAME: "class":"{{[a-z-]+}}","exact_demands":true,"node":0
+// CHECK-SAME: "status":"recognized"
+// CHECK: source-unchanged; synchronization-insertion-not-run
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @native_while(%keep: i1) attributes {test.native_only} {
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %value = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %addr : !tile
+    scf.while : () -> () {
+      scf.condition(%keep)
+    } do {
+      pto.tsetval ins(%zero, %value : index, f32) outs(%tile : !tile)
+      scf.yield
+    }
+    return
+  }
+  func.func @native_counted(%n: index) {
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %value = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %addr : !tile
+    scf.for %i = %zero to %n step %one {
+      pto.tsetval ins(%zero, %value : index, f32) outs(%tile : !tile)
+    }
+    return
+  }
+}

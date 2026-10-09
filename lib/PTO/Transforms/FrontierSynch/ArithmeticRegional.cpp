@@ -637,7 +637,8 @@ enum class StorageExportRequest { Finite, SymbolicAllowed };
 FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
     std::string& error, std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding,
-    StorageExportRequest request, std::shared_ptr<const ArithmeticRegionalRelations>* retained = nullptr)
+    StorageExportRequest request, std::shared_ptr<const ArithmeticRegionalRelations>* retained = nullptr,
+    const ArithmeticProgram* certified = nullptr, ArrayRef<ArithmeticLimits> profiles = {})
 {
     if (!context.function || !context.root || !expressions || !expressions->constructionError().empty()) {
         error = "arithmetic region requires a valid original root and expression arena";
@@ -660,13 +661,22 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext 
             return APInt(64, *fixed).getSExtValue();
         };
     }
-    // Fixed compiler input class; the bounds are not inferred from a kernel.
-    state->program = recognizeArithmeticProgram(
-        context, index, input, input.accesses(), {8, 8, 1, 4096}, entryConstant);
-    if (state->program.extraction.state != RecognitionState::Applicable ||
-        state->program.recognition.state != RecognitionState::Applicable) {
-        state->program = recognizeArithmeticProgram(
-            context, index, input, input.accesses(), {8, 8, 2, 4096}, entryConstant);
+    if (certified) {
+        if (parameterBinding || certified->context.function != context.function ||
+            certified->context.root != context.root || certified->modeledInput != &input ||
+            certified->phaseIndex != &index || certified->specializedEntry) {
+            error = "arithmetic certificate belongs to a different entry context";
+            return failure();
+        }
+        state->program = *certified;
+    } else {
+        const SmallVector<ArithmeticLimits> defaults{{8, 8, 1, 4096}, {8, 8, 2, 4096}};
+        if (profiles.empty()) { profiles = defaults; }
+        for (const auto& limits : profiles) {
+            state->program = recognizeArithmeticProgram(context, index, input, input.accesses(), limits, entryConstant);
+            if (state->program.extraction.state == RecognitionState::Applicable &&
+                state->program.recognition.state == RecognitionState::Applicable) { break; }
+        }
     }
     if (state->program.extraction.state != RecognitionState::Applicable ||
         state->program.recognition.state != RecognitionState::Applicable) {
@@ -685,6 +695,19 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext 
         }
         return failure();
     }
+    // Retain exact covers before any regional query or storage export. Those
+    // adapters can fail independently of the mathematical reduction.
+    auto reduce = [&]() {
+        const auto protection = structuredProtection(input.accesses());
+        state->analysis = analyzeGeneralArithmeticDemandsWithProtection(state->program, protection);
+        if (!state->analysis.error.empty()) { error = state->analysis.error; return false; }
+        if (!state->analysis.exactMinimum) { error = "regional exact reduction is unavailable"; return false; }
+        if (retained) { *retained = state; }
+        return true;
+    };
+    // The retained session route always computes demands first. The finite-only
+    // compatibility probe can still defer symbolic exports before construction.
+    if (retained && !reduce()) { return failure(); }
     if (!state->initialize()) { error = state->error; return failure(); }
     auto imported = importArithmeticIntegerPieces(state->program);
     if (failed(imported)) { error = "regional arithmetic primitive import failed"; return failure(); }
@@ -714,13 +737,7 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext 
     for (const auto& site : state->program.sites) {
         state->pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue));
     }
-    const auto protection = structuredProtection(input.accesses());
-    state->analysis = analyzeGeneralArithmeticDemandsWithProtection(state->program, protection);
-    if (!state->analysis.error.empty()) { error = state->analysis.error; return failure(); }
-    if (retained) {
-        if (!state->analysis.exactMinimum) { error = "regional exact reduction is unavailable"; return failure(); }
-        *retained = state;
-    }
+    if (!retained && !reduce()) { return failure(); }
     state->selectors = buildArithmeticStorageSelectors(state->program, state->pipes);
     if (!state->selectors.error.empty()) { error = state->selectors.error; return failure(); }
     return exportState(state, input, error, finite);
@@ -734,13 +751,29 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext cont
     return analyzeArithmeticRegionImpl(context, index, input, std::move(expressions), error,
                                       std::move(parameterBinding), StorageExportRequest::SymbolicAllowed);
 }
+FailureOr<RegionalAnalysis> analyzeArithmeticRegionWithProfiles(ArithmeticRegionContext context,
+    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
+    std::string& error, ArrayRef<ArithmeticLimits> profiles,
+    std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding)
+{
+    if (profiles.empty()) { error = "regional arithmetic has no declared profiles"; return failure(); }
+    return analyzeArithmeticRegionImpl(context, index, input, std::move(expressions), error,
+        std::move(parameterBinding), StorageExportRequest::SymbolicAllowed, nullptr, nullptr, profiles);
+}
 FailureOr<RegionalAnalysis> analyzeArithmeticRegionRetained(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
     std::shared_ptr<const ArithmeticRegionalRelations>& demands, std::string& error)
 {
+    return analyzeArithmeticRegionRetained(context, index, input, std::move(expressions), demands, error, nullptr);
+}
+FailureOr<RegionalAnalysis> analyzeArithmeticRegionRetained(ArithmeticRegionContext context,
+    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
+    std::shared_ptr<const ArithmeticRegionalRelations>& demands, std::string& error,
+    const ArithmeticProgram* certified)
+{
     demands.reset();
     return analyzeArithmeticRegionImpl(context, index, input, std::move(expressions), error, {},
-                                      StorageExportRequest::SymbolicAllowed, &demands);
+                                      StorageExportRequest::SymbolicAllowed, &demands, certified);
 }
 FailureOr<RegionalAnalysis> analyzeFiniteArithmeticRegion(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
@@ -748,6 +781,14 @@ FailureOr<RegionalAnalysis> analyzeFiniteArithmeticRegion(ArithmeticRegionContex
 {
     return analyzeArithmeticRegionImpl(context, index, input, std::move(expressions), error, {},
                                       StorageExportRequest::Finite);
+}
+FailureOr<RegionalAnalysis> analyzeFiniteArithmeticRegionWithProfiles(ArithmeticRegionContext context,
+    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
+    std::string& error, ArrayRef<ArithmeticLimits> profiles)
+{
+    if (profiles.empty()) { error = "regional arithmetic has no declared profiles"; return failure(); }
+    return analyzeArithmeticRegionImpl(context, index, input, std::move(expressions), error, {},
+        StorageExportRequest::Finite, nullptr, nullptr, profiles);
 }
 FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalRelations> relation,
     std::shared_ptr<RegionExpressions> expressions, std::string& error)

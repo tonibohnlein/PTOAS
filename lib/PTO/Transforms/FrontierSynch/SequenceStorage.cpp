@@ -303,7 +303,8 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
                 if (retained && retained->regionalDemands) { regional = *retained->regionalDemands; }
                 else { arithmeticError = "cached arithmetic regional interfaces unavailable"; }
             } else {
-                regional = analyzeArithmeticRegion({function, child.loop}, index, *input, arena, arithmeticError);
+                regional = analyzeArithmeticRegionWithProfiles({function, child.loop}, index, *input, arena,
+                    arithmeticError, program->regionalArithmeticProfiles);
             }
             if (succeeded(regional)) {
                 if (node.boundedDemands && child.loop->getParentOp() == function) {

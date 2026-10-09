@@ -84,6 +84,16 @@ struct AnalysisOutcome {
     std::vector<AnalysisObligation> obligations;
     std::vector<AnalysisCostRecord> costs;
 };
+// Exhausting implemented attempts cannot establish absence of a paper class.
+// OutsideCatalog requires conclusive premise failures for every scoped form.
+enum class CertificationStatus { Recognized, OutsideCatalog, Unresolved };
+struct RegionCertification {
+    std::size_t region = 0;
+    CertificationStatus status = CertificationStatus::Unresolved;
+    std::string selectedClass;
+    std::string representation = "original";
+    AnalysisOutcome analysis;
+};
 struct AnalysisConstructionCounts {
     uint64_t structuralIndices = 0;
     uint64_t mathematicalAttempts = 0;

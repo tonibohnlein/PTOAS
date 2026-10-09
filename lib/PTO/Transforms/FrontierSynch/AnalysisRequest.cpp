@@ -24,6 +24,59 @@ AnalysisOutcome FrontierAnalysis::minimumDemands(std::size_t region, AnalysisNee
     exports.synchronization = false;
     return analyze({region, AnalysisMode::MinimumExact, exports});
 }
+std::vector<RegionCertification> FrontierAnalysis::certifyRegions()
+{
+    const bool formsAvailable = succeeded(recognizeStructure()) && succeeded(recognizeArithmetic()) &&
+        succeeded(recognizeRegionalArithmetic());
+    if (!formsAvailable) { return {}; }
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    if (sessionState->certifications) { return *sessionState->certifications; }
+    sessionState->certifying = true;
+    std::vector<RegionCertification> results(program->nodes.size());
+    // Children first reuse the same session when a parent requests exports.
+    // Requests themselves enforce strict original-tree descent.
+    for (std::size_t remaining = results.size(); remaining; --remaining) {
+        const auto id = remaining - 1;
+        auto& result = results[id];
+        result.region = id;
+        result.analysis = minimumDemands(id);
+        if (!result.analysis.mathematical) { continue; }
+        result.status = CertificationStatus::Recognized;
+        const auto& math = *result.analysis.mathematical;
+        if (math.backend == "native-scalar") {
+            result.status = CertificationStatus::Unresolved;
+            result.analysis.obligations.push_back({AnalysisStage::Form,
+                "native-only exact demands do not certify finite-occurrence class membership"});
+        } else if (math.numericNode) {
+            result.selectedClass = "periodic-storage";
+            result.representation = "small-count-expanded";
+        } else if (math.rotatingDemands || math.mixedStrideDemands || math.arithmeticPeriodicDemands) {
+            result.selectedClass = "periodic-storage";
+        } else if (math.guardedRotatingDemands) {
+            result.selectedClass = "invariant-guarded-periodic-storage";
+        } else if (math.boundedDemands) {
+            result.selectedClass = "bounded-lifetime";
+        } else if (math.arithmeticDemands || math.generalArithmeticDemands || math.arithmeticRegionalDemands) {
+            result.selectedClass = "restricted-arithmetic";
+        } else if (math.finiteGuardedDemands) {
+            result.selectedClass = "finite-guarded-occurrences";
+        } else if (math.explicitDemands) {
+            result.selectedClass = "finite-occurrences";
+        } else if (math.sequenceDemands) {
+            const auto& node = program->nodes[id];
+            result.selectedClass = node.kind == StructureKind::ExplicitRun ? "finite-occurrences" :
+                (node.kind == StructureKind::Loop ? "regional-repetition" :
+                (node.kind == StructureKind::Conditional ? "regional-conditional" : "regional-sequence"));
+        }
+        // A retained result alone is insufficient to certify a form we cannot
+        // name. In particular, never relabel a conservative bounding result.
+        if (result.selectedClass.empty()) { result.status = CertificationStatus::Unresolved; }
+    }
+    sessionState->certifications = results;
+    sessionState->certifying = false;
+    refreshProgramContractAudit(*program);
+    return results;
+}
 AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const AnalysisRequest& request)
 {
     auto& attempt = sessionState->attempts[request.region][backend];
@@ -118,6 +171,13 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
     auto attemptBackend = [&](AnalysisBackend backend) {
         auto attempt = requestBackend(backend, request);
+        // Native protection proves an empty exact demand set, but is not a
+        // finite-list certificate. Keep it while trying actual class forms.
+        if (attempt.status == AnalysisStatus::Ready && sessionState->certifying &&
+            attempt.mathematical && attempt.mathematical->backend == "native-scalar") {
+            result = std::move(attempt);
+            return false;
+        }
         if (attempt.status == AnalysisStatus::Ready) { result = std::move(attempt); return true; }
         if (!result.mathematical && attempt.mathematical) {
             result.mathematical = attempt.mathematical;
@@ -245,6 +305,7 @@ void FrontierAnalysis::invalidate()
     arithmeticAnalysis.reset();
     generalArithmeticAnalysis.reset();
     arithmeticGeneratorStage.reset();
+    arithmeticForms.clear();
     arithmeticPeriodicAnalysis.reset();
     finiteVisitAnalyses.clear();
     periodicExports = {};

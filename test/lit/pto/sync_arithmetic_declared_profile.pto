@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --arithmetic-profile=8:9:3:4096 --recognize-regions %s | FileCheck %s --check-prefix=FORM
+// RUN: pto-sync-input-test --arithmetic-profile=8:9:3:4096 --certify-regions %s | FileCheck %s --check-prefix=MATH
+// RUN: pto-sync-input-test --arithmetic-profile=8:9:1:1 --certify-regions %s | FileCheck %s --check-prefix=STRICT
+// RUN: not pto-sync-input-test --arithmetic-profile=8:0:3:4096 --recognize %s 2>&1 | FileCheck %s --check-prefix=INVALID
+// RUN: not pto-sync-input-test --arithmetic-profile=8:9:9223372036854775808:4096 --recognize %s 2>&1 | FileCheck %s --check-prefix=INVALID
+// FORM: recognize arithmetic: applicable backend=not-run
+// FORM: "coefficient":4096,"dimensions":9,"period":3,"pipes":8
+// FORM: source-unchanged; synchronization-insertion-not-run
+// MATH: certification-json {"allocation_exports":0
+// MATH-SAME: "logical_preparations":0
+// MATH-SAME: "exact_demands":true
+// MATH-SAME: "status":"recognized"
+// MATH: source-unchanged; synchronization-insertion-not-run
+// STRICT: certification-json {{.*}}"function":"evolving_nested"
+// STRICT-SAME: "exact_demands":false,"node":0
+// STRICT-SAME: "status":"unresolved"
+// INVALID: invalid arithmetic profile; expected positive k:D:P:C
+
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=3>
+module {
+  func.func @three_bank(%n: index) {
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %three = arith.constant 3 : index
+    %value = arith.constant 1.0 : f32
+    %ring = pto.alloc_multi_tile addr = %addr : !ring
+    scf.for %i = %zero to %n step %one {
+      %slot = arith.remui %i, %three : index
+      %tile = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+      pto.tsetval ins(%zero, %value : index, f32) outs(%tile : !tile)
+      %read = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+    }
+    return
+  }
+  func.func @evolving_nested(%n: index) {
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %value = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %addr : !tile
+    scf.for %i = %zero to %n step %one {
+      scf.for %j = %zero to %i step %one {
+        pto.tsetval ins(%j, %value : index, f32) outs(%tile : !tile)
+        pto.tadds ins(%tile, %value : !tile, f32) outs(%tile : !tile)
+        %read = pto.tgetval ins(%tile, %j : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+}
