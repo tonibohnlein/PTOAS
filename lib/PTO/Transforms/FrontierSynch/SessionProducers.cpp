@@ -9,6 +9,7 @@
 // endpoint code or allocation is constructed by these adapters.
 #include "AnalysisSessionInternal.h"
 #include "FiniteExpansionPlan.h"
+#include "NumericTemplatePlan.h"
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
@@ -24,6 +25,24 @@ namespace mlir::pto::frontiersynch {
 uint64_t FrontierAnalysis::finiteExpansionPreflights() const
 {
     return sessionState ? sessionState->finiteExpansionPlans.size() : 0;
+}
+uint64_t FrontierAnalysis::numericTemplatePreflights() const
+{
+    return sessionState ? sessionState->numericTemplatePlans.size() : 0;
+}
+const NumericTemplate& FrontierAnalysis::materializeNumericRegion(std::size_t region)
+{
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    auto& node = program->nodes[region];
+    if (node.numericTemplate) { return *node.numericTemplate; }
+    auto found = sessionState->numericTemplatePlans.find(region);
+    if (found == sessionState->numericTemplatePlans.end()) {
+        auto plan = std::make_shared<const NumericTemplatePlan>(
+            preflightNumericTemplate(cast<scf::ForOp>(node.anchor), *structuralIndex, *storage));
+        found = sessionState->numericTemplatePlans.emplace(region, std::move(plan)).first;
+    }
+    node.numericTemplate = materializeNumericTemplate(*found->second, *structuralIndex, *storage);
+    return *node.numericTemplate;
 }
 void FrontierAnalysis::recordWholeRegion(AnalysisBackend backend)
 {
@@ -162,6 +181,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
     }
     case AnalysisBackend::NumericalPeriodic: {
         auto& local = program->nodes[region];
+        (void)materializeNumericRegion(region);
         if (local.numericTemplate && local.numericTemplate->result.state == RecognitionState::Applicable &&
             !local.periodicAnalysis) {
             local.periodicAnalysis = analyzeNumericTemplate(*local.numericTemplate);

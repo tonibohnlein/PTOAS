@@ -159,12 +159,15 @@ def main():
             continue
         for node in json.loads(line)["nodes"]:
             for attempt in node["attempts"]:
+                assert attempt["route"] != "numeric-template"
                 assert not {"analysis", "logical_endpoints", "allocation"}.intersection(attempt)
     for policy in ("may-not-alias", "may-alias"):
         run = subprocess.run([tool, "--gm-alias=" + policy, "--numeric-analysis", str(source)],
                              check=True, capture_output=True, text=True, timeout=60)
         documents = {d["function"]: d for line in run.stdout.splitlines() if line.startswith("{")
                      for d in [json.loads(line)]}
+        marker = "numeric-session: lazy-preflight cached-effects demand-only foreign-context-rejected"
+        assert run.stderr.count(marker) == 21
         assert len(documents) == 21
         check_examples(documents, policy)
         rejected = [attempt for node in documents["multiple_outer_loops"]["nodes"]

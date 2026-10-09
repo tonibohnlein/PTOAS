@@ -20,6 +20,8 @@ struct TemplateBuilder {
     uint64_t phases = 0;
     TemplateGeometryConstant geometryConstant;
     TemplateControlConstant controlConstant;
+    SmallVectorImpl<TemplatePayload>* plannedPayloads = nullptr;
+    bool activePath = true;
     MLIRContext* context() const { return output.outer.getContext(); }
     AffineExpr scalar(Value value, SmallVectorImpl<Value>* invariants = nullptr,
                       bool control = false) const;
