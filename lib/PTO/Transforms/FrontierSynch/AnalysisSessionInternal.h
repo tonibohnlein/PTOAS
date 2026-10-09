@@ -43,7 +43,7 @@ struct BackendAttempt {
 struct AnalysisSessionState {
     std::optional<DifferenceArithmeticGeneratorStage> differenceGenerators;
     uint64_t arithmeticGeneratorBuilds = 0;
-    std::map<uint8_t, std::vector<AnalysisBackend>> arithmeticOrders;
+    std::map<std::pair<std::size_t, uint8_t>, std::vector<AnalysisBackend>> arithmeticOrders;
     std::vector<AnalysisCostRecord> costs;
     std::map<std::size_t, std::shared_ptr<const FiniteExpansionPlan>> finiteExpansionPlans;
     std::map<std::size_t, std::shared_ptr<const NumericTemplatePlan>> numericTemplatePlans;

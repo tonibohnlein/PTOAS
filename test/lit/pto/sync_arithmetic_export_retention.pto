@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
+// CHECK: arithmetic-ranking: pre-producer region-isolated cached-request shared-generators
 // CHECK: arithmetic-export-failure: exact-demands-retained cached-retry isolated-context
 // CHECK: certification-json {"allocation_exports":0
 // CHECK-SAME: "logical_preparations":0

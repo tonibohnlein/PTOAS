@@ -244,8 +244,70 @@ LogicalResult checkAllocationSession(func::FuncOp function, pto::GMAliasPolicy p
                << " available=" << succeeded(allocation) << " retained-demands cached-export\n";
   return success();
 }
+LogicalResult checkArithmeticRanking(func::FuncOp function, pto::GMAliasPolicy policy) {
+  using namespace pto::frontiersynch;
+  FrontierAnalysis session(function);
+  if (failed(session.initialize(policy))) { return failure(); }
+  AnalysisRequest request;
+  const auto methods = session.arithmeticMethods(request);
+  const auto count = session.costRecords().size();
+  const auto retry = session.arithmeticMethods(request);
+  const bool pure = methods == retry && methods.size() == 2 && count == 2 &&
+      session.costRecords().size() == count && !session.arithmeticGeneratorConstructions() &&
+      !session.arithmeticRegionConstructions() && !session.constructionCounts().mathematicalAttempts;
+  if (!pure) { return function.emitError("arithmetic ranking constructed a producer or repeated selection"); }
+  for (auto [id, node] : llvm::enumerate(session.result()->nodes)) {
+    if (node.kind != StructureKind::Loop && node.kind != StructureKind::Conditional) { continue; }
+    request.region = id;
+    const auto regional = session.arithmeticMethods(request);
+    const auto before = session.costRecords().size();
+    const bool isolated = regional == std::vector<AnalysisBackend>{AnalysisBackend::Arithmetic} &&
+        session.arithmeticMethods(request) == regional && session.costRecords().size() == before &&
+        !session.arithmeticGeneratorConstructions() && !session.arithmeticRegionConstructions();
+    if (!isolated) { return function.emitError("regional arithmetic ranking reused an incompatible key"); }
+  }
+  request = {};
+  request.needs.queries = request.needs.selectors = request.needs.synchronization = true;
+  const auto beforeStrong = session.costRecords().size();
+  (void)session.arithmeticMethods(request);
+  const auto records = session.costRecords();
+  const bool distinct = records.size() == beforeStrong + 2 && !session.arithmeticGeneratorConstructions();
+  if (!distinct) { return function.emitError("stronger arithmetic needs reused a weaker estimate key"); }
+  const bool overflowSafe = !estimatedAdd(UINT64_MAX, 1) && !estimatedMultiply(UINT64_MAX, 2) &&
+      !estimatedPower(2, 64) && estimatedMultiply(EstimatedCount{}, 0) == EstimatedCount{0} &&
+      estimatedPower(0, 0) == EstimatedCount{1};
+  AnalysisCostEstimate unknown, known; known.work = UINT64_MAX; known.representation = UINT64_MAX;
+  const bool unknownEligible = estimatedCostLess(known, unknown) && !estimatedCostLess(unknown, known) &&
+      session.arithmeticMethods(request).size() == 2;
+  if (!overflowSafe || !unknownEligible) { return function.emitError("overflow changed estimate eligibility/order"); }
+  for (std::size_t i = 1; i < records.size(); ++i) {
+    const auto& a = records[i - 1]; const auto& b = records[i];
+    if (a.region == b.region && a.request == b.request && estimatedCostLess(b.estimate, a.estimate)) {
+      return function.emitError("arithmetic choices are not sorted by estimated work");
+    }
+  }
+  const bool constructed = !session.arithmeticGeneratorConstructions() &&
+      succeeded(session.analyzeArithmeticFunction()) && session.arithmeticGeneratorConstructions() == 1;
+  if (!constructed) {
+    return function.emitError("arithmetic construction did not follow pure ranking");
+  }
+  (void)session.analyzeArithmeticPeriodicFunction();
+  const bool shared = succeeded(session.analyzeArithmeticFunction()) && session.arithmeticGeneratorConstructions() == 1;
+  if (!shared) {
+    return function.emitError("arithmetic reducers did not reuse their generator construction");
+  }
+  const auto alternate = policy == pto::GMAliasPolicy::MayAlias ?
+      pto::GMAliasPolicy::MayNotAlias : pto::GMAliasPolicy::MayAlias;
+  const bool reset = succeeded(session.initialize(alternate)) && session.costRecords().empty() &&
+      !session.arithmeticGeneratorConstructions() && session.arithmeticMethods({}).size() == 2 &&
+      !session.arithmeticGeneratorConstructions();
+  if (!reset) { return function.emitError("arithmetic estimate cache crossed an alias-context reset"); }
+  llvm::outs() << "arithmetic-ranking: pre-producer region-isolated cached-request shared-generators\n";
+  return success();
+}
 LogicalResult checkArithmeticExportFailure(func::FuncOp function, pto::GMAliasPolicy policy) {
   using namespace pto::frontiersynch;
+  if (failed(checkArithmeticRanking(function, policy))) { return failure(); }
   pto::SyncInput input(policy);
   PhaseIndex index;
   const bool ready = succeeded(input.build(function, pto::SyncInstructionView::PipeEnvelopes)) &&
