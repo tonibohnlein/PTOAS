@@ -76,7 +76,10 @@ struct ArithmeticPeriodicConversion {
 // Parameter-only divisibility is retained; occurrence congruences or absolute
 // cutoffs outside common domains decline conversion. Floor/ceil bounds remain
 // mathematical even if checked machine/quotient lowering is unavailable.
-ArithmeticPeriodicConversion convertArithmeticPeriodicIntervals(const ArithmeticPeriodicInput& input);
+// Pass buildGuarded=false to stop after a successful numerical reduction.
+// The default preserves callers that request both descriptions.
+ArithmeticPeriodicConversion convertArithmeticPeriodicIntervals(const ArithmeticPeriodicInput& input,
+    bool buildGuarded = true);
 struct ArithmeticPeriodicSite {
     uint32_t originalSite = 0;
     uint64_t residue = 0;
@@ -98,10 +101,12 @@ bool checkArithmeticPeriodicSkeleton(const ArithmeticProgram& program, std::stri
 // quotients to ordinal quotients before reduction, retaining congruences.
 // Site/residue grouping is charged; no trip or distance expansion.
 ArithmeticPeriodicProgram convertArithmeticPeriodicProgram(const ArithmeticProgram& program,
-    const GeneralArithmeticGeneratorStage& stage, std::shared_ptr<RegionExpressions> expressions = {});
+    const GeneralArithmeticGeneratorStage& stage, std::shared_ptr<RegionExpressions> expressions = {},
+    bool buildGuarded = true);
 // Explicit adapter from native difference-bound generators; relational row
 // conversion occurs only inside this requested periodic export.
 ArithmeticPeriodicProgram convertArithmeticPeriodicProgram(const ArithmeticProgram& program,
-    const DifferenceArithmeticGeneratorStage& stage, std::shared_ptr<RegionExpressions> expressions = {});
+    const DifferenceArithmeticGeneratorStage& stage, std::shared_ptr<RegionExpressions> expressions = {},
+    bool buildGuarded = true);
 } // namespace mlir::pto::frontiersynch
 #endif

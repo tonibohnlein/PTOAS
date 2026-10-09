@@ -148,9 +148,14 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
     if (demands.arithmeticPeriodicDemands) {
         const auto& converted = *demands.arithmeticPeriodicDemands;
         const auto& conversion = converted.conversion;
-        if (!conversion.guarded) { return failure(); }
         std::vector<uint64_t> residues;
         for (const auto& site : converted.sites) { residues.push_back(site.residue); }
+        if (conversion.numerical) {
+            NumericalPeriodicEndpointInput input{converted.loop, conversion.expressions, converted.phases,
+                &*conversion.numerical, converted.period, residues};
+            return prepareNumericalPeriodicEndpoints(function, input, error);
+        }
+        if (!conversion.guarded) { return failure(); }
         GuardedPeriodicEndpointInput input{converted.loop, conversion.expressions, converted.phases,
             conversion.payloads, conversion.generators, &*conversion.guarded, converted.period, residues};
         return prepareGuardedPeriodicEndpoints(function, input, error);

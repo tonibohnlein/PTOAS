@@ -223,8 +223,8 @@ LogicalResult FrontierAnalysis::analyzeArithmeticPeriodicFunction()
         }
         if (failed(ensureArithmeticGenerators())) { return failure(); }
         auto converted = sessionState->differenceGenerators ?
-            convertArithmeticPeriodicProgram(*program->arithmetic, *sessionState->differenceGenerators) :
-            convertArithmeticPeriodicProgram(*program->arithmetic, *arithmeticGeneratorStage);
+            convertArithmeticPeriodicProgram(*program->arithmetic, *sessionState->differenceGenerators, {}, false) :
+            convertArithmeticPeriodicProgram(*program->arithmetic, *arithmeticGeneratorStage, {}, false);
         arithmeticPeriodicAnalysis = std::make_shared<ArithmeticPeriodicProgram>(std::move(converted));
     }
     const auto& conversion = arithmeticPeriodicAnalysis->conversion;
@@ -234,24 +234,19 @@ LogicalResult FrontierAnalysis::analyzeArithmeticPeriodicFunction()
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareArithmeticPeriodicFunction()
 {
-    if (failed(analyzeArithmeticPeriodicFunction())) { return failure(); }
-    const auto& converted = *arithmeticPeriodicAnalysis;
-    const auto& conversion = converted.conversion;
+    if (failed(recognizeStructure())) { return failure(); }
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    auto result = requestBackend(AnalysisBackend::ArithmeticPeriodic, {});
+    if (result.status != AnalysisStatus::Ready) { return failure(); }
     periodicExports = {};
-    if (!conversion.guarded) {
-        periodicExports.endpointError = conversion.exportError;
+    auto prepared = prepareLogical(result);
+    if (failed(prepared)) {
+        periodicExports.endpointError = "periodic original-cut endpoint export unavailable";
         return failure();
     }
-    std::vector<uint64_t> residues;
-    for (const auto& site : converted.sites) { residues.push_back(site.residue); }
-    GuardedPeriodicEndpointInput input{converted.loop, conversion.expressions, converted.phases,
-        conversion.payloads, conversion.generators, &*conversion.guarded, converted.period, residues};
-    auto prepared = prepareGuardedPeriodicEndpoints(function, input, periodicExports.endpointError);
-    if (failed(prepared)) { return failure(); }
     periodicExports.endpointsAvailable = true;
-    (*prepared)->allocationCertificate = guardedPeriodicAllocationCertificate(*conversion.expressions,
-        conversion.payloads, conversion.generators, *conversion.guarded, (*prepared)->planId, function.getContext());
-    periodicExports.allocationAvailable = static_cast<bool>((*prepared)->allocationCertificate);
+    auto allocation = attachAllocation(result, **prepared);
+    periodicExports.allocationAvailable = succeeded(allocation);
     if (!periodicExports.allocationAvailable) {
         periodicExports.allocationError = "periodic source-identity allocation certificate unavailable";
     }
@@ -431,6 +426,13 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
         (*prepared)->recognitionReport = contractReport(*analysis.result(), logicalBackend,
             analysis.arithmeticGeneratorConstructions(), analysis.arithmeticRegionConstructions(),
             analysis.costRecords(), analysis.constructionCounts());
+        if (result.mathematical->arithmeticPeriodicDemands) {
+            const auto& conversion = result.mathematical->arithmeticPeriodicDemands->conversion;
+            NamedAttrList report((*prepared)->recognitionReport);
+            report.set("periodic_reducer", StringAttr::get(function.getContext(),
+                conversion.numerical ? "numerical" : "guarded"));
+            (*prepared)->recognitionReport = report.getDictionary(function.getContext());
+        }
     }
     if (failed(prepared)) {
         auto diagnostic = function.emitError("logical plan unavailable; Section 5 contract outcomes:");

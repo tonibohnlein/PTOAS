@@ -165,7 +165,12 @@ bool numericalWithoutGuardedExport()
     if (!retained) {
         return false;
     }
+    auto preferred = fs::convertArithmeticPeriodicIntervals(input, false);
+    const bool numericalOnly = preferred.hasExactDemands() && preferred.numerical && !preferred.guarded &&
+                               preferred.exportError.empty();
+    if (!numericalOnly) { return false; }
     const auto& numeric = *result.numerical;
+    if (preferred.numerical->retained != numeric.retained) { return false; }
     auto threshold = numeric.completionThreshold(0, {1, fs::PeriodicEventKind::Start});
     return numeric.retained.size() == 1 && threshold.error == fs::PeriodicQueryError::None &&
         threshold.displacement == distance && input.expressions->constructionError().empty();
@@ -316,7 +321,7 @@ int runArithmeticPeriodicInputChecks(mlir::func::FuncOp function, const mlir::pt
     }
     if (program.recognition.arithmeticClass == fs::ArithmeticClass::Differences) {
         auto native = fs::analyzeDifferenceArithmeticGenerators(program, &protection);
-        auto adapted = fs::convertArithmeticPeriodicProgram(program, native);
+        auto adapted = fs::convertArithmeticPeriodicProgram(program, native, {}, false);
         auto demand = fs::reduceDifferenceArithmeticDemands(native);
         if (!demand || !demand->exactMinimum || native.analysis().exactMinimum ||
             demand != fs::reduceDifferenceArithmeticDemands(native) ||
@@ -338,10 +343,17 @@ int runArithmeticPeriodicInputChecks(mlir::func::FuncOp function, const mlir::pt
     std::vector<uint64_t> residues;
     for (const auto& site : converted.sites) { residues.push_back(site.residue); }
     auto& result = converted.conversion;
-    fs::GuardedPeriodicEndpointInput endpoints{converted.loop, result.expressions, converted.phases,
-        result.payloads, result.generators, &*result.guarded, converted.period, residues};
     std::string error;
-    auto prepared = fs::prepareGuardedPeriodicEndpoints(function, endpoints, error);
+    mlir::FailureOr<std::unique_ptr<fs::PreparedLogicalPlan>> prepared = mlir::failure();
+    if (result.numerical) {
+        fs::NumericalPeriodicEndpointInput endpoints{converted.loop, result.expressions, converted.phases,
+            &*result.numerical, converted.period, residues};
+        prepared = fs::prepareNumericalPeriodicEndpoints(function, endpoints, error);
+    } else if (result.guarded) {
+        fs::GuardedPeriodicEndpointInput endpoints{converted.loop, result.expressions, converted.phases,
+            result.payloads, result.generators, &*result.guarded, converted.period, residues};
+        prepared = fs::prepareGuardedPeriodicEndpoints(function, endpoints, error);
+    }
     if (failed(prepared) || failed(fs::insertLogicalSynchronization(function, **prepared)) ||
         failed(verify(function))) {
         llvm::errs() << "arithmetic periodic endpoint preparation: " << error << "\n"; return 1;
@@ -361,11 +373,19 @@ int runArithmeticPeriodicInputChecks(mlir::func::FuncOp function, const mlir::pt
         if (kind != "set" && kind != "wait") { continue; }
         auto record = event->getInteger("record"), ordinal = event->getInteger("source_ordinal");
         auto gap = event->getInteger("gap");
-        if (!record || !ordinal || !gap || *record < 0 || uint64_t(*record) >= result.generators.size()) { return 1; }
-        const auto& edge = result.generators[*record];
-        const auto distance = result.expressions->constantValue(edge.displacement);
+        if (!record || !ordinal || !gap || *record < 0) { return 1; }
+        const auto recordCount = result.numerical ? result.numerical->generators.size() : result.generators.size();
+        const bool validRecord = uint64_t(*record) < recordCount;
+        if (!validRecord) { return 1; }
+        const auto source = result.numerical ? result.numerical->generators[*record].source :
+                                              result.generators[*record].source;
+        const auto target = result.numerical ? result.numerical->generators[*record].target :
+                                              result.generators[*record].target;
+        const auto distance = result.numerical ?
+            std::optional<uint64_t>(result.numerical->generators[*record].displacement) :
+            result.expressions->constantValue(result.generators[*record].displacement);
         const auto position = *gap - (kind == "set" ? 1 : 0);
-        const auto type = kind == "set" ? edge.source : edge.target;
+        const auto type = kind == "set" ? source : target;
         if (!distance || position < 0 || uint64_t(position) % result.payloads.size() != type ||
             uint64_t(position) / result.payloads.size() != uint64_t(*ordinal) + (kind == "set" ? 0 : *distance)) {
             return 1;

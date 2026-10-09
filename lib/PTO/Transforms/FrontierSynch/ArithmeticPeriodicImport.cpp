@@ -291,7 +291,7 @@ bool checkArithmeticPeriodicSkeleton(const ArithmeticProgram& program, std::stri
 }
 template<class Stage>
 static ArithmeticPeriodicProgram convertGeneratorStage(const ArithmeticProgram& program,
-    const Stage& stage, std::shared_ptr<RegionExpressions> expressions)
+    const Stage& stage, std::shared_ptr<RegionExpressions> expressions, bool buildGuarded)
 {
     ArithmeticPeriodicProgram out;
     out.period = stage.analysis().period;
@@ -321,17 +321,17 @@ static ArithmeticPeriodicProgram convertGeneratorStage(const ArithmeticProgram& 
             "arithmetic event/domain bindings or non-core native relations lack periodic export";
         return out;
     }
-    out.conversion = convertArithmeticPeriodicIntervals(input);
+    out.conversion = convertArithmeticPeriodicIntervals(input, buildGuarded);
     return out;
 }
 ArithmeticPeriodicProgram convertArithmeticPeriodicProgram(const ArithmeticProgram& program,
-    const GeneralArithmeticGeneratorStage& stage, std::shared_ptr<RegionExpressions> expressions)
+    const GeneralArithmeticGeneratorStage& stage, std::shared_ptr<RegionExpressions> expressions, bool buildGuarded)
 {
-    return convertGeneratorStage(program, stage, std::move(expressions));
+    return convertGeneratorStage(program, stage, std::move(expressions), buildGuarded);
 }
 ArithmeticPeriodicProgram convertArithmeticPeriodicProgram(const ArithmeticProgram& program,
-    const DifferenceArithmeticGeneratorStage& stage, std::shared_ptr<RegionExpressions> expressions)
+    const DifferenceArithmeticGeneratorStage& stage, std::shared_ptr<RegionExpressions> expressions, bool buildGuarded)
 {
-    return convertGeneratorStage(program, stage, std::move(expressions));
+    return convertGeneratorStage(program, stage, std::move(expressions), buildGuarded);
 }
 } // namespace mlir::pto::frontiersynch

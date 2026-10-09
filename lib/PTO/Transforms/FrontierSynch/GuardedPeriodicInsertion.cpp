@@ -13,10 +13,10 @@ namespace {
 using Expr = RegionExpressions::Id;
 class Preparer {
 public:
-    Preparer(func::FuncOp function, const GuardedPeriodicEndpointInput& analysis,
+    Preparer(func::FuncOp function, const GuardedPeriodicEndpointInput& analysis, ArrayRef<Expr> selected,
              PreparedLogicalPlan& plan, std::string& error,
              const RegionalDemandFilter& filter)
-        : function(function), analysis(analysis), plan(plan), arena(*analysis.expressions),
+        : function(function), analysis(analysis), selected(selected), plan(plan), arena(*analysis.expressions),
           builder(function.getContext()), error(error), filter(filter) {}
     LogicalResult run()
     {
@@ -35,7 +35,7 @@ public:
         if (failed(count)) { return failure(); }
         tripValue = *count;
         for (std::size_t i = 0; i < analysis.generators.size(); ++i) {
-            auto retained = analysis.periodic->retained[i];
+            auto retained = selected[i];
             if (arena.implies(retained, arena.boolean(false))) { continue; }
             auto distance = analysis.generators[i].displacement;
             auto enabledValue = arena.emitContextual(retained, builder, loop, entry);
@@ -52,6 +52,7 @@ private:
     struct Invariant { std::size_t record; Value retained, distance; };
     func::FuncOp function;
     const GuardedPeriodicEndpointInput& analysis;
+    ArrayRef<Expr> selected;
     PreparedLogicalPlan& plan;
     RegionExpressions& arena;
     OpBuilder builder;
@@ -85,7 +86,7 @@ private:
             }
         }
         builder.setInsertionPointToEnd(cut.block);
-        auto retained = analysis.periodic->retained[item.record];
+        auto retained = selected[item.record];
         cut.context.values[retained] = item.retained;
         cut.context.values[edge.displacement] = item.distance;
         cut.context.values[trips] = tripValue;
@@ -148,16 +149,14 @@ private:
     }
 };
 } // namespace
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGuardedPeriodicEndpoints(
-    func::FuncOp function, const GuardedPeriodicEndpointInput& analysis, std::string& error,
+static FailureOr<std::unique_ptr<PreparedLogicalPlan>> preparePeriodicEndpoints(
+    func::FuncOp function, const GuardedPeriodicEndpointInput& analysis, ArrayRef<Expr> selected, std::string& error,
     const RegionalDemandFilter& filter)
 {
     if (!analysis.loop || analysis.loop->getParentOfType<func::FuncOp>() != function || !analysis.expressions ||
-        !analysis.periodic || !analysis.periodic->error.empty() ||
-        analysis.periodic->expressions != analysis.expressions ||
         !analysis.period || analysis.payloads.size() != analysis.phases.size() ||
         (analysis.residues.empty() ? analysis.period != 1 : analysis.residues.size() != analysis.phases.size()) ||
-        analysis.generators.size() != analysis.periodic->retained.size() ||
+        analysis.generators.size() != selected.size() ||
         analysis.generators.size() >= static_cast<std::size_t>(UINT32_MAX)) {
         error = "guarded periodic analysis has no valid endpoint contract";
         return failure();
@@ -177,7 +176,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGuardedPeriodicEndpoints(
     auto plan = std::make_unique<PreparedLogicalPlan>(0);
     plan->completeInvocation = !analysis.phases.empty();
     for (auto* phase : analysis.phases) { analysis.expressions->forbidRecomputation(phase->elementOp); }
-    if (failed(Preparer(function, analysis, *plan, error, filter).run())) {
+    if (failed(Preparer(function, analysis, selected, *plan, error, filter).run())) {
         if (error.empty()) {
             error = "guarded periodic endpoint invariants or bounds unavailable: " + analysis.expressions->error();
         }
@@ -185,5 +184,37 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGuardedPeriodicEndpoints(
     }
 
     return plan;
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGuardedPeriodicEndpoints(
+    func::FuncOp function, const GuardedPeriodicEndpointInput& input, std::string& error,
+    const RegionalDemandFilter& filter)
+{
+    const bool valid = input.periodic && input.periodic->error.empty() &&
+                       input.periodic->expressions == input.expressions;
+    if (!valid) { error = "guarded periodic analysis has no valid endpoint contract"; return failure(); }
+    return preparePeriodicEndpoints(function, input, input.periodic->retained, error, filter);
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericalPeriodicEndpoints(
+    func::FuncOp function, const NumericalPeriodicEndpointInput& input, std::string& error,
+    const RegionalDemandFilter& filter)
+{
+    const bool valid = input.expressions && input.periodic && input.periodic->error.empty();
+    if (!valid) { error = "numerical periodic analysis has no valid endpoint contract"; return failure(); }
+    auto& e = *input.expressions;
+    std::vector<GuardedPeriodicPayload> payloads;
+    std::vector<GuardedPeriodicRecord> records;
+    std::vector<Expr> selected(input.periodic->generators.size(), e.boolean(false));
+    for (const auto& payload : input.periodic->payloads) { payloads.push_back({payload.pipe, e.boolean(true)}); }
+    for (const auto& record : input.periodic->generators) {
+        records.push_back({record.source, record.target, e.constant(record.displacement),
+                           e.boolean(true), record.displacement});
+    }
+    for (auto index : input.periodic->retained) {
+        if (index >= selected.size()) { error = "invalid retained numerical record identity"; return failure(); }
+        selected[index] = e.boolean(true);
+    }
+    GuardedPeriodicEndpointInput domain{input.loop, input.expressions, input.phases, payloads, records,
+                                       nullptr, input.period, input.residues};
+    return preparePeriodicEndpoints(function, domain, selected, error, filter);
 }
 } // namespace mlir::pto::frontiersynch

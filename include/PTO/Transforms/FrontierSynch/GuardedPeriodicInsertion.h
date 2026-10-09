@@ -28,6 +28,20 @@ struct GuardedPeriodicEndpointInput {
     uint64_t period = 1;
     ArrayRef<uint64_t> residues;
 };
+// The numerical reducer already owns canonical records and retained indices.
+// Its endpoint adapter uses the same original-cut rules without constructing
+// an additional guarded quotient. Family IDs remain numerical record IDs.
+struct NumericalPeriodicEndpointInput {
+    scf::ForOp loop;
+    std::shared_ptr<RegionExpressions> expressions;
+    ArrayRef<const CompoundInstanceElement*> phases;
+    const PeriodicAnalysis* periodic = nullptr;
+    uint64_t period = 1;
+    ArrayRef<uint64_t> residues;
+};
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericalPeriodicEndpoints(
+    func::FuncOp function, const NumericalPeriodicEndpointInput& input, std::string& error,
+    const RegionalDemandFilter& filter = {});
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGuardedPeriodicEndpoints(
     func::FuncOp function, const GuardedPeriodicEndpointInput& input, std::string& error,
     const RegionalDemandFilter& filter = {});

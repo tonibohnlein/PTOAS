@@ -230,7 +230,7 @@ bool validInput(const ArithmeticPeriodicInput& input)
     return true;
 }
 } // namespace
-ArithmeticPeriodicConversion convertArithmeticPeriodicIntervals(const ArithmeticPeriodicInput& input)
+ArithmeticPeriodicConversion convertArithmeticPeriodicIntervals(const ArithmeticPeriodicInput& input, bool buildGuarded)
 {
     ArithmeticPeriodicConversion out;
     out.expressions = input.expressions; out.payloads = input.payloads;
@@ -282,6 +282,10 @@ ArithmeticPeriodicConversion convertArithmeticPeriodicIntervals(const Arithmetic
     if (numerical) {
         auto analysis = analyzePeriodicDemands(payloads, records, native);
         if (analysis.error.empty()) { out.numerical = std::move(analysis); }
+    }
+    if (out.numerical && !buildGuarded) {
+        out.cost.expressionNodes = e.size() - begin;
+        transaction.commit(); return out;
     }
     out.guarded = analyzeGuardedPeriodicQuotient(input.expressions, out.payloads, out.generators,
                                                 out.nativePrerequisites);
