@@ -80,6 +80,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         FailureOr<std::unique_ptr<PreparedLogicalPlan>> supplied = failure();
         if (resolver && child.originalNode) {
             supplied = resolver(*child.originalNode, child.regional, enclosing);
+            if (child.originalArmGuard) {
+                supplied = maskRegionalArmPlan(std::move(supplied), arena, *child.originalArmGuard);
+            }
         } else {
             supplied = child.regional.prepareWithVisits ? child.regional.prepareWithVisits(enclosing) :
                                                          child.regional.prepare();

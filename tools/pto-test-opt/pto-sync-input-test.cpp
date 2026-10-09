@@ -135,7 +135,10 @@ LogicalResult checkRegionalSession(func::FuncOp function, pto::GMAliasPolicy pol
   }
   const auto preparations = session.constructionCounts().logicalPreparations;
   for (auto [id, node] : llvm::enumerate(session.result()->nodes)) {
-    if (node.kind != StructureKind::Loop || !node.loops.empty()) { continue; }
+    const bool arm = function->hasAttr("test.cached_arm_exports") &&
+                     node.kind == StructureKind::Sequence && node.guard && node.payloadCount;
+    const bool selected = (node.kind == StructureKind::Loop || arm) && node.loops.empty();
+    if (!selected) { continue; }
     logical.region = id;
     auto child = session.analyze(logical);
     if (child.status != AnalysisStatus::Ready ||
