@@ -66,6 +66,8 @@ struct ArithmeticLimits {
     uint64_t period;
     uint64_t coefficient;
 };
+// A declared profile, never limits inferred from the current program.
+FailureOr<ArithmeticLimits> parseArithmeticProfile(StringRef text);
 enum class ArithmeticIssue {
     MissingPrimitives, MissingRole, InvalidCoordinate, DimensionLimit,
     PipeLimit, PeriodMismatch, InvalidResidue, UnsupportedExpression,

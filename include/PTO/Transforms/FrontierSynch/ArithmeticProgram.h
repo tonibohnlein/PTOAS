@@ -32,6 +32,11 @@ struct ArithmeticRegionContext {
 };
 struct ArithmeticProgram {
     ArithmeticRegionContext context;
+    // Certification provenance; same IR with a different modeled input or
+    // phase index is a different analysis context, including alias policy.
+    const SyncInput* modeledInput = nullptr;
+    const PhaseIndex* phaseIndex = nullptr;
+    bool specializedEntry = false;
     // Incoming scalar prerequisites remain obligations of the composing parent.
     SmallVector<ValuePrerequisite> incomingPrerequisites;
     RecognitionResult extraction;

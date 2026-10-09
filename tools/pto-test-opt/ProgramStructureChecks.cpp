@@ -123,7 +123,7 @@ bool auditContracts()
     fs::refreshProgramContractAudit(program);
     for (const auto& candidate : program.contractAudit) {
         if (candidate.kind == fs::ContractClass::NumericTemplate &&
-            candidate.membership != fs::ContractStatus::Violated) { return false; }
+            candidate.membership != fs::ContractStatus::Unproved) { return false; }
     }
     // Exact normalized DBM rows with existential coordinates may still select
     // the general importer. That backend choice must not reject DBM membership.

@@ -260,7 +260,7 @@ void ProgramBuilder::emit(PrimitiveRelation& target, ArrayRef<AffineExpr> rows,
     std::size_t combinations = 1;
     for (std::size_t i = 0; i < count; ++i) {
         if (combinations > SIZE_MAX / period) {
-            output.extraction.note(RecognitionIssue::ArithmeticDimension, nullptr, true);
+            output.extraction.note(RecognitionIssue::ArithmeticConfiguration, nullptr);
             return;
         }
         combinations *= period;

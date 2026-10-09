@@ -25,15 +25,14 @@ include "mlir/Pass/PassBase.td"
 
 // Integrated analysis and logical synchronization insertion.
 def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
-  let summary = "Compute frontier demands and insert logical synchronization";
+  let summary = "Certify tractable synchronization regions and retain exact demands";
   let description = [{
-    Coordinates closed-callee analysis across a module, then computes demands
-    for supported numerical periodic templates
-    and inserts guarded logical SET/WAIT pairs and same-pipe barriers at their
-    original cuts, with a terminal completion barrier for whole-function plans.
-    Preserves payloads and loop structure. Unsupported inputs
-    fail before insertion. Physical event-ID allocation is a separate pass;
-    logical commands cannot be lowered to hardware synchronization directly.
+    Builds shared input and one structural index, checks declared tractable
+    forms for every original region, and retains exact mathematical demands.
+    Incomplete proofs are reported as unresolved, never absence of a class.
+    Compilation stops with a not-implemented error before synchronization
+    emission and physical allocation. The original IR remains unchanged.
+    Regional certification alone does not establish whole-function support.
     Functions with manual on-core SET/WAIT or record/wait events are left
     unchanged, including dynamic event IDs. Cross-core commands and barriers
     alone do not trigger this skip, matching the shared InsertSync policy.
@@ -41,7 +40,9 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
   let constructor = "mlir::pto::createPTOFrontierAnalysisPass()";
   let options = [
     Option<"gmAlias", "gm-alias", "std::string", "\"may-not-alias\"",
-      "Distinct GM root assumption: may-not-alias or may-alias">
+      "Distinct GM root assumption: may-not-alias or may-alias">,
+    Option<"arithmeticProfile", "arithmetic-profile", "std::string", "\"\"",
+      "Declared k:D:P:C arithmetic class for both scopes; empty retains existing scope defaults">
   ];
   let dependentDialects = ["mlir::pto::PTODialect", "mlir::scf::SCFDialect", "mlir::arith::ArithDialect"];
 }

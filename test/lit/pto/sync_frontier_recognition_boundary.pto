@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --recognition-boundary %s 2>&1 | FileCheck %s
+// RUN: not pto-test-opt --pto-frontier-analysis %s 2>&1 | FileCheck %s --check-prefix=PASS
+// Mathematical certification retains demands; emission remains deferred.
+// CHECK: recognition-boundary: rejected; source-unchanged
+// PASS-DAG: class=closed-callee region=function membership=applicable; continuation not implemented yet
+// PASS-DAG: region=0 recognized tractable class finite-occurrences representation=original; exact demands retained
+// PASS-DAG: unresolved tractable-class obligations; further steps not implemented yet
+// PASS-DAG: mathematical analysis ran; synchronization insertion and allocation were not run; IR unchanged
+// PASS-DAG: frontier compilation not implemented yet: stopped after mathematical analysis
+module {
+  func.func @explicit_match() {
+    %base = arith.constant 0 : i64
+    %index = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tadds ins(%tile, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+  func.func @wrapper() {
+    func.call @explicit_match() : () -> ()
+    return
+  }
+  module @nested {
+    func.func @no_match(%condition: i1) {
+      scf.while : () -> () {
+        scf.condition(%condition)
+      } do {
+        scf.yield
+      }
+      return
+    }
+  }
+}

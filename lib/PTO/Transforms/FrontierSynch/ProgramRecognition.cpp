@@ -131,7 +131,7 @@ ContractDiagnosticKind contractDiagnosticKind(const RecognitionDiagnostic& diagn
     switch (diagnostic.issue) {
     case RecognitionIssue::TemplateExpansionLimit:
     case RecognitionIssue::ArithmeticConfiguration:
-    case RecognitionIssue::ArithmeticPeriod: // Current IR producer accepts P<=2 only.
+    case RecognitionIssue::ArithmeticPeriod:
         return ContractDiagnosticKind::ProducerLimit;
     case RecognitionIssue::MultiplePhases:
     case RecognitionIssue::UnsupportedView:
@@ -140,6 +140,8 @@ ContractDiagnosticKind contractDiagnosticKind(const RecognitionDiagnostic& diagn
     case RecognitionIssue::SlotExpression:
     case RecognitionIssue::LoopDomain:
     case RecognitionIssue::LoopCarriedState:
+    case RecognitionIssue::UnknownGeometry:
+    case RecognitionIssue::SymbolicGeometry:
         return ContractDiagnosticKind::AdapterGap;
     default:
         return diagnostic.outsideClass ? ContractDiagnosticKind::CriterionViolation :
@@ -170,6 +172,14 @@ void appendContract(ProgramRecognition& program, std::size_t node, ContractClass
     candidate.kind = kind; candidate.node = node;
     if (recognition) {
         candidate.membership = membership(*recognition);
+        // These producers currently prove only sufficient certificates. A
+        // failed rotating refresh producer or expansion cannot rule out the
+        // broader bounded-lifetime or periodic mathematical class.
+        const bool insufficientCertificate = (kind == ContractClass::BoundedLifetime ||
+            kind == ContractClass::NumericTemplate) && candidate.membership == ContractStatus::Violated;
+        if (insufficientCertificate) {
+            candidate.membership = ContractStatus::Unproved;
+        }
         candidate.diagnostics = recognition->diagnostics;
     } else {
         candidate.obligations.push_back({"recognizer-in-original-control-context", ContractStatus::NotEvaluated});
@@ -258,10 +268,15 @@ SmallVector<ArithmeticContractDiagnostic> summarizeArithmeticDiagnostics(ArrayRe
 void recordArithmeticContractAttempt(ProgramRecognition& program, const ArithmeticLimits& limits,
                                      const ArithmeticProgram& arithmetic)
 {
+    recordArithmeticContractAttempt(program, limits, arithmetic, std::nullopt);
+}
+void recordArithmeticContractAttempt(ProgramRecognition& program, const ArithmeticLimits& limits,
+                                     const ArithmeticProgram& arithmetic, std::optional<std::size_t> node)
+{
     const auto diagnostics = summarizeArithmeticDiagnostics(arithmetic.recognition.diagnostics);
     for (auto kind : {ContractClass::Differences, ContractClass::Octagons, ContractClass::BoundedCoefficients}) {
         ProgramContractCandidate candidate;
-        candidate.kind = kind; candidate.arithmeticProfile = limits;
+        candidate.kind = kind; candidate.node = node; candidate.arithmeticProfile = limits;
         candidate.diagnostics = arithmetic.extraction.diagnostics;
         candidate.membership = membership(arithmetic.extraction);
         if (arithmetic.extraction.state == RecognitionState::Applicable) {
@@ -423,7 +438,7 @@ StringRef contractName(ContractClass kind)
     case ContractClass::GuardedPeriodic: return "invariant-guarded-periodic-storage";
     case ContractClass::BoundedLifetime: return "bounded-lifetime";
     case ContractClass::VaryingPeriodic: return "affine-varying-periodic-visits";
-    case ContractClass::NumericTemplate: return "charged-numeric-template";
+    case ContractClass::NumericTemplate: return "periodic-storage";
     case ContractClass::Differences: return "arithmetic-differences";
     case ContractClass::Octagons: return "arithmetic-octagons";
     case ContractClass::BoundedCoefficients: return "arithmetic-bounded-coefficients";

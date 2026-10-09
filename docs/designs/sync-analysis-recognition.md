@@ -8,27 +8,43 @@
 
 ## Active implementation
 
-The executable routes are explicit analysis, numerical-template periodic
-analysis, direct and immutable guarded rotating-footprint analysis, exact
-sequence composition, finite guarded analysis, and restricted arithmetic analysis.
-They use common logical insertion. Physical allocation
-supports numerical templates, direct rotating results, finite explicit/guarded/sequence
-plans, and the sufficient compact strategies described in M13. Other compact
-results still require a uniform allocation export before physical compilation.
-Same-pipe demands always emit a pipe barrier immediately before the consumer,
-including when the source and consumer are not consecutive on that pipe. The
-barrier also completes intervening same-pipe payloads. Demand reduction remains
-exact for the supplied model; order equality and leastness apply only when this
-placement adds no ordering. Required-order queries remain valid sufficient
-witnesses for event-ID reuse, even if insertion strengthens the order.
+The public `pto-frontier-analysis` pass builds the shared model and one structural
+index, audits tractable forms on every original region, and requests exact
+mathematical demands through the session dispatcher. A recognized region has an
+owned exact result. Failed extraction or incomplete certificates remain
+`unresolved`; exhausting implemented attempts does not prove that no class
+applies. Root results and child results are reported separately.
 
-A failed route is not a missing shared memory-effect input by default. Distinguish
-an input outside that route's mathematical contract from an unimplemented
-normalization, regional interface, selector, or command emitter. Current aggregate
-failure messages do not establish which of these occurred; inspect the anchored
-recognition diagnostics and the rejecting adapter. In particular, blanket checks
-on carried values or runtime lower bounds are implementation restrictions, not a
-claim that the draft excludes all such loops.
+Compilation stops with `not implemented yet` before synchronization emission
+and physical allocation, without modifying the original IR. Demand-only
+requests build neither endpoint fragments nor allocation. Existing manual
+on-core synchronization skip and GM alias policies remain in effect.
+
+Arithmetic profiles are declared before form construction and then immutable.
+Defaults retain whole-function `(k,D,P,C)=(8,8,1 or 2,8)` and regional
+`(8,8,1 or 2,4096)` profiles. `arithmetic-profile=k:D:P:C` selects a declared
+profile for both scopes; the session API also accepts ordered profile lists.
+Neither P≤2 nor D≤8 is a universal producer restriction. Unrepresentable
+residue expansion remains an unresolved construction obligation.
+
+Small-count expansion is an optional representation, reported as
+`periodic-storage` with `representation=small-count-expanded`, rather than a
+separate mathematical class. Original region and occurrence identities remain
+unchanged. See [pinned catalog](frontier-tractable-catalog.json) and
+[source expectations](frontier-tractable-expectations.md) for the current paper
+correspondence, input hashes and independent loop-premise inspection.
+
+The diagnostic driver provides `--recognize` for the existing whole-function
+form audit, `--recognize-regions` to add cached regional arithmetic forms, and
+`--certify-regions` for owned exact results and per-region unresolved obligations.
+Its repeated certification check verifies reuse and zero endpoint/allocation
+construction. `--arithmetic-profile=k:D:P:C` precedes these modes.
+
+The algorithm libraries and their direct diagnostic entry points are retained
+for development and focused tests. Historical insertion and allocation results
+below describe those libraries and earlier integration, not current public-pass
+behavior. In particular, old public-pass emission tests expect the previous
+integration and cannot serve as acceptance tests for this temporary boundary.
 
 The implementation is in `lib/PTO/Transforms/FrontierSynch/`:
 
@@ -52,12 +68,10 @@ Arithmetic recognition builds its relation bundle only when a caller requests
 `FrontierAnalysis::recognizeArithmetic()`. Same-policy requests reuse the result;
 changing the alias policy resets it. MLIR invalidates the analysis after an
 IR-changing pass. Direct callers must keep the borrowed IR unchanged for the
-analysis lifetime. The full `--recognize` diagnostic requests it; the
-numerical insertion path does not. This avoids constructing an unused
-arithmetic candidate without changing the periodic result or adding a compiler
-mode. Recognized differences, integer octagons and bounded coefficients have
-production reduction and logical-insertion backends. A successful recognizer
-does not discharge endpoint availability, local adjacency or physical allocation.
+analysis lifetime. The full `--recognize` diagnostic and the public certification pass requests
+it; direct library callers can omit it to avoid constructing unused arithmetic
+candidates. Differences, integer octagons and bounded coefficients retain reduction and
+logical-insertion libraries; the public pass calls reduction but defers emission.
 The arithmetic dispatcher tries the fixed period-one class first, then the fixed
 period-two class if the full first contract fails; it never infers class limits
 from observed maxima.
