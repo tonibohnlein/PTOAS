@@ -13,6 +13,7 @@
 #include "mlir/IR/Block.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 namespace mlir::pto::frontiersynch {
@@ -52,6 +53,9 @@ struct PreparedLogicalPlan {
     // Optional producer certificate for the immediately following allocation
     // pass. It owns no borrowed analysis state; changing the plan invalidates it.
     DictionaryAttr allocationCertificate;
+    // A one-shot export on this detached graph. Captures own the retained
+    // mathematics; failed support must leave logical endpoints available.
+    std::function<void(PreparedLogicalPlan&)> allocationPreparation;
     // Immutable recognition snapshot, attached only when insertion commits.
     DictionaryAttr recognitionReport;
     // Optional typed lifetime interface for parent composition; invalidated with
@@ -64,6 +68,7 @@ struct PreparedLogicalPlan {
     std::vector<PreparedLogicalEndpoint> endpoints;
     std::vector<EndpointFamily> families; // Exact source/target coordinate provenance.
 };
+void prepareAllocationSupport(PreparedLogicalPlan& plan);
 // Producer obligations: certified demands, legal cuts, safely evaluable arithmetic,
 // paired guards and matching identities, and all endpoints sharing a cut in one
 // batch. No original IR may change between preparation and insertion. This API

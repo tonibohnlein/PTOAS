@@ -21,6 +21,12 @@
 #include <set>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
+void prepareAllocationSupport(PreparedLogicalPlan& plan)
+{
+    auto prepare = std::move(plan.allocationPreparation);
+    plan.allocationPreparation = {};
+    if (prepare) { prepare(plan); }
+}
 PreparedLogicalPlan::~PreparedLogicalPlan()
 {
     // Detached blocks can reference each other. Drop uses before destroying any.

@@ -20,6 +20,7 @@ struct StorageLaneCell;
 // Owns the mathematical result and every placeholder referenced by its DAG.
 // Original IR and shared input phases must outlive this object, as for regional
 // analyses. An endpoint failure does not invalidate the source demand circuits.
+struct BoundedLifetimeAllocationRecipe;
 struct BoundedLifetimeDemandResult {
     explicit BoundedLifetimeDemandResult(std::shared_ptr<RegionExpressions> arena);
     ~BoundedLifetimeDemandResult();
@@ -39,6 +40,7 @@ struct BoundedLifetimeDemandResult {
     std::vector<TemplateEndpointAnchor> anchors;
     LifetimeWindowInput window;
     LifetimeWindowAnalysis analysis;
+    std::shared_ptr<BoundedLifetimeAllocationRecipe> allocationRecipe;
 };
 // Construct once for any qualifying original loop, independent of siblings
 // and command availability. Local window rows are not global regional queries.
@@ -51,6 +53,9 @@ FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> cachedBoundedLifetimeReg
     const SyncInput& input, std::string& error);
 // Reuse an owned successful analysis. The loop remains in its original IR;
 // command preparation does not repeat recognition or the window reduction.
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeLogicalResult(
+    std::shared_ptr<BoundedLifetimeDemandResult> demands, std::string& error,
+    bool completeInvocation = false);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeResult(
     std::shared_ptr<BoundedLifetimeDemandResult> demands, std::string& error,
     bool completeInvocation = false);
