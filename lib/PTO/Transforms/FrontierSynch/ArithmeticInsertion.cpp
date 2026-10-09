@@ -384,9 +384,9 @@ private:
     }
 };
 } // namespace
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticInsertion(
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticLogicalInsertion(
     func::FuncOp function, const ArithmeticProgram& program,
-    const ArithmeticDemandAnalysis& analysis, std::string& error)
+    const ArithmeticDemandAnalysis& analysis, std::string& error, ArithmeticRecordMap& records)
 {
     const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
     if (!analysis.error.empty() || !analysis.exactMinimum ||
@@ -409,19 +409,33 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticInsertion(
         if (error.empty()) { error = "arithmetic selector cannot be emitted at its original cut"; }
         return failure();
     }
-    plan->allocationCertificate = arithmeticAllocationCertificate(analysis, pipes, preparer.recordMap(),
+    records = preparer.recordMap();
+    return plan;
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticInsertion(
+    func::FuncOp function, const ArithmeticProgram& program,
+    const ArithmeticDemandAnalysis& analysis, std::string& error)
+{
+    ArithmeticRecordMap records;
+    auto logical = prepareArithmeticLogicalInsertion(function, program, analysis, error, records);
+    if (failed(logical)) { return failure(); }
+    auto plan = std::move(*logical);
+    SmallVector<uint32_t> pipes;
+    for (const auto& site : program.sites) { pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue)); }
+    plan->allocationCertificate = arithmeticAllocationCertificate(analysis, pipes, records,
                                                                   plan->planId, function.getContext());
     if (!plan->allocationCertificate && program.context.root == function.getOperation()) {
         auto proof = buildArithmeticHandoffAllocation(analysis, pipes);
         plan->allocationCertificate = encodeGeneralArithmeticAllocationCertificate(
-            proof, pipes, preparer.recordMap(), plan->planId, function.getContext());
+            proof, pipes, records, plan->planId, function.getContext());
     }
     return plan;
 }
 namespace {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneral(
     func::FuncOp function, const ArithmeticProgram& program,
-    const GeneralArithmeticDemandAnalysis& analysis, std::string& error, bool regional)
+    const GeneralArithmeticDemandAnalysis& analysis, std::string& error, bool regional,
+    ArithmeticRecordMap* records = nullptr)
 {
     const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
     if (!analysis.error.empty() || !analysis.exactMinimum ||
@@ -444,13 +458,20 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneral(
         if (error.empty()) { error = "arithmetic selector cannot be emitted at its original cut"; }
         return failure();
     }
-    if (!regional && program.context.root == function.getOperation()) {
+    if (records) { *records = preparer.recordMap(); }
+    if (!records && !regional && program.context.root == function.getOperation()) {
         plan->allocationCertificate = generalArithmeticAllocationCertificate(
             analysis, pipes, preparer.recordMap(), plan->planId, function.getContext());
     }
     return plan;
 }
 } // namespace
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneralArithmeticLogicalInsertion(
+    func::FuncOp function, const ArithmeticProgram& program,
+    const GeneralArithmeticDemandAnalysis& analysis, std::string& error, ArithmeticRecordMap& records)
+{
+    return prepareGeneral(function, program, analysis, error, false, &records);
+}
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneralArithmeticInsertion(
     func::FuncOp function, const ArithmeticProgram& program,
     const GeneralArithmeticDemandAnalysis& analysis, std::string& error)

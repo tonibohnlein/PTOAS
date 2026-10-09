@@ -42,6 +42,40 @@ int runGuardedPeriodicChecks(llvm::StringRef path);
 int runSyncAliasChecks(func::FuncOp function, const pto::SyncInput &input);
 LogicalResult auditSyncStep0(func::FuncOp function, const pto::SyncInput &input);
 namespace {
+LogicalResult checkAllocationSession(func::FuncOp function, pto::GMAliasPolicy policy) {
+  using namespace pto::frontiersynch;
+  FrontierAnalysis session(function);
+  if (failed(session.initialize(policy))) { return failure(); }
+  auto demands = session.minimumDemands();
+  if (demands.status != AnalysisStatus::Ready) { return function.emitError("exact demands unavailable"); }
+  AnalysisRequest request;
+  request.needs.synchronization = true;
+  auto logical = session.analyze(request);
+  auto left = session.prepareLogical(logical), right = session.prepareLogical(logical);
+  const bool prepared = succeeded(left) && succeeded(right);
+  if (logical.status != AnalysisStatus::Ready || !prepared) {
+    return function.emitError("logical preparation unavailable");
+  }
+  if ((*left)->allocationCertificate || (*right)->allocationCertificate ||
+      session.constructionCounts().allocationExports) {
+    return function.emitError("logical preparation constructed physical allocation");
+  }
+  const auto work = session.constructionCounts().mathematicalAttempts;
+  const auto endpoints = (*left)->endpoints.size();
+  const auto allocation = session.attachAllocation(logical, **left);
+  const auto retry = session.attachAllocation(logical, **right);
+  const bool sameOutcome = succeeded(allocation) == succeeded(retry);
+  if (!sameOutcome ||
+      (*left)->allocationCertificate != (*right)->allocationCertificate ||
+      session.constructionCounts().allocationExports != 1 || (*left)->endpoints.size() != endpoints ||
+      session.constructionCounts().mathematicalAttempts != work ||
+      session.minimumDemands().mathematical != demands.mathematical) {
+    return function.emitError("allocation retry repeated work, changed commands or lost exact demands");
+  }
+  llvm::outs() << "allocation-session: " << logical.mathematical->backend
+               << " available=" << succeeded(allocation) << " retained-demands cached-export\n";
+  return success();
+}
 LogicalResult checkRegionalSession(func::FuncOp function, pto::GMAliasPolicy policy) {
   using namespace pto::frontiersynch;
   FrontierAnalysis session(function);
@@ -624,6 +658,7 @@ int main(int argc, char **argv) {
     }
     --argc;
   }
+  const bool allocationSessionChecks = argc == 3 && StringRef(argv[1]) == "--allocation-session-checks";
   const bool regionalSessionChecks = argc == 3 && StringRef(argv[1]) == "--regional-session-checks";
   const bool retainedChecks = argc == 3 && StringRef(argv[1]) == "--retained-demand-checks";
   const bool sessionChecks = argc == 3 && StringRef(argv[1]) == "--analysis-session-checks";
@@ -673,7 +708,7 @@ int main(int argc, char **argv) {
   const bool sequenceAnalysis = argc == 3 && StringRef(argv[1]) == "--sequence-analysis";
   const bool structuredTrace = argc == 3 && StringRef(argv[1]) == "--structured-trace";
   const bool physicalTrace = argc == 3 && StringRef(argv[1]) == "--physical-trace";
-  if (argc != 2 && !regionalSessionChecks && !retainedChecks && !sessionChecks &&
+  if (argc != 2 && !allocationSessionChecks && !regionalSessionChecks && !retainedChecks && !sessionChecks &&
       !rotatingAnalysis && !explicitAnalysis &&
       !arithmetic && !recognition &&
       !numericAnalysis && !insertLogical &&
@@ -691,7 +726,8 @@ int main(int argc, char **argv) {
     llvm::errs() << "usage: pto-sync-input-test "
                  << "[--gm-alias=may-alias|may-not-alias] "
                  << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
-                 "--retained-demand-checks|--analysis-session-checks|--recognize|--numeric-analysis|--insert-logical|"
+                 "--allocation-session-checks|--retained-demand-checks|--analysis-session-checks|"
+                 "--recognize|--numeric-analysis|--insert-logical|"
                  "--prepared-insertion-checks|--insertion-trace|"
                  "--finite-guarded-analysis|--finite-overlay-insertion|--region-expression-checks|--sequence-analysis|"
                  "--structured-trace|--physical-trace|--numerical-hierarchy-checks|--bounding-contract-checks|"
@@ -726,7 +762,7 @@ int main(int argc, char **argv) {
     return runRepeatedReadOnlyStorageChecks(&context) ? 0 : 1;
   }
   context.disableMultithreading();
-  const bool hasOption = regionalSessionChecks || retainedChecks || sessionChecks ||
+  const bool hasOption = allocationSessionChecks || regionalSessionChecks || retainedChecks || sessionChecks ||
                          mixedSymbolicChecks || rotatingAnalysis ||
                          explicitAnalysis || expectFailure ||
                          capabilities || phaseIndex ||
@@ -746,6 +782,14 @@ int main(int argc, char **argv) {
   auto module = parseSourceFile<ModuleOp>(filename, &context);
   if (!module || failed(verify(*module))) {
     return 1;
+  }
+  if (allocationSessionChecks) {
+    const auto before = render(module->getOperation());
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (failed(checkAllocationSession(function, policy))) { return 1; }
+    }
+    if (before != render(module->getOperation())) { return 1; }
+    return 0;
   }
   if (regionalSessionChecks) {
     const auto before = render(module->getOperation());
