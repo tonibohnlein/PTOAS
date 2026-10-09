@@ -21,6 +21,9 @@ struct BackendAttempt {
     std::string demandError;
     std::optional<bool> endpoints;
     std::shared_ptr<const NumericTemplateEndpoints> periodicEndpoints;
+    // Only the allocation capability is memoized here, including unavailable exports.
+    std::map<int64_t, DictionaryAttr> allocation;
+    std::map<std::pair<std::size_t, std::size_t>, int64_t> arithmeticRecords;
 };
 struct AnalysisSessionState {
     std::map<std::size_t, std::map<AnalysisBackend, BackendAttempt>> attempts;

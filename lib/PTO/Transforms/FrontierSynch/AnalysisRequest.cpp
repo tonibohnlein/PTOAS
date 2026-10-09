@@ -9,6 +9,13 @@
 // export checks; detached command fragments always have fresh ownership.
 #include "AnalysisSessionInternal.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
+#include "PTO/Transforms/FrontierSynch/CompactAllocation.h"
+#include "PTO/Transforms/FrontierSynch/GeneralArithmeticAllocation.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticPeriodicConversion.h"
+#include "PTO/Transforms/FrontierSynch/PeriodicSharedCertificate.h"
+#include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 namespace mlir::pto::frontiersynch {
 AnalysisOutcome FrontierAnalysis::minimumDemands(std::size_t region, AnalysisNeeds exports)
 {
@@ -129,15 +136,67 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical
     if (succeeded(prepared)) { (*prepared)->mathematicalOwner = result.mathematical; }
     return prepared;
 }
+namespace {
+DictionaryAttr allocateRetained(const MathematicalResult& demands, const ProgramRecognition& program,
+    const BackendAttempt& attempt, PreparedLogicalPlan& prepared, MLIRContext* context)
+{
+    const auto plan = prepared.planId;
+    if (demands.explicitDemands) { return explicitAllocationCertificate(*demands.explicitDemands, plan, context); }
+    if (demands.numericNode) {
+        return encodePeriodicSharedAllocation(*program.nodes[*demands.numericNode].periodicAnalysis, plan, context);
+    }
+    if (demands.rotatingDemands) {
+        return encodePeriodicSharedAllocation(demands.rotatingDemands->periodic, plan, context);
+    }
+    if (demands.guardedRotatingDemands) {
+        return guardedAllocationCertificate(*demands.guardedRotatingDemands, plan, context);
+    }
+    if (demands.arithmeticPeriodicDemands) {
+        const auto& conversion = demands.arithmeticPeriodicDemands->conversion;
+        return guardedPeriodicAllocationCertificate(*conversion.expressions, conversion.payloads,
+            conversion.generators, *conversion.guarded, plan, context);
+    }
+    if (demands.sequenceDemands || demands.finiteGuardedDemands) {
+        auto region = demands.sequenceDemands ? sequenceRegionalResult(*demands.sequenceDemands) :
+            finiteGuardedRegionalResult(*demands.finiteGuardedDemands);
+        auto certificate = regionalAllocationCertificate(region, prepared);
+        return certificate ? certificate : finiteRegionalAllocationCertificate(region, prepared);
+    }
+    if (!demands.arithmeticDemands && !demands.generalArithmeticDemands) { return {}; }
+    SmallVector<uint32_t> pipes;
+    for (const auto& site : program.arithmetic->sites) {
+        pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue));
+    }
+    if (demands.generalArithmeticDemands) {
+        return generalArithmeticAllocationCertificate(*demands.generalArithmeticDemands, pipes,
+            attempt.arithmeticRecords, plan, context);
+    }
+    auto certificate = arithmeticAllocationCertificate(*demands.arithmeticDemands, pipes,
+                                                       attempt.arithmeticRecords, plan, context);
+    if (certificate) { return certificate; }
+    auto proof = buildArithmeticHandoffAllocation(*demands.arithmeticDemands, pipes);
+    return encodeGeneralArithmeticAllocationCertificate(proof, pipes, attempt.arithmeticRecords, plan, context);
+}
+} // namespace
 LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan)
 {
-    if (!result.mathematical || result.mathematical->input != storage ||
+    if (!result.mathematical || !sessionState || result.mathematical->input != storage ||
         plan.mathematicalOwner != result.mathematical) { return failure(); }
+    auto& attempts = sessionState->attempts[result.mathematical->region];
+    auto selected = llvm::find_if(attempts, [&](const auto& entry) {
+        return entry.second.mathematical == result.mathematical;
+    });
+    if (selected == attempts.end()) { return failure(); }
     if (plan.allocationCertificate) { return success(); }
-    if (!result.mathematical->explicitDemands) { return failure(); }
-    if (construction.allocationExports != UINT64_MAX) { ++construction.allocationExports; }
-    plan.allocationCertificate = explicitAllocationCertificate(
-        *result.mathematical->explicitDemands, plan.planId, function.getContext());
+    auto& attempt = selected->second;
+    auto cached = attempt.allocation.find(plan.planId);
+    if (cached == attempt.allocation.end()) {
+        if (construction.allocationExports != UINT64_MAX) { ++construction.allocationExports; }
+        auto certificate = allocateRetained(*result.mathematical, *program, attempt,
+                                           plan, function.getContext());
+        cached = attempt.allocation.emplace(plan.planId, certificate).first;
+    }
+    plan.allocationCertificate = cached->second;
     return success(static_cast<bool>(plan.allocationCertificate));
 }
 void FrontierAnalysis::invalidate()

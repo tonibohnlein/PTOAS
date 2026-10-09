@@ -26,7 +26,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRotatin
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
     auto result = requestBackend(guarded ? AnalysisBackend::GuardedRotating : AnalysisBackend::Rotating, {});
     if (result.status != AnalysisStatus::Ready) { return failure(); }
-    return prepareLogical(result);
+    auto prepared = prepareLogical(result);
+    if (succeeded(prepared)) { (void)attachAllocation(result, **prepared); }
+    return prepared;
 }
 namespace {
 const StructureNode* wholeLoop(func::FuncOp function, const SyncInput& input,

@@ -9,7 +9,9 @@
 // work is never repeated after a missing synchronization export.
 #include "AnalysisSessionInternal.h"
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/GuardedRotatingInsertion.h"
+#include "PTO/Transforms/FrontierSynch/GuardedPeriodicInsertion.h"
+#include "PTO/Transforms/FrontierSynch/GuardedRotatingAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/ArithmeticPeriodicConversion.h"
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
@@ -41,7 +43,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
             node.logicalEndpoints = buildNumericTemplateEndpoints(*node.numericTemplate, *node.periodicAnalysis);
         }
         if (!node.logicalEndpoints->logical.error.empty()) { return failure(); }
-        return prepareNumericTemplateInsertion(function, *program);
+        return prepareNumericTemplateLogicalInsertion(function, *program);
     }
     if (demands.rotatingDemands) {
         const auto& rotating = *demands.rotatingDemands;
@@ -60,12 +62,13 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
         auto plan = std::make_unique<PreparedLogicalPlan>(0);
         plan->completeInvocation = demands.region == 0 && !rotating.phases.empty();
         if (failed(prepareCountedEndpointCode(function, endpoints, *plan))) { return failure(); }
-        plan->allocationCertificate = encodePeriodicSharedAllocation(rotating.periodic, plan->planId,
-                                                                     function.getContext());
         return plan;
     }
     if (demands.guardedRotatingDemands) {
-        auto plan = prepareGuardedRotatingEndpoints(function, *demands.guardedRotatingDemands, error);
+        const auto& analysis = *demands.guardedRotatingDemands;
+        GuardedPeriodicEndpointInput input{analysis.loop, analysis.expressions, analysis.phases,
+            analysis.payloads, analysis.generators, &analysis.periodic};
+        auto plan = prepareGuardedPeriodicEndpoints(function, input, error);
         const bool regional = succeeded(plan) && demands.region != 0;
         if (regional) { (*plan)->completeInvocation = false; }
         return plan;
@@ -73,21 +76,32 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
     if (demands.boundedDemands) {
         return prepareBoundedLifetimeResult(demands.boundedDemands, error, demands.region == 0);
     }
-    if (demands.sequenceDemands) { return prepareSequenceInsertion(*demands.sequenceDemands); }
+    if (demands.sequenceDemands) { return prepareSequenceLogicalInsertion(*demands.sequenceDemands); }
     if (demands.regionalDemands) {
         const auto& regional = *demands.regionalDemands;
         if (regional.prepare) { return regional.prepare(); }
         return failure();
     }
-    if (demands.arithmeticPeriodicDemands) { return prepareArithmeticPeriodicFunction(); }
+    if (demands.arithmeticPeriodicDemands) {
+        const auto& converted = *demands.arithmeticPeriodicDemands;
+        const auto& conversion = converted.conversion;
+        std::vector<uint64_t> residues;
+        for (const auto& site : converted.sites) { residues.push_back(site.residue); }
+        GuardedPeriodicEndpointInput input{converted.loop, conversion.expressions, converted.phases,
+            conversion.payloads, conversion.generators, &*conversion.guarded, converted.period, residues};
+        return prepareGuardedPeriodicEndpoints(function, input, error);
+    }
     if (demands.arithmeticDemands) {
-        return prepareArithmeticInsertion(function, *program->arithmetic, *demands.arithmeticDemands, error);
+        auto& records = sessionState->attempts[demands.region][AnalysisBackend::Arithmetic].arithmeticRecords;
+        return prepareArithmeticLogicalInsertion(function, *program->arithmetic, *demands.arithmeticDemands,
+                                                 error, records);
     }
     if (demands.generalArithmeticDemands) {
-        return prepareGeneralArithmeticInsertion(function, *program->arithmetic,
-                                                 *demands.generalArithmeticDemands, error);
+        auto& records = sessionState->attempts[demands.region][AnalysisBackend::Arithmetic].arithmeticRecords;
+        return prepareGeneralArithmeticLogicalInsertion(function, *program->arithmetic,
+                                                        *demands.generalArithmeticDemands, error, records);
     }
-    if (demands.finiteGuardedDemands) { return prepareFiniteGuardedInsertion(*demands.finiteGuardedDemands); }
+    if (demands.finiteGuardedDemands) { return prepareFiniteGuardedLogicalInsertion(*demands.finiteGuardedDemands); }
     return failure();
 }
 } // namespace mlir::pto::frontiersynch

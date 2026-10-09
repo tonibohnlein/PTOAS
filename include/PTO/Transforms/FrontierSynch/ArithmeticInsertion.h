@@ -10,7 +10,15 @@
 #include "PTO/Transforms/FrontierSynch/ArithmeticSelectors.h"
 #include "PTO/Transforms/FrontierSynch/GeneralArithmeticSelectors.h"
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
+#include <map>
 namespace mlir::pto::frontiersynch {
+using ArithmeticRecordMap = std::map<std::pair<std::size_t, std::size_t>, int64_t>;
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticLogicalInsertion(
+    func::FuncOp function, const ArithmeticProgram& program,
+    const ArithmeticDemandAnalysis& analysis, std::string& error, ArithmeticRecordMap& records);
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneralArithmeticLogicalInsertion(
+    func::FuncOp function, const ArithmeticProgram& program,
+    const GeneralArithmeticDemandAnalysis& analysis, std::string& error, ArithmeticRecordMap& records);
 // Analysis and selectors remain available if original cuts cannot carry their
 // executable predicates. Preparation is detached; no physical IDs are assigned.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticInsertion(

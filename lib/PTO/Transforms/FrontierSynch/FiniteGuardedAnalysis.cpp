@@ -194,10 +194,16 @@ RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analys
     out.prepareFiltered = [state](const RegionalDemandFilter& filter) { return state->prepare(filter); };
     return out;
 }
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedInsertion(FiniteGuardedAnalysis& analysis)
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedLogicalInsertion(FiniteGuardedAnalysis& analysis)
 {
     if (!analysis.error.empty() || !analysis.state) { return failure(); }
     auto result = analysis.state->prepare();
+    analysis.insertionError = analysis.state->insertionError;
+    return result;
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedInsertion(FiniteGuardedAnalysis& analysis)
+{
+    auto result = prepareFiniteGuardedLogicalInsertion(analysis);
     if (succeeded(result)) {
         (*result)->allocationCertificate =
             regionalAllocationCertificate(finiteGuardedRegionalResult(analysis), **result);
@@ -206,7 +212,6 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedInsertion(Fi
                 finiteGuardedRegionalResult(analysis), **result);
         }
     }
-    analysis.insertionError = analysis.state->insertionError;
     return result;
 }
 } // namespace mlir::pto::frontiersynch
