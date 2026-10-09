@@ -41,6 +41,7 @@ public:
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareLogical(const AnalysisOutcome& result);
     LogicalResult attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan);
     const AnalysisConstructionCounts& constructionCounts() const { return construction; }
+    uint64_t arithmeticGeneratorConstructions() const;
     // Call before reusing this object after original IR mutation. Previously
     // returned handles must no longer be queried against that IR.
     void invalidate();
@@ -88,6 +89,7 @@ public:
     const ProgramRecognition* result() const { return program ? &*program : nullptr; }
 private:
     LogicalResult recognizeStructure();
+    LogicalResult ensureArithmeticGenerators();
     SequenceRegionResolver regionalResolver();
     void recordWholeRegion(AnalysisBackend backend);
     AnalysisOutcome requestBackend(AnalysisBackend backend, const AnalysisRequest& request);
