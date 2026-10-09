@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
@@ -19,27 +20,15 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
     composer.costs = {};
     for (const auto& child : composer.children) {
         const auto& cost = child.regional.cost;
-        if (cost.arithmeticRegions > UINT64_MAX - composer.costs.arithmeticRegions ||
-            cost.boundaryBytes > UINT64_MAX - composer.costs.boundaryBytes ||
-            cost.retainedExpressionNodes > UINT64_MAX - composer.costs.retainedExpressionNodes) {
-            result.error = "regional arithmetic cost count exceeds representation";
-            return result;
+        for (auto member : {&RegionalCost::arithmeticRegions, &RegionalCost::boundaryBytes,
+            &RegionalCost::retainedExpressionNodes, &RegionalCost::physicalFragments,
+            &RegionalCost::rotatingResidues, &RegionalCost::numericVisits, &RegionalCost::repeatedRegions,
+            &RegionalCost::phaseDescriptions, &RegionalCost::selectorComparisons, &RegionalCost::crossingCandidates,
+            &RegionalCost::implicationChecks, &RegionalCost::numericalLeafQueries,
+            &RegionalCost::numericalIndexOperations, &RegionalCost::numericalMerges,
+            &RegionalCost::numericalReusedChildren}) {
+            accumulateCost(composer.costs.*member, cost.*member);
         }
-        composer.costs.arithmeticRegions += cost.arithmeticRegions;
-        composer.costs.boundaryBytes += cost.boundaryBytes;
-        composer.costs.retainedExpressionNodes += cost.retainedExpressionNodes;
-        composer.costs.physicalFragments += cost.physicalFragments;
-        composer.costs.rotatingResidues += cost.rotatingResidues;
-        composer.costs.numericVisits += cost.numericVisits;
-        composer.costs.repeatedRegions += cost.repeatedRegions;
-        composer.costs.phaseDescriptions += cost.phaseDescriptions;
-        composer.costs.selectorComparisons += cost.selectorComparisons;
-        composer.costs.crossingCandidates += cost.crossingCandidates;
-        composer.costs.implicationChecks += cost.implicationChecks;
-        composer.costs.numericalLeafQueries += cost.numericalLeafQueries;
-        composer.costs.numericalIndexOperations += cost.numericalIndexOperations;
-        composer.costs.numericalMerges += cost.numericalMerges;
-        composer.costs.numericalReusedChildren += cost.numericalReusedChildren;
     }
     if (!composer.importSummaries(composer.requireEndpoints)) {
         const bool symbolic = llvm::any_of(composer.children, [](const Child& child) {

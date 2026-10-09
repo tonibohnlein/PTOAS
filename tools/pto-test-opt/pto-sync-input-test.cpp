@@ -153,7 +153,19 @@ LogicalResult checkRetainedDemands(func::FuncOp function, pto::GMAliasPolicy pol
   logical.needs.synchronization = true;
   auto unsupported = session.analyze(logical);
   const auto work = counts.mathematicalAttempts;
+  const auto estimates = session.costRecords().size();
   auto retry = session.analyze(logical);
+  const bool stableEstimates = session.costRecords().size() == estimates;
+  if (!stableEstimates) {
+    return function.emitError("repeated request rebuilt cost selection");
+  }
+  const auto costs = session.costRecords();
+  for (std::size_t i = 1; i < costs.size(); ++i) {
+    if (costs[i].request == costs[i - 1].request &&
+        estimatedCostLess(costs[i].estimate, costs[i - 1].estimate)) {
+      return function.emitError("eligible arithmetic methods were not ordered by estimated work");
+    }
+  }
   auto again = session.minimumDemands();
   if (unsupported.status != AnalysisStatus::UnmetObligation || !unsupported.mathematical ||
       unsupported.mathematical != first.mathematical || retry.mathematical != first.mathematical ||

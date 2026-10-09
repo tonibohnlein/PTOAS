@@ -303,7 +303,9 @@ namespace {
 // Persist recognition independently of which logical backend succeeds. The
 // report contains no borrowed operations or values and survives insertion.
 DictionaryAttr contractReport(const frontiersynch::ProgramRecognition& program, StringRef logicalBackend,
-                              uint64_t arithmeticGeneratorConstructions)
+                              uint64_t arithmeticGeneratorConstructions,
+                              ArrayRef<frontiersynch::AnalysisCostRecord> costs,
+                              const frontiersynch::AnalysisConstructionCounts& counts)
 {
     MLIRContext* context = program.nodes.front().anchor->getContext();
     Builder b(context);
@@ -364,6 +366,30 @@ DictionaryAttr contractReport(const frontiersynch::ProgramRecognition& program, 
     report.set("logical_plan", b.getStringAttr("ready"));
     report.set("selected_logical_backend", b.getStringAttr(logicalBackend));
     report.set("arithmetic_generator_constructions", b.getI64IntegerAttr(arithmeticGeneratorConstructions));
+    SmallVector<Attribute> estimates;
+    for (const auto& record : costs) {
+        NamedAttrList entry;
+        entry.set("method", b.getStringAttr(record.method));
+        entry.set("region", b.getI64IntegerAttr(record.region));
+        entry.set("request", b.getI64IntegerAttr(record.request));
+        entry.set("attempt_constructions", b.getI64IntegerAttr(record.attemptConstructions));
+        auto count = [&](StringRef name, frontiersynch::EstimatedCount value) {
+            Attribute encoded = value ? Attribute(IntegerAttr::get(
+                IntegerType::get(context, 64, IntegerType::Unsigned), APInt(64, *value))) :
+                Attribute(b.getStringAttr("unknown"));
+            entry.set(name, encoded);
+        };
+        count("work", record.estimate.work); count("representation", record.estimate.representation);
+        count("generator_pieces", record.estimate.generatorPieces); count("ports", record.estimate.ports);
+        count("numerical_window", record.estimate.numericalWindow);
+        count("circuit_nodes", record.estimate.circuitNodes);
+        count("relation_conversion", record.estimate.relationConversion);
+        estimates.push_back(entry.getDictionary(context));
+    }
+    report.set("cost_estimates", b.getArrayAttr(estimates));
+    report.set("mathematical_attempts", b.getI64IntegerAttr(counts.mathematicalAttempts));
+    report.set("logical_preparations", b.getI64IntegerAttr(counts.logicalPreparations));
+    report.set("allocation_exports", b.getI64IntegerAttr(counts.allocationExports));
     report.set("physical_allocation", b.getStringAttr("not-requested"));
     return report.getDictionary(context);
 }
@@ -395,7 +421,7 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     }
     if (succeeded(prepared)) {
         (*prepared)->recognitionReport = contractReport(*analysis.result(), logicalBackend,
-                                                       analysis.arithmeticGeneratorConstructions());
+            analysis.arithmeticGeneratorConstructions(), analysis.costRecords(), analysis.constructionCounts());
     }
     if (failed(prepared)) {
         auto diagnostic = function.emitError("logical plan unavailable; Section 5 contract outcomes:");
