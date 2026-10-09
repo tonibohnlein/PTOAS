@@ -181,6 +181,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareBounded
     if (boundedAnalysis) { recordWholeRegion(AnalysisBackend::BoundedLifetime); }
     return prepared;
 }
+uint64_t FrontierAnalysis::arithmeticRegionConstructions() const
+{
+    return sessionState ? sessionState->arithmeticRegionBuilds : 0;
+}
 uint64_t FrontierAnalysis::arithmeticGeneratorConstructions() const
 {
     return sessionState ? sessionState->arithmeticGeneratorBuilds : 0;
@@ -306,7 +310,7 @@ namespace {
 // Persist recognition independently of which logical backend succeeds. The
 // report contains no borrowed operations or values and survives insertion.
 DictionaryAttr contractReport(const frontiersynch::ProgramRecognition& program, StringRef logicalBackend,
-                              uint64_t arithmeticGeneratorConstructions,
+                              uint64_t arithmeticGeneratorConstructions, uint64_t arithmeticRegionConstructions,
                               ArrayRef<frontiersynch::AnalysisCostRecord> costs,
                               const frontiersynch::AnalysisConstructionCounts& counts)
 {
@@ -369,6 +373,7 @@ DictionaryAttr contractReport(const frontiersynch::ProgramRecognition& program, 
     report.set("logical_plan", b.getStringAttr("ready"));
     report.set("selected_logical_backend", b.getStringAttr(logicalBackend));
     report.set("arithmetic_generator_constructions", b.getI64IntegerAttr(arithmeticGeneratorConstructions));
+    report.set("arithmetic_region_constructions", b.getI64IntegerAttr(arithmeticRegionConstructions));
     SmallVector<Attribute> estimates;
     for (const auto& record : costs) {
         NamedAttrList entry;
@@ -424,7 +429,8 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     }
     if (succeeded(prepared)) {
         (*prepared)->recognitionReport = contractReport(*analysis.result(), logicalBackend,
-            analysis.arithmeticGeneratorConstructions(), analysis.costRecords(), analysis.constructionCounts());
+            analysis.arithmeticGeneratorConstructions(), analysis.arithmeticRegionConstructions(),
+            analysis.costRecords(), analysis.constructionCounts());
     }
     if (failed(prepared)) {
         auto diagnostic = function.emitError("logical plan unavailable; Section 5 contract outcomes:");

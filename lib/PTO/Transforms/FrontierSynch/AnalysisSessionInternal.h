@@ -36,6 +36,10 @@ struct AnalysisSessionState {
     std::map<std::size_t, std::map<AnalysisBackend, BackendAttempt>> attempts;
     // Canonical original-loop construction is independent of root/regional exports.
     std::map<std::pair<std::size_t, AnalysisBackend>, BackendAttempt> loopAttempts;
+    // Nonrecursive arithmetic leaf construction is shared by a sequence's
+    // local adapter and subsequent standalone requests for the same region.
+    std::map<std::size_t, BackendAttempt> arithmeticRegionAttempts;
+    uint64_t arithmeticRegionBuilds = 0;
     std::shared_ptr<RegionExpressions> expressions = std::make_shared<RegionExpressions>();
     std::set<AnalysisBackend> wholeRegionEvidence;
     std::vector<std::size_t> activeRegions;

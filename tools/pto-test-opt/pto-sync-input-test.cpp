@@ -104,8 +104,10 @@ LogicalResult checkRegionalSession(func::FuncOp function, pto::GMAliasPolicy pol
       return function.emitError("regional success lost its identity or established whole-function evidence");
     }
     const auto work = session.constructionCounts().mathematicalAttempts;
+    const auto arithmetic = session.arithmeticRegionConstructions();
     auto retry = session.minimumDemands(id, interfaces);
-    if (retry.mathematical != first.mathematical || session.constructionCounts().mathematicalAttempts != work) {
+    if (retry.mathematical != first.mathematical || session.constructionCounts().mathematicalAttempts != work ||
+        session.arithmeticRegionConstructions() != arithmetic) {
       return function.emitError("regional request repeated mathematical construction");
     }
     auto retained = session.minimumDemands(id);
@@ -139,6 +141,13 @@ LogicalResult checkRegionalSession(func::FuncOp function, pto::GMAliasPolicy pol
     if (child.status != AnalysisStatus::Ready ||
         session.constructionCounts().logicalPreparations != preparations) {
       return function.emitError("whole-region preparation bypassed the child export cache");
+    }
+  }
+  if (auto expected = function->getAttrOfType<IntegerAttr>("test.expected_arithmetic_regions")) {
+    const bool expectedCount = session.arithmeticRegionConstructions() == expected.getValue().getLimitedValue();
+    if (!expectedCount) {
+      return function.emitError("unexpected arithmetic regional construction count: ")
+          << session.arithmeticRegionConstructions();
     }
   }
   return success();

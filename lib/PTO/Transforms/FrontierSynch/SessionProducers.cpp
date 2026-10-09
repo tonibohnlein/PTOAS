@@ -156,7 +156,8 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver()
     };
     resolver.demands = [this](std::size_t region, AnalysisBackend backend) {
         std::string error;
-        return produceLoopBackend(backend, error, region);
+        return backend == AnalysisBackend::Arithmetic ? produceArithmeticRegion(region, error) :
+                                                        produceLoopBackend(backend, error, region);
     };
     return resolver;
 }
@@ -181,22 +182,37 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend
         owned->backend = "sequence";
         return owned;
     }
-    if (backend == AnalysisBackend::Arithmetic) {
-        const auto& node = program->nodes[region];
-        if (node.kind != StructureKind::Loop && node.kind != StructureKind::Conditional) { return {}; }
-        auto* root = node.anchor;
-        if (!root) { error = "arithmetic region has no original root"; return {}; }
-        auto regional = analyzeArithmeticRegionRetained({function, root}, *structuralIndex, *storage,
-            sessionState->expressions, owned->arithmeticRegionalDemands, error);
-        if (!owned->arithmeticRegionalDemands) { return {}; }
-        if (succeeded(regional)) {
-            owned->regionalDemands = std::make_shared<const RegionalAnalysis>(std::move(*regional));
-        }
-        owned->backend = "arithmetic";
-        return owned;
-    }
+    if (backend == AnalysisBackend::Arithmetic) { return produceArithmeticRegion(region, error); }
     error = "backend has no standalone regional adapter";
     return {};
+}
+std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceArithmeticRegion(
+    std::size_t region, std::string& error)
+{
+    auto& cached = sessionState->arithmeticRegionAttempts[region];
+    if (!cached.produced) {
+        cached.produced = true;
+        const auto& node = program->nodes[region];
+        const bool applicable = node.kind == StructureKind::Loop || node.kind == StructureKind::Conditional;
+        if (!applicable || !node.anchor) {
+            cached.demandError = "arithmetic region has no supported original root";
+        } else {
+            auto owned = std::make_shared<MathematicalResult>();
+            owned->input = storage;
+            owned->recognition = program;
+            owned->region = region;
+            owned->backend = "arithmetic";
+            if (sessionState->arithmeticRegionBuilds != UINT64_MAX) { ++sessionState->arithmeticRegionBuilds; }
+            auto regional = analyzeArithmeticRegionRetained({function, node.anchor}, *structuralIndex, *storage,
+                sessionState->expressions, owned->arithmeticRegionalDemands, cached.demandError);
+            if (succeeded(regional)) {
+                owned->regionalDemands = std::make_shared<const RegionalAnalysis>(std::move(*regional));
+            }
+            if (owned->arithmeticRegionalDemands) { cached.mathematical = std::move(owned); }
+        }
+    }
+    error = cached.demandError;
+    return cached.mathematical;
 }
 std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
     AnalysisBackend backend, std::string& error)
