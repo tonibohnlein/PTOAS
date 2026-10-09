@@ -126,11 +126,10 @@ const StructureNode* selectRoot(func::FuncOp function, const ProgramRecognition&
     }
     return selected;
 }
-bool freshScope(func::FuncOp function, const ProgramRecognition& program, const StructureNode& node)
+bool freshScope(func::FuncOp function, scf::ForOp outer, ArrayRef<const CompoundInstanceElement*> phases)
 {
-    auto outer = node.numericTemplate->outer;
-    for (const auto& payload : program.payloads) {
-        if (!payload.phase || !payload.phase->elementOp || !outer->isProperAncestor(payload.phase->elementOp)) {
+    for (const auto* phase : phases) {
+        if (!phase || !phase->elementOp || !outer->isProperAncestor(phase->elementOp)) {
             return false;
         }
     }
@@ -143,10 +142,12 @@ bool freshScope(func::FuncOp function, const ProgramRecognition& program, const 
     });
     return clean;
 }
-LogicalResult preflight(func::FuncOp function, const ProgramRecognition& program, const StructureNode*& node)
+LogicalResult preflight(func::FuncOp function, const NumericTemplate& input, const PeriodicAnalysis& analysis,
+                        const NumericTemplateEndpoints& endpoints, ArrayRef<const CompoundInstanceElement*> phases)
 {
-    node = selectRoot(function, program);
-    if (!node || !function.getBody().hasOneBlock()) {
+    const bool complete = function && input.outer && input.result.state == RecognitionState::Applicable &&
+        input.outer->getParentOp() == function.getOperation() && function.getBody().hasOneBlock();
+    if (!complete) {
         return function.emitError("logical insertion requires one complete whole-function numeric template");
     }
     // Numeric-template arithmetic and logical occurrence identities use 64-bit
@@ -155,7 +156,6 @@ LogicalResult preflight(func::FuncOp function, const ProgramRecognition& program
     if (indexBits.isScalable() || indexBits.getFixedValue() != 64) {
         return function.emitError("logical insertion requires the numeric template's 64-bit index representation");
     }
-    const auto& input = *node->numericTemplate;
     auto outer = input.outer;
     auto lower = constant(outer.getLowerBound()), step = constant(outer.getStep());
     const bool bounds = lower && step && *lower == input.lower && *step == input.step && *step > 0 &&
@@ -166,17 +166,24 @@ LogicalResult preflight(func::FuncOp function, const ProgramRecognition& program
             return function.emitError("empty-invocation certificate no longer matches the loop bounds");
         }
     }
-    auto expected = buildNumericTemplateEndpoints(input, *node->periodicAnalysis);
+    auto expected = buildNumericTemplateEndpoints(input, analysis);
     DominanceInfo dominance(function);
     const bool registered = RegisteredOperationName::lookup("pto.logical_set", function.getContext()) &&
         RegisteredOperationName::lookup("pto.logical_wait", function.getContext());
-    if (!bounds || !registered || !expected.logical.error.empty() || !samePlan(*node->logicalEndpoints, expected) ||
-        !freshScope(function, program, *node) || !validCuts(expected, dominance)) {
+    const bool usable = bounds && registered && expected.logical.error.empty() && samePlan(endpoints, expected) &&
+        freshScope(function, outer, phases) && validCuts(expected, dominance);
+    if (!usable) {
         return function.emitError("logical insertion has an unsupported or unavailable endpoint obligation");
     }
     return success();
 }
 } // namespace
+LogicalResult validateNumericTemplateInsertion(func::FuncOp function, const NumericalRegionDemands& demands,
+                                              const NumericTemplateEndpoints& endpoints, const SyncInput& input)
+{
+    if (!function) { return failure(); }
+    return preflight(function, demands.form, demands.analysis, endpoints, input.instructions());
+}
 LogicalResult prepareCountedEndpointCode(func::FuncOp function, const NumericTemplateEndpoints& endpoints,
                                          PreparedLogicalPlan& prepared)
 {
@@ -205,8 +212,15 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplate(
     if (!function) {
         return failure();
     }
-    const StructureNode* node = nullptr;
-    if (failed(preflight(function, program, node))) {
+    const StructureNode* node = selectRoot(function, program);
+    if (!node) {
+        return function.emitError("logical insertion requires one complete whole-function numeric template"), failure();
+    }
+    SmallVector<const CompoundInstanceElement*> phases;
+    for (const auto& payload : program.payloads) { phases.push_back(payload.phase); }
+    const auto checked = preflight(function, *node->numericTemplate, *node->periodicAnalysis,
+                                   *node->logicalEndpoints, phases);
+    if (failed(checked)) {
         return failure();
     }
     auto prepared = std::make_unique<PreparedLogicalPlan>(planId);

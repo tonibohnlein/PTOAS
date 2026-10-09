@@ -309,14 +309,19 @@ void SequenceAnalysisState::bindAdapters()
             return both(reaches, both(*pa, *pb));
         };
         out.prepare = [this, id]() -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
-            const auto& current = children[id];
+            auto& current = children[id];
             if (!current.loop) {
                 auto prepared = prepareExplicitInsertion(function, current.explicitAnalysis, false);
                 if (succeeded(prepared)) { (*prepared)->completeInvocation = false; }
                 return prepared;
             }
             auto prepared = std::make_unique<PreparedLogicalPlan>(0);
-            if (failed(prepareCountedEndpointCode(function, current.endpoints, *prepared))) { return failure(); }
+            if (current.numericTemplate && !current.numericRecipe) {
+                current.numericRecipe = std::make_shared<const NumericTemplateEndpoints>(
+                    buildNumericTemplateEndpoints(*current.numericTemplate, current.periodic));
+            }
+            const auto& endpoints = current.numericRecipe ? *current.numericRecipe : current.endpoints;
+            if (failed(prepareCountedEndpointCode(function, endpoints, *prepared))) { return failure(); }
             prepared->allocationPreparation = [owner = shared_from_this(), id](PreparedLogicalPlan& plan) {
                 const auto& child = owner->children[id];
                 plan.regionalAllocation = periodicRegionalAllocation(child.regional, child.periodic, child.trips);

@@ -30,16 +30,20 @@ uint64_t FrontierAnalysis::numericTemplatePreflights() const
 {
     return sessionState ? sessionState->numericTemplatePlans.size() : 0;
 }
+uint64_t FrontierAnalysis::numericalRegionConstructions() const
+{
+    return sessionState ? sessionState->numericalRegionBuilds : 0;
+}
 const NumericTemplate& FrontierAnalysis::materializeNumericRegion(std::size_t region)
 {
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
     auto& node = program->nodes[region];
     if (node.numericTemplate) { return *node.numericTemplate; }
-    auto found = sessionState->numericTemplatePlans.find(region);
+    auto found = sessionState->numericTemplatePlans.find({region, false});
     if (found == sessionState->numericTemplatePlans.end()) {
         auto plan = std::make_shared<const NumericTemplatePlan>(
             preflightNumericTemplate(cast<scf::ForOp>(node.anchor), *structuralIndex, *storage));
-        found = sessionState->numericTemplatePlans.emplace(region, std::move(plan)).first;
+        found = sessionState->numericTemplatePlans.emplace(std::make_pair(region, false), std::move(plan)).first;
     }
     node.numericTemplate = materializeNumericTemplate(*found->second, *structuralIndex, *storage);
     return *node.numericTemplate;
@@ -180,16 +184,23 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
         break;
     }
     case AnalysisBackend::NumericalPeriodic: {
-        auto& local = program->nodes[region];
-        (void)materializeNumericRegion(region);
-        if (local.numericTemplate && local.numericTemplate->result.state == RecognitionState::Applicable &&
-            !local.periodicAnalysis) {
-            local.periodicAnalysis = analyzeNumericTemplate(*local.numericTemplate);
+        const auto key = std::make_pair(region, true);
+        auto found = sessionState->numericTemplatePlans.find(key);
+        if (found == sessionState->numericTemplatePlans.end()) {
+            auto plan = std::make_shared<const NumericTemplatePlan>(
+                preflightNumericTemplate(loop, *structuralIndex, *storage, {}, true));
+            found = sessionState->numericTemplatePlans.emplace(key, std::move(plan)).first;
         }
-        const bool available = node->numericTemplate && node->periodicAnalysis &&
-            node->periodicAnalysis->error.empty() && !node->numericTemplate->specializedBody;
-        if (!available) { return {}; }
-        owned->numericNode = static_cast<std::size_t>(node - program->nodes.data());
+        auto result = std::make_shared<NumericalRegionDemands>();
+        if (sessionState->numericalRegionBuilds != UINT64_MAX) { ++sessionState->numericalRegionBuilds; }
+        result->form = materializeNumericTemplate(*found->second, *structuralIndex, *storage);
+        if (result->form.result.state != RecognitionState::Applicable) {
+            error = "regional numerical template form is unavailable"; return {};
+        }
+        result->analysis = analyzeNumericTemplate(result->form);
+        if (!result->analysis.error.empty()) { error = result->analysis.error; return {}; }
+        owned->numericalDemands = std::move(result);
+        owned->numericNode = region;
         owned->backend = "numerical-periodic";
         break;
     }

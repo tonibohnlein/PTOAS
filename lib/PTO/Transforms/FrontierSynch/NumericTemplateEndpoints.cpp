@@ -8,33 +8,36 @@
 // Original phase/coordinate anchors for numeric-template logical recipes.
 #include "PTO/Transforms/FrontierSynch/NumericTemplateEndpoints.h"
 namespace mlir::pto::frontiersynch {
-NumericTemplateEndpoints buildNumericTemplateEndpoints(const NumericTemplate& input,
-                                                       const PeriodicAnalysis& analysis)
+FailureOr<std::vector<TemplateEndpointAnchor>> numericTemplateAnchors(
+    const NumericTemplate& input, const PeriodicAnalysis& analysis, std::string& error)
 {
-    NumericTemplateEndpoints result;
+    std::vector<TemplateEndpointAnchor> anchors;
     const bool certified = input.result.state == RecognitionState::Applicable &&
         input.period == 1 && input.refresh == 1 && input.outer && input.payloads.size() == analysis.payloads.size();
-    if (!certified) {
-        result.logical.error = "numeric endpoint template mismatch";
-        return result;
-    }
+    if (!certified) { error = "numeric endpoint template mismatch"; return failure(); }
     for (std::size_t i = 0; i < input.payloads.size(); ++i) {
         const auto& payload = input.payloads[i];
         if (!payload.phase || static_cast<uint32_t>(payload.phase->kPipeValue) != analysis.payloads[i].pipe) {
-            NumericTemplateEndpoints failure;
-            failure.logical.error = "numeric endpoint pipe mismatch";
-            return failure;
+            error = "numeric endpoint pipe mismatch"; return failure();
         }
         auto* operation = payload.phase->elementOp;
         if (!operation || !operation->getBlock()) {
-            NumericTemplateEndpoints failure;
-            failure.logical.error = "numeric endpoint has no legal operation cut";
-            return failure;
+            error = "numeric endpoint has no legal operation cut"; return failure();
         }
-        result.anchors.push_back({payload.phase, payload.coordinates,
+        anchors.push_back({payload.phase, payload.coordinates,
             {operation->getBlock(), operation}, {operation->getBlock(), operation->getNextNode()}});
     }
-    return bindPeriodicEndpoints(input.outer, result.anchors, analysis);
+    return anchors;
+}
+NumericTemplateEndpoints buildNumericTemplateEndpoints(const NumericTemplate& input,
+                                                       const PeriodicAnalysis& analysis)
+{
+    std::string error;
+    auto anchors = numericTemplateAnchors(input, analysis, error);
+    if (failed(anchors)) {
+        NumericTemplateEndpoints result; result.logical.error = std::move(error); return result;
+    }
+    return bindPeriodicEndpoints(input.outer, *anchors, analysis);
 }
 NumericTemplateEndpoints bindPeriodicEndpoints(scf::ForOp outer,
     ArrayRef<TemplateEndpointAnchor> anchors, const PeriodicAnalysis& analysis)

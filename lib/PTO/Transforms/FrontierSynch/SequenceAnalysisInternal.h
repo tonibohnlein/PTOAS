@@ -48,6 +48,8 @@ struct Child {
     ExplicitAnalysis explicitAnalysis;
     PeriodicAnalysis periodic;
     NumericTemplateEndpoints endpoints;
+    std::shared_ptr<const NumericTemplate> numericTemplate;
+    std::shared_ptr<const NumericTemplateEndpoints> numericRecipe;
     std::optional<std::size_t> originalNode;
     std::optional<Expr> originalArmGuard;
 };

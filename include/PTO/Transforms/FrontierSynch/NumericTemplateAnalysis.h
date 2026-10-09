@@ -12,6 +12,12 @@
 #include "PTO/Transforms/FrontierSynch/PeriodicAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/LifetimeScan.h"
 namespace mlir::pto::frontiersynch {
+// Owned regional mathematics, independent of whole-function eligibility and
+// optional endpoint/storage exports. Original IR and modeled input are borrowed.
+struct NumericalRegionDemands {
+    NumericTemplate form;
+    PeriodicAnalysis analysis;
+};
 // Result type IDs are indices into NumericTemplate::payloads. Original phase,
 // fixed inner coordinates and cuts remain in that template, without IR cloning.
 // The template's whole-function GM discharge and period-one refresh certificate

@@ -18,6 +18,7 @@
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/FiniteVisitRecognition.h"
 #include "PTO/Transforms/FrontierSynch/VaryingRotatingRecognition.h"
 #include "PTO/Transforms/FrontierSynch/ClosedCallees.h"
@@ -242,6 +243,118 @@ LogicalResult checkAllocationSession(func::FuncOp function, pto::GMAliasPolicy p
   }
   llvm::outs() << "allocation-session: " << logical.mathematical->backend
                << " available=" << succeeded(allocation) << " retained-demands cached-export\n";
+  return success();
+}
+LogicalResult checkIndependentNumericalPlans(func::FuncOp function,
+    FailureOr<std::unique_ptr<pto::frontiersynch::PreparedLogicalPlan>>& left,
+    FailureOr<std::unique_ptr<pto::frontiersynch::PreparedLogicalPlan>>& right,
+    const std::string& originalIR) {
+  const bool prepared = succeeded(left) && succeeded(right) && left->get() != right->get() &&
+      !(*left)->allocationCertificate && !(*right)->allocationCertificate;
+  if (!prepared) { return function.emitError("numerical preparation did not produce independent logical plans"); }
+  llvm::DenseSet<Operation*> firstOperations;
+  for (const auto& preparation : (*left)->preparation) {
+    if (preparation.code->getParent()) { return failure(); }
+    preparation.code->walk([&](Operation* operation) { firstOperations.insert(operation); });
+  }
+  for (const auto& preparation : (*right)->preparation) {
+    if (preparation.code->getParent()) { return failure(); }
+    bool shared = false;
+    preparation.code->walk([&](Operation* operation) { shared |= firstOperations.contains(operation); });
+    if (shared) { return function.emitError("numerical plans share detached operations"); }
+  }
+  auto printPlan = [](const pto::frontiersynch::PreparedLogicalPlan& plan) {
+    std::string text;
+    llvm::raw_string_ostream stream(text);
+    for (const auto& preparation : plan.preparation) {
+      for (auto& operation : *preparation.code) { operation.print(stream); }
+    }
+    return text;
+  };
+  const auto secondText = printPlan(**right);
+  left->reset();
+  std::string currentIR;
+  llvm::raw_string_ostream stream(currentIR);
+  function.print(stream);
+  const bool intact = printPlan(**right) == secondText && currentIR == originalIR;
+  if (!intact) {
+    return function.emitError("numerical detached plan destruction changed surviving code or original IR");
+  }
+  return success();
+}
+LogicalResult checkNumericalRegionSession(func::FuncOp function, pto::GMAliasPolicy policy) {
+  using namespace pto::frontiersynch;
+  FrontierAnalysis session(function);
+  if (failed(session.initialize(policy))) { return failure(); }
+  auto node = llvm::find_if(session.result()->nodes, [&](const auto& value) {
+    return value.kind == StructureKind::Loop && value.anchor->getParentOp() == function;
+  });
+  if (node == session.result()->nodes.end()) { return failure(); }
+  const auto id = static_cast<std::size_t>(node - session.result()->nodes.begin());
+  std::string originalIR;
+  llvm::raw_string_ostream originalStream(originalIR);
+  function.print(originalStream);
+  auto first = session.analyzeNumericalRegion({id});
+  const auto owner = first.mathematical;
+  const bool exact = first.status == AnalysisStatus::Ready && owner && owner->numericalDemands &&
+      session.numericalRegionConstructions() == 1 && !session.hasWholeFunctionMinimumDemands() &&
+      !session.constructionCounts().logicalPreparations && !session.constructionCounts().allocationExports;
+  if (!exact) { return function.emitError("regional numerical mathematics unavailable or promoted to root"); }
+  if (function->hasAttr("test.numerical_existing")) {
+    const auto recipe = buildNumericTemplateEndpoints(owner->numericalDemands->form,
+                                                      owner->numericalDemands->analysis);
+    unsigned diagnostics = 0;
+    ScopedDiagnosticHandler handler(function.getContext(), [&](Diagnostic&) {
+      ++diagnostics;
+      return success();
+    });
+    const auto checked = validateNumericTemplateInsertion(function, *owner->numericalDemands, recipe,
+                                                          *session.input());
+    const bool rejected = failed(checked) && diagnostics == 1 && recipe.logical.error.empty() &&
+        session.analyzeNumericalRegion({id}).mathematical == owner && session.numericalRegionConstructions() == 1;
+    if (!rejected) { return function.emitError("owned numerical validator accepted preexisting synchronization"); }
+    llvm::outs() << "numerical-region-session: preexisting-sync rejected retained-demands\n";
+    return success();
+  }
+  AnalysisRequest stronger; stronger.region = id;
+  stronger.needs.queries = stronger.needs.selectors = stronger.needs.synchronization = true;
+  auto exported = session.analyzeNumericalRegion(stronger);
+  const bool retained = exported.status == AnalysisStatus::UnmetObligation && exported.mathematical == owner &&
+      session.analyzeNumericalRegion({id}).mathematical == owner && session.numericalRegionConstructions() == 1 &&
+      !session.constructionCounts().logicalPreparations && !session.constructionCounts().allocationExports;
+  if (!retained) { return function.emitError("numerical export failure discarded demands or repeated construction"); }
+  auto root = session.analyzeNumericalRegion({});
+  const bool external = function->hasAttr("test.numerical_external");
+  const bool rootValid = external ? !root.mathematical && !session.hasWholeFunctionMinimumDemands() :
+      root.mathematical && root.mathematical->numericalDemands == owner->numericalDemands;
+  if (!rootValid) { return function.emitError("numerical root/child eligibility or ownership mismatch"); }
+  auto* sequence = session.analyzeSequenceFunction();
+  const bool shared = sequence && sequence->error.empty() && session.numericalRegionConstructions() == 1 &&
+      session.analyzeNumericalRegion({id}).mathematical == owner &&
+      !session.constructionCounts().logicalPreparations && !session.constructionCounts().allocationExports;
+  if (!shared) { return function.emitError("sequence rebuilt numerical mathematics or eagerly prepared commands"); }
+  if (!external) {
+    auto left = session.prepareLogical(root), right = session.prepareLogical(root);
+    if (failed(checkIndependentNumericalPlans(function, left, right, originalIR))) { return failure(); }
+    const bool empty = owner->numericalDemands->form.emptyInvocation;
+    if ((*right)->completeInvocation == empty || (!empty && (*right)->endpoints.empty())) {
+      return function.emitError("numerical invocation or endpoint ownership mismatch");
+    }
+  }
+  auto leftSequence = prepareSequenceLogicalInsertion(*sequence);
+  auto rightSequence = prepareSequenceLogicalInsertion(*sequence);
+  if (failed(checkIndependentNumericalPlans(function, leftSequence, rightSequence, originalIR))) { return failure(); }
+  const bool unchangedWork = session.numericalRegionConstructions() == 1 &&
+      !session.constructionCounts().allocationExports;
+  if (!unchangedWork) { return function.emitError("numerical preparation repeated mathematics or built allocation"); }
+  const auto alternate = policy == pto::GMAliasPolicy::MayAlias ?
+      pto::GMAliasPolicy::MayNotAlias : pto::GMAliasPolicy::MayAlias;
+  if (failed(session.initialize(alternate))) { return failure(); }
+  auto isolated = session.analyzeNumericalRegion({id});
+  const bool reset = isolated.mathematical && isolated.mathematical->numericalDemands != owner->numericalDemands &&
+      session.numericalRegionConstructions() == 1 && failed(session.prepareLogical(first));
+  if (!reset) { return function.emitError("numerical owner crossed an alias context"); }
+  llvm::outs() << "numerical-region-session: owned-demands cached-sequence independent-root lazy-endpoints\n";
   return success();
 }
 LogicalResult checkArithmeticRanking(func::FuncOp function, pto::GMAliasPolicy policy) {
@@ -1690,6 +1803,9 @@ int main(int argc, char **argv) {
     auto delegation = pto::frontiersynch::recognizeClosedCallees(*module);
     for (auto function : module->getOps<func::FuncOp>()) {
       if (function.isDeclaration()) { continue; }
+      const bool existingNumericProbeFailed = certification && function->hasAttr("test.numerical_existing") &&
+          failed(checkNumericalRegionSession(function, policy));
+      if (existingNumericProbeFailed) { return 1; }
       if (pto::hasManualOnCoreSynchronization(function)) {
         llvm::outs() << "recognition-skipped " << function.getSymName() << ": manual-on-core-synchronization\n";
         continue;
@@ -1736,6 +1852,9 @@ int main(int argc, char **argv) {
       }
       if (regionalRecognition && failed(analysis.recognizeRegionalArithmetic())) { return 1; }
       if (certification) {
+        const bool numericalProbeFailed = function->hasAttr("test.numerical_region_session") &&
+            failed(checkNumericalRegionSession(function, policy));
+        if (numericalProbeFailed) { return 1; }
         const bool exportProbeFailed = function->hasAttr("test.export_failure") &&
             failed(checkArithmeticExportFailure(function, policy));
         if (exportProbeFailed) {
