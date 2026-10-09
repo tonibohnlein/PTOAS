@@ -31,7 +31,7 @@ namespace {
 // Whole-invocation shortcut only: every payload uses the protected scalar
 // pipe, and every other effect is accounted for by the shared leaf contract.
 // No storage geometry, visit enumeration or regional selector is required.
-bool nativeScalarRequirements(func::FuncOp function, const SyncInput& input)
+bool nativeScalarRequirements(func::FuncOp function, const SyncInput& input, const PhaseIndex& index)
 {
     auto scalar = ptoStorageProtection().scalarPipe;
     if (!scalar || function.isDeclaration() || !llvm::hasSingleElement(function.getBody()) ||
@@ -41,8 +41,6 @@ bool nativeScalarRequirements(func::FuncOp function, const SyncInput& input)
                     return resultAvailability(*phase, value) == SyncResultAvailability::RequiresCompletion;
                 });
         })) { return false; }
-    PhaseIndex index;
-    if (failed(index.build(function, input))) { return false; }
     RecognitionResult checked;
     function.walk([&](Operation* op) {
         if (op == function.getOperation()) { return; }
@@ -67,18 +65,8 @@ LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy, bool r
         if (!storage) { return failure(); }
         return nativeScalarOnly && !requireStructure ? success() : recognizeStructure();
     }
-    nativeScalarOnly = false;
-    arithmeticAnalysis.reset();
-    generalArithmeticAnalysis.reset();
-    arithmeticGeneratorStage.reset();
-    arithmeticPeriodicAnalysis.reset();
-    periodicExports = {};
-    explicitAnalysis.reset();
-    boundedAnalysis.reset();
-    sequenceAnalysis.reset();
-    finiteVisitAnalyses.clear();
-    program.reset();
-    storage.reset();
+    invalidate();
+    construction = {};
     initialized = true;
     policy = requestedPolicy;
     if (!function) {
@@ -88,22 +76,27 @@ LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy, bool r
     if (failed(pending->build(function, SyncInstructionView::PipeEnvelopes))) {
         return failure();
     }
-    nativeScalarOnly = nativeScalarRequirements(function, *pending);
+    structuralIndex = std::make_shared<PhaseIndex>();
+    ++construction.structuralIndices;
+    if (failed(structuralIndex->build(function, *pending))) {
+        structuralIndex.reset();
+        return failure();
+    }
+    nativeScalarOnly = nativeScalarRequirements(function, *pending, *structuralIndex);
     storage = std::move(pending);
     return nativeScalarOnly && !requireStructure ? success() : recognizeStructure();
 }
 LogicalResult FrontierAnalysis::recognizeStructure() {
     if (program) { return success(); }
     if (!storage) { return failure(); }
-    auto recognized = recognizeProgram(function, *storage);
+    auto recognized = recognizeProgram(function, *storage, *structuralIndex);
     if (failed(recognized)) { return failure(); }
     program = std::move(*recognized);
     return success();
 }
 LogicalResult FrontierAnalysis::analyzeNumericCandidates() {
     if (failed(recognizeStructure())) { return failure(); }
-    PhaseIndex index;
-    if (failed(index.build(function, *storage))) { return failure(); }
+    const auto& index = *structuralIndex;
     for (auto& node : program->nodes) {
         if (node.varyingRotating && !node.varyingDemands &&
             node.varyingRotating->result.state == RecognitionState::Applicable) {
@@ -125,18 +118,17 @@ LogicalResult FrontierAnalysis::analyzeExplicitFunction() {
         return failure();
     }
     if (!explicitAnalysis) {
-        PhaseIndex index;
-        if (failed(index.build(function, *storage))) {
-            return failure();
-        }
-        explicitAnalysis = analyzeExplicit(function.front(), index, *storage);
+        ++construction.explicitReductions;
+        explicitAnalysis = std::make_shared<ExplicitAnalysis>(
+            analyzeExplicit(function.front(), *structuralIndex, *storage));
     }
     return success(explicitAnalysis->error.empty());
 }
 SequenceAnalysis* FrontierAnalysis::analyzeSequenceFunction() {
     if (failed(recognizeStructure())) { return nullptr; }
     if (!sequenceAnalysis) {
-        sequenceAnalysis = analyzeSequence(function, *storage, *program);
+        sequenceAnalysis = analyzeSequenceRegion(function, *storage, *program, 0,
+            std::make_shared<RegionExpressions>(), structuralIndex);
         recordSequenceContractAttempt(*program, *storage, *sequenceAnalysis);
         refreshProgramContractAudit(*program);
     }
@@ -282,10 +274,7 @@ LogicalResult FrontierAnalysis::recognizeArithmetic() {
     if (program->arithmetic || function.isDeclaration()) {
         return success();
     }
-    PhaseIndex index;
-    if (failed(index.build(function, *storage))) {
-        return failure();
-    }
+    const auto& index = *structuralIndex;
     // Record every configured arithmetic contract before selecting a backend.
     // A later profile never erases membership established by an earlier one.
     std::optional<ArithmeticProgram> selected;

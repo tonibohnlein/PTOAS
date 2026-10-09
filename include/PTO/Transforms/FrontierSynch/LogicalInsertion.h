@@ -18,6 +18,7 @@
 namespace mlir::pto::frontiersynch {
 struct RegionalAllocationSummary;
 struct CompactBoundingOwner;
+struct MathematicalResult;
 enum class LogicalCommandKind { Set, Barrier, Wait };
 struct PreparedLogicalEndpoint {
     Operation* before = nullptr;
@@ -58,6 +59,7 @@ struct PreparedLogicalPlan {
     std::shared_ptr<RegionalAllocationSummary> regionalAllocation;
     // Owns the unchanged shared input and selected bounding mathematics.
     std::shared_ptr<const CompactBoundingOwner> compactBoundingOwner;
+    std::shared_ptr<const MathematicalResult> mathematicalOwner;
     std::vector<LogicalPreparation> preparation;
     std::vector<PreparedLogicalEndpoint> endpoints;
     std::vector<EndpointFamily> families; // Exact source/target coordinate provenance.

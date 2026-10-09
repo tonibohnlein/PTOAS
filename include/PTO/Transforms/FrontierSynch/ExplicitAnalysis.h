@@ -50,6 +50,6 @@ std::optional<bool> explicitEventPrecedes(const ExplicitAnalysis& analysis,
                                         PeriodicEvent source, PeriodicEvent target);
 // Whole-function route only. Preparation is detached and failure changes no IR.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareExplicitInsertion(
-    func::FuncOp function, const ExplicitAnalysis& analysis);
+    func::FuncOp function, const ExplicitAnalysis& analysis, bool includeAllocation = true);
 } // namespace mlir::pto::frontiersynch
 #endif
