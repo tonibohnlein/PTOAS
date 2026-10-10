@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // General integer reuse: quantified pairs, residue transitions and union coverage.
-#include "PTO/Transforms/FrontierSynch/GeneralArithmeticAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/GeneralArithmeticAllocation.h"
 #include "mlir/IR/MLIRContext.h"
 #include "llvm/Support/raw_ostream.h"
 namespace fs = mlir::pto::frontiersynch;

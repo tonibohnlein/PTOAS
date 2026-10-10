@@ -6,8 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exercise supplied-primitive recognition independently of IR effect recovery.
-#include "PTO/Transforms/FrontierSynch/ArithmeticRecognition.h"
-#include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRecognition.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgram.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/MLIRContext.h"

@@ -6,8 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Inspect logical recipes without turning logical identities into hardware IDs.
-#include "PTO/Transforms/FrontierSynch/NumericTemplateEndpoints.h"
-#include "PTO/Transforms/FrontierSynch/EndpointFamilies.h"
+#include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateEndpoints.h"
+#include "PTO/Transforms/FrontierSynch/Shared/EndpointFamilies.h"
 #include "mlir/IR/AsmState.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/JSON.h"

@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// Composable allocation lifetimes. Queries and selectors borrow one expression arena.
+#ifndef PTO_TRANSFORMS_FRONTIERSYNCH_REGIONALALLOCATION_H
+#define PTO_TRANSFORMS_FRONTIERSYNCH_REGIONALALLOCATION_H
+#include "PTO/Transforms/FrontierSynch/Shared/RegionalAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
+namespace mlir::pto::frontiersynch {
+struct RegionalAllocationMember {
+    uint32_t record = 0;
+    uint64_t stride = 0, phase = 0;
+    RegionalEvent firstSource, lastTarget;
+    RegionExpressions::Id active = 0;
+    std::optional<PhysicalTupleRule> tupleRule;
+    // At most one paired handoff per invocation of the supplying region.
+    // Repeating the region invalidates this property even for a constant lane.
+    bool singletonHandoff = false;
+    // Mixed-direction palettes carry the actual direction on each record.
+    // Missing values preserve the legacy group direction.
+    std::optional<uint32_t> sourcePipe, targetPipe;
+};
+struct RegionalAllocationLane {
+    // Guarded per-phase bounds for one certified lane. Candidates may coexist;
+    // a reuse proof must cover every present last/first pair. Coordinates are
+    // meaningful only under their selector presence in the common arena.
+    std::vector<RegionalSelector> firstSources, lastTargets;
+};
+// Internal reuse within a palette is already certified. Different palettes may
+// share IDs only when every pair of their active lifetime envelopes is ordered.
+struct RegionalAllocationGroup {
+    uint32_t sourcePipe = 0, targetPipe = 0;
+    uint64_t budget = 0;
+    std::vector<RegionalAllocationMember> members;
+    // Index is the member formula's local lane. Complete iff size == budget;
+    // empty means unavailable. Members/record IDs are never duplicated to
+    // obtain a lane view. An empty selector pair denotes an unused lane.
+    std::vector<RegionalAllocationLane> lanes;
+};
+struct RegionalAllocationSummary { std::vector<RegionalAllocationGroup> groups; };
+// Preserve certified child rules while combining compatible palette formulas.
+// These offsets are logical; physical IDs are allocated independently within each directed pipe pair.
+// Null means no complete typed result was produced.
+std::shared_ptr<RegionalAllocationSummary> coalesceRegionalAllocation(
+    const RegionalAnalysis& region, const RegionalAllocationSummary& allocation);
+// For an unconditional fixed skeleton: every type is present in each period.
+// Guarded periodic producers must supply their own guarded lifetime selectors.
+std::shared_ptr<RegionalAllocationSummary> periodicRegionalAllocation(
+    const RegionalAnalysis& region, const PeriodicAnalysis& periodic, RegionExpressions::Id trips);
+std::shared_ptr<RegionalAllocationSummary> finiteRegionalAllocation(
+    const RegionalAnalysis& region, const PreparedLogicalPlan& plan);
+DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, const PreparedLogicalPlan& plan);
+FailureOr<PhysicalAllocationPlan> decodeRegionalAllocation(func::FuncOp function,
+    DictionaryAttr certificate, ArrayRef<int64_t> eligibleIds);
+} // namespace mlir::pto::frontiersynch
+#endif

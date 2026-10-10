@@ -1,0 +1,364 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+#include "SequenceAnalysisInternal.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
+#include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionalRelations.h"
+namespace mlir::pto::frontiersynch {
+namespace {
+SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
+{
+    SequenceAnalysis result;
+    auto& composer = *state;
+    composer.costs = {};
+    for (const auto& child : composer.children) {
+        const auto& cost = child.regional.cost;
+        for (auto member : {&RegionalCost::arithmeticRegions, &RegionalCost::boundaryBytes,
+            &RegionalCost::retainedExpressionNodes, &RegionalCost::physicalFragments,
+            &RegionalCost::rotatingResidues, &RegionalCost::numericVisits, &RegionalCost::repeatedRegions,
+            &RegionalCost::phaseDescriptions, &RegionalCost::selectorComparisons, &RegionalCost::crossingCandidates,
+            &RegionalCost::implicationChecks, &RegionalCost::numericalLeafQueries,
+            &RegionalCost::numericalIndexOperations, &RegionalCost::numericalMerges,
+            &RegionalCost::numericalReusedChildren}) {
+            accumulateCost(composer.costs.*member, cost.*member);
+        }
+    }
+    if (!composer.importSummaries(composer.requireEndpoints)) {
+        const bool symbolic = llvm::any_of(composer.children, [](const Child& child) {
+            return !child.regional.symbolicStorageEffects.empty();
+        });
+        const SyncInput* input = composer.input;
+        for (const auto& child : composer.children) {
+            if (!input && child.regional.relations) { input = child.regional.relations->data.input; }
+            if (!input && child.regional.arithmeticRelations) { input = child.regional.arithmeticRelations->input; }
+        }
+        if (symbolic && input && !composer.children.empty()) {
+            std::vector<RegionalAnalysis> children;
+            for (const auto& child : composer.children) { children.push_back(child.regional); }
+            std::string diagnostic;
+            if (!composer.indexReady) {
+                if (failed(composer.index.build(composer.function, *input))) {
+                    result.error = "symbolic composition shared prerequisite index unavailable"; return result;
+                }
+                composer.indexReady = true;
+            }
+            auto composed = composeSymbolicRegionalSequence(children, composer.function, *input,
+                                                             composer.index, diagnostic);
+            if (succeeded(composed) && (!composed->capabilities.endpointRecipes ||
+                (!composed->prepare && !composed->prepareWithVisits))) {
+                result.insertionError = composed->relations && !composed->relations->exportObligation.empty() ?
+                    composed->relations->exportObligation : "symbolic sequence endpoint recipes are unavailable";
+            }
+            if (succeeded(composed)) {
+                composer.error.clear();
+                composer.relationalResult = std::move(*composed);
+                result.cost = composer.relationalResult->cost;
+                result.state = std::move(state);
+                return result;
+            }
+            if (!diagnostic.empty()) { composer.error += "; " + diagnostic; }
+        }
+        result.error = composer.error;
+        return result;
+    }
+    composer.bridges();
+    if (composer.reconstructPrerequisites && !composer.valueBridges()) { result.error = composer.error; return result; }
+    if (!composer.closure()) {
+        // Retain failed construction records without publishing a mathematical
+        // interface. Every query/preparation adapter rejects result.error.
+        result.error = !composer.error.empty() ? composer.error :
+            (!composer.expressions.constructionError().empty() ? composer.expressions.constructionError() :
+             "sequence crossing construction failed");
+        result.cost = composer.costs;
+        composer.resolveOriginal = {};
+        result.state = std::move(state);
+        return result;
+    }
+    if (!composer.expressions.constructionError().empty()) {
+        result.error = composer.expressions.constructionError(); return result;
+    }
+    for (const auto& port : composer.ports) {
+        const auto& child = composer.children[port.child];
+        result.occurrences.push_back({port.child, port.type, child.anchors[port.type],
+                                      child.regional.occurrenceLoops[port.type], port.ordinal, port.visits});
+    }
+    // Parent selectors are guarded folds. They preserve original occurrence
+    // identities and remain reusable independently of incoming storage state.
+    auto append = [](auto& destination, const auto& source) {
+        for (auto value : source) { destination.push_back({value.port, value.present}); }
+    };
+    auto mask = [&](auto& selected, Expr predicate) {
+        for (auto& value : selected) { value.present = composer.both(value.present, predicate); }
+    };
+    for (uint32_t cell = 0; cell < composer.cells.size(); ++cell) {
+        SequenceStorageBoundary out;
+        out.cell = composer.cells[cell];
+        auto seenWriter = composer.no();
+        for (uint32_t child = 0; child < composer.children.size(); ++child) {
+            const auto& local = composer.boundaries[child][cell];
+            auto written = composer.no();
+            for (auto writer : local.firstWriters) {
+                written = composer.either(written, writer.present);
+                out.firstWriters.push_back({writer.port, composer.both(writer.present, composer.negate(seenWriter))});
+            }
+            for (const auto& [pipe, reads] : local.firstReaders) {
+                auto previouslyRead = composer.no();
+                for (auto prior : out.firstReaders[pipe]) {
+                    previouslyRead = composer.either(previouslyRead, prior.present);
+                }
+                for (auto read : reads) {
+                    out.firstReaders[pipe].push_back({read.port, composer.both(read.present,
+                        composer.negate(composer.either(seenWriter, previouslyRead)))});
+                }
+            }
+            mask(out.lastWriters, composer.negate(written));
+            append(out.lastWriters, local.lastWriters);
+            for (auto& [pipe, reads] : out.lastReaders) {
+                auto replaced = written;
+                auto found = local.lastReaders.find(pipe);
+                if (found != local.lastReaders.end()) {
+                    for (auto read : found->second) { replaced = composer.either(replaced, read.present); }
+                }
+                mask(reads, composer.negate(replaced));
+            }
+            for (const auto& [pipe, reads] : local.lastReaders) { append(out.lastReaders[pipe], reads); }
+            seenWriter = composer.either(seenWriter, written);
+        }
+        result.storageBoundary.push_back(std::move(out));
+    }
+    for (uint32_t childId = 0; childId < composer.children.size(); ++childId) {
+        for (const auto& [pipe, values] : composer.nativeFirst[childId]) {
+            auto seen = composer.no(), nonempty = composer.no();
+            for (auto previous : result.firstPayloads[pipe]) { seen = composer.either(seen, previous.present); }
+            for (auto selected : values) {
+                nonempty = composer.either(nonempty, selected.present);
+                result.firstPayloads[pipe].push_back({selected.port,
+                    composer.both(selected.present, composer.negate(seen))});
+            }
+            mask(result.lastPayloads[pipe], composer.negate(nonempty));
+            auto found = composer.nativeLast[childId].find(pipe);
+            if (found != composer.nativeLast[childId].end()) {
+                append(result.lastPayloads[pipe], found->second);
+            }
+        }
+    }
+    result.cost = composer.costs;
+    result.cost.children = composer.children.size(); result.cost.cells = composer.cells.size();
+    result.cost.ports = composer.ports.size(); result.cost.crossings = composer.crossings.size();
+    result.cost.expressionNodes = composer.expressions.size();
+    if (!composer.expressions.constructionError().empty()) {
+        result.error = composer.expressions.constructionError(); return result;
+    }
+    result.state = std::move(state);
+    return result;
+}
+} // namespace
+SequenceAnalysis analyzeSequence(func::FuncOp function, const SyncInput& input, const ProgramRecognition& program)
+{
+    return analyzeSequenceRegion(function, input, program, 0, std::make_shared<RegionExpressions>());
+}
+void recordSequenceContractAttempt(ProgramRecognition& program, const SyncInput& input,
+                                   const SequenceAnalysis& analysis)
+{
+    ProgramContractCandidate candidate;
+    candidate.kind = ContractClass::Sequence;
+    candidate.node = 0;
+    candidate.membership = ContractStatus::Unproved;
+    candidate.demands = ContractImplementation::Unavailable;
+    candidate.implementationError = analysis.error;
+    const auto& state = analysis.state;
+    const bool original = state && state->program == &program && state->input == &input &&
+        state->completeInvocation && state->reconstructPrerequisites && state->requiredOuterLoops.empty() &&
+        !program.nodes.empty() && program.nodes[0].kind == StructureKind::Sequence && !program.nodes[0].parent &&
+        program.nodes[0].anchor == state->function.getOperation() &&
+        program.nodes[0].region == &state->function.getBody();
+    const bool retainedRelations = state && state->relationalResult && state->relationalResult->relations &&
+        state->relationalResult->relations->data.completeRequiredOrder;
+    const bool established = original && analysis.error.empty() && (retainedRelations ||
+        (analysis.insertionError.empty() && state->error.empty() && state->expressions.constructionError().empty()));
+    // A failed endpoint/export attempt cannot erase an already owned exact
+    // relational result. Keep its diagnostic separate from class membership.
+    if (established && !analysis.insertionError.empty()) {
+        candidate.implementationError = analysis.insertionError;
+        candidate.endpointRecipes = ContractImplementation::Unavailable;
+    }
+    // finishSequence publishes a state only after importing exact child
+    // queries/selectors, reconciling shared storage, reconstructing original
+    // value prerequisites and completing the crossing closure. Composed views
+    // lack the original program/input identities and cannot prove this claim.
+    for (const char* obligation : {"original-structured-occurrence-tree", "shared-context-exact-child-queries",
+        "complete-storage-boundary-selectors", "native-first-last-and-supplied-prerequisite-coverage"}) {
+        candidate.obligations.push_back({obligation,
+            established ? ContractStatus::Established : ContractStatus::Unproved});
+    }
+    if (established) {
+        candidate.membership = ContractStatus::Established;
+        candidate.demands = ContractImplementation::Available;
+    } else if (candidate.implementationError.empty()) {
+        candidate.implementationError = original && !state->error.empty() ? state->error :
+            "sequence result does not certify the original complete invocation before endpoint preparation";
+    }
+    program.sequenceContract = std::move(candidate);
+    refreshProgramContractAudit(program);
+}
+SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& input,
+    const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions,
+    std::shared_ptr<PhaseIndex> sharedIndex, bool requireEndpoints)
+{
+    return analyzeSequenceRegionWithResolver(function, input, program, node, std::move(expressions),
+                                             std::move(sharedIndex), requireEndpoints, {});
+}
+SequenceAnalysis analyzeSequenceRegionWithResolver(func::FuncOp function, const SyncInput& input,
+    const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions,
+    std::shared_ptr<PhaseIndex> sharedIndex, bool requireEndpoints, SequenceRegionResolver resolver)
+{
+    SequenceAnalysis result;
+    if (!function || function.isDeclaration() || !function.getBody().hasOneBlock() || !expressions ||
+        !expressions->constructionError().empty()) {
+        result.error = "sequence route requires a single structured function body"; return result;
+    }
+    auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions), std::move(sharedIndex));
+    state->input = &input;
+    state->program = &program;
+    state->resolveOriginal = std::move(resolver);
+    state->completeInvocation = node == 0;
+    // Mathematical session requests pass false. A distinct stronger snapshot
+    // requests endpoint-capable children before reducing complete crossings,
+    // including at the root, without replacing the earlier exact mathematics.
+    state->requireEndpoints = requireEndpoints;
+    if (node < program.nodes.size()) { state->requiredOuterLoops = program.nodes[node].loops; }
+    if (!state->collect(node) || !state->partition()) { result.error = state->error; return result; }
+    // Construction callbacks borrow the session; retained results must not.
+    state->resolveOriginal = {};
+    state->summarize();
+    state->bindAdapters();
+    return finishSequence(std::move(state));
+}
+SequenceAnalysis composeRegionalSequence(func::FuncOp function,
+    std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
+    bool reconstructPrerequisites, bool requireEndpoints)
+{
+    return composeRegionalSequenceWithin(function, std::move(expressions), std::move(children),
+                                        reconstructPrerequisites, requireEndpoints, {});
+}
+SequenceAnalysis composeRegionalSequenceWithin(func::FuncOp function,
+    std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
+    bool reconstructPrerequisites, bool requireEndpoints, ArrayRef<scf::ForOp> enclosing)
+{
+    SequenceAnalysis result;
+    if (!function || function.isDeclaration() || !function.getBody().hasOneBlock() || !expressions ||
+        !expressions->constructionError().empty()) {
+        result.error = "sequence requires a valid common regional expression arena"; return result;
+    }
+    auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions));
+    state->requiredOuterLoops.assign(enclosing.begin(), enclosing.end());
+    state->reconstructPrerequisites = reconstructPrerequisites;
+    state->requireEndpoints = requireEndpoints;
+    SmallVector<const CompoundInstanceElement*> phases;
+    DenseSet<const CompoundInstanceElement*> seen;
+    for (const auto& regional : children) {
+        for (const auto& anchor : regional.anchors) {
+            if (anchor.phase && seen.insert(anchor.phase).second) {
+                phases.push_back(anchor.phase);
+            }
+        }
+    }
+    if (reconstructPrerequisites && failed(state->index.build(function, phases))) {
+        result.error = "cannot reconstruct regional value prerequisites";
+        return result;
+    }
+    for (auto& regional : children) {
+        Child child; child.regional = std::move(regional);
+        state->children.push_back(std::move(child));
+    }
+    return finishSequence(std::move(state));
+}
+NumericalChainQueryCost sequenceNumericalQueryCounts(const SequenceAnalysis& analysis)
+{
+    return analysis.state ? analysis.state->numericalQueryCost : NumericalChainQueryCost{};
+}
+RegionExpressions* sequenceExpressions(SequenceAnalysis& analysis)
+{
+    return analysis.state ? &analysis.state->expressions : nullptr;
+}
+std::pair<uint64_t, uint64_t> sequencePreparationCounts(const SequenceAnalysis& analysis)
+{
+    if (!analysis.state) { return {0, 0}; }
+    return {analysis.state->childPreparationOperations, analysis.state->crossingPreparationOperations};
+}
+std::optional<RegionExpressions::Id> sequenceEventReachability(const SequenceAnalysis& analysis,
+    uint32_t sourcePort, PeriodicEventKind sourceKind, uint32_t targetPort, PeriodicEventKind targetKind)
+{
+    const auto validKind = [](PeriodicEventKind kind) {
+        return kind == PeriodicEventKind::Start || kind == PeriodicEventKind::Completion;
+    };
+    if (!analysis.state || !analysis.error.empty() || !validKind(sourceKind) || !validKind(targetKind) ||
+        sourcePort >= analysis.occurrences.size() || targetPort >= analysis.occurrences.size()) {
+        return std::nullopt;
+    }
+    auto source = 2*sourcePort + (sourceKind == PeriodicEventKind::Completion);
+    auto target = 2*targetPort + (targetKind == PeriodicEventKind::Completion);
+    return analysis.state->eventReachability(source, target);
+}
+std::optional<RegionExpressions::Id> sequenceEventReachability(SequenceAnalysis& analysis,
+    SequenceEvent source, SequenceEvent target)
+{
+    if (!analysis.state || !analysis.error.empty()) { return std::nullopt; }
+    auto& state = *analysis.state;
+    auto valid = [&](const SequenceEvent& event) {
+        return event.child < state.children.size() && validRegionalEvent(state.children[event.child].regional,
+                   {event.type, event.ordinal, event.kind, event.visits});
+    };
+    if (!valid(source) || !valid(target)) { return std::nullopt; }
+    if (state.relationalResult) {
+        auto map = [&](const SequenceEvent& event) {
+            uint32_t type = event.type;
+            for (uint32_t i = 0; i < event.child; ++i) { type += state.children[i].regional.anchors.size(); }
+            return RegionalEvent{type, event.ordinal, event.kind, event.visits};
+        };
+        return regionalReachability(*state.relationalResult, map(source), map(target));
+    }
+    return state.eventReachability(std::move(source), std::move(target));
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceLogicalInsertion(SequenceAnalysis& analysis,
+    ArrayRef<scf::ForOp> enclosing, const SequenceEndpointResolver& resolver)
+{
+    if (!analysis.state || !analysis.error.empty()) { return failure(); }
+    analysis.insertionError.clear();
+    auto result = analysis.state->prepare(enclosing, resolver);
+    if (failed(result)) { analysis.insertionError = analysis.state->error; }
+    return result;
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceInsertion(SequenceAnalysis& analysis)
+{
+    auto result = prepareSequenceLogicalInsertion(analysis);
+    if (succeeded(result)) { prepareAllocationSupport(**result); }
+    const bool needsAllocation = succeeded(result) && !(*result)->allocationCertificate;
+    if (needsAllocation) {
+        (*result)->allocationCertificate = regionalAllocationCertificate(sequenceRegionalResult(analysis), **result);
+        if (!(*result)->allocationCertificate) {
+            (*result)->allocationCertificate =
+                finiteRegionalAllocationCertificate(sequenceRegionalResult(analysis), **result);
+        }
+    }
+    return result;
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceInsertion(
+    func::FuncOp function, const SyncInput& input, const ProgramRecognition& program,
+    std::string& error, SequenceCost* cost)
+{
+    auto analysis = analyzeSequence(function, input, program);
+    if (!analysis.error.empty()) { error = analysis.error; return failure(); }
+    auto prepared = prepareSequenceInsertion(analysis);
+    error = failed(prepared) ? analysis.insertionError : analysis.error;
+    if (cost) { *cost = analysis.cost; }
+    return prepared;
+}
+} // namespace mlir::pto::frontiersynch

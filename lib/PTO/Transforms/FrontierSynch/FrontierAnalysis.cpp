@@ -5,23 +5,24 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Per-function recognition and detached demand production. The public pass
-// retains exact mathematics and stops before synchronization emission and
-// physical allocation. Detached emission libraries remain available to tests.
+// Per-function analysis and detached synchronization preparation. The public
+// logical pass uses the transactional module coordinator; physical event IDs
+// are assigned by the following allocation pass. Analysis-only mode retains
+// the mathematical certification checkpoint without changing the original IR.
 #include "AnalysisSessionInternal.h"
-#include "PTO/Transforms/FrontierSynch/ExecutionContexts.h"
-#include "PTO/Transforms/FrontierSynch/ClosedCallees.h"
+#include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
+#include "PTO/Transforms/FrontierSynch/Shared/ClosedCallees.h"
 #include "PTO/Transforms/Passes.h"
-#include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
-#include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
-#include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/GuardedPeriodicInsertion.h"
-#include "PTO/Transforms/FrontierSynch/CompactAllocation.h"
-#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
-#include "PTO/Transforms/FrontierSynch/FiniteVisitRecognition.h"
+#include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Structured/RotatingAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Structured/GuardedPeriodicInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompactAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FiniteVisitRecognition.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "RecognitionInternal.h"
+#include "Shared/RecognitionInternal.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 // Whole-invocation shortcut only: every payload uses the protected scalar
@@ -449,10 +450,17 @@ DictionaryAttr contractReport(const frontiersynch::ProgramRecognition& program, 
     return report.getDictionary(context);
 }
 FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
-    func::FuncOp function, GMAliasPolicy policy)
+    func::FuncOp function, GMAliasPolicy policy,
+    const std::optional<frontiersynch::ArithmeticLimits>& profile = std::nullopt)
 {
     frontiersynch::FrontierAnalysis analysis(function);
     if (failed(analysis.initialize(policy))) { return failure(); }
+    if (profile && failed(analysis.configureArithmeticProfiles(
+            ArrayRef<frontiersynch::ArithmeticLimits>(&*profile, 1),
+            ArrayRef<frontiersynch::ArithmeticLimits>(&*profile, 1)))) {
+        function.emitError("frontier arithmetic profile context could not be established");
+        return failure();
+    }
     frontiersynch::AnalysisRequest request;
     request.mode = frontiersynch::AnalysisMode::Fallback;
     request.needs.synchronization = true;
@@ -540,8 +548,17 @@ public:
             }
             profile = *parsed;
         }
-        // Mathematical certification uses the session dispatcher. Code and
-        // allocation remain behind the explicit not-implemented boundary.
+        if (!analysisOnly) {
+            if (failed(frontiersynch::insertModuleSynchronization(getOperation(), policy,
+                    [&](func::FuncOp function, GMAliasPolicy contextPolicy) {
+                        return prepareFunction(function, contextPolicy, profile);
+                    }))) {
+                signalPassFailure();
+            }
+            return;
+        }
+        // Explicit mathematical checkpoint: retain the detailed original-region
+        // audit without preparing or attaching any synchronization commands.
         bool unfinished = false;
         getOperation().walk([&](ModuleOp module) {
             auto delegation = frontiersynch::recognizeClosedCallees(module);
@@ -554,7 +571,7 @@ public:
                     GMAliasPolicy::MayAlias : policy;
                 if (failed(analysis.initialize(contextPolicy, true))) {
                     function.emitError("frontier shared-input or structural recognition failed; "
-                                       "compilation not implemented yet");
+                                       "analysis-only checkpoint unavailable");
                     continue;
                 }
                 if (profile && failed(analysis.configureArithmeticProfiles(
@@ -567,8 +584,8 @@ public:
                 const auto& candidates = analysis.result()->contractAudit;
                 const auto wrapper = delegation.wrappers.find(function);
                 auto diagnostic = function.emitError(
-                    "frontier compilation not implemented yet: stopped after mathematical analysis; "
-                    "synchronization emission and allocation are not implemented yet");
+                    "frontier analysis-only checkpoint: stopped after mathematical analysis; "
+                    "synchronization emission and allocation were not requested");
                 for (const auto& result : certifications) {
                     auto& note = diagnostic.attachNote(analysis.result()->nodes[result.region].anchor->getLoc());
                     note << "region=" << result.region << " ";
@@ -576,7 +593,7 @@ public:
                         note << "recognized tractable class " << result.selectedClass
                              << " representation=" << result.representation << "; exact demands retained";
                     } else {
-                        note << "unresolved tractable-class obligations; further steps not implemented yet";
+                        note << "unresolved tractable-class obligations; compilation support not evaluated";
                         for (const auto& obligation : result.analysis.obligations) {
                             if (!obligation.diagnostic.empty()) { note << "; " << obligation.diagnostic; }
                         }
@@ -585,7 +602,7 @@ public:
                 if (wrapper != delegation.wrappers.end()) {
                     diagnostic.attachNote(function.getLoc()) << "class=closed-callee region=function membership="
                         << frontiersynch::recognitionName(wrapper->second.result.state)
-                        << "; continuation not implemented yet";
+                        << "; emission not requested";
                 }
                 for (const auto& candidate : candidates) {
                     auto& note = diagnostic.attachNote(function.getLoc());
@@ -593,7 +610,7 @@ public:
                     if (candidate.node) { note << *candidate.node; }
                     else { note << "function"; }
                     note << " membership=" << frontiersynch::contractName(candidate.membership)
-                         << "; continuation not implemented yet";
+                         << "; emission not requested";
                     for (const auto& reason : candidate.diagnostics) {
                         note << "; " << frontiersynch::recognitionName(reason.issue);
                     }

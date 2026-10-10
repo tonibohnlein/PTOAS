@@ -6,8 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-#include "PTO/Transforms/FrontierSynch/BoundedLifetime.h"
-#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
+#include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetime.h"
+#include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/BuiltinTypes.h"

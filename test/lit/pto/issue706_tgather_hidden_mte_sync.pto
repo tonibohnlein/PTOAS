@@ -109,5 +109,5 @@ module {
 // FRONTIER: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID2>]
 // FRONTIER: pto.comm.tgather
 // FRONTIER-NOT: pto.logical_
-// SCARCE: regional allocation not certified within supplied capacity
+// SCARCE: regional lane assignment not certified within directed capacity
 // RUN: not pto-test-opt --pto-frontier-analysis --pto-frontier-allocate='eligible-ids=0' %s 2>&1 | FileCheck %s --check-prefix=SCARCE

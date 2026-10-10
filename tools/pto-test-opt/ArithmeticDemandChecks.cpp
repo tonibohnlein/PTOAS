@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent finite physical-conflict DAGs for the symbolic demand backend.
-#include "PTO/Transforms/FrontierSynch/ArithmeticSelectors.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticSelectors.h"
 #include "mlir/IR/AffineExpr.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"

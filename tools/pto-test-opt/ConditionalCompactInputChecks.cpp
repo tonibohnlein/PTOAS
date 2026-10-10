@@ -6,8 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Finite alternative-word coverage oracle; production never enumerates words.
-#include "PTO/Transforms/FrontierSynch/ConditionalCompactInput.h"
-#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
+#include "PTO/Transforms/FrontierSynch/Shared/ConditionalCompactInput.h"
+#include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <map>

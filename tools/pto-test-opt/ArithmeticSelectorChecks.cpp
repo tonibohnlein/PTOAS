@@ -6,8 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Small independent integer-point checks for DBM primitives and selectors.
-#include "PTO/Transforms/FrontierSynch/ArithmeticSelectors.h"
-#include "PTO/Transforms/FrontierSynch/CompactAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticSelectors.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompactAllocation.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <limits>

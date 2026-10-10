@@ -6,8 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/RegionalRelations.h"
-#include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionalRelations.h"
+#include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
 #include <set>

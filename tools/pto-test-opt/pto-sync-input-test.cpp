@@ -10,22 +10,22 @@
 #include "PTO/Transforms/Passes.h"
 #include "mlir/Pass/PassManager.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
-#include "PTO/Transforms/FrontierSynch/VaryingRotatingRegional.h"
-#include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
-#include "PTO/Transforms/FrontierSynch/Recognition.h"
-#include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
-#include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
+#include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRegional.h"
+#include "PTO/Transforms/FrontierSynch/Shared/PhaseIndex.h"
+#include "PTO/Transforms/FrontierSynch/Shared/Recognition.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgram.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/RegionalRelations.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/FiniteGuardedInternal.h"
-#include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
-#include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
-#include "PTO/Transforms/FrontierSynch/FiniteVisitRecognition.h"
-#include "PTO/Transforms/FrontierSynch/VaryingRotatingRecognition.h"
-#include "PTO/Transforms/FrontierSynch/ClosedCallees.h"
-#include "PTO/Transforms/FrontierSynch/GuardedRotatingInsertion.h"
-#include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionalRelations.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedInternal.h"
+#include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FiniteVisitRecognition.h"
+#include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRecognition.h"
+#include "PTO/Transforms/FrontierSynch/Shared/ClosedCallees.h"
+#include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInsertion.h"
 #include "PTO/IR/PTO.h"
 #include "SyncPhaseCopyChecks.h"
 #include "SyncLogicalInsertionChecks.h"
@@ -1860,6 +1860,7 @@ int main(int argc, char **argv) {
     PassManager manager(&context);
     pto::PTOFrontierAnalysisOptions options;
     options.gmAlias = policy == pto::GMAliasPolicy::MayAlias ? "may-alias" : "may-not-alias";
+    options.analysisOnly = recognitionBoundary;
     manager.addPass(pto::createPTOFrontierAnalysisPass(options));
     const bool rejected = failed(manager.run(*module));
     if (recognitionBoundary) {

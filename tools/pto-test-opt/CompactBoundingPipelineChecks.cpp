@@ -9,12 +9,12 @@
 // Independent dynamic command graph: no producer demand/certificate is used by
 // the oracle. Fixture labels denote whole-cell read/write behavior.
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/CompactBoundingInsertion.h"
-#include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompactBoundingInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "SyncLogicalInsertionChecks.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/BoundarySlices.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/CountedLoop.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/BoundarySlices.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/CountedLoop.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Verifier.h"

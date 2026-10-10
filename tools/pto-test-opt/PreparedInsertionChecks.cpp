@@ -8,10 +8,10 @@
 // Exercise the common inserter without recognition or numerical-loop recipes.
 #include "SyncLogicalInsertionChecks.h"
 #include "PTO/IR/PTO.h"
-#include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
-#include "PTO/Transforms/FrontierSynch/ExecutionContexts.h"
+#include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
-#include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Verifier.h"

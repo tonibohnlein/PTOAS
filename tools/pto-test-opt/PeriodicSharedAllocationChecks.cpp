@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exhaustive permutation oracle; no assignment-solver helpers are reused.
-#include "PTO/Transforms/FrontierSynch/PeriodicSharedAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedAllocation.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>

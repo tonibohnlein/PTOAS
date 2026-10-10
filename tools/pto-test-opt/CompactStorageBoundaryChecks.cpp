@@ -6,8 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent finite occurrence DAG containment for qualified mixed composition.
-#include "PTO/Transforms/FrontierSynch/CompactStorageBoundary.h"
-#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompactStorageBoundary.h"
+#include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "llvm/Support/raw_ostream.h"
 #include <set>
 using namespace mlir;

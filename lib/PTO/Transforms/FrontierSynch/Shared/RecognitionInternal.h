@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+#ifndef PTO_TRANSFORMS_FRONTIERSYNCH_RECOGNITIONINTERNAL_H
+#define PTO_TRANSFORMS_FRONTIERSYNCH_RECOGNITIONINTERNAL_H
+#include "PTO/Transforms/FrontierSynch/Shared/Recognition.h"
+namespace mlir::pto::frontiersynch::detail {
+// Caller proves these branch choices on a contiguous interval of whole loop
+// iterations. The result must only be queried/emitted on that interval.
+// sliceGuards stay in the potential skeleton but require immutable expression
+// replacements in analyzeGuardedRotating, proved for the same interval.
+GuardedRecognition recognizeRotatingSlice(scf::ForOp loop, const PhaseIndex& index,
+    const SyncInput& input, const DenseMap<Value, bool>& choices, ArrayRef<Value> sliceGuards = {});
+// A read with no possible writer anywhere in the supplied shared input,
+// including the same static phase. Safe across arbitrary regional re-entry.
+bool dischargeGlobalReadOnlyEffect(std::size_t effect, const SyncStorageEffects& effects);
+// Globally independent GM effects with disjoint writer visits in this loop.
+// The proof is relative to this loop execution. Repeated regional owners must
+// retain the discharged effect for re-entry; global independence alone does
+// not establish disjoint visits of the same static phase.
+bool dischargeGlobalEffect(std::size_t effect, scf::ForOp loop, const SyncInput& input, const PhaseIndex& index);
+// The same proof needs only the immutable full-invocation shared access model.
+// This overload serves detached composition without constructing another input.
+bool dischargeGlobalEffect(std::size_t effect, scf::ForOp loop,
+                           const SyncStorageEffects& effects, const PhaseIndex& index);
+bool entryExpression(Value value, Operation* entry, const PhaseIndex& index,
+                     SmallVectorImpl<Operation*>& recipe);
+// Complete writer coverage under the skeleton's same-visit Boolean guards.
+bool coversEveryVisit(const GuardedRecognition& skeleton, ArrayRef<std::size_t> writers);
+bool coversEveryVisitUnderFacts(const GuardedRecognition& skeleton, ArrayRef<std::size_t> writers,
+                               const DenseMap<Value, bool>& facts);
+std::optional<PhysicalRefreshDescription> certifyPhysicalRefresh(
+    const GuardedRecognition& skeleton, const SyncInput& input, scf::ForOp loop, RefreshCertificate& certificate);
+void normalizeFragments(RecognitionResult& result, const SyncStorageEffects& effects);
+void inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result);
+void inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result, bool allowEnvelopes);
+bool checkRotatingDomain(scf::ForOp loop, const PhaseIndex& index, RecognitionResult& result, bool canonical = false);
+void inspectRotatingPhases(scf::ForOp loop, ArrayRef<const CompoundInstanceElement*> phases,
+                          const SyncInput& input, const SyncStorageEffects& effects, RecognitionResult& result,
+                          const PhaseIndex& index, bool allowParameters = false, bool independentPhysicalMaps = false);
+} // namespace mlir::pto::frontiersynch::detail
+#endif

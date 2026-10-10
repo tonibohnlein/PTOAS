@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Small physical conflicts/selector oracle, independent of lower-fact inference.
-#include "PTO/Transforms/FrontierSynch/CompactLowerFacts.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompactLowerFacts.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <utility>

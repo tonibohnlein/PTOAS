@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Bounded finite-prefix queries for independent causal-lifetime test oracles.
-#include "PTO/Transforms/FrontierSynch/PeriodicAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Structured/PeriodicAllocation.h"
 #include "llvm/Support/JSON.h"
 namespace fs = mlir::pto::frontiersynch;
 llvm::json::Object dumpPeriodicAllocation(const fs::PeriodicAllocation& result);

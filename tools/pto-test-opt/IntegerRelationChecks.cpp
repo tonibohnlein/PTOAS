@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent finite integer witnesses for projection and Boolean subtraction.
-#include "PTO/Transforms/FrontierSynch/IntegerRelations.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/IntegerRelations.h"
 #include "llvm/Support/raw_ostream.h"
 #include <functional>
 namespace fs = mlir::pto::frontiersynch;

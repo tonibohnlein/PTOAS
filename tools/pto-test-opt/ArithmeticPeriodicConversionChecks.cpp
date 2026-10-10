@@ -6,14 +6,14 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
-#include "PTO/Transforms/FrontierSynch/ArithmeticPeriodicConversion.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticPeriodicConversion.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/Support/raw_ostream.h"
-#include "PTO/Transforms/FrontierSynch/GuardedPeriodicInsertion.h"
-#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
+#include "PTO/Transforms/FrontierSynch/Structured/GuardedPeriodicInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "SyncLogicalInsertionChecks.h"
 #include "mlir/IR/Verifier.h"
 #include <set>

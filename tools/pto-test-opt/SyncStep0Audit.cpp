@@ -8,7 +8,7 @@
 // Validate Step 0 against the shared translator and original MLIR interfaces.
 // The step1 mode uses production pipe envelopes and stops before recognition.
 // This checks preservation, not native footprint completeness or F* readiness.
-#include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
+#include "PTO/Transforms/FrontierSynch/Shared/PhaseIndex.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"

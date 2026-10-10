@@ -7,8 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Connect source structure to recognizers without flattening nested control.
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
-#include "ArithmeticRows.h"
-#include "PTO/Transforms/FrontierSynch/FiniteVisitRecognition.h"
+#include "Arithmetic/ArithmeticRows.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FiniteVisitRecognition.h"
 #include "llvm/ADT/DenseSet.h"
 #include <map>
 namespace mlir::pto::frontiersynch {

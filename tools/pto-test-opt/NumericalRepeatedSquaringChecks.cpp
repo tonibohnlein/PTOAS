@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Small independent occurrence graphs verify the shared definition algebra.
-#include "PTO/Transforms/FrontierSynch/NumericalRepeatedSquaring.h"
+#include "PTO/Transforms/FrontierSynch/Shared/NumericalRepeatedSquaring.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <set>

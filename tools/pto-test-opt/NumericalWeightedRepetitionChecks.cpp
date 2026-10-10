@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent finite unfolding: Boolean BFS never uses scaled ranks or scores.
-#include "PTO/Transforms/FrontierSynch/NumericalWeightedRepetition.h"
+#include "PTO/Transforms/FrontierSynch/Shared/NumericalWeightedRepetition.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <numeric>

@@ -6,8 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent scalar execution of transformed structured counter IR.
-#include "PTO/Transforms/FrontierSynch/PhysicalExecutedCounters.h"
-#include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/PhysicalExecutedCounters.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticInsertion.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Parser/Parser.h"

@@ -1,0 +1,124 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// Syntactic route recognition on original IR; no backend or demand generation.
+#ifndef PTO_TRANSFORMS_FRONTIERSYNCH_RECOGNITION_H
+#define PTO_TRANSFORMS_FRONTIERSYNCH_RECOGNITION_H
+#include "PTO/Transforms/FrontierSynch/Shared/PhaseIndex.h"
+#include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetime.h"
+#include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+
+namespace mlir::pto::frontiersynch {
+enum class RecognitionState { Applicable, NotApplicable, MissingPremise };
+enum class RecognitionIssue {
+    StructuredBody, MultiplePhases, UnmodeledOperation, UnknownPipe,
+    WithinSlotFootprint, SymbolicGeometry, UnknownGeometry, LoopDomain, LoopCarriedState,
+    SlotExpression, IndexArithmetic, CommonStride, OverlappingFamilies,
+    AliasedOperand, UnsupportedView, GuardInvariance, UnsupportedControl,
+    ArithmeticDimension, ArithmeticPeriod, ArithmeticPipeLimit, ArithmeticConfiguration, AdditionalPrerequisite,
+    TemplateExpansionLimit, TemplateContext, GMDischarge, RefreshBound
+};
+struct RecognitionDiagnostic {
+    RecognitionIssue issue;
+    // A proved contract exclusion, rather than an unavailable input/proof.
+    bool outsideClass = false;
+    Operation* anchor = nullptr;
+};
+struct RotatingAccess {
+    std::size_t effect = 0;
+    Value family;
+    uint64_t slots = 1;
+    // Slot = (stride*j + offset) mod slots for iteration ordinal j.
+    uint64_t stride = 0;
+    uint64_t offset = 0;
+    uint64_t refresh = 1;
+    // Exact contiguous within-slot bytes, when proved. Empty for unresolved effects.
+    std::optional<std::pair<uint64_t, uint64_t>> atom;
+    std::optional<std::size_t> guard;
+    AffineExpr parameterOffset; // Replaces offset when nonnull; symbols below.
+    SmallVector<Value> parameters;
+    SmallVector<std::size_t> effects; // All supplied effect IDs merged into this fragment.
+    bool reads = false;
+    bool writes = false;
+    // A contiguous physical bank family recovered from an address map. The
+    // family identity is shared across SSA allocations with this same geometry.
+    std::optional<SyncStorageCell> firstPhysicalSlot;
+    uint64_t physicalSlotStride = 0;
+};
+struct RecognitionResult {
+    RecognitionState state = RecognitionState::Applicable;
+    SmallVector<RecognitionDiagnostic> diagnostics;
+    SmallVector<RotatingAccess, 0> accesses;
+    SmallVector<std::size_t> dischargedEffects; // Proved conflict-free in the unchanged input.
+    void note(RecognitionIssue issue, Operation* anchor, bool outsideClass = false);
+};
+
+// Guard nodes are shared conjunctions: parent AND (condition == takeThen).
+// A missing parent denotes true. Conditions need evaluation only on their path.
+struct GuardNode {
+    std::optional<std::size_t> parent;
+    Value condition;
+    bool takeThen = true;
+};
+struct GuardedPhase {
+    const CompoundInstanceElement* phase = nullptr;
+    std::optional<std::size_t> guard;
+};
+struct GuardedRecognition {
+    RecognitionResult result;
+    SmallVector<GuardNode> guards;
+    SmallVector<GuardedPhase> phases;
+    bool entryGuardsAvailable = true;
+    // Pure, speculatable definitions in operand-first order that make invariant
+    // expressions available at entry. No IR is moved by recognition.
+    SmallVector<Operation*> entryExpressions;
+};
+
+// Index and effects must come from the same unchanged SyncInput and function.
+// Results borrow unchanged input/IR. Applicable establishes this recognizer's
+// input contract, relative to completeness of the supplied effects. It is not
+// Section 8 Ready: no demands, endpoint code, selectors or queries are produced.
+RecognitionResult recognizeExplicit(Block& block, const PhaseIndex& index,
+                                    const SyncStorageEffects& effects);
+// A maximal adjacent run of original leaf operations, without cloning or unfolding.
+RecognitionResult recognizeExplicitRun(ArrayRef<Operation*> operations, const PhaseIndex& index,
+                                       const SyncStorageEffects& effects);
+RecognitionResult recognizeRotating(scf::ForOp loop, const PhaseIndex& index,
+                                    const SyncInput& input, const SyncStorageEffects& effects);
+GuardedRecognition recognizeFiniteGuarded(Region& region, const PhaseIndex& index,
+                                          const SyncStorageEffects& effects);
+// Adjacent original roots, including nested if/else, without visiting siblings.
+GuardedRecognition recognizeFiniteGuarded(ArrayRef<Operation*> roots, const PhaseIndex& index,
+                                          const SyncStorageEffects& effects);
+GuardedRecognition recognizeGuardedRotating(scf::ForOp loop, const PhaseIndex& index,
+                                            const SyncInput& input, const SyncStorageEffects& effects);
+// A bounded finite address schedule projected onto common absolute physical
+// atoms. Phase is the original loop's zero-based ordinal modulo period.
+struct PhysicalRefreshAccess {
+    std::size_t access = 0;
+    uint64_t phase = 0;
+    uint32_t atom = 0;
+};
+struct PhysicalRefreshDescription {
+    uint64_t period = 1;
+    SmallVector<SyncStorageCell> atoms;
+    SmallVector<PhysicalRefreshAccess, 0> accesses;
+};
+struct BoundedLifetimeRecognition {
+    GuardedRecognition skeleton;
+    RefreshCertificate refresh;
+    std::optional<PhysicalRefreshDescription> physical;
+};
+// Independent iteration guards are allowed; unconditional producers establish
+// refresh. This does not certify that future predicates can run at a SET cut.
+BoundedLifetimeRecognition recognizeBoundedLifetime(scf::ForOp loop,
+    const PhaseIndex& index, const SyncInput& input);
+StringRef recognitionName(RecognitionState state);
+StringRef recognitionName(RecognitionIssue issue);
+} // namespace mlir::pto::frontiersynch
+#endif

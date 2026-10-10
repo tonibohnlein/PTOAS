@@ -5,10 +5,10 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-#include "../../lib/PTO/Transforms/FrontierSynch/RegionalRelationsInternal.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/SequenceAnalysisInternal.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/ScalarPrerequisiteMapping.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/FiniteAccessPreflight.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/RegionalRelationsInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/ScalarPrerequisiteMapping.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/FiniteAccessPreflight.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"

@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent finite event closure and all-type threshold/profile oracles.
-#include "PTO/Transforms/FrontierSynch/PeriodicExcessCertificate.h"
+#include "PTO/Transforms/FrontierSynch/Structured/PeriodicExcessCertificate.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 using namespace mlir;

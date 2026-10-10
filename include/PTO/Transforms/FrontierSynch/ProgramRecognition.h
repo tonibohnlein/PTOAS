@@ -9,12 +9,12 @@
 // function and SyncInput must outlive the result and remain unchanged.
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_PROGRAMRECOGNITION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_PROGRAMRECOGNITION_H
-#include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
-#include "PTO/Transforms/FrontierSynch/VaryingRotatingRecognition.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgram.h"
+#include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRecognition.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
-#include "PTO/Transforms/FrontierSynch/NumericTemplateAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/NumericTemplateEndpoints.h"
-#include "PTO/Transforms/FrontierSynch/PeriodicAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateEndpoints.h"
+#include "PTO/Transforms/FrontierSynch/Structured/PeriodicAllocation.h"
 namespace mlir::pto::frontiersynch {
 struct BoundedLifetimeDemandResult;
 enum class StructureKind { Sequence, ExplicitRun, Loop, Conditional, Unsupported, Section };

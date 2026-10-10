@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Algebraic selected graphs on original occurrence anchors; no synthetic lower
 // fact in this oracle is asserted to follow from the fixture's storage effects.
-#include "PTO/Transforms/FrontierSynch/BoundingRepetition.h"
+#include "PTO/Transforms/FrontierSynch/Shared/BoundingRepetition.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "llvm/Support/raw_ostream.h"
 #include <set>

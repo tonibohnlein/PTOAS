@@ -15,7 +15,7 @@
 #ifndef PTO_FRONTIERSYNCH_ANALYSISSESSIONINTERNAL_H
 #define PTO_FRONTIERSYNCH_ANALYSISSESSIONINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/GuardedRotatingAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingAnalysis.h"
 #include <set>
 namespace mlir::pto::frontiersynch {
 struct VaryingRegionalExports;

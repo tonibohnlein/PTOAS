@@ -6,10 +6,10 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent dense DAG oracle for projections, crossing reductions and queries.
-#include "PTO/Transforms/FrontierSynch/ChainInterface.h"
-#include "PTO/Transforms/FrontierSynch/RegionalNumericalInterface.h"
-#include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/FiniteOverlay.h"
+#include "PTO/Transforms/FrontierSynch/Shared/ChainInterface.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionalNumericalInterface.h"
+#include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FiniteOverlay.h"
 #include "llvm/Support/raw_ostream.h"
 #include <array>
 using namespace mlir;
