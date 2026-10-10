@@ -276,3 +276,24 @@ brace findings, each independently checked to have a braced body. All actual
 line-length findings were fixed. Commands, source/binary hashes, draft hashes,
 per-region outcomes and diagnostic iterations are retained under
 `.local/section8-refactor/regional-gaps/m4/`.
+
+## Final scoped regional audit
+
+The fifth milestone records every original region in
+[the validation ledger](frontier-regional-validation.md) and its
+[machine-readable companion](frontier-regional-validation.json). It reuses the
+independent source expectations only after verifying every input hash and all
+480 source anchors. A new paired serial optimized campaign runs the pinned
+baseline and committed candidate on identical inputs and alias options.
+All 44 requests finish, with no new timeout, source mutation or lost exact
+result. MayNotAlias improves from 230 to 233 of 240 regions; MayAlias from 218
+to 222. Timing increases and changed selected routes are recorded explicitly.
+
+The scoped proof/adapter work and its audit are complete; comprehensive class
+coverage is not. Prefill still needs an exact wrapping-aware arithmetic adapter.
+Gated-delta parent regions need global interfaces beyond bounded-window demand
+rows, and MayAlias retains refresh/composition obligations. The report lists
+all affected original nodes rather than promoting child or normalized-root
+success to those regions. No unresolved region is claimed outside every paper
+class. The broader PTO/PyPTO/pypto-lib campaign and deferred emission/allocation
+algorithms remain separate from this eleven-input Step2 audit.
