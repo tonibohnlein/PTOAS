@@ -219,9 +219,10 @@ SequenceAnalysis analyzeSequenceRegionWithResolver(func::FuncOp function, const 
     state->program = &program;
     state->resolveOriginal = std::move(resolver);
     state->completeInvocation = node == 0;
-    // Whole-function membership is mathematical. Endpoint preparation checks
-    // its own complete recipe and visit-binding contract independently.
-    state->requireEndpoints = node != 0 && requireEndpoints;
+    // Mathematical session requests pass false. A distinct stronger snapshot
+    // requests endpoint-capable children before reducing complete crossings,
+    // including at the root, without replacing the earlier exact mathematics.
+    state->requireEndpoints = requireEndpoints;
     if (node < program.nodes.size()) { state->requiredOuterLoops = program.nodes[node].loops; }
     if (!state->collect(node) || !state->partition()) { result.error = state->error; return result; }
     // Construction callbacks borrow the session; retained results must not.
