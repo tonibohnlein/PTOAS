@@ -82,7 +82,7 @@ struct SequenceRegionResolver {
         std::shared_ptr<RegionExpressions>, std::string&)> specializedGuarded;
     std::function<std::shared_ptr<const NumericBodyMathematics>(scf::ForOp,
         const TemplateGeometryConstant&, const TemplateControlConstant&,
-        std::shared_ptr<const NormalizedControlDescription>, std::string&)> specializedNumeric;
+        std::shared_ptr<const NormalizedControlDescription>, TemplateGeometryPolicy, std::string&)> specializedNumeric;
     std::function<FailureOr<RegionalAnalysis>(std::size_t, std::string&)> finiteArithmetic;
     // Current-form input only; requesting it never selects another alternative.
     std::function<std::shared_ptr<const NormalizedControlDescription>(std::size_t)> normalized;

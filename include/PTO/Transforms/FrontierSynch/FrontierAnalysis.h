@@ -63,7 +63,8 @@ public:
     uint64_t specializedNumericConstructions() const;
     std::shared_ptr<const NumericBodyMathematics> specializedNumericDemands(scf::ForOp loop,
         const TemplateGeometryConstant& geometry, const TemplateControlConstant& control, std::string& error,
-        NumericTemplateLimits limits = {}, std::shared_ptr<const NormalizedControlDescription> normalized = {});
+        NumericTemplateLimits limits = {}, std::shared_ptr<const NormalizedControlDescription> normalized = {},
+        TemplateGeometryPolicy policy = TemplateGeometryPolicy::AllCertifiedMaps);
     uint64_t specializedArithmeticConstructions() const;
     // Constants must be deterministic within this request. Reuse compares every
     // observed lookup, including unavailable values, in the original context.

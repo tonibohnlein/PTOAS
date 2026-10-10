@@ -53,6 +53,9 @@ struct TemplatePayload {
     SmallVector<TemplateCoordinate> coordinates;
     SmallVector<TemplateEffect, 0> effects;
 };
+// Preserve GM coordinates when only local physical maps have a phase-period proof.
+// Fixed inner occurrence coordinates still apply in both modes.
+enum class TemplateGeometryPolicy { AllCertifiedMaps, PreserveGlobalCoordinates };
 struct NumericTemplate {
     RecognitionResult result;
     scf::ForOp outer;
@@ -62,6 +65,7 @@ struct NumericTemplate {
     int64_t step = 1;
     // Valid only for the retained constant outer bounds, not a changed trip count.
     bool emptyInvocation = false;
+    TemplateGeometryPolicy geometryPolicy = TemplateGeometryPolicy::AllCertifiedMaps;
     bool specializedBody = false; // Finite body only; no repeating-word certificate.
     NumericTemplateLimits limits;
     uint64_t countedVisits = 0; // Preflight upper bound before allocating visits.
@@ -92,6 +96,7 @@ using TemplateControlConstant = std::function<std::optional<bool>(Value)>;
 struct NormalizedControlDescription;
 NumericTemplate recognizeSpecializedNumericBody(scf::ForOp outer, const PhaseIndex& index,
     const SyncInput& input, TemplateGeometryConstant geometry, TemplateControlConstant control,
-    NumericTemplateLimits limits = {}, std::shared_ptr<const NormalizedControlDescription> normalized = {});
+    NumericTemplateLimits limits = {}, std::shared_ptr<const NormalizedControlDescription> normalized = {},
+    TemplateGeometryPolicy policy = TemplateGeometryPolicy::AllCertifiedMaps);
 } // namespace mlir::pto::frontiersynch
 #endif

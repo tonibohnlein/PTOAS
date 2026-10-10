@@ -1502,9 +1502,96 @@ LogicalResult checkFiniteArithmeticSession(func::FuncOp function, pto::GMAliasPo
     return success();
 }
 
+namespace {
+LogicalResult checkNumericGeometryPolicy(func::FuncOp function, pto::GMAliasPolicy alias)
+{
+    using namespace pto::frontiersynch;
+    scf::ForOp outer;
+    for (auto loop : function.getOps<scf::ForOp>()) { outer = loop; }
+    if (!outer) { return function.emitError("numeric policy fixture requires an outer loop"); }
+    TemplateGeometryConstant geometry = [&](Value value) -> std::optional<int64_t> {
+        return value == outer.getInductionVar() ? std::optional<int64_t>(0) : std::nullopt;
+    };
+    const TemplateControlConstant control;
+    const auto preserved = TemplateGeometryPolicy::PreserveGlobalCoordinates;
+    const auto legacy = TemplateGeometryPolicy::AllCertifiedMaps;
+    for (bool reverse : {false, true}) {
+        FrontierAnalysis session(function);
+        if (failed(session.initialize(alias))) { return failure(); }
+        std::shared_ptr<const NumericBodyMathematics> owned;
+        for (auto policy : {reverse ? preserved : legacy, reverse ? legacy : preserved}) {
+            std::string error;
+            const auto before = session.specializedNumericConstructions();
+            auto result = session.specializedNumericDemands(outer, geometry, control, error, {}, {}, policy);
+            const auto diagnostic = error;
+            auto retry = session.specializedNumericDemands(outer, geometry, control, error, {}, {}, policy);
+            const bool cached = retry == result && error == diagnostic &&
+                session.specializedNumericConstructions() == before + 1;
+            if (!cached) { return function.emitError("numeric geometry policy attempt was not cached independently"); }
+            if (policy == preserved && !result) {
+                return function.emitError("original GM coordinate policy failed: " + error);
+            }
+            if (!result) {
+                if (error.empty()) { return function.emitError("legacy numeric refusal lost its obligation"); }
+                continue;
+            }
+            if (result->body.geometryPolicy != policy) {
+                return function.emitError("numeric cache reused another geometry policy");
+            }
+            bool gmWrite = false;
+            for (const auto& payload : result->body.payloads) {
+                for (const auto& effect : payload.effects) {
+                    const auto& original = result->inputOwner->accesses().effects()[effect.sourceEffect];
+                    if (original.memory->scope != pto::AddressSpace::GM ||
+                        original.mode != pto::SyncAccessMode::Write) { continue; }
+                    gmWrite = true;
+                    if (effect.regions.empty()) {
+                        return function.emitError("numeric policy discarded original GM map");
+                    }
+                    for (const auto& region : effect.regions) {
+                        if (region.byteOffset.isFunctionOfSymbol(0) != (policy == preserved)) {
+                            return function.emitError("numeric policy bound or retained the wrong GM coordinate");
+                        }
+                    }
+                    if (policy == preserved &&
+                        (effect.discharge != TemplateDischarge::IterationPrivateBase || effect.outerStride != 32768)) {
+                        return function.emitError("numeric GM discharge lost its exact visit stride");
+                    }
+                }
+            }
+            if (!gmWrite) { return function.emitError("numeric geometry policy fixture had no GM write"); }
+            if (policy == preserved) { owned = result; }
+        }
+        if (session.specializedNumericConstructions() != 2 || !owned) {
+            return function.emitError("numeric policies did not build exactly one result each");
+        }
+        const auto other = alias == pto::GMAliasPolicy::MayAlias ?
+            pto::GMAliasPolicy::MayNotAlias : pto::GMAliasPolicy::MayAlias;
+        if (failed(session.initialize(other)) || session.specializedNumericConstructions()) {
+            return function.emitError("numeric policy cache survived alias reset");
+        }
+        std::string error;
+        for (auto policy : {legacy, preserved}) {
+            auto result = session.specializedNumericDemands(outer, geometry, control, error, {}, {}, policy);
+            if (policy == preserved && (!result || result == owned || result->inputOwner == owned->inputOwner)) {
+                return function.emitError("numeric policy reused old alias-context mathematics");
+            }
+        }
+        if (session.specializedNumericConstructions() != 2) {
+            return function.emitError("alias reset did not clear both numeric policy attempts");
+        }
+    }
+    llvm::outs() << "numeric-geometry-policy: both-orders separate-attempts physical-GM-coordinate alias-reset\n";
+    return success();
+}
+} // namespace
+
 LogicalResult checkSpecializedNumericSession(func::FuncOp function, pto::GMAliasPolicy policy)
 {
     using namespace pto::frontiersynch;
+    if (function->hasAttr("test.specialized_numeric_geometry_policy")) {
+        return checkNumericGeometryPolicy(function, policy);
+    }
     FrontierAnalysis session(function);
     if (failed(session.initialize(policy))) { return failure(); }
     scf::ForOp outer;
