@@ -487,6 +487,10 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
             analysis.arithmeticGeneratorConstructions(), analysis.arithmeticRegionConstructions(),
             analysis.specializedArithmeticConstructions(),
             analysis.costRecords(), analysis.constructionCounts());
+        NamedAttrList allocationReport((*prepared)->recognitionReport);
+        allocationReport.set("allocation_support", StringAttr::get(function.getContext(),
+            (*prepared)->allocationCertificate ? "available" : "unavailable"));
+        (*prepared)->recognitionReport = allocationReport.getDictionary(function.getContext());
         if (result.mathematical->arithmeticPeriodicDemands) {
             const auto& conversion = result.mathematical->arithmeticPeriodicDemands->conversion;
             NamedAttrList report((*prepared)->recognitionReport);

@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeRegional.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
 #include "llvm/ADT/MapVector.h"
@@ -236,8 +237,27 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
             std::string diagnostic;
             auto bounded = cachedBoundedLifetimeRegion(function, node, index, *input, diagnostic);
             if (succeeded(bounded)) {
-                node.boundedExportError =
-                    "bounded demands available; global query/native/storage selectors require a regional provider";
+                FailureOr<RegionalAnalysis> regional = failure();
+                if (resolveOriginal.exports) {
+                    const auto id = static_cast<std::size_t>(&node - program->nodes.data());
+                    regional = resolveOriginal.exports(id, AnalysisBackend::BoundedLifetime, diagnostic);
+                } else {
+                    auto queries = boundedLifetimeRegionalQueries(*bounded, *node.boundedLifetime,
+                        index, arena, diagnostic);
+                    if (succeeded(queries)) {
+                        regional =
+                            boundedLifetimeRegionalSelectors(**bounded, *node.boundedLifetime, *queries, diagnostic);
+                    }
+                }
+                node.boundedExportError = diagnostic;
+                if (succeeded(regional) && (!requireEndpoints || regional->capabilities.endpointRecipes)) {
+                    child.regional = std::move(*regional); child.anchors = child.regional.anchors;
+                    children.push_back(std::move(child)); return true;
+                }
+                if (succeeded(regional)) {
+                    diagnostic = "bounded global interfaces have no synchronization-code export";
+                }
+                obligation(diagnostic);
             } else if (!diagnostic.empty()) { repeatedAttempt = diagnostic; }
         }
         // Existing numerical routes can already allocate physical IDs. Preserve

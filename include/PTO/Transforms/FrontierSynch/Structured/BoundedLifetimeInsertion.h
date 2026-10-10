@@ -28,7 +28,8 @@ struct BoundedLifetimeDemandResult {
     BoundedLifetimeDemandResult& operator=(const BoundedLifetimeDemandResult&) = delete;
     std::shared_ptr<RegionExpressions> arena;
     RegionExpressions& expressions;
-    Block symbols;
+    std::shared_ptr<Block> symbolOwner = std::make_shared<Block>();
+    Block& symbols;
     std::unique_ptr<IterationPredicates> predicates;
     func::FuncOp function;
     scf::ForOp loop;
@@ -47,7 +48,7 @@ struct BoundedLifetimeDemandResult {
 FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> analyzeBoundedLifetimeRegion(
     func::FuncOp function, scf::ForOp loop, const PhaseIndex& index, const SyncInput& input,
     const BoundedLifetimeRecognition& recognized, std::string& error,
-    std::shared_ptr<RegionExpressions> arena = {});
+    std::shared_ptr<RegionExpressions> arena = {}, std::optional<uint64_t> exportSpan = {});
 FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> cachedBoundedLifetimeRegion(
     func::FuncOp function, const StructureNode& node, const PhaseIndex& index,
     const SyncInput& input, std::string& error);

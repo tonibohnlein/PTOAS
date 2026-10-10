@@ -26,6 +26,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/ClosedCallees.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeRegional.h"
 #include "PTO/IR/PTO.h"
 #include "SyncPhaseCopyChecks.h"
 #include "SyncLogicalInsertionChecks.h"
@@ -39,6 +40,9 @@
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
+bool checkBoundedRegionalQueries(const pto::frontiersynch::BoundedLifetimeDemandResult&,
+    const pto::frontiersynch::BoundedLifetimeRecognition&, const pto::frontiersynch::PhaseIndex&,
+    pto::frontiersynch::RegionalAnalysis&);
 LogicalResult checkNormalizedControlSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkFixedCoordinateRelations(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkUniformRelationCrossings(func::FuncOp, pto::GMAliasPolicy);
@@ -1413,6 +1417,7 @@ int runCompactBoundaryRanksChecks(func::FuncOp function, const pto::SyncInput& i
 int runFiniteRequirementReplacementChecks(func::FuncOp function, const pto::SyncInput& input);
 int runPeriodicSharedAllocationChecks();
 bool runCarriedScalarChecks(MLIRContext* context);
+bool checkBoundedSession(func::FuncOp function, pto::GMAliasPolicy policy, std::size_t region, bool requireEndpoint);
 bool runScalarConstraintChecks(MLIRContext* context);
 bool runModularScalarChecks(MLIRContext* context);
 bool runRepeatedStorageChecks(MLIRContext* context);
@@ -1560,6 +1565,9 @@ int main(int argc, char **argv) {
   const bool arithmeticPeriodicInput = argc == 3 && StringRef(argv[1]) == "--arithmetic-periodic-input-checks";
   const bool arithmetic = argc == 3 && StringRef(argv[1]) == "--arithmetic";
   const bool finiteExpansion = argc == 3 && StringRef(argv[1]) == "--finite-expansion";
+  const bool boundedEndpoint = argc == 3 && StringRef(argv[1]) == "--bounded-endpoint-exports";
+  const bool boundedQueries = boundedEndpoint ||
+      (argc == 3 && StringRef(argv[1]) == "--bounded-regional-queries");
   const bool certification = argc == 3 && StringRef(argv[1]) == "--certify-regions";
   const bool regionalRecognition = argc == 3 && StringRef(argv[1]) == "--recognize-regions";
   const bool recognition = certification || regionalRecognition ||
@@ -1598,40 +1606,38 @@ int main(int argc, char **argv) {
   const bool sequenceAnalysis = argc == 3 && StringRef(argv[1]) == "--sequence-analysis";
   const bool structuredTrace = argc == 3 && StringRef(argv[1]) == "--structured-trace";
   const bool physicalTrace = argc == 3 && StringRef(argv[1]) == "--physical-trace";
-  if (argc != 2 && !allocationSessionChecks && !regionalSessionChecks && !retainedChecks && !sessionChecks &&
-      !rotatingAnalysis && !explicitAnalysis &&
-      !arithmetic && !finiteExpansion && !recognition &&
+  if (argc != 2 && !boundedQueries && !allocationSessionChecks && !regionalSessionChecks && !retainedChecks &&
+      !sessionChecks && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !finiteExpansion && !recognition &&
       !numericAnalysis && !insertLogical && !insertLogicalLibrary && !insertModuleLibrary && !recognitionBoundary &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
       !mixedSymbolicChecks && !rotatingRegionChecks && !finiteVisitInput && !arithmeticPeriodicInput &&
-      !expressionChecks && !hierarchyChecks && !boundingChecks &&
-      !compactInputChecks && !compactBoundsChecks &&
+      !expressionChecks && !hierarchyChecks && !boundingChecks && !compactInputChecks && !compactBoundsChecks &&
       !balancedCompactChecks && !guardedCompactChecks && !conditionalCompactChecks && !finiteReplacementChecks &&
       !boundingSequenceChecks && !compactStorageBoundaryChecks && !compactBoundaryRanksChecks &&
-      !boundingRepetitionChecks && !compactClassRepetitionChecks &&
-      !compactBoundingPipelineChecks && !compactBoundingAllocationChecks &&
-      !preparedInsertion && !finiteOverlayInsertion &&
-      !expectFailure && !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip &&
-      !regionChecks && !phaseCopies && !step0 && !existing) {
-    llvm::errs() << "usage: pto-sync-input-test "
-                 << "[--gm-alias=may-alias|may-not-alias] "
-                 << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
-                 "--allocation-session-checks|--retained-demand-checks|--analysis-session-checks|"
-                 "--recognize|--recognition-boundary|--numeric-analysis|--insert-logical|--insert-logical-library|"
-                 "--insert-module-library|--prepared-insertion-checks|--insertion-trace|"
-                 "--finite-guarded-analysis|--finite-overlay-insertion|--region-expression-checks|--sequence-analysis|"
-                 "--structured-trace|--physical-trace|--numerical-hierarchy-checks|--bounding-contract-checks|"
-                 "--compact-input-checks|"
-                 "--compact-order-bounds-checks|--balanced-compact-checks|--guarded-compact-checks|"
-                 "--conditional-compact-input-checks|--finite-replacement-checks|--bounding-sequence-checks|"
-                 "--compact-storage-boundary-checks|--compact-boundary-ranks-checks|"
-                 "--bounding-repetition-checks|--compact-class-repetition-checks|"
-                 "--compact-bounding-pipeline-checks|--compact-bounding-allocation-checks|"
-                 "--arithmetic|--finite-expansion|--arithmetic-periodic-input-checks|"
-                 "--explicit-analysis|--rotating-analysis|--roundtrip|"
-                 "--region-contract-checks|"
-                 "--step0-json|--step1-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
-    return 1;
+      !boundingRepetitionChecks && !compactClassRepetitionChecks && !compactBoundingPipelineChecks &&
+      !compactBoundingAllocationChecks && !preparedInsertion && !finiteOverlayInsertion && !expectFailure &&
+      !capabilities && !phaseIndex && !storageEffects && !aliasChecks && !roundtrip && !regionChecks && !phaseCopies &&
+      !step0 && !existing) {
+      llvm::errs()
+          << "usage: pto-sync-input-test "
+          << "[--gm-alias=may-alias|may-not-alias] "
+          << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
+             "--allocation-session-checks|--retained-demand-checks|--analysis-session-checks|"
+             "--recognize|--recognition-boundary|--numeric-analysis|--insert-logical|--insert-logical-library|"
+             "--insert-module-library|--prepared-insertion-checks|--insertion-trace|"
+             "--finite-guarded-analysis|--finite-overlay-insertion|--region-expression-checks|--sequence-analysis|"
+             "--structured-trace|--physical-trace|--numerical-hierarchy-checks|--bounding-contract-checks|"
+             "--compact-input-checks|"
+             "--compact-order-bounds-checks|--balanced-compact-checks|--guarded-compact-checks|"
+             "--conditional-compact-input-checks|--finite-replacement-checks|--bounding-sequence-checks|"
+             "--compact-storage-boundary-checks|--compact-boundary-ranks-checks|"
+             "--bounding-repetition-checks|--compact-class-repetition-checks|"
+             "--compact-bounding-pipeline-checks|--compact-bounding-allocation-checks|"
+             "--arithmetic|--finite-expansion|--arithmetic-periodic-input-checks|"
+             "--explicit-analysis|--rotating-analysis|--roundtrip|"
+             "--region-contract-checks|"
+             "--step0-json|--step1-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
+      return 1;
   }
   DialectRegistry dialects;
   dialects.insert<pto::PTODialect, func::FuncDialect, arith::ArithDialect,
@@ -1669,27 +1675,61 @@ int main(int argc, char **argv) {
     return runRepeatedReadOnlyStorageChecks(&context) ? 0 : 1;
   }
   context.disableMultithreading();
-  const bool hasOption = allocationSessionChecks || regionalSessionChecks || retainedChecks || sessionChecks ||
-                         mixedSymbolicChecks || rotatingAnalysis ||
-                         explicitAnalysis || expectFailure ||
-                         capabilities || phaseIndex ||
-                         storageEffects || recognition || numericAnalysis || insertLogical || insertLogicalLibrary ||
-                         insertModuleLibrary || recognitionBoundary ||
-                         insertionTrace || physicalTrace ||
-                         structuredTrace || sequenceAnalysis || finiteGuardedAnalysis || finiteOverlayInsertion ||
-                         expressionChecks || hierarchyChecks || boundingChecks || compactInputChecks ||
-                         compactBoundsChecks || balancedCompactChecks || guardedCompactChecks ||
-                         conditionalCompactChecks || finiteReplacementChecks || boundingSequenceChecks ||
-                         compactStorageBoundaryChecks || compactBoundaryRanksChecks ||
-                         boundingRepetitionChecks || compactClassRepetitionChecks || compactBoundingPipelineChecks ||
-                         compactBoundingAllocationChecks ||
-                         preparedInsertion || arithmetic || finiteExpansion || arithmeticPeriodicInput ||
-                         finiteVisitInput || rotatingRegionChecks ||
-                         aliasChecks || roundtrip || regionChecks || phaseCopies || step0 || existing;
+  const bool hasOption =
+      boundedQueries || allocationSessionChecks || regionalSessionChecks || retainedChecks || sessionChecks ||
+      mixedSymbolicChecks || rotatingAnalysis || explicitAnalysis || expectFailure || capabilities || phaseIndex ||
+      storageEffects || recognition || numericAnalysis || insertLogical || insertLogicalLibrary ||
+      insertModuleLibrary || recognitionBoundary || insertionTrace || physicalTrace || structuredTrace ||
+      sequenceAnalysis || finiteGuardedAnalysis || finiteOverlayInsertion || expressionChecks || hierarchyChecks ||
+      boundingChecks || compactInputChecks || compactBoundsChecks || balancedCompactChecks || guardedCompactChecks ||
+      conditionalCompactChecks || finiteReplacementChecks || boundingSequenceChecks || compactStorageBoundaryChecks ||
+      compactBoundaryRanksChecks || boundingRepetitionChecks || compactClassRepetitionChecks ||
+      compactBoundingPipelineChecks || compactBoundingAllocationChecks || preparedInsertion || arithmetic ||
+      finiteExpansion || arithmeticPeriodicInput || finiteVisitInput || rotatingRegionChecks || aliasChecks ||
+      roundtrip || regionChecks || phaseCopies || step0 || existing;
   const auto filename = argv[hasOption ? 2 : 1];
   auto module = parseSourceFile<ModuleOp>(filename, &context);
   if (!module || failed(verify(*module))) {
     return 1;
+  }
+  if (boundedQueries) {
+    const auto before = render(module->getOperation());
+    unsigned checked = 0;
+    for (auto function : module->getOps<func::FuncOp>()) {
+      pto::SyncInput input(policy);
+      pto::frontiersynch::PhaseIndex index;
+      if (failed(input.build(function)) || failed(index.build(function, input))) { return 1; }
+      auto program = pto::frontiersynch::recognizeProgram(function, input, index);
+      if (failed(program)) { return 1; }
+      for (auto [id, node] : llvm::enumerate(program->nodes)) {
+        if (!node.boundedLifetime || node.boundedLifetime->skeleton.result.state !=
+            pto::frontiersynch::RecognitionState::Applicable) { continue; }
+        std::string error;
+        llvm::errs() << "bounded original region=" << id << " sites=" << node.boundedLifetime->skeleton.phases.size()
+                     << " span=" << node.boundedLifetime->refresh.span << "\n";
+        auto demands = pto::frontiersynch::cachedBoundedLifetimeRegion(function, node, index, input, error);
+        if (failed(demands)) { llvm::errs() << error << "\n"; return 1; }
+        auto arena = std::make_shared<pto::frontiersynch::RegionExpressions>();
+        llvm::errs() << "bounded original ready\n";
+        auto queries = pto::frontiersynch::boundedLifetimeRegionalQueries(*demands,
+            *node.boundedLifetime, index, arena, error);
+        llvm::outs() << "bounded-query region=" << id << " established=" << succeeded(queries)
+                     << " error=" << error << "\n";
+        llvm::outs().flush();
+        if (failed(queries)) { return 1; }
+        auto selectors = pto::frontiersynch::boundedLifetimeRegionalSelectors(**demands,
+            *node.boundedLifetime, *queries, error);
+        llvm::outs() << "bounded-selectors region=" << id << " established=" << succeeded(selectors)
+                     << " error=" << error << "\n";
+        llvm::outs().flush();
+        if (failed(selectors)) { return 1; }
+        if ((!boundedEndpoint &&
+             !checkBoundedRegionalQueries(**demands, *node.boundedLifetime, index, *selectors)) ||
+            !checkBoundedSession(function, policy, id, boundedEndpoint)) { return 1; }
+        ++checked;
+      }
+    }
+    return checked && before == render(module->getOperation()) ? 0 : 1;
   }
   if (allocationSessionChecks) {
     const auto before = render(module->getOperation());

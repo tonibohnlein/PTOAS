@@ -5,6 +5,9 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --bounded-endpoint-exports %s | FileCheck %s --check-prefix=ENDPOINT
+// ENDPOINT: bounded regional allocation: unsupported, demands and logical IR retained
+// ENDPOINT: bounded-session: retained demands, separate cached exports, owned input after invalidation
 // RUN: %python %S/Inputs/check_physical_refresh.py pto-sync-input-test %s
 !mat = !pto.tile_buf<mat, 16x32xf16, blayout=col_major, slayout=row_major>
 !left = !pto.tile_buf<left, 16x32xf16, slayout=row_major>

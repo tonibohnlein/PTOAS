@@ -38,6 +38,9 @@ struct BackendAttempt {
     bool varyingQueriesAttempted = false, varyingSelectorsAttempted = false;
     std::shared_ptr<VaryingRegionalExports> varyingExports;
     std::string varyingQueryError;
+    std::shared_ptr<const RegionalAnalysis> boundedQueries, boundedSelectors;
+    bool boundedQueriesAttempted = false, boundedSelectorsAttempted = false;
+    std::string boundedQueryError, boundedSelectorError;
     std::shared_ptr<const RegionalAnalysis> arithmeticQueries, arithmeticSelectors;
     bool arithmeticQueriesAttempted = false, arithmeticSelectorsAttempted = false;
     std::string arithmeticQueryError, arithmeticSelectorError;

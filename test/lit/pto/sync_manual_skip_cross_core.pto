@@ -18,5 +18,6 @@ module {
   }
 }
 // PRESERVE: pto.syncall
+// ANALYZE: allocation_support = "available"
 // ANALYZE: selected_logical_backend = "explicit"
 // ANALYZE: pto.syncall
