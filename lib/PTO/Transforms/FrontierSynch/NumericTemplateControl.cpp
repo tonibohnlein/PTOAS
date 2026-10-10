@@ -37,7 +37,8 @@ bool invariantScalar(Value value, scf::ForOp loop, DenseMap<Value, bool>& cache,
     return invariant;
 }
 } // namespace
-AffineExpr TemplateBuilder::scalar(Value value, SmallVectorImpl<Value>* invariants, bool control) const
+AffineExpr TemplateBuilder::scalar(Value value, SmallVectorImpl<Value>* invariants, bool control,
+                                   bool specializeGeometry) const
 {
     // ScalarEvolution caches by Value: a fresh instance is required for each
     // coordinate environment, rather than carrying the first visit's constants.
@@ -49,7 +50,7 @@ AffineExpr TemplateBuilder::scalar(Value value, SmallVectorImpl<Value>* invarian
         if (auto found = coordinates.find(symbol); found != coordinates.end()) {
             return getAffineConstantExpr(found->second, context());
         }
-        if (!control && geometryConstant) {
+        if (!control && specializeGeometry && geometryConstant) {
             if (auto bound = geometryConstant(symbol)) { return getAffineConstantExpr(*bound, context()); }
         }
         if (symbol == output.outer.getInductionVar()) {

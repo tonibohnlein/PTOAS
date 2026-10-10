@@ -57,7 +57,8 @@ bool readOnlyOrigin(const SyncInput& input, const SyncStorageEffect& source)
             storageBasesAreComparable(domains, input.memory().gmPolicy());
     });
 }
-std::optional<TemplateRegion> substitute(TemplateBuilder& builder, const SyncAccessRegion& source)
+std::optional<TemplateRegion> substitute(TemplateBuilder& builder, const SyncAccessRegion& source,
+                                         bool specializeGeometry)
 {
     SmallVector<AffineExpr> dimensions, symbols;
     SmallVector<Value> invariants;
@@ -65,7 +66,7 @@ std::optional<TemplateRegion> substitute(TemplateBuilder& builder, const SyncAcc
         dimensions.push_back(getAffineDimExpr(i, builder.context()));
     }
     for (auto value : source.symbols) {
-        auto expression = builder.scalar(value, source.base ? &invariants : nullptr);
+        auto expression = builder.scalar(value, source.base ? &invariants : nullptr, false, specializeGeometry);
         if (!expression) {
             return std::nullopt;
         }
@@ -121,7 +122,9 @@ bool TemplateBuilder::payload(const CompoundInstanceElement* phase)
             effect.ranges = source.ranges;
         }
         for (const auto& original : source.regions) {
-            auto map = substitute(*this, original);
+            const bool preserveGlobal = output.geometryPolicy == TemplateGeometryPolicy::PreserveGlobalCoordinates &&
+                source.memory->scope == AddressSpace::GM;
+            auto map = substitute(*this, original, !preserveGlobal);
             if (!map && readOnlyOrigin(input, source)) {
                 effect.regions.clear();
                 effect.ranges.clear();

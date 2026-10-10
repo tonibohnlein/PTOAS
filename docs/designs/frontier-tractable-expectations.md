@@ -1108,3 +1108,33 @@ conversion, demand representation or emission capability. The current Section 8
 selection and cost-accounting passages were reread, and all three pinned paper
 hashes remain unchanged. These implementation claims do not establish final
 paired-campaign acceptance.
+
+## Numerical phase bodies with evolving GM maps
+
+The phased dispatcher reuses the existing finite numerical body producer when
+compact arithmetic extraction is unavailable. A retained geometry policy allows
+representative binding only after every complete local map and selector passes
+the periodicity proof. GM map substitution preserves outer coordinates while
+still applying actual finite inner coordinates. Numerical GM discharge and the
+joint original-map repeated-storage proof remain mandatory. Deferred original
+effect identities survive; failed attempts do not prepare a partial parent.
+
+The policy is part of preflight, materialized bodies and specialized cache keys.
+Explicit occurrence queries/selectors retain their fixed rank domain, so only
+those callbacks skip original-parameter rebinding. No arithmetic profile,
+normalization cap, address admission gate or mathematical reducer changed.
+
+The optimized milestone passes 59 focused checks. Its independent byte oracle
+checks 28 actual command closures over both aliases, two equivalent GM origins,
+zero/one trips and partial periods. A three-visit quadratic index distinguishes
+actual inner-coordinate evaluation from a linear approximation. Cache checks
+exercise both policy orders, retries, GM outer-symbol/stride retention and alias
+reset. Overlapping GM stores and nonperiodic local motion cannot use this
+adapter. Unequal startup/steady words retain an explicit unsupported symbolic
+cross-interval obligation, unchanged IR and no prepared parent plan.
+
+The separate latest replay recovers corpus533's CSA plan. Persistent GEMM remains
+unresolved: it reaches the mandatory joint storage proof, which lacks complete
+invariant local byte maps or effect selectors. Neither these targeted replays
+nor the focused suite constitutes final corpus acceptance. Paper hashes remain
+unchanged from the preceding crossing-cost milestone.
