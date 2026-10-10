@@ -105,6 +105,48 @@ positive: its regular expression backtracks to a nested call's closing
 parenthesis, while the actual balanced control condition has a braced body.
 The raw scanner result and independent brace adjudication are retained separately.
 
+## Occurrence-local scalar range contexts
+
+The shared scalar evaluator can now refine integer ranges from guaranteed
+ancestor `scf.if` arms at an executed occurrence. Signed comparisons, swapped
+operands, false-arm inversions, true conjunctions and false disjunctions retain
+their machine widths. Unsigned intervals crossing the sign bit provide no
+signed refinement. Unsupported predicates provide no facts. Contradictory
+supported facts discard the refinements instead of manufacturing expressions.
+
+Facts and both successful/failed range caches belong to one evaluator context.
+Range-only queries inherit that immutable context without publishing placeholder
+symbols into expression caches. Refinement follows operation admission: a
+positive result does not prove that its producing addition was nonwrapping.
+Arithmetic access normalization uses the consuming phase's context. Presence
+guards and loop-domain formulas use their scalar definition contexts, so they
+cannot assume the occurrence whose presence they are reconstructing.
+
+The prefill loop is outside the earlier `length > 0` prefetch arm. That sibling
+condition does not constrain its runtime bound. With literal 64-bit index
+semantics, start=0 and end=-5 give unsigned chunk count `2^62-1`; ordinal `2^61`
+is an executed visit and multiplying it by four wraps to `INT64_MIN`. The
+remaining-length subtraction then wraps to `INT64_MAX-4`. No implicit valid
+sequence-length contract can remove that case. This remains a machine-arithmetic
+representation obligation, not evidence that no tractable class applies.
+
+Focused checks cover both index widths, branch/root isolation with identical SSA
+values, signed extrema, unsigned sign boundaries, Boolean alternatives,
+contradictory paths, guarded chunk arithmetic, both cache query orders, and the
+literal prefill witness. An internal arithmetic-builder check distinguishes
+occurrence-valid unsigned division from its unavailable control-domain formula.
+
+The optimized build, all 40 range cases, the interleaved cache and arithmetic
+builder checks, and six focused existing arithmetic/recurrence checks pass.
+The final serial two-policy corpus audit preserves all 480 regional outcomes:
+232/240 under MayNotAlias and 218/240 under MayAlias, with no new timeout.
+No command fragments or allocation are constructed by those demand requests.
+Artifacts and source/binary hashes are under
+`.local/section8-refactor/regional-gaps/m2/`. The changed-code prefilter reports
+seven brace matches; independent balanced-condition inspection confirms that
+all seven actual control bodies are braced. Raw findings and adjudication are
+retained separately.
+
 ## Outstanding proof obligations
 
 Prefill requires literal signed/unsigned reasoning from loaded sequence endpoints
