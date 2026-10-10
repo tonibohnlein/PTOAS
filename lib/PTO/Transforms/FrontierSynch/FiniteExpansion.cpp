@@ -8,112 +8,17 @@
 // A finite occurrence representation over the unchanged shared access model.
 #include "ArithmeticProgramInternal.h"
 #include "FiniteExpansionPlan.h"
+#include "NormalizedControl.h"
 #include "FiniteGuardedInternal.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
 #include "RecognitionInternal.h"
 #include "../InsertSync/SyncScalarEvolution.h"
 #include "../InsertSync/SyncScalarReplay.h"
 #include "llvm/Support/MathExtras.h"
-namespace mlir::pto::frontiersynch::detail {
-namespace {
-// This memo belongs to exactly one fixed-coordinate environment. Dialect
-// folders operate on detached copies and never rewrite the shared input IR.
-class FixedCondition {
-public:
-    FixedCondition(const ArithmeticSite& site, uint64_t& work) : site(site), work(work) {}
-    std::optional<bool> evaluate(Value value)
-    {
-        auto result = dyn_cast_or_null<IntegerAttr>(fold(value, 0));
-        if (!result || !result.getType().isInteger(1)) { return std::nullopt; }
-        return result.getValue().isOne();
-    }
-private:
-    const ArithmeticSite& site;
-    uint64_t& work;
-    DenseMap<Value, Attribute> memo;
-    Attribute fold(Value value, unsigned depth)
-    {
-        if (!value || depth >= 64) { return {}; }
-        auto inserted = memo.try_emplace(value, Attribute{});
-        if (!inserted.second) { return inserted.first->second; }
-        auto remember = [&](Attribute result) { memo[value] = result; return result; };
-        for (auto coordinate : site.fixedCoordinates) {
-            if (value == coordinate.loop.getInductionVar()) {
-                return remember(IntegerAttr::get(value.getType(), coordinate.induction));
-            }
-        }
-        Attribute literal;
-        if (matchPattern(value, m_Constant(&literal))) {
-            // Poison/undefined fold results are not concrete scalar values.
-            if (isa<IntegerAttr, FloatAttr>(literal)) { return remember(literal); }
-            return {};
-        }
-        auto* operation = value.getDefiningOp();
-        const bool replay = mlir::pto::detail::canReplayScalar(operation);
-        const bool arithmetic = replay && isa<arith::ArithDialect>(operation->getDialect());
-        const bool singleResult = arithmetic && operation->getNumResults() == 1;
-        if (!singleResult) {
-            return {};
-        }
-        // LLVM folders may ignore poison-producing overflow/fast-math
-        // promises. Until separately proved, those operations stay symbolic.
-        if (auto flags = dyn_cast<arith::ArithIntegerOverflowFlagsInterface>(operation)) {
-            const bool unflagged = flags.getOverflowAttr().getValue() == arith::IntegerOverflowFlags::none;
-            if (!unflagged) { return {}; }
-        }
-        if (auto flags = dyn_cast<arith::ArithFastMathInterface>(operation)) {
-            const bool unflagged = flags.getFastMathFlagsAttr().getValue() == arith::FastMathFlags::none;
-            if (!unflagged) { return {}; }
-        }
-        const bool usesIndex = value.getType().isIndex() ||
-            llvm::any_of(operation->getOperandTypes(), [](Type type) { return type.isIndex(); });
-        if (usesIndex) {
-            const auto width = DataLayout::closest(operation).getTypeSizeInBits(IndexType::get(value.getContext()));
-            const bool supportedWidth = !width.isScalable() &&
-                width.getFixedValue() == IndexType::kInternalStorageBitWidth;
-            if (!supportedWidth) { return {}; }
-        }
-        SmallVector<Attribute> operands;
-        for (Value operand : operation->getOperands()) {
-            auto constant = fold(operand, depth + 1);
-            if (!constant) { return {}; }
-            operands.push_back(constant);
-        }
-        if (work != UINT64_MAX) { ++work; }
-        OwningOpRef<Operation*> copy(operation->cloneWithoutRegions());
-        SmallVector<OpFoldResult> results;
-        const bool folded = succeeded(copy->fold(operands, results));
-        const bool singleFold = folded && results.size() == 1;
-        if (!singleFold) { return {}; }
-        auto result = dyn_cast<Attribute>(results.front());
-        auto typed = dyn_cast_or_null<TypedAttr>(result);
-        const bool scalar = typed && isa<IntegerAttr, FloatAttr>(result);
-        const bool sameType = scalar && typed.getType() == value.getType();
-        if (!sameType) { return {}; }
-        return remember(result);
-    }
-};
-std::optional<int64_t> fixedValue(Value value, const ArithmeticSite& site, MLIRContext* context)
-{
-    mlir::pto::detail::ScalarEvolution evolution(context, value.getDefiningOp() ? value.getDefiningOp() :
-        value.getParentRegion()->getParentOp());
-    auto expression = evolution.value(value, [&](Value current) -> AffineExpr {
-        for (auto fixed : site.fixedCoordinates) {
-            auto loop = fixed.loop;
-            if (current == loop.getInductionVar()) {
-                return getAffineConstantExpr(fixed.induction, context);
-            }
-        }
-        return {};
-    });
-    auto constant = dyn_cast_or_null<AffineConstantExpr>(expression);
-    return constant ? std::optional<int64_t>(constant.getValue()) : std::nullopt;
-}
-}
-} // namespace mlir::pto::frontiersynch::detail
 namespace mlir::pto::frontiersynch {
 FiniteExpansionPlan preflightFiniteExpansion(ArithmeticRegionContext context,
-    const PhaseIndex& index, const SyncInput& input, const FiniteExpansionLimits& limits)
+    const PhaseIndex& index, const SyncInput& input, const FiniteExpansionLimits& limits,
+    std::shared_ptr<const NormalizedControlDescription> normalized)
 {
     FiniteExpansionPlan plan;
     plan.context = std::move(context); plan.index = &index; plan.input = &input; plan.limits = limits;
@@ -140,44 +45,68 @@ FiniteExpansionPlan preflightFiniteExpansion(ArithmeticRegionContext context,
             return plan;
         }
     }
+    if (!normalized) { normalized = normalizeSmallCountControl(region, index, input, limits); }
+    plan.normalized = std::move(normalized);
+    const auto& description = *plan.normalized;
+    const bool sameContext = description.index == &index && description.input == &input &&
+        description.context.function == region.function && description.context.root == region.root &&
+        description.context.roots == region.roots && description.result.state == RecognitionState::Applicable;
+    if (!sameContext) {
+        plan.result.note(RecognitionIssue::TemplateContext, region.root); return plan;
+    }
     bool admitted = true;
     auto issue = RecognitionIssue::TemplateExpansionLimit;
-    std::function<void(Operation*, ArithmeticSite, unsigned)> walk;
-    walk = [&](Operation* op, ArithmeticSite context, unsigned depth) {
+    std::function<void(std::size_t, ArithmeticSite, unsigned)> walk;
+    walk = [&](std::size_t id, ArithmeticSite context, unsigned depth) {
         if (!admitted) { return; }
+        const auto& node = description.nodes[id];
+        for (auto fixed : node.fixedCoordinates) {
+            auto old = llvm::find_if(context.fixedCoordinates,
+                [&](auto coordinate) { return coordinate.loop == fixed.loop; });
+            if (old == context.fixedCoordinates.end()) { context.fixedCoordinates.push_back(fixed); }
+            else if (old->induction != fixed.induction) {
+                issue = RecognitionIssue::TemplateContext; admitted = false; return;
+            }
+        }
+        auto* op = node.original;
+        if (!op) { for (auto child : node.children) { walk(child, context, depth); } return; }
         const bool exhausted = depth > limits.depth || visits.size() >= limits.visits;
-        if (exhausted) {
-            admitted = false;
+        if (exhausted) { admitted = false; return; }
+        visits.push_back({op, context});
+        if (node.kind == NormalizedControlKind::ExpandedLoop) {
+            plan.expandsLoops = true;
+            for (auto child : node.children) { walk(child, context, depth + 1); }
             return;
         }
-        visits.push_back({op, context});
-        if (auto loop = dyn_cast<scf::ForOp>(op)) {
+        if (node.kind == NormalizedControlKind::RetainedLoop) {
+            auto loop = cast<scf::ForOp>(op);
             plan.expandsLoops = true;
-            auto lower = detail::fixedValue(loop.getLowerBound(), context, region.function.getContext());
-            auto upper = detail::fixedValue(loop.getUpperBound(), context, region.function.getContext());
-            auto step = detail::fixedValue(loop.getStep(), context, region.function.getContext());
+            auto lower = detail::normalizedInteger(loop.getLowerBound(), context.fixedCoordinates,
+                region.function.getContext());
+            auto upper = detail::normalizedInteger(loop.getUpperBound(), context.fixedCoordinates,
+                region.function.getContext());
+            auto step = detail::normalizedInteger(loop.getStep(), context.fixedCoordinates,
+                region.function.getContext());
             if (!lower || !upper || !step || *step <= 0) {
                 issue = RecognitionIssue::LoopDomain; admitted = false; return;
             }
-            // Wide arithmetic proves count and every actual IV before narrowing.
             const __int128 distance = static_cast<__int128>(*upper) - *lower;
             const __int128 count = distance <= 0 ? 0 : (distance + *step - 1) / *step;
             if (count > limits.visits - visits.size()) { admitted = false; return; }
             for (__int128 visit = 0; visit < count && admitted; ++visit) {
                 auto body = context;
                 const auto induction = static_cast<__int128>(*lower) + visit * *step;
-                // The final increment must also be representable in index width.
                 if (induction + *step > INT64_MAX) { admitted = false; return; }
                 body.fixedCoordinates.push_back({loop, static_cast<int64_t>(induction)});
-                for (auto& child : loop.getBody()->getOperations()) { walk(&child, body, depth + 1); }
+                for (auto child : node.children) { walk(child, body, depth + 1); }
             }
             return;
         }
-        if (auto branch = dyn_cast<scf::IfOp>(op)) {
-            detail::FixedCondition condition(context, plan.foldOperations);
-            const auto selected = condition.evaluate(branch.getCondition());
+        if (node.kind == NormalizedControlKind::Conditional) {
+            auto branch = cast<scf::IfOp>(op);
+            const auto selected = detail::normalizedCondition(branch.getCondition(), context, plan.foldOperations);
             visits.back().fixedBranch = selected.has_value();
-            for (auto [arm, region] : llvm::enumerate(op->getRegions())) {
+            for (auto [arm, child] : llvm::enumerate(node.children)) {
                 const bool inactive = selected && ((arm == 0) != *selected);
                 if (inactive) {
                     if (plan.prunedArms != UINT64_MAX) { ++plan.prunedArms; }
@@ -185,32 +114,27 @@ FiniteExpansionPlan preflightFiniteExpansion(ArithmeticRegionContext context,
                 }
                 auto body = context;
                 body.guards.push_back({branch, arm == 0, selected.has_value()});
-                for (auto& block : region) {
-                    for (auto& child : block) { walk(&child, body, depth + 1); }
-                }
+                walk(child, body, depth + 1);
             }
             return;
         }
-        if (op == region.function.getOperation()) {
-            for (auto& child : region.function.front()) { walk(&child, context, depth); }
+        const bool functionRoot = op == region.function.getOperation();
+        if (functionRoot) {
+            for (auto child : node.children) { walk(child, context, depth); }
             return;
         }
         if (op->getNumRegions()) { issue = RecognitionIssue::UnsupportedControl; admitted = false; return; }
         auto phases = index.phasesFor(op);
-        const bool multiplePhases = phases.size() > 1;
-        if (multiplePhases) { issue = RecognitionIssue::UnsupportedControl; admitted = false; return; }
+        const bool multiple = phases.size() > 1;
+        if (multiple) { issue = RecognitionIssue::UnsupportedControl; admitted = false; return; }
         const bool payload = phases.size() == 1;
         if (payload) {
-            const bool payloadLimit = sites.size() >= limits.payloads;
-            if (payloadLimit) { admitted = false; return; }
-            context.phase = phases.front();
-            sites.push_back(std::move(context));
+            const bool full = sites.size() >= limits.payloads;
+            if (full) { admitted = false; return; }
+            context.phase = phases.front(); sites.push_back(std::move(context));
         }
     };
-    if (region.roots.empty()) { walk(region.root, {}, 0); }
-    else {
-        for (auto* selected : region.roots) { walk(selected, {}, 0); }
-    }
+    for (auto root : description.roots) { walk(root, {}, 0); }
     const auto count = static_cast<uint64_t>(sites.size());
     const bool pairsFit = !count || count <= limits.pairs / count;
     if (!admitted || !pairsFit) {

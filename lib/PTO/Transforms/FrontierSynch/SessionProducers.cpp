@@ -22,6 +22,38 @@
 #include "PTO/Transforms/FrontierSynch/VaryingRotatingRecognition.h"
 #include "PTO/Transforms/FrontierSynch/VaryingRotatingRegional.h"
 namespace mlir::pto::frontiersynch {
+namespace {
+ArithmeticRegionContext originalContext(func::FuncOp function, const ProgramRecognition& program, std::size_t region)
+{
+    ArithmeticRegionContext context{function, function};
+    if (region) {
+        const auto& node = program.nodes[region];
+        if (node.kind == StructureKind::ExplicitRun) { context.roots = node.operations; }
+        else if (node.kind == StructureKind::Sequence && node.region && node.region->hasOneBlock()) {
+            for (auto& operation : node.region->front()) {
+                if (!operation.hasTrait<OpTrait::IsTerminator>()) { context.roots.push_back(&operation); }
+            }
+        } else if (node.kind == StructureKind::Loop || node.kind == StructureKind::Conditional) {
+            context.roots.push_back(node.anchor);
+        }
+        context.root = context.roots.empty() ? nullptr : context.roots.front();
+    }
+    return context;
+}
+std::shared_ptr<const NormalizedControlDescription> normalizedInput(AnalysisSessionState& session,
+    func::FuncOp function, const ProgramRecognition& program, std::size_t region,
+    const PhaseIndex& index, const SyncInput& input)
+{
+    auto found = session.normalizedInputs.find(region);
+    if (found != session.normalizedInputs.end()) { return found->second; }
+    auto description = normalizeSmallCountControl(originalContext(function, program, region), index, input);
+    return session.normalizedInputs.emplace(region, std::move(description)).first->second;
+}
+} // namespace
+uint64_t FrontierAnalysis::normalizationConstructions() const
+{
+    return sessionState ? sessionState->normalizedInputs.size() : 0;
+}
 uint64_t FrontierAnalysis::finiteExpansionPreflights() const
 {
     return sessionState ? sessionState->finiteExpansionPlans.size() : 0;
@@ -42,7 +74,8 @@ const NumericTemplate& FrontierAnalysis::materializeNumericRegion(std::size_t re
     auto found = sessionState->numericTemplatePlans.find({region, false});
     if (found == sessionState->numericTemplatePlans.end()) {
         auto plan = std::make_shared<const NumericTemplatePlan>(
-            preflightNumericTemplate(cast<scf::ForOp>(node.anchor), *structuralIndex, *storage));
+            preflightNumericTemplate(cast<scf::ForOp>(node.anchor), *structuralIndex, *storage, {}, false, {}, {},
+                normalizedInput(*sessionState, function, *program, region, *structuralIndex, *storage)));
         found = sessionState->numericTemplatePlans.emplace(std::make_pair(region, false), std::move(plan)).first;
     }
     node.numericTemplate = materializeNumericTemplate(*found->second, *structuralIndex, *storage);
@@ -69,20 +102,9 @@ const FiniteExpansionPlan& expansionPlan(AnalysisSessionState& session, func::Fu
 {
     auto found = session.finiteExpansionPlans.find(region);
     if (found != session.finiteExpansionPlans.end()) { return *found->second; }
-    ArithmeticRegionContext context{function, function};
-    if (region) {
-        const auto& node = program.nodes[region];
-        if (node.kind == StructureKind::ExplicitRun) { context.roots = node.operations; }
-        else if (node.kind == StructureKind::Sequence && node.region && node.region->hasOneBlock()) {
-            for (auto& operation : node.region->front()) {
-                if (!operation.hasTrait<OpTrait::IsTerminator>()) { context.roots.push_back(&operation); }
-            }
-        } else if (node.kind == StructureKind::Loop || node.kind == StructureKind::Conditional) {
-            context.roots.push_back(node.anchor);
-        }
-        context.root = context.roots.empty() ? nullptr : context.roots.front();
-    }
-    auto plan = std::make_shared<const FiniteExpansionPlan>(preflightFiniteExpansion(context, index, input));
+    auto context = originalContext(function, program, region);
+    auto plan = std::make_shared<const FiniteExpansionPlan>(preflightFiniteExpansion(context, index, input, {},
+        normalizedInput(session, function, program, region, index, input)));
     auto inserted = session.finiteExpansionPlans.emplace(region, std::move(plan));
     return *inserted.first->second;
 }
@@ -188,7 +210,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
         auto found = sessionState->numericTemplatePlans.find(key);
         if (found == sessionState->numericTemplatePlans.end()) {
             auto plan = std::make_shared<const NumericTemplatePlan>(
-                preflightNumericTemplate(loop, *structuralIndex, *storage, {}, true));
+                preflightNumericTemplate(loop, *structuralIndex, *storage, {}, true, {}, {},
+                    normalizedInput(*sessionState, function, *program, region, *structuralIndex, *storage)));
             found = sessionState->numericTemplatePlans.emplace(key, std::move(plan)).first;
         }
         auto result = std::make_shared<NumericalRegionDemands>();
@@ -199,6 +222,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
         }
         result->analysis = analyzeNumericTemplate(result->form);
         if (!result->analysis.error.empty()) { error = result->analysis.error; return {}; }
+        owned->normalizedInput = found->second->normalized;
         owned->numericalDemands = std::move(result);
         owned->numericNode = region;
         owned->backend = "numerical-periodic";
@@ -347,6 +371,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend
         const auto& plan = expansionPlan(*sessionState, function, *program, region, *structuralIndex, *storage);
         auto demands = std::make_shared<FiniteGuardedAnalysis>(analyzeExpandedFinite(plan, *structuralIndex, *storage));
         if (!demands->error.empty()) { error = demands->error; return {}; }
+        owned->normalizedInput = plan.normalized;
         owned->finiteGuardedDemands = std::move(demands);
         owned->backend = "expanded-finite-guarded";
         return owned;
@@ -462,10 +487,10 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
         owned->backend = "arithmetic";
         return owned;
     case AnalysisBackend::ExpandedFinite: {
-        auto demands = std::make_shared<FiniteGuardedAnalysis>(
-            analyzeExpandedFinite(expansionPlan(*sessionState, function, *program, 0, *structuralIndex, *storage),
-                *structuralIndex, *storage));
+        const auto& plan = expansionPlan(*sessionState, function, *program, 0, *structuralIndex, *storage);
+        auto demands = std::make_shared<FiniteGuardedAnalysis>(analyzeExpandedFinite(plan, *structuralIndex, *storage));
         if (!demands->error.empty()) { error = demands->error; return {}; }
+        owned->normalizedInput = plan.normalized;
         owned->finiteGuardedDemands = std::move(demands);
         owned->backend = "expanded-finite-guarded";
         return owned;
