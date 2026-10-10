@@ -257,7 +257,9 @@ AffineExpr ProgramBuilder::value(Value input, const ArithmeticSite& site, unsign
         auto parameter = parameterIds.find(binding);
         return parameter == parameterIds.end() ? AffineExpr{} : getAffineSymbolExpr(parameter->second, context);
     }, proof);
-    return normalized ? normalized : machineValue(input, site, offset);
+    if (normalized) { return normalized; }
+    if (guardedSelections.contains(input)) { return {}; }
+    return machineValue(input, site, offset);
 }
 bool ProgramBuilder::staticallyEmpty(const ArithmeticSite& site) const
 {
