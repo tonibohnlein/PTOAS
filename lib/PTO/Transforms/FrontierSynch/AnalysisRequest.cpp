@@ -92,8 +92,7 @@ AnalysisOutcome FrontierAnalysis::analyzeFiniteExpansion(const AnalysisRequest& 
 }
 std::vector<RegionCertification> FrontierAnalysis::certifyRegions()
 {
-    const bool formsAvailable = succeeded(recognizeStructure()) && succeeded(recognizeArithmetic()) &&
-        succeeded(recognizeRegionalArithmetic());
+    const bool formsAvailable = succeeded(recognizeStructure());
     if (!formsAvailable) { return {}; }
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
     if (sessionState->certifications) { return *sessionState->certifications; }

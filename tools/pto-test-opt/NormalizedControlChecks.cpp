@@ -265,6 +265,10 @@ LogicalResult checkExactFormFastPath(func::FuncOp function, pto::GMAliasPolicy p
         !session.normalizationConstructions() && !session.arithmeticGeneratorConstructions() &&
         !session.numericTemplatePreflights() && !session.constructionCounts().logicalPreparations;
     if (!explicitOnly) { return function.emitError("straight-line analysis left the explicit fast path"); }
+    const auto certifications = session.certifyRegions();
+    const bool lazyCertification = !certifications.empty() && !session.result()->arithmetic &&
+        session.result()->arithmeticContracts.empty() && !session.arithmeticGeneratorConstructions();
+    if (!lazyCertification) { return function.emitError("certification eagerly constructed arithmetic forms"); }
     llvm::outs() << "exact-form-fast-path: explicit no-normalization no-arithmetic\n";
     return success();
 }
