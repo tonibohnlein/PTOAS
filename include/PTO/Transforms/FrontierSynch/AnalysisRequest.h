@@ -31,9 +31,10 @@ struct NumericalRegionDemands;
 struct NormalizedControlDescription;
 enum class AnalysisBackend {
     Explicit, NumericalPeriodic, Rotating, MixedStride, GuardedRotating, BoundedLifetime,
-    Sequence, VaryingBoundary, FiniteVisit, ExpandedFinite, ArithmeticPeriodic, Arithmetic,
+    Sequence, NumericalSequence, VaryingBoundary, FiniteVisit, ExpandedFinite, ArithmeticPeriodic, Arithmetic,
     FiniteGuarded, CompactBounding
 };
+enum class AnalysisForm { Original, SmallCountExpanded };
 enum class AnalysisMode { MinimumExact, Fallback };
 enum class AnalysisEvaluation { Uniform, Stateful };
 enum class AnalysisStatus { Ready, NotApplicable, UnmetObligation };

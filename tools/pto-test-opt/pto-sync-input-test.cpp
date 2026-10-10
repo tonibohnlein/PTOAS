@@ -38,6 +38,10 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
 LogicalResult checkNormalizedControlSession(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkFixedCoordinateRelations(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkUniformRelationCrossings(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkNumericalRequestOrder(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkExactFormFastPath(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkNumericPreflight(func::FuncOp, const pto::SyncInput&,
     const pto::frontiersynch::ProgramRecognition&);
 LogicalResult dumpProgramRecognition(func::FuncOp, const pto::SyncInput &,
@@ -285,6 +289,7 @@ LogicalResult checkIndependentNumericalPlans(func::FuncOp function,
 }
 LogicalResult checkNumericalRegionSession(func::FuncOp function, pto::GMAliasPolicy policy) {
   using namespace pto::frontiersynch;
+  if (failed(checkNumericalRequestOrder(function, policy))) { return failure(); }
   FrontierAnalysis session(function);
   if (failed(session.initialize(policy))) { return failure(); }
   auto node = llvm::find_if(session.result()->nodes, [&](const auto& value) {
@@ -1853,6 +1858,15 @@ int main(int argc, char **argv) {
       }
       if (regionalRecognition && failed(analysis.recognizeRegionalArithmetic())) { return 1; }
       if (certification) {
+        const bool uniformRelationsFailed = function->hasAttr("test.uniform_relation_crossings") &&
+            failed(checkUniformRelationCrossings(function, policy));
+        if (uniformRelationsFailed) { return 1; }
+        const bool fixedRelationsFailed = function->hasAttr("test.fixed_coordinate_relations") &&
+            failed(checkFixedCoordinateRelations(function, policy));
+        if (fixedRelationsFailed) { return 1; }
+        const bool explicitFormFailed = function->hasAttr("test.exact_form_explicit") &&
+            failed(checkExactFormFastPath(function, policy));
+        if (explicitFormFailed) { return 1; }
         const bool normalizationProbeFailed = function->hasAttr("test.normalization_requests") &&
             failed(checkNormalizedControlSession(function, policy));
         if (normalizationProbeFailed) { return 1; }

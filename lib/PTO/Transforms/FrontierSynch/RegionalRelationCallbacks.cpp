@@ -99,6 +99,9 @@ private:
         RegionalEvent result{static_cast<uint32_t>(site), c(0), PeriodicEventKind::Start};
         std::vector<Id> ordinals;
         std::vector<std::pair<Id, Id>> bindings;
+        for (auto fixed : data.sites[site].fixedCoordinates) {
+            bindings.push_back({e.input(fixed.loop.getInductionVar()), e.constant(fixed.induction)});
+        }
         const auto& loops = data.sites[site].loops;
         if (loops.size() != values.size()) { return std::nullopt; }
         for (unsigned i = 0; i < loops.size(); ++i) {
@@ -129,6 +132,9 @@ private:
         if (ordinals.size() != loops.size()) { return std::nullopt; }
         std::vector<Id> values;
         std::vector<std::pair<Id, Id>> bindings;
+        for (auto fixed : data.sites[event.type].fixedCoordinates) {
+            bindings.push_back({e.input(fixed.loop.getInductionVar()), e.constant(fixed.induction)});
+        }
         for (unsigned i = 0; i < loops.size(); ++i) {
             auto loop = loops[i]; auto geometry = CountedLoop::get(loop);
             if (!geometry) { return std::nullopt; }
@@ -171,14 +177,40 @@ bool Request::build(std::string& diagnostic)
     data.input = &input; data.context.function = function;
     for (unsigned i = 0; i < region.anchors.size(); ++i) {
         const auto& anchor = region.anchors[i];
-        if (!anchor.phase || !anchor.coordinates.empty() ||
+        if (!anchor.phase ||
             (!region.outerDivisors.empty() && llvm::any_of(region.outerDivisors[i], [](auto n) { return n != 1; }))) {
             return finish(fail("regional relation original-coordinate adapter unavailable"));
         }
         ArithmeticSite site; site.phase = anchor.phase;
+        for (const auto& fixed : anchor.coordinates) {
+            if (!fixed.loop || !fixed.loop->isProperAncestor(anchor.phase->elementOp)) {
+                return finish(fail("regional fixed coordinate does not enclose its original occurrence"));
+            }
+            site.fixedCoordinates.push_back({fixed.loop, fixed.induction});
+        }
         if (!region.outerLoops.empty()) { llvm::append_range(site.loops, region.outerLoops[i]); }
         if (region.occurrenceLoops[i]) { site.loops.push_back(region.occurrenceLoops[i]); }
+        Operation* previousFixed = nullptr;
+        for (auto fixed : site.fixedCoordinates) {
+            const bool nested = !previousFixed || previousFixed->isProperAncestor(fixed.loop);
+            if (!nested || llvm::is_contained(site.loops, fixed.loop)) {
+                return finish(fail("regional fixed and dynamic coordinate schemas overlap or differ in nesting"));
+            }
+            previousFixed = fixed.loop;
+        }
+        for (const auto& previous : data.sites) {
+            if (previous.phase != site.phase) { continue; }
+            const bool disjoint = llvm::any_of(site.fixedCoordinates, [&](const auto& fixed) {
+                return llvm::any_of(previous.fixedCoordinates, [&](const auto& other) {
+                    return fixed.loop == other.loop && fixed.induction != other.induction;
+                });
+            });
+            if (!disjoint) { return finish(fail("regional occurrence identities are not disjoint")); }
+        }
         Operation* root = site.loops.empty() ? anchor.phase->elementOp : site.loops.front().getOperation();
+        for (auto fixed : site.fixedCoordinates) {
+            if (fixed.loop->isProperAncestor(root)) { root = fixed.loop.getOperation(); }
+        }
         if (!data.context.root) { data.context.root = root; }
         while (data.context.root && data.context.root != root && !data.context.root->isProperAncestor(root)) {
             data.context.root = data.context.root->getParentOp();
@@ -195,12 +227,17 @@ bool Request::build(std::string& diagnostic)
         for (const auto& prerequisite : index.prerequisitesFor(site.phase->elementOp)) {
             if (!prerequisite.producer) { continue; }
             auto producer = llvm::find_if(data.sites, [&](const auto& source) {
-                return source.phase == prerequisite.producer;
+                return detail::directPrerequisiteMapping(prerequisite, source, site, dominance);
             });
             if (producer == data.sites.end()) {
+                const bool internal = llvm::any_of(data.sites, [&](const auto& source) {
+                    return source.phase == prerequisite.producer;
+                });
+                if (internal) {
+                    return finish(fail(
+                        "regional scalar prerequisite needs an original-occurrence mapping certificate"));
+                }
                 data.incomingPrerequisites.push_back(prerequisite);
-            } else if (!detail::directPrerequisiteMapping(prerequisite, *producer, site, dominance)) {
-                return finish(fail("regional scalar prerequisite needs an original-occurrence mapping certificate"));
             }
         }
     }
@@ -254,7 +291,8 @@ bool Request::build(std::string& diagnostic)
                     }
                     if (ak == PeriodicEventKind::Completion && bk == PeriodicEventKind::Start) {
                         for (const auto& edge : index.prerequisitesFor(data.sites[target].phase->elementOp)) {
-                            if (!edge.native || edge.producer != data.sites[source].phase) { continue; }
+                            if (!edge.native || !detail::directPrerequisiteMapping(
+                                edge, data.sites[source], data.sites[target], dominance)) { continue; }
                             nativePrerequisites = true;
                             auto sameVisit = yes();
                             for (unsigned i = 0; i < first[source].size(); ++i) {
@@ -345,6 +383,10 @@ bool Request::build(std::string& diagnostic)
             }
             if (list == &region.deferredAccessBoundary) { data.dischargedEffects.push_back(access.effect); }
         }
+    }
+    const bool fixed = llvm::any_of(data.sites, [](const auto& site) { return !site.fixedCoordinates.empty(); });
+    if (fixed && !parameterValues.empty()) {
+        return finish(fail("parameterized fixed-occurrence relation adapter is not implemented yet"));
     }
     return finish(true);
 }

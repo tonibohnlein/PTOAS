@@ -46,8 +46,11 @@ struct AnalysisSessionState {
     uint64_t arithmeticGeneratorBuilds = 0;
     std::map<std::pair<std::size_t, uint8_t>, std::vector<AnalysisBackend>> arithmeticOrders;
     std::vector<AnalysisCostRecord> costs;
+    std::map<std::pair<std::size_t, uint8_t>, std::vector<AnalysisForm>> formOrders;
+    std::map<std::pair<std::size_t, AnalysisForm>, uint64_t> formAttempts;
     std::map<std::size_t, std::shared_ptr<const NormalizedControlDescription>> normalizedInputs;
-    std::map<std::size_t, std::shared_ptr<const FiniteExpansionPlan>> finiteExpansionPlans;
+    std::map<const NormalizedControlDescription*, std::shared_ptr<const FiniteExpansionPlan>> finiteExpansionPlans;
+    std::map<const NormalizedControlDescription*, BackendAttempt> expandedAttempts;
     std::map<std::pair<std::size_t, bool>, std::shared_ptr<const NumericTemplatePlan>> numericTemplatePlans;
     uint64_t numericalRegionBuilds = 0;
     std::map<std::size_t, std::map<AnalysisBackend, BackendAttempt>> attempts;

@@ -71,7 +71,10 @@ SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& i
     std::shared_ptr<PhaseIndex> index = {}, bool requireEndpoints = true);
 // The resolver is construction-only and receives proper original descendants.
 // Specialized phase views retain their own arena/context adapters.
+struct NormalizedControlDescription;
 struct SequenceRegionResolver {
+    // Current-form input only; requesting it never selects another alternative.
+    std::function<std::shared_ptr<const NormalizedControlDescription>(std::size_t)> normalized;
     std::function<FailureOr<RegionalAnalysis>(std::size_t, bool, std::string&)> region;
     std::function<std::shared_ptr<const MathematicalResult>(std::size_t, AnalysisBackend)> demands;
     std::function<FailureOr<RegionalAnalysis>(std::size_t, AnalysisBackend, std::string&)> exports;
