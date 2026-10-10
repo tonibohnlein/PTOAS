@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
+// RUN: pto-sync-input-test --gm-alias=may-alias --certify-regions %s | FileCheck %s
+// CHECK-COUNT-3: producer-failure: typed form-status cached invalid-request-unresolved
+module {
+  func.func private @unknown_effect()
+  func.func @no_loop() attributes {test.producer_failure} {
+    return
+  }
+  func.func @dynamic_loop(%count: index) attributes {test.producer_failure, test.dynamic_producer_failure} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %address = arith.constant 0 : i64
+    %value = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %address : !pto.tile_buf<vec, 1x16xf32>
+    scf.for %i = %zero to %count step %one {
+      pto.tadds ins(%tile, %value : !pto.tile_buf<vec, 1x16xf32>, f32)
+        outs(%tile : !pto.tile_buf<vec, 1x16xf32>)
+    }
+    return
+  }
+  func.func @unproved_outer(%count: index) attributes {test.producer_failure, test.unproved_outer} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %address = arith.constant 0 : i64
+    %value = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %address : !pto.tile_buf<vec, 1x16xf32>
+    func.call @unknown_effect() : () -> ()
+    scf.for %i = %zero to %count step %one {
+      pto.tadds ins(%tile, %value : !pto.tile_buf<vec, 1x16xf32>, f32)
+        outs(%tile : !pto.tile_buf<vec, 1x16xf32>)
+    }
+    return
+  }
+}

@@ -22,7 +22,14 @@ struct VaryingRegionalExports;
 struct FiniteExpansionPlan;
 struct NumericTemplatePlan;
 struct NormalizedControlDescription;
+struct ProducerFailure {
+    AnalysisStatus status = AnalysisStatus::UnmetObligation;
+    AnalysisStage stage = AnalysisStage::Demands;
+    SmallVector<RecognitionDiagnostic> diagnostics;
+    SmallVector<ArithmeticDiagnostic> arithmeticDiagnostics;
+};
 struct BackendAttempt {
+    ProducerFailure failure;
     bool produced = false;
     std::optional<bool> finiteArithmeticStorage;
     std::string finiteArithmeticStorageError;

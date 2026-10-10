@@ -28,6 +28,7 @@ AnalysisOutcome FrontierAnalysis::minimumDemands(std::size_t region, AnalysisNee
 AnalysisOutcome FrontierAnalysis::analyzeNumericalRegion(const AnalysisRequest& request)
 {
     AnalysisOutcome result;
+    result.status = AnalysisStatus::UnmetObligation;
     const bool valid = succeeded(recognizeStructure()) && request.region < program->nodes.size();
     if (!valid) {
         result.obligations.push_back({AnalysisStage::Form, "numerical original region is unavailable"});
@@ -41,6 +42,7 @@ AnalysisOutcome FrontierAnalysis::analyzeNumericalRegion(const AnalysisRequest& 
 AnalysisOutcome FrontierAnalysis::analyzeArithmeticRegional(const AnalysisRequest& request)
 {
     AnalysisOutcome result;
+    result.status = AnalysisStatus::UnmetObligation;
     const bool valid = succeeded(recognizeStructure()) && request.region && request.region < program->nodes.size();
     if (!valid) {
         result.obligations.push_back({AnalysisStage::Form, "arithmetic original child region is unavailable"});
@@ -54,6 +56,7 @@ AnalysisOutcome FrontierAnalysis::analyzeArithmeticRegional(const AnalysisReques
 AnalysisOutcome FrontierAnalysis::analyzeFiniteVisit(const AnalysisRequest& request)
 {
     AnalysisOutcome result;
+    result.status = AnalysisStatus::UnmetObligation;
     const bool valid = succeeded(recognizeStructure()) && request.region < program->nodes.size();
     if (!valid) {
         result.obligations.push_back({AnalysisStage::Form, "finite-visit original region is unavailable"});
@@ -67,6 +70,7 @@ AnalysisOutcome FrontierAnalysis::analyzeFiniteVisit(const AnalysisRequest& requ
 AnalysisOutcome FrontierAnalysis::analyzeVaryingBoundary(const AnalysisRequest& request)
 {
     AnalysisOutcome result;
+    result.status = AnalysisStatus::UnmetObligation;
     const bool valid = succeeded(recognizeStructure()) && request.region < program->nodes.size();
     if (!valid) {
         result.obligations.push_back({AnalysisStage::Form, "repeating-boundary original region is unavailable"});
@@ -80,6 +84,7 @@ AnalysisOutcome FrontierAnalysis::analyzeVaryingBoundary(const AnalysisRequest& 
 AnalysisOutcome FrontierAnalysis::analyzeFiniteExpansion(const AnalysisRequest& request)
 {
     AnalysisOutcome result;
+    result.status = AnalysisStatus::UnmetObligation;
     const bool valid = succeeded(recognizeStructure()) && request.region < program->nodes.size();
     if (!valid) {
         result.obligations.push_back({AnalysisStage::Form, "finite expansion original region is unavailable"});
@@ -186,13 +191,22 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
         } else { attempt.demandError = "recursive request must descend to an original child"; }
     }
     AnalysisOutcome result;
+    result.status = AnalysisStatus::UnmetObligation;
     result.mathematical = attempt.mathematical;
     if (result.mathematical && request.region == 0 && backend != AnalysisBackend::CompactBounding) {
         recordWholeRegion(backend);
     }
     if (!result.mathematical) {
-        result.stage = AnalysisStage::Demands;
-        result.obligations.push_back({result.stage, attempt.demandError});
+        result.stage = attempt.failure.stage;
+        result.status = attempt.failure.status;
+        result.obligations.push_back({result.stage, attempt.demandError.empty() ?
+            "exact producer or adapter did not establish its required contract" : attempt.demandError});
+        for (const auto& diagnostic : attempt.failure.diagnostics) {
+            result.obligations.push_back({result.stage, recognitionName(diagnostic.issue).str()});
+        }
+        for (const auto& diagnostic : attempt.failure.arithmeticDiagnostics) {
+            result.obligations.push_back({result.stage, recognitionName(diagnostic.issue).str()});
+        }
         return result;
     }
     const auto& demands = *result.mathematical;
@@ -284,6 +298,7 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
 AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
 {
     AnalysisOutcome result;
+    result.status = AnalysisStatus::UnmetObligation;
     if (!storage || !structuralIndex) {
         result.obligations.push_back({AnalysisStage::Form, "original region request is unavailable"});
         return result;
@@ -323,6 +338,9 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
             result.regionalExports = attempt.regionalExports;
             result.status = AnalysisStatus::UnmetObligation;
             result.stage = attempt.stage;
+        }
+        if (!result.mathematical && attempt.stage == AnalysisStage::Demands) {
+            result.stage = AnalysisStage::Demands;
         }
         llvm::append_range(result.obligations, attempt.obligations);
         return false;
