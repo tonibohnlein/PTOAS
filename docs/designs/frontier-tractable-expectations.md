@@ -956,3 +956,21 @@ Focused checks vary geometry, guards, unknown bindings, limits and alias policy;
 check retained/export agreement for all start/completion queries; reject foreign
 functions, enclosing loops and poisoned arenas without new IDs; and
 re-export after transaction rollback and context reset.
+
+### Private-arena expression import
+
+A bulk typed-DAG import operation copies only the supplied roots' reachable
+expressions into another arena. Its memo is local to the call, and construction
+is transactional. Integer recipes retain their native representation; no relation
+conversion or pair-matrix construction is introduced. Input owners and payload
+replay prohibitions follow imported circuits. Source traversal work is recorded
+with saturating counters, including nodes already interned in the target and
+failed rebuilding after traversal. Imported owners are deduplicated by shared
+ownership identity, including aliased pointers.
+
+Checks cover every expression kind, mapped integer recipes, distinct meanings
+for equal source IDs, retry after target rollback and ID reuse, invalid/poisoned
+sources, same-arena requests, saturated work counts, placeholder-owner lifetime,
+bounded ownership under cyclic imports and rollback, and inherited replay
+prohibition after the source arena is destroyed.
+This is the ownership primitive for the remaining guarded phase cache.

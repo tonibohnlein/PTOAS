@@ -642,6 +642,144 @@ bool checkSubstitution(Value index, Value predicate)
     fs::RegionExpressions::Substitution conflict({{v, duplicate.constant(1)}, {v, duplicate.constant(2)}});
     return duplicate.substitute(v, conflict) == fs::RegionExpressions::invalid && a.error().empty();
 }
+bool checkImport(Value index, Value predicate)
+{
+    using Arena = fs::RegionExpressions;
+    Arena source, target;
+    const auto x = source.input(index), p = source.input(predicate), three = source.constant(3);
+    const auto sum = source.add(x, three), less = source.lt(x, three);
+    SmallVector<Arena::Id> roots{x, p, three, source.boolean(true), sum, source.sub(x, three),
+        source.div(x, three), source.rem(x, three), less, source.le(x, three), source.eq(x, three),
+        source.slt(x, three), source.sle(x, three), source.land(p, less), source.lor(p, less),
+        source.lnot(p), source.select(p, x, sum)};
+    auto system = fs::IntegerSystem::create(1, {{{fs::BoundInteger(1)}, fs::BoundInteger(2)}});
+    if (failed(system)) { return false; }
+    const fs::IntegerAffine numerator{{fs::BoundInteger(3)}, fs::BoundInteger(-2)};
+    roots.push_back(source.integerPredicate(*system, {x}, 2, {1}));
+    roots.push_back(source.integerFloor(numerator, fs::BoundInteger(2), {x}, 1, {0}));
+    roots.push_back(source.integerWitness(numerator, fs::BoundInteger(2), {x}, 2, {1}, 1));
+    std::string diagnostic;
+    auto mapped = source.integerMappedPredicate(*system, {x},
+        {getAffineDimExpr(0, index.getContext()) + 1}, 1, {0}, diagnostic);
+    if (!mapped) { return false; }
+    roots.push_back(*mapped);
+    target.constant(999); // Numeric IDs deliberately disagree with the source.
+    const auto before = target.size();
+    {
+        Arena::Transaction transaction(target);
+        uint64_t work = UINT64_MAX - 1;
+        auto imported = target.import(source, roots, &work);
+        const bool complete = succeeded(imported) && imported->size() == roots.size() && work == UINT64_MAX;
+        if (!complete) { return false; }
+        const auto count = target.size();
+        auto retry = target.import(source, roots);
+        const bool reused = succeeded(retry) && *retry == *imported && target.size() == count;
+        if (!reused) { return false; }
+        for (int64_t value : {-9, -1, 0, 2, 3, 8}) {
+            for (bool flag : {false, true}) {
+                Arena::Substitution a({{x, source.constant(static_cast<uint64_t>(value))}, {p, source.boolean(flag)}});
+                Arena::Substitution b({{(*imported)[0], target.constant(static_cast<uint64_t>(value))},
+                                       {(*imported)[1], target.boolean(flag)}});
+                for (std::size_t i = 0; i < roots.size(); ++i) {
+                    const auto expected = source.constantValue(source.substitute(roots[i], a));
+                    const auto actual = target.constantValue(target.substitute((*imported)[i], b));
+                    const bool sameType = target.isBoolean((*imported)[i]) == source.isBoolean(roots[i]);
+                    if (!expected || actual != expected || !sameType) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    const bool rolledBack = target.size() == before;
+    if (!rolledBack) { return false; }
+    target.constant(12345); // Reuse rolled-back target IDs with different meanings.
+    auto renewed = target.import(source, roots);
+    const bool renewedInput = succeeded(renewed) && (*renewed)[0] == target.input(index);
+    if (!renewedInput) { return false; }
+    Arena other;
+    const auto otherRoot = other.constant(77);
+    if (otherRoot != x) { return false; }
+    auto different = target.import(other, {otherRoot});
+    const bool distinct = succeeded(different) && target.constantValue(different->front()) == 77;
+    if (!distinct) { return false; }
+    const auto stable = target.size();
+    auto invalid = target.import(source, {Arena::invalid});
+    other.add(other.boolean(true), other.constant(1));
+    auto poisoned = target.import(other, {otherRoot});
+    const bool refused = failed(invalid) && failed(poisoned) && target.size() == stable && target.error().empty();
+    if (!refused) { return false; }
+    auto same = target.import(target, *renewed);
+    return succeeded(same) && *same == *renewed;
+}
+bool checkImportOwners(Value index)
+{
+    using Arena = fs::RegionExpressions;
+    std::weak_ptr<Block> weak;
+    {
+        Arena target;
+        Arena::Id imported;
+        {
+            Arena source;
+            auto owner = std::make_shared<Block>(); weak = owner;
+            auto input = owner->addArgument(index.getType(), UnknownLoc::get(index.getContext()));
+            source.retainInputOwner(owner);
+            auto result = target.import(source, {source.add(source.input(input), source.constant(3))});
+            if (failed(result)) { return false; }
+            imported = result->front();
+            Arena mirror;
+            for (unsigned attempt = 0; attempt < 12; ++attempt) {
+                Arena::Transaction rollback(target);
+                auto copied = mirror.import(target, {imported});
+                if (failed(copied)) { return false; }
+                auto returned = target.import(mirror, *copied);
+                const bool boundedOwners = succeeded(returned) && owner.use_count() == 4;
+                if (!boundedOwners) { return false; }
+            }
+            // Aliased pointers with one control block still retain one owner.
+            source.retainInputOwner(std::shared_ptr<void>(owner, input.getAsOpaquePointer()));
+            auto retried = target.import(source, {source.input(input)});
+            const bool oneImportedOwner = succeeded(retried) && owner.use_count() == 5;
+            if (!oneImportedOwner) { return false; }
+        }
+        if (weak.expired()) { return false; }
+        auto inputs = target.referencedInputs(imported);
+        const bool oneInput = inputs.size() == 1;
+        if (!oneInput) { return false; }
+        Arena::Substitution binding({{inputs[0].first, target.constant(7)}});
+        const bool preserved = target.constantValue(target.substitute(imported, binding)) == 10;
+        if (!preserved) { return false; }
+    }
+    return weak.expired();
+}
+bool checkImportReplay(Operation* cut)
+{
+    using Arena = fs::RegionExpressions;
+    Arena target, unrestricted;
+    Arena::Id imported, control;
+    {
+        Arena source;
+        const auto root = source.input(cut->getResult(0));
+        auto allowed = unrestricted.import(source, {root});
+        source.forbidRecomputation(cut);
+        auto forbidden = target.import(source, {root});
+        const bool importedBoth = succeeded(allowed) && succeeded(forbidden);
+        if (!importedBoth) { return false; }
+        imported = forbidden->front(); control = allowed->front();
+    }
+    fs::PreparedLogicalPlan plan(0);
+    auto& blockedCode = plan.addPreparation(cut);
+    OpBuilder builder(cut->getContext()); builder.setInsertionPointToEnd(&blockedCode);
+    Arena::CutEmission blockedContext;
+    auto blocked = target.emitContextual(imported, builder, cut, blockedContext);
+    const bool rejectedWithoutCode = failed(blocked) && blockedCode.empty();
+    if (!rejectedWithoutCode) { return false; }
+    auto& allowedCode = plan.addPreparation(cut);
+    builder.setInsertionPointToEnd(&allowedCode);
+    Arena::CutEmission allowedContext;
+    auto allowed = unrestricted.emitContextual(control, builder, cut, allowedContext);
+    return succeeded(allowed) && !allowedCode.empty();
+}
 bool checkIntegerAdapters(Value index, Value predicate)
 {
     fs::RegionExpressions expressions;
@@ -1131,6 +1269,9 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
         !checked("checkIntegerEmission", checkIntegerEmission(function, cuts, hidden)) ||
         !checked("checkPlacementRetry", checkPlacementRetry(function, cuts)) ||
         !checked("checkSubstitution", checkSubstitution(function.getArgument(0), function.getArgument(1))) ||
+        !checked("checkImport", checkImport(function.getArgument(0), function.getArgument(1))) ||
+        !checked("checkImportOwners", checkImportOwners(function.getArgument(0))) ||
+        !checked("checkImportReplay", checkImportReplay(cuts[0])) ||
         !checked("runNestedRegionalChecks", runNestedRegionalChecks(function)) ||
         !checked("runRepeatedRegionChecks", runRepeatedRegionChecks(function)) ||
         !checked("runRepeatedStorageChecks", runRepeatedStorageChecks(function.getContext())) ||
