@@ -1397,6 +1397,7 @@ int runCompactBoundaryRanksChecks(func::FuncOp function, const pto::SyncInput& i
 int runFiniteRequirementReplacementChecks(func::FuncOp function, const pto::SyncInput& input);
 int runPeriodicSharedAllocationChecks();
 bool runCarriedScalarChecks(MLIRContext* context);
+bool runScalarConstraintChecks(MLIRContext* context);
 bool runRepeatedStorageChecks(MLIRContext* context);
 bool runRepeatedReadOnlyStorageChecks(MLIRContext*);
 bool runExpressionRelationChecks(MLIRContext*);
@@ -1629,6 +1630,10 @@ int main(int argc, char **argv) {
   if (argc == 2 && StringRef(argv[1]) == "--finite-visit-checks") {
     context.disableMultithreading();
     return runFiniteVisitChecks(&context) ? 0 : 1;
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--scalar-constraint-checks") {
+    context.disableMultithreading();
+    return runScalarConstraintChecks(&context) ? 0 : 1;
   }
   if (argc == 2 && StringRef(argv[1]) == "--carried-scalar-checks") {
     context.disableMultithreading();
