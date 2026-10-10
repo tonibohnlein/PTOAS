@@ -2086,12 +2086,28 @@ int main(int argc, char **argv) {
           for (const auto& obligation : result.analysis.obligations) {
             obligations.push_back(obligation.diagnostic);
           }
+          const pto::frontiersynch::ArithmeticAnalysisCost* arithmeticCost = nullptr;
+          if (const auto& owned = result.analysis.mathematical) {
+            if (owned->arithmeticRegionalDemands) {
+              arithmeticCost = &owned->arithmeticRegionalDemands->analysis.cost;
+            } else if (owned->generalArithmeticDemands) {
+              arithmeticCost = &owned->generalArithmeticDemands->cost;
+            }
+          }
+          llvm::json::Object implicationCost;
+          if (arithmeticCost) {
+            implicationCost["cache_hits"] = arithmeticCost->implicationCacheHits;
+            implicationCost["rational_proofs"] = arithmeticCost->rationalImplications;
+            implicationCost["integer_counterexamples"] = arithmeticCost->integerCounterexamples;
+            implicationCost["exact_checks"] = arithmeticCost->exactImplicationChecks;
+          }
           regions.push_back(llvm::json::Object{{"node", result.region},
               {"status", result.status == pto::frontiersynch::CertificationStatus::Recognized ?
                   "recognized" : "unresolved"},
               {"class", result.selectedClass}, {"representation", result.representation},
               {"exact_demands", static_cast<bool>(result.analysis.mathematical)},
               {"queries", result.analysis.available.queries}, {"selectors", result.analysis.available.selectors},
+              {"implication_cost", std::move(implicationCost)},
               {"obligations", std::move(obligations)}});
         }
         const auto& counts = analysis.constructionCounts();

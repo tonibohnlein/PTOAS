@@ -6,12 +6,18 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticDemandAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "llvm/ADT/DenseSet.h"
+#include "IntegerImplicationCache.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include <algorithm>
 #include <numeric>
 #include <tuple>
 #include <type_traits>
+#include <unordered_map>
+#include <set>
+#include <deque>
+#include "llvm/ADT/Hashing.h"
 namespace mlir::pto::frontiersynch {
 bool ArithmeticEventKey::operator<(const ArithmeticEventKey& other) const
 {
@@ -133,6 +139,7 @@ class Analysis {
     using System = typename Policy::System;
     using Relation = TypedArithmeticRelation<System>;
     using Piece = ImportedPiece<System>;
+    using TaggedIdentities = std::map<ArithmeticRelationKey, std::set<std::size_t>>;
 public:
     explicit Analysis(const ArithmeticProgram& program, const StructuredProtection* facts)
         : program(program), protection(facts)
@@ -184,13 +191,45 @@ public:
     }
     void complete()
     {
+        struct ClearScratch {
+            Analysis& analysis;
+            ~ClearScratch() {
+                if (analysis.implications) {
+                    const auto& counts = analysis.implications->cost();
+                    auto& cost = analysis.result.cost;
+                    accumulateCost(cost.implicationCacheHits, counts.hits);
+                    accumulateCost(cost.rationalImplications, counts.rationalProofs);
+                    accumulateCost(cost.integerCounterexamples, counts.witnessRefutations);
+                    accumulateCost(cost.exactImplicationChecks, counts.exactChecks);
+                }
+                analysis.implications.reset();
+                analysis.compositions.clear(); analysis.uniqueSystems.clear(); analysis.systemBuckets.clear();
+                analysis.unionCompositions.clear(); analysis.uniqueUnions.clear(); analysis.unionIdentities.clear();
+            }
+        } scratch{*this};
         completeNative();
         if (!result.error.empty()) { return; }
         auto step = compose(result.generators, result.nativeOrder);
         auto reach = result.nativeOrder;
+        Relation frontier;
+        TaggedIdentities history;
+        if constexpr (std::is_same_v<System, IntegerSystem>) {
+            frontier = reach;
+            for (const auto& [key, pieces] : reach) {
+                for (const auto& piece : pieces) { history[key].insert(systemIdentity(piece)); }
+            }
+        }
         for (unsigned round = 0; round < result.pipeCount && result.error.empty(); ++round) {
-            auto next = compose(reach, step);
+            // A numerical piece already composed under these endpoint tags
+            // contributes no new paths on a later round. The round bound stays
+            // unchanged; composition distributes over the accumulated union.
+            auto next = [&] {
+                if constexpr (std::is_same_v<System, IntegerSystem>) {
+                    return compose(frontier, step, nullptr, &history);
+                } else { return compose(reach, step); }
+            }();
             unite(reach, next);
+            if constexpr (std::is_same_v<System, IntegerSystem>) { frontier = std::move(next); }
         }
         if (!result.error.empty()) { return; }
         result.requiredOrder = subtract(reach, identity);
@@ -230,6 +269,61 @@ private:
     std::vector<uint64_t> parameterResidues(const Piece& piece) const
     {
         return {piece.residues.end() - result.parameterCount, piece.residues.end()};
+    }
+    std::unique_ptr<IntegerImplicationCache> implications;
+    bool subsumed(std::size_t a, std::size_t b)
+    {
+        if constexpr (std::is_same_v<System, IntegerSystem>) {
+            if (!implications) { implications = std::make_unique<IntegerImplicationCache>(uniqueSystems); }
+            return implications->isSubsetOf(a, b);
+        } else { return uniqueSystems[a].isSubsetOf(uniqueSystems[b]); }
+    }
+    void appendKnown(std::vector<System>& pieces, std::vector<std::size_t>& ids, System piece, std::size_t id)
+    {
+        if (uniqueSystems[id].isEmpty()) { return; }
+        for (auto previous : ids) { if (subsumed(id, previous)) { return; } }
+        std::size_t kept = 0;
+        for (std::size_t i = 0; i < pieces.size(); ++i) {
+            if (subsumed(ids[i], id)) { continue; }
+            if (i != kept) { pieces[kept] = std::move(pieces[i]); ids[kept] = ids[i]; }
+            ++kept;
+        }
+        pieces.resize(kept); ids.resize(kept);
+        pieces.push_back(std::move(piece)); ids.push_back(id);
+    }
+    void append(std::vector<System>& pieces, System piece)
+    {
+        if constexpr (std::is_same_v<System, IntegerSystem>) {
+            auto id = systemIdentity(piece);
+            std::vector<std::size_t> ids;
+            for (const auto& existing : pieces) { ids.push_back(systemIdentity(existing)); }
+            appendKnown(pieces, ids, std::move(piece), id);
+        } else {
+            if (piece.isEmpty()) { return; }
+            for (const auto& existing : pieces) { if (piece.isSubsetOf(existing)) { return; } }
+            pieces.erase(std::remove_if(pieces.begin(), pieces.end(),
+                [&](const System& old) { return old.isSubsetOf(piece); }), pieces.end());
+            pieces.push_back(std::move(piece));
+        }
+    }
+    void append(Relation& relation, const ArithmeticRelationKey& key, System piece)
+    {
+        append(relation[key], std::move(piece));
+        if (relation[key].empty()) { relation.erase(key); }
+    }
+    void unite(Relation& target, const Relation& source)
+    {
+        for (const auto& [key, pieces] : source) {
+            if constexpr (std::is_same_v<System, IntegerSystem>) {
+                auto& retained = target[key];
+                std::vector<std::size_t> ids;
+                for (const auto& piece : retained) { ids.push_back(systemIdentity(piece)); }
+                for (const auto& piece : pieces) {
+                    auto id = systemIdentity(piece); appendKnown(retained, ids, piece, id);
+                }
+                if (retained.empty()) { target.erase(key); }
+            } else { for (const auto& piece : pieces) { append(target, key, piece); } }
+        }
     }
     bool canonicalOrder(const PrimitiveRelation& relation, std::vector<unsigned>& keep)
     {
@@ -580,10 +674,134 @@ private:
         }
         return output;
     }
-    Relation compose(const Relation& a, const Relation& b, const Relation* outputKeys = nullptr)
+    // Immutable mathematical systems may recur under many endpoint tags.
+    // Cache only exact numerical composition; event identities stay outside it.
+    std::unordered_map<std::size_t, std::vector<std::size_t>> systemBuckets;
+    std::vector<System> uniqueSystems;
+    using CompositionKey = std::tuple<std::size_t, std::size_t, unsigned, unsigned, unsigned>;
+    std::map<CompositionKey, std::vector<std::size_t>> compositions;
+    std::size_t systemIdentity(const System& system)
+    {
+        std::size_t hash = system.dimensions();
+        if constexpr (std::is_same_v<System, IntegerSystem>) {
+            for (const auto& row : system.constraints()) {
+                hash = llvm::hash_combine(
+                    hash, llvm::hash_combine_range(row.coefficients.begin(), row.coefficients.end()), row.bound);
+            }
+            hash = llvm::hash_combine(hash, system.constraints().size());
+            for (const auto& row : system.congruences()) {
+                hash = llvm::hash_combine(
+                    hash, llvm::hash_combine_range(row.coefficients.begin(), row.coefficients.end()), row.residue,
+                    row.modulus);
+            }
+        }
+        auto same = [&](const System& stored) {
+            if constexpr (std::is_same_v<System, IntegerSystem>) {
+                if (stored.dimensions() != system.dimensions() ||
+                    stored.constraints().size() != system.constraints().size() ||
+                    stored.congruences().size() != system.congruences().size()) { return false; }
+                for (auto pair : llvm::zip(stored.constraints(), system.constraints())) {
+                    const auto& a = std::get<0>(pair); const auto& b = std::get<1>(pair);
+                    if (a.coefficients != b.coefficients || a.bound != b.bound) { return false; }
+                }
+                for (auto pair : llvm::zip(stored.congruences(), system.congruences())) {
+                    const auto& a = std::get<0>(pair); const auto& b = std::get<1>(pair);
+                    if (a.coefficients != b.coefficients || a.residue != b.residue || a.modulus != b.modulus) {
+                        return false;
+                    }
+                }
+                return true;
+            } else { return stored == system; }
+        };
+        auto& bucket = systemBuckets[hash];
+        for (auto id : bucket) { if (same(uniqueSystems[id])) { return id; } }
+        const auto id = uniqueSystems.size(); uniqueSystems.push_back(system); bucket.push_back(id); return id;
+    }
+    FailureOr<std::vector<System>> composePieces(const System& left, const System& right,
+        unsigned x, unsigned z, unsigned y)
+    {
+        const unsigned p = result.parameterCount, joinedDimensions = x + z + y + p;
+        std::vector<unsigned> am(x + z + p), bm(z + y + p), keep(x + y + p);
+        std::iota(am.begin(), am.begin() + x + z, 0);
+        std::iota(am.begin() + x + z, am.end(), x + z + y);
+        std::iota(bm.begin(), bm.begin() + z + y, x);
+        std::iota(bm.begin() + z + y, bm.end(), x + z + y);
+        std::iota(keep.begin(), keep.begin() + x, 0);
+        std::iota(keep.begin() + x, keep.end(), x + z);
+        auto a = left.remap(joinedDimensions, am), b = right.remap(joinedDimensions, bm);
+        if (failed(a) || failed(b)) { return failure(); }
+        auto joined = a->intersect(*b);
+        ++result.cost.pieceJoins;
+        if (failed(joined)) { return failure(); }
+        auto projected = Policy::project(*joined, keep);
+        ++result.cost.projections;
+        return projected;
+    }
+    FailureOr<std::vector<std::size_t>> composeIdentities(std::size_t left, std::size_t right,
+        unsigned x, unsigned z, unsigned y)
+    {
+        const CompositionKey key{left, right, x, z, y};
+        if (auto found = compositions.find(key); found != compositions.end()) { return found->second; }
+        auto projected = composePieces(uniqueSystems[left], uniqueSystems[right], x, z, y);
+        if (failed(projected)) { return failure(); }
+        std::vector<std::size_t> ids;
+        for (const auto& piece : *projected) {
+            if (!piece.isEmpty()) { ids.push_back(systemIdentity(piece)); }
+        }
+        compositions.emplace(key, ids);
+        return ids;
+    }
+    std::deque<std::vector<std::size_t>> uniqueUnions;
+    std::map<std::vector<std::size_t>, std::size_t> unionIdentities;
+    std::map<CompositionKey, std::size_t> unionCompositions;
+    std::size_t unionIdentity(std::vector<std::size_t> ids)
+    {
+        llvm::sort(ids); ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+        if (auto found = unionIdentities.find(ids); found != unionIdentities.end()) { return found->second; }
+        const auto id = uniqueUnions.size();
+        unionIdentities.emplace(ids, id); uniqueUnions.push_back(std::move(ids)); return id;
+    }
+    FailureOr<std::size_t> composeUnions(std::size_t left, std::size_t right, unsigned x, unsigned z, unsigned y)
+    {
+        const CompositionKey key{left, right, x, z, y};
+        if (auto found = unionCompositions.find(key); found != unionCompositions.end()) { return found->second; }
+        std::vector<std::size_t> retained;
+        std::set<std::size_t> seen;
+        for (auto a : uniqueUnions[left]) {
+            for (auto b : uniqueUnions[right]) {
+                auto product = composeIdentities(a, b, x, z, y);
+                if (failed(product)) { return failure(); }
+                for (auto id : *product) {
+                    if (!seen.insert(id).second ||
+                        llvm::any_of(retained, [&](auto old) { return subsumed(id, old); })) {
+                        continue;
+                    }
+                    retained.erase(std::remove_if(retained.begin(), retained.end(),
+                        [&](auto old) { return subsumed(old, id); }), retained.end());
+                    retained.push_back(id);
+                }
+            }
+        }
+        const auto id = unionIdentity(std::move(retained));
+        unionCompositions.emplace(key, id); return id;
+    }
+    Relation compose(const Relation& a, const Relation& b, const Relation* outputKeys = nullptr,
+        TaggedIdentities* history = nullptr)
     {
         ++result.cost.relationCompositions;
         Relation output;
+        std::map<ArithmeticRelationKey, std::set<std::size_t>> emitted;
+        std::map<ArithmeticRelationKey, std::vector<std::size_t>> retainedIds;
+        TaggedIdentities emittedUnions;
+        std::map<const std::vector<System>*, std::size_t> inputUnions;
+        auto inputIdentity = [&](const std::vector<System>& pieces) {
+            const auto* address = &pieces;
+            if (auto found = inputUnions.find(address); found != inputUnions.end()) { return found->second; }
+            std::vector<std::size_t> ids;
+            for (const auto& piece : pieces) { ids.push_back(systemIdentity(piece)); }
+            const auto id = unionIdentity(std::move(ids));
+            inputUnions.emplace(address, id); return id;
+        };
         using Match = std::pair<ArithmeticEventKey, std::vector<uint64_t>>;
         using Entry = typename Relation::value_type;
         std::map<Match, std::vector<const Entry*>> bySource;
@@ -596,28 +814,24 @@ private:
                 ArithmeticRelationKey key{ak.source, bk.target, ak.parameterResidues};
                 if (outputKeys && !outputKeys->count(key)) { continue; }
                 const unsigned x = ak.source.residues.size(), z = ak.target.residues.size();
-                const unsigned y = bk.target.residues.size(), p = result.parameterCount;
-                const unsigned joinedDimensions = x + z + y + p;
-                std::vector<unsigned> am(x + z + p), bm(z + y + p), keep(x + y + p);
-                std::iota(am.begin(), am.begin() + x + z, 0);
-                std::iota(am.begin() + x + z, am.end(), x + z + y);
-                std::iota(bm.begin(), bm.begin() + z + y, x);
-                std::iota(bm.begin() + z + y, bm.end(), x + z + y);
-                std::iota(keep.begin(), keep.begin() + x, 0);
-                std::iota(keep.begin() + x, keep.end(), x + z);
-                for (const auto& left : av) {
-                    auto expandedLeft = left.remap(joinedDimensions, am);
-                    if (failed(expandedLeft)) { fail("left composition remapping failed"); return {}; }
-                    for (const auto& right : bv) {
-                        auto expandedRight = right.remap(joinedDimensions, bm);
-                        if (failed(expandedRight)) { fail("right composition remapping failed"); return {}; }
-                        auto joined = expandedLeft->intersect(*expandedRight);
-                        ++result.cost.pieceJoins;
-                        if (failed(joined)) { fail("arithmetic composition intersection failed"); return {}; }
-                        auto value = Policy::project(*joined, keep);
-                        ++result.cost.projections;
-                        if (failed(value)) { fail("arithmetic composition projection failed"); return {}; }
-                        for (auto& piece : *value) { append(output, key, std::move(piece)); }
+                const unsigned y = bk.target.residues.size();
+                if constexpr (std::is_same_v<System, IntegerSystem>) {
+                    auto product = composeUnions(inputIdentity(av), inputIdentity(bv), x, z, y);
+                    if (failed(product)) { fail("arithmetic composition projection failed"); return {}; }
+                    if (!emittedUnions[key].insert(*product).second) { continue; }
+                    for (auto id : uniqueUnions[*product]) {
+                        if (!emitted[key].insert(id).second ||
+                            (history && !(*history)[key].insert(id).second)) { continue; }
+                        appendKnown(output[key], retainedIds[key], uniqueSystems[id], id);
+                        if (output[key].empty()) { output.erase(key); }
+                    }
+                } else {
+                    for (const auto& left : av) {
+                        for (const auto& right : bv) {
+                            auto value = composePieces(left, right, x, z, y);
+                            if (failed(value)) { fail("arithmetic composition projection failed"); return {}; }
+                            for (auto& piece : *value) { append(output, key, std::move(piece)); }
+                        }
                     }
                 }
             }
