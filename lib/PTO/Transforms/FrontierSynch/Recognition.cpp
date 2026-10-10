@@ -203,7 +203,7 @@ bool dischargeGlobal(std::size_t id, scf::ForOp loop, const SyncStorageEffects& 
 
 void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
                    const SyncStorageEffects& effects, Families& families, RecognitionResult& result,
-                   const PhaseIndex& index, bool allowParameters)
+                   const PhaseIndex& index, bool allowParameters, bool independentPhysicalMaps)
 {
     const auto& effect = effects.effects()[id];
     const auto& memory = *effect.memory;
@@ -282,7 +282,7 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
     if (!pattern->arithmeticProven) {
         result.note(RecognitionIssue::IndexArithmetic, anchor);
     }
-    if (family.stride && *family.stride != pattern->stride) {
+    if (!independentPhysicalMaps && family.stride && *family.stride != pattern->stride) {
         result.note(RecognitionIssue::CommonStride, anchor, true);
     }
     family.stride = pattern->stride;
@@ -411,15 +411,15 @@ bool detail::checkRotatingDomain(scf::ForOp loop, const PhaseIndex& index, Recog
 
 void detail::inspectRotatingPhases(scf::ForOp loop, ArrayRef<const CompoundInstanceElement*> phases,
                                   const SyncInput& input, const SyncStorageEffects& effects, RecognitionResult& result,
-                                  const PhaseIndex& index, bool allowParameters)
+                                  const PhaseIndex& index, bool allowParameters, bool independentPhysicalMaps)
 {
     Families families;
     for (const auto* phase : phases) {
         for (auto id : effects.effectsFor(phase)) {
-            inspectAccess(id, loop, input, effects, families, result, index, allowParameters);
+            inspectAccess(id, loop, input, effects, families, result, index, allowParameters, independentPhysicalMaps);
         }
     }
-    checkDisjoint(families, result, loop);
+    if (!independentPhysicalMaps) { checkDisjoint(families, result, loop); }
     detail::normalizeFragments(result, effects);
 }
 

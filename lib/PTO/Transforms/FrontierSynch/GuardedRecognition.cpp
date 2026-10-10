@@ -73,11 +73,13 @@ void collect(ArrayRef<Operation*> roots, Operation* entry, const PhaseIndex& ind
         }
     }
 }
+} // namespace
 // Coverage concerns one identical physical map, not merely its slot orbit.
 // A guard node is covered when some matching writer always executes under it.
 // Complementary covered children establish their parent's coverage; nested
 // parents occur earlier in the DAG, so one reverse pass suffices.
-bool coversEveryVisit(const GuardedRecognition& skeleton, ArrayRef<std::size_t> writers)
+bool detail::coversEveryVisitUnderFacts(const GuardedRecognition& skeleton, ArrayRef<std::size_t> writers,
+                                      const DenseMap<Value, bool>& facts)
 {
     std::vector<uint8_t> covered(skeleton.guards.size());
     for (auto writer : writers) {
@@ -93,6 +95,13 @@ bool coversEveryVisit(const GuardedRecognition& skeleton, ArrayRef<std::size_t> 
         if (!guard.condition || (guard.parent && *guard.parent >= i - 1)) { return false; }
         if (!covered[i - 1]) { continue; }
         auto parent = guard.parent.value_or(skeleton.guards.size());
+        auto implied = facts.find(guard.condition);
+        if (implied != facts.end()) {
+            if (implied->second != guard.takeThen) { continue; }
+            if (!guard.parent) { return true; }
+            covered[*guard.parent] = 1;
+            continue;
+        }
         auto& arms = branches[parent][guard.condition];
         arms |= guard.takeThen ? 1 : 2;
         if (arms != 3) { continue; }
@@ -101,7 +110,11 @@ bool coversEveryVisit(const GuardedRecognition& skeleton, ArrayRef<std::size_t> 
     }
     return false;
 }
-} // namespace
+
+bool detail::coversEveryVisit(const GuardedRecognition& skeleton, ArrayRef<std::size_t> writers)
+{
+    return coversEveryVisitUnderFacts(skeleton, writers, DenseMap<Value, bool>());
+}
 
 GuardedRecognition recognizeFiniteGuarded(Region& region, const PhaseIndex& index,
                                           const SyncStorageEffects& effects)
@@ -193,8 +206,20 @@ BoundedLifetimeRecognition recognizeBoundedLifetime(scf::ForOp loop, const Phase
         payloads.push_back({static_cast<uint32_t>(item.phase->kPipeValue)});
     }
     detail::inspectRotatingPhases(loop, phases, input, input.accesses(), skeleton.result, index);
+    bool physicalProjection = false;
     if (skeleton.result.state != RecognitionState::Applicable) {
-        return out;
+        // Disjoint families/common stride are rotating-form premises, not
+        // bounded-lifetime premises. Reprove all access maps independently;
+        // only these two exclusions permit a physical-partition alternative.
+        physicalProjection = llvm::all_of(skeleton.result.diagnostics, [](const auto& diagnostic) {
+            return diagnostic.issue == RecognitionIssue::OverlappingFamilies ||
+                   diagnostic.issue == RecognitionIssue::CommonStride;
+        });
+        if (!physicalProjection) { return out; }
+        skeleton.result = {};
+        detail::inspectRotatingPhases(loop, phases, input, input.accesses(), skeleton.result, index,
+                                     false, true);
+        if (skeleton.result.state != RecognitionState::Applicable) { return out; }
     }
     if (input.accesses().hasUniformRelationships(phases)) {
         out.refresh.error = "bounded refresh needs a uniform-relationship adapter";
@@ -205,6 +230,11 @@ BoundedLifetimeRecognition recognizeBoundedLifetime(scf::ForOp loop, const Phase
     if (!prerequisites.error.empty()) {
         out.refresh.error = prerequisites.error;
         skeleton.result.note(RecognitionIssue::AdditionalPrerequisite, loop);
+        return out;
+    }
+    if (physicalProjection) {
+        out.physical = detail::certifyPhysicalRefresh(skeleton, input, loop, out.refresh);
+        if (!out.physical) { skeleton.result.note(RecognitionIssue::RefreshBound, loop); return out; }
         return out;
     }
     DenseMap<Value, uint32_t> families;
@@ -245,7 +275,7 @@ BoundedLifetimeRecognition recognizeBoundedLifetime(scf::ForOp loop, const Phase
     for (const auto& [map, members] : writerMaps) {
         SmallVector<std::size_t> writers;
         for (auto member : members) { writers.push_back(fragments[member].payload); }
-        if (!coversEveryVisit(skeleton, writers)) { continue; }
+        if (!detail::coversEveryVisit(skeleton, writers)) { continue; }
         for (auto member : members) { coveredWriters[member] = 1; }
     }
     out.refresh = certifyRotatingRefreshCoverage(payloads, fragments, coveredWriters);

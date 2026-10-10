@@ -12,6 +12,7 @@
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "CountedLoop.h"
 #include "IterationPredicates.h"
+#include "PhysicalRefreshLimits.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "CircuitEndpoints.h"
 #include "../InsertSync/SyncScalarReplay.h"
@@ -42,6 +43,10 @@ FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> analyzeBoundedLifetimeRe
     if (!m || span >= UINT32_MAX || m > UINT32_MAX / (span + 1)) {
         error = "bounded lifetime window cannot represent its potential occurrences";
         return failure();
+    }
+    if (recognized.physical && !detail::physicalRefreshWindowFits(span,
+            skeleton.phases.size(), skeleton.guards.size(), recognized.physical->accesses.size())) {
+        error = "physical refresh window exceeds numerical fragment representation"; return failure();
     }
     if (!arena) { arena = std::make_shared<RegionExpressions>(); }
     auto demands = std::make_shared<BoundedLifetimeDemandResult>(std::move(arena));
@@ -98,39 +103,72 @@ FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> analyzeBoundedLifetimeRe
     DenseMap<Value, uint32_t> families;
     std::map<std::tuple<uint32_t, uint64_t, uint64_t, uint64_t>, uint32_t> cells;
     auto& physicalCells = demands->physicalCells;
-    for (uint64_t d = 0; d <= span; ++d) {
-        for (const auto& access : skeleton.result.accesses) {
-            const auto& effect = input.accesses().effects()[access.effect];
-            auto found = positions.find(effect.phase);
-            if (found == positions.end() || !access.atom || !access.slots) {
-                error = "bounded lifetime access has no normalized occurrence";
-                return failure();
+    auto protectionGroup = [&](const RotatingAccess& access, uint64_t distance) {
+        const auto& effect = input.accesses().effects()[access.effect];
+        uint64_t group = effect.memory && effect.memory->scope == AddressSpace::ACC && access.stride == 0 ?
+                             protection.inLoop(effect.phase, loop) : 0;
+        if (group) {
+            auto scope = group & invocationProtectionBit ? 0 : distance;
+            auto reset = group & protectionResetBit;
+            group = groups.emplace(std::make_pair(group & ~protectionResetBit, scope), groups.size() + 1)
+                        .first->second | reset;
+        }
+        return group;
+    };
+    if (recognized.physical) {
+        const auto& physical = *recognized.physical;
+        if (!physical.period || physical.period > span || physical.atoms.size() > UINT32_MAX) {
+            error = "physical refresh certificate has invalid period or atom dimensions"; return failure();
+        }
+        for (auto [cell, atom] : llvm::enumerate(physical.atoms)) {
+            // These are absolute physical cells. No source-relative family
+            // renaming is needed; the fixed map also serves allocation.
+            physicalCells.push_back({static_cast<uint32_t>(cell), static_cast<uint32_t>(atom.space),
+                                     atom.begin, atom.end, 1, 0, 0});
+        }
+        for (uint64_t d = 0; d <= span; ++d) {
+            auto phase = e.rem(e.add(base, e.constant(d)), e.constant(physical.period));
+            for (const auto& projection : physical.accesses) {
+                if (projection.access >= skeleton.result.accesses.size() || projection.atom >= physical.atoms.size()) {
+                    error = "physical refresh certificate has invalid access identity"; return failure();
+                }
+                const auto& access = skeleton.result.accesses[projection.access];
+                const auto& effect = input.accesses().effects()[access.effect];
+                auto found = positions.find(effect.phase);
+                if (found == positions.end()) { error = "physical refresh access has no payload"; return failure(); }
+                auto active = e.eq(phase, e.constant(projection.phase));
+                window.accesses.push_back({static_cast<uint32_t>(d * m + found->second), projection.atom,
+                    e.land(active, e.boolean(access.reads)), e.land(active, e.boolean(access.writes)),
+                    protectionGroup(access, d)});
             }
-            // Common-stride storage renaming cancels the unknown source index.
-            auto slot = (APInt(128, access.stride) * APInt(128, d) + APInt(128, access.offset))
-                            .urem(APInt(128, access.slots))
-                            .getZExtValue();
-            const auto family = families.try_emplace(access.family, families.size()).first->second;
-            auto [entry, added] = cells.emplace(
-                std::make_tuple(family, access.atom->first, access.atom->second, slot), cells.size());
-            const auto cell = entry->second;
-            if (added) {
-                physicalCells.push_back({cell, family, access.atom->first, access.atom->second,
-                    access.slots, access.stride % access.slots, slot});
+        }
+    } else {
+        for (uint64_t d = 0; d <= span; ++d) {
+            for (const auto& access : skeleton.result.accesses) {
+                const auto& effect = input.accesses().effects()[access.effect];
+                auto found = positions.find(effect.phase);
+                if (found == positions.end() || !access.atom || !access.slots) {
+                    error = "bounded lifetime access has no normalized occurrence";
+                    return failure();
+                }
+                // Common-stride storage renaming cancels the unknown source index.
+                auto slot = (APInt(128, access.stride) * APInt(128, d) + APInt(128, access.offset))
+                                .urem(APInt(128, access.slots))
+                                .getZExtValue();
+                const auto family = families.try_emplace(access.family, families.size()).first->second;
+                auto [entry, added] = cells.emplace(
+                    std::make_tuple(family, access.atom->first, access.atom->second, slot), cells.size());
+                const auto cell = entry->second;
+                if (added) {
+                    physicalCells.push_back({cell, family, access.atom->first, access.atom->second,
+                        access.slots, access.stride % access.slots, slot});
+                }
+                auto group = protectionGroup(access, d);
+                window.accesses.push_back(
+                    {static_cast<uint32_t>(d * m + found->second), cell,
+                     e.boolean(access.reads), e.boolean(access.writes),
+                     group});
             }
-            uint64_t group = effect.memory && effect.memory->scope == AddressSpace::ACC && access.stride == 0 ?
-                                 protection.inLoop(effect.phase, loop) :
-                                 0;
-            if (group) {
-                auto scope = group & invocationProtectionBit ? 0 : d;
-                auto reset = group & protectionResetBit;
-                group = groups.emplace(std::make_pair(group & ~protectionResetBit, scope), groups.size() + 1)
-                            .first->second |
-                        reset;
-            }
-            window.accesses.push_back(
-                {static_cast<uint32_t>(d * m + found->second), cell, e.boolean(access.reads), e.boolean(access.writes),
-                 group});
         }
     }
     auto prerequisites = index.mapPrerequisites(phases);
