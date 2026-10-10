@@ -78,6 +78,9 @@ struct SequenceRegionResolver {
     std::function<FailureOr<RegionalAnalysis>(std::size_t, bool, std::string&)> region;
     std::function<std::shared_ptr<const MathematicalResult>(std::size_t, AnalysisBackend)> demands;
     std::function<FailureOr<RegionalAnalysis>(std::size_t, AnalysisBackend, std::string&)> exports;
+    // Only expression-free mathematics is shared across specialized contexts.
+    std::function<std::shared_ptr<const ArithmeticRegionalRelations>(ArithmeticRegionContext,
+        const ArithmeticEntryConstant&, std::string&)> specializedDemands;
     explicit operator bool() const { return static_cast<bool>(region); }
     FailureOr<RegionalAnalysis> operator()(std::size_t node, bool endpoints, std::string& error) const
     { return region(node, endpoints, error); }

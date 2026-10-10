@@ -40,6 +40,7 @@ using namespace mlir;
 LogicalResult checkNormalizedControlSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkFixedCoordinateRelations(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkUniformRelationCrossings(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkSpecializedArithmeticSession(func::FuncOp function, pto::GMAliasPolicy policy);
 LogicalResult checkDynamicUniformCrossings(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkNumericalRequestOrder(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkExactFormFastPath(func::FuncOp, pto::GMAliasPolicy);
@@ -1859,6 +1860,9 @@ int main(int argc, char **argv) {
       }
       if (regionalRecognition && failed(analysis.recognizeRegionalArithmetic())) { return 1; }
       if (certification) {
+        const bool specializedFailure = function->hasAttr("test.specialized_arithmetic_requests") &&
+            failed(checkSpecializedArithmeticSession(function, policy));
+        if (specializedFailure) { return 1; }
         const bool dynamicUniformFailed = function->hasAttr("test.dynamic_uniform_crossings") &&
             failed(checkDynamicUniformCrossings(function, policy));
         if (dynamicUniformFailed) { return 1; }
@@ -1998,7 +2002,8 @@ int main(int argc, char **argv) {
         llvm::outs() << "certification-json " << llvm::json::Value(llvm::json::Object{
             {"function", function.getSymName()}, {"regions", std::move(regions)},
             {"mathematical_attempts", attempts}, {"logical_preparations", counts.logicalPreparations},
-            {"allocation_exports", counts.allocationExports}}) << "\n";
+            {"allocation_exports", counts.allocationExports},
+            {"specialized_arithmetic_constructions", analysis.specializedArithmeticConstructions()}}) << "\n";
       }
       if (numericAnalysis) {
         const bool lazy = analysis.numericTemplatePreflights() == 0 &&

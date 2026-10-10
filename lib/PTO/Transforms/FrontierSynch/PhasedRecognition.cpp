@@ -347,8 +347,10 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                             }
                         }
                         if (invariant) {
-                            auto analyzed = analyzeSequenceRegion(function, *input, *program, id,
-                                                                  arena, indexOwner, requireEndpoints);
+                            SequenceRegionResolver specialized;
+                            specialized.specializedDemands = resolveOriginal.specializedDemands;
+                            auto analyzed = analyzeSequenceRegionWithResolver(function, *input, *program, id,
+                                arena, indexOwner, requireEndpoints, std::move(specialized));
                             if (!analyzed.error.empty()) {
                                 return unavailable("invariant nested phase: " + analyzed.error);
                             }
@@ -374,24 +376,39 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                             diagnostic = "root-local outer control requires a recursively selected regional arm";
                             return false;
                         }
-                        auto view = analyzeArithmeticRegionWithProfiles(
-                            {function, root}, index, *input, arena, diagnostic,
-                            program->regionalArithmeticProfiles,
-                            [&](Value parameter) -> std::optional<Expr> {
-                                if (parameter.getType().isInteger(1)) {
-                                    if (auto bound = boundaryGuard(
-                                            parameter, normalizer, interval.bindings, expressions)) {
-                                        return bound;
-                                    }
+                        auto parameterBinding = [&](Value parameter) -> std::optional<Expr> {
+                            if (parameter.getType().isInteger(1)) {
+                                if (auto bound = boundaryGuard(
+                                        parameter, normalizer, interval.bindings, expressions)) {
+                                    return bound;
                                 }
-                                // A true owned address must retain its actual
-                                // outer coordinate. A later joint family proof
-                                // justifies projecting its inter-visit effects.
-                                if (evolvingStorage && !normalizer.periodic(parameter, period)) {
-                                    return expressions.input(parameter);
-                                }
-                                return normalizer.atPhase(parameter, phase, period);
-                            });
+                            }
+                            // A true owned address must retain its actual
+                            // outer coordinate. A later joint family proof
+                            // justifies projecting its inter-visit effects.
+                            if (evolvingStorage && !normalizer.periodic(parameter, period)) {
+                                return expressions.input(parameter);
+                            }
+                            return normalizer.atPhase(parameter, phase, period);
+                        };
+                        FailureOr<RegionalAnalysis> view = failure();
+                        if (resolveOriginal.specializedDemands) {
+                            ArithmeticEntryConstant constants = [&](Value value) -> std::optional<int64_t> {
+                                auto bound = parameterBinding(value);
+                                auto literal = bound ? expressions.constantValue(*bound) : std::nullopt;
+                                return literal ? std::optional<int64_t>(APInt(64, *literal).getSExtValue()) :
+                                    std::nullopt;
+                            };
+                            auto mathematics = resolveOriginal.specializedDemands(
+                                {function, root}, constants, diagnostic);
+                            if (mathematics) {
+                                view = exportSpecializedArithmeticRegion(
+                                    *mathematics, arena, true, diagnostic, parameterBinding);
+                            }
+                        } else {
+                            view = analyzeArithmeticRegionWithProfiles({function, root}, index, *input, arena,
+                                diagnostic, program->regionalArithmeticProfiles, parameterBinding);
+                        }
                         if (failed(view)) { return false; }
                         parts.push_back(std::move(*view));
                         return true;
@@ -535,8 +552,10 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                             }
                         }
                         if (invariant) {
-                            auto analyzed = analyzeSequenceRegion(function, *input, *program, id,
-                                                                  arena, indexOwner, requireEndpoints);
+                            SequenceRegionResolver specialized;
+                            specialized.specializedDemands = resolveOriginal.specializedDemands;
+                            auto analyzed = analyzeSequenceRegionWithResolver(function, *input, *program, id,
+                                arena, indexOwner, requireEndpoints, std::move(specialized));
                             if (!analyzed.error.empty()) {
                                 return unavailable("invariant explicit phase: " + analyzed.error);
                             }

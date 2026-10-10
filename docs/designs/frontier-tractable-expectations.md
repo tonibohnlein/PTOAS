@@ -882,3 +882,25 @@ Coverage increases from 227/240 to 228/240 under MayNotAlias and from 214/240 to
 under both policies and `lossless_block_cast` nodes 0, 2 and 3 under MayAlias.
 The slowest final run is 14.2 seconds. This is focused milestone validation,
 not the final paired optimized cross-project corpus campaign.
+
+### Specialized phase mathematics and exports
+
+Phase and invariant-body composition now request specialized arithmetic
+mathematics through their owning analysis session. The cache includes the original
+region, configured arithmetic profiles and the complete observed entry-constant
+lookup set, including unavailable values. A changed constant or newly available
+value cannot reuse an incompatible reduction. The retained mathematical handle
+owns its shared input and structural index; it contains no expression-arena IDs.
+
+Exports instantiate fresh query and selector expressions in the requesting arena.
+They validate every consumed entry constant and preserve the specialized counted
+loop origin and step in the inverse mapping to original occurrences. Failed
+exports roll back their expression IDs. Ordinary arithmetic adapters reject
+specialized handles rather than dropping those assumptions. Alias-context reset
+clears the cache while already returned handles retain their original inputs.
+
+The regression uses nonzero lower bounds 1 and 3, a step of 2, unknown and known
+upper bounds, zero and reversed trip domains, exact first/last writer ordinals,
+contradictory and missing bindings, export retry after rollback, profile isolation,
+and export of an old retained handle after context reset. This does not supply a
+general bounded-span proof or enable synchronization insertion in the public pass.

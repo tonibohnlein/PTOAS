@@ -16,6 +16,9 @@ namespace mlir::pto::frontiersynch {
 // Composition consumes these relations without reconstructing child accesses.
 struct ArithmeticRegionalRelations {
     const SyncInput* input = nullptr;
+    std::shared_ptr<const SyncInput> inputOwner;
+    std::shared_ptr<const PhaseIndex> indexOwner;
+    SmallVector<std::pair<Value, int64_t>> entryConstants;
     ArithmeticProgram program;
     GeneralArithmeticDemandAnalysis analysis;
     ArithmeticStorageSelectors selectors;
@@ -27,6 +30,17 @@ struct ArithmeticRegionalRelations {
 std::shared_ptr<const ArithmeticRegionalRelations> analyzeArithmeticRegionDemands(
     ArithmeticRegionContext context, const PhaseIndex& index, const SyncInput& input,
     const ArithmeticProgram* certified, std::string& error);
+// Pure phase mathematics: constants specialize the producer; remaining entry
+// values are bound only by a later transactional export. No arena IDs escape.
+std::shared_ptr<const ArithmeticRegionalRelations> analyzeSpecializedArithmeticDemands(
+    ArithmeticRegionContext context, const PhaseIndex& index, const SyncInput& input,
+    ArrayRef<ArithmeticLimits> profiles, ArithmeticEntryConstant entryConstant, std::string& error);
+// The binding must reestablish every consumed constant and describe the same
+// certified phase/interval. Remaining symbolic parameters may vary pointwise.
+FailureOr<RegionalAnalysis> exportSpecializedArithmeticRegion(
+    const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
+    bool selectors, std::string& error,
+    std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding);
 // Each requested snapshot has independent callback state in the common arena.
 // Failed construction rolls back its unpublished nodes and arena diagnostics.
 FailureOr<RegionalAnalysis> exportArithmeticRegion(

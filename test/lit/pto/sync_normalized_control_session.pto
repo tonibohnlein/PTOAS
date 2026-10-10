@@ -14,6 +14,7 @@
 // CHECK: uniform-relation-crossings: shared-alias-policy exact-crossing complete-reduction
 // CHECK: fixed-coordinate-relations: distinct-visits scalar-mapping retained-identities no-reanalysis
 // CHECK: exact-form-fast-path: explicit no-normalization no-arithmetic
+// CHECK: specialized-arithmetic-session: observed-misses context-isolated nonzero-origins rollback-safe
 // CHECK: source-unchanged; synchronization-insertion-not-run
 !mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
 !left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
@@ -344,4 +345,19 @@ module attributes {pto.target_arch = "a3"} {
     pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
     return
   }
+  func.func @specialized_nonzero_origin(%lo: index, %n: index)
+      attributes {test.specialized_arithmetic_requests} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %two = arith.constant 2 : index
+    %value = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x8xf32>
+    scf.for %i = %lo to %n step %two {
+      pto.tsetval ins(%zero, %value : index, f32) outs(%tile : !pto.tile_buf<vec, 1x8xf32>)
+      pto.tadds ins(%tile, %value : !pto.tile_buf<vec, 1x8xf32>, f32) outs(%tile : !pto.tile_buf<vec, 1x8xf32>)
+      %read = pto.tgetval ins(%tile, %zero : !pto.tile_buf<vec, 1x8xf32>, index) outs : f32
+    }
+    return
+  }
+
 }
