@@ -42,6 +42,7 @@ LogicalResult checkFixedCoordinateRelations(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkUniformRelationCrossings(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSpecializedNumericSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSpecializedGuardedSession(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkSequenceEndpointRetry(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkNaturalRotatingExportRetry(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkFiniteArithmeticSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSpecializedArithmeticSession(func::FuncOp function, pto::GMAliasPolicy policy);
@@ -962,6 +963,12 @@ LogicalResult checkRetainedDemands(func::FuncOp function, pto::GMAliasPolicy pol
       again.mathematical != first.mathematical || counts.mathematicalAttempts != work) {
     return function.emitError("endpoint failure lost exact demands or repeated mathematical construction");
   }
+  if (first.mathematical->sequenceDemands) {
+    const auto& contract = session.result()->sequenceContract;
+    const bool retainedContract = contract && contract->membership == ContractStatus::Established &&
+        contract->demands == ContractImplementation::Available && session.hasWholeFunctionMinimumDemands();
+    if (!retainedContract) { return function.emitError("endpoint failure downgraded whole-sequence evidence"); }
+  }
   logical.mode = AnalysisMode::Fallback;
   auto fallback = session.analyze(logical);
   if (fallback.status != AnalysisStatus::UnmetObligation || fallback.mathematical != first.mathematical) {
@@ -1831,6 +1838,10 @@ int main(int argc, char **argv) {
     auto delegation = pto::frontiersynch::recognizeClosedCallees(*module);
     for (auto function : module->getOps<func::FuncOp>()) {
       if (function.isDeclaration()) { continue; }
+      if (certification && function->hasAttr("test.sequence_endpoint_retry")) {
+        if (failed(checkSequenceEndpointRetry(function, policy))) { return 1; }
+        continue;
+      }
       if (certification && function->hasAttr("test.natural_rotating_export_retry")) {
         if (failed(checkNaturalRotatingExportRetry(function, policy))) { return 1; }
         continue;

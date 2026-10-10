@@ -81,7 +81,7 @@ exercise equivalent spellings and small explicit cover/query oracles, and run
 both alias policies serially. Record paper-hash changes before each milestone.
 No emission, allocation or device-runtime correctness is claimed by this work.
 
-## Verified certification checkpoint
+## Historical certification checkpoint (before regional cache integration)
 
 The optimized local build uses `-O2`, C++17 and enabled assertions; these runs
 are correctness audits, not release performance comparisons. The source is
@@ -114,7 +114,7 @@ for **8/11** and **5/11** inputs. All 22 invocations finish without timeout.
 These counts establish implemented certificates, not full catalog completeness.
 No unresolved node is reported as outside the catalog.
 
-The remaining source obligations include advancing GEMM slice footprints and
+At that checkpoint, the remaining source obligations included advancing GEMM slice footprints and
 carried bank state in direct regional requests; persistent outer re-entry;
 exact cast/unsigned length semantics in prefill; and predicate-dependent refresh
 with overlapping physical families in gated delta. Regional arithmetic coefficient
@@ -122,10 +122,10 @@ limits are genuine failures of those declared profiles, not universal exclusion
 from arithmetic or other classes. Additional GM aliases require complete crossing
 and storage certificates; the may-alias losses are not silently ignored.
 
-The source ledger remains provisional for complete positive/negative certificates.
+At that checkpoint, the source ledger remained provisional for complete positive/negative certificates.
 General finite expansion of each original child, complete bounded-span certificates,
 exhaustive outside-catalog witnesses remain
-unfinished. Parent recognition through a normalized representation does not certify
+unfinished at that checkpoint. Parent recognition through a normalized representation does not certify
 every original descendant directly.
 
 Validation passes 26 focused checks and nine additional library checks, including
@@ -1009,3 +1009,24 @@ requests share the mathematical result and export
 snapshot, leave the earlier exact result available, construct no endpoint or
 allocation code, and leave original IR unchanged. The regression declares
 k=8, D=9, P=1, C=4096; it adds no class admission limit or production algorithm.
+
+### Endpoint-capable sequence representations
+
+A synchronization request can need a different exact child representation from
+an earlier demands-only request. The session retains the earlier mathematical
+result and tries a separately cached sequence with endpoint-capable children.
+It recomputes the complete crossing requirements for those selected interfaces;
+it never attaches compact loop commands to expanded occurrence coordinates.
+Whole-function promotion still requires the complete original invocation audit.
+A failed stronger audit preserves an established weaker mathematical contract
+and records the endpoint obligation separately.
+
+The nested scalar-copy regression verifies the distinct `sequence-endpoints`
+selection, retained expanded child mathematics, cached Ready retries and two
+disjoint detached plans. Destroying the first leaves the second intact. An
+independent byte-hazard oracle checks six original-coordinate command closures,
+including zero/one visits and non-unit steps. The existing 32-bit-index refusal
+also checks that failed stronger exports retain whole-sequence evidence.
+All 46 focused checks pass. Targeted optimized replays recover `mhc_head_mix`
+and `csa_slots_build_valid_qk_plan` through logical preparation, six-ID allocation
+and C++ emission. Other campaign losses remain under separate investigation.

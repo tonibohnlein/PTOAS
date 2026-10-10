@@ -750,14 +750,32 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend
     owned->region = region;
     if (backend == AnalysisBackend::ExpandedFinite) { return produceExpandedFinite(region, error); }
     if (backend == AnalysisBackend::NumericalSequence) { return adaptNumericalSequence(region, error); }
-    if (backend == AnalysisBackend::Sequence) {
+    if (backend == AnalysisBackend::Sequence || backend == AnalysisBackend::SequenceEndpoints) {
+        const bool endpoints = backend == AnalysisBackend::SequenceEndpoints;
         auto sequence = std::make_shared<SequenceAnalysis>(analyzeSequenceRegionWithResolver(
             function, *storage, *program, region, sessionState->expressions, structuralIndex,
-            false, regionalResolver()));
+            endpoints, regionalResolver()));
         if (!sequence->error.empty()) { error = sequence->error; return {}; }
+        if (region == 0) {
+            auto previous = program->sequenceContract;
+            recordSequenceContractAttempt(*program, *storage, *sequence);
+            const bool complete = program->sequenceContract &&
+                program->sequenceContract->membership == ContractStatus::Established &&
+                program->sequenceContract->demands == ContractImplementation::Available;
+            if (!complete) {
+                error = "sequence adapter does not certify the complete invocation";
+                const bool retained = previous && previous->membership == ContractStatus::Established &&
+                    previous->demands == ContractImplementation::Available;
+                if (retained) {
+                    program->sequenceContract = std::move(previous);
+                    noteSequenceEndpointOutcome(error);
+                }
+                return {};
+            }
+        }
         owned->regionalDemands = std::make_shared<const RegionalAnalysis>(sequenceRegionalResult(*sequence));
         owned->sequenceDemands = std::move(sequence);
-        owned->backend = "sequence";
+        owned->backend = endpoints ? "sequence-endpoints" : "sequence";
         return owned;
     }
     if (backend == AnalysisBackend::Arithmetic) { return produceArithmeticRegion(region, error); }
@@ -833,6 +851,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
     }
     case AnalysisBackend::NumericalSequence:
         return adaptNumericalSequence(0, error);
+    case AnalysisBackend::SequenceEndpoints:
+        return produceRegionBackend(backend, 0, error);
     case AnalysisBackend::Sequence: {
         const auto* sequence = analyzeSequenceFunction();
         const bool complete = sequence && sequence->error.empty() && program->sequenceContract &&

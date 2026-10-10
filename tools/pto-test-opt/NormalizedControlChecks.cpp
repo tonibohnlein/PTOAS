@@ -18,6 +18,83 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/SequenceAnalysisInternal.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
+LogicalResult checkSequenceEndpointRetry(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    using namespace pto::frontiersynch;
+    std::string before;
+    llvm::raw_string_ostream original(before); function.print(original); original.flush();
+    FrontierAnalysis session(function);
+    if (failed(session.initialize(policy))) { return failure(); }
+    auto weak = session.minimumDemands();
+    if (weak.status != AnalysisStatus::Ready || !weak.mathematical) {
+        return function.emitError("sequence retry lacks initial exact mathematics");
+    }
+    AnalysisRequest request;
+    request.needs.synchronization = true;
+    auto strong = session.analyze(request);
+    if (strong.status != AnalysisStatus::Ready || !strong.mathematical) {
+        return function.emitError("sequence endpoint retry unavailable");
+    }
+    if (strong.mathematical->backend != "sequence-endpoints") {
+        return function.emitError("strong sequence retry chose ") << strong.mathematical->backend;
+    }
+    bool expanded = false;
+    if (weak.mathematical->sequenceDemands && weak.mathematical->sequenceDemands->state) {
+        for (const auto& child : weak.mathematical->sequenceDemands->state->children) {
+            if (!child.originalNode) { continue; }
+            auto original = session.minimumDemands(*child.originalNode);
+            expanded |= original.mathematical && original.mathematical->backend == "expanded-finite-guarded";
+        }
+    }
+    if (!expanded || strong.mathematical == weak.mathematical) {
+        return function.emitError("sequence retry did not replace expanded child coordinates");
+    }
+    const auto attempts = session.constructionCounts().mathematicalAttempts;
+    auto again = session.analyze(request);
+    auto retained = session.minimumDemands();
+    const bool cached = again.status == AnalysisStatus::Ready &&
+        again.mathematical == strong.mathematical && retained.mathematical == weak.mathematical &&
+        session.constructionCounts().mathematicalAttempts == attempts;
+    if (!cached) { return function.emitError("strong sequence retry replaced or reconstructed mathematics"); }
+    auto left = session.prepareLogical(strong);
+    auto right = session.prepareLogical(again);
+    const bool fresh = succeeded(left) && succeeded(right) && left->get() != right->get();
+    if (!fresh) { return function.emitError("sequence retry lacks fresh detached plans"); }
+    llvm::DenseSet<Operation*> operations;
+    for (const auto& preparation : (*left)->preparation) {
+        if (preparation.code->getParent()) { return failure(); }
+        preparation.code->walk([&](Operation* op) { operations.insert(op); });
+    }
+    for (const auto& preparation : (*right)->preparation) {
+        if (preparation.code->getParent()) { return failure(); }
+        bool shared = false;
+        preparation.code->walk([&](Operation* op) { shared |= operations.contains(op); });
+        if (shared) { return function.emitError("sequence retry plans share detached operations"); }
+    }
+    auto renderPlan = [](const PreparedLogicalPlan& plan) {
+        std::string text;
+        llvm::raw_string_ostream stream(text);
+        for (const auto& preparation : plan.preparation) {
+            for (auto& op : *preparation.code) { op.print(stream); }
+        }
+        return text;
+    };
+    const auto independent = renderPlan(**right);
+    left->reset();
+    const bool ownerRetained = renderPlan(**right) == independent;
+    if (!ownerRetained) { return function.emitError("sequence plan lost its owner"); }
+    FrontierAnalysis cold(function);
+    if (failed(cold.initialize(policy))) { return failure(); }
+    if (cold.analyze(request).status != AnalysisStatus::Ready) {
+        return function.emitError("cold sequence endpoint request failed");
+    }
+    std::string after;
+    llvm::raw_string_ostream current(after); function.print(current); current.flush();
+    if (before != after) { return function.emitError("sequence retry changed original IR"); }
+    llvm::outs() << "sequence-endpoint-retry: retained-expanded-math recomposed-strong-children "
+                 << "cached fresh-plans source-unchanged\n";
+    return success();
+}
 LogicalResult checkNaturalRotatingExportRetry(func::FuncOp function, pto::GMAliasPolicy policy)
 {
     using namespace pto::frontiersynch;
