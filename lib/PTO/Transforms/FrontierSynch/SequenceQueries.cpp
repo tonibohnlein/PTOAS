@@ -37,35 +37,47 @@ void SequenceAnalysisState::bridges()
                 const auto& left = children[a].regional;
                 const auto& right = children[b].regional;
                 if (!left.accessModel || !right.accessModel) { continue; }
-                for (const auto& x : left.accessBoundary) {
-                    for (const auto& y : right.accessBoundary) {
-                        const auto& model = *left.accessModel;
-                        const auto& source = model.effects()[x.effect];
-                        const auto& target = model.effects()[y.effect];
-                        if (ptoStorageProtection().protectsScalar(static_cast<uint32_t>(source.phase->kPipeValue),
-                            static_cast<uint32_t>(target.phase->kPipeValue))) { continue; }
-                        if (source.memory && target.memory && source.memory->scope == AddressSpace::ACC &&
-                            target.memory->scope == AddressSpace::ACC && hardwareProtectsConflict(
-                                static_cast<uint32_t>(source.phase->kPipeValue),
-                                protection.within(source.phase, requiredOuterLoops),
-                                static_cast<uint32_t>(target.phase->kPipeValue),
-                                protection.within(target.phase, requiredOuterLoops))) { continue; }
-                        bool conflict = model.uniformConflict(x.effect, y.effect);
-                        if (!conflict && !finiteCrossingPairs.count({a, x.effect, b, y.effect}) &&
-                            (!x.representedByCells || !y.representedByCells) &&
-                            model.residualConflict(x.effect, y.effect)) {
-                            if (left.occurrenceLoops[x.last.event.type] || right.occurrenceLoops[y.first.event.type] ||
-                                !x.last.event.visits.empty() || !y.first.event.visits.empty()) {
-                                fail("crossing symbolic access predicate needs an occurrence adapter"); return;
+                auto pair = [&](const auto& xs, const auto& ys, bool activeEffects) {
+                    for (const auto& x : xs) {
+                        for (const auto& y : ys) {
+                            const auto& model = *left.accessModel;
+                            const auto& source = model.effects()[x.effect];
+                            const auto& target = model.effects()[y.effect];
+                            const auto sourcePipe = static_cast<uint32_t>(source.phase->kPipeValue);
+                            const auto targetPipe = static_cast<uint32_t>(target.phase->kPipeValue);
+                            if (ptoStorageProtection().protectsScalar(sourcePipe, targetPipe)) { continue; }
+                            const bool accumulator = source.memory && target.memory &&
+                                source.memory->scope == AddressSpace::ACC && target.memory->scope == AddressSpace::ACC;
+                            if (accumulator && hardwareProtectsConflict(sourcePipe,
+                                    protection.within(source.phase, requiredOuterLoops), targetPipe,
+                                    protection.within(target.phase, requiredOuterLoops))) { continue; }
+                            bool conflict = model.uniformConflict(x.effect, y.effect);
+                            const bool residualPair = !conflict && activeEffects &&
+                                !finiteCrossingPairs.count({a, x.effect, b, y.effect}) &&
+                                (!x.representedByCells || !y.representedByCells) &&
+                                model.residualConflict(x.effect, y.effect);
+                            if (residualPair) {
+                                if (left.occurrenceLoops[x.last.event.type] ||
+                                    right.occurrenceLoops[y.first.event.type] ||
+                                    !x.last.event.visits.empty() || !y.first.event.visits.empty()) {
+                                    fail("crossing symbolic access predicate needs an occurrence adapter"); return;
+                                }
+                                conflict = true;
                             }
-                            conflict = true;
-                        }
-                        if (conflict) {
-                            crossing({port(a, x.last.event), x.last.present},
-                                     {port(b, y.first.event), y.first.present});
+                            if (conflict) {
+                                crossing({port(a, x.last.event), x.last.present},
+                                    {port(b, y.first.event), y.first.present});
+                            }
                         }
                     }
-                }
+                };
+                pair(left.accessBoundary, right.accessBoundary, true);
+                if (!error.empty()) { return; }
+                pair(left.accessBoundary, right.deferredAccessBoundary, false);
+                if (!error.empty()) { return; }
+                pair(left.deferredAccessBoundary, right.accessBoundary, false);
+                if (!error.empty()) { return; }
+                pair(left.deferredAccessBoundary, right.deferredAccessBoundary, false);
             }
         }
     }

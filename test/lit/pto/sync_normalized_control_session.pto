@@ -8,6 +8,9 @@
 // RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
 // RUN: pto-sync-input-test --gm-alias=may-alias --certify-regions %s | FileCheck %s
 // CHECK-COUNT-9: normalized-control-session: shared-input numerical-to-finite original-coordinates isolated-context
+// CHECK: dynamic-uniform-crossings: non-unit-coordinates zero-trips extrema exact-required-closure
+// CHECK: deferred-nonuniform-crossing: exact-adapter-required
+// CHECK: deferred-writer-slices: disjoint-visits accepted overlapping-visits refused
 // CHECK: uniform-relation-crossings: shared-alias-policy exact-crossing complete-reduction
 // CHECK: fixed-coordinate-relations: distinct-visits scalar-mapping retained-identities no-reanalysis
 // CHECK: exact-form-fast-path: explicit no-normalization no-arithmetic
@@ -217,6 +220,77 @@ module attributes {pto.target_arch = "a3"} {
         pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
         pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
       }
+    }
+    return
+  }
+  func.func @dynamic_uniform_gm(%n: index, %m: index, %src: !pto.ptr<f32, gm>, %dst: !pto.ptr<f32, gm>)
+      attributes {test.dynamic_uniform_crossings} {
+    %base = arith.constant 0 : i64
+    %other = arith.constant 128 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %three = arith.constant 3 : index
+    %eight = arith.constant 8 : index
+    %a = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x8xf32>
+    %b = pto.alloc_tile addr = %other : !pto.tile_buf<vec, 1x8xf32>
+    %source = pto.make_tensor_view %src, shape = [%one, %eight], strides = [%eight, %one]
+      : !pto.tensor_view<1x8xf32>
+    %target = pto.make_tensor_view %dst, shape = [%one, %eight], strides = [%eight, %one]
+      : !pto.tensor_view<1x8xf32>
+    %read = pto.partition_view %source, offsets = [%zero, %zero], sizes = [%one, %eight]
+      : !pto.tensor_view<1x8xf32> -> !pto.partition_tensor_view<1x8xf32>
+    %write = pto.partition_view %target, offsets = [%zero, %zero], sizes = [%one, %eight]
+      : !pto.tensor_view<1x8xf32> -> !pto.partition_tensor_view<1x8xf32>
+    scf.for %i = %one to %n step %two {
+      pto.tload ins(%read : !pto.partition_tensor_view<1x8xf32>) outs(%a : !pto.tile_buf<vec, 1x8xf32>)
+    }
+    scf.for %j = %three to %m step %three {
+      pto.tstore ins(%b : !pto.tile_buf<vec, 1x8xf32>) outs(%write : !pto.partition_tensor_view<1x8xf32>)
+    }
+    return
+  }
+  func.func @dynamic_nonuniform_deferred(%n: index, %m: index, %src: !pto.ptr<f32, gm>, %dst: !pto.ptr<f32, gm>)
+      attributes {test.dynamic_uniform_crossings, test.nonuniform_deferred} {
+    %base = arith.constant 0 : i64
+    %other = arith.constant 128 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %three = arith.constant 3 : index
+    %eight = arith.constant 8 : index
+    %a = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x8xf32>
+    %b = pto.alloc_tile addr = %other : !pto.tile_buf<vec, 1x8xf32>
+    %source = pto.make_tensor_view %src, shape = [%one, %eight], strides = [%eight, %one]
+      : !pto.tensor_view<1x8xf32>
+    %target = pto.make_tensor_view %src, shape = [%one, %eight], strides = [%eight, %one]
+      : !pto.tensor_view<1x8xf32>
+    %read = pto.partition_view %source, offsets = [%zero, %zero], sizes = [%one, %eight]
+      : !pto.tensor_view<1x8xf32> -> !pto.partition_tensor_view<1x8xf32>
+    %write = pto.partition_view %target, offsets = [%zero, %zero], sizes = [%one, %eight]
+      : !pto.tensor_view<1x8xf32> -> !pto.partition_tensor_view<1x8xf32>
+    scf.for %i = %one to %n step %two {
+      pto.tload ins(%read : !pto.partition_tensor_view<1x8xf32>) outs(%a : !pto.tile_buf<vec, 1x8xf32>)
+    }
+    scf.for %j = %three to %m step %three {
+      pto.tstore ins(%b : !pto.tile_buf<vec, 1x8xf32>) outs(%write : !pto.partition_tensor_view<1x8xf32>)
+    }
+    return
+  }
+  func.func @disjoint_deferred_writer(%dst: !pto.ptr<f32, gm>)
+      attributes {test.dynamic_uniform_crossings, test.disjoint_deferred} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %four = arith.constant 4 : index
+    %eight = arith.constant 8 : index
+    %tile = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x8xf32>
+    %target = pto.make_tensor_view %dst, shape = [%four, %eight], strides = [%eight, %one]
+      : !pto.tensor_view<4x8xf32>
+    scf.for %i = %zero to %four step %one {
+      %write = pto.partition_view %target, offsets = [%i, %zero], sizes = [%one, %eight]
+        : !pto.tensor_view<4x8xf32> -> !pto.partition_tensor_view<1x8xf32>
+      pto.tstore ins(%tile : !pto.tile_buf<vec, 1x8xf32>) outs(%write : !pto.partition_tensor_view<1x8xf32>)
     }
     return
   }

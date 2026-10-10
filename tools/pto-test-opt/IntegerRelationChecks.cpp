@@ -239,6 +239,58 @@ bool unaryResidueInclusionChecks()
            coupled->isSubsetOf(*coupledResidue) && !coupled->isSubsetOf(*coupledWrong) &&
            empty->isSubsetOf(*coupledWrong);
 }
+bool uncachedInclusionChecks()
+{
+    auto target = System::create(3, {}, {congruence({0, 0, 1}, 1, 2)});
+    auto inequality = System::create(3, {row({1, 0, 0}, -10)});
+    const bool targetsValid = succeeded(target) && succeeded(inequality);
+    if (!targetsValid) { return false; }
+    for (int64_t sum : {1, 2}) {
+        auto source = System::create(3,
+            {row({1, 1, 0}, sum), row({-1, -1, 0}, -sum), row({0, 0, 1}, 0), row({0, 0, -1}, 0)},
+            {congruence({1, 0, 0}, 0, 2), congruence({0, 1, 0}, 0, 2)});
+        const bool correctResidue = succeeded(source) && !source->isKnownEmpty() &&
+            source->isSubsetOf(*target) == (sum == 1);
+        if (!correctResidue) {
+            return false;
+        }
+        auto fresh = System::create(3, source->constraints(), source->congruences());
+        const bool correctInequality = succeeded(fresh) && !fresh->isKnownEmpty() &&
+            fresh->isSubsetOf(*inequality) == (sum == 1);
+        if (!correctInequality) {
+            return false;
+        }
+    }
+    auto source = System::create(1, {row({1}, 5)}, {congruence({1}, 1, 2)});
+    auto weaker = System::create(1, {row({1}, 6)}, {congruence({1}, 1, 2)});
+    return succeeded(source) && succeeded(weaker) && !source->isKnownEmpty() &&
+        source->isSubsetOf(*source) && source->isSubsetOf(*weaker) && !source->isKnownEmpty();
+}
+bool seededDifferenceChecks(uint64_t& checked)
+{
+    auto seed = System::create(2, {row({1, 0}, 4), row({-1, 0}, 4), row({0, 1}, 4), row({0, -1}, 4)},
+        {congruence({1, 0}, 1, 2)});
+    auto restricted = System::create(2, {row({1, 0}, 5), row({0, 1}, 1)}, {congruence({1, 0}, 1, 2)});
+    auto universal = System::create(2, {row({1, 0}, 5)}, {congruence({1, 0}, 1, 2)});
+    const bool systemsValid = succeeded(seed) && succeeded(restricted) && succeeded(universal);
+    if (!systemsValid) { return false; }
+    for (const auto& blocker : {*restricted, *universal}) {
+        auto difference = fs::subtractIntegerUnions(2, {*seed}, {blocker});
+        if (failed(difference)) { return false; }
+        for (int64_t x = -5; x <= 5; ++x) {
+            for (int64_t y = -5; y <= 5; ++y) {
+                const Point point{Integer(x), Integer(y)};
+                ++checked;
+                const bool expected = contains(*seed, point) && !contains(blocker, point);
+                const bool matches = contains(*difference, point) == expected;
+                if (!matches) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
 bool remapAndDifferenceChecks(uint64_t& checked)
 {
     auto different = System::create(2, {row({1, -1}, -1)});
@@ -275,6 +327,14 @@ int runIntegerRelationChecks()
     if (!feasibilityAndWitnessChecks()) { llvm::errs() << "integer feasibility/witness check failed\n"; return 1; }
     if (!unaryLatticeChecks(checked)) { llvm::errs() << "integer unary lattice check failed\n"; return 1; }
     if (!unaryResidueInclusionChecks()) { llvm::errs() << "integer unary residue inclusion failed\n"; return 1; }
+    const bool uncached = uncachedInclusionChecks();
+    if (!uncached) {
+        llvm::errs() << "integer uncached inclusion failed\n"; return 1;
+    }
+    const bool seeded = seededDifferenceChecks(checked);
+    if (!seeded) {
+        llvm::errs() << "integer seeded difference failed\n"; return 1;
+    }
     if (!remapAndDifferenceChecks(checked)) { llvm::errs() << "integer remap/difference check failed\n"; return 1; }
     llvm::outs() << "integer relation exactness passed " << checked << " bounded points\n";
     return 0;

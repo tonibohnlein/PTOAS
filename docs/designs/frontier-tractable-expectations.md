@@ -831,3 +831,54 @@ IR and finish without a timeout. Per-region comparison finds no coverage loss:
 MayNotAlias remains 227/240, and MayAlias increases from 213/240 to 214/240.
 This is recognition/mathematical coverage; the public insertion boundary remains
 unchanged. The three pinned paper section hashes remain unchanged.
+
+## Uniform crossing extrema and deferred access scopes
+
+Dynamic uniform conflicts now compose through exact occurrence extrema. The
+relational adapter joins the source's last-site selector and target's first-site
+selector, preserving parameter residues, rational witness equalities and original
+visit coordinates. Byte bridges and native crossings still participate in one
+complete crossing reduction. Missing extrema remain an explicit obligation.
+
+The shared circuit adapter accepts the same uniform conflicts directly from
+active or deferred access boundaries. It retains deferred identities and extrema
+through nested composition, avoiding finite byte projection and relational
+conversion when the existing circuit interface suffices. A conflicting deferred
+nonuniform access still requires an exact byte adapter. Uniform alias predicates
+come from the shared access model; this change invents no physical addresses.
+
+A discharged GM writer can occur in multiple selected slices of its original
+loop. The adapter revalidates the existing disjoint-visit footprint proof before
+accepting distinct constant ordinal intervals of the same effect and outermost
+original loop. Fixed coordinates, nested visit frames and overlapping intervals
+do not use this exemption. The proof consumes the identical full-invocation
+access model on both sides; detached composition needs no new shared-input
+construction. The elementwise pipeline's split store slices exercise this path.
+
+Exact integer inclusion now avoids feasibility projection for syntactically
+implied atoms. A mismatching fixed residue still checks source emptiness. Seeded
+union subtraction removes only right-hand atoms syntactically implied by the
+seed; every arrangement frame remains restricted to that seed. These changes
+remove redundant work without introducing analysis budgets or class exclusions.
+
+Regression checks independently enumerate dynamic non-unit trip domains and
+uniform required order/minimum crossings, including zero trips and denominator
+scaling. Direct circuit checks remove relational providers, require no projected
+finite crossing pairs, test missing extrema and nonuniform refusal, and repeat
+the oracle after nested composition. Actual guarded regional exports test
+disjoint writer slices and refusal of overlapping slices. Integer tests cover
+uncached empty sources, structural inclusion and seeded differences.
+
+The three paper hashes remain unchanged. The public pass retains its requested
+recognition-and-analysis boundary; synchronization insertion and allocation are
+not enabled by this milestone. Parameterized fixed-occurrence relational
+conversion and general deferred nonuniform crossing adapters remain explicit
+unsupported capabilities.
+
+Validation: all 39 focused checks pass. The 22 serial pinned corpus runs retain
+all previously exact regions, preserve input IR and introduce no timeouts.
+Coverage increases from 227/240 to 228/240 under MayNotAlias and from 214/240 to
+218/240 under MayAlias. The added exact regions are `gdn_chunk_cumsum` node 4
+under both policies and `lossless_block_cast` nodes 0, 2 and 3 under MayAlias.
+The slowest final run is 14.2 seconds. This is focused milestone validation,
+not the final paired optimized cross-project corpus campaign.

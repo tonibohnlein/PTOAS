@@ -118,35 +118,6 @@ private:
         }
         return result;
     }
-    Relation identities(ArrayRef<ArithmeticOccurrenceDomain> domains)
-    {
-        Relation result;
-        for (const auto& domain : domains) {
-            const unsigned d = domain.residues.size();
-            std::vector<unsigned> map(d + p);
-            std::iota(map.begin(), map.begin() + d, 0);
-            std::iota(map.begin() + d, map.end(), 2 * d);
-            auto lifted = domain.system.remap(2 * d + p, map);
-            std::vector<IntegerConstraint> rows;
-            for (unsigned i = 0; i < d; ++i) {
-                IntegerConstraint row;
-                row.coefficients.resize(2 * d + p);
-                row.coefficients[i] = BoundInteger(1); row.coefficients[d + i] = BoundInteger(-1);
-                rows.push_back(row);
-                for (auto& c : row.coefficients) { c = -c; }
-                rows.push_back(std::move(row));
-            }
-            auto equal = IntegerSystem::create(2 * d + p, rows);
-            if (failed(lifted) || failed(equal)) { failedOperation = true; return {}; }
-            auto present = lifted->intersect(*equal);
-            if (failed(present)) { failedOperation = true; return {}; }
-            for (auto kind : {ArithmeticEvent::Start, ArithmeticEvent::Completion}) {
-                ArithmeticEventKey event{domain.site, kind, domain.residues};
-                append(result[{event, event, domain.parameterResidues}], *present);
-            }
-        }
-        return result;
-    }
     bool uniformPair(const ArithmeticSite& source, const ArithmeticSite& target) const
     {
         const auto sourcePipe = static_cast<uint32_t>(source.phase->kPipeValue);
@@ -160,19 +131,13 @@ private:
         }
         return false;
     }
-    Relation nativeCrossings(bool uniform = false)
+    Relation nativeCrossings()
     {
         Relation result;
         for (const auto& a : left.occurrences) {
             for (const auto& b : right.occurrences) {
-                const bool eligible = uniform ? uniformPair(left.sites[a.site], right.sites[b.site]) :
-                    left.sites[a.site].phase->kPipeValue == right.sites[b.site].phase->kPipeValue;
-                if (a.parameterResidues != b.parameterResidues || !eligible) { continue; }
-                const bool dynamicUniform = uniform && (!a.residues.empty() || !b.residues.empty());
-                if (dynamicUniform) {
-                    error = "dynamic uniform crossing extrema adapter is not implemented yet";
-                    failedOperation = true; return {};
-                }
+                if (a.parameterResidues != b.parameterResidues ||
+                    left.sites[a.site].phase->kPipeValue != right.sites[b.site].phase->kPipeValue) { continue; }
                 const unsigned x = a.residues.size(), y = b.residues.size(), dims = x + y + p;
                 std::vector<unsigned> am(x + p), bm(y + p), keep(dims);
                 std::iota(am.begin(), am.begin() + x, 0);
@@ -181,14 +146,9 @@ private:
                 std::iota(keep.begin(), keep.end(), 0);
                 auto products = join(a.system, am, b.system, bm, dims, keep);
                 if (failed(products)) { failedOperation = true; return {}; }
-                const std::vector<std::pair<ArithmeticEvent, ArithmeticEvent>> kindsList = uniform ?
-                    std::vector<std::pair<ArithmeticEvent, ArithmeticEvent>>{
-                        {ArithmeticEvent::Completion, ArithmeticEvent::Start}} :
-                    std::vector<std::pair<ArithmeticEvent, ArithmeticEvent>>{
-                        {ArithmeticEvent::Start, ArithmeticEvent::Start},
-                        {ArithmeticEvent::Completion, ArithmeticEvent::Completion},
-                        {ArithmeticEvent::Start, ArithmeticEvent::Completion}};
-                for (auto kinds : kindsList) {
+                for (auto kinds : {std::make_pair(ArithmeticEvent::Start, ArithmeticEvent::Start),
+                                   std::make_pair(ArithmeticEvent::Completion, ArithmeticEvent::Completion),
+                                   std::make_pair(ArithmeticEvent::Start, ArithmeticEvent::Completion)}) {
                     ArithmeticRelationKey key{{a.site, kinds.first, a.residues},
                                               {split + b.site, kinds.second, b.residues}, a.parameterResidues};
                     for (auto& piece : *products) { append(result[key], piece); }
@@ -197,22 +157,25 @@ private:
         }
         return result;
     }
-    // Domain columns: shared byte, then shared parameters. Add exact output
-    // quotient equalities from the selector witness; no functional resynthesis.
-    FailureOr<IntegerSystem> selectorGraph(const Piece& piece, unsigned total, unsigned first, unsigned byte)
+    // Optional byte input, then shared parameters. Native extrema have no byte
+    // input. Preserve exact quotient witnesses without functional resynthesis.
+    FailureOr<IntegerSystem> selectorGraph(const Piece& piece, unsigned total, unsigned first,
+        std::optional<unsigned> byte = {})
     {
-        if (piece.inputResidues.size() != 1 || piece.parameterResidues.size() != p ||
-            piece.domain.dimensions() != 1 + p) { return failure(); }
-        std::vector<unsigned> map(1 + p);
-        map[0] = byte;
-        std::iota(map.begin() + 1, map.end(), total - p);
+        const unsigned inputs = unsigned(byte.has_value());
+        const bool validSchema = piece.inputResidues.size() == inputs && piece.parameterResidues.size() == p &&
+            piece.domain.dimensions() == inputs + p;
+        if (!validSchema) { return failure(); }
+        std::vector<unsigned> map(inputs + p);
+        if (byte) { map[0] = *byte; }
+        std::iota(map.begin() + inputs, map.end(), total - p);
         auto domain = piece.domain.remap(total, map);
         if (failed(domain)) { return failure(); }
         std::vector<IntegerConstraint> rows;
         for (unsigned i = 0; i < piece.outputs.size(); ++i) {
             const auto& output = piece.outputs[i];
             if (output.denominator <= BoundInteger(0) ||
-                output.numerator.coefficients.size() != 1 + p) { return failure(); }
+                output.numerator.coefficients.size() != inputs + p) { return failure(); }
             IntegerConstraint row;
             row.coefficients.resize(total);
             row.coefficients[first + i] = output.denominator;
@@ -224,6 +187,68 @@ private:
         }
         auto equalities = IntegerSystem::create(total, rows);
         return failed(equalities) ? FailureOr<IntegerSystem>(failure()) : domain->intersect(*equalities);
+    }
+    FailureOr<std::vector<Piece>> occurrenceExtrema(const RegionalRelationData& child,
+        unsigned site, Kind kind)
+    {
+        std::vector<Piece> pieces;
+        bool supplied = false;
+        for (const auto& boundary : child.selectors.boundaries) {
+            if (boundary.kind != kind || boundary.site != site) { continue; }
+            supplied = true;
+            for (const auto& piece : boundary.selector.pieces) {
+                if (piece.outputSite != site) { return failure(); }
+                pieces.push_back(piece);
+            }
+        }
+        if (supplied) { return pieces; }
+        // A flat occurrence type has one possible visit, so its domain is both
+        // extrema. Dynamic types require the producer's exact tuple selector.
+        for (const auto& occurrence : child.occurrences) {
+            if (occurrence.site != site) { continue; }
+            if (!occurrence.residues.empty()) { return failure(); }
+            pieces.push_back({occurrence.system, {}, occurrence.parameterResidues, site, {}});
+        }
+        return pieces;
+    }
+    Relation uniformCrossings()
+    {
+        Relation result;
+        std::map<unsigned, std::vector<Piece>> last, first;
+        for (unsigned a = 0; a < left.sites.size(); ++a) {
+            for (unsigned b = 0; b < right.sites.size(); ++b) {
+                if (!uniformPair(left.sites[a], right.sites[b])) { continue; }
+                for (auto selection : {std::make_pair(true, a), std::make_pair(false, b)}) {
+                    auto& cache = selection.first ? last : first;
+                    if (cache.count(selection.second)) { continue; }
+                    auto selected = occurrenceExtrema(selection.first ? left : right, selection.second,
+                        selection.first ? Kind::LastSite : Kind::FirstSite);
+                    if (failed(selected)) {
+                        error = "uniform crossing requires an exact first/last original-occurrence selector";
+                        failedOperation = true; return {};
+                    }
+                    cache.emplace(selection.second, std::move(*selected));
+                }
+                for (const auto& x : last[a]) {
+                    for (const auto& y : first[b]) {
+                        if (x.parameterResidues != y.parameterResidues) { continue; }
+                        const unsigned nx = x.outputs.size(), ny = y.outputs.size(), total = nx + ny + p;
+                        auto xx = selectorGraph(x, total, 0), yy = selectorGraph(y, total, nx);
+                        const bool graphsAvailable = succeeded(xx) && succeeded(yy);
+                        if (!graphsAvailable) { failedOperation = true; return {}; }
+                        auto both = xx->intersect(*yy);
+                        ++out.analysis.cost.pieceJoins;
+                        if (failed(both)) { failedOperation = true; return {}; }
+                        ArithmeticRelationKey key{{a, ArithmeticEvent::Completion, {}},
+                            {split + b, ArithmeticEvent::Start, {}}, x.parameterResidues};
+                        for (const auto& output : x.outputs) { key.source.residues.push_back(output.residue); }
+                        for (const auto& output : y.outputs) { key.target.residues.push_back(output.residue); }
+                        append(result[key], *both);
+                    }
+                }
+            }
+        }
+        return result;
     }
     Relation bridges()
     {
@@ -251,7 +276,8 @@ private:
                         unsigned nx = x.outputs.size(), ny = y.outputs.size(), total = nx + ny + 1 + p;
                         auto xx = selectorGraph(x, total, 0, nx + ny);
                         auto yy = selectorGraph(y, total, nx, nx + ny);
-                        if (failed(xx) || failed(yy)) { failedOperation = true; return {}; }
+                        const bool graphsAvailable = succeeded(xx) && succeeded(yy);
+                        if (!graphsAvailable) { failedOperation = true; return {}; }
                         auto both = xx->intersect(*yy);
                         if (failed(both)) { failedOperation = true; return {}; }
                         std::vector<unsigned> keep(nx + ny + p);
@@ -565,22 +591,22 @@ FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
     out.analysis.period = left.analysis.period; out.analysis.parameterCount = p;
     out.analysis.pipeCount = pipes.size();
     auto lh = left.analysis.requiredOrder, rh = renamed(right.analysis.requiredOrder, split);
-    auto lid = identities(left.occurrences);
-    auto rid = renamed(identities(right.occurrences), split);
-    auto lref = lh, rref = rh;
-    unite(lref, lid); unite(rref, rid);
     auto bridge = bridges(), nativeEdges = nativeCrossings();
-    unite(bridge, nativeCrossings(true));
+    unite(bridge, uniformCrossings());
     if (failedOperation) { return failure(); }
     if (failed(prerequisiteCrossings(bridge, nativeEdges))) { return failure(); }
     auto native = compose(compose(left.analysis.nativeOrder, nativeEdges),
                           renamed(right.analysis.nativeOrder, split));
     auto crossings = bridge;
     unite(crossings, native);
-    auto allCross = compose(compose(lref, crossings), rref);
-    auto alternate = compose(compose(lh, crossings), rref);
-    unite(alternate, compose(compose(lref, crossings), rh));
-    unite(alternate, native);
+    // Expand (H_left + I) C (H_right + I) without projecting through
+    // identity relations. All operands already use their occurrence domains.
+    auto prefix = compose(lh, crossings);
+    auto suffix = compose(crossings, rh);
+    auto alternate = compose(prefix, rh);
+    unite(alternate, prefix); unite(alternate, suffix); unite(alternate, native);
+    auto allCross = bridge;
+    unite(allCross, alternate);
     auto retained = subtract(bridge, alternate);
     if (failedOperation || !selectors()) {
         error = "exact symbolic crossing composition or storage-selector projection failed"; return failure();
