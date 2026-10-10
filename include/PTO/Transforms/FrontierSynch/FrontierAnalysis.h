@@ -145,6 +145,8 @@ private:
     SequenceRegionResolver regionalResolver(
         std::shared_ptr<const MathematicalResult> retainedNumerical = {});
     std::shared_ptr<const MathematicalResult> adaptNumericalSequence(std::size_t region, std::string& error);
+    std::shared_ptr<const RegionalAnalysis> boundedExports(
+        const MathematicalResult& demands, bool selectors, std::string& error);
     std::shared_ptr<const RegionalAnalysis> arithmeticExports(
         const MathematicalResult& demands, bool selectors, std::string& error);
     std::shared_ptr<const RegionalAnalysis> varyingExports(

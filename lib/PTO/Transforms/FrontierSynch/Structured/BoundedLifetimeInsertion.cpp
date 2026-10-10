@@ -23,12 +23,16 @@
 #include <tuple>
 namespace mlir::pto::frontiersynch {
 BoundedLifetimeDemandResult::BoundedLifetimeDemandResult(std::shared_ptr<RegionExpressions> arena)
-    : arena(std::move(arena)), expressions(*this->arena) {}
+    : arena(std::move(arena)), expressions(*this->arena), symbols(*symbolOwner)
+{
+    expressions.retainInputOwner(symbolOwner);
+}
 BoundedLifetimeDemandResult::~BoundedLifetimeDemandResult() = default;
 using Id = RegionExpressions::Id;
 FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> analyzeBoundedLifetimeRegion(
     func::FuncOp function, scf::ForOp loop, const PhaseIndex& index, const SyncInput& input,
-    const BoundedLifetimeRecognition& recognized, std::string& error, std::shared_ptr<RegionExpressions> arena)
+    const BoundedLifetimeRecognition& recognized, std::string& error, std::shared_ptr<RegionExpressions> arena,
+    std::optional<uint64_t> exportSpan)
 {
     if (!function || !loop || loop->getParentOfType<func::FuncOp>() != function) {
         error = "bounded lifetime region must belong to its original function"; return failure();
@@ -39,7 +43,11 @@ FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> analyzeBoundedLifetimeRe
         error = "bounded lifetime requires a certified skeleton, refresh and counted domain";
         return failure();
     }
-    const auto m = skeleton.phases.size(), span = recognized.refresh.span;
+    const auto m = skeleton.phases.size(), span = exportSpan.value_or(recognized.refresh.span);
+    if (span < recognized.refresh.span) {
+        error = "export window is smaller than certified lifetime";
+        return failure();
+    }
     if (!m || span >= UINT32_MAX || m > UINT32_MAX / (span + 1)) {
         error = "bounded lifetime window cannot represent its potential occurrences";
         return failure();
@@ -337,7 +345,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
         auto targetGuard = bindBoundedExpression(*demands, edge.guard, distance, true);
         targetGuard = e.land(e.le(e.constant(distance), ordinal), targetGuard);
         if (!emitter.add(edge.source, edge.target % m, sourceGuard, targetGuard, {ordinal}, {target})) {
-            error = demands->predicates->error.empty() ? e.lastEmissionError() : demands->predicates->error;
+            const auto reason = demands->predicates->error.empty() ? e.lastEmissionError() : demands->predicates->error;
+            error = "bounded endpoint unavailable from site " + std::to_string(edge.source) +
+                " to site " + std::to_string(edge.target % m) + " at visit displacement " +
+                std::to_string(distance) + ": " + reason;
             return failure();
         }
     }

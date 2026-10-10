@@ -15,6 +15,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeRegional.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
 #include "Shared/RecognitionInternal.h"
 #include "PTO/Transforms/FrontierSynch/Structured/MixedStrideAnalysis.h"
@@ -415,6 +416,41 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::varyingExports(
     }
     return varyingSelectedResult(*attempt.varyingExports, *storage, error);
 }
+std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::boundedExports(
+    const MathematicalResult& demands, bool selectors, std::string& error)
+{
+    if (!demands.boundedDemands) { return {}; }
+    auto original = llvm::find_if(program->nodes, [&](const auto& candidate) {
+        return candidate.anchor == demands.boundedDemands->loop.getOperation();
+    });
+    if (original == program->nodes.end()) { error = "bounded original loop is unavailable"; return {}; }
+    const auto& node = *original;
+    if (!node.boundedLifetime) { return {}; }
+    const auto loopRegion = static_cast<std::size_t>(std::distance(program->nodes.begin(), original));
+    auto& attempt = sessionState->loopAttempts[{loopRegion, AnalysisBackend::BoundedLifetime}];
+    if (!attempt.boundedQueriesAttempted) {
+        attempt.boundedQueriesAttempted = true;
+        if (construction.boundedQueryBuilds != UINT64_MAX) { ++construction.boundedQueryBuilds; }
+        auto result = boundedLifetimeRegionalQueries(demands.boundedDemands, *node.boundedLifetime,
+            *structuralIndex, sessionState->expressions, attempt.boundedQueryError, storage);
+        if (succeeded(result)) {
+            attempt.boundedQueries = std::make_shared<const RegionalAnalysis>(std::move(*result));
+        }
+    }
+    if (!attempt.boundedQueries) { error = attempt.boundedQueryError; return {}; }
+    if (!selectors) { error.clear(); return attempt.boundedQueries; }
+    if (!attempt.boundedSelectorsAttempted) {
+        attempt.boundedSelectorsAttempted = true;
+        if (construction.boundedSelectorBuilds != UINT64_MAX) { ++construction.boundedSelectorBuilds; }
+        auto result = boundedLifetimeRegionalSelectors(*demands.boundedDemands, *node.boundedLifetime,
+            *attempt.boundedQueries, attempt.boundedSelectorError);
+        if (succeeded(result)) {
+            attempt.boundedSelectors = std::make_shared<const RegionalAnalysis>(std::move(*result));
+        }
+    }
+    error = attempt.boundedSelectorError;
+    return attempt.boundedSelectors;
+}
 std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::arithmeticExports(
     const MathematicalResult& demands, bool selectors, std::string& error)
 {
@@ -734,6 +770,7 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver(
             produceLoopBackend(backend, error, region);
         if (!demands) { return failure(); }
         auto result = backend == AnalysisBackend::Arithmetic ? arithmeticExports(*demands, true, error) :
+            backend == AnalysisBackend::BoundedLifetime ? boundedExports(*demands, true, error) :
             varyingExports(*demands, true, error);
         if (!result) { return failure(); }
         return *result;

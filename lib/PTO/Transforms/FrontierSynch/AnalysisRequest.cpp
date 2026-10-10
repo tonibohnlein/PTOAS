@@ -224,6 +224,18 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
         result.available.selectors = exports.capabilities.exactSelectors;
     }
     if (demands.backend == "native-scalar" || demands.backend == "expanded-finite-guarded") { result.available = {}; }
+    if (demands.boundedDemands && (request.needs.queries || request.needs.selectors)) {
+        std::string error;
+        result.regionalExports = boundedExports(demands, false, error);
+        result.available.queries = static_cast<bool>(result.regionalExports);
+        if (request.needs.selectors) {
+            auto selected = boundedExports(demands, true, error);
+            result.available.selectors = static_cast<bool>(selected);
+            if (selected) { result.regionalExports = std::move(selected); }
+        }
+        if (!error.empty()) { result.obligations.push_back({result.available.queries ?
+            AnalysisStage::Selectors : AnalysisStage::Queries, error}); }
+    }
     if (demands.arithmeticRegionalDemands && (request.needs.queries || request.needs.selectors)) {
         std::string error;
         result.regionalExports = arithmeticExports(demands, false, error);
@@ -456,6 +468,9 @@ DictionaryAttr allocateRetained(const MathematicalResult& demands, const Program
 } // namespace
 LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan)
 {
+    // Allocation is a separate request on this prepared graph. Its readiness is
+    // returned here and stored in plan.allocationCertificate, not in the earlier
+    // Analyze outcome's available exports or logical Ready status.
     if (!result.mathematical || !sessionState || result.mathematical->input != storage ||
         plan.mathematicalOwner != result.mathematical) { return failure(); }
     auto& attempts = sessionState->attempts[result.mathematical->region];

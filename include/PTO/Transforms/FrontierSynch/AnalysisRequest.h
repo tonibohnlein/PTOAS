@@ -116,6 +116,7 @@ struct AnalysisConstructionCounts {
     uint64_t rotatingReductions = 0, guardedRotatingReductions = 0;
     uint64_t varyingBoundaryReductions = 0;
     uint64_t varyingQueryBuilds = 0, varyingSelectorBuilds = 0;
+    uint64_t boundedQueryBuilds = 0, boundedSelectorBuilds = 0;
     uint64_t arithmeticQueryBuilds = 0, arithmeticSelectorBuilds = 0;
     uint64_t expandedSelectorBuilds = 0, expandedSelectorChecks = 0;
     uint64_t logicalPreparations = 0;

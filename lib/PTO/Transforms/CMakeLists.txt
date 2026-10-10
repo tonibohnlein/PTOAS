@@ -168,6 +168,8 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Structured/BoundedLifetime.cpp
   FrontierSynch/Structured/BoundedLifetimeAllocation.cpp
   FrontierSynch/Structured/BoundedLifetimeInsertion.cpp
+  FrontierSynch/Structured/BoundedLifetimeRegional.cpp
+  FrontierSynch/Structured/BoundedLifetimeSelectors.cpp
   FrontierSynch/Structured/GuardedPeriodicInsertion.cpp
   FrontierSynch/Structured/GuardedPeriodicQuotient.cpp
   FrontierSynch/Structured/GuardedRotatingAnalysis.cpp
