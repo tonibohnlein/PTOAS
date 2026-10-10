@@ -12,12 +12,69 @@
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/GuardedPeriodicInsertion.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/NormalizedControl.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/PhaseNormalization.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/NumericTemplatePlan.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/FiniteExpansionPlan.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/RegionalRelationsInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/SequenceAnalysisInternal.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
+LogicalResult checkPhaseMinMax(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    using namespace pto::frontiersynch;
+    pto::SyncInput input(policy);
+    PhaseIndex index;
+    const bool initialized = succeeded(input.build(function)) && succeeded(index.build(function, input));
+    if (!initialized) { return failure(); }
+    auto loops = function.getOps<scf::ForOp>();
+    if (loops.empty()) { return function.emitError("phase extrema fixture requires an original loop"); }
+    auto loop = *loops.begin();
+    RegionExpressions expressions;
+    PhaseNormalization normalizer(loop, index, expressions);
+    bool valid = true;
+    loop.walk([&](Operation* op) {
+        if (!isa<arith::MinSIOp, arith::MaxSIOp>(op)) { return; }
+        for (uint64_t phase = 0; phase < 4; ++phase) {
+            auto value = normalizer.atPhase(op->getResult(0), phase, 1);
+            if (function->hasAttr("test.narrow_phase")) { valid &= !value; continue; }
+            const int64_t shifted = static_cast<int64_t>(phase) - 1;
+            const int64_t expected = isa<arith::MinSIOp>(op) ? std::min(shifted, int64_t{0}) :
+                std::max(shifted, int64_t{0});
+            const auto size = expressions.size();
+            auto retry = normalizer.atPhase(op->getResult(0), phase, 1);
+            valid &= value && expressions.constantValue(*value) == static_cast<uint64_t>(expected) &&
+                value == retry && expressions.size() == size;
+        }
+    });
+    if (!valid) { return function.emitError("signed phase extrema or narrow-layout refusal changed"); }
+    llvm::outs() << "phase-minmax: signed-extrema cached narrow-layout-refused\n";
+    return success();
+}
+LogicalResult checkPiecewiseAccessCache(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    using namespace pto::frontiersynch;
+    FrontierAnalysis session(function);
+    if (failed(session.initialize(policy))) { return failure(); }
+    std::string error;
+    auto first = session.specializedArithmeticDemands({function, function}, {}, error);
+    const auto count = session.specializedArithmeticConstructions();
+    auto again = session.specializedArithmeticDemands({function, function}, {}, error);
+    const bool expected = function.getName() != "unsupported";
+    const bool cached = bool(first) == expected && first == again &&
+        session.specializedArithmeticConstructions() == count;
+    if (!cached) {
+        return function.emitError("piecewise arithmetic request did not cache its exact result or failure");
+    }
+    FrontierAnalysis cold(function);
+    if (failed(cold.initialize(policy))) { return failure(); }
+    auto independent = cold.specializedArithmeticDemands({function, function}, {}, error);
+    const bool isolated = bool(independent) == expected && (!first || independent != first);
+    if (!isolated) {
+        return function.emitError("piecewise arithmetic cache crossed invocation contexts");
+    }
+    llvm::outs() << "piecewise-access: cached exact-or-unresolved isolated-context\n";
+    return success();
+}
 LogicalResult checkSequenceEndpointRetry(func::FuncOp function, pto::GMAliasPolicy policy)
 {
     using namespace pto::frontiersynch;

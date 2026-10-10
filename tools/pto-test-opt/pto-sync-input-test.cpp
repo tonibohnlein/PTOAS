@@ -42,6 +42,8 @@ LogicalResult checkFixedCoordinateRelations(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkUniformRelationCrossings(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSpecializedNumericSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSpecializedGuardedSession(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkPhaseMinMax(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkPiecewiseAccessCache(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSequenceEndpointRetry(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkNaturalRotatingExportRetry(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkFiniteArithmeticSession(func::FuncOp, pto::GMAliasPolicy);
@@ -1838,6 +1840,14 @@ int main(int argc, char **argv) {
     auto delegation = pto::frontiersynch::recognizeClosedCallees(*module);
     for (auto function : module->getOps<func::FuncOp>()) {
       if (function.isDeclaration()) { continue; }
+      if (certification && function->hasAttr("test.phase_minmax")) {
+        if (failed(checkPhaseMinMax(function, policy))) { return 1; }
+        continue;
+      }
+      if (certification && function->hasAttr("test.piecewise_access_cache")) {
+        if (failed(checkPiecewiseAccessCache(function, policy))) { return 1; }
+        continue;
+      }
       if (certification && function->hasAttr("test.sequence_endpoint_retry")) {
         if (failed(checkSequenceEndpointRetry(function, policy))) { return 1; }
         continue;

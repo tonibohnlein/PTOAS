@@ -132,9 +132,9 @@ AffineExpr negate(AffineExpr expression)
         getAffineConstantExpr(-1, expression.getContext())) : AffineExpr{};
 }
 void emitRange(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEffect& effect,
-               const SyncStorageCell& range, AffineExpr origin, Value base = {})
+               const SyncStorageCell& range, ArrayRef<ArithmeticValuePiece> origins, Value base = {})
 {
-    const bool valid = range.begin < range.end && range.end <= static_cast<uint64_t>(INT64_MAX) && origin;
+    const bool valid = range.begin < range.end && range.end <= static_cast<uint64_t>(INT64_MAX);
     if (!valid) {
         builder.output.extraction.note(RecognitionIssue::UnknownGeometry, effect.phase->elementOp);
         return;
@@ -148,28 +148,33 @@ void emitRange(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEff
     relation.storageSpace = range.space;
     relation.storageBase = base ? base : range.base;
     relation.coordinates[depth] = {"byte", CoordinateKind::Storage};
-    auto rows = builder.domain(site, 0);
-    auto byte = getAffineDimExpr(depth, builder.context);
-    auto begin = add(origin, getAffineConstantExpr(range.begin, builder.context));
-    auto end = add(origin, getAffineConstantExpr(range.end - 1, builder.context));
-    rows.push_back(add(byte, negate(begin)));
-    rows.push_back(add(end, -byte));
-    FiniteAccessRecipe recipe;
-    if (builder.output.finiteExpansion && !depth) {
-        SmallVector<AffineExpr> zeros(builder.output.parameters.size(), getAffineConstantExpr(0, builder.context));
-        auto atZero = mlir::pto::detail::substitute(origin, {}, zeros);
-        auto fixed = dyn_cast_or_null<AffineConstantExpr>(atZero ? simplifyAffineExpr(atZero, 0, 0) : AffineExpr{});
-        if (fixed) {
-            const auto translation = add(origin, negate(fixed));
-            if (translation) {
-                recipe.translation = simplifyAffineExpr(translation, 0, builder.output.parameters.size());
+    for (const auto& choice : origins) {
+        auto rows = builder.domain(site, 0);
+        llvm::append_range(rows, choice.rows);
+        auto byte = getAffineDimExpr(depth, builder.context);
+        auto begin = add(choice.value, getAffineConstantExpr(range.begin, builder.context));
+        auto end = add(choice.value, getAffineConstantExpr(range.end - 1, builder.context));
+        rows.push_back(add(byte, negate(begin)));
+        rows.push_back(add(end, -byte));
+        FiniteAccessRecipe recipe;
+        const bool affineRecipe = builder.output.finiteExpansion && !depth &&
+            origins.size() == 1 && choice.rows.empty();
+        if (affineRecipe) {
+            SmallVector<AffineExpr> zeros(builder.output.parameters.size(), getAffineConstantExpr(0, builder.context));
+            auto atZero = mlir::pto::detail::substitute(choice.value, {}, zeros);
+            auto fixed = dyn_cast_or_null<AffineConstantExpr>(atZero ? simplifyAffineExpr(atZero, 0, 0) : AffineExpr{});
+            if (fixed) {
+                const auto translation = add(choice.value, negate(fixed));
+                if (translation) {
+                    recipe.translation = simplifyAffineExpr(translation, 0, builder.output.parameters.size());
+                }
             }
         }
-    }
-    builder.emitForSites(relation, rows, {{&site, 0}}, recipe.translation ? &recipe.rows : nullptr);
-    if (recipe.translation) {
-        recipe.relation = builder.output.primitives.relations.size();
-        builder.output.finiteAccessRecipes.push_back(std::move(recipe));
+        builder.emitForSites(relation, rows, {{&site, 0}}, recipe.translation ? &recipe.rows : nullptr);
+        if (recipe.translation) {
+            recipe.relation = builder.output.primitives.relations.size();
+            builder.output.finiteAccessRecipes.push_back(std::move(recipe));
+        }
     }
     builder.output.primitives.relations.push_back(std::move(relation));
 }
@@ -180,21 +185,18 @@ bool symbolicRegion(ProgramBuilder& builder, std::size_t siteId, const SyncStora
         return false;
     }
     SmallVector<AffineExpr> zeros(region.extents.size(), getAffineConstantExpr(0, builder.context));
-    SmallVector<AffineExpr> symbols, occurrenceSymbols;
+    SmallVector<AffineExpr> symbols;
     for (auto [id, symbol] : llvm::enumerate(region.symbols)) {
         symbols.push_back(getAffineSymbolExpr(id, builder.context));
-        auto value = builder.value(symbol, builder.output.sites[siteId], 0);
-        if (!value) {
-            return false;
-        }
-        occurrenceSymbols.push_back(value);
+
     }
     auto localOrigin = mlir::pto::detail::substitute(region.byteOffset, zeros, symbols);
     DenseMap<AffineExpr, BoundedExpression> cache;
     auto bounded = localOrigin ? boundedOrigin(localOrigin, region.symbols, cache).expression : AffineExpr{};
-    auto origin = mlir::pto::detail::substitute(bounded, {}, occurrenceSymbols);
+    auto origins = bounded ? builder.piecewiseMap(bounded, region.symbols, builder.output.sites[siteId], 0) :
+        std::nullopt;
     auto offset = add(region.byteOffset, negate(localOrigin));
-    if (!origin || !offset) {
+    if (!origins || !offset) {
         return false;
     }
     SyncAccessRegion local = region;
@@ -218,7 +220,7 @@ bool symbolicRegion(ProgramBuilder& builder, std::size_t siteId, const SyncStora
         return false;
     }
     for (const auto& piece : pieces) {
-        emitRange(builder, siteId, effect, piece, origin, region.base);
+        emitRange(builder, siteId, effect, piece, *origins, region.base);
     }
     return true;
 }
@@ -250,7 +252,7 @@ void extractAccesses(ProgramBuilder& builder, const SyncInput& input, const Sync
             const auto& effect = effects.effects()[id];
             if (effect.rangesMaterialized) {
                 for (const auto& range : effect.ranges) {
-                    emitRange(builder, siteId, effect, range, getAffineConstantExpr(0, builder.context));
+                    emitRange(builder, siteId, effect, range, {{getAffineConstantExpr(0, builder.context), {}}});
                 }
                 continue;
             }

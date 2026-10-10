@@ -1030,3 +1030,30 @@ also checks that failed stronger exports retain whole-sequence evidence.
 All 46 focused checks pass. Targeted optimized replays recover `mhc_head_mix`
 and `csa_slots_build_valid_qk_plan` through logical preparation, six-ID allocation
 and C++ emission. Other campaign losses remain under separate investigation.
+
+### Guarded access-origin arithmetic
+
+The arithmetic producer now reuses its existing signed-index min/max/select
+bound alternatives for symbolic physical access origins. Preparation and
+construction use the same admitted expression grammar. Each distinct SSA
+symbol makes one choice, reused at every occurrence in the map. Every choice
+predicate is conjoined with the original site's presence and counted domain;
+all choices remain pieces of one access relation. Existing producer limits
+report an unresolved representation obligation without dropping a physical
+effect. This extends an adapter, not the arithmetic class or reducer.
+
+Original access maps, bases and provenance remain authoritative. Dynamic local
+extents remain unsupported by this adapter. Multi-piece origins do not use the
+single-translation finite-normalization recipe. Phase normalization also
+supports signed 64-bit min/max through signed comparison/select, retaining the
+existing width and phase proof requirements.
+
+Independent checks cover 4,068 byte-membership comparisons with negative
+origins, ties, nested extrema, correlated tensor offsets and an unsupported
+select branch. Warm/cold sessions verify successful and failed request caching
+and context isolation. Explicit 32-bit index layouts remain refused by the
+phase adapter. All 53 focused checks pass, including existing piecewise-bound
+and scalar-wrap oracles. Targeted optimized replays additionally recover both
+pypto-lib `prefill_fwd` cases 32/33 through logical preparation, six-ID
+allocation and C++ emission. Persistent GEMM and the two conservative-baseline
+cases remain separate campaign findings.

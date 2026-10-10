@@ -308,7 +308,7 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
             if (llvm::is_contained(output.extraction.dischargedEffects, id)) { continue; }
             for (const auto& region : effects.effects()[id].regions) {
                 for (auto symbol : region.symbols) {
-                    if (!builder.prepareValue(symbol, site)) {
+                    if (!builder.prepareBound(symbol, site)) {
                         output.extraction.note(RecognitionIssue::IndexArithmetic, site.phase->elementOp);
                     }
                 }

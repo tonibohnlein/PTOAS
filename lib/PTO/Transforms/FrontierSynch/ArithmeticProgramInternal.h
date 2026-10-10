@@ -12,6 +12,10 @@
 #include "llvm/ADT/MapVector.h"
 namespace mlir::pto::frontiersynch { struct FiniteExpansionPlan; }
 namespace mlir::pto::frontiersynch::detail {
+struct ArithmeticValuePiece {
+    AffineExpr value;
+    SmallVector<AffineExpr> rows;
+};
 struct ProgramBuilder {
     ArithmeticProgram& output;
     const ArithmeticLimits& limits;
@@ -28,6 +32,10 @@ struct ProgramBuilder {
     bool prepareValue(Value input, const ArithmeticSite& site);
     bool prepareGuard(Value condition, const ArithmeticSite& site);
     bool prepareBound(Value input, const ArithmeticSite& site);
+    // Exact guarded choices for an origin with no local dimensions. Repeated
+    // SSA symbols share one choice; unsupported branches are never discarded.
+    std::optional<SmallVector<ArithmeticValuePiece>> piecewiseMap(
+        AffineExpr origin, ArrayRef<Value> symbols, const ArithmeticSite& site, unsigned offset);
     // Conjoin both endpoint guard domains at their respective coordinate offsets.
     void emitForSites(PrimitiveRelation& relation, ArrayRef<AffineExpr> rows,
                       ArrayRef<std::pair<const ArithmeticSite*, unsigned>> endpoints,
