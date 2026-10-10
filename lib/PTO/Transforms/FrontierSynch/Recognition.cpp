@@ -403,7 +403,7 @@ bool detail::checkRotatingDomain(scf::ForOp loop, const PhaseIndex& index, Recog
     if (!normalized || (canonical && (*lower != 0 || *step != 1))) {
         result.note(RecognitionIssue::LoopDomain, loop, true);
     }
-    if (index.hasRelevantCarriedState(loop)) {
+    if (index.hasUnprovedCarriedState(loop)) {
         result.note(RecognitionIssue::LoopCarriedState, loop, true);
     }
     return true;

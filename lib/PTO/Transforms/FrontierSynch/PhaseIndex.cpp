@@ -7,11 +7,13 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
 #include "PTO/IR/PTOAccessRegion.h"
+#include "../InsertSync/SyncScalarEvolution.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/STLExtras.h"
 #include <algorithm>
+#include <numeric>
 
 namespace mlir::pto::frontiersynch {
 LogicalResult PhaseIndex::build(func::FuncOp source, const SyncInput& input)
@@ -25,6 +27,7 @@ LogicalResult PhaseIndex::build(func::FuncOp source, ArrayRef<const CompoundInst
     valuePrerequisites.clear();
     prerequisites.clear();
     relevantValues.clear();
+    carriedOrdinals.clear();
     dominance.invalidate();
     function = {};
     if (!source) {
@@ -41,6 +44,7 @@ LogicalResult PhaseIndex::build(func::FuncOp source, ArrayRef<const CompoundInst
     anchorPhases = std::move(pending);
     function = source;
     computeRelevance();
+    computeCarriedOrdinals();
     DenseMap<Operation*, bool> carriedRelevance;
     for (const auto& entry : anchorPhases) {
         if (entry.second.size() != 1) {
@@ -109,6 +113,55 @@ bool PhaseIndex::hasRelevantCarriedState(Operation* operation) const
     auto loop = dyn_cast<scf::ForOp>(operation);
     return loop && (hasRelevantResults(loop) || llvm::any_of(loop.getRegionIterArgs(),
         [&](Value argument) { return isRelevant(argument); }));
+}
+
+void PhaseIndex::computeCarriedOrdinals()
+{
+    function.walk([&](scf::ForOp loop) {
+        for (auto argument : loop.getRegionIterArgs()) {
+            if (!isRelevant(argument)) { continue; }
+            auto* context = function.getContext();
+            mlir::pto::detail::ScalarEvolution evolution(context, loop);
+            auto proof = evolution.modularRecurrence(argument);
+            if (!proof) { continue; }
+            auto ordinal = getAffineDimExpr(0, context);
+            auto scaled = mlir::pto::detail::checkedMul(ordinal, getAffineConstantExpr(proof->stride, context));
+            auto expression = mlir::pto::detail::checkedAdd(getAffineConstantExpr(proof->seed, context), scaled);
+            if (!expression) { continue; }
+            carriedOrdinals.try_emplace(argument, CarriedOrdinalProof{expression % proof->modulus,
+                static_cast<uint64_t>(proof->seed), static_cast<uint64_t>(proof->stride),
+                static_cast<uint64_t>(proof->modulus)});
+        }
+    });
+}
+
+uint64_t PhaseIndex::CarriedOrdinalProof::period() const
+{
+    return modulus / std::gcd(modulus, stride);
+}
+
+uint64_t PhaseIndex::CarriedOrdinalProof::atOrdinal(uint64_t ordinal) const
+{
+    // The product of two uint64_t values plus a signed-64 seed fits 128
+    // unsigned bits here: stride is bounded by the signed machine proof.
+    auto value = APInt(128, ordinal) * APInt(128, stride) + APInt(128, seed);
+    return value.urem(APInt(128, modulus)).getZExtValue();
+}
+
+const PhaseIndex::CarriedOrdinalProof* PhaseIndex::carriedOrdinal(Value argument) const
+{
+    auto found = carriedOrdinals.find(argument);
+    return found == carriedOrdinals.end() ? nullptr : &found->second;
+}
+
+bool PhaseIndex::hasUnprovedCarriedState(Operation* operation) const
+{
+    auto loop = dyn_cast_or_null<scf::ForOp>(operation);
+    // Final values need a separate exit/zero-trip interpretation. A formula
+    // for the body argument alone does not certify an escaping loop result.
+    return loop && (hasRelevantResults(loop) || llvm::any_of(loop.getRegionIterArgs(), [&](Value argument) {
+        return isRelevant(argument) && !carriedOrdinal(argument);
+    }));
 }
 
 void PhaseIndex::traceResult(const CompoundInstanceElement* producer, Value result,

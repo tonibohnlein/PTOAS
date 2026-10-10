@@ -87,8 +87,8 @@ bool SequenceAnalysisState::repeatedChild(const StructureNode& node, Expr trips)
         return false;
     };
     auto loop = dyn_cast<scf::ForOp>(node.anchor);
-    if (!loop || index.hasRelevantCarriedState(loop) || node.children.size() != 1) {
-        return unavailable("q1 repeat recognition: single body without relevant carried state required");
+    if (!loop || index.hasUnprovedCarriedState(loop) || node.children.size() != 1) {
+        return unavailable("q1 repeat recognition: single body with proved carried state required");
     }
     if (llvm::any_of(input->instructions(), [&](auto* phase) {
             return phase->macroOpInstanceId >= 0 && loop->isProperAncestor(phase->elementOp);

@@ -160,9 +160,9 @@ def main():
         assert report["queries_available"] and report["unchanged"], report
         # Recognition/insertion size must not depend on runtime trip count.
         path.write_text(source.replace("array<i64: 5>", "array<i64: 1000000000>"))
-        large = invoke(tool, "--insert-logical", path)
+        large = invoke(tool, "--insert-logical-library", path)
         path.write_text(source)
-        small = invoke(tool, "--insert-logical", path)
+        small = invoke(tool, "--insert-logical-library", path)
         assert large.replace("1000000000", "5") == small
         # Diagnostic attributes can name scf.for without adding an operation.
         assert operation_count(large, "scf.for") == operation_count(source, "scf.for")
@@ -174,7 +174,7 @@ def main():
             constant = source.replace("    scf.for %i = %zero to %n",
                 f"    %bound = arith.constant {bound} : index\n    scf.for %i = %zero to %bound")
             path.write_text(constant)
-            emitted = invoke(tool, "--insert-logical", path)
+            emitted = invoke(tool, "--insert-logical-library", path)
             report = json.loads(invoke(tool, "--sequence-analysis", path))
             assert not report["error"] and report["prepared"], report
             constant_analysis.append(tuple(report[k] for k in ("ports", "cells", "expressions", "emitted")))

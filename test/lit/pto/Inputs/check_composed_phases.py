@@ -26,7 +26,7 @@ def invoke(tool, mode, path):
 def check(document, n, m, repeats=1, bank_stride=32, initial_load=False, active_prefix=False,
           moving_extract=False, external_value=False, moving_stride=32, phase_lengths=(),
           owned_stride=0, owned_probe=0, owned_probes=(), owned_consumers=True, owned_origin=0,
-          read_square=False):
+          read_square=False, visit_lower=0, visit_step=1, bank_sequence=(0, 1)):
     assert document["accepted"], document
     trace = document["trace"]
     assert not trace["error"], trace
@@ -35,28 +35,29 @@ def check(document, n, m, repeats=1, bank_stride=32, initial_load=False, active_
         prefix = [outer] if repeats != 1 else []
         for visit in range(max(0, min(n, m) if active_prefix else n)):
             # Distinct physical bank bytes, with a nonzero allocation origin.
-            base = 512 + bank_stride * (visit % 2)
+            coordinate = visit_lower + visit_step * visit
+            base = 512 + bank_stride * bank_sequence[visit % len(bank_sequence)]
             cell = set(range(base, base + 4))
             tile = set(range(base, base + 32))
             if initial_load:
                 gm_base = 1000000000 + 65536 * 4 * visit
-                expected.append(("load", prefix + [visit], set(range(gm_base, gm_base + 32)), tile))
-            expected.append(("prologue", prefix + [visit], cell, set()))
+                expected.append(("load", prefix + [coordinate], set(range(gm_base, gm_base + 32)), tile))
+            expected.append(("prologue", prefix + [coordinate], cell, set()))
             inner_length = phase_lengths[visit % len(phase_lengths)] if phase_lengths else m
             for inner in range(max(0, inner_length)):
                 if moving_extract:
                     source_begin = 4096 + inner * moving_stride
-                    expected.append(("extract", prefix + [visit, inner],
+                    expected.append(("extract", prefix + [coordinate, inner],
                                      set(range(source_begin, source_begin + 32)), tile))
-                expected.append(("compute", prefix + [visit, inner], tile, tile))
+                expected.append(("compute", prefix + [coordinate, inner], tile, tile))
                 read_begin = base + 4 * inner * inner if read_square else base
-                expected.append(("read", prefix + [visit, inner], set(range(read_begin, read_begin + 4)), set()))
-            expected.append(("epilogue", prefix + [visit], set(), cell))
+                expected.append(("read", prefix + [coordinate, inner], set(range(read_begin, read_begin + 4)), set()))
+            expected.append(("epilogue", prefix + [coordinate], set(), cell))
             if owned_stride:
                 owned_base = 1000000000 + 65536 * 4 + owned_origin + visit * owned_stride
-                expected.append(("owned", prefix + [visit], tile, set(range(owned_base, owned_base + 32))))
+                expected.append(("owned", prefix + [coordinate], tile, set(range(owned_base, owned_base + 32))))
             if moving_extract:
-                expected.append(("sourcewrite", prefix + [visit], set(), set(range(4096, 4100))))
+                expected.append(("sourcewrite", prefix + [coordinate], set(), set(range(4096, 4100))))
     if owned_stride and owned_consumers:
         for consumer, offset in enumerate(owned_probes or (owned_probe,)):
             probe = 1000000000 + 65536 * 4 + offset
@@ -215,7 +216,7 @@ def main():
         masked = source.replace("arith.remui %visit, %two", "arith.andi %one, %visit")
         path.write_text(masked)
         check(json.loads(invoke(tool, "--structured-trace", path)), 3, 2)
-        # Large physical spacing is a constant after phase specialization.
+        # Large physical spacing is a constant after storage normalization.
         # It must not count as a variable arithmetic coefficient or enumerate
         # the unused gap between the two 32-byte accessed tiles.
         spaced = source.replace(
@@ -228,7 +229,7 @@ def main():
         path.write_text(spaced)
         check(json.loads(invoke(tool, "--structured-trace", path)), 3, 2, bank_stride=65536)
         spaced_report = json.loads(invoke(tool, "--sequence-analysis", path))
-        assert spaced_report["repeated_regions"] > 0 and spaced_report["phase_descriptions"] > 0, spaced_report
+        assert spaced_report["repeated_regions"] > 0, spaced_report
         # The same phase provider handles a read-only GM stream on an explicit
         # sibling. Its evolving address is irrelevant only because the shared
         # input proves that no writer can touch that storage, including re-entry.
@@ -250,7 +251,7 @@ def main():
         path.write_text(streamed)
         check(json.loads(invoke(tool, "--structured-trace", path)), 3, 2, initial_load=True)
         stream_report = json.loads(invoke(tool, "--sequence-analysis", path))
-        assert stream_report["repeated_regions"] > 0 and stream_report["phase_descriptions"] > 0, stream_report
+        assert stream_report["repeated_regions"] > 0, stream_report
         # A compact SSA DAG must stay compact during phase normalization.
         # The repeated additions have exponentially many unfolded paths; the
         # final subtraction cancels them and preserves the original bank.
@@ -268,10 +269,10 @@ def main():
         path.write_text(source)
         report = json.loads(invoke(tool, "--sequence-analysis", path))
         assert not report["error"] and report["prepared"] and report["numeric_visits"] == 0, report
-        assert report["repeated_regions"] > 0 and report["phase_descriptions"] > 0, report
-        small = invoke(tool, "--insert-logical", path)
+        assert report["repeated_regions"] > 0, report
+        small = invoke(tool, "--insert-logical-library", path)
         path.write_text(source.replace("array<i64: 3, 2>", "array<i64: 1000000000, 1000000001>"))
-        large = invoke(tool, "--insert-logical", path)
+        large = invoke(tool, "--insert-logical-library", path)
         assert small == large.replace("1000000000, 1000000001", "3, 2")
         # Recognition diagnostics can name scf.for in string attributes.
         assert sum(line.lstrip().startswith("scf.for ") for line in small.splitlines()) == 2

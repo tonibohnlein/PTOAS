@@ -34,8 +34,8 @@ public:
           normalizer(loop, index, *this->arena) {}
     RepeatedRegionAnalysis run()
     {
-        if (!loop || program.nodes[node].children.size() != 1 || index.hasRelevantCarriedState(loop)) {
-            return fail("rotating compact child requires one original body and no evolving carried state");
+        if (!loop || program.nodes[node].children.size() != 1 || index.hasUnprovedCarriedState(loop)) {
+            return fail("rotating compact child requires one original body and proved carried state");
         }
         auto domain = CountedLoop::get(loop);
         auto lower = positiveConstant(loop.getLowerBound(), true);

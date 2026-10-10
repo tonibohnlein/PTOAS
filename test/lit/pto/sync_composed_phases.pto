@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: %python %S/Inputs/check_composed_phases.py pto-sync-input-test %s
+// RUN: %python %S/Inputs/check_carried_phase_closure.py pto-sync-input-test %s
 // RUN: %python %S/Inputs/check_periodic_phase_lengths.py pto-sync-input-test %s
 // RUN: %python %S/Inputs/check_phase_owned_storage.py pto-sync-input-test %s
 !cell = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>

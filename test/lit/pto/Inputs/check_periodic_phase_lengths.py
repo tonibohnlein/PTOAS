@@ -44,9 +44,9 @@ def check_compact(tool, path, source):
     assert not report["error"] and report["prepared"], report
     assert report["numeric_visits"] == 0, report
     assert report["repeated_regions"] > 0 and report["phase_descriptions"] > 0, report
-    small = invoke(tool, "--insert-logical", path)
+    small = invoke(tool, "--insert-logical-library", path)
     path.write_text(source.replace("array<i64: 3, 2>", "array<i64: 1000000001, 1000000000>"))
-    large = invoke(tool, "--insert-logical", path)
+    large = invoke(tool, "--insert-logical-library", path)
     assert small == large.replace("1000000001, 1000000000", "3, 2")
     assert sum(line.lstrip().startswith("scf.for ") for line in small.splitlines()) == 2
 

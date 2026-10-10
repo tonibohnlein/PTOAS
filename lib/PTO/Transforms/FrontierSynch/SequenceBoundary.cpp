@@ -445,8 +445,8 @@ std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
     const PhaseIndex& index, RegionExpressions& arena, Expr trips,
     const DenseMap<Value, Expr>& inherited, std::string& error)
 {
-    if (!CountedLoop::get(loop) || index.hasRelevantCarriedState(loop)) {
-        error = "boundary slicing requires a representable counted loop without relevant carried state";
+    if (!CountedLoop::get(loop) || index.hasUnprovedCarriedState(loop)) {
+        error = "boundary slicing requires a representable counted loop with proved carried state";
         return std::nullopt;
     }
     PhaseNormalization normalizer(loop, index, arena);
@@ -537,7 +537,7 @@ std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
 bool SequenceAnalysisState::boundaryLoop(scf::ForOp loop)
 {
     auto domain = CountedLoop::get(loop);
-    if (!domain || index.hasRelevantCarriedState(loop)) { return false; }
+    if (!domain || index.hasUnprovedCarriedState(loop)) { return false; }
     auto trips = domain->trips(expressions);
     std::string partitionError;
     auto partition = collectBoundarySlices(loop, index, expressions, trips, DenseMap<Value, Expr>{}, partitionError);

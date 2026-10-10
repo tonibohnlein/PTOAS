@@ -55,8 +55,8 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
         return false;
     };
     auto outer = dyn_cast<scf::ForOp>(node.anchor);
-    if (!outer || index.hasRelevantCarriedState(outer) || node.children.size() != 1) {
-        return unavailable("single body without relevant carried state required");
+    if (!outer || index.hasUnprovedCarriedState(outer) || node.children.size() != 1) {
+        return unavailable("single body with proved carried state required");
     }
     if (llvm::any_of(input->instructions(), [&](auto* phase) {
             return phase->macroOpInstanceId >= 0 && outer->isProperAncestor(phase->elementOp);

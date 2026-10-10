@@ -63,6 +63,16 @@ public:
     // values. Computed once, including zero-trip and loop-carried SSA edges.
     bool isRelevant(Value value) const { return relevantValues.contains(value); }
     bool hasRelevantCarriedState(Operation* loop) const;
+    struct CarriedOrdinalProof {
+        AffineExpr expression;
+        uint64_t seed, stride, modulus;
+        uint64_t period() const;
+        uint64_t atOrdinal(uint64_t ordinal) const;
+    };
+    // Exact formula in the original loop's zero-based ordinal. Missing proofs
+    // never turn carried values into independent execution parameters.
+    const CarriedOrdinalProof* carriedOrdinal(Value argument) const;
+    bool hasUnprovedCarriedState(Operation* loop) const;
     bool hasRelevantResults(Operation* operation) const;
 
     // SSA availability at an operation boundary. This says nothing about a
@@ -76,6 +86,8 @@ private:
     DenseMap<Operation*, SmallVector<const CompoundInstanceElement*>> anchorPhases;
     DenseSet<Operation*> valuePrerequisites;
     DenseSet<Value> relevantValues;
+    DenseMap<Value, CarriedOrdinalProof> carriedOrdinals;
+    void computeCarriedOrdinals();
     void computeRelevance();
     DenseMap<Operation*, SmallVector<ValuePrerequisite>> prerequisites;
     void traceResult(const CompoundInstanceElement* producer, Value result,
