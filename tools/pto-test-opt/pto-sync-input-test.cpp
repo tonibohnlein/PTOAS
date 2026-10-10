@@ -40,6 +40,7 @@ using namespace mlir;
 LogicalResult checkNormalizedControlSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkFixedCoordinateRelations(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkUniformRelationCrossings(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkDynamicUniformCrossings(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkNumericalRequestOrder(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkExactFormFastPath(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkNumericPreflight(func::FuncOp, const pto::SyncInput&,
@@ -1858,6 +1859,9 @@ int main(int argc, char **argv) {
       }
       if (regionalRecognition && failed(analysis.recognizeRegionalArithmetic())) { return 1; }
       if (certification) {
+        const bool dynamicUniformFailed = function->hasAttr("test.dynamic_uniform_crossings") &&
+            failed(checkDynamicUniformCrossings(function, policy));
+        if (dynamicUniformFailed) { return 1; }
         const bool uniformRelationsFailed = function->hasAttr("test.uniform_relation_crossings") &&
             failed(checkUniformRelationCrossings(function, policy));
         if (uniformRelationsFailed) { return 1; }

@@ -119,9 +119,10 @@ void checkDisjoint(const Families& families, RecognitionResult& result, Operatio
     }
 }
 
-bool dischargeGlobal(std::size_t id, scf::ForOp loop, const SyncInput& input, const PhaseIndex& index)
+bool dischargeGlobal(std::size_t id, scf::ForOp loop, const SyncStorageEffects& effects, const PhaseIndex& index)
 {
-    const auto& effects = input.accesses();
+    const bool valid = loop && id < effects.effects().size() && effects.effects()[id].memory;
+    if (!valid) { return false; }
     const auto& effect = effects.effects()[id];
     if (effect.memory->scope != AddressSpace::GM || !effects.independentOfOtherPhases(id)) {
         return false;
@@ -207,7 +208,7 @@ void inspectAccess(std::size_t id, scf::ForOp loop, const SyncInput& input,
     const auto& effect = effects.effects()[id];
     const auto& memory = *effect.memory;
     Operation* anchor = effect.phase->elementOp;
-    if (dischargeGlobal(id, loop, input, index)) {
+    if (dischargeGlobal(id, loop, effects, index)) {
         result.dischargedEffects.push_back(id);
         return;
     }
@@ -327,7 +328,13 @@ bool detail::dischargeGlobalReadOnlyEffect(std::size_t id, const SyncStorageEffe
 bool detail::dischargeGlobalEffect(std::size_t effect, scf::ForOp loop,
                                    const SyncInput& input, const PhaseIndex& index)
 {
-    return dischargeGlobal(effect, loop, input, index);
+    return dischargeGlobal(effect, loop, input.accesses(), index);
+}
+
+bool detail::dischargeGlobalEffect(std::size_t effect, scf::ForOp loop,
+                                   const SyncStorageEffects& effects, const PhaseIndex& index)
+{
+    return dischargeGlobal(effect, loop, effects, index);
 }
 
 RecognitionResult recognizeExplicit(Block& block, const PhaseIndex& index, const SyncStorageEffects& effects)

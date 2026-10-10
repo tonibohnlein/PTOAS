@@ -489,7 +489,7 @@ FailureOr<std::vector<IntegerSystem>> IntegerSystem::project(llvm::ArrayRef<unsi
 bool IntegerSystem::isSubsetOf(const IntegerSystem& other) const
 {
     if (dimensionCount != other.dimensionCount) { return false; }
-    if (isEmpty()) { return true; }
+    if (isKnownEmpty()) { return true; }
     for (const auto& atom : other.inequalities) {
         if (std::any_of(inequalities.begin(), inequalities.end(), [&](const auto& known) {
                 return known.coefficients == atom.coefficients && known.bound <= atom.bound;
@@ -511,10 +511,10 @@ bool IntegerSystem::isSubsetOf(const IntegerSystem& other) const
         // Projection can encode a grid coordinate by a fixed value instead
         // of retaining its congruence row. Unary lattice facts can establish
         // the affine residue without testing every other residue separately.
-        // isEmpty() above established that this source has a witness, so a
-        // different fixed residue also disproves inclusion immediately.
+        // A different fixed residue disproves inclusion only when the source
+        // is nonempty. Structural implication needs no emptiness projection.
         if (const auto residue = fixedResidue(*this, atom)) {
-            if (*residue != atom.residue) { return false; }
+            if (*residue != atom.residue) { return isEmpty(); }
             continue;
         }
         for (BoundInteger residue(0); residue < atom.modulus; ++residue) {
@@ -589,6 +589,33 @@ IntegerSystem thresholdSlice(unsigned dimensions, const Axis& axis, std::size_t 
     }
     return validSystem(dimensions, rows);
 }
+// Inside a seeded arrangement, atoms already implied by the seed do not
+// partition membership. Dropping them changes neither seed intersection nor
+// the Boolean difference, and avoids irrelevant affine/modular axes.
+std::vector<IntegerSystem> relativeMembership(const IntegerSystem& seed, llvm::ArrayRef<IntegerSystem> pieces)
+{
+    std::vector<IntegerSystem> result;
+    for (const auto& piece : pieces) {
+        if (piece.isKnownEmpty()) { continue; }
+        std::vector<IntegerConstraint> rows;
+        std::vector<IntegerCongruence> congruences;
+        for (const auto& atom : piece.constraints()) {
+            const bool implied = llvm::any_of(seed.constraints(), [&](const auto& known) {
+                return known.coefficients == atom.coefficients && known.bound <= atom.bound;
+            });
+            if (!implied) { rows.push_back(atom); }
+        }
+        for (const auto& atom : piece.congruences()) {
+            const bool implied = llvm::any_of(seed.congruences(), [&](const auto& known) {
+                return known.coefficients == atom.coefficients && known.modulus == atom.modulus &&
+                    known.residue == atom.residue;
+            });
+            if (!implied) { congruences.push_back(atom); }
+        }
+        result.push_back(validSystem(seed.dimensions(), rows, congruences));
+    }
+    return result;
+}
 std::vector<IntegerSystem> arrange(unsigned dimensions, llvm::ArrayRef<IntegerSystem> lhs,
                                   llvm::ArrayRef<IntegerSystem> rhs, llvm::ArrayRef<Axis> axes,
                                   const IntegerSystem* seed = nullptr)
@@ -653,8 +680,9 @@ FailureOr<std::vector<IntegerSystem>> subtractIntegerUnions(unsigned dimensions,
         // Every descendant already belongs to this conjunction. Partition only
         // right-hand membership, retaining exact integer emptiness checks.
         // This avoids exploring the universe outside a selector's domain.
-        const auto axes = arrangementAxes({}, rhs);
-        return arrange(dimensions, lhs, rhs, axes, &lhs.front());
+        const auto relative = relativeMembership(lhs.front(), rhs);
+        const auto axes = arrangementAxes({}, relative);
+        return arrange(dimensions, lhs, relative, axes, &lhs.front());
     }
     const auto axes = arrangementAxes(lhs, rhs);
     return arrange(dimensions, lhs, rhs, axes);
