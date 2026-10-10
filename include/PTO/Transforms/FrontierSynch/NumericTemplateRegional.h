@@ -9,7 +9,19 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_NUMERICTEMPLATEREGIONAL_H
 #include "PTO/Transforms/FrontierSynch/NumericTemplate.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
 namespace mlir::pto::frontiersynch {
+struct NumericBodyMathematics {
+    NumericTemplate body;
+    std::shared_ptr<const ExplicitAnalysis> demands;
+    std::shared_ptr<const SyncInput> inputOwner;
+    std::shared_ptr<const PhaseIndex> indexOwner;
+    std::shared_ptr<const NormalizedControlDescription> normalized;
+};
+std::shared_ptr<const ExplicitAnalysis> analyzeNumericBody(const NumericTemplate& body, std::string& error);
+FailureOr<RegionalAnalysis> exportNumericBody(func::FuncOp function,
+    const SyncInput& input, const NumericBodyMathematics& mathematics,
+    std::shared_ptr<RegionExpressions> expressions, ArrayRef<scf::ForOp> enclosing, std::string& error);
 // One specialized body, with all bounded inner coordinates retained at their
 // original cuts. No loop is inferred or repeated by this adapter.
 FailureOr<RegionalAnalysis> numericBodyRegionalResult(func::FuncOp function,

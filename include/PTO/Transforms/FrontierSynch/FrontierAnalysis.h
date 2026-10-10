@@ -54,6 +54,10 @@ public:
     // Gate the finite-only repetition adapter before constructing mathematics;
     // a successful gate reuses canonical query and selector exports.
     FailureOr<RegionalAnalysis> finiteArithmeticRegion(std::size_t region, std::string& error);
+    uint64_t specializedNumericConstructions() const;
+    std::shared_ptr<const NumericBodyMathematics> specializedNumericDemands(scf::ForOp loop,
+        const TemplateGeometryConstant& geometry, const TemplateControlConstant& control, std::string& error,
+        NumericTemplateLimits limits = {}, std::shared_ptr<const NormalizedControlDescription> normalized = {});
     uint64_t specializedArithmeticConstructions() const;
     // Constants must be deterministic within this request. Reuse compares every
     // observed lookup, including unavailable values, in the original context.
