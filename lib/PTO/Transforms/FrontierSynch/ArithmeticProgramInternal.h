@@ -29,9 +29,13 @@ struct ProgramBuilder {
     bool staticallyEmpty(const ArithmeticSite& site) const;
     bool entryParameter(Value value, bool regionalLeaves = false) const;
     AffineExpr registerParameter(Value value);
-    bool prepareValue(Value input, const ArithmeticSite& site);
+    // Control domains cannot assume the occurrence whose presence they define.
+    enum class ScalarProofContext { Occurrence, Definition };
+    bool prepareValue(Value input, const ArithmeticSite& site,
+                      ScalarProofContext proof = ScalarProofContext::Occurrence);
     bool prepareGuard(Value condition, const ArithmeticSite& site);
-    bool prepareBound(Value input, const ArithmeticSite& site);
+    bool prepareBound(Value input, const ArithmeticSite& site,
+                      ScalarProofContext proof = ScalarProofContext::Occurrence);
     // Exact guarded choices for an origin with no local dimensions. Repeated
     // SSA symbols share one choice; unsupported branches are never discarded.
     std::optional<SmallVector<ArithmeticValuePiece>> piecewiseMap(
@@ -40,7 +44,8 @@ struct ProgramBuilder {
     void emitForSites(PrimitiveRelation& relation, ArrayRef<AffineExpr> rows,
                       ArrayRef<std::pair<const ArithmeticSite*, unsigned>> endpoints,
                       SmallVector<SmallVector<AffineExpr>>* recipes = nullptr);
-    AffineExpr value(Value input, const ArithmeticSite& site, unsigned offset) const;
+    AffineExpr value(Value input, const ArithmeticSite& site, unsigned offset,
+                     ScalarProofContext proof = ScalarProofContext::Occurrence) const;
     SmallVector<AffineExpr> domain(const ArithmeticSite& site, unsigned offset) const;
     // All rows are >= 0. Filter optionally restricts one original coordinate
     // to a modular residue; its modulus must divide the configured period.

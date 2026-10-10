@@ -141,6 +141,7 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/SyncInput.cpp
   InsertSync/SyncStorageEffects.cpp
   InsertSync/SyncAccessRegion.cpp
+  InsertSync/SyncScalarConstraints.cpp
   InsertSync/SyncRegionOverlap.cpp
   InsertSync/SyncRegionDigits.cpp
   InsertSync/SyncEffectRanges.cpp

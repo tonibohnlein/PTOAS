@@ -121,10 +121,15 @@ Value indexParameter(const ProgramBuilder& builder, Value input)
     return {};
 }
 AffineExpr normalizeValue(Value input, const ArithmeticSite& site, unsigned offset,
-                          MLIRContext* context, llvm::function_ref<AffineExpr(Value)> parameter)
+                          MLIRContext* context, llvm::function_ref<AffineExpr(Value)> parameter,
+                          ProgramBuilder::ScalarProofContext proof)
 {
-    mlir::pto::detail::ScalarEvolution evolution(context, input.getDefiningOp() ? input.getDefiningOp() :
-        input.getParentRegion()->getParentOp());
+    auto* anchor = proof == ProgramBuilder::ScalarProofContext::Occurrence && site.phase ?
+        site.phase->elementOp : nullptr;
+    if (!anchor) {
+        anchor = input.getDefiningOp() ? input.getDefiningOp() : input.getParentRegion()->getParentOp();
+    }
+    mlir::pto::detail::ScalarEvolution evolution(context, anchor);
     return evolution.value(input, [&](Value value) -> AffineExpr {
         for (auto fixed : site.fixedCoordinates) {
             if (value == fixed.loop.getInductionVar()) {
@@ -192,16 +197,17 @@ AffineExpr ProgramBuilder::registerParameter(Value value)
     }
     return getAffineSymbolExpr(inserted.first->second, context);
 }
-bool ProgramBuilder::prepareValue(Value input, const ArithmeticSite& site)
+bool ProgramBuilder::prepareValue(Value input, const ArithmeticSite& site, ScalarProofContext proof)
 {
     if (constant(input)) { return true; }
     auto expression = normalizeValue(input, site, 0, context, [&](Value value) -> AffineExpr {
         auto binding = indexParameter(*this, value);
         return binding ? registerParameter(binding) : AffineExpr{};
-    });
+    }, proof);
     return static_cast<bool>(expression);
 }
-AffineExpr ProgramBuilder::value(Value input, const ArithmeticSite& site, unsigned offset) const
+AffineExpr ProgramBuilder::value(Value input, const ArithmeticSite& site, unsigned offset,
+                                 ScalarProofContext proof) const
 {
     if (auto fixed = constant(input)) { return getAffineConstantExpr(*fixed, context); }
     return normalizeValue(input, site, offset, context, [&](Value input) -> AffineExpr {
@@ -211,7 +217,7 @@ AffineExpr ProgramBuilder::value(Value input, const ArithmeticSite& site, unsign
         }
         auto parameter = parameterIds.find(binding);
         return parameter == parameterIds.end() ? AffineExpr{} : getAffineSymbolExpr(parameter->second, context);
-    });
+    }, proof);
 }
 bool ProgramBuilder::staticallyEmpty(const ArithmeticSite& site) const
 {
@@ -236,12 +242,13 @@ SmallVector<AffineExpr> ProgramBuilder::domain(const ArithmeticSite& site, unsig
     for (auto [id, storedLoop] : llvm::enumerate(site.loops)) {
         auto loop = storedLoop;
         const auto iv = getAffineDimExpr(offset + id, context);
-        auto lower = value(loop.getLowerBound(), site, offset);
-        auto upper = value(loop.getUpperBound(), site, offset);
+        auto lower = value(loop.getLowerBound(), site, offset, ScalarProofContext::Definition);
+        auto upper = value(loop.getUpperBound(), site, offset, ScalarProofContext::Definition);
         // Piecewise bounds, including the lower-origin congruence, are emitted
         // together in emitForSites after choosing their exact alternatives.
         if (!lower || !upper) { continue; }
-        auto step = cast<AffineConstantExpr>(value(loop.getStep(), site, offset)).getValue();
+        auto step = cast<AffineConstantExpr>(
+            value(loop.getStep(), site, offset, ScalarProofContext::Definition)).getValue();
         auto distance = mlir::pto::detail::checkedAdd(iv, mlir::pto::detail::checkedMul(
             lower, getAffineConstantExpr(-1, context)));
         rows.push_back(distance);

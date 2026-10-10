@@ -12,6 +12,7 @@
 #ifndef PTO_TRANSFORMS_INSERTSYNC_SYNCSCALAREVOLUTION_H
 #define PTO_TRANSFORMS_INSERTSYNC_SYNCSCALAREVOLUTION_H
 #include "SyncRegionArithmetic.h"
+#include "SyncScalarConstraints.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Matchers.h"
@@ -35,6 +36,7 @@ class ScalarEvolution {
     MLIRContext* context;
     unsigned indexBits = 32;
     DenseMap<Value, Result> cache;
+    std::shared_ptr<const ScalarConstraints> constraints;
     struct RangeQueries {
         DenseMap<Value, std::optional<Range>> values;
         unsigned depth = 0;
@@ -155,6 +157,16 @@ class ScalarEvolution {
             result.range = Range{APInt::getSignedMinValue(bits).getSExtValue(),
                                  APInt::getSignedMaxValue(bits).getSExtValue()};
         }
+        // Refine the result bit-pattern range only after operation admission.
+        // A guard on x+1 does not prove that computing x+1 was nonwrapping.
+        if (constraints && result.range) {
+            auto fact = constraints->find(v);
+            if (fact != constraints->end()) {
+                Range refined{std::max(result.range->lower, fact->second.first),
+                              std::min(result.range->upper, fact->second.second)};
+                if (refined.lower <= refined.upper) { result.range = refined; }
+            }
+        }
         cache[v] = result;
         return result;
     }
@@ -170,6 +182,7 @@ public:
         if (anchor) {
             auto bits = DataLayout::closest(anchor).getTypeSizeInBits(IndexType::get(context));
             indexBits = !bits.isScalable() && bits.getFixedValue() <= 64 ? bits.getFixedValue() : 0;
+            constraints = std::make_shared<const ScalarConstraints>(enclosingScalarConstraints(anchor, indexBits));
         }
     }
     // Range-only query uses independent state: it must not publish placeholder
@@ -191,6 +204,7 @@ public:
         ScalarEvolution query(context);
         query.indexBits = indexBits;
         query.rangeQueries = rangeQueries;
+        query.constraints = constraints;
         auto range = query.resolve(value, [&](Value) { return getAffineSymbolExpr(0, context); }, 0).range;
         --rangeQueries->depth;
         const unsigned bits = width(value.getType());

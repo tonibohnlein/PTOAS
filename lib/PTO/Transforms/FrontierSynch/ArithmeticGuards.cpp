@@ -15,6 +15,7 @@
 namespace mlir::pto::frontiersynch::detail {
 namespace {
 using Rows = SmallVector<AffineExpr>;
+using ProofContext = ProgramBuilder::ScalarProofContext;
 using Pieces = SmallVector<Rows>;
 using GuardCache = DenseMap<std::pair<Value, unsigned>, Pieces>;
 constexpr unsigned maxGuardDepth = 64;
@@ -90,8 +91,8 @@ std::optional<Pieces> combine(Pieces left, Pieces right, bool conjunction, bool*
 std::optional<Pieces> comparison(ProgramBuilder& builder, arith::CmpIOp compare, bool truth,
                                   const ArithmeticSite& site, unsigned offset)
 {
-    auto lhs = builder.value(compare.getLhs(), site, offset);
-    auto rhs = builder.value(compare.getRhs(), site, offset);
+    auto lhs = builder.value(compare.getLhs(), site, offset, ProofContext::Definition);
+    auto rhs = builder.value(compare.getRhs(), site, offset, ProofContext::Definition);
     auto negative = [&](AffineExpr expression) {
         return mlir::pto::detail::checkedMul(expression, getAffineConstantExpr(-1, builder.context));
     };
@@ -188,18 +189,19 @@ std::optional<Pieces> condition(ProgramBuilder& builder, Value value, bool truth
 // cap is reported as a producer limit, never as a theorem-class violation.
 using BoundPieces = SmallVector<ArithmeticValuePiece>;
 std::optional<BoundPieces> boundPieces(ProgramBuilder& builder, Value input, const ArithmeticSite& site,
-                                     unsigned offset, unsigned depth, GuardCache& cache, bool& exceeded)
+                                     unsigned offset, unsigned depth, GuardCache& cache, bool& exceeded,
+                                     ProofContext proof = ProofContext::Occurrence)
 {
     if (depth > maxGuardDepth) { exceeded = true; return std::nullopt; }
-    if (auto affine = builder.value(input, site, offset)) { return BoundPieces{{affine, {}}}; }
+    if (auto affine = builder.value(input, site, offset, proof)) { return BoundPieces{{affine, {}}}; }
     auto* op = input.getDefiningOp();
     const bool minmax = op && isa<arith::MinSIOp, arith::MaxSIOp>(op);
     auto select = dyn_cast_or_null<arith::SelectOp>(op);
     if (!input.getType().isIndex() || (!minmax && !select)) { return std::nullopt; }
     Value left = select ? select.getTrueValue() : op->getOperand(0);
     Value right = select ? select.getFalseValue() : op->getOperand(1);
-    auto a = boundPieces(builder, left, site, offset, depth + 1, cache, exceeded);
-    auto b = boundPieces(builder, right, site, offset, depth + 1, cache, exceeded);
+    auto a = boundPieces(builder, left, site, offset, depth + 1, cache, exceeded, proof);
+    auto b = boundPieces(builder, right, site, offset, depth + 1, cache, exceeded, proof);
     if (!a || !b) { return std::nullopt; }
     BoundPieces result;
     auto append = [&](AffineExpr value, std::optional<Pieces> predicates) {
@@ -250,13 +252,15 @@ std::optional<Pieces> piecewiseDomain(ProgramBuilder& builder, const ArithmeticS
     Pieces result{Rows{}};
     for (auto [id, storedLoop] : llvm::enumerate(site.loops)) {
         auto loop = storedLoop;
-        if (builder.value(loop.getLowerBound(), site, offset) &&
-            builder.value(loop.getUpperBound(), site, offset)) { continue; }
-        auto lower = boundPieces(builder, loop.getLowerBound(), site, offset, 0, cache, exceeded);
-        auto upper = boundPieces(builder, loop.getUpperBound(), site, offset, 0, cache, exceeded);
+        if (builder.value(loop.getLowerBound(), site, offset, ProofContext::Definition) &&
+            builder.value(loop.getUpperBound(), site, offset, ProofContext::Definition)) { continue; }
+        auto lower = boundPieces(builder, loop.getLowerBound(), site, offset, 0, cache, exceeded,
+                                 ProofContext::Definition);
+        auto upper = boundPieces(builder, loop.getUpperBound(), site, offset, 0, cache, exceeded,
+                                 ProofContext::Definition);
         if (!lower || !upper) { return std::nullopt; }
         Pieces alternatives;
-        auto step = dyn_cast<AffineConstantExpr>(builder.value(loop.getStep(), site, offset));
+        auto step = dyn_cast<AffineConstantExpr>(builder.value(loop.getStep(), site, offset, ProofContext::Definition));
         if (!step || step.getValue() <= 0) { return std::nullopt; }
         const auto iv = getAffineDimExpr(offset + id, builder.context);
         const auto minusOne = getAffineConstantExpr(-1, builder.context);
@@ -338,7 +342,7 @@ std::optional<SmallVector<ArithmeticValuePiece>> ProgramBuilder::piecewiseMap(
     return result;
 }
 
-bool ProgramBuilder::prepareBound(Value input, const ArithmeticSite& site)
+bool ProgramBuilder::prepareBound(Value input, const ArithmeticSite& site, ScalarProofContext proof)
 {
     SmallVector<std::pair<Value, unsigned>> work{{input, 0}};
     DenseSet<Value> seen;
@@ -348,7 +352,7 @@ bool ProgramBuilder::prepareBound(Value input, const ArithmeticSite& site)
             output.extraction.note(RecognitionIssue::TemplateExpansionLimit, value.getDefiningOp());
             return false;
         }
-        if (!seen.insert(value).second || prepareValue(value, site)) { continue; }
+        if (!seen.insert(value).second || prepareValue(value, site, proof)) { continue; }
         auto* op = value.getDefiningOp();
         if (!value.getType().isIndex() || !op) { return false; }
         if (auto select = dyn_cast<arith::SelectOp>(op)) {
@@ -388,7 +392,7 @@ bool ProgramBuilder::prepareGuard(Value root, const ArithmeticSite& site)
                 return false;
             }
             for (Value operand : compare->getOperands()) {
-                if (!prepareValue(operand, site)) {
+                if (!prepareValue(operand, site, ProofContext::Definition)) {
                     // The predicate kind is supported. Report the scalar that
                     // could not be normalized, rather than rejecting scf.if.
                     output.extraction.note(RecognitionIssue::IndexArithmetic,
