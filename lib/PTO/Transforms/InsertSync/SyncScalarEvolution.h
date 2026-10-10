@@ -159,6 +159,12 @@ class ScalarEvolution {
         return result;
     }
 public:
+    struct ModularRecurrence {
+        int64_t seed, stride, modulus, lower, step;
+    };
+    // Shared machine-semantics proof; consumers may use its closed form or
+    // evaluate a representative with wide modular arithmetic.
+    std::optional<ModularRecurrence> modularRecurrence(BlockArgument argument);
     explicit ScalarEvolution(MLIRContext* context, Operation* anchor = nullptr) : context(context)
     {
         if (anchor) {
@@ -222,8 +228,10 @@ inline ScalarEvolution::Result ScalarEvolution::argument(BlockArgument arg, Symb
     return {symbol(arg), Range{lower->first, last}};
 }
 
-inline ScalarEvolution::Result ScalarEvolution::recurrence(BlockArgument arg, scf::ForOp loop, Symbol symbol)
+inline std::optional<ScalarEvolution::ModularRecurrence> ScalarEvolution::modularRecurrence(BlockArgument arg)
 {
+    auto loop = dyn_cast<scf::ForOp>(arg.getOwner()->getParentOp());
+    if (!loop || !arg.getArgNumber()) { return std::nullopt; }
     const unsigned id = arg.getArgNumber() - 1;
     auto yield = dyn_cast<scf::YieldOp>(loop.getBody()->getTerminator());
     auto lower = constant(loop.getLowerBound()), step = constant(loop.getStep());
@@ -249,10 +257,17 @@ inline ScalarEvolution::Result ScalarEvolution::recurrence(BlockArgument arg, sc
         !fits(Range{0, maximum}, arg.getType())) {
         return {};
     }
-    auto ordinal = checkedAdd(symbol(loop.getInductionVar()), number(-*lower));
-    auto shifted = ordinal ? checkedMul(ordinal.floorDiv(*step), number(*stride)) : AffineExpr{};
-    auto expression = shifted ? checkedAdd(number(*seed), shifted) : AffineExpr{};
-    return expression ? Result{modulo(expression, *modulus), Range{0, *modulus - 1}} : Result{};
+    return ModularRecurrence{*seed, *stride, *modulus, *lower, *step};
+}
+
+inline ScalarEvolution::Result ScalarEvolution::recurrence(BlockArgument arg, scf::ForOp loop, Symbol symbol)
+{
+    auto proof = modularRecurrence(arg);
+    if (!proof) { return {}; }
+    auto ordinal = checkedAdd(symbol(loop.getInductionVar()), number(-proof->lower));
+    auto shifted = ordinal ? checkedMul(ordinal.floorDiv(proof->step), number(proof->stride)) : AffineExpr{};
+    auto expression = shifted ? checkedAdd(number(proof->seed), shifted) : AffineExpr{};
+    return expression ? Result{modulo(expression, proof->modulus), Range{0, proof->modulus - 1}} : Result{};
 }
 
 inline std::optional<ScalarEvolution::Range> ScalarEvolution::arithmeticRange(Operation* op, Range a, Range b)
