@@ -52,4 +52,55 @@ RegionExpressions::Id RegionExpressions::substitute(Id expression, Substitution&
     }
     return context.memo.lookup(expression);
 }
+FailureOr<SmallVector<RegionExpressions::Id>> RegionExpressions::import(
+    const RegionExpressions& source, ArrayRef<Id> roots, uint64_t* work)
+{
+    const bool validRoots = constructionMessage.empty() && source.constructionMessage.empty() &&
+        llvm::all_of(roots, [&](Id id) { return source.valid(id); });
+    if (!validRoots) { return failure(); }
+    if (&source == this || roots.empty()) { return SmallVector<Id>(roots.begin(), roots.end()); }
+    Transaction transaction(*this);
+    SmallVector<Id> pending(roots.begin(), roots.end()), order;
+    llvm::DenseSet<Id> seen;
+    while (!pending.empty()) {
+        const Id id = pending.pop_back_val();
+        if (!seen.insert(id).second) { continue; }
+        order.push_back(id); source.appendOperands(source.nodes[id], pending);
+    }
+    llvm::sort(order);
+    if (work) {
+        const auto count = static_cast<uint64_t>(order.size());
+        *work = count > UINT64_MAX - *work ? UINT64_MAX : *work + count;
+    }
+    llvm::DenseMap<Id, Id> memo;
+    for (Id id : order) {
+        const auto& node = source.nodes[id];
+        Id result = invalid;
+        if (node.kind == Kind::Constant) {
+            result = node.boolean ? boolean(node.literal != 0) : constant(node.literal);
+        }
+        else if (node.kind == Kind::Input) { result = input(node.value); }
+        else if (node.kind == Kind::Integer) { result = rebuildInteger(node, memo); }
+        else if (node.kind == Kind::Select) {
+            result = select(memo.lookup(node.a), memo.lookup(node.b), memo.lookup(node.c));
+        } else if (node.kind == Kind::Not) { result = lnot(memo.lookup(node.a)); }
+        else { result = binary(node.kind, memo.lookup(node.a), memo.lookup(node.b)); }
+        if (result == invalid) { return failure(); }
+        memo[id] = result;
+    }
+    SmallVector<Id> imported;
+    for (Id id : roots) { imported.push_back(memo.lookup(id)); }
+    // Query placeholders have owners separate from source IR. Preserve them
+    // and the monotone payload replay prohibition for the target's lifetime.
+    const std::owner_less<std::shared_ptr<void>> before;
+    for (const auto& owner : source.inputOwners) {
+        const bool retained = llvm::any_of(inputOwners, [&](const auto& other) {
+            return !before(owner, other) && !before(other, owner);
+        });
+        if (!retained) { inputOwners.push_back(owner); }
+    }
+    forbiddenRecomputation.insert(source.forbiddenRecomputation.begin(), source.forbiddenRecomputation.end());
+    transaction.commit();
+    return imported;
+}
 } // namespace mlir::pto::frontiersynch
