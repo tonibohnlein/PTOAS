@@ -1057,3 +1057,22 @@ and scalar-wrap oracles. Targeted optimized replays additionally recover both
 pypto-lib `prefill_fwd` cases 32/33 through logical preparation, six-ID
 allocation and C++ emission. Persistent GEMM and the two conservative-baseline
 cases remain separate campaign findings.
+
+### Typed unsuccessful producer outcomes
+
+Failed session attempts retain their status, failing stage and existing form
+witnesses independently of mathematical and export caches. A proved exclusion
+of a particular supplied form is `Form/NotApplicable`; an unavailable proof or
+representation is `UnmetObligation`. Once a form is available, unsuccessful
+production, reduction or adaptation remains `Demands/UnmetObligation`.
+Expansion caps never become a claim that no paper class applies. Canonical
+loop, expanded and regional arithmetic attempts preserve this evidence on
+both root promotion and repeated requests. Exhausting implemented attempts
+also remains unresolved, including when some other forms were proved excluded.
+
+The failure-stage fixture distinguishes absent loop structure from an unproved
+surrounding call and from a dynamic finite-expansion obligation. It checks
+cached retries, invalid-region requests and an exhausted whole-region demand
+request. These diagnostics do not change successful demand selection or the
+intentional public recognition-only stopping boundary. Section 8 and the two
+other pinned paper sources were reread; all three hashes remain unchanged.
