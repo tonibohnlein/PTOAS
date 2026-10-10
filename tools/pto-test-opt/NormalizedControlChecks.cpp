@@ -8,10 +8,12 @@
 // Check shared normalized input across different mathematical adapters.
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/NormalizedControl.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/NumericTemplatePlan.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/FiniteExpansionPlan.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/RegionalRelationsInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/SequenceAnalysisInternal.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
 LogicalResult checkNormalizedControlSession(func::FuncOp function, pto::GMAliasPolicy policy)
@@ -529,5 +531,317 @@ LogicalResult checkUniformRelationCrossings(func::FuncOp function, pto::GMAliasP
     auto reversed = composeRegionalRelationData(right, *left, {function, function}, error);
     if (succeeded(reversed)) { return function.emitError("uniform adapter accepted reversed invocation order"); }
     llvm::outs() << "uniform-relation-crossings: shared-alias-policy exact-crossing complete-reduction\n";
+    return success();
+}
+
+namespace {
+mlir::LogicalResult checkDeferredSlices(mlir::func::FuncOp function,
+    mlir::pto::frontiersynch::FrontierAnalysis& session)
+{
+    using namespace mlir::pto::frontiersynch;
+    PhaseIndex index;
+    if (failed(index.build(function, *session.input()))) { return failure(); }
+    auto loop = *function.getOps<scf::ForOp>().begin();
+    auto recognized = recognizeGuardedRotating(loop, index, *session.input(), session.input()->accesses());
+    auto arena = std::make_shared<RegionExpressions>();
+    auto analysis = analyzeGuardedRotating(loop, *session.input(), recognized, index, arena);
+    std::string error;
+    auto first = guardedRotatingRegionalResult(function, *session.input(), analysis, error,
+        PeriodicSlice{arena->constant(0), arena->constant(2)});
+    auto last = guardedRotatingRegionalResult(function, *session.input(), analysis, error,
+        PeriodicSlice{arena->constant(2), arena->constant(4)});
+    const bool exported = succeeded(first) && succeeded(last) && !first->deferredAccessBoundary.empty();
+    if (!exported) { return function.emitError("disjoint writer slice export failed: " + error); }
+    auto accepted = composeRegionalSequence(function, arena, {*first, *last}, true, false);
+    if (!accepted.error.empty()) { return function.emitError(accepted.error); }
+    auto overlap = composeRegionalSequence(function, arena, {*first, *first}, true, false);
+    const bool refused = overlap.error.find("deferred sibling access") != std::string::npos;
+    if (!refused) { return function.emitError("overlapping discharged writer visits were accepted"); }
+    llvm::outs() << "deferred-writer-slices: disjoint-visits accepted overlapping-visits refused\n";
+    return success();
+}
+mlir::LogicalResult checkUniformCircuit(mlir::func::FuncOp function,
+    mlir::pto::frontiersynch::FrontierAnalysis& session)
+{
+    using namespace mlir::pto::frontiersynch;
+    std::vector<RegionalAnalysis> children;
+    for (std::size_t id = 0; id < session.result()->nodes.size(); ++id) {
+        const auto& node = session.result()->nodes[id];
+        const bool directLoop = node.kind == StructureKind::Loop && node.anchor->getParentOp() == function;
+        if (!directLoop) { continue; }
+        AnalysisRequest request{id}; request.needs.queries = request.needs.selectors = true;
+        auto result = session.analyze(request);
+        auto view = result.regionalExports ? result.regionalExports :
+            (result.mathematical ? result.mathematical->regionalDemands : nullptr);
+        if (result.status != AnalysisStatus::Ready || !view || view->storageBoundary.empty()) {
+            return function.emitError("uniform circuit fixture lacks a finite source interface");
+        }
+        auto symbolic = *view;
+        const auto finite = *view;
+        symbolic.storageBoundary.clear(); symbolic.symbolicStorageEffects.clear();
+        symbolic.relations.reset(); symbolic.arithmeticRelations.reset(); symbolic.numerical.reset();
+        auto certificate = std::make_shared<RegionalSymbolicStorageCertificate>();
+        certificate->expressions = view->expressions; certificate->accessModel = view->accessModel;
+        certificate->gmAliasPolicy = view->gmAliasPolicy;
+        for (auto& access : symbolic.accessBoundary) {
+            access.representedByCells = false;
+            symbolic.symbolicStorageEffects.push_back(access.effect);
+        }
+        for (const auto& boundary : finite.storageBoundary) {
+            RegionalStorageFamily family; family.space = boundary.cell.space; family.base = boundary.cell.base;
+            for (auto effect : symbolic.symbolicStorageEffects) {
+                const auto& modeled = finite.accessModel->effects()[effect];
+                if (modeled.memory && modeled.memory->scope == family.space) { family.effects.push_back(effect); }
+            }
+            family.membership = [arena = finite.expressions, cell = boundary.cell](RegionalByteAddress address)
+                -> std::optional<Expr> {
+                if (address.space != cell.space || address.base != cell.base) { return arena->boolean(false); }
+                return arena->land(arena->le(arena->constant(cell.begin), address.offset),
+                    arena->lt(address.offset, arena->constant(cell.end)));
+            };
+            certificate->families.push_back(std::move(family));
+        }
+        symbolic.symbolicStorage = std::move(certificate);
+        symbolic.storageSelectors = [finite](RegionalByteAddress address) -> std::optional<RegionalStorageSelectors> {
+            if (finite.storageSelectors) { return finite.storageSelectors(address); }
+            auto& e = *finite.expressions;
+            RegionalStorageSelectors result;
+            auto append = [&](auto& out, const auto& values, Expr guard) {
+                for (auto value : values) { value.present = e.land(value.present, guard); out.push_back(value); }
+            };
+            for (const auto& boundary : finite.storageBoundary) {
+                const auto& cell = boundary.cell;
+                if (address.space != cell.space || address.base != cell.base) { continue; }
+                const auto guard = e.land(e.le(e.constant(cell.begin), address.offset),
+                    e.lt(address.offset, e.constant(cell.end)));
+                append(result.firstWriters, boundary.firstWriters, guard);
+                append(result.lastWriters, boundary.lastWriters, guard);
+                for (const auto& [pipe, values] : boundary.firstReaders) {
+                    append(result.firstReaders[pipe], values, guard);
+                }
+                for (const auto& [pipe, values] : boundary.lastReaders) {
+                    append(result.lastReaders[pipe], values, guard);
+                }
+            }
+            return result;
+        };
+        children.push_back(std::move(symbolic));
+    }
+    const bool compatible = children.size() == 2 && children[0].expressions == children[1].expressions;
+    if (!compatible) { return failure(); }
+    auto arena = children[0].expressions;
+    const bool checkMissing = !function->hasAttr("test.nonuniform_deferred") &&
+        session.input()->memory().gmPolicy() == mlir::pto::GMAliasPolicy::MayAlias;
+    if (checkMissing) {
+        auto missing = children;
+        missing.front().deferredAccessBoundary.clear();
+        auto unavailable = composeRegionalSequence(function, arena, missing, true, false);
+        if (unavailable.error.empty()) {
+            return function.emitError("uniform crossing accepted missing deferred extrema");
+        }
+    }
+    auto composed = composeRegionalSequence(function, arena, children, true, false);
+    if (function->hasAttr("test.nonuniform_deferred")) {
+        if (composed.error.empty()) { return function.emitError("nonuniform deferred overlap lost its obligation"); }
+        return success();
+    }
+    const bool circuits = composed.error.empty() && composed.state && !composed.state->relationalResult &&
+        composed.state->finiteCrossingPairs.empty();
+    if (!circuits) {
+        return function.emitError("uniform circuit composition used byte projection or relational lowering: " +
+            composed.error);
+    }
+    auto grouped = composeRegionalSequence(function, arena, {children.front()}, true, false);
+    if (!grouped.error.empty()) { return function.emitError(grouped.error); }
+    auto nested = composeRegionalSequence(function, arena,
+        {sequenceRegionalResult(grouped), children.back()}, true, false);
+    const bool nestedCircuit = nested.error.empty() && nested.state && !nested.state->relationalResult &&
+        nested.state->finiteCrossingPairs.empty();
+    if (!nestedCircuit) { return function.emitError("nested uniform crossing lost its circuit interface"); }
+    composed = std::move(nested);
+    auto region = sequenceRegionalResult(composed);
+    for (const auto& deferred : children.front().deferredAccessBoundary) {
+        const bool retained = llvm::any_of(region.deferredAccessBoundary,
+            [&](const auto& value) { return value.effect == deferred.effect; });
+        if (!retained) { return function.emitError("uniform parent lost a deferred effect identity"); }
+    }
+    auto evaluate = [&](Expr expression, int64_t n, int64_t m) {
+        SmallVector<std::pair<Expr, Expr>> bindings;
+        for (auto input : arena->referencedInputs(expression)) {
+            if (input.second == function.getArgument(0)) { bindings.emplace_back(input.first, arena->constant(n)); }
+            else if (input.second == function.getArgument(1)) {
+                bindings.emplace_back(input.first, arena->constant(m));
+            }
+            else { return std::optional<uint64_t>{}; }
+        }
+        RegionExpressions::Substitution substitution(bindings);
+        return arena->constantValue(arena->substitute(expression, substitution));
+    };
+    for (int64_t n : {0, 1, 2, 3, 5, 8}) {
+        for (int64_t m : {0, 3, 4, 5, 7, 9}) {
+            const int64_t nx = n > 1 ? (n - 2) / 2 + 1 : 0, ny = m > 3 ? (m - 4) / 3 + 1 : 0;
+            const bool active = session.input()->memory().gmPolicy() == mlir::pto::GMAliasPolicy::MayAlias && nx && ny;
+            for (int64_t x = 0; x < 5; ++x) {
+                for (int64_t y = 0; y < 5; ++y) {
+                    auto required = region.reachability({0, arena->constant(x), PeriodicEventKind::Completion},
+                        {1, arena->constant(y), PeriodicEventKind::Start});
+                    const bool correctOrder = required &&
+                        evaluate(*required, n, m) == std::optional<uint64_t>(active && x < nx && y < ny);
+                    if (!correctOrder) {
+                        return function.emitError("uniform circuit order differs from visit enumeration");
+                    }
+                    bool minimum = false;
+                    for (const auto& edge : composed.state->crossings) {
+                        const auto& source = composed.state->ports[edge.source];
+                        const auto& target = composed.state->ports[edge.target];
+                        const bool selected = evaluate(edge.guard, n, m) == 1 &&
+                            evaluate(source.ordinal, n, m) == uint64_t(x) &&
+                            evaluate(target.ordinal, n, m) == uint64_t(y);
+                        if (selected) { minimum = true; }
+                    }
+                    if (minimum != (active && x == nx - 1 && y == 0)) {
+                        return function.emitError("uniform circuit minimum differs from extremal bridge");
+                    }
+                }
+            }
+        }
+    }
+    return success();
+}
+} // namespace
+LogicalResult checkDynamicUniformCrossings(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    using namespace pto::frontiersynch;
+    using I = BoundInteger;
+    FrontierAnalysis session(function);
+    if (failed(session.initialize(policy))) { return failure(); }
+    if (function->hasAttr("test.disjoint_deferred")) { return checkDeferredSlices(function, session); }
+    if (failed(checkUniformCircuit(function, session))) { return failure(); }
+    if (function->hasAttr("test.nonuniform_deferred")) {
+        llvm::outs() << "deferred-nonuniform-crossing: exact-adapter-required\n";
+        return success();
+    }
+    const auto& input = *session.input();
+    const auto phases = input.instructions();
+    const bool twoPhases = phases.size() == 2;
+    if (!twoPhases) { return failure(); }
+    auto arena = std::make_shared<RegionExpressions>();
+    auto make = [&](unsigned id) {
+        RegionalRelationData data;
+        auto loop = cast<scf::ForOp>(phases[id]->elementOp->getParentOp());
+        data.input = &input; data.context = {function, loop}; data.sites.push_back({phases[id], {loop}, {}, {}});
+        data.parameterValues = {function.getArgument(0), function.getArgument(1)};
+        for (auto value : data.parameterValues) { data.parameters.push_back(arena->input(value)); }
+        data.analysis.period = data.selectors.period = 1;
+        data.analysis.parameterCount = data.selectors.parameterCount = 2;
+        data.analysis.pipeCount = 1; data.analysis.exactMinimum = data.completeRequiredOrder = true;
+        const int lower = id ? 3 : 1, step = id ? 3 : 2;
+        std::vector<I> bound(3); bound[0] = I(1); bound[id + 1] = I(-1);
+        auto domain = IntegerSystem::create(3, {{{I(-1), I(0), I(0)}, I(-lower)}, {bound, I(-1)}},
+            {{{I(1), I(0), I(0)}, I(lower % step), I(step)}});
+        data.occurrences.push_back({0, {0}, {0, 0}, *domain});
+        auto pair = [&](int distance, bool equal) {
+            auto a = domain->remap(4, {0, 2, 3}), b = domain->remap(4, {1, 2, 3});
+            std::vector<IntegerConstraint> rows{{{I(1), I(-1), I(0), I(0)}, I(-distance)}};
+            if (equal) { rows.push_back({{I(-1), I(1), I(0), I(0)}, I(distance)}); }
+            auto order = IntegerSystem::create(4, rows);
+            return *a->intersect(*b)->intersect(*order);
+        };
+        for (auto a : {ArithmeticEvent::Start, ArithmeticEvent::Completion}) {
+            for (auto b : {ArithmeticEvent::Start, ArithmeticEvent::Completion}) {
+                ArithmeticRelationKey key{{0, a, {0}}, {0, b, {0}}, {0, 0}};
+                const bool completionToStart = a == ArithmeticEvent::Completion && b == ArithmeticEvent::Start;
+                if (!completionToStart) { data.analysis.nativeOrder[key] = {pair(0, false)}; }
+                data.analysis.requiredOrder[key] = {pair(a == b || completionToStart ? step : 0, false)};
+                if (completionToStart) { data.analysis.minimumDemands[key] = {pair(step, true)}; }
+            }
+        }
+        ArithmeticBoundarySelector extremum;
+        extremum.kind = id ? ArithmeticBoundaryKind::FirstSite : ArithmeticBoundaryKind::LastSite;
+        extremum.site = 0; extremum.selector.parameterCount = 2;
+        if (!id) {
+            for (int parity : {0, 1}) {
+                auto present = IntegerSystem::create(2, {{{I(-1), I(0)}, I(-2-parity)}},
+                    {{{I(1), I(0)}, I(parity), I(2)}});
+                extremum.selector.pieces.push_back({*present, {}, {0, 0}, 0,
+                    {{{{I(1), I(0)}, I(-1-parity)}, I(1), 0}}});
+            }
+        } else {
+            auto present = IntegerSystem::create(2, {{{I(0), I(-1)}, I(-4)}});
+            extremum.selector.pieces.push_back({*present, {}, {0, 0}, 0,
+                {{{{I(0), I(0)}, I(3)}, I(1), 0}}});
+        }
+        data.selectors.boundaries.push_back(std::move(extremum));
+        return data;
+    };
+    auto left = make(0), right = make(1);
+    std::string error;
+    auto composed = composeRegionalRelationData(left, right, {function, function}, error);
+    if (failed(composed)) { return function.emitError(error); }
+    auto fractionalLeft = left, fractionalRight = right;
+    for (auto* child : {&fractionalLeft, &fractionalRight}) {
+        for (auto& boundary : child->selectors.boundaries) {
+            for (auto& piece : boundary.selector.pieces) {
+                for (auto& output : piece.outputs) {
+                    for (auto& coefficient : output.numerator.coefficients) { coefficient *= I(2); }
+                    output.numerator.constant *= I(2); output.denominator *= I(2);
+                }
+            }
+        }
+    }
+    auto fractional = composeRegionalRelationData(fractionalLeft, fractionalRight, {function, function}, error);
+    if (failed(fractional)) { return function.emitError(error); }
+    const ArithmeticRelationKey crossing{{0, ArithmeticEvent::Completion, {0}},
+        {1, ArithmeticEvent::Start, {0}}, {0, 0}};
+    auto contains = [](const IntegerSystem& system, ArrayRef<int64_t> point) {
+        auto dot = [&](const auto& coefficients) {
+            I total(0);
+            for (unsigned i = 0; i < point.size(); ++i) { total += coefficients[i] * I(point[i]); }
+            return total;
+        };
+        for (const auto& row : system.constraints()) {
+            const bool within = dot(row.coefficients) <= row.bound;
+            if (!within) { return false; }
+        }
+        for (const auto& row : system.congruences()) {
+            const bool congruent = (dot(row.coefficients) - row.residue) % row.modulus == I(0);
+            if (!congruent) { return false; }
+        }
+        return true;
+    };
+    auto member = [&](const auto& relation, ArrayRef<int64_t> point) {
+        auto found = relation.find(crossing);
+        return found != relation.end() && llvm::any_of(found->second,
+            [&](const auto& system) { return contains(system, point); });
+    };
+    for (int64_t n : {-1, 0, 1, 2, 3, 5, 8}) {
+        for (int64_t m : {-1, 0, 3, 4, 5, 7, 9}) {
+            int64_t last = -1;
+            for (int64_t i = 1; i < n; i += 2) { last = i; }
+            for (int64_t x = 0; x < 10; ++x) {
+                for (int64_t y = 0; y < 10; ++y) {
+                    const bool active = policy == pto::GMAliasPolicy::MayAlias && last >= 0 && m > 3;
+                    const bool minimum = active && x == last && y == 3;
+                    const bool required = active && x >= 1 && x < n && (x-1)%2 == 0 &&
+                        y >= 3 && y < m && (y-3)%3 == 0;
+                    for (const auto* result : {&*composed, &*fractional}) {
+                        const bool expectedMinimum = member(result->analysis.minimumDemands, {x, y, n, m}) == minimum;
+                        const bool expectedClosure = member(result->analysis.requiredOrder, {x, y, n, m}) == required;
+                        if (!expectedMinimum || !expectedClosure) {
+                            return function.emitError("uniform extrema differ from independent visit enumeration");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    left.selectors.boundaries.clear();
+    auto unsupported = composeRegionalRelationData(left, right, {function, function}, error);
+    const bool alias = policy == pto::GMAliasPolicy::MayAlias;
+    const bool unexpectedSupport = succeeded(unsupported) == alias;
+    if (unexpectedSupport) {
+        return function.emitError("uniform adapter omitted a needed extremum or rejected unrelated composition");
+    }
+    llvm::outs() << "dynamic-uniform-crossings: non-unit-coordinates zero-trips extrema exact-required-closure\n";
     return success();
 }

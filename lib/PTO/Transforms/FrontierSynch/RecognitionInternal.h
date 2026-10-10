@@ -23,6 +23,10 @@ bool dischargeGlobalReadOnlyEffect(std::size_t effect, const SyncStorageEffects&
 // retain the discharged effect for re-entry; global independence alone does
 // not establish disjoint visits of the same static phase.
 bool dischargeGlobalEffect(std::size_t effect, scf::ForOp loop, const SyncInput& input, const PhaseIndex& index);
+// The same proof needs only the immutable full-invocation shared access model.
+// This overload serves detached composition without constructing another input.
+bool dischargeGlobalEffect(std::size_t effect, scf::ForOp loop,
+                           const SyncStorageEffects& effects, const PhaseIndex& index);
 bool entryExpression(Value value, Operation* entry, const PhaseIndex& index,
                      SmallVectorImpl<Operation*>& recipe);
 void normalizeFragments(RecognitionResult& result, const SyncStorageEffects& effects);

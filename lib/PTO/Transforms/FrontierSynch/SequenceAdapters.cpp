@@ -7,7 +7,9 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Typed explicit/periodic adapters to the shared regional composition contract.
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
+#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 #include "SequenceAnalysisInternal.h"
+#include "RecognitionInternal.h"
 #include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
 #include "llvm/ADT/MapVector.h"
 namespace mlir::pto::frontiersynch {
@@ -36,8 +38,110 @@ bool promoteUniformStorage(RegionalAnalysis& region)
     }
     return true;
 }
-// A symbolic child may pass through finite composition if every cross-child
-// storage pair involving it is provably conflict-free in the shared model.
+// Uniform modeled conflicts already have an exact first/last occurrence
+// bridge in the shared circuit composer. They require no byte intersection.
+bool uniformCrossingCovered(const RegionalAnalysis& source, std::size_t effect,
+                            const RegionalAnalysis& target, std::size_t other)
+{
+    const auto& model = *source.accessModel;
+    const auto* a = model.effects()[effect].phase;
+    const auto* b = model.effects()[other].phase;
+    if (!a || !b) { return false; }
+    if (ptoStorageProtection().protectsScalar(static_cast<uint32_t>(a->kPipeValue),
+            static_cast<uint32_t>(b->kPipeValue))) { return true; }
+    const auto hasBoundary = [](const RegionalAnalysis& region, std::size_t id) {
+        for (const auto* boundaries : {&region.accessBoundary, &region.deferredAccessBoundary}) {
+            if (llvm::any_of(*boundaries, [&](const auto& value) { return value.effect == id; })) { return true; }
+        }
+        return false;
+    };
+    return model.uniformConflict(effect, other) && hasBoundary(source, effect) && hasBoundary(target, other);
+}
+// A discharge for repeated GM writers is relative to distinct visits of its
+// original loop. Revalidate that proof for disjoint constant ordinal slices;
+// neither an identical effect ID nor independent phases proves this alone.
+bool disjointDeferredVisits(const RegionalAnalysis& source, const RegionalAccessBoundary& access,
+                            const RegionalAnalysis& target, std::size_t other,
+                            const PhaseIndex& index)
+{
+    const bool sameContext = source.expressions && source.expressions == target.expressions &&
+        source.accessModel && source.accessModel == target.accessModel && access.effect == other &&
+        access.effect < source.accessModel->effects().size();
+    if (!sameContext) { return false; }
+    const auto& modeled = source.accessModel->effects()[access.effect];
+    if (!modeled.memory || modeled.memory->scope != AddressSpace::GM) { return false; }
+    auto bounds = [](const RegionalAnalysis& region, const RegionalAccessBoundary& value)
+        -> std::optional<std::tuple<scf::ForOp, uint64_t, uint64_t>> {
+        const auto type = value.first.event.type;
+        const bool flat = type == value.last.event.type && type < region.occurrenceLoops.size() &&
+            type < region.anchors.size() && region.anchors[type].coordinates.empty() &&
+            value.first.event.visits.empty() && value.last.event.visits.empty();
+        if (!flat) { return std::nullopt; }
+        const bool nested = !region.outerLoops.empty() &&
+            (type >= region.outerLoops.size() || !region.outerLoops[type].empty());
+        if (nested) { return std::nullopt; }
+        if (region.anchors[type].phase != region.accessModel->effects()[value.effect].phase) {
+            return std::nullopt;
+        }
+        auto loop = region.occurrenceLoops[type];
+        if (!loop || loop->getParentOfType<scf::ForOp>()) { return std::nullopt; }
+        auto first = region.expressions->constantValue(value.first.event.ordinal);
+        auto last = region.expressions->constantValue(value.last.event.ordinal);
+        if (!first || !last || *first > *last) { return std::nullopt; }
+        return std::make_tuple(loop, *first, *last);
+    };
+    auto left = bounds(source, access);
+    if (!left) { return false; }
+    bool found = false;
+    for (const auto* side : {&target.accessBoundary, &target.deferredAccessBoundary}) {
+        for (const auto& value : *side) {
+            if (value.effect != other) { continue; }
+            auto right = bounds(target, value);
+            const bool sameLoop = right && std::get<0>(*left) == std::get<0>(*right);
+            if (!sameLoop) { return false; }
+            const bool disjoint = std::get<2>(*left) < std::get<1>(*right) ||
+                std::get<2>(*right) < std::get<1>(*left);
+            if (!disjoint) { return false; }
+            found = true;
+        }
+    }
+    return found && detail::dischargeGlobalEffect(access.effect, std::get<0>(*left), *source.accessModel, index);
+}
+// Deferred effects retain their occurrence extrema. Uniform conflicts use an
+// exact occurrence bridge; nonuniform conflicts need byte selectors unless a
+// scoped disjoint-visit proof establishes that these selected slices cannot meet.
+bool deferredCrossingsCovered(ArrayRef<Child> children, const PhaseIndex& index, std::string& error)
+{
+    for (std::size_t i = 0; i < children.size(); ++i) {
+        const auto& source = children[i].regional;
+        for (const auto& access : source.deferredAccessBoundary) {
+            if (!source.accessModel || access.effect >= source.accessModel->effects().size()) { return false; }
+            for (std::size_t j = 0; j < children.size(); ++j) {
+                if (i == j) { continue; }
+                const auto& target = children[j].regional;
+                if (target.accessModel != source.accessModel) {
+                    if (!target.anchors.empty()) { return false; }
+                    continue;
+                }
+                for (const auto& anchor : target.anchors) {
+                    for (auto effect : source.accessModel->effectsFor(anchor.phase)) {
+                        const bool unsupported = source.accessModel->mayConflict(access.effect, effect) &&
+                            !uniformCrossingCovered(source, access.effect, target, effect) &&
+                            !disjointDeferredVisits(source, access, target, effect, index);
+                        if (unsupported) {
+                            error = "deferred effect " + std::to_string(access.effect) +
+                                " conflicts with sibling effect " + std::to_string(effect);
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+// A symbolic child may pass through circuit composition if every cross-child
+// storage pair is conflict-free or has an exact uniform occurrence bridge.
 // Its storage interface is retained for later, possibly conflicting consumers.
 bool independentSymbolicStorage(ArrayRef<Child> children)
 {
@@ -55,7 +159,9 @@ bool independentSymbolicStorage(ArrayRef<Child> children)
                 }
                 for (const auto& anchor : other.anchors) {
                     for (auto target : region.accessModel->effectsFor(anchor.phase)) {
-                        if (region.accessModel->mayConflict(effect, target)) { return false; }
+                        const bool unsupported = region.accessModel->mayConflict(effect, target) &&
+                            !uniformCrossingCovered(region, effect, other, target);
+                        if (unsupported) { return false; }
                     }
                 }
             }
@@ -82,7 +188,6 @@ bool projectFiniteCrossings(std::vector<Child>& children,
             if (!source.storageSelectors || !source.accessModel || !source.expressions ||
                 effect >= source.accessModel->effects().size()) { return false; }
             const auto& modeled = source.accessModel->effects()[effect];
-            if (!modeled.memory || modeled.regions.empty()) { return false; }
             for (uint32_t j = 0; j < children.size(); ++j) {
                 if (i == j) { continue; }
                 const auto& target = children[j].regional;
@@ -90,7 +195,10 @@ bool projectFiniteCrossings(std::vector<Child>& children,
                     target.gmAliasPolicy != source.gmAliasPolicy) { return false; }
                 for (const auto& anchor : target.anchors) {
                     for (auto other : source.accessModel->effectsFor(anchor.phase)) {
-                        if (!source.accessModel->mayConflict(effect, other)) { continue; }
+                        const bool covered = !source.accessModel->mayConflict(effect, other) ||
+                            uniformCrossingCovered(source, effect, target, other);
+                        if (covered) { continue; }
+                        if (!modeled.memory || modeled.regions.empty()) { return false; }
                         const auto matches = [&](const auto& value) { return value.effect == other; };
                         if (!llvm::any_of(target.accessBoundary, matches) ||
                             llvm::any_of(target.accessBoundary, [&](const auto& value) {
@@ -367,6 +475,10 @@ bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
             return fail("symbolic storage certificate belongs to a different arena or modeled input");
         }
     }
+    std::string deferredError;
+    if (!deferredCrossingsCovered(children, index, deferredError)) {
+        return fail("deferred sibling access requires an exact nonuniform crossing adapter: " + deferredError);
+    }
     if (children.size() != 1 && !independentSymbolicStorage(children) &&
         !projectFiniteCrossings(children, finiteCrossingPairs, costs)) {
         return fail("symbolic storage crossings require a constructed uniform-atom or relational adapter");
@@ -521,14 +633,16 @@ bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
             for (auto& [pipe, values] : out.firstReaders) { normalizeSelectorAlternatives(values); }
             for (auto& [pipe, values] : out.lastReaders) { normalizeSelectorAlternatives(values); }
         }
-        for (const auto& access : child.regional.accessBoundary) {
-            if (!child.regional.accessModel || access.effect >= child.regional.accessModel->effects().size()) {
-                return fail("regional access selector has no shared effect");
-            }
-            // Register a port only when a residual crossing actually uses it.
-            // Fully geometric composition retains its compact boundary graph.
-            if (!validSelector(access.first) || !validSelector(access.last)) {
-                return fail("regional access selector has an invalid occurrence or predicate");
+        for (const auto* side : {&child.regional.accessBoundary, &child.regional.deferredAccessBoundary}) {
+            for (const auto& access : *side) {
+                if (!child.regional.accessModel || access.effect >= child.regional.accessModel->effects().size()) {
+                    return fail("regional access selector has no shared effect");
+                }
+                // Ports are registered only when a crossing uses these extrema.
+                const bool validExtrema = validSelector(access.first) && validSelector(access.last);
+                if (!validExtrema) {
+                    return fail("regional access selector has an invalid occurrence or predicate");
+                }
             }
         }
         auto importNative = [&](const auto& source, NativeSelectors& destination) {
