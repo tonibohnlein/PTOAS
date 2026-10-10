@@ -8,6 +8,7 @@
 // Request protocol adapters. Cache mathematical construction independently of
 // export checks; detached command fragments always have fresh ownership.
 #include "AnalysisSessionInternal.h"
+#include "NormalizedControl.h"
 #include "PTO/Transforms/FrontierSynch/MixedStrideAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/CompactBoundingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
@@ -112,9 +113,11 @@ std::vector<RegionCertification> FrontierAnalysis::certifyRegions()
             result.status = CertificationStatus::Unresolved;
             result.analysis.obligations.push_back({AnalysisStage::Form,
                 "native-only exact demands do not certify finite-occurrence class membership"});
-        } else if (math.numericNode) {
+        } else if (math.numericNode || math.backend == "numerical-sequence") {
             result.selectedClass = "periodic-storage";
-            result.representation = "small-count-expanded";
+            if (math.normalizedInput && math.normalizedInput->original) {
+                result.representation = "small-count-expanded";
+            }
         } else if (math.rotatingDemands || math.mixedStrideDemands || math.arithmeticPeriodicDemands) {
             result.selectedClass = "periodic-storage";
         } else if (math.guardedRotatingDemands) {
@@ -150,6 +153,22 @@ std::vector<RegionCertification> FrontierAnalysis::certifyRegions()
 AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const AnalysisRequest& request)
 {
     auto& attempt = sessionState->attempts[request.region][backend];
+    if (backend == AnalysisBackend::NumericalSequence) {
+        const uint8_t key = unsigned(request.needs.queries) | (unsigned(request.needs.selectors) << 1) |
+            (unsigned(request.needs.synchronization) << 2) | (unsigned(request.mode == AnalysisMode::Fallback) << 3);
+        const bool recorded = llvm::any_of(sessionState->costs, [&](const auto& record) {
+            return record.region == request.region && record.request == key && record.method == "numerical-sequence";
+        });
+        if (!recorded) {
+            AnalysisCostEstimate estimate;
+            for (const auto& record : sessionState->costs) {
+                if (record.region == request.region && record.request == key && record.method == "form-expanded") {
+                    estimate = record.estimate; break;
+                }
+            }
+            sessionState->costs.push_back({request.region, key, "numerical-sequence", estimate});
+        }
+    }
     if (!attempt.produced) {
         attempt.produced = true;
         if (construction.mathematicalAttempts != UINT64_MAX) { ++construction.mathematicalAttempts; }
@@ -309,18 +328,33 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
         llvm::append_range(result.obligations, attempt.obligations);
         return false;
     };
-    for (auto backend : {AnalysisBackend::Explicit, AnalysisBackend::NumericalPeriodic,
-            AnalysisBackend::Rotating, AnalysisBackend::MixedStride, AnalysisBackend::GuardedRotating,
-            AnalysisBackend::BoundedLifetime, AnalysisBackend::Sequence, AnalysisBackend::VaryingBoundary,
-            AnalysisBackend::FiniteVisit,
-            AnalysisBackend::ExpandedFinite, AnalysisBackend::ArithmeticPeriodic, AnalysisBackend::FiniteGuarded}) {
-        if (backend == AnalysisBackend::ArithmeticPeriodic) {
-            for (auto method : arithmeticMethods(request)) {
-                if (attemptBackend(method)) { result.costs = costRecords(); return result; }
-            }
-        } else if (attemptBackend(backend)) {
-            result.costs = costRecords(); return result;
+    // The straight-line fast path needs neither normalization nor arithmetic.
+    if (attemptBackend(AnalysisBackend::Explicit)) { result.costs = costRecords(); return result; }
+    const auto forms = exactForms(request);
+    const bool alternative = forms.size() > 1;
+    auto attemptForm = [&](AnalysisForm form) {
+        sessionState->formAttempts[{request.region, form}] = 1;
+        if (form == AnalysisForm::SmallCountExpanded) {
+            return attemptBackend(AnalysisBackend::NumericalPeriodic) ||
+                attemptBackend(AnalysisBackend::NumericalSequence) || attemptBackend(AnalysisBackend::ExpandedFinite);
         }
+        // Keep the paper's family order inside the original description. With
+        // no distinct expanded view the existing numerical/finite producers
+        // may interpret retained finite domains as charged backend work.
+        if (!alternative && attemptBackend(AnalysisBackend::NumericalPeriodic)) { return true; }
+        for (auto backend : {AnalysisBackend::Rotating, AnalysisBackend::MixedStride, AnalysisBackend::GuardedRotating,
+                AnalysisBackend::BoundedLifetime, AnalysisBackend::Sequence, AnalysisBackend::VaryingBoundary,
+                AnalysisBackend::FiniteVisit, AnalysisBackend::ExpandedFinite, AnalysisBackend::ArithmeticPeriodic,
+                AnalysisBackend::FiniteGuarded}) {
+            if (backend == AnalysisBackend::ExpandedFinite && alternative) { continue; }
+            if (backend == AnalysisBackend::ArithmeticPeriodic) {
+                for (auto method : arithmeticMethods(request)) { if (attemptBackend(method)) { return true; } }
+            } else if (attemptBackend(backend)) { return true; }
+        }
+        return false;
+    };
+    for (auto form : forms) {
+        if (attemptForm(form)) { result.costs = costRecords(); return result; }
     }
     // A missing export can never authorize weakening an exact whole-region order.
     if (!result.mathematical && request.mode == AnalysisMode::Fallback && request.region == 0) {

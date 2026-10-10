@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "../../lib/PTO/Transforms/FrontierSynch/RegionalRelationsInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/SequenceAnalysisInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/ScalarPrerequisiteMapping.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -381,6 +382,53 @@ bool sequentialAdmission(MLIRContext& context)
     auto arms = fs::composeRegionalRelationData(left, right, {function, function}, error);
     return failed(arms) && error.find("sequential invocation") != std::string::npos;
 }
+bool fixedPrerequisiteMappings(MLIRContext& context)
+{
+    auto function = func::FuncOp::create(UnknownLoc::get(&context), "fixed_prerequisites",
+        FunctionType::get(&context, {}, {}));
+    function.addEntryBlock();
+    auto cleanup = llvm::make_scope_exit([&] { function.erase(); });
+    OpBuilder builder(&function.front(), function.front().begin());
+    auto zero = builder.create<arith::ConstantIndexOp>(function.getLoc(), 0);
+    auto one = builder.create<arith::ConstantIndexOp>(function.getLoc(), 1);
+    auto two = builder.create<arith::ConstantIndexOp>(function.getLoc(), 2);
+    auto outside = builder.create<arith::AddIOp>(function.getLoc(), zero, one);
+    auto loop = builder.create<scf::ForOp>(function.getLoc(), zero, two, one);
+    builder.setInsertionPointToStart(loop.getBody());
+    auto producer = builder.create<arith::AddIOp>(function.getLoc(), outside, loop.getInductionVar());
+    auto consumer = builder.create<arith::AddIOp>(function.getLoc(), producer, one);
+    pto::CompoundInstanceElement a(0, {}, {}, pto::PipelineType::PIPE_S, producer->getName());
+    pto::CompoundInstanceElement b(1, {}, {}, pto::PipelineType::PIPE_S, consumer->getName());
+    pto::CompoundInstanceElement outer(2, {}, {}, pto::PipelineType::PIPE_S, outside->getName());
+    a.elementOp = producer; b.elementOp = consumer; outer.elementOp = outside;
+    DominanceInfo dominance(function);
+    fs::ValuePrerequisite edge{&a, consumer, true, true};
+    for (int64_t source : {0, 1}) {
+        for (int64_t target : {0, 1}) {
+            fs::ArithmeticSite from{&a, {}, {}, {{loop, source}}};
+            fs::ArithmeticSite to{&b, {}, {}, {{loop, target}}};
+            const bool mapped = fs::detail::directPrerequisiteMapping(edge, from, to, dominance);
+            if (mapped != (source == target)) {
+                return false;
+            }
+            from.fixedCoordinates.clear(); from.loops = {loop};
+            if (fs::detail::directPrerequisiteMapping(edge, from, to, dominance)) { return false; }
+            from.loops.clear(); from.fixedCoordinates = {{loop, source}};
+            to.fixedCoordinates.clear(); to.loops = {loop};
+            if (fs::detail::directPrerequisiteMapping(edge, from, to, dominance)) { return false; }
+        }
+    }
+    fs::ArithmeticSite broadcast{&outer, {}, {}, {}};
+    fs::ArithmeticSite receiver{&b, {}, {}, {{loop, 1}}};
+    fs::ValuePrerequisite incoming{&outer, consumer, true, true};
+    const bool broadcasts = fs::detail::directPrerequisiteMapping(incoming, broadcast, receiver, dominance);
+    if (!broadcasts) { return false; }
+    builder.setInsertionPointAfter(loop);
+    auto sibling = builder.create<scf::ForOp>(function.getLoc(), zero, two, one);
+    fs::ArithmeticSite from{&a, {}, {}, {{loop, 0}}};
+    receiver.fixedCoordinates = {{sibling, 0}};
+    return !fs::detail::directPrerequisiteMapping(edge, from, receiver, dominance);
+}
 bool nativeScalarClosure()
 {
     // Independently close a finite all-event graph. Native scalar edges are
@@ -448,7 +496,8 @@ int runRegionalRelationChecks()
     MLIRContext context;
     if (!quotientCoordinates(context) || !association(context) ||
         !retainedResult(context) || !retainedInputs(context) ||
-        !scalarCrossings(context) || !sequentialAdmission(context) || !nativeScalarClosure()) {
+        !scalarCrossings(context) || !sequentialAdmission(context) ||
+        !fixedPrerequisiteMappings(context) || !nativeScalarClosure()) {
         llvm::errs() << "regional relation normalization/composition oracle failed\n"; return 1;
     }
     llvm::outs() << "regional relations: raw coordinates, parameter permutations, "

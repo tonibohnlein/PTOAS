@@ -28,6 +28,7 @@ struct ArithmeticPeriodicExports {
 struct FiniteVisitAnalysis;
 struct BoundedLifetimeDemandResult;
 struct AnalysisSessionState;
+struct NumericTemplatePlan;
 class FrontierAnalysis {
 public:
     explicit FrontierAnalysis(Operation* operation) : function(dyn_cast<func::FuncOp>(operation)) {}
@@ -56,6 +57,8 @@ public:
     AnalysisOutcome analyzeNumericalRegion(const AnalysisRequest& request);
     // Rank supported arithmetic reducers without constructing generators.
     std::vector<AnalysisBackend> arithmeticMethods(const AnalysisRequest& request);
+    // Rank descriptions once per request without producing demands or exports.
+    std::vector<AnalysisForm> exactForms(const AnalysisRequest& request);
     std::vector<AnalysisCostRecord> costRecords() const;
     // Call before reusing this object after original IR mutation. Previously
     // returned handles must no longer be queried against that IR.
@@ -112,10 +115,15 @@ public:
     const ProgramRecognition* result() const { return program ? &*program : nullptr; }
 private:
     LogicalResult recognizeStructure();
+    std::shared_ptr<const NormalizedControlDescription> normalizedRegion(std::size_t region);
+    const NumericTemplatePlan* numericalPreflight(std::size_t region);
+    std::shared_ptr<const MathematicalResult> produceExpandedFinite(std::size_t region, std::string& error);
     LogicalResult ensureArithmeticGenerators();
     const NumericTemplate& materializeNumericRegion(std::size_t region);
     const ArithmeticProgram* recognizeArithmeticRegion(std::size_t region);
-    SequenceRegionResolver regionalResolver();
+    SequenceRegionResolver regionalResolver(
+        std::shared_ptr<const MathematicalResult> retainedNumerical = {});
+    std::shared_ptr<const MathematicalResult> adaptNumericalSequence(std::size_t region, std::string& error);
     std::shared_ptr<const RegionalAnalysis> arithmeticExports(
         const MathematicalResult& demands, bool selectors, std::string& error);
     std::shared_ptr<const RegionalAnalysis> varyingExports(

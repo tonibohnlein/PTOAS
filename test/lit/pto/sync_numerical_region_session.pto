@@ -7,8 +7,11 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
 // RUN: pto-sync-input-test --gm-alias=may-alias --certify-regions %s | FileCheck %s
+// CHECK: numerical-request-order: fresh-and-warm exact-queries selectors logical-root-and-child
 // CHECK: numerical-region-session: owned-demands cached-sequence independent-root lazy-endpoints
+// CHECK: numerical-request-order: fresh-and-warm exact-queries selectors logical-root-and-child
 // CHECK: numerical-region-session: owned-demands cached-sequence independent-root lazy-endpoints
+// CHECK: numerical-request-order: fresh-and-warm exact-queries selectors logical-root-and-child
 // CHECK: numerical-region-session: owned-demands cached-sequence independent-root lazy-endpoints
 // CHECK: numerical-region-session: preexisting-sync rejected retained-demands
 // CHECK: recognition-skipped existing_sync: manual-on-core-synchronization

@@ -22,6 +22,8 @@ struct NormalizedControlNode {
 // name original induction values; effects, prerequisites and cuts remain in the
 // unchanged shared input/index. Backend rejection cannot consume this owner.
 struct NormalizedControlDescription {
+    // Present only when this is a distinct expanded alternative.
+    std::shared_ptr<const NormalizedControlDescription> original;
     ArithmeticRegionContext context;
     const PhaseIndex* index = nullptr;
     const SyncInput* input = nullptr;

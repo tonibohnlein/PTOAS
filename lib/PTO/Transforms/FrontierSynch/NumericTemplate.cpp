@@ -232,9 +232,10 @@ NumericTemplate recognizeRegionalNumericTemplate(scf::ForOp outer, const PhaseIn
 }
 NumericTemplate recognizeSpecializedNumericBody(scf::ForOp outer, const PhaseIndex& index,
     const SyncInput& input, TemplateGeometryConstant geometry, TemplateControlConstant control,
-    NumericTemplateLimits limits)
+    NumericTemplateLimits limits, std::shared_ptr<const NormalizedControlDescription> normalized)
 {
     return materializeNumericTemplate(preflightNumericTemplate(
-        outer, index, input, limits, true, std::move(geometry), std::move(control)), index, input);
+        outer, index, input, limits, true, std::move(geometry), std::move(control), std::move(normalized)),
+        index, input);
 }
 } // namespace mlir::pto::frontiersynch

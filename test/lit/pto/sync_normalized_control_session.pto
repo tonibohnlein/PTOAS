@@ -7,7 +7,10 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
 // RUN: pto-sync-input-test --gm-alias=may-alias --certify-regions %s | FileCheck %s
-// CHECK-COUNT-7: normalized-control-session: shared-input numerical-to-finite original-coordinates isolated-context
+// CHECK-COUNT-9: normalized-control-session: shared-input numerical-to-finite original-coordinates isolated-context
+// CHECK: uniform-relation-crossings: shared-alias-policy exact-crossing complete-reduction
+// CHECK: fixed-coordinate-relations: distinct-visits scalar-mapping retained-identities no-reanalysis
+// CHECK: exact-form-fast-path: explicit no-normalization no-arithmetic
 // CHECK: source-unchanged; synchronization-insertion-not-run
 !mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
 !left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
@@ -141,6 +144,32 @@ module attributes {pto.target_arch = "a3"} {
     }
     return
   }
+  func.func @dependent_with_alternative() attributes {test.normalization_requests, test.normalization_coordinates = array<i64: 0>, test.normalization_deep} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %five = arith.constant 5 : index
+    %seven = arith.constant 7 : index
+    %nine = arith.constant 9 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %t = %zero to %two step %one {
+      scf.for %i = %one to %two step %one {
+        scf.for %j = %zero to %i step %one {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+        }
+      }
+      scf.for %once = %zero to %one step %one {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+      }
+    }
+    return
+  }
   func.func @nested_failed_expansions() attributes {test.normalization_requests, test.normalization_coordinates = array<i64>, test.normalization_compact} {
     %base = arith.constant 0 : i64
     %zero = arith.constant 0 : index
@@ -168,6 +197,77 @@ module attributes {pto.target_arch = "a3"} {
       }
       }
     }
+    return
+  }
+  func.func @external_producer() attributes {test.normalization_requests, test.normalization_external, test.normalization_coordinates = array<i64: 7>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %five = arith.constant 5 : index
+    %seven = arith.constant 7 : index
+    %nine = arith.constant 9 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+    scf.for %t = %zero to %two step %one {
+      scf.for %i = %seven to %nine step %two {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+      }
+    }
+    return
+  }
+  func.func @uniform_gm_crossing(%src: !pto.ptr<f32, gm>, %dst: !pto.ptr<f32, gm>)
+      attributes {test.uniform_relation_crossings} {
+    %base = arith.constant 0 : i64
+    %other = arith.constant 128 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %eight = arith.constant 8 : index
+    %a = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x8xf32>
+    %b = pto.alloc_tile addr = %other : !pto.tile_buf<vec, 1x8xf32>
+    %source = pto.make_tensor_view %src, shape = [%one, %eight], strides = [%eight, %one]
+      : !pto.tensor_view<1x8xf32>
+    %target = pto.make_tensor_view %dst, shape = [%one, %eight], strides = [%eight, %one]
+      : !pto.tensor_view<1x8xf32>
+    %read = pto.partition_view %source, offsets = [%zero, %zero], sizes = [%one, %eight]
+      : !pto.tensor_view<1x8xf32> -> !pto.partition_tensor_view<1x8xf32>
+    %write = pto.partition_view %target, offsets = [%zero, %zero], sizes = [%one, %eight]
+      : !pto.tensor_view<1x8xf32> -> !pto.partition_tensor_view<1x8xf32>
+    pto.tload ins(%read : !pto.partition_tensor_view<1x8xf32>) outs(%a : !pto.tile_buf<vec, 1x8xf32>)
+    pto.tload ins(%read : !pto.partition_tensor_view<1x8xf32>) outs(%b : !pto.tile_buf<vec, 1x8xf32>)
+    pto.tstore ins(%a : !pto.tile_buf<vec, 1x8xf32>) outs(%write : !pto.partition_tensor_view<1x8xf32>)
+    return
+  }
+  func.func @fixed_scalar_copies() attributes {test.fixed_coordinate_relations} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %tile = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x8xf32>
+    scf.for %i = %zero to %two step %one {
+      %value = pto.tgetval ins(%tile, %i : !pto.tile_buf<vec, 1x8xf32>, index) outs : f32
+      pto.tsetval ins(%i, %value : index, f32) outs(%tile : !pto.tile_buf<vec, 1x8xf32>)
+    }
+    return
+  }
+  func.func @straightline() attributes {test.exact_form_explicit} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %five = arith.constant 5 : index
+    %seven = arith.constant 7 : index
+    %nine = arith.constant 9 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+    pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
     return
   }
 }

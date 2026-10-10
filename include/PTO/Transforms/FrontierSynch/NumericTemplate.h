@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_NUMERICTEMPLATE_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_NUMERICTEMPLATE_H
 #include <functional>
+#include <memory>
 #include "PTO/Transforms/FrontierSynch/Recognition.h"
 namespace mlir::pto::frontiersynch {
 struct NumericTemplateLimits {
@@ -88,8 +89,9 @@ NumericTemplate recognizeRegionalNumericTemplate(scf::ForOp outer, const PhaseIn
 // Geometry constants never participate in branch or loop-bound evaluation.
 using TemplateGeometryConstant = std::function<std::optional<int64_t>(Value)>;
 using TemplateControlConstant = std::function<std::optional<bool>(Value)>;
+struct NormalizedControlDescription;
 NumericTemplate recognizeSpecializedNumericBody(scf::ForOp outer, const PhaseIndex& index,
     const SyncInput& input, TemplateGeometryConstant geometry, TemplateControlConstant control,
-    NumericTemplateLimits limits = {});
+    NumericTemplateLimits limits = {}, std::shared_ptr<const NormalizedControlDescription> normalized = {});
 } // namespace mlir::pto::frontiersynch
 #endif

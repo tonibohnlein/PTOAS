@@ -37,7 +37,9 @@ FiniteExpansionPlan preflightFiniteExpansion(ArithmeticRegionContext context,
     std::shared_ptr<const NormalizedControlDescription> normalized = {});
 ArithmeticProgram materializeFiniteExpansion(const FiniteExpansionPlan& plan,
     const PhaseIndex& index, const SyncInput& input);
+// Session results may share an arena; unsuccessful predicate construction is
+// transactional and never poisons previously retained query circuits.
 FiniteGuardedAnalysis analyzeExpandedFinite(const FiniteExpansionPlan& plan,
-    const PhaseIndex& index, const SyncInput& input);
+    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions = {});
 } // namespace mlir::pto::frontiersynch
 #endif

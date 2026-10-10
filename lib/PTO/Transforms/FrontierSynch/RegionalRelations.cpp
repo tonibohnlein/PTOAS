@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "RegionalRelationsInternal.h"
-#include <set>
+#include <map>
 namespace mlir::pto::frontiersynch {
 FailureOr<RegionalAnalysis> composeSymbolicRegionalSequence(
     ArrayRef<RegionalAnalysis> children, func::FuncOp function, const SyncInput& input,
@@ -20,7 +20,7 @@ FailureOr<RegionalAnalysis> composeSymbolicRegionalSequence(
     std::vector<std::unique_ptr<RegionalRelationRequest>> requests(children.size());
     SmallVector<Value> parameters;
     std::vector<RegionExpressions::Id> bindings;
-    std::set<const CompoundInstanceElement*> phases;
+    std::map<const CompoundInstanceElement*, std::vector<std::pair<unsigned, const TemplateEndpointAnchor*>>> phases;
     Operation* root = nullptr;
     auto addParameter = [&](Value value, RegionExpressions::Id binding) {
         auto found = llvm::find(parameters, value);
@@ -38,10 +38,22 @@ FailureOr<RegionalAnalysis> composeSymbolicRegionalSequence(
             error = "symbolic children have different modeled input or expression context"; return failure();
         }
         for (const auto& anchor : child.anchors) {
-            if (!anchor.phase || !phases.insert(anchor.phase).second) {
-                error = "symbolic sibling occurrence identities need an explicit phase-coordinate adapter";
-                return failure();
+            if (!anchor.phase) {
+                error = "symbolic sibling occurrence has no original phase"; return failure();
             }
+            auto& occurrences = phases[anchor.phase];
+            for (const auto& previous : occurrences) {
+                const bool disjoint = llvm::any_of(anchor.coordinates, [&](const auto& fixed) {
+                    return llvm::any_of(previous.second->coordinates, [&](const auto& other) {
+                        return fixed.loop == other.loop && fixed.induction != other.induction;
+                    });
+                });
+                if (previous.first != i || !disjoint) {
+                    error = "symbolic sibling occurrence identities need an explicit phase-coordinate adapter";
+                    return failure();
+                }
+            }
+            occurrences.push_back({i, &anchor});
             auto* operation = anchor.phase->elementOp;
             if (!root) { root = operation; }
             while (root && root != operation && !root->isProperAncestor(operation)) { root = root->getParentOp(); }
@@ -75,10 +87,6 @@ FailureOr<RegionalAnalysis> composeSymbolicRegionalSequence(
                 for (const auto* right : {&children[j].accessBoundary, &children[j].deferredAccessBoundary}) {
                     for (const auto& a : *left) {
                         for (const auto& b : *right) {
-                            if (input.accesses().uniformConflict(a.effect, b.effect)) {
-                                error = "symbolic sibling uniform-prerequisite relation adapter unavailable";
-                                return failure();
-                            }
                             if ((left == &children[i].deferredAccessBoundary ||
                                  right == &children[j].deferredAccessBoundary) &&
                                 input.accesses().mayConflict(a.effect, b.effect)) {

@@ -627,7 +627,8 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                         if (!bound) { return std::nullopt; }
                         auto literal = expressions.constantValue(*bound);
                         return literal ? std::optional<bool>(*literal != 0) : std::nullopt;
-                    });
+                    }, {}, resolveOriginal.normalized ?
+                        resolveOriginal.normalized(static_cast<std::size_t>(&node - program->nodes.data())) : nullptr);
                 if (finite.result.state != RecognitionState::Applicable) {
                     std::string reason = compactFailure + "; finite body expansion";
                     for (const auto& issue : finite.result.diagnostics) {

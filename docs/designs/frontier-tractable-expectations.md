@@ -778,3 +778,56 @@ and 213/240 under MayAlias. No timeout or source mutation occurs; the slowest
 run is 13.7 seconds. Compliance reports zero errors/warnings and whitespace
 checks pass. These focused milestone results are not the final paired corpus
 performance campaign.
+
+### Original and expanded exact-form candidates
+
+The session ranks the original description and its single optional small-count
+alternative before mathematical construction. A compact fallback is the original
+candidate, not a second alternative. The original description wins equal estimates;
+known work precedes unknown work, then representation size breaks ties. Unknown
+estimates leave the candidate eligible. Interface requests have separate cost-cache
+keys while sharing the immutable normalized input and numerical control preflight.
+
+Numerical estimates count the occurrences enumerated by the retained preflight,
+including residual dependent finite domains, and shared effects at those occurrences.
+Normalization work is charged separately. Original rotating descriptions receive a
+known estimate only when their complete rotating form has been certified; other
+original descriptions remain eligible with unknown work. These estimates select
+implemented alternatives and do not certify class membership or impose admission
+limits.
+
+The original attempt cannot silently construct a numerical result for the same
+expanded region through Sequence. It may reuse mathematical evidence already
+retained by an earlier attempt. Proper original descendants can still select their
+own one-time alternatives. Root promotion shares normalization and finite mathematics
+only when the unchanged function contains a complete admitted loop with no external
+payload; original scope checks remain independent of this sharing.
+
+Expanded finite exports share the session expression context. Predicate import and
+reduction publish only after their expression transaction commits. Ownership and
+rollback are checked by source review and the generic transaction tests; this
+milestone does not inject a finite reducer failure after predicate import.
+
+A supported relational adapter preserves parameter-free fixed original occurrences
+as distinct sites, with no added dynamic relation dimensions. Repeated phase anchors
+must have disjoint fixed bindings. Scalar prerequisites pair compatible visits;
+mixed fixed/dynamic bindings of the same loop and parameterized fixed-occurrence
+relations remain explicit unavailable adapters. This limitation retains the exact
+child mathematics and permits later exact attempts. Fixed-occurrence preparation
+remains unsupported and is tested to leave original IR unchanged.
+
+Sequential relational composition also carries shared modeled uniform conflicts
+between potentially aliasing physical bases for flat occurrence types. Dynamic
+uniform crossings require a first/last occurrence adapter and remain an explicit
+unavailable export until that adapter is implemented. Their occurrence-domain products join
+the byte-level crossings before the existing complete crossing reduction. It retains
+the shared scalar protection policy, deferred-effect obligations and original
+sequential-scope checks. No physical address precision admission rule is added.
+
+Candidate-order milestone verification: 39 focused checks, 32 independently checked
+command closures and unavailable-cut replay, and the regional expression suite
+(including generic transaction rollback) pass. All 22 pinned runs preserve source
+IR and finish without a timeout. Per-region comparison finds no coverage loss:
+MayNotAlias remains 227/240, and MayAlias increases from 213/240 to 214/240.
+This is recognition/mathematical coverage; the public insertion boundary remains
+unchanged. The three pinned paper section hashes remain unchanged.
