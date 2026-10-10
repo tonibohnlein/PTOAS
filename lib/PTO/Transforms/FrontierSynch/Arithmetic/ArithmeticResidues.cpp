@@ -103,6 +103,7 @@ private:
 // inventing a new parameter or treating an integer as a pointer identity.
 Value indexParameter(const ProgramBuilder& builder, Value input)
 {
+    if (builder.expandEntryDefinition(input)) { return {}; }
     if (builder.entryParameter(input)) { return input; }
     if (!isa<IntegerType>(input.getType())) { return {}; }
     for (auto* user : input.getUsers()) {
@@ -145,6 +146,22 @@ AffineExpr normalizeValue(Value input, const ArithmeticSite& site, unsigned offs
         return parameter(value);
     });
 }
+}
+bool ProgramBuilder::expandEntryDefinition(Value value) const
+{
+    if (!expandEntryArithmetic) { return false; }
+    auto* op = value.getDefiningOp();
+    if (!op || op->getNumResults() != 1 || op->getNumRegions()) { return false; }
+    if (isa<arith::AddIOp, arith::SubIOp, arith::CmpIOp, arith::SelectOp>(op)) { return true; }
+    if (isa<arith::AndIOp, arith::OrIOp, arith::XOrIOp>(op)) { return value.getType().isInteger(1); }
+    APInt fixed;
+    if (isa<arith::MulIOp>(op)) {
+        return matchPattern(op->getOperand(0), m_ConstantInt(&fixed)) ||
+               matchPattern(op->getOperand(1), m_ConstantInt(&fixed));
+    }
+    if (!isa<arith::DivUIOp, arith::RemUIOp, arith::DivSIOp, arith::RemSIOp>(op) ||
+        !matchPattern(op->getOperand(1), m_ConstantInt(&fixed)) || fixed.isZero()) { return false; }
+    return isa<arith::DivUIOp, arith::RemUIOp>(op) || !fixed.isNegative();
 }
 bool ProgramBuilder::entryParameter(Value value, bool regionalLeaves) const
 {
@@ -200,17 +217,39 @@ AffineExpr ProgramBuilder::registerParameter(Value value)
 bool ProgramBuilder::prepareValue(Value input, const ArithmeticSite& site, ScalarProofContext proof)
 {
     if (constant(input)) { return true; }
+    // The unexpanded alternative names the actual entry SSA value. Do not
+    // traverse its definition speculatively and retain unused leaf parameters.
+    if (APInt literal; !expandEntryArithmetic && entryParameter(input) &&
+        !matchPattern(input, m_ConstantInt(&literal))) {
+        registerParameter(input);
+        return true;
+    }
+    const auto originalParameters = output.parameters.size();
     auto expression = normalizeValue(input, site, 0, context, [&](Value value) -> AffineExpr {
         auto binding = indexParameter(*this, value);
         return binding ? registerParameter(binding) : AffineExpr{};
     }, proof);
-    return static_cast<bool>(expression);
+    if (expression) { return true; }
+    // A failed affine traversal may have registered leaves before reaching
+    // unsupported machine arithmetic. They are not inputs of its replacement
+    // recipe. Roll back only this attempt's additions before that recipe binds
+    // its actual entry values; earlier successful expressions keep their IDs.
+    while (output.parameters.size() > originalParameters) {
+        parameterIds.erase(output.parameters.back());
+        output.parameters.pop_back(); output.primitives.parameters.pop_back();
+    }
+    return prepareMachine(input, site);
 }
 AffineExpr ProgramBuilder::value(Value input, const ArithmeticSite& site, unsigned offset,
                                  ScalarProofContext proof) const
 {
     if (auto fixed = constant(input)) { return getAffineConstantExpr(*fixed, context); }
-    return normalizeValue(input, site, offset, context, [&](Value input) -> AffineExpr {
+    if (APInt literal; !expandEntryArithmetic && entryParameter(input) &&
+        !matchPattern(input, m_ConstantInt(&literal))) {
+        auto found = parameterIds.find(input);
+        return found == parameterIds.end() ? AffineExpr{} : getAffineSymbolExpr(found->second, context);
+    }
+    auto normalized = normalizeValue(input, site, offset, context, [&](Value input) -> AffineExpr {
         auto binding = indexParameter(*this, input);
         if (binding) {
             if (auto fixed = constant(binding)) { return getAffineConstantExpr(*fixed, context); }
@@ -218,6 +257,7 @@ AffineExpr ProgramBuilder::value(Value input, const ArithmeticSite& site, unsign
         auto parameter = parameterIds.find(binding);
         return parameter == parameterIds.end() ? AffineExpr{} : getAffineSymbolExpr(parameter->second, context);
     }, proof);
+    return normalized ? normalized : machineValue(input, site, offset);
 }
 bool ProgramBuilder::staticallyEmpty(const ArithmeticSite& site) const
 {
@@ -267,6 +307,42 @@ SmallVector<AffineExpr> ProgramBuilder::domain(const ArithmeticSite& site, unsig
 void ProgramBuilder::emit(PrimitiveRelation& target, ArrayRef<AffineExpr> rows,
                          std::optional<std::pair<unsigned, uint64_t>> filter, uint64_t modulus)
 {
+    bool machine = false;
+    for (auto row : rows) {
+        if (row) {
+            row.walk([&](AffineExpr expression) {
+                if (auto symbol = dyn_cast<AffineSymbolExpr>(expression)) {
+                    machine |= symbol.getPosition() >= limits.dimensions;
+                }
+            });
+        }
+    }
+    if (machine) {
+        if (limits.period != 1) {
+            output.extraction.note(RecognitionIssue::IndexArithmetic, output.context.root);
+            return;
+        }
+        if (filter && (filter->first >= target.coordinates.size() || !modulus || limits.period % modulus)) {
+            output.extraction.note(RecognitionIssue::ArithmeticConfiguration, output.context.root);
+            return;
+        }
+        if (filter && filter->second != 0) { return; }
+        PrimitiveRelation staged = target;
+        staged.pieces.clear();
+        if (!emitMachine(staged, rows)) {
+            output.extraction.note(RecognitionIssue::IndexArithmetic, output.context.root);
+            return;
+        }
+        if (output.finiteExpansion) {
+            if (staged.pieces.size() > output.expansionFragmentLimit - output.expandedFragments) {
+                output.extraction.note(RecognitionIssue::TemplateExpansionLimit, output.context.root);
+                return;
+            }
+            output.expandedFragments += staged.pieces.size();
+        }
+        llvm::append_range(target.pieces, staged.pieces);
+        return;
+    }
     const auto count = target.coordinates.size();
     if (count > limits.dimensions) {
         output.extraction.note(RecognitionIssue::ArithmeticDimension, nullptr, true);

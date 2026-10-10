@@ -9,6 +9,7 @@
 #ifndef PTO_FRONTIERSYNCH_ITERATIONPREDICATES_H
 #define PTO_FRONTIERSYNCH_ITERATIONPREDICATES_H
 #include "CountedLoop.h"
+#include "PTO/Transforms/FrontierSynch/Shared/ModularScalar.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "../../InsertSync/SyncScalarReplay.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -22,6 +23,7 @@ public:
     IterationPredicates(scf::ForOp loop, RegionExpressions& e, ArrayRef<const CompoundInstanceElement*> phases)
         : loop(loop), e(e), dominance(loop->getParentOfType<func::FuncOp>())
     {
+        e.retainInputOwner(symbolOwner);
         for (auto* phase : phases) {
             forbidden.insert(phase->elementOp);
         }
@@ -32,6 +34,31 @@ public:
         auto found = identities.find(key);
         if (found != identities.end()) {
             return found->second;
+        }
+        // Normalize replayable integer predicates at their actual visit. Opaque
+        // payload-dependent predicates retain one identity per evaluation.
+        // No scalar from inside this loop becomes an independent invariant.
+        if (auto domain = CountedLoop::get(loop)) {
+            ModularScalar scalar(e, loop);
+            auto normalized = scalar.value(value, [&](Value leaf) -> std::optional<Id> {
+                if (leaf == loop.getInductionVar()) {
+                    auto multiple = e.constant(0), factor = ordinal;
+                    auto step = static_cast<uint64_t>(domain->step);
+                    while (step) {
+                        if (step & 1) { multiple = e.add(multiple, factor); }
+                        step >>= 1;
+                        if (step) { factor = e.add(factor, factor); }
+                    }
+                    return e.add(e.input(loop.getLowerBound()), multiple);
+                }
+                auto* owner = leaf.getParentRegion() ? leaf.getParentRegion()->getParentOp() : nullptr;
+                if (owner && owner != loop && !loop->isProperAncestor(owner)) { return e.input(leaf); }
+                return std::nullopt;
+            });
+            if (normalized && e.isBoolean(*normalized)) {
+                identities.try_emplace(key, *normalized);
+                return *normalized;
+            }
         }
         auto argument = symbols.addArgument(value.getType(), loop.getLoc());
         auto id = e.input(argument);
@@ -138,7 +165,8 @@ private:
     scf::ForOp loop;
     RegionExpressions& e;
     DominanceInfo dominance;
-    Block symbols;
+    std::shared_ptr<Block> symbolOwner = std::make_shared<Block>();
+    Block& symbols = *symbolOwner;
     DenseSet<Operation*> forbidden;
     DenseMap<std::pair<Value, Id>, Id> identities;
     DenseMap<Value, std::pair<Value, Id>> recipes;

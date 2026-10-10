@@ -282,8 +282,14 @@ private:
             }
             std::vector<unsigned> keep;
             if (!canonicalOrder(schema, keep)) { return false; }
-            const auto liftedDimensions = schema.pieces[normalized.piece].system.getNumInputs();
+            const auto liftedDimensions = normalized.machineSystem ? normalized.machineSystem->dimensions() :
+                schema.pieces[normalized.piece].system.getNumInputs();
             auto primitive = Policy::create(liftedDimensions, normalized.rows);
+            if (normalized.machineSystem) {
+                if constexpr (std::is_same_v<typename Policy::System, IntegerSystem>) {
+                    primitive = *normalized.machineSystem;
+                } else { primitive = failure(); }
+            }
             if (failed(primitive)) { fail("arithmetic primitive construction failed"); return false; }
             if (program.finiteExpansion && schema.kind == PrimitiveKind::Reads) {
                 const bool valid = schema.storageSpace && schema.sourceSite &&

@@ -208,6 +208,23 @@ public:
         auto range = query.resolve(value, [&](Value) { return getAffineSymbolExpr(0, context); }, 0).range;
         --rangeQueries->depth;
         const unsigned bits = width(value.getType());
+        if (bits && bits <= 64 &&
+            isa_and_nonnull<arith::DivUIOp, arith::RemUIOp>(value.getDefiningOp())) {
+            auto* operation = value.getDefiningOp();
+            auto divisor = constant(operation->getOperand(1));
+            if (divisor && *divisor > 0 && (bits == 64 || static_cast<uint64_t>(*divisor) < (uint64_t(1) << bits))) {
+                const auto maximum = APInt::getMaxValue(bits).udiv(APInt(bits, *divisor));
+                std::optional<int64_t> high;
+                if (isa<arith::RemUIOp>(operation)) {
+                    if (APInt(bits, *divisor - 1).isNonNegative()) { high = *divisor - 1; }
+                } else if (!maximum.isNegative()) { high = maximum.getSExtValue(); }
+                if (high) {
+                    Range refined{range ? std::max(int64_t(0), range->lower) : 0,
+                                  range ? std::min(*high, range->upper) : *high};
+                    if (refined.lower <= refined.upper) { range = refined; }
+                }
+            }
+        }
         if (!range && bits && bits <= 64) {
             range = Range{APInt::getSignedMinValue(bits).getSExtValue(),
                           APInt::getSignedMaxValue(bits).getSExtValue()};

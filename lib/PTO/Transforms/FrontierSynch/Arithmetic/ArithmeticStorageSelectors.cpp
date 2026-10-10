@@ -101,8 +101,10 @@ FailureOr<std::vector<Piece>> Builder::importPiece(const NormalizedPiece& normal
         }
         if (matches != 1) { return failure(); }
     }
-    const auto liftedDimensions = raw.system.getNumInputs();
-    auto system = rows(liftedDimensions, normalized.rows);
+    const auto liftedDimensions = normalized.machineSystem ? normalized.machineSystem->dimensions() :
+        raw.system.getNumInputs();
+    auto system = normalized.machineSystem ? FailureOr<IntegerSystem>(*normalized.machineSystem) :
+        rows(liftedDimensions, normalized.rows);
     if (failed(system)) { return failure(); }
     std::vector<uint64_t> residues(raw.residues.size());
     for (unsigned i = 0; i < raw.residues.size(); ++i) {

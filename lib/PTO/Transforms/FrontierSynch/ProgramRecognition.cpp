@@ -291,6 +291,19 @@ void recordArithmeticContractAttempt(ProgramRecognition& program, const Arithmet
                 for (const auto& piece : recognition.pieces) {
                     if (piece.empty) { continue; }
                     for (const auto& row : piece.rows) { rowClass = std::max(rowClass, detail::classifyRow(row)); }
+                    if (piece.machineSystem) {
+                        if (!piece.machineSystem->congruences().empty()) {
+                            rowClass = ArithmeticClass::BoundedCoefficients;
+                        }
+                        for (const auto& constraint : piece.machineSystem->constraints()) {
+                            LinearRow row;
+                            for (const auto& coefficient : constraint.coefficients) {
+                                // Admission checked every coefficient against a signed-i64 limit.
+                                row.coefficients.push_back(static_cast<int64_t>(coefficient));
+                            }
+                            rowClass = std::max(rowClass, detail::classifyRow(row));
+                        }
+                    }
                 }
                 const bool qualifies = kind == ContractClass::BoundedCoefficients ||
                     rowClass == ArithmeticClass::Differences ||

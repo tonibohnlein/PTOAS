@@ -78,14 +78,73 @@ bool schema(const PrimitiveRelation& relation, const ArithmeticPrimitives& input
 bool validPiece(const ResiduePiece& piece, const PrimitiveRelation& relation, uint64_t period)
 {
     auto system = piece.system;
-    return system && system.getNumDims() == relation.dimensions &&
+    const bool machine = piece.machineSystem && !system && period == 1 &&
+        piece.machineSystem->dimensions() >= relation.coordinates.size();
+    if (machine) {
+        return piece.residues.size() == relation.coordinates.size() &&
+            llvm::all_of(piece.residues, [](uint64_t residue) { return residue == 0; });
+    }
+    return !piece.machineSystem && system && system.getNumDims() == relation.dimensions &&
            system.getNumInputs() >= relation.coordinates.size() &&
            piece.residues.size() == relation.coordinates.size() &&
            llvm::all_of(piece.residues, [&](uint64_t residue) { return residue < period; });
 }
+// A congruence is an exact existential equality. These fresh trailing columns
+// are counted in D and projected by the ordinary certified primitive importer.
+// Thus P=1 names an affine primitive, not an uncharged modular representation.
+FailureOr<IntegerSystem> liftMachineCongruences(const IntegerSystem& source, unsigned dimensions)
+{
+    std::vector<IntegerConstraint> rows = source.constraints();
+    for (auto& row : rows) { row.coefficients.resize(dimensions); }
+    unsigned local = source.dimensions();
+    for (const auto& congruence : source.congruences()) {
+        IntegerConstraint equality{congruence.coefficients, congruence.residue};
+        equality.coefficients.resize(dimensions);
+        equality.coefficients[local++] = -congruence.modulus;
+        rows.push_back(equality);
+        for (auto& coefficient : equality.coefficients) { coefficient = -coefficient; }
+        equality.bound = -equality.bound;
+        rows.push_back(std::move(equality));
+    }
+    return IntegerSystem::create(dimensions, rows);
+}
 void inspectPiece(const ResiduePiece& source, const ArithmeticLimits& limits, NormalizedPiece& normalized,
                   ArithmeticRecognition& output)
 {
+    if (source.machineSystem) {
+        normalized.empty = source.machineSystem->isKnownEmpty();
+        if (normalized.empty) { return; }
+        const auto externalAndLocals = source.machineSystem->dimensions();
+        const auto freshLocals = source.machineSystem->congruences().size();
+        if (externalAndLocals > limits.dimensions || freshLocals > limits.dimensions - externalAndLocals) {
+            // Failure of this adapter does not exclude another exact form.
+            reject(output, ArithmeticIssue::DimensionLimit, normalized.relation, normalized.piece, true);
+            return;
+        }
+        const unsigned dimensions = externalAndLocals + freshLocals;
+        output.observedDimensions = std::max(output.observedDimensions, dimensions);
+        auto lifted = liftMachineCongruences(*source.machineSystem, dimensions);
+        if (failed(lifted)) {
+            reject(output, ArithmeticIssue::InvalidCoordinate, normalized.relation, normalized.piece, true);
+            return;
+        }
+        normalized.machineSystem = std::make_shared<const IntegerSystem>(std::move(*lifted));
+        output.arithmeticClass = ArithmeticClass::BoundedCoefficients;
+        const BoundInteger coefficientLimit(static_cast<int64_t>(std::min<uint64_t>(limits.coefficient, INT64_MAX)));
+        auto inspect = [&](const std::vector<BoundInteger>& coefficients) {
+            for (const auto& coefficient : coefficients) {
+                auto magnitude = coefficient < BoundInteger(0) ? -coefficient : coefficient;
+                if (magnitude > coefficientLimit) {
+                    reject(output, ArithmeticIssue::CoefficientLimit, normalized.relation, normalized.piece);
+                } else {
+                    output.observedCoefficient = std::max(output.observedCoefficient,
+                        static_cast<uint64_t>(static_cast<int64_t>(magnitude)));
+                }
+            }
+        };
+        for (const auto& row : normalized.machineSystem->constraints()) { inspect(row.coefficients); }
+        return;
+    }
     auto system = source.system;
     for (unsigned rowId = 0; rowId < system.getNumConstraints(); ++rowId) {
         LinearRow row;
@@ -164,15 +223,17 @@ ArithmeticRecognition recognizeArithmetic(const ArithmeticPrimitives& input, con
                 reject(output, ArithmeticIssue::InvalidResidue, id, pieceId, true);
                 continue;
             }
-            if (piece.system.getNumInputs() > limits.dimensions) {
+            const auto pieceDimensions = piece.machineSystem ? piece.machineSystem->dimensions() :
+                piece.system.getNumInputs();
+            if (pieceDimensions > limits.dimensions) {
                 reject(output, ArithmeticIssue::DimensionLimit, id, pieceId);
                 continue;
             }
-            output.observedDimensions = std::max(output.observedDimensions, piece.system.getNumInputs());
+            output.observedDimensions = std::max(output.observedDimensions, pieceDimensions);
             // General integer projection retains congruences introduced by
             // quotient elimination. Do not hand these lifted pieces to a
             // cheaper backend whose import assumes no existential locals.
-            if (piece.system.getNumInputs() > relation.coordinates.size()) {
+            if (pieceDimensions > relation.coordinates.size()) {
                 output.arithmeticClass = ArithmeticClass::BoundedCoefficients;
             }
             NormalizedPiece normalized{id, pieceId, false, {}};

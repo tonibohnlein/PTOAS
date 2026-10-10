@@ -10,6 +10,8 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICPROGRAMINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgram.h"
 #include "llvm/ADT/MapVector.h"
+#include <map>
+#include <tuple>
 namespace mlir::pto::frontiersynch { struct FiniteExpansionPlan; }
 namespace mlir::pto::frontiersynch::detail {
 struct ArithmeticValuePiece {
@@ -24,10 +26,27 @@ struct ProgramBuilder {
     DenseMap<Value, unsigned> parameterIds;
     ArithmeticEntryConstant entryConstant;
     mutable DenseMap<std::pair<Value, unsigned>, bool> entryInputs = DenseMap<std::pair<Value, unsigned>, bool>();
+    struct MachineBinding {
+        Value value;
+        ArithmeticSite site;
+        unsigned offset;
+        unsigned indexBits;
+    };
+    mutable std::vector<MachineBinding> machineBindings;
+    using MachineKey = std::tuple<unsigned, unsigned, unsigned,
+        std::vector<const void*>, std::vector<Operation*>>;
+    std::map<MachineKey, std::vector<ResiduePiece>> machinePrimitives;
+    bool expandEntryArithmetic = true;
+    bool prepareMachine(Value input, const ArithmeticSite& site);
+    AffineExpr machineValue(Value input, const ArithmeticSite& site, unsigned offset) const;
+    bool emitMachine(PrimitiveRelation& target, ArrayRef<AffineExpr> rows);
     std::optional<int64_t> constant(Value value) const;
     PrimitiveRelation relation(PrimitiveKind kind, unsigned dimensions) const;
     bool staticallyEmpty(const ArithmeticSite& site) const;
     bool entryParameter(Value value, bool regionalLeaves = false) const;
+    // Keep supported pure entry definitions coupled to their original leaves.
+    // Cast boundaries and opaque values retain their SSA parameter identities.
+    bool expandEntryDefinition(Value value) const;
     AffineExpr registerParameter(Value value);
     // Control domains cannot assume the occurrence whose presence they define.
     enum class ScalarProofContext { Occurrence, Definition };

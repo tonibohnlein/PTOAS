@@ -38,8 +38,33 @@ void dumpArithmeticJSON(func::FuncOp function, const fs::ArithmeticProgram& prog
                 rows.push_back(llvm::json::Object{{"coefficients", std::move(coefficients)},
                                                 {"constant", row.constant}, {"equality", row.equality}});
             }
-            pieces.push_back(llvm::json::Object{{"empty", normalized.empty}, {"residues", std::move(residues)},
-                                               {"rows", std::move(rows)}});
+            llvm::json::Array machineRows, congruences;
+            auto wide = [](const fs::BoundInteger& value) {
+                std::string text;
+                llvm::raw_string_ostream stream(text); stream << value;
+                return stream.str();
+            };
+            if (normalized.machineSystem) {
+                for (const auto& row : normalized.machineSystem->constraints()) {
+                    llvm::json::Array coefficients;
+                    for (const auto& value : row.coefficients) { coefficients.push_back(wide(value)); }
+                    machineRows.push_back(llvm::json::Object{{"coefficients", std::move(coefficients)},
+                        {"bound", wide(row.bound)}});
+                }
+                for (const auto& row : normalized.machineSystem->congruences()) {
+                    llvm::json::Array coefficients;
+                    for (const auto& value : row.coefficients) { coefficients.push_back(wide(value)); }
+                    congruences.push_back(llvm::json::Object{{"coefficients", std::move(coefficients)},
+                        {"modulus", wide(row.modulus)}, {"residue", wide(row.residue)}});
+                }
+            }
+            pieces.push_back(
+                llvm::json::Object{
+                    {"machine_rows", std::move(machineRows)},
+                    {"congruences", std::move(congruences)},
+                    {"empty", normalized.empty},
+                    {"residues", std::move(residues)},
+                    {"rows", std::move(rows)}});
         }
         relations.push_back(llvm::json::Object{
             {"kind", static_cast<unsigned>(relation.kind)},
@@ -67,7 +92,12 @@ void dumpArithmeticJSON(func::FuncOp function, const fs::ArithmeticProgram& prog
     }
     llvm::json::Object document{{"function", function.getSymName()}, {"period", program.primitives.period},
                                 {"sites", std::move(sites)}, {"parameters", std::move(parameters)},
-                                {"relations", std::move(relations)}};
+                                {"relations", std::move(relations)},
+                                {"machine_conversions", program.machinePrimitiveConversions},
+                                {"machine_primitive_cache_hits", program.machinePrimitiveCacheHits},
+                                {"machine_expression_nodes", program.machineExpressionNodes},
+                                {"machine_relation_pieces", program.machineRelationPieces},
+                                {"machine_projections", program.machineProjections}};
     if (program.context.root && program.context.root != function.getOperation()) {
         auto label = program.context.root->getAttrOfType<StringAttr>("frontier.test_arithmetic_region");
         document["region"] = label ? label.getValue() : StringRef("anonymous");
