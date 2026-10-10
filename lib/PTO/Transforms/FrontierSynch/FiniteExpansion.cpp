@@ -189,7 +189,8 @@ void collectExpanded(ProgramBuilder& builder, const FiniteExpansionLimits& limit
 
 namespace mlir::pto::frontiersynch {
 static FiniteGuardedAnalysis analyzeExpandedFiniteContext(ArithmeticRegionContext context,
-    const PhaseIndex& index, const SyncInput& input, const FiniteExpansionPlan* plan = nullptr)
+    const PhaseIndex& index, const SyncInput& input, const FiniteExpansionPlan* plan = nullptr,
+    std::shared_ptr<RegionExpressions> expressions = {})
 {
     FiniteGuardedAnalysis result;
     auto program = std::make_shared<ArithmeticProgram>(
@@ -232,12 +233,18 @@ static FiniteGuardedAnalysis analyzeExpandedFiniteContext(ArithmeticRegionContex
                                                           &translations);
     auto stage = analyzeGeneralArithmeticGenerators(translated ? *translated : *program, &protection);
     if (!stage.analysis().error.empty()) { result.error = stage.analysis().error; return result; }
+    auto arena = expressions ? std::move(expressions) : std::make_shared<RegionExpressions>();
+    if (!arena->constructionError().empty()) {
+        result.error = "finite expansion requires an unpoisoned expression context"; return result;
+    }
+    const auto initialExpressions = arena->size();
+    RegionExpressions::Transaction transaction(*arena);
     auto state = std::make_shared<FiniteGuardedState>();
     state->expandedStorageProgram = translated ?
         std::make_shared<const ArithmeticProgram>(std::move(*translated)) : program;
     state->expandedStorageTranslations = std::move(translations);
     state->function = program->context.function;
-    state->arena = std::make_shared<RegionExpressions>();
+    state->arena = arena;
     state->accessModel = &input.accesses();
     state->gmAliasPolicy = input.memory().gmPolicy();
     SmallVector<RegionExpressions::Id> parameters;
@@ -281,21 +288,22 @@ static FiniteGuardedAnalysis analyzeExpandedFiniteContext(ArithmeticRegionContex
     state->cost.crossingCandidates = stage.analysis().cost.pieceJoins;
     state->cost.crossings = state->guardedResidual.size();
     state->closeAndReduce();
-    state->cost.expressionNodes = state->arena->size();
+    state->cost.expressionNodes = state->arena->size() - initialExpressions;
     const bool failedReduction = !state->rankIndex.error.empty() || !state->arena->error().empty();
     if (failedReduction) {
         result.error = state->rankIndex.error.empty() ? state->arena->error() : state->rankIndex.error;
         return result;
     }
+    transaction.commit();
     result.state = std::move(state);
     result.expandedProgram = std::move(program);
     result.cost = result.state->cost;
     return result;
 }
 FiniteGuardedAnalysis analyzeExpandedFinite(const FiniteExpansionPlan& plan,
-    const PhaseIndex& index, const SyncInput& input)
+    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions)
 {
-    return analyzeExpandedFiniteContext(plan.context, index, input, &plan);
+    return analyzeExpandedFiniteContext(plan.context, index, input, &plan, std::move(expressions));
 }
 FiniteGuardedAnalysis analyzeExpandedFinite(func::FuncOp function, Operation* root,
     const PhaseIndex& index, const SyncInput& input)

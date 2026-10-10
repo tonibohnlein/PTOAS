@@ -18,9 +18,14 @@ inline bool directPrerequisiteMapping(const ValuePrerequisite& edge,
 {
     const bool identities = edge.directSSA && source.phase && target.phase &&
         source.phase == edge.producer && target.phase->elementOp == edge.consumer;
-    const bool originalCoordinates = source.fixedCoordinates.empty() && target.fixedCoordinates.empty() &&
-        source.loops.size() <= target.loops.size();
+    const bool originalCoordinates = source.loops.size() <= target.loops.size();
     if (!identities || !originalCoordinates) { return false; }
+    for (const auto& fixed : source.fixedCoordinates) {
+        auto match = llvm::find_if(target.fixedCoordinates, [&](const auto& candidate) {
+            return candidate.loop == fixed.loop && candidate.induction == fixed.induction;
+        });
+        if (match == target.fixedCoordinates.end()) { return false; }
+    }
     for (unsigned i = 0; i < source.loops.size(); ++i) {
         if (source.loops[i] != target.loops[i]) { return false; }
     }

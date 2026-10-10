@@ -6,6 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "AnalysisSessionInternal.h"
+#include "NormalizedControl.h"
+#include "NumericTemplatePlan.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticPeriodicConversion.h"
 #include <algorithm>
 #include <tuple>
@@ -92,6 +94,81 @@ std::pair<AnalysisCostEstimate, AnalysisCostEstimate> estimates(
     return {periodic, arithmetic};
 }
 } // namespace
+std::vector<AnalysisForm> FrontierAnalysis::exactForms(const AnalysisRequest& request)
+{
+    const bool valid = storage && succeeded(recognizeStructure()) && request.region < program->nodes.size();
+    if (!valid) { return {}; }
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    const auto identity = std::make_pair(request.region, requestKey(request));
+    auto cached = sessionState->formOrders.find(identity);
+    if (cached != sessionState->formOrders.end()) { return cached->second; }
+    auto normalized = normalizedRegion(request.region);
+    std::vector<AnalysisForm> order{AnalysisForm::Original};
+    if (!normalized->original) {
+        sessionState->formOrders.emplace(identity, order); return order;
+    }
+    AnalysisCostEstimate original, expanded;
+    const auto* numerical = numericalPreflight(request.region);
+    const auto& source = *normalized->original;
+    const uint64_t interfaces = uint64_t(request.needs.queries) + uint64_t(request.needs.selectors) +
+                                uint64_t(request.needs.synchronization);
+    // Count backend occurrences, not just normalized syntax: retained dependent
+    // finite domains still enumerate visits during numerical materialization.
+    const bool numericalEligible = numerical && numerical->form.result.state == RecognitionState::Applicable;
+    EstimatedCount payloads, effects, visits;
+    if (numericalEligible) {
+        payloads = numerical->form.countedPayloads;
+        visits = numerical->form.countedVisits;
+        effects = 0;
+        for (const auto& occurrence : numerical->payloads) {
+            effects = estimatedAdd(effects, storage->accesses().effectsFor(occurrence.phase).size());
+        }
+    }
+    const auto joins = estimatedMultiply(effects, effects);
+    expanded.generatorPieces = joins;
+    expanded.ports = estimatedMultiply(payloads, 2);
+    expanded.numericalWindow = estimatedMultiply(payloads, estimatedAdd(effects, 1));
+    expanded.circuitNodes = expanded.relationConversion = 0;
+    const auto normalization = estimatedAdd(estimatedMultiply(source.nodes.size(), 2),
+        estimatedAdd(normalized->nodes.size(), normalized->planningVisits));
+    expanded.work = estimatedAdd(normalization, estimatedAdd(visits,
+        estimatedAdd(joins, estimatedMultiply(expanded.numericalWindow, estimatedAdd(interfaces, 1)))));
+    original.representation = estimatedAdd(source.nodes.size(), source.effects);
+    expanded.representation = numericalEligible ? estimatedAdd(normalized->nodes.size(),
+        estimatedAdd(effects, estimatedMultiply(interfaces, expanded.ports))) :
+        estimatedAdd(normalized->nodes.size(), normalized->effects);
+    // Only a complete known original form receives a known estimate. An
+    // unavailable signature leaves work unknown, never removes that attempt.
+    const StructureNode* loop = request.region ? &program->nodes[request.region] : nullptr;
+    if (!request.region) {
+        for (const auto& node : program->nodes) {
+            const bool topLevelLoop = node.kind == StructureKind::Loop && node.anchor->getParentOp() == function;
+            if (!topLevelLoop) { continue; }
+            const bool complete = llvm::all_of(storage->instructions(), [&](auto* phase) {
+                return node.anchor->isProperAncestor(phase->elementOp);
+            });
+            if (complete) { loop = &node; break; }
+        }
+    }
+    const RecognitionResult* rotating = loop && loop->rotatingResult ? &*loop->rotatingResult : nullptr;
+    if (rotating && rotating->state == RecognitionState::Applicable) {
+        const EstimatedCount fragments = rotating->accesses.size();
+        const EstimatedCount sites = loop->payloadCount;
+        original.generatorPieces = estimatedMultiply(fragments, fragments);
+        original.ports = estimatedMultiply(sites, 2);
+        original.numericalWindow = original.circuitNodes = original.relationConversion = 0;
+        original.work = estimatedAdd(source.nodes.size(), estimatedMultiply(original.generatorPieces,
+            estimatedAdd(sites, estimatedAdd(interfaces, 1))));
+        original.representation = estimatedAdd(original.generatorPieces,
+            estimatedMultiply(original.ports, estimatedAdd(interfaces, 1)));
+    }
+    order.push_back(AnalysisForm::SmallCountExpanded);
+    if (estimatedCostLess(expanded, original)) { std::reverse(order.begin(), order.end()); }
+    sessionState->costs.push_back({request.region, identity.second, "form-original", original});
+    sessionState->costs.push_back({request.region, identity.second, "form-expanded", expanded});
+    sessionState->formOrders.emplace(identity, order);
+    return order;
+}
 std::vector<AnalysisBackend> FrontierAnalysis::arithmeticMethods(const AnalysisRequest& request)
 {
     const bool valid = storage && succeeded(recognizeStructure()) && request.region < program->nodes.size();
@@ -133,8 +210,16 @@ std::vector<AnalysisCostRecord> FrontierAnalysis::costRecords() const
     if (!sessionState) { return {}; }
     auto records = sessionState->costs;
     for (auto& record : records) {
-        const auto backend = record.method == "arithmetic-periodic" ? AnalysisBackend::ArithmeticPeriodic :
-                                                                     AnalysisBackend::Arithmetic;
+        if (record.method == "form-original" || record.method == "form-expanded") {
+            const auto form = record.method == "form-original" ?
+                AnalysisForm::Original : AnalysisForm::SmallCountExpanded;
+            auto attempt = sessionState->formAttempts.find({record.region, form});
+            record.attemptConstructions = attempt == sessionState->formAttempts.end() ? 0 : attempt->second;
+            continue;
+        }
+        const auto backend = record.method == "numerical-sequence" ? AnalysisBackend::NumericalSequence :
+            (record.method == "arithmetic-periodic" ?
+                AnalysisBackend::ArithmeticPeriodic : AnalysisBackend::Arithmetic);
         if (record.region && backend == AnalysisBackend::Arithmetic) {
             const auto attempt = sessionState->arithmeticRegionAttempts.find(record.region);
             record.attemptConstructions = attempt != sessionState->arithmeticRegionAttempts.end() &&

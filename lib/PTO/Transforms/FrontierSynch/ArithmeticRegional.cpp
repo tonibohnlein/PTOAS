@@ -509,7 +509,10 @@ FailureOr<RegionalAnalysis> exportState(const std::shared_ptr<State>& state,
         auto* operation = site.phase->elementOp;
         auto* next = operation->getNextNode();
         if (!next) { error = "arithmetic payload has no legal after cut"; return failure(); }
-        out.anchors.push_back({site.phase, {}, {operation->getBlock(), operation}, {operation->getBlock(), next}});
+        TemplateEndpointAnchor anchor{site.phase, {},
+            {operation->getBlock(), operation}, {operation->getBlock(), next}};
+        for (const auto& fixed : site.fixedCoordinates) { anchor.coordinates.push_back({fixed.loop, fixed.induction}); }
+        out.anchors.push_back(std::move(anchor));
         out.occurrenceLoops.push_back(site.loops.empty() ? scf::ForOp{} : site.loops.back());
         out.outerLoops.emplace_back(site.loops.begin(), site.loops.empty() ? site.loops.end() : site.loops.end()-1);
         state->arena->forbidRecomputation(site.phase->elementOp);

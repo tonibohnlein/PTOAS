@@ -128,7 +128,9 @@ void select(NormalizedControlDescription& output)
         total.effects = saturatedAdd(total.effects, sizes[root].effects);
     }
     const bool fits = total.nodes <= output.limits.visits && total.payloads <= output.limits.payloads;
-    if (!fits) { return; } // Optional expansion never rejects the compact input.
+    const bool changes = llvm::any_of(choices, [](const auto& choice) { return choice.has_value(); });
+    if (!fits || !changes) { return; } // Optional expansion never rejects compact input.
+    output.original = std::make_shared<const NormalizedControlDescription>(output);
     auto original = std::move(output.nodes);
     auto roots = std::move(output.roots);
     output.nodes.clear(); output.roots.clear(); output.nodes.reserve(total.nodes);

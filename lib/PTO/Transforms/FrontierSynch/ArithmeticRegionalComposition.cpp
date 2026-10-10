@@ -147,14 +147,32 @@ private:
         }
         return result;
     }
-    Relation nativeCrossings()
+    bool uniformPair(const ArithmeticSite& source, const ArithmeticSite& target) const
+    {
+        const auto sourcePipe = static_cast<uint32_t>(source.phase->kPipeValue);
+        const auto targetPipe = static_cast<uint32_t>(target.phase->kPipeValue);
+        if (ptoStorageProtection().protectsScalar(sourcePipe, targetPipe)) { return false; }
+        const auto& accesses = left.input->accesses();
+        for (auto a : accesses.effectsFor(source.phase)) {
+            for (auto b : accesses.effectsFor(target.phase)) {
+                if (accesses.uniformConflict(a, b)) { return true; }
+            }
+        }
+        return false;
+    }
+    Relation nativeCrossings(bool uniform = false)
     {
         Relation result;
         for (const auto& a : left.occurrences) {
             for (const auto& b : right.occurrences) {
-                if (a.parameterResidues != b.parameterResidues ||
-                    left.sites[a.site].phase->kPipeValue != right.sites[b.site].phase->kPipeValue) {
-                        continue; }
+                const bool eligible = uniform ? uniformPair(left.sites[a.site], right.sites[b.site]) :
+                    left.sites[a.site].phase->kPipeValue == right.sites[b.site].phase->kPipeValue;
+                if (a.parameterResidues != b.parameterResidues || !eligible) { continue; }
+                const bool dynamicUniform = uniform && (!a.residues.empty() || !b.residues.empty());
+                if (dynamicUniform) {
+                    error = "dynamic uniform crossing extrema adapter is not implemented yet";
+                    failedOperation = true; return {};
+                }
                 const unsigned x = a.residues.size(), y = b.residues.size(), dims = x + y + p;
                 std::vector<unsigned> am(x + p), bm(y + p), keep(dims);
                 std::iota(am.begin(), am.begin() + x, 0);
@@ -163,9 +181,14 @@ private:
                 std::iota(keep.begin(), keep.end(), 0);
                 auto products = join(a.system, am, b.system, bm, dims, keep);
                 if (failed(products)) { failedOperation = true; return {}; }
-                for (auto kinds : {std::make_pair(ArithmeticEvent::Start, ArithmeticEvent::Start),
-                                   std::make_pair(ArithmeticEvent::Completion, ArithmeticEvent::Completion),
-                                   std::make_pair(ArithmeticEvent::Start, ArithmeticEvent::Completion)}) {
+                const std::vector<std::pair<ArithmeticEvent, ArithmeticEvent>> kindsList = uniform ?
+                    std::vector<std::pair<ArithmeticEvent, ArithmeticEvent>>{
+                        {ArithmeticEvent::Completion, ArithmeticEvent::Start}} :
+                    std::vector<std::pair<ArithmeticEvent, ArithmeticEvent>>{
+                        {ArithmeticEvent::Start, ArithmeticEvent::Start},
+                        {ArithmeticEvent::Completion, ArithmeticEvent::Completion},
+                        {ArithmeticEvent::Start, ArithmeticEvent::Completion}};
+                for (auto kinds : kindsList) {
                     ArithmeticRelationKey key{{a.site, kinds.first, a.residues},
                                               {split + b.site, kinds.second, b.residues}, a.parameterResidues};
                     for (auto& piece : *products) { append(result[key], piece); }
@@ -504,18 +527,8 @@ FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
         error = "symbolic sibling composition requires disjoint sequential invocation scopes";
         return failure();
     }
-    SmallVector<SyncStorageCell> domains;
-    for (const auto* child : {&left, &right}) {
-        for (const auto& support : child->selectors.support) {
-            SyncStorageCell domain{support.space, 0, 1, support.base};
-            if (llvm::none_of(domains, [&](const auto& old) { return sameStorageDomain(old, domain); })) {
-                domains.push_back(domain);
-            }
-        }
-    }
-    if (!storageBasesAreComparable(domains, left.input->memory().gmPolicy())) {
-        error = "symbolic sibling physical-base relation adapter unavailable"; return failure();
-    }
+    // Incomparable physical bases use the shared model's uniform conflict
+    // relation below. Byte selectors still serve comparable storage domains.
     if (left.context.function != right.context.function ||
         context.function != left.context.function) {
         error = "symbolic sibling invocation contexts differ"; return failure();
@@ -557,6 +570,8 @@ FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
     auto lref = lh, rref = rh;
     unite(lref, lid); unite(rref, rid);
     auto bridge = bridges(), nativeEdges = nativeCrossings();
+    unite(bridge, nativeCrossings(true));
+    if (failedOperation) { return failure(); }
     if (failed(prerequisiteCrossings(bridge, nativeEdges))) { return failure(); }
     auto native = compose(compose(left.analysis.nativeOrder, nativeEdges),
                           renamed(right.analysis.nativeOrder, split));

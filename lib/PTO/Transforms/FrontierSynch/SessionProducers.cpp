@@ -10,6 +10,7 @@
 #include "AnalysisSessionInternal.h"
 #include "FiniteExpansionPlan.h"
 #include "NumericTemplatePlan.h"
+#include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
@@ -97,15 +98,17 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRotatin
     return prepared;
 }
 namespace {
-const FiniteExpansionPlan& expansionPlan(AnalysisSessionState& session, func::FuncOp function,
-    const ProgramRecognition& program, std::size_t region, const PhaseIndex& index, const SyncInput& input)
+const FiniteExpansionPlan& expansionPlan(AnalysisSessionState& session,
+    const PhaseIndex& index, const SyncInput& input,
+    std::shared_ptr<const NormalizedControlDescription> normalized)
 {
-    auto found = session.finiteExpansionPlans.find(region);
+    auto found = session.finiteExpansionPlans.find(normalized.get());
     if (found != session.finiteExpansionPlans.end()) { return *found->second; }
-    auto context = originalContext(function, program, region);
-    auto plan = std::make_shared<const FiniteExpansionPlan>(preflightFiniteExpansion(context, index, input, {},
-        normalizedInput(session, function, program, region, index, input)));
-    auto inserted = session.finiteExpansionPlans.emplace(region, std::move(plan));
+    const auto* identity = normalized.get();
+    auto context = normalized->context;
+    auto plan = std::make_shared<const FiniteExpansionPlan>(
+        preflightFiniteExpansion(context, index, input, {}, std::move(normalized)));
+    auto inserted = session.finiteExpansionPlans.emplace(identity, std::move(plan));
     return *inserted.first->second;
 }
 const StructureNode* wholeLoop(func::FuncOp function, const SyncInput& input,
@@ -130,6 +133,60 @@ const StructureNode* wholeLoop(func::FuncOp function, const SyncInput& input,
     return outside.state == RecognitionState::Applicable ? selected : nullptr;
 }
 } // namespace
+std::shared_ptr<const NormalizedControlDescription> FrontierAnalysis::normalizedRegion(std::size_t region)
+{
+    // A complete root-loop view shares its original loop's representation.
+    // Whole-invocation scope checks remain separate from that representation.
+    if (!region) {
+        if (const auto* loop = wholeLoop(function, *storage, *program, *structuralIndex)) {
+            region = static_cast<std::size_t>(loop - program->nodes.data());
+        }
+    }
+    return normalizedInput(*sessionState, function, *program, region, *structuralIndex, *storage);
+}
+const NumericTemplatePlan* FrontierAnalysis::numericalPreflight(std::size_t region)
+{
+    const auto* node = region ? &program->nodes[region] : wholeLoop(function, *storage, *program, *structuralIndex);
+    const bool valid = node && node->kind == StructureKind::Loop && !node->unsupportedContext;
+    if (!valid) { return nullptr; }
+    const auto original = static_cast<std::size_t>(node - program->nodes.data());
+    const auto key = std::make_pair(original, true);
+    auto found = sessionState->numericTemplatePlans.find(key);
+    if (found == sessionState->numericTemplatePlans.end()) {
+        auto plan = std::make_shared<const NumericTemplatePlan>(preflightNumericTemplate(
+            cast<scf::ForOp>(node->anchor), *structuralIndex, *storage, {}, true, {}, {}, normalizedRegion(original)));
+        found = sessionState->numericTemplatePlans.emplace(key, std::move(plan)).first;
+    }
+    return found->second.get();
+}
+std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceExpandedFinite(std::size_t region,
+    std::string& error)
+{
+    if (region && program->nodes[region].unsupportedContext) {
+        error = "finite expansion requires a supported original region"; return {};
+    }
+    auto normalized = normalizedRegion(region);
+    auto& cached = sessionState->expandedAttempts[normalized.get()];
+    if (!cached.produced) {
+        cached.produced = true;
+        const auto& plan = expansionPlan(*sessionState, *structuralIndex, *storage, normalized);
+        auto demands = std::make_shared<FiniteGuardedAnalysis>(
+            analyzeExpandedFinite(plan, *structuralIndex, *storage, sessionState->expressions));
+        cached.demandError = demands->error;
+        if (cached.demandError.empty()) {
+            auto owned = std::make_shared<MathematicalResult>();
+            owned->input = storage; owned->recognition = program;
+            owned->normalizedInput = normalized; owned->finiteGuardedDemands = std::move(demands);
+            owned->backend = "expanded-finite-guarded";
+            cached.mathematical = std::move(owned);
+        }
+    }
+    error = cached.demandError;
+    if (!cached.mathematical) { return {}; }
+    auto owned = std::make_shared<MathematicalResult>(*cached.mathematical);
+    owned->region = region;
+    return owned;
+}
 std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceLoopBackend(
     AnalysisBackend backend, std::string& error, std::size_t region)
 {
@@ -206,23 +263,17 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
         break;
     }
     case AnalysisBackend::NumericalPeriodic: {
-        const auto key = std::make_pair(region, true);
-        auto found = sessionState->numericTemplatePlans.find(key);
-        if (found == sessionState->numericTemplatePlans.end()) {
-            auto plan = std::make_shared<const NumericTemplatePlan>(
-                preflightNumericTemplate(loop, *structuralIndex, *storage, {}, true, {}, {},
-                    normalizedInput(*sessionState, function, *program, region, *structuralIndex, *storage)));
-            found = sessionState->numericTemplatePlans.emplace(key, std::move(plan)).first;
-        }
+        const auto* plan = numericalPreflight(region);
+        if (!plan) { error = "numerical original-loop preflight unavailable"; return {}; }
         auto result = std::make_shared<NumericalRegionDemands>();
         if (sessionState->numericalRegionBuilds != UINT64_MAX) { ++sessionState->numericalRegionBuilds; }
-        result->form = materializeNumericTemplate(*found->second, *structuralIndex, *storage);
+        result->form = materializeNumericTemplate(*plan, *structuralIndex, *storage);
         if (result->form.result.state != RecognitionState::Applicable) {
             error = "regional numerical template form is unavailable"; return {};
         }
         result->analysis = analyzeNumericTemplate(result->form);
         if (!result->analysis.error.empty()) { error = result->analysis.error; return {}; }
-        owned->normalizedInput = found->second->normalized;
+        owned->normalizedInput = plan->normalized;
         owned->numericalDemands = std::move(result);
         owned->numericNode = region;
         owned->backend = "numerical-periodic";
@@ -314,15 +365,18 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::arithmeticExports(
     error = attempt.arithmeticSelectorError;
     return attempt.arithmeticSelectors;
 }
-SequenceRegionResolver FrontierAnalysis::regionalResolver()
+SequenceRegionResolver FrontierAnalysis::regionalResolver(
+    std::shared_ptr<const MathematicalResult> retainedNumerical)
 {
     SequenceRegionResolver resolver;
-    resolver.region = [this](std::size_t region, bool endpoints, std::string& error) -> FailureOr<RegionalAnalysis> {
+    resolver.region = [this, retainedNumerical](std::size_t region, bool endpoints, std::string& error)
+        -> FailureOr<RegionalAnalysis> {
         AnalysisRequest request;
         request.region = region;
         request.needs.queries = request.needs.selectors = true;
         request.needs.synchronization = endpoints;
-        auto result = analyze(request);
+        const bool numericalAdapter = retainedNumerical && retainedNumerical->numericNode == region;
+        auto result = numericalAdapter ? requestBackend(AnalysisBackend::NumericalSequence, request) : analyze(request);
         auto exports = result.regionalExports ? result.regionalExports :
             (result.mathematical ? result.mathematical->regionalDemands : nullptr);
         if (result.status == AnalysisStatus::Ready && exports) {
@@ -334,7 +388,22 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver()
         }
         return failure();
     };
-    resolver.demands = [this](std::size_t region, AnalysisBackend backend) {
+    resolver.normalized = [this](std::size_t region) {
+        auto description = normalizedRegion(region);
+        const bool current = !sessionState->activeRegions.empty() && sessionState->activeRegions.back() == region;
+        return current && description->original ? description->original : description;
+    };
+    resolver.demands = [this, retainedNumerical](std::size_t region, AnalysisBackend backend) {
+        const bool currentNumerical = backend == AnalysisBackend::NumericalPeriodic &&
+            !sessionState->activeRegions.empty() && sessionState->activeRegions.back() == region;
+        if (retainedNumerical && backend == AnalysisBackend::NumericalPeriodic &&
+            retainedNumerical->numericNode == region) { return retainedNumerical; }
+        if (currentNumerical) {
+            auto description = normalizedRegion(region);
+            const auto cached = sessionState->loopAttempts.find({region, backend});
+            const bool reusable = !description->original && cached != sessionState->loopAttempts.end();
+            return reusable ? cached->second.mathematical : std::shared_ptr<const MathematicalResult>{};
+        }
         std::string error;
         return backend == AnalysisBackend::Arithmetic ? produceArithmeticRegion(region, error) :
                                                         produceLoopBackend(backend, error, region);
@@ -351,6 +420,66 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver()
     };
     return resolver;
 }
+std::shared_ptr<const MathematicalResult> FrontierAnalysis::adaptNumericalSequence(
+    std::size_t region, std::string& error)
+{
+    // An explicit adapter of retained mathematics, never another producer or
+    // an original-form cache entry. Root eligibility was checked by its owner.
+    std::shared_ptr<const MathematicalResult> retained;
+    auto scope = sessionState->attempts.find(region);
+    if (scope != sessionState->attempts.end()) {
+        auto producer = scope->second.find(AnalysisBackend::NumericalPeriodic);
+        if (producer != scope->second.end()) { retained = producer->second.mathematical; }
+    }
+    // Root promotion may already own the canonical loop without a named child
+    // request. Reading that entry must not invoke or insert a producer.
+    if (!retained && region) {
+        auto canonical = sessionState->loopAttempts.find({region, AnalysisBackend::NumericalPeriodic});
+        if (canonical != sessionState->loopAttempts.end()) { retained = canonical->second.mathematical; }
+    }
+    if (!retained || !retained->numericalDemands || !retained->numericNode) {
+        error = "numerical sequence adapter requires retained exact numerical mathematics"; return {};
+    }
+    auto sequence = std::make_shared<SequenceAnalysis>(analyzeSequenceRegionWithResolver(
+        function, *storage, *program, region, sessionState->expressions, structuralIndex,
+        false, regionalResolver(retained)));
+    if (!sequence->error.empty()) { error = sequence->error; return {}; }
+    bool imported = retained->numericalDemands->form.emptyInvocation;
+    if (region && sequence->state) {
+        imported |= llvm::any_of(sequence->state->children, [&](const auto& child) {
+            return child.numericTemplate.get() == &retained->numericalDemands->form;
+        });
+    } else if (!region && sequence->state) {
+        for (const auto& child : sequence->state->children) {
+            if (child.originalNode != retained->numericNode) { continue; }
+            auto attempts = sessionState->attempts.find(*child.originalNode);
+            if (attempts == sessionState->attempts.end()) { continue; }
+            auto adapter = attempts->second.find(AnalysisBackend::NumericalSequence);
+            const bool available = adapter != attempts->second.end() && adapter->second.mathematical;
+            if (!available) { continue; }
+            // This named child adapter passed the direct pointer-consumption
+            // check above; the root resolver forced this exact cached result.
+            imported |= adapter->second.mathematical->normalizedInput == retained->normalizedInput;
+        }
+    }
+    if (!imported) { error = "sequence selected another representation instead of numerical import"; return {}; }
+    if (!region) {
+        recordSequenceContractAttempt(*program, *storage, *sequence);
+        const bool complete = program->sequenceContract &&
+            program->sequenceContract->membership == ContractStatus::Established &&
+            program->sequenceContract->demands == ContractImplementation::Available;
+        if (!complete) { error = "numerical sequence adapter does not certify the complete invocation"; return {}; }
+    }
+    auto owned = std::make_shared<MathematicalResult>();
+    owned->input = storage;
+    owned->recognition = program;
+    owned->region = region;
+    owned->normalizedInput = retained->normalizedInput;
+    owned->regionalDemands = std::make_shared<const RegionalAnalysis>(sequenceRegionalResult(*sequence));
+    owned->sequenceDemands = std::move(sequence);
+    owned->backend = "numerical-sequence";
+    return owned;
+}
 std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend(
     AnalysisBackend backend, std::size_t region, std::string& error)
 {
@@ -363,19 +492,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend
     owned->input = storage;
     owned->recognition = program;
     owned->region = region;
-    if (backend == AnalysisBackend::ExpandedFinite) {
-        const auto& node = program->nodes[region];
-        if (node.unsupportedContext) {
-            error = "finite expansion requires a supported original region"; return {};
-        }
-        const auto& plan = expansionPlan(*sessionState, function, *program, region, *structuralIndex, *storage);
-        auto demands = std::make_shared<FiniteGuardedAnalysis>(analyzeExpandedFinite(plan, *structuralIndex, *storage));
-        if (!demands->error.empty()) { error = demands->error; return {}; }
-        owned->normalizedInput = plan.normalized;
-        owned->finiteGuardedDemands = std::move(demands);
-        owned->backend = "expanded-finite-guarded";
-        return owned;
-    }
+    if (backend == AnalysisBackend::ExpandedFinite) { return produceExpandedFinite(region, error); }
+    if (backend == AnalysisBackend::NumericalSequence) { return adaptNumericalSequence(region, error); }
     if (backend == AnalysisBackend::Sequence) {
         auto sequence = std::make_shared<SequenceAnalysis>(analyzeSequenceRegionWithResolver(
             function, *storage, *program, region, sessionState->expressions, structuralIndex,
@@ -457,6 +575,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
         owned->backend = "compact-bounding";
         return owned;
     }
+    case AnalysisBackend::NumericalSequence:
+        return adaptNumericalSequence(0, error);
     case AnalysisBackend::Sequence: {
         const auto* sequence = analyzeSequenceFunction();
         const bool complete = sequence && sequence->error.empty() && program->sequenceContract &&
@@ -486,15 +606,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
         owned->generalArithmeticDemands = generalArithmeticAnalysis;
         owned->backend = "arithmetic";
         return owned;
-    case AnalysisBackend::ExpandedFinite: {
-        const auto& plan = expansionPlan(*sessionState, function, *program, 0, *structuralIndex, *storage);
-        auto demands = std::make_shared<FiniteGuardedAnalysis>(analyzeExpandedFinite(plan, *structuralIndex, *storage));
-        if (!demands->error.empty()) { error = demands->error; return {}; }
-        owned->normalizedInput = plan.normalized;
-        owned->finiteGuardedDemands = std::move(demands);
-        owned->backend = "expanded-finite-guarded";
-        return owned;
-    }
+    case AnalysisBackend::ExpandedFinite:
+        return produceExpandedFinite(0, error);
     case AnalysisBackend::FiniteGuarded: {
         SmallVector<Operation*> roots;
         for (auto& operation : function.front()) {
