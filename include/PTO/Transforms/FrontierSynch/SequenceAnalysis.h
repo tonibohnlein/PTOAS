@@ -72,7 +72,11 @@ SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& i
 // The resolver is construction-only and receives proper original descendants.
 // Specialized phase views retain their own arena/context adapters.
 struct NormalizedControlDescription;
+struct NumericBodyMathematics;
 struct SequenceRegionResolver {
+    std::function<std::shared_ptr<const NumericBodyMathematics>(scf::ForOp,
+        const TemplateGeometryConstant&, const TemplateControlConstant&,
+        std::shared_ptr<const NormalizedControlDescription>, std::string&)> specializedNumeric;
     std::function<FailureOr<RegionalAnalysis>(std::size_t, std::string&)> finiteArithmetic;
     // Current-form input only; requesting it never selects another alternative.
     std::function<std::shared_ptr<const NormalizedControlDescription>(std::size_t)> normalized;

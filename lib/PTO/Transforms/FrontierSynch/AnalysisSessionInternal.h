@@ -53,7 +53,17 @@ struct SpecializedArithmeticAttempt {
     std::shared_ptr<const ArithmeticRegionalRelations> mathematics;
     std::string error;
 };
+struct SpecializedNumericAttempt {
+    std::shared_ptr<const NormalizedControlDescription> normalized;
+    std::tuple<uint64_t, uint64_t, uint64_t, unsigned> limits;
+    std::map<const void*, std::pair<Value, std::optional<int64_t>>> geometry;
+    std::map<const void*, std::pair<Value, std::optional<bool>>> control;
+    std::shared_ptr<const NumericBodyMathematics> mathematics;
+    std::string error;
+};
 struct AnalysisSessionState {
+    std::map<Operation*, std::vector<SpecializedNumericAttempt>> specializedNumeric;
+    uint64_t specializedNumericBuilds = 0;
     std::map<Operation*, std::vector<SpecializedArithmeticAttempt>> specializedArithmetic;
     uint64_t specializedArithmeticBuilds = 0;
     std::optional<DifferenceArithmeticGeneratorStage> differenceGenerators;

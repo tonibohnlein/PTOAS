@@ -15,6 +15,7 @@
 // CHECK: fixed-coordinate-relations: distinct-visits scalar-mapping retained-identities no-reanalysis
 // CHECK: exact-form-fast-path: explicit no-normalization no-arithmetic
 // CHECK: specialized-arithmetic-session: observed-misses context-isolated nonzero-origins rollback-safe
+// CHECK: specialized-numeric-session: observed-bindings cached-reduction rollback-safe
 // CHECK: source-unchanged; synchronization-insertion-not-run
 !mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
 !left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
@@ -368,6 +369,43 @@ module attributes {pto.target_arch = "a3"} {
     %value = arith.constant 1.0 : f32
     scf.for %i = %zero to %three step %one {
       pto.store %value, %out[%offset] : !pto.ptr<f32, gm>, f32
+    }
+    return
+  }
+
+  func.func @specialized_numeric_body(%offset: index, %choose: i1)
+      attributes {test.specialized_numeric_requests} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %five = arith.constant 5 : index
+    %value = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x8xf32>
+    scf.for %i = %zero to %two step %one {
+      scf.for %j = %one to %five step %two {
+        scf.if %choose {
+          pto.tsetval ins(%offset, %value : index, f32) outs(%tile : !pto.tile_buf<vec, 1x8xf32>)
+          %read = pto.tgetval ins(%tile, %offset : !pto.tile_buf<vec, 1x8xf32>, index) outs : f32
+        }
+      }
+    }
+    return
+  }
+
+  func.func @specialized_numeric_outer_scope(%offset: index, %choose: i1)
+      attributes {test.specialized_numeric_requests, test.specialized_numeric_outer_scope} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %value = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 1x8xf32>
+    scf.for %i = %zero to %two step %one {
+      scf.for %j = %zero to %two step %one {
+        pto.tsetval ins(%offset, %value : index, f32) outs(%tile : !pto.tile_buf<vec, 1x8xf32>)
+        %read = pto.tgetval ins(%tile, %offset : !pto.tile_buf<vec, 1x8xf32>, index) outs : f32
+      }
     }
     return
   }
