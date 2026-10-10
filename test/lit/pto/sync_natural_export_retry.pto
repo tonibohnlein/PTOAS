@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
+// RUN: pto-sync-input-test --gm-alias=may-alias --certify-regions %s | FileCheck %s
+// CHECK: natural-export-retry: rotating-demands retained slot-limit arithmetic-ready cached source-unchanged
+// CHECK: source-unchanged; synchronization-insertion-not-run
+// Four pointwise writes update the selected bank before a scalar read. The
+// scalar atom creates more than 256 encoded-family slot visits in the regional
+// rotating exporter. An immutable guard keeps its original periodic form.
+// Zero stride is admitted; arithmetic needs only five sites and period one.
+!tile = !pto.tile_buf<vec, 1x8xf32>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<vec, 1x8xf32>, count=16>
+module attributes {pto.target_arch = "a3"} {
+  func.func @natural_rotating_export_retry(%g: i1, %n: index) attributes {test.natural_rotating_export_retry} {
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 1024 : i64
+    %addr2 = arith.constant 2048 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %a = pto.alloc_multi_tile addr = %addr0 : !ring
+    %b = pto.alloc_multi_tile addr = %addr1 : !ring
+    %c = pto.alloc_multi_tile addr = %addr2 : !ring
+    scf.for %i = %zero to %n step %one {
+      %at = pto.multi_tile_get %a[%zero] : !ring -> !tile
+      %bt = pto.multi_tile_get %b[%zero] : !ring -> !tile
+      %ct = pto.multi_tile_get %c[%zero] : !ring -> !tile
+      scf.if %g {
+        pto.tadd ins(%bt, %ct : !tile, !tile) outs(%at : !tile)
+        pto.tadd ins(%at, %ct : !tile, !tile) outs(%bt : !tile)
+        pto.tadd ins(%at, %bt : !tile, !tile) outs(%ct : !tile)
+        pto.tadd ins(%bt, %ct : !tile, !tile) outs(%at : !tile)
+        %read = pto.tgetval ins(%at, %zero : !tile, index) outs : f32
+      }
+    }
+    return
+  }
+}

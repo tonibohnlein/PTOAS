@@ -995,3 +995,17 @@ and import-visit counters are exposed separately in certification diagnostics.
 
 The public pass still stops at recognition. No conservative algorithm, streaming
 emission, finite-visit emission or physical-ID repair is added by this change.
+
+### Natural export refusal and later arithmetic
+
+A guarded zero-stride member of the periodic-storage class uses sixteen encoded
+banks, four pointwise writes and a scalar read. The scalar byte atom splits the
+writer footprints, so the existing regional export exceeds its 256 slot-visit
+limit. Its exact guarded demands remain owned. The common dispatcher continues
+to the arithmetic child provider and returns complete queries/selectors through
+the sequence adapter. This succeeds both after a demands-only request and in a
+fresh session. A whole-root request also returns complete exports. Repeated
+requests share the mathematical result and export
+snapshot, leave the earlier exact result available, construct no endpoint or
+allocation code, and leave original IR unchanged. The regression declares
+k=8, D=9, P=1, C=4096; it adds no class admission limit or production algorithm.
