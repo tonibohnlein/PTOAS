@@ -914,3 +914,18 @@ construction. Arithmetic contracts appear only when a selected request reaches
 that family. Developer recognition reports can still explicitly request an
 exhaustive arithmetic-profile audit; those reports are distinct from ordinary
 compilation's request-driven certification.
+
+### Finite arithmetic repetition probes
+
+The evolving repetition adapter probes finite physical storage support from its
+session's cached original arithmetic form before constructing demands. Positive
+and negative eligibility are cached per original region and immutable context.
+The probe imports primitives and projects physical bytes inside a transaction;
+no expression IDs, selectors or reductions escape a rejected probe.
+
+A positive probe requests the canonical arithmetic mathematical result and its
+cached query/selector snapshot. It does not run a second producer or reducer,
+and a later standalone request shares the same snapshot. A negative probe leaves
+the general symbolic arithmetic route available. The regression contrasts a
+fixed physical-footprint nest with repeated GM stores at an arbitrary entry
+offset, verifies retry counters and probe rollback, and resets the alias context.

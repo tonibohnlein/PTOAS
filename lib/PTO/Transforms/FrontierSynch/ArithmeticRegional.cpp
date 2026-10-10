@@ -857,6 +857,28 @@ FailureOr<RegionalAnalysis> exportSpecializedArithmeticRegion(
     transaction.commit();
     return exported;
 }
+bool hasFiniteArithmeticStorage(const ArithmeticProgram& program, const SyncInput& input,
+    std::shared_ptr<RegionExpressions> expressions, std::string& error)
+{
+    const bool valid = expressions && expressions->constructionError().empty() &&
+        program.modeledInput == &input && !program.specializedEntry &&
+        program.extraction.state == RecognitionState::Applicable &&
+        program.recognition.state == RecognitionState::Applicable;
+    if (!valid) { error = "finite storage probe requires a certified original arithmetic form"; return false; }
+    RegionExpressions::Transaction transaction(*expressions);
+    auto state = std::make_shared<State>();
+    state->program = program; state->input = &input; state->arena = expressions;
+    if (!state->initialize()) { error = state->error; return false; }
+    auto imported = importArithmeticIntegerPieces(program);
+    if (failed(imported)) { error = "finite storage primitive import failed"; return false; }
+    state->primitives = std::move(*imported);
+    if (!collectFiniteStorage(*state)) { error = state->error; return false; }
+    if (!state->finiteStorageComplete) {
+        error = "finite regional export deferred: symbolic storage support remains available to other routes";
+        return false;
+    }
+    return true;
+}
 FailureOr<RegionalAnalysis> exportArithmeticRegion(
     const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
     bool selectors, std::string& error, std::shared_ptr<const SyncInput> inputOwner)

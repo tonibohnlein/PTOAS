@@ -40,6 +40,7 @@ using namespace mlir;
 LogicalResult checkNormalizedControlSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkFixedCoordinateRelations(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkUniformRelationCrossings(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkFiniteArithmeticSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSpecializedArithmeticSession(func::FuncOp function, pto::GMAliasPolicy policy);
 LogicalResult checkDynamicUniformCrossings(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkNumericalRequestOrder(func::FuncOp, pto::GMAliasPolicy);
@@ -1860,6 +1861,9 @@ int main(int argc, char **argv) {
       }
       if (regionalRecognition && failed(analysis.recognizeRegionalArithmetic())) { return 1; }
       if (certification) {
+        const bool finiteArithmeticFailure = function->hasAttr("test.finite_arithmetic_requests") &&
+            failed(checkFiniteArithmeticSession(function, policy));
+        if (finiteArithmeticFailure) { return 1; }
         const bool specializedFailure = function->hasAttr("test.specialized_arithmetic_requests") &&
             failed(checkSpecializedArithmeticSession(function, policy));
         if (specializedFailure) { return 1; }

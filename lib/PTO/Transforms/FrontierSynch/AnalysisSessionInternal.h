@@ -22,6 +22,8 @@ struct NumericTemplatePlan;
 struct NormalizedControlDescription;
 struct BackendAttempt {
     bool produced = false;
+    std::optional<bool> finiteArithmeticStorage;
+    std::string finiteArithmeticStorageError;
     std::shared_ptr<const MathematicalResult> mathematical;
     std::string demandError;
     bool varyingQueriesAttempted = false, varyingSelectorsAttempted = false;

@@ -50,6 +50,10 @@ public:
     const AnalysisConstructionCounts& constructionCounts() const { return construction; }
     uint64_t arithmeticGeneratorConstructions() const;
     uint64_t arithmeticRegionConstructions() const;
+    uint64_t finiteArithmeticStorageProbes() const;
+    // Gate the finite-only repetition adapter before constructing mathematics;
+    // a successful gate reuses canonical query and selector exports.
+    FailureOr<RegionalAnalysis> finiteArithmeticRegion(std::size_t region, std::string& error);
     uint64_t specializedArithmeticConstructions() const;
     // Constants must be deterministic within this request. Reuse compares every
     // observed lookup, including unavailable values, in the original context.

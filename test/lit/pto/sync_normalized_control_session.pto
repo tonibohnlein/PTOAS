@@ -21,7 +21,7 @@
 !right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
 !acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
 module attributes {pto.target_arch = "a3"} {
-  func.func @non_unit() attributes {test.normalization_requests, test.normalization_coordinates = array<i64: 1, 3>} {
+  func.func @non_unit() attributes {test.finite_arithmetic_requests, test.normalization_requests, test.normalization_coordinates = array<i64: 1, 3>} {
     %base = arith.constant 0 : i64
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
@@ -356,6 +356,18 @@ module attributes {pto.target_arch = "a3"} {
       pto.tsetval ins(%zero, %value : index, f32) outs(%tile : !pto.tile_buf<vec, 1x8xf32>)
       pto.tadds ins(%tile, %value : !pto.tile_buf<vec, 1x8xf32>, f32) outs(%tile : !pto.tile_buf<vec, 1x8xf32>)
       %read = pto.tgetval ins(%tile, %zero : !pto.tile_buf<vec, 1x8xf32>, index) outs : f32
+    }
+    return
+  }
+
+  func.func @symbolic_finite_support(%out: !pto.ptr<f32, gm>, %offset: index)
+      attributes {test.finite_arithmetic_requests, test.finite_arithmetic_unavailable} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %three = arith.constant 3 : index
+    %value = arith.constant 1.0 : f32
+    scf.for %i = %zero to %three step %one {
+      pto.store %value, %out[%offset] : !pto.ptr<f32, gm>, f32
     }
     return
   }

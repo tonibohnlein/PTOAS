@@ -41,6 +41,10 @@ FailureOr<RegionalAnalysis> exportSpecializedArithmeticRegion(
     const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
     bool selectors, std::string& error,
     std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding);
+// Probe finite storage support from a cached form before reducing demands.
+// No expressions or query callbacks escape this transaction.
+bool hasFiniteArithmeticStorage(const ArithmeticProgram& program, const SyncInput& input,
+    std::shared_ptr<RegionExpressions> expressions, std::string& error);
 // Each requested snapshot has independent callback state in the common arena.
 // Failed construction rolls back its unpublished nodes and arena diagnostics.
 FailureOr<RegionalAnalysis> exportArithmeticRegion(
