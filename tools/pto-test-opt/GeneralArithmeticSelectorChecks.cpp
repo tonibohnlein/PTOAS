@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent integer-point and complete-tuple checks for exact general selectors.
-#include "PTO/Transforms/FrontierSynch/GeneralArithmeticSelectors.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/GeneralArithmeticSelectors.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 namespace fs = mlir::pto::frontiersynch;

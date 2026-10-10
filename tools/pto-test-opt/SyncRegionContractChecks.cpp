@@ -8,12 +8,12 @@
 // Test the generic consumer with synthetic MLIR effect declarations. These
 // declarations do not assert native coverage for the fixture's PTO operations.
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
-#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
+#include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "PTO/IR/PTOAccessRegion.h"
 #include "../../lib/PTO/Transforms/InsertSync/SyncEffectRanges.h"
 #include "llvm/Support/raw_ostream.h"
 #include "SyncScalarEvolutionChecks.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/CountedLoop.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/CountedLoop.h"
 #include "SyncExplicitAccessChecks.h"
 using namespace mlir;
 using namespace mlir::pto;

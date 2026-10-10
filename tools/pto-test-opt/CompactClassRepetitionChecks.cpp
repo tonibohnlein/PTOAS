@@ -6,8 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent concrete nested occurrence oracle; production never unfolds trips.
-#include "PTO/Transforms/FrontierSynch/CompactClassRepetition.h"
-#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompactClassRepetition.h"
+#include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Matchers.h"

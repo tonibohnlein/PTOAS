@@ -6,12 +6,12 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Check hierarchical identities through two sequence exports, without insertion.
-#include "PTO/Transforms/FrontierSynch/RepeatedRegion.h"
-#include "PTO/Transforms/FrontierSynch/RegionalNumericalInterface.h"
-#include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/RepeatedRegionInternal.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/RepeatedAllocation.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/RepeatedLaneAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RepeatedRegion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionalNumericalInterface.h"
+#include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/RepeatedRegionInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/RepeatedAllocation.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/RepeatedLaneAllocation.h"
 #include <map>
 #include <set>
 #include <tuple>

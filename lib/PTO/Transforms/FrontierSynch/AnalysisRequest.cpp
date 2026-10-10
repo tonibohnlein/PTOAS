@@ -8,17 +8,17 @@
 // Request protocol adapters. Cache mathematical construction independently of
 // export checks; detached command fragments always have fresh ownership.
 #include "AnalysisSessionInternal.h"
-#include "NormalizedControl.h"
-#include "PTO/Transforms/FrontierSynch/MixedStrideAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/CompactBoundingInsertion.h"
-#include "PTO/Transforms/FrontierSynch/FiniteAllocation.h"
-#include "PTO/Transforms/FrontierSynch/CompactAllocation.h"
-#include "PTO/Transforms/FrontierSynch/GeneralArithmeticAllocation.h"
-#include "PTO/Transforms/FrontierSynch/ArithmeticPeriodicConversion.h"
-#include "PTO/Transforms/FrontierSynch/PeriodicSharedCertificate.h"
-#include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/RegionalAllocation.h"
+#include "Shared/NormalizedControl.h"
+#include "PTO/Transforms/FrontierSynch/Structured/MixedStrideAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompactBoundingInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompactAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/GeneralArithmeticAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticPeriodicConversion.h"
+#include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.h"
+#include "PTO/Transforms/FrontierSynch/Structured/RotatingAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 namespace mlir::pto::frontiersynch {
 AnalysisOutcome FrontierAnalysis::minimumDemands(std::size_t region, AnalysisNeeds exports)
 {

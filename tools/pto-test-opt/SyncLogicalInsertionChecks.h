@@ -8,7 +8,7 @@
 // Bounded actual-IR execution traces for independent logical insertion checks.
 #ifndef PTO_TEST_SYNC_LOGICAL_INSERTION_CHECKS_H
 #define PTO_TEST_SYNC_LOGICAL_INSERTION_CHECKS_H
-#include "PTO/Transforms/FrontierSynch/NumericTemplate.h"
+#include "PTO/Transforms/FrontierSynch/Structured/NumericTemplate.h"
 #include "llvm/Support/JSON.h"
 llvm::json::Object traceStructuredLogicalInsertion(mlir::func::FuncOp function,
     mlir::ArrayRef<const mlir::pto::CompoundInstanceElement*> phases);

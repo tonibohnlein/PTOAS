@@ -6,9 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Reject non-partitions and malformed alternative metadata before mutation.
-#include "PTO/Transforms/FrontierSynch/BalancedCompactBody.h"
-#include "PTO/Transforms/FrontierSynch/CompactBoundingAllocation.h"
-#include "PTO/Transforms/FrontierSynch/PhysicalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/BalancedCompactBody.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompactBoundingAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Verifier.h"

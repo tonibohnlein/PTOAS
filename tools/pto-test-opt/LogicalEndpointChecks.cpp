@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Finite matching and canonical-cut data for an independent command oracle.
-#include "PTO/Transforms/FrontierSynch/LogicalEndpoints.h"
+#include "PTO/Transforms/FrontierSynch/Shared/LogicalEndpoints.h"
 #include "llvm/Support/JSON.h"
 #include <algorithm>
 #include <map>

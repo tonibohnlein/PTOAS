@@ -8,7 +8,7 @@
 // Check path isolation and machine-semantic range proofs independently of
 // recognizer selection, including the literal prefill wrapping counterexample.
 #include "../../lib/PTO/Transforms/InsertSync/SyncScalarEvolution.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/ArithmeticProgramInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgramInternal.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"

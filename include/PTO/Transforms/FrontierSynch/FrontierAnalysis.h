@@ -12,11 +12,11 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_FRONTIERANALYSIS_H
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
-#include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/ArithmeticPeriodicConversion.h"
-#include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
-#include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Finite/ExplicitAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticDemandAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticPeriodicConversion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
 namespace mlir::pto::frontiersynch {
 // Detached whole-function producer shared by module coordination and tests.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFunctionSynchronization(

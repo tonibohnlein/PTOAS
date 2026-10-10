@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent exhaustive chain partitions for small causal lifetime orders.
-#include "PTO/Transforms/FrontierSynch/SharedHandoffAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/SharedHandoffAllocation.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <functional>

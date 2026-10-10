@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Algebraic graph bounds on an actual borrowed fixed occurrence frame. Synthetic
 // lower/upper pairs exercise certification; they do not assert extra input facts.
-#include "PTO/Transforms/FrontierSynch/CompactOrderBounds.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompactOrderBounds.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;

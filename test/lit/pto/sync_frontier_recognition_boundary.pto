@@ -6,14 +6,14 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --recognition-boundary %s 2>&1 | FileCheck %s
-// RUN: not pto-test-opt --pto-frontier-analysis %s 2>&1 | FileCheck %s --check-prefix=PASS
+// RUN: not pto-test-opt --pto-frontier-analysis=analysis-only=true %s 2>&1 | FileCheck %s --check-prefix=PASS
 // Mathematical certification retains demands; emission remains deferred.
 // CHECK: recognition-boundary: rejected; source-unchanged
-// PASS-DAG: class=closed-callee region=function membership=applicable; continuation not implemented yet
+// PASS-DAG: class=closed-callee region=function membership=applicable; emission not requested
 // PASS-DAG: region=0 recognized tractable class finite-occurrences representation=original; exact demands retained
-// PASS-DAG: unresolved tractable-class obligations; further steps not implemented yet
+// PASS-DAG: unresolved tractable-class obligations; compilation support not evaluated
 // PASS-DAG: mathematical analysis ran; synchronization insertion and allocation were not run; IR unchanged
-// PASS-DAG: frontier compilation not implemented yet: stopped after mathematical analysis
+// PASS-DAG: frontier analysis-only checkpoint: stopped after mathematical analysis
 module {
   func.func @explicit_match() {
     %base = arith.constant 0 : i64

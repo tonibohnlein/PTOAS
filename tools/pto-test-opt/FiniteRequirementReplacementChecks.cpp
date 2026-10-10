@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent Boolean adjacency oracle for concrete original-scan certificates.
-#include "PTO/Transforms/FrontierSynch/FiniteRequirementReplacement.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FiniteRequirementReplacement.h"
 #include "llvm/Support/raw_ostream.h"
 #include <set>
 using namespace mlir;

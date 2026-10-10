@@ -6,8 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Check the shared recurrence proof against independently stepped bank state.
-#include "PTO/Transforms/FrontierSynch/PhaseIndex.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/PhaseNormalization.h"
+#include "PTO/Transforms/FrontierSynch/Shared/PhaseIndex.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/PhaseNormalization.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
 #include <array>

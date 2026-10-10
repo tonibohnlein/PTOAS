@@ -6,10 +6,11 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-test-opt --pto-insert-sync %s | FileCheck %s --check-prefix=PRESERVE
-// RUN: not pto-test-opt --pto-frontier-analysis %s 2>&1 | FileCheck %s --check-prefix=ANALYZE
+// RUN: pto-test-opt --pto-frontier-analysis %s | FileCheck %s --check-prefix=ANALYZE
+// RUN: pto-test-opt --pto-frontier-analysis --pto-frontier-allocate %s | FileCheck %s --check-prefix=ANALYZE
 // Derived from the corpus SyncAll sample. Cross-core sync must not trigger
-// the manual on-core skip. Until its analysis adapter exists, it must report
-// the unsupported obligation rather than silently pass the function through.
+// the manual on-core skip. The recognition report proves it was analyzed;
+// the supplied cross-core protocol remains present after physical allocation.
 module {
   func.func @cross_core(%ptr: !pto.ptr<i32, gm>) {
     pto.syncall(%ptr : !pto.ptr<i32, gm>) mode = #pto.sync_all_mode<soft>, core_type = #pto.sync_core_type<aiv_only>
@@ -17,4 +18,5 @@ module {
   }
 }
 // PRESERVE: pto.syncall
-// ANALYZE: error: explicit route requires resolved control and shared modeled effects
+// ANALYZE: selected_logical_backend = "explicit"
+// ANALYZE: pto.syncall

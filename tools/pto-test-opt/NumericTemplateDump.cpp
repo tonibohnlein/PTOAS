@@ -6,9 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Preserve original occurrence identity in late-expansion diagnostic output.
-#include "PTO/Transforms/FrontierSynch/NumericTemplateAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/NumericTemplatePlan.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Structured/NumericTemplatePlan.h"
 #include "mlir/IR/AsmState.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"

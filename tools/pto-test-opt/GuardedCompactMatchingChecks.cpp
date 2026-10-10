@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent matching enumeration and actual original-branch cut checks.
-#include "PTO/Transforms/FrontierSynch/GuardedCompactMatching.h"
+#include "PTO/Transforms/FrontierSynch/Shared/GuardedCompactMatching.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 #include <set>

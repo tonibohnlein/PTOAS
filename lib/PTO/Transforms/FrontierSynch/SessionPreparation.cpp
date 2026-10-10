@@ -8,17 +8,17 @@
 // Detached preparation consumes retained mathematics. Producer and reducer
 // work is never repeated after a missing synchronization export.
 #include "AnalysisSessionInternal.h"
-#include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
-#include "PTO/Transforms/FrontierSynch/MixedStrideAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/CompactBoundingInsertion.h"
-#include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/GuardedPeriodicInsertion.h"
-#include "PTO/Transforms/FrontierSynch/GuardedRotatingAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/ArithmeticPeriodicConversion.h"
-#include "PTO/Transforms/FrontierSynch/BoundedLifetimeInsertion.h"
-#include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/ArithmeticInsertion.h"
-#include "PTO/Transforms/FrontierSynch/PeriodicSharedCertificate.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
+#include "PTO/Transforms/FrontierSynch/Structured/MixedStrideAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompactBoundingInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Structured/RotatingAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Structured/GuardedPeriodicInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticPeriodicConversion.h"
+#include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 namespace mlir::pto::frontiersynch {
 namespace {

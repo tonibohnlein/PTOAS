@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Execute prepared endpoint copies through original, independently chosen arms.
-#include "PTO/Transforms/FrontierSynch/BalancedCompactBody.h"
+#include "PTO/Transforms/FrontierSynch/Shared/BalancedCompactBody.h"
 #include "SyncLogicalInsertionChecks.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/Verifier.h"

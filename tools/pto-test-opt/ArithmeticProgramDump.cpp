@@ -6,12 +6,12 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Structured test output for independent finite checks of derived relations.
-#include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
-#include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/ArithmeticProgramInternal.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/FiniteExpansionPlan.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/FiniteGuardedInternal.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/RegionalRelationsInternal.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgram.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticDemandAnalysis.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgramInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/FiniteExpansionPlan.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/RegionalRelationsInternal.h"
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"

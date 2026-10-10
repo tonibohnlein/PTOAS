@@ -7,16 +7,16 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Check shared normalized input across different mathematical adapters.
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/NumericTemplateRegional.h"
-#include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
-#include "PTO/Transforms/FrontierSynch/GuardedPeriodicInsertion.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/NormalizedControl.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/PhaseNormalization.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/NumericTemplatePlan.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/FiniteExpansionPlan.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/RegionalRelationsInternal.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/SequenceAnalysisInternal.h"
+#include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateRegional.h"
+#include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingRegional.h"
+#include "PTO/Transforms/FrontierSynch/Structured/GuardedPeriodicInsertion.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/NormalizedControl.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/PhaseNormalization.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Structured/NumericTemplatePlan.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/FiniteExpansionPlan.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/RegionalRelationsInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
 LogicalResult checkCrossingCostSelection(func::FuncOp function, pto::GMAliasPolicy)

@@ -58,10 +58,13 @@ module attributes {pto.target_arch = "a3"} {
 
 // CHECK-LABEL: func.func @local_hidden_reservations
 // CHECK: pto.tstore
-// CHECK: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
+// CHECK: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID[[BEFORE:[1-5]]]>]
+// CHECK: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID[[BEFORE]]>]
 // CHECK: pto.comm.tgather
+// CHECK: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID[[AFTER:[1-5]]]>]
+// CHECK: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID[[AFTER]]>]
 // CHECK: pto.tload
 // CHECK: pto.tstore
-// CHECK: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
-// CHECK: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// CHECK: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID[[FINAL:[0-5]]]>]
+// CHECK: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID[[FINAL]]>]
 // CHECK: pto.tload

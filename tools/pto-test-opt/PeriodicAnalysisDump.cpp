@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Inspect exact numerical periodic records without claiming executable endpoints.
-#include "PTO/Transforms/FrontierSynch/PeriodicAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Structured/PeriodicAnalysis.h"
 #include "llvm/Support/JSON.h"
 namespace fs = mlir::pto::frontiersynch;
 llvm::json::Object dumpPeriodicAnalysis(const fs::PeriodicAnalysis& result)

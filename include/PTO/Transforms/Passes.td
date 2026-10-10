@@ -25,13 +25,17 @@ include "mlir/Pass/PassBase.td"
 
 // Integrated analysis and logical synchronization insertion.
 def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
-  let summary = "Certify tractable synchronization regions and retain exact demands";
+  let summary = "Analyze synchronization demands and insert logical handoffs";
   let description = [{
     Builds shared input and one structural index, checks declared tractable
-    forms for every original region, and retains exact mathematical demands.
+    forms, retains exact mathematical demands, and prepares logical handoffs.
     Incomplete proofs are reported as unresolved, never absence of a class.
-    Compilation stops with a not-implemented error before synchronization
-    emission and physical allocation. The original IR remains unchanged.
+    Synchronization is attached transactionally only after preparation succeeds.
+    Allocation certificates are attached when supported; physical event IDs
+    are assigned by the following pto-frontier-allocate pass. Missing allocation
+    support leaves the selected logical graph available. Analysis-only mode
+    retains the original-region certification checkpoint and stops with a
+    checkpoint diagnostic before emission, leaving the IR unchanged.
     Regional certification alone does not establish whole-function support.
     Functions with manual on-core SET/WAIT or record/wait events are left
     unchanged, including dynamic event IDs. Cross-core commands and barriers
@@ -39,6 +43,8 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
   }];
   let constructor = "mlir::pto::createPTOFrontierAnalysisPass()";
   let options = [
+    Option<"analysisOnly", "analysis-only", "bool", "false",
+      "Stop after mathematical certification without inserting synchronization">,
     Option<"gmAlias", "gm-alias", "std::string", "\"may-not-alias\"",
       "Distinct GM root assumption: may-not-alias or may-alias">,
     Option<"arithmeticProfile", "arithmetic-profile", "std::string", "\"\"",

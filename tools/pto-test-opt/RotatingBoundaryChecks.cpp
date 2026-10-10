@@ -7,9 +7,9 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Algebraic storage generators without expanding banks or loop iterations.
 // Independent unfolded all-conflict graph, including cross-visit buffer reuse.
-#include "PTO/Transforms/FrontierSynch/RotatingBoundary.h"
+#include "PTO/Transforms/FrontierSynch/Structured/RotatingBoundary.h"
 #include "llvm/Support/raw_ostream.h"
-#include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
+#include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include <set>
 #include <tuple>
 namespace fs = mlir::pto::frontiersynch;

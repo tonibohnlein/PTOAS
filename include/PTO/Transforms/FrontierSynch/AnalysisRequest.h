@@ -9,9 +9,9 @@
 // Mathematical ownership is independent of endpoint and allocation outcomes.
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ANALYSISREQUEST_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ANALYSISREQUEST_H
-#include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Finite/ExplicitAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
-#include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticDemandAnalysis.h"
 #include <memory>
 namespace mlir::pto::frontiersynch {
 struct ProgramRecognition;

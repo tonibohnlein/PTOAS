@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent checks of shared-model extraction; no producer-equivalence claim.
-#include "PTO/Transforms/FrontierSynch/CompactWriterReaderInput.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompactWriterReaderInput.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "llvm/Support/raw_ostream.h"
 #include <set>

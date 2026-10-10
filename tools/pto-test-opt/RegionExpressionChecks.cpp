@@ -6,9 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Check expression algebra, total detached emission and original SSA availability.
-#include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
-#include "PTO/Transforms/FrontierSynch/RegionExpressions.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/SequenceAnalysisInternal.h"
+#include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
