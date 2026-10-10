@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_NUMERICTEMPLATEINTERNAL_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_NUMERICTEMPLATEINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/NumericTemplate.h"
+namespace mlir::pto::frontiersynch { struct NormalizedControlDescription; }
 namespace mlir::pto::frontiersynch::detail {
 struct TemplateBuilder {
     NumericTemplate& output;
@@ -21,15 +22,13 @@ struct TemplateBuilder {
     TemplateGeometryConstant geometryConstant;
     TemplateControlConstant controlConstant;
     SmallVectorImpl<TemplatePayload>* plannedPayloads = nullptr;
-    bool activePath = true;
     MLIRContext* context() const { return output.outer.getContext(); }
     AffineExpr scalar(Value value, SmallVectorImpl<Value>* invariants = nullptr,
                       bool control = false) const;
     std::optional<int64_t> integer(Value value) const;
     std::optional<bool> guard(Value value, unsigned depth = 0) const;
     bool charge(uint64_t count, uint64_t& total, uint64_t limit, Operation* anchor);
-    bool block(Block& body, bool emit, unsigned depth);
-    bool loop(scf::ForOp loop, bool emit, unsigned depth);
+    bool normalized(const NormalizedControlDescription& description);
     bool payload(const CompoundInstanceElement* phase);
 };
 bool prepareTemplateEffects(TemplateBuilder& builder);

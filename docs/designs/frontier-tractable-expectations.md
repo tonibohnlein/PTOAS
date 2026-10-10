@@ -64,8 +64,8 @@ The retained outer loop is not expanded by the numerical-template producer.
 The visit counter charges every visited original operation in the expanded
 inner body, including scalar/control operations and terminators; it is not
 simply the number of loop iterations. The payload counter charges shared phase
-instances. The preflight walks both conditional arms conservatively; emission
-of the normalized representation keeps the selected arm. Fragment charging
+instances. The shared description retains both conditional arms; each producer prunes
+proved-dead arms before charging its occurrence enumeration. Fragment charging
 counts prepared access fragments, and depth bounds nested control traversal.
 All counters are local to one proposed representation. Lossless's final nest
 has 8,192 inner iterations and at least 16,384 payload instances; the latter
@@ -735,3 +735,46 @@ exact-result status and query/selector availability: 227/240 under MayNotAlias,
 213/240 under MayAlias. No timeout or source mutation occurs; the slowest run is
 13.9 seconds. Compliance and whitespace checks pass. This is a milestone
 regression check, not the final paired optimized corpus campaign.
+
+### Shared normalized control input with backend occurrence construction
+
+Numerical and finite adapters now consume one immutable control description per
+original region in the unchanged session. It retains original operations,
+both conditional arms and original loop identities. Optional expansion uses
+constant lower bounds and positive steps, preferring innermost loops. Planning
+visits each original descriptor once before constructing an expanded view.
+There is no speculative nested expansion and compact retry. If the optional
+view exceeds its size limit, the compact original description remains valid.
+The structural description is not a demand representation or a certificate
+that all backend interfaces are available.
+
+Each producer constructs occurrences in its own representation. Retained
+finite domains can become known under inherited outer coordinates; interpreting
+these domains is charged producer work, not another source normalization.
+Coordinates merge by original loop identity and conflicting bindings fail.
+Runtime arms remain guarded. Proven-dead arms are pruned before producer
+enumeration limits apply. Numerical depth and visit limits remain effective
+when a caller supplies a description made with larger limits.
+
+This slice centralizes input normalization and its lifetime. It does not yet
+select original versus expanded exact forms by cost, centralize specialized
+phase contexts, or replace the existing order of exact attempts. Section 8's
+SmallCountCandidates and ExactForm requirements were reread; their pinned
+content is unchanged.
+
+Verification: optimized builds and both links pass (56 affected translation
+units, then two units for fallback counts and two for defensive context
+validation). All 39 focused checks pass, including both alias policies,
+null/duplicate/displaced root selection, exact finite visit boundaries,
+independent numerical depth/visit limits, zero/one/non-unit coordinates,
+dependent retained bounds, a dead 5,000-trip arm and four nested large loops
+under a dead guard. Compact counts match the shared phase/effect records;
+planning visits equal the original structural descriptor size. Neither
+mathematical adapter prepares commands or allocation.
+
+All 22 serial pinned-input runs preserve every region's class, representation,
+exact-result status and query/selector availability: 227/240 under MayNotAlias
+and 213/240 under MayAlias. No timeout or source mutation occurs; the slowest
+run is 13.7 seconds. Compliance reports zero errors/warnings and whitespace
+checks pass. These focused milestone results are not the final paired corpus
+performance campaign.

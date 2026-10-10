@@ -71,11 +71,12 @@ void clear(NumericTemplate& output)
 } // namespace
 NumericTemplatePlan preflightNumericTemplate(scf::ForOp outer, const PhaseIndex& index,
                                   const SyncInput& input, NumericTemplateLimits limits, bool regional,
-                                  TemplateGeometryConstant geometry, TemplateControlConstant control)
+                                  TemplateGeometryConstant geometry, TemplateControlConstant control,
+                                  std::shared_ptr<const NormalizedControlDescription> normalized)
 {
     NumericTemplatePlan plan;
     plan.index = &index; plan.input = &input; plan.regional = regional;
-    plan.geometry = geometry; plan.control = control;
+    plan.geometry = geometry; plan.control = control; plan.normalized = normalized;
     auto& output = plan.form;
     output.outer = outer;
     output.limits = limits;
@@ -115,7 +116,14 @@ NumericTemplatePlan preflightNumericTemplate(scf::ForOp outer, const PhaseIndex&
             return plan;
         }
     }
-    if (!builder.block(*outer.getBody(), false, 0)) {
+    if (!normalized) {
+        FiniteExpansionLimits expansion;
+        expansion.visits = limits.visits; expansion.payloads = limits.payloads; expansion.depth = limits.depth;
+        normalized = normalizeSmallCountControl({outer->getParentOfType<func::FuncOp>(), outer},
+                                                 index, input, expansion);
+    }
+    plan.normalized = std::move(normalized);
+    if (!builder.normalized(*plan.normalized)) {
         return plan;
     }
     output.countedVisits = builder.visits;

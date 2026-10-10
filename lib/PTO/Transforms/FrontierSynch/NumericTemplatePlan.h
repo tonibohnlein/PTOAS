@@ -8,6 +8,7 @@
 #ifndef PTO_FRONTIERSYNCH_NUMERICTEMPLATEPLAN_H
 #define PTO_FRONTIERSYNCH_NUMERICTEMPLATEPLAN_H
 #include "PTO/Transforms/FrontierSynch/NumericTemplate.h"
+#include "NormalizedControl.h"
 namespace mlir::pto::frontiersynch {
 // Bounded control preflight only: no effects, atoms, reduction or endpoints.
 // Records own their vectors; IR/input/index and callback contexts are borrowed
@@ -17,13 +18,15 @@ struct NumericTemplatePlan {
     const PhaseIndex* index = nullptr;
     const SyncInput* input = nullptr;
     bool regional = false;
+    std::shared_ptr<const NormalizedControlDescription> normalized;
     SmallVector<TemplatePayload> payloads; // Original identities/coordinates; no effects.
     TemplateGeometryConstant geometry;
     TemplateControlConstant control;
 };
 NumericTemplatePlan preflightNumericTemplate(scf::ForOp outer, const PhaseIndex& index,
     const SyncInput& input, NumericTemplateLimits limits = {}, bool regional = false,
-    TemplateGeometryConstant geometry = {}, TemplateControlConstant control = {});
+    TemplateGeometryConstant geometry = {}, TemplateControlConstant control = {},
+    std::shared_ptr<const NormalizedControlDescription> normalized = {});
 NumericTemplate materializeNumericTemplate(const NumericTemplatePlan& plan,
     const PhaseIndex& index, const SyncInput& input);
 } // namespace mlir::pto::frontiersynch

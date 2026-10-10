@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exact per-visit scalar/guard specialization using the shared recurrence proof.
 #include "NumericTemplateInternal.h"
+#include "NormalizedControl.h"
 #include "RecognitionInternal.h"
 #include "../InsertSync/SyncScalarEvolution.h"
 namespace mlir::pto::frontiersynch::detail {
@@ -141,86 +142,110 @@ bool TemplateBuilder::charge(uint64_t count, uint64_t& total, uint64_t limit, Op
     total += count;
     return true;
 }
-bool TemplateBuilder::loop(scf::ForOp nested, bool emit, unsigned depth)
+bool TemplateBuilder::normalized(const NormalizedControlDescription& description)
 {
-    auto lower = integer(nested.getLowerBound()), upper = integer(nested.getUpperBound());
-    auto step = integer(nested.getStep());
-    const bool valid = lower && upper && step && *step > 0 && *lower >= 0;
-    if (!valid) {
-        output.result.note(RecognitionIssue::LoopDomain, nested, true);
-        return false;
+    const bool contextMatches = description.index == &index && description.input == &input &&
+        description.result.state == RecognitionState::Applicable;
+    if (!contextMatches) {
+        output.result.note(RecognitionIssue::TemplateContext, output.outer, true); return false;
     }
-    const auto distance = *upper > *lower ? static_cast<uint64_t>(*upper - *lower) : uint64_t{0};
-    const auto count = distance / *step + static_cast<uint64_t>(distance % *step != 0);
-    if (count > output.limits.visits - visits || depth > output.limits.depth) {
-        output.result.note(RecognitionIssue::TemplateExpansionLimit, nested, true);
-        return false;
+    auto root = llvm::find_if(description.nodes, [&](const auto& node) {
+        return node.original == output.outer.getOperation() && node.fixedCoordinates.empty();
+    });
+    if (root == description.nodes.end()) {
+        output.result.note(RecognitionIssue::TemplateContext, output.outer, true); return false;
     }
-    int64_t induction = *lower;
-    for (uint64_t visit = 0; visit < count; ++visit) {
-        coordinates[nested.getInductionVar()] = induction;
-        path.push_back({nested, induction});
-        for (auto state : nested.getRegionIterArgs()) {
-            if (index.isRelevant(state) && !scalar(state)) {
-                output.result.note(RecognitionIssue::LoopCarriedState, nested);
-                return false;
+    auto bind = [&](ArrayRef<FixedLoopCoordinate> fixed) {
+        coordinates.clear(); path.clear();
+        for (auto coordinate : fixed) {
+            coordinates[coordinate.loop.getInductionVar()] = coordinate.induction;
+            path.push_back({coordinate.loop, coordinate.induction});
+        }
+    };
+    std::function<bool(std::size_t, SmallVector<FixedLoopCoordinate>, unsigned)> visit;
+    visit = [&](std::size_t id, SmallVector<FixedLoopCoordinate> fixed, unsigned depth) {
+        const auto& node = description.nodes[id];
+        for (auto coordinate : node.fixedCoordinates) {
+            auto found = llvm::find_if(fixed, [&](auto old) { return old.loop == coordinate.loop; });
+            if (found == fixed.end()) { fixed.push_back(coordinate); }
+            else if (found->induction != coordinate.induction) {
+                output.result.note(RecognitionIssue::TemplateContext, node.original, true); return false;
             }
         }
-        if (!block(*nested.getBody(), emit, depth)) {
-            return false;
+        bind(fixed);
+        if (depth > output.limits.depth) {
+            output.result.note(RecognitionIssue::TemplateExpansionLimit, node.original, true); return false;
         }
-        path.pop_back();
-        if (visit + 1 < count && llvm::AddOverflow(induction, *step, induction)) {
-            output.result.note(RecognitionIssue::LoopDomain, nested, true);
-            return false;
-        }
-    }
-    coordinates.erase(nested.getInductionVar());
-    return true;
-}
-bool TemplateBuilder::block(Block& body, bool emit, unsigned depth)
-{
-    if (depth > output.limits.depth) {
-        output.result.note(RecognitionIssue::TemplateExpansionLimit, body.getParentOp(), true);
-        return false;
-    }
-    for (Operation& op : body) {
-        if (!charge(1, visits, output.limits.visits, &op)) {
-            return false;
-        }
-        if (auto nested = dyn_cast<scf::ForOp>(op)) {
-            if (!loop(nested, emit, depth + 1)) {
-                return false;
-            }
-        } else if (auto branch = dyn_cast<scf::IfOp>(op)) {
+        if (node.original && !charge(1, visits, output.limits.visits, node.original)) { return false; }
+        if (node.kind == NormalizedControlKind::Conditional) {
+            auto branch = cast<scf::IfOp>(node.original);
             auto selected = guard(branch.getCondition());
             if (!selected) {
-                output.result.note(RecognitionIssue::UnsupportedControl, branch, true);
-                return false;
+                output.result.note(RecognitionIssue::UnsupportedControl, branch, true); return false;
             }
-            for (auto [arm, region] : llvm::enumerate(branch->getRegions())) {
-                const bool chosen = (arm == 0) == *selected;
-                const bool savedPath = activePath;
-                activePath = savedPath && chosen;
-                const bool walked = (emit && !chosen) || region.empty() || block(region.front(), emit, depth + 1);
-                activePath = savedPath;
-                if (!walked) { return false; }
+            for (auto [arm, child] : llvm::enumerate(node.children)) {
+                const bool inactive = (arm == 0) != *selected;
+                if (inactive) { continue; }
+                if (!visit(child, fixed, depth + 1)) { return false; }
             }
-        } else {
-            auto phaseList = index.phasesFor(&op);
-            if (!charge(phaseList.size(), phases, output.limits.payloads, &op)) {
-                return false;
-            }
-            for (const auto* phase : phaseList) {
-                if (emit && !payload(phase)) { return false; }
-                if (!emit && activePath && plannedPayloads) {
-                    TemplatePayload planned;
-                    planned.phase = phase; planned.coordinates = path;
-                    plannedPayloads->push_back(std::move(planned));
+            return true;
+        }
+        if (node.kind == NormalizedControlKind::ExpandedLoop ||
+            node.kind == NormalizedControlKind::RetainedLoop) {
+            auto loop = cast<scf::ForOp>(node.original);
+            auto lower = integer(loop.getLowerBound()), upper = integer(loop.getUpperBound());
+            auto step = integer(loop.getStep());
+            const bool valid = lower && upper && *lower >= 0 && step && *step > 0;
+            if (!valid) { output.result.note(RecognitionIssue::LoopDomain, loop, true); return false; }
+            auto body = [&](std::size_t child, SmallVector<FixedLoopCoordinate> inherited) {
+                // Expanded descendants carry their own binding; retained visits
+                // inherit one from this producer's occurrence construction.
+                for (auto coordinate : description.nodes[child].fixedCoordinates) {
+                    if (llvm::none_of(inherited, [&](auto old) { return old.loop == coordinate.loop; })) {
+                        inherited.push_back(coordinate);
+                    }
                 }
+                bind(inherited);
+                for (auto state : loop.getRegionIterArgs()) {
+                    const bool representable = !index.isRelevant(state) || scalar(state);
+                    if (!representable) {
+                        output.result.note(RecognitionIssue::LoopCarriedState, loop); return false;
+                    }
+                }
+                return visit(child, std::move(inherited), depth + 1);
+            };
+            if (node.kind == NormalizedControlKind::ExpandedLoop) {
+                for (auto child : node.children) { if (!body(child, fixed)) { return false; } }
+                return true;
+            }
+            const __int128 distance = static_cast<__int128>(*upper) - *lower;
+            const __int128 count = distance <= 0 ? 0 : (distance + *step - 1) / *step;
+            if (count > output.limits.visits - visits) {
+                output.result.note(RecognitionIssue::TemplateExpansionLimit, loop, true); return false;
+            }
+            for (__int128 iteration = 0; iteration < count; ++iteration) {
+                auto inherited = fixed;
+                const auto induction = static_cast<__int128>(*lower) + iteration * *step;
+                inherited.push_back({loop, static_cast<int64_t>(induction)});
+                for (auto child : node.children) { if (!body(child, inherited)) { return false; } }
+            }
+            return true;
+        }
+        if (node.kind == NormalizedControlKind::Sequence) {
+            for (auto child : node.children) { if (!visit(child, fixed, depth)) { return false; } }
+            return true;
+        }
+        auto phaseList = index.phasesFor(node.original);
+        if (!charge(phaseList.size(), phases, output.limits.payloads, node.original)) { return false; }
+        if (plannedPayloads) {
+            for (auto* phase : phaseList) {
+                TemplatePayload planned; planned.phase = phase; planned.coordinates = path;
+                plannedPayloads->push_back(std::move(planned));
             }
         }
-    }
+        return true;
+    };
+    for (auto child : root->children) { if (!visit(child, {}, 0)) { return false; } }
     return true;
 }
 } // namespace mlir::pto::frontiersynch::detail
