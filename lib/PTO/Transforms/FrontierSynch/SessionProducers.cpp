@@ -25,6 +25,31 @@
 #include "PTO/Transforms/FrontierSynch/VaryingRotatingRegional.h"
 namespace mlir::pto::frontiersynch {
 namespace {
+void recordFormFailure(ProducerFailure& failure, const RecognitionResult& form)
+{
+    failure.stage = AnalysisStage::Form;
+    failure.status = form.state == RecognitionState::NotApplicable ?
+        AnalysisStatus::NotApplicable : AnalysisStatus::UnmetObligation;
+    failure.diagnostics = form.diagnostics;
+    // Expansion caps restrict a representation attempt, never the paper class.
+    for (const auto& diagnostic : form.diagnostics) {
+        if (diagnostic.issue == RecognitionIssue::TemplateExpansionLimit) {
+            failure.status = AnalysisStatus::UnmetObligation;
+        }
+    }
+}
+void recordArithmeticFormFailure(ProducerFailure& failure, const ArithmeticProgram* form)
+{
+    if (!form) { failure.stage = AnalysisStage::Form; return; }
+    if (form->extraction.state != RecognitionState::Applicable) {
+        recordFormFailure(failure, form->extraction);
+    } else if (form->recognition.state != RecognitionState::Applicable) {
+        failure.stage = AnalysisStage::Form;
+        failure.status = form->recognition.state == RecognitionState::NotApplicable ?
+            AnalysisStatus::NotApplicable : AnalysisStatus::UnmetObligation;
+        failure.arithmeticDiagnostics = form->recognition.diagnostics;
+    }
+}
 ArithmeticRegionContext originalContext(func::FuncOp function, const ProgramRecognition& program, std::size_t region)
 {
     ArithmeticRegionContext context{function, function};
@@ -113,24 +138,29 @@ const FiniteExpansionPlan& expansionPlan(AnalysisSessionState& session,
     return *inserted.first->second;
 }
 const StructureNode* wholeLoop(func::FuncOp function, const SyncInput& input,
-                              const ProgramRecognition& program, const PhaseIndex& index)
+                              const ProgramRecognition& program, const PhaseIndex& index,
+                              ProducerFailure* failure = nullptr)
 {
+    if (failure) { failure->stage = AnalysisStage::Form; }
+    auto excluded = [&]() { if (failure) { failure->status = AnalysisStatus::NotApplicable; } };
     const StructureNode* selected = nullptr;
     for (const auto& node : program.nodes) {
         const bool rootLoop = node.kind == StructureKind::Loop && node.anchor->getParentOp() == function;
         if (!rootLoop) { continue; }
-        if (selected || node.unsupportedContext) { return nullptr; }
+        if (node.unsupportedContext) { return nullptr; }
+        if (selected) { excluded(); return nullptr; }
         selected = &node;
     }
     if (!selected || llvm::any_of(input.instructions(), [&](const auto* phase) {
             return !selected->anchor->isProperAncestor(phase->elementOp);
-        })) { return nullptr; }
+        })) { excluded(); return nullptr; }
     RecognitionResult outside;
     for (auto& operation : function.front()) {
         if (&operation == selected->anchor) { continue; }
-        if (operation.getNumRegions()) { return nullptr; }
+        if (operation.getNumRegions()) { excluded(); return nullptr; }
         detail::inspectLeaf(operation, index, outside);
     }
+    if (outside.state != RecognitionState::Applicable && failure) { recordFormFailure(*failure, outside); }
     return outside.state == RecognitionState::Applicable ? selected : nullptr;
 }
 } // namespace
@@ -174,6 +204,9 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceExpandedFinit
         auto demands = std::make_shared<FiniteGuardedAnalysis>(
             analyzeExpandedFinite(plan, *structuralIndex, *storage, sessionState->expressions));
         cached.demandError = demands->error;
+        if (plan.result.state != RecognitionState::Applicable) {
+            recordFormFailure(cached.failure, plan.result);
+        }
         if (cached.demandError.empty()) {
             auto owned = std::make_shared<MathematicalResult>();
             owned->input = storage; owned->recognition = program;
@@ -183,6 +216,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceExpandedFinit
         }
     }
     error = cached.demandError;
+    sessionState->attempts[region][AnalysisBackend::ExpandedFinite].failure = cached.failure;
     if (!cached.mathematical) { return {}; }
     auto owned = std::make_shared<MathematicalResult>(*cached.mathematical);
     owned->region = region;
@@ -191,9 +225,13 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceExpandedFinit
 std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceLoopBackend(
     AnalysisBackend backend, std::string& error, std::size_t region)
 {
-    const auto* node = region == 0 ? wholeLoop(function, *storage, *program, *structuralIndex) :
+    auto& requestedFailure = sessionState->attempts[region][backend].failure;
+    const auto* node = region == 0 ? wholeLoop(function, *storage, *program, *structuralIndex, &requestedFailure) :
                                     &program->nodes[region];
     if (!node || node->kind != StructureKind::Loop || node->unsupportedContext) {
+        auto& producerFailure = sessionState->attempts[region][backend].failure;
+        producerFailure.stage = AnalysisStage::Form;
+        if (node && node->kind != StructureKind::Loop) { producerFailure.status = AnalysisStatus::NotApplicable; }
         error = "route requires an original certified loop"; return {};
     }
     const auto original = static_cast<std::size_t>(node - program->nodes.data());
@@ -203,6 +241,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceLoopBackend(
         attempt.mathematical = constructLoopBackend(backend, original, attempt.demandError);
     }
     error = attempt.demandError;
+    sessionState->attempts[region][backend].failure = attempt.failure;
     if (!attempt.mathematical) { return {}; }
     auto result = std::make_shared<MathematicalResult>(*attempt.mathematical);
     result->region = region;
@@ -214,6 +253,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
 {
     const auto* node = &program->nodes[region];
     const auto loop = cast<scf::ForOp>(node->anchor);
+    auto& producerFailure = sessionState->loopAttempts[{region, backend}].failure;
     auto owned = std::make_shared<MathematicalResult>();
     owned->input = storage;
     owned->recognition = program;
@@ -222,6 +262,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
     case AnalysisBackend::VaryingBoundary: {
         auto& local = program->nodes[region];
         if (!local.varyingRotating || local.varyingRotating->result.state != RecognitionState::Applicable) {
+            if (local.varyingRotating) { recordFormFailure(producerFailure, local.varyingRotating->result); }
+            else { producerFailure.stage = AnalysisStage::Form; }
             error = "affine repeating-boundary form is not established";
             return {};
         }
@@ -256,7 +298,18 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
             result.recognition.contract.membership == ContractStatus::Established &&
             result.recognition.contract.demands == ContractImplementation::Available;
         if (!exact) {
-            error = result.recognition.contract.implementationError;
+            const auto& contract = result.recognition.contract;
+            if (contract.membership != ContractStatus::Established) {
+                producerFailure.stage = AnalysisStage::Form;
+                producerFailure.status = contract.membership == ContractStatus::Violated ?
+                    AnalysisStatus::NotApplicable : AnalysisStatus::UnmetObligation;
+                RecognitionResult form;
+                form.state = contract.membership == ContractStatus::Violated ?
+                    RecognitionState::NotApplicable : RecognitionState::MissingPremise;
+                form.diagnostics = contract.diagnostics;
+                recordFormFailure(producerFailure, form);
+            }
+            error = contract.implementationError;
             return {};
         }
         owned->finiteVisitDemands = found->second;
@@ -265,11 +318,13 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
     }
     case AnalysisBackend::NumericalPeriodic: {
         const auto* plan = numericalPreflight(region);
-        if (!plan) { error = "numerical original-loop preflight unavailable"; return {}; }
+        if (!plan) { producerFailure.stage = AnalysisStage::Form;
+            error = "numerical original-loop preflight unavailable"; return {}; }
         auto result = std::make_shared<NumericalRegionDemands>();
         if (sessionState->numericalRegionBuilds != UINT64_MAX) { ++sessionState->numericalRegionBuilds; }
         result->form = materializeNumericTemplate(*plan, *structuralIndex, *storage);
         if (result->form.result.state != RecognitionState::Applicable) {
+            recordFormFailure(producerFailure, result->form.result);
             error = "regional numerical template form is unavailable"; return {};
         }
         result->analysis = analyzeNumericTemplate(result->form);
@@ -281,7 +336,11 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
         break;
     }
     case AnalysisBackend::Rotating: {
-        if (!node->rotatingResult || node->rotatingResult->state != RecognitionState::Applicable) { return {}; }
+        if (!node->rotatingResult || node->rotatingResult->state != RecognitionState::Applicable) {
+            if (node->rotatingResult) { recordFormFailure(producerFailure, *node->rotatingResult); }
+            else { producerFailure.stage = AnalysisStage::Form; }
+            error = "rotating form is not established"; return {};
+        }
         if (construction.rotatingReductions != UINT64_MAX) { ++construction.rotatingReductions; }
         auto demands = std::make_shared<RotatingAnalysis>(
             analyzeRotating(loop, *structuralIndex, *storage, *node->rotatingResult, false));
@@ -292,7 +351,13 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
     }
     case AnalysisBackend::GuardedRotating: {
         if (!node->guardedRotatingResult ||
-            node->guardedRotatingResult->result.state != RecognitionState::Applicable) { return {}; }
+            node->guardedRotatingResult->result.state != RecognitionState::Applicable) {
+            if (node->guardedRotatingResult) {
+                recordFormFailure(producerFailure, node->guardedRotatingResult->result);
+            }
+            else { producerFailure.stage = AnalysisStage::Form; }
+            error = "guarded rotating form is not established"; return {};
+        }
         GuardedRotatingSpecialization request; request.loop = loop;
         auto mathematics = specializedGuardedDemands(request, error);
         if (!mathematics || !error.empty()) { return {}; }
@@ -302,7 +367,11 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
     }
     case AnalysisBackend::BoundedLifetime: {
         if (!node->boundedLifetime ||
-            node->boundedLifetime->skeleton.result.state != RecognitionState::Applicable) { return {}; }
+            node->boundedLifetime->skeleton.result.state != RecognitionState::Applicable) {
+            if (node->boundedLifetime) { recordFormFailure(producerFailure, node->boundedLifetime->skeleton.result); }
+            else { producerFailure.stage = AnalysisStage::Form; }
+            error = "bounded lifetime form is not established"; return {};
+        }
         auto demands = cachedBoundedLifetimeRegion(function, *node, *structuralIndex, *storage, error);
         if (failed(demands)) { return {}; }
         owned->boundedDemands = *demands;
@@ -799,13 +868,15 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceArithmeticReg
             owned->region = region;
             owned->backend = "arithmetic";
             if (sessionState->arithmeticRegionBuilds != UINT64_MAX) { ++sessionState->arithmeticRegionBuilds; }
+            const auto* form = recognizeArithmeticRegion(region);
             owned->arithmeticRegionalDemands = analyzeArithmeticRegionDemands(
-                {function, node.anchor}, *structuralIndex, *storage,
-                recognizeArithmeticRegion(region), cached.demandError);
+                {function, node.anchor}, *structuralIndex, *storage, form, cached.demandError);
+            if (!owned->arithmeticRegionalDemands) { recordArithmeticFormFailure(cached.failure, form); }
             if (owned->arithmeticRegionalDemands) { cached.mathematical = std::move(owned); }
         }
     }
     error = cached.demandError;
+    sessionState->attempts[region][AnalysisBackend::Arithmetic].failure = cached.failure;
     return cached.mathematical;
 }
 std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
@@ -869,6 +940,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
     }
     case AnalysisBackend::ArithmeticPeriodic:
         if (failed(analyzeArithmeticPeriodicFunction())) {
+            recordArithmeticFormFailure(sessionState->attempts[0][backend].failure,
+                program->arithmetic ? &*program->arithmetic : nullptr);
             error = arithmeticPeriodicAnalysis ? arithmeticPeriodicAnalysis->conversion.diagnostic :
                 "arithmetic periodic form is unavailable";
             return {};
@@ -877,7 +950,11 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
         owned->backend = "arithmetic-periodic";
         return owned;
     case AnalysisBackend::Arithmetic:
-        if (failed(analyzeArithmeticFunction())) { return {}; }
+        if (failed(analyzeArithmeticFunction())) {
+            recordArithmeticFormFailure(sessionState->attempts[0][backend].failure,
+                program->arithmetic ? &*program->arithmetic : nullptr);
+            return {};
+        }
         owned->arithmeticDemands = arithmeticAnalysis;
         owned->generalArithmeticDemands = generalArithmeticAnalysis;
         owned->backend = "arithmetic";

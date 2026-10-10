@@ -19,6 +19,41 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/SequenceAnalysisInternal.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
+LogicalResult checkProducerFailureStages(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    using namespace pto::frontiersynch;
+    FrontierAnalysis session(function);
+    if (failed(session.initialize(policy))) { return failure(); }
+    const bool dynamic = function->hasAttr("test.dynamic_producer_failure");
+    auto first = dynamic ? session.analyzeFiniteExpansion({}) : session.analyzeNumericalRegion({});
+    const auto attempts = session.constructionCounts().mathematicalAttempts;
+    auto retry = dynamic ? session.analyzeFiniteExpansion({}) : session.analyzeNumericalRegion({});
+    const bool unresolved = dynamic || function->hasAttr("test.unproved_outer");
+    const auto expected = unresolved ? AnalysisStatus::UnmetObligation : AnalysisStatus::NotApplicable;
+    const bool retained = first.status == expected && first.stage == AnalysisStage::Form &&
+        !first.mathematical && !first.obligations.empty() && retry.status == first.status &&
+        retry.stage == first.stage && session.constructionCounts().mathematicalAttempts == attempts;
+    if (!retained) { return function.emitError("producer failure lost its cached form status or stage"); }
+    auto invalid = session.analyze({SIZE_MAX});
+    if (invalid.status != AnalysisStatus::UnmetObligation || invalid.stage != AnalysisStage::Form) {
+        return function.emitError("invalid request was reported as a proved class exclusion");
+    }
+    if (dynamic) {
+        auto aggregate = session.minimumDemands();
+        if (!aggregate.mathematical && aggregate.status != AnalysisStatus::UnmetObligation) {
+            return function.emitError("exhausted attempts were reported as a proved class exclusion");
+        }
+    }
+    if (function->hasAttr("test.unproved_outer")) {
+        auto aggregate = session.minimumDemands();
+        if (aggregate.mathematical || aggregate.status != AnalysisStatus::UnmetObligation ||
+            aggregate.stage != AnalysisStage::Demands) {
+            return function.emitError("incomplete producer coverage lost its demand-stage obligation");
+        }
+    }
+    llvm::outs() << "producer-failure: typed form-status cached invalid-request-unresolved\n";
+    return success();
+}
 LogicalResult checkPhaseMinMax(func::FuncOp function, pto::GMAliasPolicy policy)
 {
     using namespace pto::frontiersynch;
