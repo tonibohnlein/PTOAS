@@ -151,8 +151,8 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
     repeatedAttempt.clear();
     Child child;
     child.loop = dyn_cast<scf::ForOp>(node.anchor);
-    if (!child.loop || index.hasRelevantCarriedState(child.loop)) {
-        return fail("sequence loop interface has relevant carried state");
+    if (!child.loop || index.hasUnprovedCarriedState(child.loop)) {
+        return fail("sequence loop interface has unproved carried state");
     }
     auto domain = CountedLoop::get(child.loop);
     if (!domain) { return fail("sequence loop requires a representable positive-step ordinal domain"); }

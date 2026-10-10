@@ -71,8 +71,8 @@ def main():
     require(len(documents)==len(configs),output.stdout)
     for document,config in zip(documents,configs):
         validate(document,*config)
-    # The production pass retains loop/payload structure and leaves IDs logical.
-    inserted=subprocess.run([tool,"--insert-logical",fixture],check=True,capture_output=True,text=True)
+    # The logical library adapter retains loop/payload structure and leaves IDs logical.
+    inserted=subprocess.run([tool,"--insert-logical-library",fixture],check=True,capture_output=True,text=True)
     for name in ("scf.for", "pto.textract", "pto.tmatmul"):
         require(inserted.stdout.count(name)==source.count(name),name)
     require("pto.logical_set" in inserted.stdout and "pto.logical_wait" in inserted.stdout,inserted.stdout)
@@ -92,7 +92,7 @@ def main():
             result=subprocess.run([tool,"--rotating-analysis",str(path)],check=True,capture_output=True,text=True)
             doc=json.loads(result.stdout)
             require(not doc["prepared"] and doc["unchanged_preparation"],doc)
-            rejected=subprocess.run([tool,"--insert-logical",str(path)],capture_output=True,text=True)
+            rejected=subprocess.run([tool,"--insert-logical-library",str(path)],capture_output=True,text=True)
             require(rejected.returncode == 0, "sequence/arithmetic fallback failed: " + rejected.stderr)
             require(rejected.stdout.count("scf.for") == text.count("scf.for"), "fallback unfolded the loop")
     print("rotating analysis:7 runtime-bound loops, exact command closure and matching guards passed")

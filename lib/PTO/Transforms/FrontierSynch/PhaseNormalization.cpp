@@ -23,7 +23,8 @@ bool PhaseNormalization::independent(Value value)
         if (owner == outer) { return false; }
         if (!owner || !outer->isProperAncestor(owner)) { return independence[value] = true; }
         auto loop = dyn_cast<scf::ForOp>(owner);
-        return independence[value] = loop && argument == loop.getInductionVar();
+        return independence[value] = loop &&
+            (argument == loop.getInductionVar() || static_cast<bool>(index.carriedOrdinal(argument)));
     }
     auto* op = value.getDefiningOp();
     if (!op) { return false; }
@@ -58,6 +59,9 @@ bool PhaseNormalization::periodic(Value value, uint64_t period)
     cached.emplace(period, false);
     auto compute = [&]() -> bool {
         if (!value || independent(value)) { return true; }
+        if (auto recurrence = index.carriedOrdinal(value)) {
+            return period && period % recurrence->period() == 0;
+        }
         auto* op = value.getDefiningOp();
         if (!op || !index.phasesFor(op).empty()) { return false; }
         if (auto divisor = modulus(value)) {
@@ -114,6 +118,9 @@ std::optional<RegionExpressions::Id> PhaseNormalization::atPhase(Value value, ui
     auto compute = [&]() -> std::optional<RegionExpressions::Id> {
         using Id = RegionExpressions::Id;
         if (independent(value)) { return arena.input(value); }
+        if (auto recurrence = index.carriedOrdinal(value)) {
+            return arena.constant(recurrence->atOrdinal(phase));
+        }
         if (value == outer.getInductionVar()) {
             APInt lower, step;
             if (!matchPattern(outer.getLowerBound(), m_ConstantInt(&lower)) ||
@@ -178,6 +185,11 @@ std::optional<RegionExpressions::Id> PhaseNormalization::residue(Value value, ui
         return residues[value][key] = result;
     };
     if (independent(value)) { return save(arena.rem(arena.input(value), arena.constant(period))); }
+    if (index.carriedOrdinal(value)) {
+        if (!periodic(value, period)) { return std::nullopt; }
+        auto concrete = atPhase(value, phase, period);
+        return concrete ? save(arena.rem(*concrete, arena.constant(period))) : std::nullopt;
+    }
     if (value == outer.getInductionVar()) {
         APInt lower, step;
         if (!matchPattern(outer.getLowerBound(), m_ConstantInt(&lower)) ||

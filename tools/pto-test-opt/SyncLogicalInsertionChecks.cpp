@@ -476,8 +476,17 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
         return verify(function);
     }
     bool accepted = false;
+    uint64_t phaseDescriptions = 0;
     std::shared_ptr<fs::BoundedLifetimeDemandResult> boundedDemands;
-    if (function->hasAttr("test.mixed_stride_insertion")) {
+    if (function->hasAttr("test.phased_insertion")) {
+        auto program = fs::recognizeProgram(function, input);
+        if (failed(program)) { return failure(); }
+        auto analysis = fs::analyzeSequence(function, input, *program);
+        phaseDescriptions = analysis.cost.phaseDescriptions;
+        auto prepared = fs::prepareSequenceInsertion(analysis);
+        accepted = phaseDescriptions && succeeded(prepared) &&
+            succeeded(fs::insertLogicalSynchronization(function, **prepared));
+    } else if (function->hasAttr("test.mixed_stride_insertion")) {
         auto program = fs::recognizeProgram(function, input);
         std::string error;
         if (succeeded(program)) {
@@ -568,7 +577,12 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
     llvm::json::Object report{{"function", function.getSymName()},
         {"accepted", accepted}, {"unchanged_on_failure", accepted || before == render()},
         {"bounded_demands_retained", bool(boundedDemands)},
-        {"bounded_demand_count", boundedCount}};
+        {"bounded_demand_count", boundedCount}, {"phase_descriptions", phaseDescriptions}};
+    if (auto recognition = function->getAttrOfType<DictionaryAttr>("pto.frontier_recognition")) {
+        if (auto backend = recognition.getAs<StringAttr>("selected_logical_backend")) {
+            report["selected_logical_backend"] = backend.getValue();
+        }
+    }
     auto ids = function->getAttrOfType<DenseI64ArrayAttr>("test.eligible_ids");
     if (accepted && ids) {
         auto logicalIR = render();
