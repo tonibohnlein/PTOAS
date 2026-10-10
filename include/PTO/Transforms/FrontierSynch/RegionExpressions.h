@@ -69,6 +69,12 @@ public:
         const RegionExpressions* owner = nullptr;
     };
     Id substitute(Id expression, Substitution& context);
+    // Import only the roots' reachable typed DAG from another arena. No memo
+    // escapes the call, so rollback cannot leave stale cross-arena bindings.
+    // Successful roots belong to this arena; failure publishes no new IDs.
+    // work counts distinct source nodes visited, including interned reuse.
+    FailureOr<SmallVector<Id>> import(const RegionExpressions& source, ArrayRef<Id> roots,
+                                     uint64_t* work = nullptr);
     Id add(Id a, Id b);
     Id sub(Id a, Id b);
     // Constant-work factoring of constant-leaf choices; no case distribution.
