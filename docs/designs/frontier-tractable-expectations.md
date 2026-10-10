@@ -940,3 +940,19 @@ uses this entry point before the separate six-ID allocator. The production pass
 continues to stop at mathematical certification with its explicit unsupported
 emission diagnostic. This test entry point supports integration measurement; it
 does not add another analysis dispatcher or a production command-line option.
+
+### Specialized numerical body mathematics
+
+Finite numerical phase-body construction now separates its occurrence word,
+storage scan and reduction from fresh regional exports. The session caches the
+mathematics by original loop, immutable modeled context, normalization identity,
+explicit limits and every observed geometry/control lookup, including unknown
+answers. Failed specializations cannot suppress later compatible alternatives.
+Phase recursion forwards this expression-free provider; it never caches IDs from
+a speculative export arena. Original inner coordinates remain attached to the
+finite word. Retained handles own shared input and the phase index across reset.
+
+Focused checks vary geometry, guards, unknown bindings, limits and alias policy;
+check retained/export agreement for all start/completion queries; reject foreign
+functions, enclosing loops and poisoned arenas without new IDs; and
+re-export after transaction rollback and context reset.

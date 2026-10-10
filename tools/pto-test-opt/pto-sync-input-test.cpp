@@ -40,6 +40,7 @@ using namespace mlir;
 LogicalResult checkNormalizedControlSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkFixedCoordinateRelations(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkUniformRelationCrossings(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkSpecializedNumericSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkFiniteArithmeticSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSpecializedArithmeticSession(func::FuncOp function, pto::GMAliasPolicy policy);
 LogicalResult checkDynamicUniformCrossings(func::FuncOp, pto::GMAliasPolicy);
@@ -1828,6 +1829,11 @@ int main(int argc, char **argv) {
     auto delegation = pto::frontiersynch::recognizeClosedCallees(*module);
     for (auto function : module->getOps<func::FuncOp>()) {
       if (function.isDeclaration()) { continue; }
+      if (certification && function->hasAttr("test.specialized_numeric_requests")) {
+        // These fixtures request one bound phase body, not an unbound invocation audit.
+        if (failed(checkSpecializedNumericSession(function, policy))) { return 1; }
+        continue;
+      }
       const bool existingNumericProbeFailed = certification && function->hasAttr("test.numerical_existing") &&
           failed(checkNumericalRegionSession(function, policy));
       if (existingNumericProbeFailed) { return 1; }
@@ -2023,7 +2029,8 @@ int main(int argc, char **argv) {
             {"function", function.getSymName()}, {"regions", std::move(regions)},
             {"mathematical_attempts", attempts}, {"logical_preparations", counts.logicalPreparations},
             {"allocation_exports", counts.allocationExports},
-            {"specialized_arithmetic_constructions", analysis.specializedArithmeticConstructions()}}) << "\n";
+            {"specialized_arithmetic_constructions", analysis.specializedArithmeticConstructions()},
+            {"specialized_numeric_constructions", analysis.specializedNumericConstructions()}}) << "\n";
       }
       if (numericAnalysis) {
         const bool lazy = analysis.numericTemplatePreflights() == 0 &&

@@ -12,21 +12,30 @@
 #include "RecognitionInternal.h"
 #include "PTO/Transforms/FrontierSynch/HardwareProtection.h"
 namespace mlir::pto::frontiersynch {
-FailureOr<RegionalAnalysis> numericBodyRegionalResult(func::FuncOp function,
-    const SyncInput& input, const NumericTemplate& body, std::shared_ptr<RegionExpressions> arena,
-    ArrayRef<scf::ForOp> enclosing, std::string& error)
+std::shared_ptr<const ExplicitAnalysis> analyzeNumericBody(const NumericTemplate& body, std::string& error)
 {
-    if (!arena || body.result.state != RecognitionState::Applicable || !body.specializedBody) {
-        error = "finite body requires certified specialized effects"; return failure();
+    if (body.result.state != RecognitionState::Applicable || !body.specializedBody) {
+        error = "finite body requires certified specialized effects";
+        for (const auto& issue : body.result.diagnostics) { error += " / " + recognitionName(issue.issue).str(); }
+        return {};
+    }
+    const bool singleBody = llvm::all_of(body.payloads, [&](const auto& payload) {
+        return llvm::none_of(payload.coordinates, [&](const auto& coordinate) {
+            return coordinate.loop == body.outer;
+        });
+    });
+    if (!singleBody) {
+        error = "single-body normalization cannot expand the selected enclosing loop; adapter not implemented yet";
+        return {};
     }
     auto word = numericTemplateOccurrences(body, 1);
-    if (failed(word)) { error = "finite body contains invalid physical atoms"; return failure(); }
+    if (failed(word)) { error = "finite body contains invalid physical atoms"; return {}; }
     auto analysis = std::make_shared<ExplicitAnalysis>();
     analysis->occurrences = std::move(*word);
     std::vector<StorageGenerator> supplied, native;
     for (auto [a, b] : body.uniformConflicts) {
         if (a >= analysis->occurrences.size() || b >= analysis->occurrences.size()) {
-            error = "finite body conflict has invalid payload reference"; return failure();
+            error = "finite body conflict has invalid payload reference"; return {};
         }
         if (ptoStorageProtection().protectsScalar(analysis->occurrences[a].pipe,
                                                   analysis->occurrences[b].pipe)) { continue; }
@@ -35,9 +44,36 @@ FailureOr<RegionalAnalysis> numericBodyRegionalResult(func::FuncOp function,
     for (auto [a, b] : body.valueDemands) { supplied.push_back({a, b}); }
     for (auto [a, b] : body.nativePrerequisites) { native.push_back({a, b}); }
     analysis->scan = scanStorageLifetimes(analysis->occurrences, supplied, ptoStorageProtection());
-    if (!analysis->scan.error.empty()) { error = analysis->scan.error; return failure(); }
+    if (!analysis->scan.error.empty()) { error = analysis->scan.error; return {}; }
     analysis->reduction = reduceExplicitDemands(analysis->occurrences, analysis->scan.generators, native);
-    if (!analysis->reduction.error.empty()) { error = analysis->reduction.error; return failure(); }
+    if (!analysis->reduction.error.empty()) { error = analysis->reduction.error; return {}; }
+    for (const auto& payload : body.payloads) { analysis->phases.push_back(payload.phase); }
+    return analysis;
+}
+FailureOr<RegionalAnalysis> exportNumericBody(func::FuncOp function,
+    const SyncInput& input, const NumericBodyMathematics& mathematics,
+    std::shared_ptr<RegionExpressions> arena, ArrayRef<scf::ForOp> enclosing, std::string& error)
+{
+    const auto& body = mathematics.body;
+    const auto analysis = mathematics.demands;
+    const bool valid = arena && arena->constructionError().empty() && analysis && body.outer && function &&
+        body.outer->getParentOfType<func::FuncOp>() == function && body.specializedBody &&
+        body.result.state == RecognitionState::Applicable && analysis->phases.size() == body.payloads.size() &&
+        (!mathematics.inputOwner || mathematics.inputOwner.get() == &input);
+    if (!valid) { error = "finite body export requires retained mathematics in its input context"; return failure(); }
+    SmallVector<scf::ForOp> expected;
+    for (auto* parent = body.outer->getParentOp(); parent && parent != function; parent = parent->getParentOp()) {
+        if (auto loop = dyn_cast<scf::ForOp>(parent)) { expected.push_back(loop); }
+    }
+    std::reverse(expected.begin(), expected.end()); expected.push_back(body.outer);
+    const bool originalFrames = ArrayRef<scf::ForOp>(expected) == enclosing &&
+        llvm::all_of(analysis->phases, [&](const auto* phase) {
+            return phase && phase->elementOp && body.outer->isProperAncestor(phase->elementOp);
+        });
+    if (!originalFrames) {
+        error = "finite body export requires original phases and enclosing loops"; return failure();
+    }
+    RegionExpressions::Transaction transaction(*arena);
     RegionalAnalysis out;
     out.expressions = arena; out.accessModel = &input.accesses(); out.gmAliasPolicy = input.memory().gmPolicy();
     out.capabilities = {true, true, true, true};
@@ -47,7 +83,6 @@ FailureOr<RegionalAnalysis> numericBodyRegionalResult(func::FuncOp function,
     for (uint32_t type = 0; type < body.payloads.size(); ++type) {
         const auto& payload = body.payloads[type];
         auto* op = payload.phase->elementOp;
-        analysis->phases.push_back(payload.phase);
         out.anchors.push_back({payload.phase, payload.coordinates, {op->getBlock(), op},
                                {op->getBlock(), op->getNextNode()}});
         out.occurrenceLoops.push_back({});
@@ -83,7 +118,9 @@ FailureOr<RegionalAnalysis> numericBodyRegionalResult(func::FuncOp function,
         }
     }
     for (auto& [atom, cell] : cells) { out.storageBoundary.push_back(std::move(cell)); }
-    out.presence = [analysis, arena, zero](RegionalEvent event) -> std::optional<Expr> {
+    const auto owners = std::make_pair(mathematics.inputOwner, mathematics.indexOwner);
+    out.presence = [analysis, arena, zero, owners](RegionalEvent event) -> std::optional<Expr> {
+        (void)owners; // Keep borrowed phases and shared access records alive after session reset.
         if (event.type >= analysis->phases.size() || !event.visits.empty() ||
             event.ordinal >= arena->size() || arena->isBoolean(event.ordinal)) { return std::nullopt; }
         return arena->eq(event.ordinal, zero);
@@ -114,7 +151,18 @@ FailureOr<RegionalAnalysis> numericBodyRegionalResult(func::FuncOp function,
     }
     out.prepare = {};
     out.prepareWithVisits = [state](ArrayRef<scf::ForOp> visits) { return state->prepare(visits); };
+    if (!arena->constructionError().empty()) { error = arena->constructionError(); return failure(); }
+    transaction.commit();
     return out;
+}
+FailureOr<RegionalAnalysis> numericBodyRegionalResult(func::FuncOp function,
+    const SyncInput& input, const NumericTemplate& body, std::shared_ptr<RegionExpressions> arena,
+    ArrayRef<scf::ForOp> enclosing, std::string& error)
+{
+    auto demands = analyzeNumericBody(body, error);
+    if (!demands) { return failure(); }
+    return exportNumericBody(function, input, {body, std::move(demands), {}, {}, {}},
+                             std::move(arena), enclosing, error);
 }
 FailureOr<RegionalAnalysis> specializedExplicitRunRegional(func::FuncOp function, scf::ForOp outer,
     ArrayRef<Operation*> operations, const PhaseIndex& index, const SyncInput& input,

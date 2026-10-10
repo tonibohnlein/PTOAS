@@ -349,6 +349,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                         if (invariant) {
                             SequenceRegionResolver specialized;
                             specialized.specializedDemands = resolveOriginal.specializedDemands;
+                            specialized.specializedNumeric = resolveOriginal.specializedNumeric;
                             auto analyzed = analyzeSequenceRegionWithResolver(function, *input, *program, id,
                                 arena, indexOwner, requireEndpoints, std::move(specialized));
                             if (!analyzed.error.empty()) {
@@ -554,6 +555,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                         if (invariant) {
                             SequenceRegionResolver specialized;
                             specialized.specializedDemands = resolveOriginal.specializedDemands;
+                            specialized.specializedNumeric = resolveOriginal.specializedNumeric;
                             auto analyzed = analyzeSequenceRegionWithResolver(function, *input, *program, id,
                                 arena, indexOwner, requireEndpoints, std::move(specialized));
                             if (!analyzed.error.empty()) {
@@ -635,30 +637,41 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                 // genuine moving subregions. Bind geometry only after the complete
                 // periodic-map proof above; control receives independent interval
                 // facts and actual enumerated inner coordinates, never the phase IV.
-                auto finite = recognizeSpecializedNumericBody(outer, index, *input,
-                    [&](Value value) -> std::optional<int64_t> {
-                        auto bound = normalizer.atPhase(value, phase, period);
-                        if (!bound) { return std::nullopt; }
-                        auto literal = expressions.constantValue(*bound);
-                        return literal ? std::optional<int64_t>(APInt(64, *literal).getSExtValue()) : std::nullopt;
-                    }, [&](Value value) -> std::optional<bool> {
-                        auto bound = boundaryGuard(value, normalizer, interval.bindings, expressions);
-                        if (!bound) { return std::nullopt; }
-                        auto literal = expressions.constantValue(*bound);
-                        return literal ? std::optional<bool>(*literal != 0) : std::nullopt;
-                    }, {}, resolveOriginal.normalized ?
-                        resolveOriginal.normalized(static_cast<std::size_t>(&node - program->nodes.data())) : nullptr);
-                if (finite.result.state != RecognitionState::Applicable) {
-                    std::string reason = compactFailure + "; finite body expansion";
-                    for (const auto& issue : finite.result.diagnostics) {
-                        reason += " / " + recognitionName(issue.issue).str();
+                TemplateGeometryConstant geometry = [&](Value value) -> std::optional<int64_t> {
+                    auto bound = normalizer.atPhase(value, phase, period);
+                    if (!bound) { return std::nullopt; }
+                    auto literal = expressions.constantValue(*bound);
+                    return literal ? std::optional<int64_t>(APInt(64, *literal).getSExtValue()) : std::nullopt;
+                };
+                TemplateControlConstant control = [&](Value value) -> std::optional<bool> {
+                    auto bound = boundaryGuard(value, normalizer, interval.bindings, expressions);
+                    if (!bound) { return std::nullopt; }
+                    auto literal = expressions.constantValue(*bound);
+                    return literal ? std::optional<bool>(*literal != 0) : std::nullopt;
+                };
+                std::string diagnostic;
+                std::shared_ptr<const NumericBodyMathematics> mathematics;
+                if (resolveOriginal.specializedNumeric) {
+                    auto normalized = resolveOriginal.normalized ? resolveOriginal.normalized(
+                        static_cast<std::size_t>(&node - program->nodes.data())) : nullptr;
+                    mathematics = resolveOriginal.specializedNumeric(
+                        outer, geometry, control, std::move(normalized), diagnostic);
+                } else {
+                    auto finite = recognizeSpecializedNumericBody(outer, index, *input, geometry, control, {},
+                        resolveOriginal.normalized ? resolveOriginal.normalized(
+                            static_cast<std::size_t>(&node - program->nodes.data())) : nullptr);
+                    auto demands = analyzeNumericBody(finite, diagnostic);
+                    if (demands) {
+                        mathematics = std::make_shared<const NumericBodyMathematics>(
+                            NumericBodyMathematics{std::move(finite), std::move(demands), {}, {}, {}});
                     }
-                    return unavailable(reason);
+                }
+                if (!mathematics) {
+                    return unavailable(compactFailure + "; finite body expansion: " + diagnostic);
                 }
                 SmallVector<scf::ForOp> enclosing(node.loops.begin(), node.loops.end());
                 enclosing.push_back(outer);
-                std::string diagnostic;
-                auto body = numericBodyRegionalResult(function, *input, finite, arena, enclosing, diagnostic);
+                auto body = exportNumericBody(function, *input, *mathematics, arena, enclosing, diagnostic);
                 if (failed(body)) { return unavailable(compactFailure + "; finite phase body: " + diagnostic); }
                 selected = std::move(*body);
             }

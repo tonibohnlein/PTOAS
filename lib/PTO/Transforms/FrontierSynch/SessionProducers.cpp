@@ -10,6 +10,7 @@
 #include "AnalysisSessionInternal.h"
 #include "FiniteExpansionPlan.h"
 #include "NumericTemplatePlan.h"
+#include "PTO/Transforms/FrontierSynch/NumericTemplateRegional.h"
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingAnalysis.h"
@@ -416,6 +417,62 @@ std::shared_ptr<const ArithmeticRegionalRelations> FrontierAnalysis::specialized
     variants.push_back(std::move(attempt));
     return result;
 }
+uint64_t FrontierAnalysis::specializedNumericConstructions() const
+{
+    return sessionState ? sessionState->specializedNumericBuilds : 0;
+}
+std::shared_ptr<const NumericBodyMathematics> FrontierAnalysis::specializedNumericDemands(scf::ForOp loop,
+    const TemplateGeometryConstant& geometry, const TemplateControlConstant& control, std::string& error,
+    NumericTemplateLimits limits, std::shared_ptr<const NormalizedControlDescription> normalized)
+{
+    const bool valid = initialized && storage && structuralIndex && program && loop &&
+        function->isProperAncestor(loop);
+    if (!valid) { error = "specialized numeric body belongs to a different invocation"; return {}; }
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    const auto node = llvm::find_if(program->nodes, [&](const auto& node) { return node.anchor == loop; });
+    if (node == program->nodes.end()) { error = "specialized numeric body requires an original loop"; return {}; }
+    if (!normalized) {
+        auto description = normalizedInput(*sessionState, function, *program,
+            static_cast<std::size_t>(node - program->nodes.begin()), *structuralIndex, *storage);
+        normalized = description->original ? description->original : description;
+    }
+    const bool sameContext = normalized->index == structuralIndex.get() && normalized->input == storage.get() &&
+        normalized->context.function == function && normalized->context.root == loop;
+    if (!sameContext) { error = "specialized numeric normalization belongs to a different context"; return {}; }
+    const auto geometryValue = [&](Value value) { return geometry ? geometry(value) : std::optional<int64_t>{}; };
+    const auto controlValue = [&](Value value) { return control ? control(value) : std::optional<bool>{}; };
+    const auto key = std::make_tuple(limits.visits, limits.payloads, limits.fragments, limits.depth);
+    auto& variants = sessionState->specializedNumeric[loop];
+    for (const auto& attempt : variants) {
+        if (attempt.limits != key || attempt.normalized != normalized) { continue; }
+        const bool sameGeometry = llvm::all_of(attempt.geometry, [&](const auto& entry) {
+            return geometryValue(entry.second.first) == entry.second.second;
+        });
+        const bool sameControl = llvm::all_of(attempt.control, [&](const auto& entry) {
+            return controlValue(entry.second.first) == entry.second.second;
+        });
+        if (sameGeometry && sameControl) { error = attempt.error; return attempt.mathematics; }
+    }
+    SpecializedNumericAttempt attempt; attempt.limits = key; attempt.normalized = normalized;
+    const auto observedGeometry = [&](Value value) {
+        auto answer = geometryValue(value);
+        attempt.geometry.emplace(value.getAsOpaquePointer(), std::make_pair(value, answer)); return answer;
+    };
+    const auto observedControl = [&](Value value) {
+        auto answer = controlValue(value);
+        attempt.control.emplace(value.getAsOpaquePointer(), std::make_pair(value, answer)); return answer;
+    };
+    ++sessionState->specializedNumericBuilds;
+    auto body = recognizeSpecializedNumericBody(loop, *structuralIndex, *storage,
+        observedGeometry, observedControl, limits, normalized);
+    auto demands = analyzeNumericBody(body, attempt.error);
+    if (demands) {
+        attempt.mathematics = std::make_shared<const NumericBodyMathematics>(
+            NumericBodyMathematics{std::move(body), std::move(demands), storage, structuralIndex, normalized});
+    }
+    error = attempt.error;
+    auto result = attempt.mathematics; variants.push_back(std::move(attempt)); return result;
+}
 uint64_t FrontierAnalysis::finiteArithmeticStorageProbes() const
 {
     if (!sessionState) { return 0; }
@@ -497,6 +554,11 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver(
     };
     resolver.finiteArithmetic = [this](std::size_t region, std::string& error) {
         return finiteArithmeticRegion(region, error);
+    };
+    resolver.specializedNumeric = [this](scf::ForOp loop, const TemplateGeometryConstant& geometry,
+        const TemplateControlConstant& control, std::shared_ptr<const NormalizedControlDescription> normalized,
+        std::string& error) {
+        return specializedNumericDemands(loop, geometry, control, error, {}, std::move(normalized));
     };
     resolver.specializedDemands = [this](ArithmeticRegionContext context,
         const ArithmeticEntryConstant& constants, std::string& error) {

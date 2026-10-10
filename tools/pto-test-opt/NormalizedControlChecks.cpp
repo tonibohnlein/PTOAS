@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Check shared normalized input across different mathematical adapters.
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/NumericTemplateRegional.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/NormalizedControl.h"
@@ -1042,5 +1043,140 @@ LogicalResult checkFiniteArithmeticSession(func::FuncOp function, pto::GMAliasPo
         return function.emitError("finite eligibility cache survived alias-context reset");
     }
     llvm::outs() << "finite-arithmetic-session: early-gate cached-producer cached-exports later-exact-retry\n";
+    return success();
+}
+
+LogicalResult checkSpecializedNumericSession(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    using namespace pto::frontiersynch;
+    FrontierAnalysis session(function);
+    if (failed(session.initialize(policy))) { return failure(); }
+    scf::ForOp outer;
+    function.walk([&](scf::ForOp loop) { if (loop->getParentOp() == function) { outer = loop; } });
+    const auto geometry = [&](std::optional<int64_t> offset) -> TemplateGeometryConstant {
+        return [&, offset](Value value) { return value == function.getArgument(0) ? offset : std::nullopt; };
+    };
+    const auto control = [&](std::optional<bool> choose) -> TemplateControlConstant {
+        return [&, choose](Value value) { return value == function.getArgument(1) ? choose : std::nullopt; };
+    };
+    std::string error;
+    if (function->hasAttr("test.specialized_numeric_outer_scope")) {
+        function.walk([&](scf::ForOp loop) { if (loop->getParentOp() != function) { outer = loop; } });
+        auto first = session.specializedNumericDemands(outer, geometry(0), control(true), error);
+        if (!first) { return function.emitError("single-body original mathematics unavailable: " + error); }
+        auto whole = normalizeSmallCountControl({function, function}, *first->indexOwner, *first->inputOwner);
+        auto expanded = recognizeSpecializedNumericBody(outer, *first->indexOwner, *first->inputOwner,
+            geometry(0), control(true), {}, whole);
+        auto invalid = analyzeNumericBody(expanded, error);
+        const bool refusedWord = !invalid && !error.empty();
+        auto wrongBody = first->body;
+        for (auto& payload : wrongBody.payloads) { payload.coordinates.push_back({outer, 0}); }
+        auto invalidBody = analyzeNumericBody(wrongBody, error);
+        const bool refusedBody = !invalidBody && error.find("single-body") != std::string::npos;
+        auto incompatible = session.specializedNumericDemands(outer, geometry(0), control(true), error, {}, whole);
+        const bool refusedContext = !incompatible && session.specializedNumericConstructions() == 1 &&
+            first->body.payloads.size() == 2;
+        if (!refusedWord || !refusedBody || !refusedContext) {
+            return function.emitError("single-body scope refusal mismatch word=" + std::to_string(refusedWord) +
+                " body=" + std::to_string(refusedBody) + " context=" + std::to_string(refusedContext) +
+                " payloads=" + std::to_string(first->body.payloads.size()) +
+                " builds=" + std::to_string(session.specializedNumericConstructions()));
+        }
+        llvm::outs() << "specialized-numeric-scope: expanded-enclosing-visits-refused\n";
+        return success();
+    }
+    auto missing = session.specializedNumericDemands(outer, geometry({}), control(true), error);
+    auto missingRetry = session.specializedNumericDemands(outer, geometry({}), control(true), error);
+    const bool failedOnce = !missing && !missingRetry && !error.empty() &&
+        session.specializedNumericConstructions() == 1;
+    if (!failedOnce) { return function.emitError("specialized numeric failed binding was not cached"); }
+    auto first = session.specializedNumericDemands(outer, geometry(0), control(true), error);
+    auto retry = session.specializedNumericDemands(outer, geometry(0), control(true), error);
+    const bool reused = first && retry == first && session.specializedNumericConstructions() == 2 &&
+        first->body.payloads.size() == 4 && first->demands->phases.size() == 4;
+    if (!reused) {
+        return function.emitError("specialized numeric word/reduction mismatch: " + error + " builds=" +
+            std::to_string(session.specializedNumericConstructions()) + " payloads=" +
+            std::to_string(first ? first->body.payloads.size() : 0) + " phases=" +
+            std::to_string(first ? first->demands->phases.size() : 0));
+    }
+    const bool coordinates = first->body.payloads[0].coordinates.back().induction == 1 &&
+        first->body.payloads[2].coordinates.back().induction == 3;
+    if (!coordinates) { return function.emitError("specialized numeric lost non-unit inner coordinates"); }
+    auto changed = session.specializedNumericDemands(outer, geometry(1), control(true), error);
+    auto absent = session.specializedNumericDemands(outer, geometry(0), control(false), error);
+    auto unknown = session.specializedNumericDemands(outer, geometry(0), control({}), error);
+    const bool isolated = changed && changed != first && absent && absent != first &&
+        absent->body.payloads.empty() && absent->demands->occurrences.empty() && !unknown &&
+        session.specializedNumericConstructions() == 5;
+    if (!isolated) { return function.emitError("specialized numeric bindings reused incompatible mathematics"); }
+    const bool shifted = first->body.atoms.size() == 1 && changed->body.atoms.size() == 1 &&
+        first->body.atoms[0].begin == 0 && first->body.atoms[0].end == 4 &&
+        changed->body.atoms[0].begin == 4 && changed->body.atoms[0].end == 8;
+    if (!shifted) { return function.emitError("specialized geometry did not shift the source scalar byte range"); }
+    auto arena = std::make_shared<RegionExpressions>();
+    func::FuncOp foreign;
+    for (auto candidate : function->getParentOfType<ModuleOp>().getOps<func::FuncOp>()) {
+        if (candidate != function) { foreign = candidate; break; }
+    }
+    auto wrongFunction = exportNumericBody(foreign, *first->inputOwner, *first, arena, {outer}, error);
+    auto wrongFrames = exportNumericBody(function, *first->inputOwner, *first, arena, {}, error);
+    const bool rejectedContexts = failed(wrongFunction) && failed(wrongFrames) && !arena->size();
+    if (!rejectedContexts) { return function.emitError("specialized numeric accepted foreign original cuts"); }
+    {
+        RegionExpressions::Transaction transaction(*arena);
+        arena->div(arena->constant(1), arena->constant(0));
+        const auto before = arena->size();
+        auto poisoned = exportNumericBody(function, *first->inputOwner, *first, arena, {outer}, error);
+        const bool rejected = failed(poisoned) && arena->size() == before;
+        if (!rejected) { return function.emitError("specialized numeric exported a poisoned arena"); }
+    }
+    {
+        RegionExpressions::Transaction transaction(*arena);
+        auto exported = exportNumericBody(function, *first->inputOwner, *first, arena, {outer}, error);
+        if (failed(exported)) { return function.emitError("specialized numeric export failed: " + error); }
+        auto zero = arena->constant(0);
+        for (uint32_t a = 0; a < first->body.payloads.size(); ++a) {
+            for (uint32_t b = 0; b < first->body.payloads.size(); ++b) {
+                for (auto ak : {PeriodicEventKind::Start, PeriodicEventKind::Completion}) {
+                    for (auto bk : {PeriodicEventKind::Start, PeriodicEventKind::Completion}) {
+                        auto expected = explicitEventPrecedes(*first->demands, {a, ak}, {b, bk});
+                        auto actual = exported->reachability({a, zero, ak}, {b, zero, bk});
+                        const bool equal = expected && actual && arena->constantValue(*actual) == (*expected ? 1 : 0);
+                        if (!equal) { return function.emitError("specialized numeric exported a different closure"); }
+                    }
+                }
+            }
+        }
+    }
+    const bool rolledBack = arena->size() == 0;
+    if (!rolledBack) { return function.emitError("specialized numeric export survived rollback"); }
+    NumericTemplateLimits small; small.visits = 1;
+    auto limited = session.specializedNumericDemands(outer, geometry(0), control(true), error, small);
+    auto limitedRetry = session.specializedNumericDemands(outer, geometry(0), control(true), error, small);
+    const bool limitIsolated = !limited && !limitedRetry && session.specializedNumericConstructions() == 6 &&
+        session.specializedNumericDemands(outer, geometry(0), control(true), error) == first;
+    if (!limitIsolated) { return function.emitError("specialized numeric limits changed cached eligibility"); }
+    auto expanded = normalizeSmallCountControl({function, outer}, *first->indexOwner, *first->inputOwner);
+    auto alternative = session.specializedNumericDemands(outer, geometry(0), control(true), error, {}, expanded);
+    const bool representationIsolated = expanded != first->normalized && alternative && alternative != first &&
+        alternative->body.payloads.size() == 4 &&
+        alternative->body.payloads[0].coordinates.back().induction == 1 &&
+        alternative->body.payloads[2].coordinates.back().induction == 3 &&
+        session.specializedNumericConstructions() == 7 &&
+        session.specializedNumericDemands(outer, geometry(0), control(true), error) == first;
+    if (!representationIsolated) {
+        return function.emitError("specialized numeric normalization identity was ignored");
+    }
+    const auto other = policy == pto::GMAliasPolicy::MayAlias ?
+        pto::GMAliasPolicy::MayNotAlias : pto::GMAliasPolicy::MayAlias;
+    const bool reset = succeeded(session.initialize(other)) && !session.specializedNumericConstructions();
+    if (!reset) { return function.emitError("specialized numeric cache survived alias reset"); }
+    auto exported = exportNumericBody(function, *first->inputOwner, *first, arena, {outer}, error);
+    if (failed(exported)) { return function.emitError("retained numeric mathematics lost input ownership"); }
+    auto renewed = session.specializedNumericDemands(outer, geometry(0), control(true), error);
+    const bool renewedOnce = renewed && renewed != first && session.specializedNumericConstructions() == 1;
+    if (!renewedOnce) { return function.emitError("specialized numeric reset reused old-context mathematics"); }
+    llvm::outs() << "specialized-numeric-session: observed-bindings cached-reduction rollback-safe\n";
     return success();
 }
