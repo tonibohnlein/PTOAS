@@ -247,6 +247,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Arithmetic/DifferenceBoundRelations.cpp
   FrontierSynch/Arithmetic/GeneralArithmeticAllocation.cpp
   FrontierSynch/Arithmetic/GeneralArithmeticSelectors.cpp
+  FrontierSynch/Arithmetic/IntegerImplicationCache.cpp
   FrontierSynch/Arithmetic/IntegerRelations.cpp
 
   # Shared composition, normalization, emission and allocation
@@ -509,6 +510,7 @@ add_mlir_dialect_library(PTOTransforms
   PTOAnalysis
   PTOIR
   MLIRAnalysis
+  MLIRPresburger
   MLIRIR
   MLIRLLVMDialect
   MLIRPass

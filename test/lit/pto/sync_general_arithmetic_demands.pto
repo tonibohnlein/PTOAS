@@ -6,5 +6,5 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --general-arithmetic-demand-checks | FileCheck %s
-// CHECK: general arithmetic demand physical-conflict oracle passed 48 parameter valuations
+// CHECK: general arithmetic demand physical-conflict oracle passed 64 parameter valuations
 module {}

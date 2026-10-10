@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent finite physical-conflict DAGs for the symbolic demand backend.
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticSelectors.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/IntegerImplicationCache.h"
 #include "mlir/IR/AffineExpr.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
@@ -16,6 +17,59 @@
 namespace fs = mlir::pto::frontiersynch;
 using namespace mlir;
 namespace {
+bool checkImplicationCertificates()
+{
+    using B = fs::BoundInteger;
+    std::vector<fs::IntegerSystem> systems;
+    auto add = [&](unsigned dimensions, std::vector<fs::IntegerConstraint> rows,
+                   std::vector<fs::IntegerCongruence> congruences = {}) {
+        auto system = fs::IntegerSystem::create(dimensions, rows, congruences);
+        if (failed(system)) { return std::size_t(-1); }
+        systems.push_back(std::move(*system)); return systems.size() - 1;
+    };
+    // 2*x+y<=1, x>=0, y>=0 has rational max x=1/2,
+    // but integer max x=0. The target's coefficient row is absent.
+    auto fractional = add(2, {{{B(2), B(1)}, B(1)}, {{B(-1), B(0)}, B(0)}, {{B(0), B(-1)}, B(0)}});
+    auto zero = add(2, {{{B(1), B(0)}, B(0)}});
+    auto negative = add(2, {{{B(1), B(0)}, B(-1)}});
+    auto unbounded = add(2, {{{B(-1), B(0)}, B(0)}});
+    auto even = add(1, {{{B(-1)}, B(0)}, {{B(1)}, B(1)}}, {{{B(1)}, B(0), B(2)}});
+    auto scalarZero = add(1, {{{B(1)}, B(0)}});
+    auto odd = add(1, {}, {{{B(1)}, B(1), B(2)}});
+    auto empty = add(1, {{{B(0)}, B(-1)}});
+    B wide(1); for (unsigned i = 0; i < 70; ++i) { wide *= B(2); }
+    auto wideSource = add(1, {{{B(-1)}, -wide}, {{B(1)}, wide + 1}});
+    auto wideTarget = add(1, {{{B(1)}, wide}});
+    fs::IntegerImplicationCache cache(systems);
+    const std::vector<std::tuple<std::size_t, std::size_t, bool>> cases{
+        {fractional, zero, true}, {fractional, negative, false}, {unbounded, zero, false},
+        {even, scalarZero, true}, {even, odd, false}, {empty, scalarZero, true},
+        {wideSource, wideTarget, false}};
+    for (auto [a, b, expected] : cases) {
+        if (cache.isSubsetOf(a, b) != expected || cache.isSubsetOf(a, b) != systems[a].isSubsetOf(systems[b])) {
+            llvm::errs() << "integer implication certificate differs\n"; return false;
+        }
+    }
+    // The cache owns numerical IDs, not pointers into vector storage. Grow
+    // the vector after real queries, then exercise both cached and new IDs.
+    const auto oldCapacity = systems.capacity();
+    std::size_t appended = 0;
+    while (systems.size() <= oldCapacity) {
+        appended = add(2, {{{B(1), B(0)}, B(1)}});
+        if (appended == std::size_t(-1)) { return false; }
+    }
+    if (systems.capacity() <= oldCapacity || !cache.isSubsetOf(fractional, zero) ||
+        !cache.isSubsetOf(fractional, appended) || cache.isSubsetOf(appended, zero) ||
+        cache.isSubsetOf(appended, zero) != systems[appended].isSubsetOf(systems[zero])) {
+        llvm::errs() << "integer implication cache failed after storage growth\n"; return false;
+    }
+    if (!cache.cost().hits || !cache.cost().rationalProofs || !cache.cost().witnessRefutations ||
+        !cache.cost().exactChecks) {
+        llvm::errs() << "integer implication certificate path was not exercised\n"; return false;
+    }
+    llvm::outs() << "integer implication certificates: rational, integer witness, exact fallback, wide bounds\n";
+    return true;
+}
 struct Occurrence {
     unsigned site;
     int64_t iteration;
@@ -24,6 +78,7 @@ struct Occurrence {
 };
 std::vector<uint32_t> pipes(unsigned scene)
 {
+    if (scene == 3) { return {0, 1, 2, 0}; }
     return scene == 0 ? std::vector<uint32_t>{0, 1, 2} :
            scene == 1 ? std::vector<uint32_t>{0, 1} : std::vector<uint32_t>{0, 0, 0};
 }
@@ -39,6 +94,14 @@ std::vector<Occurrence> execution(unsigned scene, int64_t trips, int64_t guard)
         } else if (scene == 1) {
             result.push_back({0, i, 0, {}, {i % 2}});
             if (guard) { result.push_back({1, i, 1, {i % 2}, {}}); }
+        } else if (scene == 3) {
+            // Completion(0) -> Start(3) needs three handoffs on three pipes;
+            // same-pipe native start/start and completion/completion edges
+            // cannot bypass this final-round completion prerequisite.
+            result.push_back({0, i, 0, {}, {0}});
+            result.push_back({1, i, 1, {0}, {1}});
+            result.push_back({2, i, 2, {1}, {2}});
+            result.push_back({3, i, 0, {2}, {}});
         } else {
             result.push_back({0, i, 0, {}, {0}});
             result.push_back({1, i, 0, {}, {1}});
@@ -116,6 +179,7 @@ public:
         for (int64_t n = 0; n <= 3; ++n) {
             for (int64_t g = 0; g <= 1; ++g) { addExecution(scene, n, g); }
         }
+        if (scene == 3 && period == 1) { broadenFirstVisit(); }
         program.recognition = fs::recognizeArithmetic(program.primitives, {3, 4, period, 1});
     }
     fs::ArithmeticProgram program;
@@ -162,6 +226,29 @@ private:
         }
         relation.pieces.push_back({IntegerSet::get(relation.dimensions, 2, rows,
                                                   SmallVector<bool>(rows.size(), true)), residues});
+    }
+    void broadenFirstVisit()
+    {
+        // Every first-visit tuple for trips=1 also occurs at trips=2/3.
+        // Append its exact interval hull after the individual points, forcing
+        // subsumption to replace an earlier numerical piece without changing
+        // the concrete relation checked by the independent graph oracle.
+        for (auto& relation : program.primitives.relations) {
+            const auto original = relation.pieces.size();
+            for (std::size_t i = 0; i < original; ++i) {
+                const auto& piece = relation.pieces[i];
+                auto constraints = piece.system.getConstraints();
+                const auto nRow = relation.dimensions;
+                auto n = getAffineSymbolExpr(0, &context);
+                if (constraints[nRow] != n - 1) { continue; }
+                SmallVector<AffineExpr> rows(constraints.begin(), constraints.end());
+                SmallVector<bool> equalities(rows.size(), true);
+                equalities[nRow] = false;
+                rows.push_back(3 - n); equalities.push_back(false);
+                relation.pieces.push_back({IntegerSet::get(relation.dimensions, 2, rows, equalities),
+                    piece.residues});
+            }
+        }
     }
     void addExecution(unsigned scene, int64_t n, int64_t g)
     {
@@ -298,7 +385,7 @@ int runChecks(Analyze analyze, llvm::StringRef name)
     MLIRContext context;
     context.disableMultithreading();
     unsigned checked = 0;
-    for (unsigned scene = 0; scene < 3; ++scene) {
+    for (unsigned scene = 0; scene < 4; ++scene) {
         for (uint64_t period : {1, 2}) {
             Bundle bundle(context, scene, period);
             auto analysis = analyze(bundle.program);
@@ -333,5 +420,6 @@ int runArithmeticDemandChecks()
 }
 int runGeneralArithmeticDemandChecks()
 {
+    if (!checkImplicationCertificates()) { return 1; }
     return runChecks(fs::analyzeGeneralArithmeticDemands, "general arithmetic demand");
 }

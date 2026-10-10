@@ -288,15 +288,15 @@ LogicalResult FrontierAnalysis::recognizeArithmetic() {
         return success();
     }
     const auto& index = *structuralIndex;
-    // Record every configured arithmetic contract before selecting a backend.
-    // A later profile never erases membership established by an earlier one.
+    // Profiles are alternative representations of the same arithmetic family.
+    // Later profiles remain unevaluated once an exact form is available.
     std::optional<ArithmeticProgram> selected;
     for (const auto& limits : wholeArithmeticProfiles) {
         auto candidate = recognizeArithmeticProgram(function, index, *storage, storage->accesses(), limits);
         recordArithmeticContractAttempt(*program, limits, candidate);
-        const bool alreadyAccepted = selected && selected->extraction.state == RecognitionState::Applicable &&
-                                     selected->recognition.state == RecognitionState::Applicable;
-        if (!alreadyAccepted) { selected = std::move(candidate); }
+        selected = std::move(candidate);
+        if (selected->extraction.state == RecognitionState::Applicable &&
+            selected->recognition.state == RecognitionState::Applicable) { break; }
     }
     program->arithmetic = std::move(selected);
     refreshProgramContractAudit(*program);
@@ -332,9 +332,9 @@ const ArithmeticProgram* FrontierAnalysis::recognizeArithmeticRegion(std::size_t
         auto candidate = std::make_shared<ArithmeticProgram>(recognizeArithmeticProgram(
             {function, node.anchor}, *structuralIndex, *storage, storage->accesses(), limits));
         recordArithmeticContractAttempt(*program, limits, *candidate, region);
-        const bool accepted = selected && selected->extraction.state == RecognitionState::Applicable &&
-            selected->recognition.state == RecognitionState::Applicable;
-        if (!accepted) { selected = std::move(candidate); }
+        selected = std::move(candidate);
+        if (selected->extraction.state == RecognitionState::Applicable &&
+            selected->recognition.state == RecognitionState::Applicable) { break; }
     }
     auto stored = arithmeticForms.emplace(region, std::move(selected));
     refreshProgramContractAudit(*program);

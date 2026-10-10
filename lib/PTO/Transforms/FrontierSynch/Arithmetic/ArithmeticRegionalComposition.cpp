@@ -563,7 +563,9 @@ FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
     // below describes the current result, not a sum of intermediate snapshots.
     for (auto member : {&ArithmeticAnalysisCost::primitivePieces, &ArithmeticAnalysisCost::pieceJoins,
         &ArithmeticAnalysisCost::projections, &ArithmeticAnalysisCost::relationCompositions,
-        &ArithmeticAnalysisCost::differences}) {
+        &ArithmeticAnalysisCost::differences, &ArithmeticAnalysisCost::implicationCacheHits,
+        &ArithmeticAnalysisCost::rationalImplications, &ArithmeticAnalysisCost::integerCounterexamples,
+        &ArithmeticAnalysisCost::exactImplicationChecks}) {
         out.analysis.cost.*member = left.analysis.cost.*member;
         accumulateCost(out.analysis.cost.*member, right.analysis.cost.*member);
     }

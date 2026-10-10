@@ -41,6 +41,8 @@ struct ArithmeticAnalysisCost {
     uint64_t relationCompositions = 0;
     uint64_t differences = 0;
     uint64_t outputPieces = 0;
+    uint64_t implicationCacheHits = 0, rationalImplications = 0;
+    uint64_t integerCounterexamples = 0, exactImplicationChecks = 0;
 };
 template<class System>
 struct TypedArithmeticDemandAnalysis {
