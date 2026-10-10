@@ -143,6 +143,13 @@ std::optional<RegionExpressions::Id> PhaseNormalization::atPhase(Value value, ui
         if (!left || !right) { return std::nullopt; }
         if (isa<arith::AddIOp>(op)) { return arena.add(*left, *right); }
         if (isa<arith::SubIOp>(op)) { return arena.sub(*left, *right); }
+        if (isa<arith::MinSIOp, arith::MaxSIOp>(op)) {
+            const auto bits = DataLayout::closest(outer).getTypeSizeInBits(value.getType());
+            const bool signed64 = !bits.isScalable() && bits.getFixedValue() == 64;
+            if (!signed64) { return std::nullopt; }
+            auto less = arena.slt(*left, *right);
+            return isa<arith::MinSIOp>(op) ? arena.select(less, *left, *right) : arena.select(less, *right, *left);
+        }
         if (!isa<arith::MulIOp>(op)) { return std::nullopt; }
         auto factor = arena.constantValue(*right);
         if (!factor) { factor = arena.constantValue(*left); std::swap(left, right); }

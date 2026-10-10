@@ -186,11 +186,7 @@ std::optional<Pieces> condition(ProgramBuilder& builder, Value value, bool truth
 // Bound alternatives remain explicit relation pieces. Their Cartesian
 // products are charged by the emitted primitive-piece count; a representation
 // cap is reported as a producer limit, never as a theorem-class violation.
-struct BoundPiece {
-    AffineExpr value;
-    Rows rows;
-};
-using BoundPieces = SmallVector<BoundPiece>;
+using BoundPieces = SmallVector<ArithmeticValuePiece>;
 std::optional<BoundPieces> boundPieces(ProgramBuilder& builder, Value input, const ArithmeticSite& site,
                                      unsigned offset, unsigned depth, GuardCache& cache, bool& exceeded)
 {
@@ -289,6 +285,58 @@ std::optional<Pieces> piecewiseDomain(ProgramBuilder& builder, const ArithmeticS
     return result;
 }
 } // namespace
+
+std::optional<SmallVector<ArithmeticValuePiece>> ProgramBuilder::piecewiseMap(
+    AffineExpr origin, ArrayRef<Value> symbols, const ArithmeticSite& site, unsigned offset)
+{
+    struct Choice { SmallVector<AffineExpr> values; Rows rows; };
+    SmallVector<Value> unique;
+    DenseMap<Value, unsigned> identifiers;
+    SmallVector<AffineExpr> aliases;
+    for (Value symbol : symbols) {
+        auto [position, inserted] = identifiers.try_emplace(symbol, unique.size());
+        if (inserted) { unique.push_back(symbol); }
+        aliases.push_back(getAffineSymbolExpr(position->second, context));
+    }
+    origin = mlir::pto::detail::substitute(origin, {}, aliases);
+    if (!origin) { return std::nullopt; }
+    SmallVector<Choice> choices{{{}, {}}};
+    GuardCache cache;
+    bool exceeded = false;
+    for (Value symbol : unique) {
+        auto alternatives = boundPieces(*this, symbol, site, offset, 0, cache, exceeded);
+        if (!alternatives) {
+            if (exceeded) { output.extraction.note(RecognitionIssue::TemplateExpansionLimit, site.phase->elementOp); }
+            return std::nullopt;
+        }
+        const bool tooMany = !alternatives->empty() && choices.size() > maxGuardPieces / alternatives->size();
+        if (tooMany) {
+            output.extraction.note(RecognitionIssue::TemplateExpansionLimit, site.phase->elementOp);
+            return std::nullopt;
+        }
+        SmallVector<Choice> next;
+        for (const auto& previous : choices) {
+            for (const auto& alternative : *alternatives) {
+                auto predicates = combine(Pieces{previous.rows}, Pieces{alternative.rows}, true, &exceeded);
+                if (!predicates) {
+                    output.extraction.note(RecognitionIssue::TemplateExpansionLimit, site.phase->elementOp);
+                    return std::nullopt;
+                }
+                auto values = previous.values;
+                values.push_back(alternative.value);
+                for (auto& rows : *predicates) { next.push_back({values, std::move(rows)}); }
+            }
+        }
+        choices = std::move(next);
+    }
+    SmallVector<ArithmeticValuePiece> result;
+    for (auto& choice : choices) {
+        auto value = mlir::pto::detail::substitute(origin, {}, choice.values);
+        if (!value) { return std::nullopt; }
+        result.push_back({value, std::move(choice.rows)});
+    }
+    return result;
+}
 
 bool ProgramBuilder::prepareBound(Value input, const ArithmeticSite& site)
 {

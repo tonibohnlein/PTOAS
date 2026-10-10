@@ -1,0 +1,104 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_arithmetic_piecewise_access.py pto-sync-input-test %s
+// RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
+// CHECK-COUNT-5: piecewise-access: cached exact-or-unresolved isolated-context
+// Each origin uses the same selected SSA value in both tensor dimensions.
+// The byte relation must preserve their correlation, signed ties and guards.
+!tile = !pto.tile_buf<vec, 1x8xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func @maximum(%pointer: !pto.ptr<f32, gm>, %n: index) attributes {test.piecewise_access_cache} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %lower = arith.constant -2 : index
+    %upper = arith.constant 4 : index
+    %eight = arith.constant 8 : index
+    %size = arith.constant 32 : index
+    %address = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %address : !tile
+    %tensor = pto.make_tensor_view %pointer, shape = [%size, %size], strides = [%one, %one] : !pto.tensor_view<?x?xf32>
+    scf.for %i = %lower to %upper step %one {
+      %pos = arith.maxsi %i, %zero : index
+      %view = pto.partition_view %tensor, offsets = [%pos, %pos], sizes = [%one, %eight] : !pto.tensor_view<?x?xf32>
+      pto.tstore ins(%tile : !tile) outs(%view : !pto.partition_tensor_view<1x8xf32>)
+    }
+    return
+  }
+  func.func @minimum(%pointer: !pto.ptr<f32, gm>, %n: index) attributes {test.piecewise_access_cache} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %lower = arith.constant -2 : index
+    %upper = arith.constant 4 : index
+    %eight = arith.constant 8 : index
+    %size = arith.constant 32 : index
+    %address = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %address : !tile
+    %tensor = pto.make_tensor_view %pointer, shape = [%size, %size], strides = [%one, %one] : !pto.tensor_view<?x?xf32>
+    scf.for %i = %lower to %upper step %one {
+      %pos = arith.minsi %i, %zero : index
+      %view = pto.partition_view %tensor, offsets = [%pos, %pos], sizes = [%one, %eight] : !pto.tensor_view<?x?xf32>
+      pto.tstore ins(%tile : !tile) outs(%view : !pto.partition_tensor_view<1x8xf32>)
+    }
+    return
+  }
+  func.func @selected(%pointer: !pto.ptr<f32, gm>, %n: index) attributes {test.piecewise_access_cache} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %lower = arith.constant -2 : index
+    %upper = arith.constant 4 : index
+    %eight = arith.constant 8 : index
+    %size = arith.constant 32 : index
+    %address = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %address : !tile
+    %tensor = pto.make_tensor_view %pointer, shape = [%size, %size], strides = [%one, %one] : !pto.tensor_view<?x?xf32>
+    scf.for %i = %lower to %upper step %one {
+      %test = arith.cmpi slt, %i, %zero : index
+      %pos = arith.select %test, %i, %zero : index
+      %view = pto.partition_view %tensor, offsets = [%pos, %pos], sizes = [%one, %eight] : !pto.tensor_view<?x?xf32>
+      pto.tstore ins(%tile : !tile) outs(%view : !pto.partition_tensor_view<1x8xf32>)
+    }
+    return
+  }
+  func.func @nested(%pointer: !pto.ptr<f32, gm>, %n: index) attributes {test.piecewise_access_cache} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %lower = arith.constant -2 : index
+    %upper = arith.constant 4 : index
+    %eight = arith.constant 8 : index
+    %size = arith.constant 32 : index
+    %address = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %address : !tile
+    %tensor = pto.make_tensor_view %pointer, shape = [%size, %size], strides = [%one, %one] : !pto.tensor_view<?x?xf32>
+    scf.for %i = %lower to %upper step %one {
+      %low = arith.minsi %i, %one : index
+      %pos = arith.maxsi %low, %zero : index
+      %view = pto.partition_view %tensor, offsets = [%pos, %pos], sizes = [%one, %eight] : !pto.tensor_view<?x?xf32>
+      pto.tstore ins(%tile : !tile) outs(%view : !pto.partition_tensor_view<1x8xf32>)
+    }
+    return
+  }
+  func.func @unsupported(%pointer: !pto.ptr<f32, gm>, %n: index) attributes {test.piecewise_access_cache} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %lower = arith.constant -2 : index
+    %upper = arith.constant 4 : index
+    %eight = arith.constant 8 : index
+    %size = arith.constant 32 : index
+    %address = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %address : !tile
+    %tensor = pto.make_tensor_view %pointer, shape = [%size, %size], strides = [%one, %one] : !pto.tensor_view<?x?xf32>
+    scf.for %i = %lower to %upper step %one {
+      %test = arith.cmpi slt, %i, %zero : index
+      %bad = arith.divsi %i, %n : index
+      %pos = arith.select %test, %i, %bad : index
+      %view = pto.partition_view %tensor, offsets = [%pos, %pos], sizes = [%one, %eight] : !pto.tensor_view<?x?xf32>
+      pto.tstore ins(%tile : !tile) outs(%view : !pto.partition_tensor_view<1x8xf32>)
+    }
+    return
+  }
+}
