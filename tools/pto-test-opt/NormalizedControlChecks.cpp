@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/NumericTemplateRegional.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/GuardedRotatingRegional.h"
+#include "PTO/Transforms/FrontierSynch/GuardedPeriodicInsertion.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/NormalizedControl.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/NumericTemplatePlan.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/FiniteExpansionPlan.h"
@@ -1178,5 +1179,208 @@ LogicalResult checkSpecializedNumericSession(func::FuncOp function, pto::GMAlias
     const bool renewedOnce = renewed && renewed != first && session.specializedNumericConstructions() == 1;
     if (!renewedOnce) { return function.emitError("specialized numeric reset reused old-context mathematics"); }
     llvm::outs() << "specialized-numeric-session: observed-bindings cached-reduction rollback-safe\n";
+    return success();
+}
+
+namespace {
+LogicalResult checkGuardedSliceSession(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    using namespace pto::frontiersynch;
+    FrontierAnalysis session(function);
+    if (failed(session.initialize(policy))) { return failure(); }
+    scf::ForOp loop;
+    Value condition;
+    function.walk([&](scf::ForOp value) { loop = value; });
+    loop.walk([&](scf::IfOp branch) {
+        const bool directChild = branch->getParentOp() == loop;
+        if (directChild) { condition = branch.getCondition(); }
+    });
+    GuardedRotatingSpecialization request; request.loop = loop;
+    std::string error;
+    auto missing = session.specializedGuardedDemands(request, error);
+    auto retry = session.specializedGuardedDemands(request, error);
+    const bool failedFormCached = missing && retry == missing && !error.empty() &&
+        !session.specializedGuardedConstructions();
+    if (!failedFormCached) { return function.emitError("unavailable guarded form was not retained"); }
+    request.sliced = true; request.guards.push_back(condition);
+    request.expressions = std::make_shared<RegionExpressions>();
+    request.bindings[condition] = request.expressions->boolean(true);
+    auto selected = session.specializedGuardedDemands(request, error);
+    const bool specialized = selected && error.empty() && selected->demands.phases.size() == 3 &&
+        session.specializedGuardedConstructions() == 1;
+    if (!specialized) {
+        if (selected) {
+            for (const auto& diagnostic : selected->recognition.result.diagnostics) {
+                error += " / " + recognitionName(diagnostic.issue).str();
+            }
+        }
+        return function.emitError("constant-specialized guarded slice unavailable: " + error);
+    }
+    request.bindings[condition] = request.expressions->boolean(false);
+    request.choices[condition] = false;
+    auto empty = session.specializedGuardedDemands(request, error);
+    const bool selectedEmpty = empty && error.empty() && empty->demands.phases.empty() &&
+        session.specializedGuardedConstructions() == 2;
+    if (!selectedEmpty) { return function.emitError("constant-specialized empty slice unavailable: " + error); }
+    llvm::outs() << "specialized-guarded-slice: original-form-unavailable constant-specialization exact-empty-slice\n";
+    return success();
+}
+} // namespace
+
+LogicalResult checkSpecializedGuardedSession(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    if (function->hasAttr("test.specialized_guarded_slice")) {
+        return checkGuardedSliceSession(function, policy);
+    }
+    using namespace pto::frontiersynch;
+    FrontierAnalysis session(function);
+    if (failed(session.initialize(policy))) { return failure(); }
+    std::string before;
+    llvm::raw_string_ostream rendered(before); function.print(rendered); rendered.flush();
+    scf::ForOp loop;
+    function.walk([&](scf::ForOp candidate) { loop = candidate; });
+    auto g = function.getArgument(0), h = function.getArgument(1);
+    std::string error;
+    GuardedRotatingSpecialization request; request.loop = loop;
+    auto generic = session.specializedGuardedDemands(request, error);
+    const bool genericReady = generic && error.empty() && generic->demands.phases.size() == 3;
+    if (!genericReady) { return function.emitError("guarded generic mathematics unavailable: " + error); }
+    auto a = std::make_shared<RegionExpressions>(), b = std::make_shared<RegionExpressions>();
+    const auto aRoot = a->boolean(true), bRoot = b->boolean(false);
+    if (aRoot != bRoot) { return function.emitError("test requires equal IDs in unrelated arenas"); }
+    request.bindings[g] = aRoot; request.expressions = a;
+    auto yes = session.specializedGuardedDemands(request, error);
+    request.bindings[g] = bRoot; request.expressions = b;
+    auto no = session.specializedGuardedDemands(request, error);
+    const bool isolated = yes && no && yes != no && error.empty() &&
+        session.specializedGuardedConstructions() == 3 &&
+        yes->demands.expressions->constantValue(yes->demands.payloads.front().presence) != 0 &&
+        llvm::all_of(no->demands.payloads, [&](const auto& payload) {
+            return no->demands.expressions->constantValue(payload.presence) == 0;
+        });
+    if (!isolated) { return function.emitError("guarded source arena IDs contaminated specialization"); }
+    b->constant(123); request.bindings[g] = b->boolean(true);
+    auto same = session.specializedGuardedDemands(request, error);
+    if (same != yes) { return function.emitError("equal guarded circuits did not reuse mathematics"); }
+    request.bindings[g] = b->input(h); request.bindings[h] = b->lnot(b->input(h));
+    auto correlated = session.specializedGuardedDemands(request, error);
+    if (!correlated || !error.empty()) { return function.emitError("correlated guards unavailable"); }
+    request.sliced = true; request.choices[g] = true;
+    const auto count = session.specializedGuardedConstructions();
+    auto contradictory = session.specializedGuardedDemands(request, error);
+    const bool refused = !contradictory && !error.empty() && session.specializedGuardedConstructions() == count;
+    if (!refused) { return function.emitError("unproved guarded choice was accepted"); }
+    request.choices[g] = false; request.bindings.clear();
+    auto empty = session.specializedGuardedDemands(request, error);
+    const bool emptyReady = empty && error.empty() && empty->demands.phases.empty();
+    if (!emptyReady) { return function.emitError("empty guarded slice unavailable: " + error); }
+    request = GuardedRotatingSpecialization(); request.loop = loop;
+    auto target = std::make_shared<RegionExpressions>(); target->constant(999);
+    const auto targetPrefix = target->size();
+    const auto constructions = session.specializedGuardedConstructions();
+    {
+        RegionExpressions::Transaction rollback(*target);
+        auto imported = session.instantiateGuardedDemands(request, target, error);
+        const bool importedReady = imported && error.empty() && imported->demands.expressions == target &&
+            imported->demands.periodic.expressions == target;
+        if (!importedReady) { return function.emitError("guarded import unavailable: " + error); }
+        auto equivalent = [&](const GuardedRotatingAnalysis& source, const GuardedRotatingAnalysis& copy) {
+            for (uint32_t first = 0; first < source.phases.size(); ++first) {
+                for (uint32_t second = 0; second < source.phases.size(); ++second) {
+                    for (auto start : {PeriodicEventKind::Start, PeriodicEventKind::Completion}) {
+                        for (auto end : {PeriodicEventKind::Start, PeriodicEventKind::Completion}) {
+                            auto expected = source.periodic.eventThreshold({first, start}, {second, end});
+                            auto actual = copy.periodic.eventThreshold({first, start}, {second, end});
+                            if (!expected || !actual) { return false; }
+                            for (bool gv : {false, true}) {
+                                for (bool hv : {false, true}) {
+                                    for (uint64_t offset : {0, 1, 2, 3}) {
+                                        auto evaluate = [&](auto& arena, auto id) {
+                                            RegionExpressions::Substitution values({
+                                                {arena.input(g), arena.boolean(gv)},
+                                                {arena.input(h), arena.boolean(hv)},
+                                                {arena.input(function.getArgument(3)), arena.constant(offset)}});
+                                            return arena.constantValue(arena.substitute(id, values));
+                                        };
+                                        auto left = evaluate(*source.expressions, expected->reachable);
+                                        auto right = evaluate(*copy.expressions, actual->reachable);
+                                        if (!left || right != left) { return false; }
+                                        const bool sameDistance = !*left ||
+                                            evaluate(*source.expressions, expected->distance) ==
+                                            evaluate(*copy.expressions, actual->distance);
+                                        if (!sameDistance) { return false; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return true;
+        };
+        if (!equivalent(generic->demands, imported->demands)) {
+            return function.emitError("guarded import changed all-event thresholds");
+        }
+    }
+    const bool rolledBack = target->size() == targetPrefix;
+    if (!rolledBack) { return function.emitError("guarded export transaction leaked nodes"); }
+    target->constant(321); // Reuse rejected IDs before importing again.
+    auto renewed = session.instantiateGuardedDemands(request, target, error);
+    const bool retryReady = renewed && error.empty();
+    if (!retryReady) { return function.emitError("guarded rollback retry failed"); }
+    const auto privateSize = generic->demands.expressions->size();
+    auto poisoned = std::make_shared<RegionExpressions>();
+    auto disposable = importGuardedRotating(generic->demands, poisoned);
+    if (failed(disposable)) { return function.emitError("guarded disposable import failed"); }
+    poisoned->add(poisoned->boolean(true), poisoned->constant(1));
+    auto& broken = *disposable;
+    GuardedPeriodicEndpointInput endpoint{broken.loop, broken.expressions, broken.phases,
+        broken.payloads, broken.generators, &broken.periodic};
+    auto failedPlan = prepareGuardedPeriodicEndpoints(function, endpoint, error);
+    const bool privateUnchanged = failed(failedPlan) && generic->demands.expressions->size() == privateSize &&
+        generic->demands.expressions->error().empty() &&
+        session.specializedGuardedDemands(request, error) == generic &&
+        session.specializedGuardedConstructions() == constructions;
+    if (!privateUnchanged) { return function.emitError("failed endpoint preparation contaminated guarded cache"); }
+    auto outcome = session.minimumDemands();
+    if (outcome.mathematical && outcome.mathematical->guardedRotatingDemands) {
+        const auto size = generic->demands.expressions->size();
+        auto plan = session.prepareLogical(outcome);
+        if (failed(plan)) { return function.emitError("guarded root preparation did not reach allocation check"); }
+        (void)session.attachAllocation(outcome, **plan);
+        const bool isolatedExports = generic->demands.expressions->size() == size &&
+            generic->demands.expressions->error().empty();
+        if (!isolatedExports) { return function.emitError("guarded root exports modified private mathematics"); }
+    } else { return function.emitError("guarded fixture did not select guarded root mathematics"); }
+    const auto work = session.guardedExpressionImportWork();
+    if (!work) { return function.emitError("guarded import work was not recorded"); }
+    const auto other = policy == pto::GMAliasPolicy::MayAlias ?
+        pto::GMAliasPolicy::MayNotAlias : pto::GMAliasPolicy::MayAlias;
+    const bool reset = succeeded(session.initialize(other)) && !session.specializedGuardedConstructions() &&
+        !session.guardedExpressionImportWork();
+    if (!reset) { return function.emitError("guarded cache survived context reset"); }
+    {
+        auto oldExport = importGuardedRotating(generic->demands, std::make_shared<RegionExpressions>());
+        if (failed(oldExport)) { return function.emitError("retained guarded circuit import failed"); }
+    }
+    auto fresh = session.specializedGuardedDemands(request, error);
+    const bool renewedContext = fresh && fresh != generic && error.empty() &&
+        session.specializedGuardedConstructions() == 1;
+    if (!renewedContext) { return function.emitError("guarded mathematical owner/reset failed"); }
+    std::weak_ptr<const pto::SyncInput> weakInput = generic->inputOwner;
+    std::weak_ptr<const PhaseIndex> weakIndex = generic->indexOwner;
+    auto retainedExport = guardedRotatingRegionalResult(function, *generic->inputOwner, renewed->demands, error);
+    if (failed(retainedExport)) { return function.emitError("retained guarded regional export failed: " + error); }
+    generic.reset(); yes.reset(); no.reset(); same.reset(); correlated.reset(); empty.reset();
+    renewed.reset(); target.reset(); outcome = AnalysisOutcome();
+    auto presence = regionalPresence(*retainedExport, {0, retainedExport->expressions->constant(0),
+        PeriodicEventKind::Start});
+    const bool independentlyOwned = !weakInput.expired() && !weakIndex.expired() && presence.has_value();
+    if (!independentlyOwned) {
+        return function.emitError("guarded export did not independently retain borrowed input");
+    }
+    std::string after; llvm::raw_string_ostream finalStream(after); function.print(finalStream); finalStream.flush();
+    if (before != after) { return function.emitError("guarded specialization mutated original IR"); }
+    llvm::outs() << "specialized-guarded-session: private-circuits context-isolated rollback-safe retained-owner\n";
     return success();
 }

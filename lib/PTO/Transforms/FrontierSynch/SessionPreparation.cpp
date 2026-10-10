@@ -104,7 +104,12 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
         return plan;
     }
     if (demands.guardedRotatingDemands) {
-        const auto& analysis = *demands.guardedRotatingDemands;
+        // Endpoint construction may add nodes or fail emission. Its arena is
+        // disposable and can never poison the private mathematical cache.
+        auto imported = importGuardedRotating(*demands.guardedRotatingDemands,
+            std::make_shared<RegionExpressions>(), &sessionState->guardedImportWork);
+        if (failed(imported)) { return failure(); }
+        const auto& analysis = *imported;
         GuardedPeriodicEndpointInput input{analysis.loop, analysis.expressions, analysis.phases,
             analysis.payloads, analysis.generators, &analysis.periodic};
         auto plan = prepareGuardedPeriodicEndpoints(function, input, error);

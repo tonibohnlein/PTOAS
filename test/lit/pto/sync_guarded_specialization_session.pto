@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
+// RUN: pto-sync-input-test --gm-alias=may-alias --certify-regions %s | FileCheck %s
+// CHECK: specialized-guarded-session: private-circuits context-isolated rollback-safe retained-owner
+// CHECK: specialized-guarded-slice: original-form-unavailable constant-specialization exact-empty-slice
+// CHECK: source-unchanged; synchronization-insertion-not-run
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+!right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<left, 16x16xf16, slayout=row_major>, count=2>
+module attributes {pto.target_arch = "a3"} {
+  func.func @guarded_ring(%g: i1, %h: i1, %n: index, %offset: index) attributes {test.specialized_guarded_requests, test.trace_arguments = array<i64: 1, 1, 3, 0>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %banks = arith.constant 2 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %ring = pto.alloc_multi_tile addr = %base : !ring
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %zero to %n step %one {
+      %slot = arith.remui %i, %banks : index
+      %sum = arith.addi %i, %offset : index
+      %readslot = arith.remui %sum, %banks : index
+      %left = pto.multi_tile_get %ring[%slot] : !ring -> !left
+      %readleft = pto.multi_tile_get %ring[%readslot] : !ring -> !left
+      scf.if %g {
+        // LOCAL_GUARD
+        scf.if %h {
+          pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.label = "L"}
+        } else {
+          pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.label = "B"}
+        }
+        pto.tmatmul ins(%readleft, %right : !left, !right) outs(%acc : !acc) {test.label = "C"}
+      }
+    }
+    return
+  }
+  func.func @guarded_changing_slice(%g: i1, %h: i1, %n: index, %offset: index) attributes {test.specialized_guarded_requests, test.specialized_guarded_slice, test.trace_arguments = array<i64: 1, 1, 3, 0>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %banks = arith.constant 2 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %ring = pto.alloc_multi_tile addr = %base : !ring
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %i = %zero to %n step %one {
+      %slot = arith.remui %i, %banks : index
+      %sum = arith.addi %i, %offset : index
+      %readslot = arith.remui %sum, %banks : index
+      %left = pto.multi_tile_get %ring[%slot] : !ring -> !left
+      %readleft = pto.multi_tile_get %ring[%readslot] : !ring -> !left
+      %first = arith.cmpi eq, %i, %zero : index
+      scf.if %first {
+        // LOCAL_GUARD
+        scf.if %h {
+          pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.label = "L"}
+        } else {
+          pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left) {test.label = "B"}
+        }
+        pto.tmatmul ins(%readleft, %right : !left, !right) outs(%acc : !acc) {test.label = "C"}
+      }
+    }
+    return
+  }
+}

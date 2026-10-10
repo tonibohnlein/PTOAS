@@ -293,12 +293,10 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
     case AnalysisBackend::GuardedRotating: {
         if (!node->guardedRotatingResult ||
             node->guardedRotatingResult->result.state != RecognitionState::Applicable) { return {}; }
-        if (construction.guardedRotatingReductions != UINT64_MAX) { ++construction.guardedRotatingReductions; }
-        auto demands = std::make_shared<GuardedRotatingAnalysis>(
-            analyzeGuardedRotating(loop, *storage, *node->guardedRotatingResult, *structuralIndex,
-                                  sessionState->expressions));
-        if (!demands->error.empty()) { error = demands->error; return {}; }
-        owned->guardedRotatingDemands = std::move(demands);
+        GuardedRotatingSpecialization request; request.loop = loop;
+        auto mathematics = specializedGuardedDemands(request, error);
+        if (!mathematics || !error.empty()) { return {}; }
+        owned->guardedRotatingDemands = std::make_shared<GuardedRotatingAnalysis>(mathematics->demands);
         owned->backend = "guarded-rotating";
         break;
     }
@@ -416,6 +414,114 @@ std::shared_ptr<const ArithmeticRegionalRelations> FrontierAnalysis::specialized
     auto result = attempt.mathematics;
     variants.push_back(std::move(attempt));
     return result;
+}
+uint64_t FrontierAnalysis::specializedGuardedConstructions() const
+{
+    return sessionState ? sessionState->specializedGuardedBuilds : 0;
+}
+uint64_t FrontierAnalysis::guardedExpressionImportWork() const
+{
+    return sessionState ? sessionState->guardedImportWork : 0;
+}
+std::shared_ptr<const GuardedRotatingMathematics> FrontierAnalysis::specializedGuardedDemands(
+    const GuardedRotatingSpecialization& request, std::string& error)
+{
+    error.clear();
+    auto originalValue = [&](Value value) {
+        auto* region = value ? value.getParentRegion() : nullptr;
+        auto* owner = region ? region->getParentOp() : nullptr;
+        return owner && (owner == function || function->isProperAncestor(owner));
+    };
+    const bool valid = initialized && storage && structuralIndex && program && request.loop &&
+        function->isProperAncestor(request.loop) &&
+        (request.sliced || (request.choices.empty() && request.guards.empty())) &&
+        llvm::all_of(request.choices, [&](const auto& entry) {
+            return originalValue(entry.first) && entry.first.getType().isInteger(1);
+        }) && llvm::all_of(request.guards, [&](Value value) {
+            return originalValue(value) && value.getType().isInteger(1);
+        }) && (request.bindings.empty() || request.expressions);
+    if (!valid) { error = "guarded specialization requires original invocation values and a binding arena"; return {}; }
+    auto node = llvm::find_if(program->nodes, [&](const auto& value) {
+        return value.kind == StructureKind::Loop && value.anchor == request.loop;
+    });
+    if (node == program->nodes.end()) { error = "guarded specialization requires an original loop"; return {}; }
+    SmallVector<Value> keys;
+    SmallVector<RegionExpressions::Id> roots;
+    for (const auto& [value, expression] : request.bindings) {
+        const bool typed = originalValue(value) && value.getType().isIntOrIndex() &&
+            expression < request.expressions->size() &&
+            request.expressions->isBoolean(expression) == value.getType().isInteger(1);
+        if (!typed) { error = "guarded specialization contains an invalid typed binding"; return {}; }
+        auto chosen = request.choices.find(value);
+        const bool consistent = chosen == request.choices.end() ||
+            request.expressions->constantValue(expression) == std::optional<uint64_t>(chosen->second);
+        if (!consistent) { error = "guarded slice choice is not proved by its binding"; return {}; }
+        keys.push_back(value); roots.push_back(expression);
+    }
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    auto arena = sessionState->guardedExpressions;
+    // Canonicalize the actual circuits, not their source IDs. Import commits
+    // before the producer transaction so failed attempts cannot recycle keys.
+    DenseMap<Value, RegionExpressions::Id> bindings;
+    if (!roots.empty()) {
+        auto imported = arena->import(*request.expressions, roots, &sessionState->guardedImportWork);
+        if (failed(imported)) { error = "guarded specialization binding import failed"; return {}; }
+        for (auto [value, expression] : llvm::zip(keys, *imported)) { bindings[value] = expression; }
+    }
+    auto& variants = sessionState->specializedGuarded[request.loop];
+    auto equalMap = [](const auto& a, const auto& b) {
+        return a.size() == b.size() && llvm::all_of(a, [&](const auto& entry) {
+            auto found = b.find(entry.first); return found != b.end() && found->second == entry.second;
+        });
+    };
+    for (const auto& attempt : variants) {
+        const bool same = attempt.sliced == request.sliced && attempt.guards == request.guards &&
+            equalMap(attempt.choices, request.choices) && equalMap(attempt.bindings, bindings);
+        if (same) { error = attempt.error; return attempt.mathematics; }
+    }
+    auto mathematics = std::make_shared<GuardedRotatingMathematics>();
+    mathematics->inputOwner = storage; mathematics->indexOwner = structuralIndex;
+    if (!sessionState->guardedInputOwner) {
+        sessionState->guardedInputOwner = std::make_shared<std::pair<std::shared_ptr<const SyncInput>,
+            std::shared_ptr<const PhaseIndex>>>(storage, structuralIndex);
+    }
+    mathematics->exportInputOwner = sessionState->guardedInputOwner;
+
+    if (request.sliced) {
+        mathematics->recognition = detail::recognizeRotatingSlice(
+            request.loop, *structuralIndex, *storage, request.choices, request.guards);
+    } else if (node->guardedRotatingResult) { mathematics->recognition = *node->guardedRotatingResult; }
+    else {
+        mathematics->recognition = recognizeGuardedRotating(
+            request.loop, *structuralIndex, *storage, storage->accesses());
+    }
+    if (mathematics->recognition.result.state == RecognitionState::Applicable) {
+        RegionExpressions::Transaction transaction(*arena);
+        if (sessionState->specializedGuardedBuilds != UINT64_MAX) { ++sessionState->specializedGuardedBuilds; }
+        if (construction.guardedRotatingReductions != UINT64_MAX) { ++construction.guardedRotatingReductions; }
+        auto demands = analyzeGuardedRotating(request.loop, *storage, mathematics->recognition,
+            *structuralIndex, arena, bindings);
+        error = demands.error;
+        if (error.empty()) { mathematics->demands = std::move(demands); transaction.commit(); }
+    } else { error = "guarded rotating form is unavailable in this specialization"; }
+    if (!error.empty()) { mathematics->demands.error = error; }
+    variants.push_back({request.sliced, request.choices, request.guards, std::move(bindings), mathematics, error});
+    return mathematics;
+}
+std::shared_ptr<GuardedRotatingMathematics> FrontierAnalysis::instantiateGuardedDemands(
+    const GuardedRotatingSpecialization& request, std::shared_ptr<RegionExpressions> target, std::string& error)
+{
+    auto retained = specializedGuardedDemands(request, error);
+    const bool unavailable = !retained || !error.empty();
+    if (unavailable) {
+        return retained ? std::make_shared<GuardedRotatingMathematics>(*retained) : nullptr;
+    }
+    if (!target) { error = "guarded instantiation requires an export arena"; return {}; }
+    auto imported = importGuardedRotating(retained->demands, target, &sessionState->guardedImportWork);
+    if (failed(imported)) { error = "guarded mathematical circuit import failed"; return {}; }
+    target->retainInputOwner(retained->exportInputOwner);
+    auto result = std::make_shared<GuardedRotatingMathematics>(*retained);
+    result->demands = std::move(*imported); return result;
 }
 uint64_t FrontierAnalysis::specializedNumericConstructions() const
 {
@@ -554,6 +660,10 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver(
     };
     resolver.finiteArithmetic = [this](std::size_t region, std::string& error) {
         return finiteArithmeticRegion(region, error);
+    };
+    resolver.specializedGuarded = [this](const GuardedRotatingSpecialization& request,
+        std::shared_ptr<RegionExpressions> target, std::string& error) {
+        return instantiateGuardedDemands(request, std::move(target), error);
     };
     resolver.specializedNumeric = [this](scf::ForOp loop, const TemplateGeometryConstant& geometry,
         const TemplateControlConstant& control, std::shared_ptr<const NormalizedControlDescription> normalized,

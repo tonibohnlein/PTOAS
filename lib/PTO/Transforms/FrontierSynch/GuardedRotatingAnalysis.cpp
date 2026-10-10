@@ -13,6 +13,45 @@
 #include <numeric>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
+void rewriteGuardedRotatingExpressions(GuardedRotatingAnalysis& analysis,
+    const std::function<RegionExpressions::Id(RegionExpressions::Id)>& rewrite)
+{
+    auto payloads = [&](auto& values) { for (auto& value : values) { value.presence = rewrite(value.presence); } };
+    auto records = [&](auto& values) {
+        for (auto& value : values) {
+            value.active = rewrite(value.active); value.displacement = rewrite(value.displacement);
+        }
+    };
+    payloads(analysis.payloads); payloads(analysis.periodic.payloads);
+    records(analysis.generators); records(analysis.periodic.records); records(analysis.periodic.nativePrerequisites);
+    for (auto& value : analysis.periodic.retained) { value = rewrite(value); }
+    for (auto& frontier : analysis.periodic.frontiers) {
+        for (auto* side : {&frontier.starts, &frontier.completions}) {
+            for (auto& value : *side) {
+                value.reachable = rewrite(value.reachable); value.distance = rewrite(value.distance);
+            }
+        }
+    }
+    for (auto& value : analysis.fragments) {
+        value.offset = rewrite(value.offset); value.read = rewrite(value.read); value.write = rewrite(value.write);
+    }
+}
+FailureOr<GuardedRotatingAnalysis> importGuardedRotating(const GuardedRotatingAnalysis& source,
+    std::shared_ptr<RegionExpressions> target, uint64_t* work)
+{
+    const bool valid = target && source.expressions && source.periodic.expressions == source.expressions &&
+        source.error.empty() && source.periodic.error.empty();
+    if (!valid) { return failure(); }
+    auto result = source;
+    SmallVector<RegionExpressions::Id> roots;
+    rewriteGuardedRotatingExpressions(result, [&](auto id) { roots.push_back(id); return id; });
+    auto imported = target->import(*source.expressions, roots, work);
+    if (failed(imported)) { return failure(); }
+    std::size_t position = 0;
+    rewriteGuardedRotatingExpressions(result, [&](auto) { return (*imported)[position++]; });
+    result.expressions = target; result.periodic.expressions = std::move(target);
+    return result;
+}
 namespace {
 using Expr = RegionExpressions::Id;
 uint64_t inverse(uint64_t value, uint64_t modulus)

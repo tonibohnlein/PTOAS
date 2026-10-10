@@ -10,10 +10,12 @@
 // original occurrence tree. initialize/invalidate destroys every entry when
 // that context changes. Specialized parameter/phase views do not use these
 // original-region keys. Their expression-free mathematical cache revalidates
-// every observed constant binding; expression exports remain transaction-local.
+// every observed constant binding. Guarded circuits have a separate private
+// canonical arena; exports import transaction-local views and never lend it.
 #ifndef PTO_FRONTIERSYNCH_ANALYSISSESSIONINTERNAL_H
 #define PTO_FRONTIERSYNCH_ANALYSISSESSIONINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/GuardedRotatingAnalysis.h"
 #include <set>
 namespace mlir::pto::frontiersynch {
 struct VaryingRegionalExports;
@@ -61,7 +63,21 @@ struct SpecializedNumericAttempt {
     std::shared_ptr<const NumericBodyMathematics> mathematics;
     std::string error;
 };
+struct SpecializedGuardedAttempt {
+    bool sliced = false;
+    DenseMap<Value, bool> choices;
+    SmallVector<Value> guards;
+    DenseMap<Value, RegionExpressions::Id> bindings;
+    std::shared_ptr<const GuardedRotatingMathematics> mathematics;
+    std::string error;
+};
 struct AnalysisSessionState {
+    // Never passed to speculative exporters; canonical imported key IDs stay
+    // in the committed prefix even when a producer attempt rolls back.
+    std::shared_ptr<RegionExpressions> guardedExpressions = std::make_shared<RegionExpressions>();
+    std::map<Operation*, std::vector<SpecializedGuardedAttempt>> specializedGuarded;
+    uint64_t specializedGuardedBuilds = 0, guardedImportWork = 0;
+    std::shared_ptr<void> guardedInputOwner;
     std::map<Operation*, std::vector<SpecializedNumericAttempt>> specializedNumeric;
     uint64_t specializedNumericBuilds = 0;
     std::map<Operation*, std::vector<SpecializedArithmeticAttempt>> specializedArithmetic;

@@ -54,6 +54,12 @@ public:
     // Gate the finite-only repetition adapter before constructing mathematics;
     // a successful gate reuses canonical query and selector exports.
     FailureOr<RegionalAnalysis> finiteArithmeticRegion(std::size_t region, std::string& error);
+    uint64_t specializedGuardedConstructions() const;
+    uint64_t guardedExpressionImportWork() const;
+    std::shared_ptr<const GuardedRotatingMathematics> specializedGuardedDemands(
+        const GuardedRotatingSpecialization& request, std::string& error);
+    std::shared_ptr<GuardedRotatingMathematics> instantiateGuardedDemands(
+        const GuardedRotatingSpecialization& request, std::shared_ptr<RegionExpressions> target, std::string& error);
     uint64_t specializedNumericConstructions() const;
     std::shared_ptr<const NumericBodyMathematics> specializedNumericDemands(scf::ForOp loop,
         const TemplateGeometryConstant& geometry, const TemplateControlConstant& control, std::string& error,
