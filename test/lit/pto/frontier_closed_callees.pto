@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// RUN: %python %S/Inputs/check_closed_callees.py pto-test-opt pto-sync-input-test %s
+// RUN: %python %S/Inputs/check_closed_callees.py pto-test-opt pto-sync-input-test %s --library
 // Corpus matmul_tpush_tpop_print: retain the cube/vector FIFO protocol and calls.
 module attributes {pto.backend = "emitc", pto.target_arch = "a3"} {
   func.func @matmul_tpush_tpop_print(%arg0: !pto.ptr<f32, gm>, %arg1: !pto.ptr<f32, gm>, %arg2: !pto.ptr<f32, gm>) attributes {pto.entry} {
