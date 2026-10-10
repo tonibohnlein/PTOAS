@@ -215,6 +215,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Arithmetic/ArithmeticGuards.cpp
   FrontierSynch/Arithmetic/ArithmeticHandoffAllocation.cpp
   FrontierSynch/Arithmetic/ArithmeticInsertion.cpp
+  FrontierSynch/Arithmetic/ArithmeticMachineScalars.cpp
   FrontierSynch/Arithmetic/ArithmeticPeriodicConversion.cpp
   FrontierSynch/Arithmetic/ArithmeticPeriodicImport.cpp
   FrontierSynch/Arithmetic/ArithmeticProgram.cpp
@@ -277,6 +278,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Shared/InvocationProtection.cpp
   FrontierSynch/Shared/LogicalEndpoints.cpp
   FrontierSynch/Shared/LogicalInsertion.cpp
+  FrontierSynch/Shared/ModularScalar.cpp
   FrontierSynch/Shared/NormalizedControl.cpp
   FrontierSynch/Shared/NormalizedScalar.cpp
   FrontierSynch/Shared/NumericalRepeatedBinding.cpp

@@ -209,11 +209,12 @@ module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 64 : i32>>
     auto comparison = cast<scf::IfOp>(anchor->getParentOp()).getCondition();
     auto expected = getAffineDimExpr(0, context).floorDiv(4);
     // Geometry is exact on executed nonnegative visits. The presence formula
-    // itself must not borrow that assumption: unsigned division differs on
-    // negative visits, and its loop-dependent result cannot become a parameter.
-    return builder.prepareValue(quotient, site) && builder.value(quotient, site, 0) == expected &&
-           !builder.value(quotient, site, 0, fs::detail::ProgramBuilder::ScalarProofContext::Definition) &&
-           !builder.prepareGuard(comparison, site) && output.parameters.empty();
+    // itself must not borrow that assumption: its separate machine recipe
+    // retains unsigned division on negative visits, without a free parameter.
+    auto geometry = builder.value(quotient, site, 0);
+    auto definition = builder.value(quotient, site, 0, fs::detail::ProgramBuilder::ScalarProofContext::Definition);
+    return builder.prepareValue(quotient, site) && geometry == expected && definition && definition != geometry &&
+           builder.prepareGuard(comparison, site) && !builder.machineBindings.empty() && output.parameters.empty();
 }
 } // namespace
 bool runScalarConstraintChecks(MLIRContext* context)
@@ -222,6 +223,8 @@ bool runScalarConstraintChecks(MLIRContext* context)
     for (unsigned bits : {32U, 64U}) {
         int64_t low = bits == 64 ? INT64_MIN : INT32_MIN;
         int64_t high = bits == 64 ? INT64_MAX : INT32_MAX;
+        cases.push_back({"unsigned quotient range", "%q = arith.divui %x, %four : index\n" + probe("%q"),
+            0, bits == 64 ? (int64_t(1) << 62) - 1 : (int64_t(1) << 30) - 1, bits, Case::Opaque});
         cases.push_back(
             {"then", "%g = arith.cmpi sgt, %x, %zero : index\nscf.if %g {" + probe() + "}", 1, high, bits, Case::X});
         cases.push_back(

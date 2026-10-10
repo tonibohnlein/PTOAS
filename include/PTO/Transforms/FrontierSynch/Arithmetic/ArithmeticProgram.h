@@ -59,6 +59,8 @@ struct ArithmeticProgram {
     bool finiteExpansion = false;
     uint64_t expandedVisits = 0, expandedFragments = 0, expansionFragmentLimit = 0;
     uint64_t expandedFoldOperations = 0, expandedPrunedArms = 0, expandedTranslationFragments = 0;
+    uint64_t machinePrimitiveConversions = 0, machineExpressionNodes = 0, machinePrimitiveCacheHits = 0;
+    uint64_t machineRelationPieces = 0, machineProjections = 0;
     SmallVector<FiniteAccessRecipe> finiteAccessRecipes;
     // Incoming scalar prerequisites remain obligations of the composing parent.
     SmallVector<ValuePrerequisite> incomingPrerequisites;

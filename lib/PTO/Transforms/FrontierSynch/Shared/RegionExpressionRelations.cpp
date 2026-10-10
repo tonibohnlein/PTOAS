@@ -166,7 +166,7 @@ private:
     unsigned columns;
     Integer modulus, sign;
     Formula definitions{{}};
-    std::map<Id, ValueForm> values, signedValues, inputs;
+    std::map<Id, ValueForm> values, signedValues, modularValues, inputs;
     std::map<unsigned, std::pair<Integer, Integer>> columnBounds;
     std::map<std::pair<Id, bool>, Formula> predicates;
     bool failed = false;
@@ -270,8 +270,58 @@ private:
         auto cached = signedValues.find(id);
         if (cached != signedValues.end()) { return cached->second; }
         auto input = inputs.find(id);
-        auto result = input == inputs.end() ? signedValue(value(id)) : input->second;
+        const auto& node = arena.nodes[id];
+        ValueForm result;
+        if (input != inputs.end()) { result = input->second; }
+        else if (node.kind == Kind::Add || node.kind == Kind::Sub) {
+            auto fused = modularLinear(id);
+            // Retain the unit-coefficient gate construction when fusion would
+            // introduce a wide quotient. This is an adapter cost choice only.
+            result = floorDiv(fused.high + sign, modulus) - floorDiv(fused.low + sign, modulus) <= 1 ?
+                signedWrap(fused) : signedValue(value(id));
+        } else { result = signedValue(value(id)); }
         signedValues.emplace(id, result);
+        return result;
+    }
+    // Add/subtract chains commute with reduction modulo 2^64. Fuse them
+    // before signed interpretation, retaining casts/div/rem/select as leaves.
+    ValueForm modularLinear(Id id)
+    {
+        if (auto found = modularValues.find(id); found != modularValues.end()) { return found->second; }
+        const auto& node = arena.nodes[id];
+        ValueForm result;
+        if (node.kind == Kind::Add || node.kind == Kind::Sub) {
+            auto a = modularLinear(node.a), b = modularLinear(node.b);
+            const bool plus = node.kind == Kind::Add;
+            result = refine({addLinear(a.expression, b.expression, Integer(plus ? 1 : -1)),
+                plus ? a.low + b.low : a.low - b.high,
+                plus ? a.high + b.high : a.high - b.low});
+        } else { result = signedExpression(id); }
+        modularValues.emplace(id, result);
+        return result;
+    }
+    ValueForm signedWrap(ValueForm original)
+    {
+        original = refine(std::move(original));
+        const auto first = floorDiv(original.low + sign, modulus);
+        const auto last = floorDiv(original.high + sign, modulus);
+        if (first == last) {
+            original.expression.constant -= first * modulus;
+            original.low -= first * modulus; original.high -= first * modulus;
+            return original;
+        }
+        auto result = bounded(column(), -sign, sign - 1);
+        if (last - first <= 1) {
+            auto one = original.expression; one.constant -= first * modulus;
+            auto two = original.expression; two.constant -= last * modulus;
+            auto alternatives = equality(result.expression, one);
+            append(alternatives, equality(result.expression, two)); require(std::move(alternatives));
+        } else {
+            auto shifted = original; shifted.expression.constant += sign;
+            shifted.low += sign; shifted.high += sign;
+            auto turns = quotient(shifted, modulus);
+            require(equality(result.expression, addLinear(original.expression, turns.expression, -modulus)));
+        }
         return result;
     }
     ValueForm quotient(ValueForm value, const Integer& divisor)
@@ -438,11 +488,20 @@ ValueForm RegionExpressions::RelationBuilder::value(Id id)
         auto no = conjunction(predicate(id, false), equality(result.expression, literal(Integer(0))));
         append(yes, std::move(no)); require(std::move(yes));
     } else if (node.kind == Kind::Add || node.kind == Kind::Sub) {
-        auto a = value(node.a), b = value(node.b);
-        const bool plus = node.kind == Kind::Add;
-        result = wrap({addLinear(a.expression, b.expression, Integer(plus ? 1 : -1)),
-                       plus ? a.low + b.low : a.low - b.high,
-                       plus ? a.high + b.high : a.high - b.low});
+        auto fused = modularLinear(id);
+        // Unsigned consumers also see an additive DAG modulo 2^64. Convert
+        // signed entry representatives only once, after fusing that DAG.
+        // Keep the existing gate adapter when fusion introduces a wide
+        // quotient; this is a representation choice, never an admission gate.
+        if (floorDiv(fused.high, modulus) - floorDiv(fused.low, modulus) <= 1) {
+            result = wrap(std::move(fused));
+        } else {
+            auto a = value(node.a), b = value(node.b);
+            const bool plus = node.kind == Kind::Add;
+            result = wrap({addLinear(a.expression, b.expression, Integer(plus ? 1 : -1)),
+                           plus ? a.low + b.low : a.low - b.high,
+                           plus ? a.high + b.high : a.high - b.low});
+        }
     } else if (node.kind == Kind::Div || node.kind == Kind::Rem) {
         auto denominator = arena.constantValue(node.b);
         if (!denominator || !*denominator) {

@@ -10,8 +10,10 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICRECOGNITION_H
 #include "PTO/Transforms/FrontierSynch/Shared/Recognition.h"
 #include "mlir/IR/IntegerSet.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/IntegerRelations.h"
 #include "mlir/IR/Value.h"
 #include <string>
+#include <memory>
 
 namespace mlir::pto::frontiersynch {
 enum class PrimitiveKind { Context, Occurrences, Order, Native, Reads, Writes, Prerequisites };
@@ -30,6 +32,10 @@ struct ResiduePiece {
     // system variables are quotient coordinates q, in dimensions-then-symbols
     // order; the original coordinate is period*q + residue. Locals have no residue.
     SmallVector<uint64_t> residues;
+    // Explicit bit-exact scalar adapter; wide constants never pass through
+    // MLIR affine int64 coefficient folding. Shares the declared coordinates.
+    std::shared_ptr<const IntegerSystem> machineSystem;
+
 };
 enum class ArithmeticEvent { Payload, Start, Completion };
 struct PrimitiveRelation {
@@ -91,6 +97,7 @@ struct NormalizedPiece {
     std::size_t piece = 0;
     bool empty = false;
     SmallVector<LinearRow> rows;
+    std::shared_ptr<const IntegerSystem> machineSystem;
 };
 struct ArithmeticRecognition {
     RecognitionState state = RecognitionState::Applicable;

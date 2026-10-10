@@ -1414,6 +1414,7 @@ int runFiniteRequirementReplacementChecks(func::FuncOp function, const pto::Sync
 int runPeriodicSharedAllocationChecks();
 bool runCarriedScalarChecks(MLIRContext* context);
 bool runScalarConstraintChecks(MLIRContext* context);
+bool runModularScalarChecks(MLIRContext* context);
 bool runRepeatedStorageChecks(MLIRContext* context);
 bool runRepeatedReadOnlyStorageChecks(MLIRContext*);
 bool runExpressionRelationChecks(MLIRContext*);
@@ -1646,6 +1647,10 @@ int main(int argc, char **argv) {
   if (argc == 2 && StringRef(argv[1]) == "--finite-visit-checks") {
     context.disableMultithreading();
     return runFiniteVisitChecks(&context) ? 0 : 1;
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--modular-scalar-checks") {
+    context.disableMultithreading();
+    return runModularScalarChecks(&context) ? 0 : 1;
   }
   if (argc == 2 && StringRef(argv[1]) == "--scalar-constraint-checks") {
     context.disableMultithreading();
