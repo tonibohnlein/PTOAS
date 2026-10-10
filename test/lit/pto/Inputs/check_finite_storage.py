@@ -58,6 +58,8 @@ def main():
             for policy in ["may-not-alias", "may-alias"]:
                 form, expanded = invoke(tool, path, policy)
                 assert expanded["exact_selectors"], expanded
+                assert expanded["relation_available"], expanded
+                assert not expanded["relation_error"], expanded
                 assert expanded["invalid_storage_rejected"], expanded
                 assert expanded["query_snapshot_unchanged"], expanded
                 assert expanded["preflight_failure_retained"], expanded
@@ -65,6 +67,17 @@ def main():
                     assert expanded["storage_translation_families"] == (4 if name == "translated-parity" else 3), name
                     assert expanded["selector_checks"] > 0, expanded
                 for sample in expanded["samples"]:
+                    assert sample["relation_event_queries"] == sample["event_queries"], (name, sample)
+                    relation_storage = sample["relation_storage"]
+                    for native, ordinary in zip(relation_storage["storage"], sample["storage"], strict=True):
+                        assert (native["space"], native["byte"], native["member"]) == (
+                            ordinary["space"], ordinary["byte"], ordinary["member"]), (name, native, ordinary)
+                        for field in ["first_writers", "last_writers"]:
+                            assert active(native[field]) == active(ordinary[field]), (name, field, native, ordinary)
+                        for field in ["first_readers", "last_readers"]:
+                            filtered = lambda values: {pipe: active(choices) for pipe, choices in values
+                                                       if active(choices)}
+                            assert filtered(native[field]) == filtered(ordinary[field]), (name, field, native, ordinary)
                     sites = form["sites"]
                     present = [i for i, value in enumerate(sample["presence"]) if value]
                     pipes = {sites[i]["pipe"] for i in present}

@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "FiniteGuardedInternal.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticStorageSelectors.h"
+#include "RegionalRelationsInternal.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "../InsertSync/SyncRegionArithmetic.h"
 #include "llvm/ADT/MapVector.h"
 namespace mlir::pto::frontiersynch {
@@ -259,6 +261,125 @@ struct ExpandedStorage {
     }
 };
 } // namespace
+namespace {
+FailureOr<ArithmeticStorageSelectors> mappedFiniteSelectors(const ExpandedStorage& storage,
+    RegionExpressions::RelationCost& cost, std::string& error)
+{
+    // Convert only primitive selector domains, never the reduced query circuit.
+    RegionExpressions arena;
+    Block variables;
+    auto function = storage.program->context.function;
+    auto byte = arena.input(variables.addArgument(IndexType::get(function.getContext()), function.getLoc()));
+    SmallVector<RegionExpressions::Id> parameters;
+    for (auto parameter : storage.program->parameters) { parameters.push_back(arena.input(parameter)); }
+    auto lower = [&](const IntegerSystem& domain, ArrayRef<uint64_t> residues,
+                     std::optional<ExpandedStorage::Key> key) -> FailureOr<std::vector<IntegerSystem>> {
+        SmallVector<RegionExpressions::Id> inputs;
+        if (key) { inputs.push_back(byte); }
+        llvm::append_range(inputs, parameters);
+        SmallVector<AffineExpr> coordinates;
+        for (unsigned i = 0; i < inputs.size(); ++i) {
+            coordinates.push_back(getAffineDimExpr(i, function.getContext()));
+        }
+        if (key) {
+            auto found = storage.coordinateMaps.find(*key);
+            if (found != storage.coordinateMaps.end()) { coordinates = found->second; }
+        }
+        // Adapt the retained mathematical primitive directly. The public
+        // callback circuit may simplify it into wrapping scalar operations;
+        // converting that circuit back would discard this cheaper exact form.
+        auto predicate = arena.integerMappedPredicate(domain, inputs, coordinates,
+            storage.selectors.period, residues, error);
+        if (!predicate) { return failure(); }
+        // Parameter-only facts are unchanged by the physical-byte map. Keep
+        // their original proved domain visible while lowering mapped floors,
+        // rather than giving every parameter the full signed machine range.
+        const BoundInteger period(static_cast<int64_t>(storage.selectors.period));
+        std::vector<IntegerConstraint> rows;
+        for (auto row : domain.constraints()) {
+            if (key && row.coefficients.front() != 0) { continue; }
+            row.bound *= period;
+            for (auto [coefficient, residue] : llvm::zip(row.coefficients, residues)) {
+                row.bound += coefficient * BoundInteger(static_cast<int64_t>(residue));
+            }
+            rows.push_back(std::move(row));
+        }
+        auto universe = IntegerSystem::create(inputs.size(), rows);
+        RegionExpressions::RelationCost actual;
+        auto result = arena.integerRelation(*predicate, inputs, *universe, error, &actual);
+        accumulateCost(cost.gates, actual.gates); accumulateCost(cost.projections, actual.projections);
+        accumulateCost(cost.formulaProducts, actual.formulaProducts); accumulateCost(cost.pieces, actual.pieces);
+        cost.peakClauses = std::max(cost.peakClauses, actual.peakClauses);
+        return result;
+    };
+    auto result = storage.selectors;
+    result.period = 1; result.support.clear();
+    for (const auto& support : storage.selectors.support) {
+        std::vector<uint64_t> residues{support.byteResidue}; llvm::append_range(residues, support.parameterResidues);
+        auto pieces = lower(support.domain, residues, ExpandedStorage::Key{support.space, support.base});
+        if (failed(pieces)) { return failure(); }
+        for (auto& piece : *pieces) {
+            result.support.push_back({support.space, support.base, 0,
+                                      std::vector<uint64_t>(parameters.size(), 0), std::move(piece)});
+        }
+    }
+    for (auto& boundary : result.boundaries) {
+        auto source = std::move(boundary.selector.pieces); boundary.selector.pieces.clear();
+        std::optional<ExpandedStorage::Key> key;
+        if (boundary.storageSpace) { key = ExpandedStorage::Key{*boundary.storageSpace, boundary.storageBase}; }
+        for (const auto& piece : source) {
+            if (!piece.outputs.empty()) {
+                error = "finite relation selector has free occurrence outputs"; return failure();
+            }
+            auto residues = piece.inputResidues; llvm::append_range(residues, piece.parameterResidues);
+            auto pieces = lower(piece.domain, residues, key);
+            if (failed(pieces)) { return failure(); }
+            for (auto& domain : *pieces) {
+                auto raw = piece; raw.domain = std::move(domain);
+                std::fill(raw.inputResidues.begin(), raw.inputResidues.end(), 0);
+                std::fill(raw.parameterResidues.begin(), raw.parameterResidues.end(), 0);
+                boundary.selector.pieces.push_back(std::move(raw));
+            }
+        }
+    }
+    return result;
+}
+std::shared_ptr<const RegionalRelationData> retainedFiniteRelations(
+    const FiniteGuardedAnalysis& source, const ExpandedStorage& storage)
+{
+    auto& state = *source.state;
+    if (state.expandedRelationsAttempted) { return state.expandedRelations; }
+    state.expandedRelationsAttempted = true;
+    auto fail = [&](StringRef message) { state.expandedRelationError = message.str(); return nullptr; };
+    if (!state.expandedGenerators || !state.expandedInput ||
+        !state.expandedGenerators->belongsTo(*state.expandedStorageProgram)) {
+        return fail("finite relation adapter requires its owned generator context");
+    }
+    auto reduced = reduceGeneralArithmeticDemands(*state.expandedGenerators);
+    if (!reduced || !reduced->exactMinimum || !reduced->error.empty()) {
+        return fail(reduced ? reduced->error : "finite relation reduction unavailable");
+    }
+    auto data = std::make_shared<RegionalRelationData>();
+    data->input = state.expandedInput; data->context = source.expandedProgram->context;
+    data->sites = source.expandedProgram->sites; data->parameterValues = source.expandedProgram->parameters;
+    data->analysis = *reduced; data->occurrences = state.expandedGenerators->occurrences();
+    data->completeRequiredOrder = true;
+    data->incomingPrerequisites = source.expandedProgram->incomingPrerequisites;
+    for (auto parameter : data->parameterValues) { data->parameters.push_back(state.arena->input(parameter)); }
+    for (auto* parent = data->context.root->getParentOp(); parent; parent = parent->getParentOp()) {
+        if (auto loop = dyn_cast<scf::ForOp>(parent)) { data->enclosing.insert(data->enclosing.begin(), loop); }
+    }
+    const auto values = data->parameterValues;
+    const auto bindings = data->parameters;
+    if (failed(normalizeRegionalRelationData(*data, values, bindings, state.expandedRelationError))) { return {}; }
+    auto selectors = mappedFiniteSelectors(storage, state.expandedRelationCost, state.expandedRelationError);
+    if (failed(selectors)) { return {}; }
+    data->selectors = std::move(*selectors);
+    data->translationCost = state.expandedRelationCost;
+    state.expandedRelations = data;
+    return data;
+}
+} // namespace
 FailureOr<RegionalAnalysis> expandedFiniteRegionalSelectors(const FiniteGuardedAnalysis& analysis,
     const RegionalAnalysis& queries, std::string& error, std::shared_ptr<const SyncInput> inputOwner,
     uint64_t* checkedPredicates)
@@ -327,6 +448,11 @@ FailureOr<RegionalAnalysis> expandedFiniteRegionalSelectors(const FiniteGuardedA
     }
     if (!storage->preflight(error, checkedPredicates)) { return failure(); }
     auto out = queries;
+    if (auto data = retainedFiniteRelations(analysis, *storage)) {
+        auto carrier = std::make_shared<RegionalRelations>();
+        carrier->data = *data; carrier->children.push_back(queries);
+        out.relations = std::move(carrier);
+    }
     auto certificate = std::make_shared<RegionalSymbolicStorageCertificate>();
     certificate->expressions = state->arena; certificate->accessModel = state->accessModel;
     certificate->gmAliasPolicy = state->gmAliasPolicy;

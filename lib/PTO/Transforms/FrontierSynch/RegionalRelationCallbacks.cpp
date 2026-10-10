@@ -384,10 +384,9 @@ bool Request::build(std::string& diagnostic)
             if (list == &region.deferredAccessBoundary) { data.dischargedEffects.push_back(access.effect); }
         }
     }
-    const bool fixed = llvm::any_of(data.sites, [](const auto& site) { return !site.fixedCoordinates.empty(); });
-    if (fixed && !parameterValues.empty()) {
-        return finish(fail("parameterized fixed-occurrence relation adapter is not implemented yet"));
-    }
+    // Fixed visits retain original-coordinate identities. Their query formulas
+    // use the same observed entry parameters and column alignment as dynamic
+    // visits; no parameter can become an independent occurrence coordinate.
     return finish(true);
 }
 FailureOr<RegionalRelationData> Request::lower(ArrayRef<Value> parameters, std::string& diagnostic)

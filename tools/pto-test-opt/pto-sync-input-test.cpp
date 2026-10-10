@@ -17,6 +17,8 @@
 #include "PTO/Transforms/FrontierSynch/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/FiniteGuardedAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/RegionalRelations.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/FiniteGuardedInternal.h"
 #include "PTO/Transforms/FrontierSynch/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/FiniteVisitRecognition.h"
@@ -767,6 +769,15 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
         const bool complete = selected.capabilities.completeStorageModel && selected.capabilities.exactSelectors &&
             selected.storageSelectors && selected.symbolicStorage && !selected.prepare &&
             !selected.capabilities.endpointRecipes;
+        const auto state = first.mathematical->finiteGuardedDemands->state;
+        const bool retainedRelations = selected.relations && selected.relations->data.completeRequiredOrder &&
+            selected.relations->data.analysis.period == 1 && selected.relations->data.selectors.period == 1 &&
+            state->expandedIndexOwner && state->expandedGenerators &&
+            state->expandedGenerators->belongsTo(*state->expandedStorageProgram) &&
+            selected.relations->data.sites.size() == selected.anchors.size();
+        if (!retainedRelations) {
+          return function.emitError("finite native relations unavailable: " + state->expandedRelationError);
+        }
         retainedStorage = outcome.regionalExports;
         if (!complete) {
           return function.emitError("expanded storage export has incomplete support or unexpected recipes");
@@ -841,6 +852,11 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
   retainedOwner.reset();
   session.invalidate();
   auto survivingSelectors = retainedStorage->storageSelectors(savedByte);
+  const auto survivingState = retainedQueries->presence ? retainedStorage->relations : nullptr;
+  if (!survivingState || !survivingState->data.input ||
+      survivingState->data.input->memory().gmPolicy() != policy) {
+    return function.emitError("finite relation context did not survive session reset");
+  }
   const bool sameSelectors = savedSelectors && survivingSelectors &&
       savedSelectors->firstWriters.size() == survivingSelectors->firstWriters.size() &&
       savedSelectors->lastWriters.size() == survivingSelectors->lastWriters.size();
