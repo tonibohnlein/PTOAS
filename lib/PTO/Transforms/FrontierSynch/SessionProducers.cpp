@@ -212,7 +212,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceExpandedFinit
         cached.produced = true;
         const auto& plan = expansionPlan(*sessionState, *structuralIndex, *storage, normalized);
         auto demands = std::make_shared<FiniteGuardedAnalysis>(
-            analyzeExpandedFinite(plan, *structuralIndex, *storage, sessionState->expressions));
+            analyzeExpandedFinite(plan, *structuralIndex, *storage, sessionState->expressions, structuralIndex));
         cached.demandError = demands->error;
         if (plan.result.state != RecognitionState::Applicable) {
             recordFormFailure(cached.failure, plan.result);

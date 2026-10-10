@@ -40,6 +40,7 @@ ArithmeticProgram materializeFiniteExpansion(const FiniteExpansionPlan& plan,
 // Session results may share an arena; unsuccessful predicate construction is
 // transactional and never poisons previously retained query circuits.
 FiniteGuardedAnalysis analyzeExpandedFinite(const FiniteExpansionPlan& plan,
-    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions = {});
+    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions = {},
+    std::shared_ptr<const PhaseIndex> indexOwner = {});
 } // namespace mlir::pto::frontiersynch
 #endif

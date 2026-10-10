@@ -215,3 +215,64 @@ regional outcomes are retained under
 `.local/section8-refactor/regional-gaps/m3/`. The compliance prefilter's eleven
 brace findings were independently checked as nested-parenthesis regex false
 positives; raw results and adjudication are preserved separately.
+
+## Parameterized fixed occurrences and retained relational exports
+
+The fixed-occurrence callback adapter now aligns invocation parameters through
+its existing common schema, including reordered parameters and symbolic byte
+selections. Original phase/fixed-coordinate identities and disjointness checks
+remain mandatory. Finite expansion owns its generator program, protection facts
+and structural index before constructing the borrowing generator stage. Export
+retries retain that stage and its cached reduction rather than rerunning the
+producer. The relational carrier retains query ownership; the state caches only
+mathematical data, avoiding an ownership cycle.
+
+Storage adaptation starts from retained primitive selector domains. It restores
+physical byte coordinates, parameters and residues directly, without lowering
+shared reachability circuits into relations. The general mapped-predicate
+adapter supports certified affine maps with positive constant floor/ceiling
+divisors and modulo. Parameter-only facts remain visible during adaptation;
+these are consequences of the original domain, not extra assumptions.
+
+Two exact projection-method optimizations avoid otherwise expensive conversion.
+An inequality's bound can be rounded to the lattice implied by existing
+congruences. Opposite inequalities bounding an affine expression to a narrow
+integer strip can be projected by enumerating its possible left-side values and
+substituting the selected coordinate with divisibility retained. Overflow-safe
+estimates select this construction only when cheaper than both existing Cooper
+and bounded-unary alternatives. An identity projection and semantic union-piece
+deduplication need no feasibility search. Empty or duplicate union pieces remain
+mathematically exact.
+
+Conflict construction skips only keys absent from the complete reference order.
+Finite expansion's unchanged pair limit now counts compatible ordered write/read
+pairs instead of all unordered storage pairs. Neither optimization excludes a
+mathematical class or raises a representation limit. MayAlias uniform crossings
+and shared modeled access comparisons remain intact.
+
+### Fourth milestone validation
+
+All eleven focused groups pass, including 4,771 independent expression points,
+3,296 integer projection/feasibility/witness points, asymmetric parameter and
+symbolic-byte mappings, arithmetic reducers/selectors, original-coordinate finite
+expansion, fixed branches, physical translation and period-two storage exports.
+The storage oracle compares complete relational event queries and byte selectors
+against independently validated ordinary exports. The session check verifies
+cached retries, foreign-context rejection and lifetime after reset/invalidation.
+
+The serial two-policy corpus audit retains every previous exact result with no
+new timeout: MayNotAlias remains 233/240; MayAlias improves from 218 to 222/240.
+Elementwise MayAlias completes in 0.41 seconds; the maximum corpus request is
+5.60 seconds. The finite-session ownership check completes in 0.16 seconds and
+the translated-storage suite in 4.27 seconds. PyPTO GEMM still prepares logical
+commands, allocates IDs 0 through 5 and generates C++ byte-identical to the pinned
+optimized baseline. The public CLI retains the requested Step2 stopping point.
+
+The broader region-expression fixture still fails its pre-existing numerical
+composition child-reuse assertion on both baseline and candidate; its separately
+invoked expression-relation oracle passes. This is recorded separately from
+passing validation. Raw compliance results retain 26 nested-parenthesis regex
+brace findings, each independently checked to have a braced body. All actual
+line-length findings were fixed. Commands, source/binary hashes, draft hashes,
+per-region outcomes and diagnostic iterations are retained under
+`.local/section8-refactor/regional-gaps/m4/`.

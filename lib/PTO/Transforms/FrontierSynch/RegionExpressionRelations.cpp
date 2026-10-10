@@ -110,6 +110,27 @@ bool simplify(Clause& clause)
     }
     return true;
 }
+// Tighten an integer inequality to the known lattice of its left side.
+// Floor definitions plus an input residue can thereby become an equality,
+// avoiding Cooper enumeration over unrelated physical byte strides.
+void tightenLatticeBounds(std::vector<IntegerConstraint>& rows,
+    ArrayRef<IntegerCongruence> congruences)
+{
+    for (auto& row : rows) {
+        for (const auto& congruence : congruences) {
+            for (int64_t sign : {int64_t(1), int64_t(-1)}) {
+                const bool same = llvm::all_of(llvm::zip(row.coefficients, congruence.coefficients),
+                    [&](const auto& pair) {
+                        return mod(std::get<0>(pair) - Integer(sign) * std::get<1>(pair),
+                                   congruence.modulus) == 0;
+                    });
+                if (same) {
+                    row.bound -= mod(row.bound - Integer(sign) * congruence.residue, congruence.modulus);
+                }
+            }
+        }
+    }
+}
 Formula conjoin(const Formula& a, const Formula& b)
 {
     Formula result;
@@ -297,12 +318,59 @@ private:
         return {{Atom{remainder.expression, target - 1}},
                 {Atom{scaled(remainder.expression, Integer(-1)), -target - 1}}};
     }
+    ValueForm mappedBinary(AffineBinaryOpExpr expression, const ValueForm& left, const ValueForm& right)
+    {
+        if (expression.getKind() == AffineExprKind::Add) {
+            return {addLinear(left.expression, right.expression), left.low + right.low, left.high + right.high};
+        }
+        if (expression.getKind() == AffineExprKind::Mul) {
+            const bool constantLeft = left.low == left.high;
+            const auto& input = constantLeft ? right : left;
+            const auto& factor = constantLeft ? left : right;
+            if (factor.low != factor.high) { reject("mapped integer product is not linear"); return {}; }
+            return {scaled(input.expression, factor.low),
+                factor.low * (factor.low >= 0 ? input.low : input.high),
+                factor.low * (factor.low >= 0 ? input.high : input.low)};
+        }
+        if (right.low != right.high || right.low <= 0) {
+            reject("mapped integer divisor is not a positive constant"); return {};
+        }
+        if (expression.getKind() == AffineExprKind::CeilDiv) {
+            auto negative = quotient({scaled(left.expression, Integer(-1)), -left.high, -left.low}, right.low);
+            return {scaled(negative.expression, Integer(-1)), -negative.high, -negative.low};
+        }
+        auto divided = quotient(left, right.low);
+        if (expression.getKind() == AffineExprKind::FloorDiv) { return divided; }
+        if (expression.getKind() == AffineExprKind::Mod) {
+            return {addLinear(left.expression, divided.expression, -right.low), Integer(0), right.low - 1};
+        }
+        reject("unsupported mapped integer operation"); return {};
+    }
+    std::vector<ValueForm> integerOriginals(const IntegerRecipe& recipe)
+    {
+        std::vector<ValueForm> originals;
+        for (auto input : recipe.inputs) { originals.push_back(signedExpression(input)); }
+        if (recipe.coordinates.empty()) { return originals; }
+        llvm::DenseMap<AffineExpr, ValueForm> mapped;
+        for (auto expression : recipe.coordinateOrder) {
+            ValueForm result;
+            if (auto dim = dyn_cast<AffineDimExpr>(expression)) { result = originals[dim.getPosition()]; }
+            else if (auto constant = dyn_cast<AffineConstantExpr>(expression)) {
+                const Integer value(constant.getValue()); result = {literal(value), value, value};
+            } else {
+                auto binary = cast<AffineBinaryOpExpr>(expression);
+                result = mappedBinary(binary, mapped.lookup(binary.getLHS()), mapped.lookup(binary.getRHS()));
+            }
+            mapped.try_emplace(expression, std::move(result));
+        }
+        originals.clear();
+        for (auto expression : recipe.coordinates) { originals.push_back(mapped.lookup(expression)); }
+        return originals;
+    }
     std::vector<ValueForm> integerInputs(const IntegerRecipe& recipe)
     {
-        std::vector<ValueForm> result;
-        for (auto input : recipe.inputs) {
-            result.push_back(quotient(signedExpression(input), Integer(recipe.period)));
-        }
+        auto result = integerOriginals(recipe);
+        for (auto& input : result) { input = quotient(std::move(input), Integer(recipe.period)); }
         return result;
     }
     ValueForm affine(const IntegerAffine& expression, ArrayRef<ValueForm> inputs)
@@ -317,20 +385,29 @@ private:
     }
     Formula integerPredicate(const IntegerRecipe& recipe, bool truth)
     {
-        if (!recipe.coordinates.empty()) {
-            reject("relational lowering for mapped integer predicates not implemented yet"); return {};
-        }
-        auto inputs = integerInputs(recipe);
+        auto originals = integerOriginals(recipe);
         Clause conditions;
-        for (auto [input, residue] : llvm::zip(recipe.inputs, recipe.residues)) {
-            conditions.push_back({signedExpression(input).expression, Integer(residue), Integer(recipe.period)});
+        const Integer period(recipe.period);
+        for (auto [input, residue] : llvm::zip(originals, recipe.residues)) {
+            conditions.push_back({input.expression, Integer(residue), period});
         }
+        // On the required residues, q=(x-r)/period. Clear this common
+        // denominator instead of introducing and projecting one quotient per
+        // coordinate, including unconstrained runtime parameters.
+        auto offset = [&](ArrayRef<Integer> coefficients) {
+            Integer result(0);
+            for (auto [coefficient, residue] : llvm::zip(coefficients, recipe.residues)) {
+                result += coefficient * Integer(residue);
+            }
+            return result;
+        };
         for (const auto& row : recipe.system.constraints()) {
-            conditions.push_back({affine({row.coefficients, Integer(0)}, inputs).expression, row.bound});
+            conditions.push_back({affine({row.coefficients, Integer(0)}, originals).expression,
+                                  row.bound * period + offset(row.coefficients)});
         }
         for (const auto& row : recipe.system.congruences()) {
-            conditions.push_back({affine({row.coefficients, Integer(0)}, inputs).expression,
-                                  row.residue, row.modulus});
+            conditions.push_back({affine({row.coefficients, Integer(0)}, originals).expression,
+                                  row.residue * period + offset(row.coefficients), row.modulus * period});
         }
         if (truth) { return {std::move(conditions)}; }
         Formula result;
@@ -587,16 +664,27 @@ FailureOr<std::vector<IntegerSystem>> RegionExpressions::RelationBuilder::run(Id
                 congruences.push_back({std::move(coefficients), atom.bound - atom.expression.constant, atom.modulus});
             }
         }
+        tightenLatticeBounds(rows, congruences);
         auto system = IntegerSystem::create(columns, rows, congruences);
         if (mlir::failed(system)) { diagnostic = "regional relation constraints failed"; return failure(); }
         auto restricted = system->intersect(*liftedDomain);
         if (mlir::failed(restricted)) { diagnostic = "regional relation intersection failed"; return failure(); }
         if (restricted->isKnownEmpty()) { continue; }
+        // No existential columns means there is nothing to project. Keep an
+        // exact (possibly empty) piece instead of invoking the full feasibility
+        // solver merely to rediscover the same relation.
+        if (columns == variables.size()) {
+            result.push_back(std::move(*restricted));
+            continue;
+        }
         if (cost) { ++cost->projections; }
         auto pieces = restricted->project(keep);
         if (mlir::failed(pieces)) { diagnostic = "regional relation projection unavailable"; return failure(); }
         for (auto& piece : *pieces) {
-            if (!piece.isKnownEmpty() && !llvm::is_contained(result, piece)) { result.push_back(std::move(piece)); }
+            // Union membership does not require semantic deduplication. Proving
+            // equality here can rerun unbounded feasibility for each pair of
+            // already exact projected pieces.
+            if (!piece.isKnownEmpty()) { result.push_back(std::move(piece)); }
         }
     }
     if (cost) { cost->pieces = result.size(); }

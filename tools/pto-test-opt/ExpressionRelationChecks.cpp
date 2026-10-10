@@ -103,6 +103,62 @@ bool runExpressionRelationChecks(MLIRContext* context)
             return std::min(uint64_t(v[0]), uint64_t(v[0]) + 1) == uint64_t(v[1]); }) ||
         !test("cancelled-difference", arena.eq(arena.sub(arena.add(x, y), x), y), [](auto) {
             return true; })) { return false; }
+    const auto dx = getAffineDimExpr(0, context), dy = getAffineDimExpr(1, context);
+    const auto mappedDomain = *fs::IntegerSystem::create(2,
+        {{{I(1), I(0)}, I(3)}, {{I(-1), I(0)}, I(5)}, {{I(0), I(1)}, I(2)}});
+    std::string mappedError;
+    auto mapped = arena.integerMappedPredicate(mappedDomain, {x, y},
+        {dx - dy * 2 + dy.floorDiv(3), dy.ceilDiv(2)}, 2, {1, 0}, mappedError);
+    auto modulo = arena.integerMappedPredicate(mappedDomain, {x, y},
+        {dx - dy % 3, dy.ceilDiv(2)}, 2, {1, 0}, mappedError);
+    if (!mapped || !modulo) { return false; }
+    auto floor = [](int64_t value, int64_t divisor) {
+        return value / divisor - (value % divisor < 0);
+    };
+    auto expectedMap = [&](auto point, bool useModulo) {
+        const auto first = useModulo ? point[0] - (point[1] - floor(point[1], 3) * 3) :
+            point[0] - point[1] * 2 + floor(point[1], 3);
+        const auto second = -floor(-point[1], 2);
+        const auto quotient = floor(first, 2);
+        return first - quotient * 2 == 1 && second % 2 == 0 && quotient >= -5 && quotient <= 3 &&
+            floor(second, 2) <= 2;
+    };
+    if (!test("mapped-periodic", *mapped, [&](auto point) { return expectedMap(point, false); }) ||
+        !test("mapped-periodic-complement", arena.lnot(*mapped), [&](auto point) {
+            return !expectedMap(point, false); }) ||
+        !test("mapped-modulo", *modulo, [&](auto point) { return expectedMap(point, true); })) { return false; }
+    auto periodicCongruence = arena.integerPredicate(
+        *fs::IntegerSystem::create(2, {}, {{{I(2), I(-3)}, I(2), I(5)}}), {x, y}, 3, {1, 2});
+    auto expectedCongruence = [&](auto point) {
+        const auto qx = floor(point[0], 3), qy = floor(point[1], 3);
+        const auto sum = 2 * qx - 3 * qy;
+        return point[0] - 3 * qx == 1 && point[1] - 3 * qy == 2 && sum - 5 * floor(sum, 5) == 2;
+    };
+    if (!test("periodic-congruence", periodicCongruence, expectedCongruence) ||
+        !test("periodic-congruence-complement", arena.lnot(periodicCongruence), [&](auto point) {
+            return !expectedCongruence(point); })) { return false; }
+    auto strideDomain = *fs::IntegerSystem::create(2,
+        {{{I(1), I(0)}, I(4)}, {{I(-1), I(0)}, I(0)}, {{I(1), I(2)}, I(-1)}});
+    auto stridePredicate = arena.integerMappedPredicate(strideDomain, {x, y},
+        {dx - dy.floorDiv(8) * 4096, dy}, 8, {0, 3}, mappedError);
+    if (!stridePredicate) { return false; }
+    std::vector<std::vector<int64_t>> stridePoints;
+    for (int64_t parameter = -20; parameter <= 20; ++parameter) {
+        for (int64_t address : {-8192, -4096, 0, 4096, 8192, 7}) {
+            stridePoints.push_back({address, parameter});
+        }
+    }
+    auto expectedStride = [&](auto point) {
+        const auto parameter = floor(point[1], 8);
+        const auto shifted = point[0] - 4096 * parameter;
+        const auto address = floor(shifted, 8);
+        return point[1] - 8 * parameter == 3 && shifted - 8 * address == 0 &&
+            address >= 0 && address <= 4 && address + 2 * parameter <= -1;
+    };
+    const auto strideUniverse = box({{INT64_MIN, INT64_MAX}, {INT64_MIN, INT64_MAX}});
+    if (!check(arena, *stridePredicate, {x, y}, strideUniverse, stridePoints, expectedStride, count) ||
+        !check(arena, arena.lnot(*stridePredicate), {x, y}, strideUniverse, stridePoints,
+            [&](auto point) { return !expectedStride(point); }, count)) { return false; }
     auto congruence = *fs::IntegerSystem::create(1, {}, {{{I(1)}, I(1), I(3)}});
     auto congruent = arena.integerPredicate(congruence, {x}, 1, {0});
     if (!test("negated-congruence", arena.lnot(congruent), [](auto v) { return (v[0] % 3 + 3) % 3 != 1; })) {
@@ -131,7 +187,7 @@ bool runExpressionRelationChecks(MLIRContext* context)
     std::string error;
     fs::RegionExpressions::RelationCost unusedCost;
     auto unused = arena.integerRelation(arena.boolean(true), variables, broad, error, &unusedCost);
-    if (failed(unused) || unusedCost.gates != 1 || unusedCost.projections != 1 || unused->size() != 1) {
+    if (failed(unused) || unusedCost.gates != 1 || unusedCost.projections != 0 || unused->size() != 1) {
         llvm::errs() << "unused relation inputs created projection work\n"; return false;
     }
     if (succeeded(arena.integerRelation(arena.eq(x, y), {x}, box({{0, 2}}), error)) || error.empty() ||

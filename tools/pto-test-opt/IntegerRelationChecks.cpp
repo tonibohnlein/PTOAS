@@ -161,6 +161,35 @@ bool latticeWitnessOracle(const System& source, int64_t lower, int64_t upper, ui
     }
     return true;
 }
+bool narrowStripChecks(uint64_t& checked)
+{
+    auto source = System::create(2,
+        {row({1, 0}, 6), row({-1, 0}, 6), row({0, 1}, 20), row({0, -1}, 20),
+         row({-2, 3}, -3), row({2, -3}, 5), row({-1, 2048}, 10000)},
+        {congruence({1, 1}, -1, 5)});
+    if (failed(source) || !boundedProjection(*source, {0}, {{-6, 6}, {-20, 20}}, checked)) {
+        return false;
+    }
+    auto witnesses = source->eliminateWithWitness(1);
+    if (failed(witnesses) || source->isEmpty()) { return false; }
+    for (int64_t x = -6; x <= 6; ++x) {
+        bool expected = false, actual = false;
+        for (int64_t y = -20; y <= 20; ++y) { expected |= contains(*source, {Integer(x), Integer(y)}); }
+        for (const auto& witness : *witnesses) {
+            if (!contains(witness.domain, {Integer(x)})) { continue; }
+            const auto numerator = evaluate(witness.numerator.coefficients, {Integer(x)}) +
+                witness.numerator.constant;
+            if (numerator % witness.denominator != 0 ||
+                !contains(*source, {Integer(x), numerator / witness.denominator})) { return false; }
+            actual = true;
+        }
+        auto fixed = System::create(2, {row({1, 0}, x), row({-1, 0}, -x)});
+        auto restricted = source->intersect(*fixed);
+        if (failed(restricted) || restricted->isEmpty() == expected || actual != expected) { return false; }
+        ++checked;
+    }
+    return true;
+}
 bool unaryLatticeChecks(uint64_t& checked)
 {
     const std::vector<std::vector<Congruence>> cases{
@@ -325,6 +354,7 @@ int runIntegerRelationChecks()
     uint64_t checked = 0;
     if (!projectionChecks(checked)) { llvm::errs() << "integer projection oracle differs\n"; return 1; }
     if (!feasibilityAndWitnessChecks()) { llvm::errs() << "integer feasibility/witness check failed\n"; return 1; }
+    if (!narrowStripChecks(checked)) { llvm::errs() << "integer narrow strip check failed\n"; return 1; }
     if (!unaryLatticeChecks(checked)) { llvm::errs() << "integer unary lattice check failed\n"; return 1; }
     if (!unaryResidueInclusionChecks()) { llvm::errs() << "integer unary residue inclusion failed\n"; return 1; }
     const bool uncached = uncachedInclusionChecks();

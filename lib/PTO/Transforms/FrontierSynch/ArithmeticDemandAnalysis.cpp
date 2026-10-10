@@ -502,6 +502,14 @@ private:
                 if (scalarPair(*a.schema->sourceSite, *b.schema->sourceSite)) { continue; }
                 const auto x = a.schema->sourceDimensions, y = b.schema->sourceDimensions;
                 if (a.residues[x] != b.residues[y]) { continue; }
+                ArithmeticRelationKey key{
+                    {*a.schema->sourceSite, ArithmeticEvent::Payload, {a.residues.begin(), a.residues.begin() + x}},
+                    {*b.schema->sourceSite, ArithmeticEvent::Payload, {b.residues.begin(), b.residues.begin() + y}},
+                    parameterResidues(a)};
+                // The final conflict intersection uses this identical complete
+                // reference-order key. An absent key cannot contribute a
+                // forward conflict, so avoid its byte join and projection.
+                if (order.find(key) == order.end()) { continue; }
                 const unsigned joinedDimensions = x + y + 1 + result.parameterCount;
                 std::vector<unsigned> am(x + 1 + result.parameterCount), bm(y + 1 + result.parameterCount);
                 std::iota(am.begin(), am.begin() + x, 0);
@@ -528,10 +536,6 @@ private:
                     ++result.cost.differences;
                     if (failed(projected)) { fail("hardware protection subtraction failed"); return false; }
                 }
-                ArithmeticRelationKey key{
-                    {*a.schema->sourceSite, ArithmeticEvent::Payload, {a.residues.begin(), a.residues.begin() + x}},
-                    {*b.schema->sourceSite, ArithmeticEvent::Payload, {b.residues.begin(), b.residues.begin() + y}},
-                    parameterResidues(a)};
                 for (auto& value : *projected) { append(conflicts, key, std::move(value)); }
             }
         }

@@ -8,6 +8,7 @@
 // A finite occurrence representation over the unchanged shared access model.
 #include "ArithmeticProgramInternal.h"
 #include "FiniteExpansionPlan.h"
+#include "FiniteAccessPreflight.h"
 #include "NormalizedControl.h"
 #include "FiniteGuardedInternal.h"
 #include "PTO/Transforms/FrontierSynch/ArithmeticDemandAnalysis.h"
@@ -204,34 +205,24 @@ static FiniteGuardedAnalysis analyzeExpandedFiniteContext(ArithmeticRegionContex
         }
         return result;
     }
-    uint64_t accesses = 0, overlapPairs = 0;
-    DenseMap<Value, std::map<unsigned, std::pair<uint64_t, uint64_t>>> groups;
+    uint64_t accesses = 0;
     for (const auto& relation : program->primitives.relations) {
-        const bool read = relation.kind == PrimitiveKind::Reads;
-        const bool write = relation.kind == PrimitiveKind::Writes;
-        const bool access = (read || write) && !relation.pieces.empty();
-        if (!access) { continue; }
-        accesses += relation.pieces.size();
-        auto& count = groups[relation.storageBase][static_cast<unsigned>(*relation.storageSpace)];
-        (read ? count.first : count.second) += relation.pieces.size();
-    }
-    const auto limits = plan ? plan->limits : FiniteExpansionLimits{};
-    for (const auto& entry : groups) {
-        for (auto [space, count] : entry.second) {
-            (void)space;
-            // Counts are bounded by the primitive-fragment cap, so products
-            // fit uint64_t. Read/read pairs never enter the overlap join.
-            overlapPairs += count.second * (count.second + 2 * count.first);
+        if (relation.kind == PrimitiveKind::Reads || relation.kind == PrimitiveKind::Writes) {
+            accesses += relation.pieces.size();
         }
     }
-    if (overlapPairs > limits.pairs) {
+    const auto limits = plan ? plan->limits : FiniteExpansionLimits{};
+    auto overlapPairs = detail::finiteAccessPairEstimate(*program, limits.pairs);
+    if (!overlapPairs) {
         result.error = "finite expansion overlap adapter exceeds its pair budget"; return result;
     }
-    auto protection = structuredProtection(input.accesses());
+    auto protection = std::make_shared<const StructuredProtection>(structuredProtection(input.accesses()));
     llvm::MapVector<std::pair<AddressSpace, Value>, AffineExpr> translations;
     auto translated = detail::normalizeFiniteDemandAccesses(*program, &program->expandedTranslationFragments,
                                                           &translations);
-    auto stage = analyzeGeneralArithmeticGenerators(translated ? *translated : *program, &protection);
+    auto storageProgram = translated ?
+        std::make_shared<const ArithmeticProgram>(std::move(*translated)) : program;
+    auto stage = analyzeGeneralArithmeticGenerators(*storageProgram, protection.get());
     if (!stage.analysis().error.empty()) { result.error = stage.analysis().error; return result; }
     auto arena = expressions ? std::move(expressions) : std::make_shared<RegionExpressions>();
     if (!arena->constructionError().empty()) {
@@ -240,9 +231,10 @@ static FiniteGuardedAnalysis analyzeExpandedFiniteContext(ArithmeticRegionContex
     const auto initialExpressions = arena->size();
     RegionExpressions::Transaction transaction(*arena);
     auto state = std::make_shared<FiniteGuardedState>();
-    state->expandedStorageProgram = translated ?
-        std::make_shared<const ArithmeticProgram>(std::move(*translated)) : program;
+    state->expandedStorageProgram = std::move(storageProgram);
+    state->expandedProtection = std::move(protection);
     state->expandedStorageTranslations = std::move(translations);
+    state->expandedInput = &input;
     state->function = program->context.function;
     state->arena = arena;
     state->accessModel = &input.accesses();
@@ -282,10 +274,11 @@ static FiniteGuardedAnalysis analyzeExpandedFiniteContext(ArithmeticRegionContex
     };
     import(stage.analysis().generators, false);
     import(stage.analysis().nativeOrder, true);
+    state->expandedGenerators = std::make_shared<GeneralArithmeticGeneratorStage>(std::move(stage));
     state->cost.numericVisits = program->expandedVisits;
     state->cost.phaseDescriptions = program->sites.size();
     state->cost.physicalFragments = accesses;
-    state->cost.crossingCandidates = stage.analysis().cost.pieceJoins;
+    state->cost.crossingCandidates = state->expandedGenerators->analysis().cost.pieceJoins;
     state->cost.crossings = state->guardedResidual.size();
     state->closeAndReduce();
     state->cost.expressionNodes = state->arena->size() - initialExpressions;
@@ -301,9 +294,12 @@ static FiniteGuardedAnalysis analyzeExpandedFiniteContext(ArithmeticRegionContex
     return result;
 }
 FiniteGuardedAnalysis analyzeExpandedFinite(const FiniteExpansionPlan& plan,
-    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions)
+    const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
+    std::shared_ptr<const PhaseIndex> indexOwner)
 {
-    return analyzeExpandedFiniteContext(plan.context, index, input, &plan, std::move(expressions));
+    auto result = analyzeExpandedFiniteContext(plan.context, index, input, &plan, std::move(expressions));
+    if (result.state) { result.state->expandedIndexOwner = std::move(indexOwner); }
+    return result;
 }
 FiniteGuardedAnalysis analyzeExpandedFinite(func::FuncOp function, Operation* root,
     const PhaseIndex& index, const SyncInput& input)

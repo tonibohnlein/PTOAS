@@ -11,6 +11,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/ArithmeticProgramInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/FiniteExpansionPlan.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/FiniteGuardedInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/RegionalRelationsInternal.h"
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
@@ -194,6 +195,26 @@ bool checkStoragePreflight(func::FuncOp function, fs::RegionExpressions& retaine
     return !native && !physical && !nativeError.empty() && !byteError.empty() &&
         retained.size() == before && retained.constructionError() == previousError;
 }
+llvm::json::Array dumpEventQueries(const fs::RegionalAnalysis& region, std::size_t sites,
+    const std::function<uint64_t(fs::RegionExpressions::Id)>& evaluate)
+{
+    llvm::json::Array result;
+    if (sites > 64) { return result; }
+    const auto zero = region.expressions->constant(0);
+    for (uint32_t source = 0; source < 2 * sites; ++source) {
+        llvm::json::Array row;
+        for (uint32_t target = 0; target < 2 * sites; ++target) {
+            auto event = [&](uint32_t id) {
+                return fs::RegionalEvent{id / 2, zero, id % 2 ?
+                    fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start};
+            };
+            auto answer = fs::regionalReachability(region, event(source), event(target));
+            row.push_back(answer ? evaluate(*answer) : UINT64_MAX);
+        }
+        result.push_back(std::move(row));
+    }
+    return result;
+}
 llvm::json::Object dumpFiniteStorage(const fs::RegionalAnalysis& region,
     const std::function<uint64_t(fs::RegionExpressions::Id)>& evaluate)
 {
@@ -219,7 +240,8 @@ llvm::json::Object dumpFiniteStorage(const fs::RegionalAnalysis& region,
             auto selected = region.storageSelectors(address);
             auto member = region.expressions->boolean(false);
             bool membershipAvailable = true;
-            for (const auto& family : region.symbolicStorage->families) {
+            const std::vector<fs::RegionalStorageFamily> empty;
+            for (const auto& family : region.symbolicStorage ? region.symbolicStorage->families : empty) {
                 auto present = family.membership(address);
                 membershipAvailable &= present.has_value();
                 if (present) { member = region.expressions->lor(member, *present); }
@@ -336,7 +358,7 @@ void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
                 document["sites"] = form.sites.size();
                 auto queries = fs::expandedFiniteRegionalQueries(expanded);
                 document["exact_queries"] = queries.capabilities.exactQueries;
-                std::optional<fs::RegionalAnalysis> selectedStorage;
+                std::optional<fs::RegionalAnalysis> selectedStorage, relationStorage;
                 if (function->hasAttr("test.expanded_storage")) {
                     document["preflight_failure_retained"] = checkStoragePreflight(function, *state.arena);
                     std::string error;
@@ -348,6 +370,16 @@ void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
                     document["exact_selectors"] = succeeded(selected);
                     if (succeeded(selected)) {
                         selectedStorage = std::move(*selected);
+                        document["relation_available"] = bool(selectedStorage->relations);
+                        document["relation_error"] = state.expandedRelationError;
+                        document["relation_projections"] = state.expandedRelationCost.projections;
+                        if (selectedStorage->relations) {
+                            auto carrier = std::make_shared<fs::RegionalRelations>(*selectedStorage->relations);
+                            auto native = fs::exportRegionalRelationData(carrier, state.arena, error);
+                            if (succeeded(native) && native->capabilities.exactSelectors) {
+                                relationStorage = std::move(*native);
+                            }
+                        }
                         const auto invalid = fs::RegionExpressions::invalid;
                         const auto boolean = state.arena->boolean(true);
                         document["invalid_storage_rejected"] =
@@ -426,23 +458,7 @@ void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
                         append(state.guardedResidual, edges);
                         append(state.guardedNative, native);
                         append(state.retained, retained);
-                        llvm::json::Array eventQueries;
-                        constexpr uint32_t maxDumpSites = 64;
-                        const bool dumpQueries = form.sites.size() <= maxDumpSites;
-                        if (dumpQueries) {
-                            for (uint32_t source = 0; source < 2 * form.sites.size(); ++source) {
-                                llvm::json::Array row;
-                                for (uint32_t target = 0; target < 2 * form.sites.size(); ++target) {
-                                    auto event = [&](uint32_t id) {
-                                        return fs::RegionalEvent{id / 2, zero, id % 2 ?
-                                            fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start};
-                                    };
-                                    auto answer = fs::regionalReachability(queries, event(source), event(target));
-                                    row.push_back(answer ? evaluate(*answer) : UINT64_MAX);
-                                }
-                                eventQueries.push_back(std::move(row));
-                            }
-                        }
+                        auto eventQueries = dumpEventQueries(queries, form.sites.size(), evaluate);
                         llvm::json::Object sample{{"parameters", std::move(values)},
                             {"presence", std::move(presence)}, {"generators", std::move(edges)},
                             {"native", std::move(native)}, {"retained", std::move(retained)},
@@ -450,6 +466,11 @@ void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
                         if (selectedStorage) {
                             auto storage = dumpFiniteStorage(*selectedStorage, evaluate);
                             for (auto& entry : storage) { sample[entry.first] = std::move(entry.second); }
+                        }
+                        if (relationStorage) {
+                            sample["relation_event_queries"] =
+                                dumpEventQueries(*relationStorage, form.sites.size(), evaluate);
+                            sample["relation_storage"] = dumpFiniteStorage(*relationStorage, evaluate);
                         }
                         samples.push_back(std::move(sample));
                     }

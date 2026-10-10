@@ -13,6 +13,8 @@
 #include "PTO/Transforms/FrontierSynch/GuardedRanks.h"
 #include "llvm/ADT/MapVector.h"
 namespace mlir::pto::frontiersynch {
+struct RegionalRelationData;
+class GeneralArithmeticGeneratorStage;
 namespace detail {
 // Validate exactly the eventual predicate construction in a private arena.
 // The physical byte is symbolic; parameter inputs retain their actual SSA form.
@@ -31,6 +33,14 @@ struct FiniteGuardedState {
     GuardedRanks rankIndex;
     // One retained alternative shared by demand and later storage construction.
     std::shared_ptr<const ArithmeticProgram> expandedStorageProgram;
+    std::shared_ptr<const StructuredProtection> expandedProtection;
+    const SyncInput* expandedInput = nullptr;
+    std::shared_ptr<GeneralArithmeticGeneratorStage> expandedGenerators;
+    std::shared_ptr<const PhaseIndex> expandedIndexOwner;
+    std::shared_ptr<const RegionalRelationData> expandedRelations;
+    bool expandedRelationsAttempted = false;
+    std::string expandedRelationError;
+    RegionExpressions::RelationCost expandedRelationCost;
     llvm::MapVector<std::pair<AddressSpace, Value>, AffineExpr> expandedStorageTranslations;
     std::vector<GuardedDemand> retained;
     std::vector<StorageGenerator> residual;
