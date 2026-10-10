@@ -29,7 +29,6 @@ namespace mlir::pto::frontiersynch {
 namespace {
 using Id = RegionExpressions::Id;
 struct State : ArithmeticRegionalRelations {
-    std::shared_ptr<const SyncInput> inputOwner;
     std::optional<ArithmeticHandoffAllocation> handoffAllocation;
     std::vector<ArithmeticIntegerPiece> primitives;
     using StorageKey = std::pair<AddressSpace, Value>;
@@ -44,7 +43,7 @@ struct State : ArithmeticRegionalRelations {
     Id no() { return arena->boolean(false); }
     Id yes() { return arena->boolean(true); }
     Id c(uint64_t value) { return arena->constant(value); }
-    bool initialize()
+    bool initialize(const std::function<std::optional<Id>(Value)>& parameterBinding = {})
     {
         for (auto* ancestor = program.context.root->getParentOp(); ancestor; ancestor = ancestor->getParentOp()) {
             if (auto loop = dyn_cast<scf::ForOp>(ancestor)) { enclosing.push_back(loop); }
@@ -53,7 +52,6 @@ struct State : ArithmeticRegionalRelations {
         for (const auto& site : program.sites) {
             for (auto loop : site.loops) {
                 if (geometry.count(loop)) { continue; }
-                auto domain = CountedLoop::get(loop);
                 auto lower = loop.getLowerBound();
                 // An entry-bound origin is reusable in every endpoint query.
                 // Origins depending on another queried coordinate need a map.
@@ -67,12 +65,24 @@ struct State : ArithmeticRegionalRelations {
                      definition->getBlock() == &program.context.function.front()) :
                     (owner == program.context.function.getOperation() ||
                      (owner && owner != program.context.root && !program.context.root->isProperAncestor(owner))));
-                if (!domain || !entry) {
+                if (!entry) {
                     error = "arithmetic regional ordinals require a representable counted domain and entry origin";
                     return false;
                 }
-                geometry.emplace(loop, LoopGeometry{fixed ? c(constant.getSExtValue()) : arena->input(lower),
-                                                     domain->step, domain->maximumOrdinal});
+                auto origin = fixed ? std::optional<Id>(c(constant.getSExtValue())) :
+                    (parameterBinding ? parameterBinding(lower) : std::optional<Id>(arena->input(lower)));
+                const bool validOrigin = origin && *origin < arena->size() && !arena->isBoolean(*origin);
+                if (!validOrigin) { error = "arithmetic loop origin has no exact entry binding"; return false; }
+                auto signedConstant = [&](Id value) -> std::optional<int64_t> {
+                    auto bits = arena->constantValue(value);
+                    return bits ? std::optional<int64_t>(APInt(64, *bits).getSExtValue()) : std::nullopt;
+                };
+                auto upper = parameterBinding ? parameterBinding(loop.getUpperBound()) : std::optional<Id>{};
+                const bool validUpper = upper && *upper < arena->size() && !arena->isBoolean(*upper);
+                auto domain = CountedLoop::get(loop, signedConstant(*origin),
+                    validUpper ? signedConstant(*upper) : std::nullopt);
+                if (!domain) { error = "arithmetic entry-bound loop ordinal exceeds its representation"; return false; }
+                geometry.emplace(loop, LoopGeometry{*origin, domain->step, domain->maximumOrdinal});
             }
         }
         return true;
@@ -663,7 +673,7 @@ FailureOr<RegionalAnalysis> initializeExports(const std::shared_ptr<State>& stat
     const std::function<std::optional<Id>(Value)>& parameterBinding,
     const std::function<bool()>& reduce = {})
 {
-    if (!state->initialize()) { error = state->error; return failure(); }
+    if (!state->initialize(parameterBinding)) { error = state->error; return failure(); }
     auto imported = importArithmeticIntegerPieces(state->program, !selectors);
     if (failed(imported)) { error = "regional arithmetic primitive import failed"; return failure(); }
     state->primitives = std::move(*imported);
@@ -705,7 +715,8 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext 
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
     std::string& error, std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding,
     StorageExportRequest request, std::shared_ptr<const ArithmeticRegionalRelations>* retained = nullptr,
-    const ArithmeticProgram* certified = nullptr, ArrayRef<ArithmeticLimits> profiles = {})
+    const ArithmeticProgram* certified = nullptr, ArrayRef<ArithmeticLimits> profiles = {},
+    ArithmeticEntryConstant suppliedConstants = {})
 {
     if (!context.function || !context.root || !expressions || !expressions->constructionError().empty()) {
         error = "arithmetic region requires a valid original root and expression arena";
@@ -718,7 +729,7 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext 
     // an artificial variable coefficient that fails the arithmetic class.
     // Original sites/cuts remain, and their enclosing provider enforces the
     // phase/interval context for both queries and prepared endpoint recipes.
-    ArithmeticEntryConstant entryConstant;
+    ArithmeticEntryConstant entryConstant = std::move(suppliedConstants);
     if (parameterBinding) {
         entryConstant = [&](Value value) -> std::optional<int64_t> {
             auto expression = parameterBinding(value);
@@ -726,6 +737,17 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext 
             auto fixed = state->arena->constantValue(*expression);
             if (!fixed) { return std::nullopt; }
             return APInt(64, *fixed).getSExtValue();
+        };
+    }
+    if (entryConstant) {
+        auto lookup = std::move(entryConstant);
+        entryConstant = [&, lookup = std::move(lookup)](Value value) {
+            auto result = lookup(value);
+            if (result && llvm::none_of(state->entryConstants,
+                [&](const auto& entry) { return entry.first == value; })) {
+                state->entryConstants.push_back({value, *result});
+            }
+            return result;
         };
     }
     if (certified) {
@@ -792,14 +814,55 @@ std::shared_ptr<const ArithmeticRegionalRelations> analyzeArithmeticRegionDemand
     std::shared_ptr<const ArithmeticRegionalRelations> demands;
     (void)analyzeArithmeticRegionImpl(context, index, input, std::make_shared<RegionExpressions>(),
         error, {}, StorageExportRequest::Demands, &demands, certified);
-    return demands;
+    return demands ? std::make_shared<const ArithmeticRegionalRelations>(*demands) : nullptr;
+}
+std::shared_ptr<const ArithmeticRegionalRelations> analyzeSpecializedArithmeticDemands(
+    ArithmeticRegionContext context, const PhaseIndex& index, const SyncInput& input,
+    ArrayRef<ArithmeticLimits> profiles, ArithmeticEntryConstant entryConstant, std::string& error)
+{
+    std::shared_ptr<const ArithmeticRegionalRelations> demands;
+    auto observe = [&](Value value) {
+        auto result = entryConstant ? entryConstant(value) : std::optional<int64_t>{};
+        return result;
+    };
+    (void)analyzeArithmeticRegionImpl(context, index, input, std::make_shared<RegionExpressions>(),
+        error, {}, StorageExportRequest::Demands, &demands, nullptr, profiles, observe);
+    if (!demands) { return {}; }
+    return std::make_shared<const ArithmeticRegionalRelations>(*demands);
+}
+FailureOr<RegionalAnalysis> exportSpecializedArithmeticRegion(
+    const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
+    bool selectors, std::string& error,
+    std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding)
+{
+    const bool valid = demands.input && expressions && expressions->constructionError().empty() &&
+        demands.program.specializedEntry && demands.analysis.exactMinimum && demands.analysis.error.empty();
+    if (!valid) { error = "specialized export requires exact arithmetic mathematics"; return failure(); }
+    RegionExpressions::Transaction transaction(*expressions);
+    for (const auto& [value, expected] : demands.entryConstants) {
+        auto binding = parameterBinding ? parameterBinding(value) : std::optional<Id>{};
+        auto actual = binding && *binding < expressions->size() ? expressions->constantValue(*binding) : std::nullopt;
+        const bool sameConstant = actual && APInt(64, *actual).getSExtValue() == expected;
+        if (!sameConstant) {
+            error = "specialized arithmetic export contradicts its certified entry constants"; return failure();
+        }
+    }
+    auto state = std::make_shared<State>();
+    state->input = demands.input; state->inputOwner = demands.inputOwner; state->indexOwner = demands.indexOwner;
+    state->entryConstants = demands.entryConstants;
+    state->program = demands.program; state->analysis = demands.analysis; state->arena = expressions;
+    auto exported = initializeExports(state, *demands.input, error, selectors,
+        StorageExportRequest::SymbolicAllowed, parameterBinding);
+    if (failed(exported)) { return failure(); }
+    transaction.commit();
+    return exported;
 }
 FailureOr<RegionalAnalysis> exportArithmeticRegion(
     const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
     bool selectors, std::string& error, std::shared_ptr<const SyncInput> inputOwner)
 {
-    const bool valid = demands.input && expressions && expressions->constructionError().empty() &&
-        demands.analysis.exactMinimum && demands.analysis.error.empty() &&
+    const bool valid = demands.input && !demands.program.specializedEntry && expressions &&
+        expressions->constructionError().empty() && demands.analysis.exactMinimum && demands.analysis.error.empty() &&
         (!inputOwner || inputOwner.get() == demands.input);
     if (!valid) {
         error = "arithmetic export requires exact mathematics in its modeled input context"; return failure();
@@ -808,7 +871,9 @@ FailureOr<RegionalAnalysis> exportArithmeticRegion(
     // inside this transaction, and no rejected state or appended ID escapes.
     RegionExpressions::Transaction transaction(*expressions);
     auto state = std::make_shared<State>();
-    state->input = demands.input; state->inputOwner = std::move(inputOwner);
+    state->input = demands.input;
+    state->inputOwner = inputOwner ? std::move(inputOwner) : demands.inputOwner;
+    state->indexOwner = demands.indexOwner;
     state->program = demands.program; state->analysis = demands.analysis;
     state->arena = expressions;
     auto exported = initializeExports(state, *demands.input, error, selectors,
@@ -821,12 +886,15 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticRegion(
     const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
     ArrayRef<scf::ForOp> enclosing, std::string& error, std::shared_ptr<const SyncInput> inputOwner)
 {
-    const bool valid = demands.input && expressions && expressions->constructionError().empty() &&
-        demands.analysis.exactMinimum && (!inputOwner || inputOwner.get() == demands.input);
+    const bool valid = demands.input && !demands.program.specializedEntry && expressions &&
+        expressions->constructionError().empty() && demands.analysis.exactMinimum &&
+        (!inputOwner || inputOwner.get() == demands.input);
     if (!valid) { error = "arithmetic preparation requires its retained original context"; return failure(); }
     RegionExpressions::Transaction transaction(*expressions);
     auto state = std::make_shared<State>();
-    state->input = demands.input; state->inputOwner = std::move(inputOwner);
+    state->input = demands.input;
+    state->inputOwner = inputOwner ? std::move(inputOwner) : demands.inputOwner;
+    state->indexOwner = demands.indexOwner;
     state->program = demands.program; state->analysis = demands.analysis;
     state->arena = expressions; state->selectors.period = state->program.primitives.period;
     if (!state->initialize()) { error = state->error; return failure(); }

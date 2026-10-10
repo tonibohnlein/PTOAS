@@ -50,6 +50,12 @@ public:
     const AnalysisConstructionCounts& constructionCounts() const { return construction; }
     uint64_t arithmeticGeneratorConstructions() const;
     uint64_t arithmeticRegionConstructions() const;
+    uint64_t specializedArithmeticConstructions() const;
+    // Constants must be deterministic within this request. Reuse compares every
+    // observed lookup, including unavailable values, in the original context.
+    std::shared_ptr<const ArithmeticRegionalRelations> specializedArithmeticDemands(
+        ArithmeticRegionContext context, const ArithmeticEntryConstant& constants, std::string& error,
+        ArrayRef<ArithmeticLimits> profiles = {});
     uint64_t finiteExpansionPreflights() const;
     uint64_t numericTemplatePreflights() const;
     uint64_t numericalRegionConstructions() const;

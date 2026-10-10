@@ -356,6 +356,7 @@ namespace {
 // report contains no borrowed operations or values and survives insertion.
 DictionaryAttr contractReport(const frontiersynch::ProgramRecognition& program, StringRef logicalBackend,
                               uint64_t arithmeticGeneratorConstructions, uint64_t arithmeticRegionConstructions,
+                              uint64_t specializedArithmeticConstructions,
                               ArrayRef<frontiersynch::AnalysisCostRecord> costs,
                               const frontiersynch::AnalysisConstructionCounts& counts)
 {
@@ -419,6 +420,7 @@ DictionaryAttr contractReport(const frontiersynch::ProgramRecognition& program, 
     report.set("selected_logical_backend", b.getStringAttr(logicalBackend));
     report.set("arithmetic_generator_constructions", b.getI64IntegerAttr(arithmeticGeneratorConstructions));
     report.set("arithmetic_region_constructions", b.getI64IntegerAttr(arithmeticRegionConstructions));
+    report.set("specialized_arithmetic_constructions", b.getI64IntegerAttr(specializedArithmeticConstructions));
     SmallVector<Attribute> estimates;
     for (const auto& record : costs) {
         NamedAttrList entry;
@@ -475,6 +477,7 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     if (succeeded(prepared)) {
         (*prepared)->recognitionReport = contractReport(*analysis.result(), logicalBackend,
             analysis.arithmeticGeneratorConstructions(), analysis.arithmeticRegionConstructions(),
+            analysis.specializedArithmeticConstructions(),
             analysis.costRecords(), analysis.constructionCounts());
         if (result.mathematical->arithmeticPeriodicDemands) {
             const auto& conversion = result.mathematical->arithmeticPeriodicDemands->conversion;
