@@ -24,7 +24,7 @@ struct TemplateBuilder {
     SmallVectorImpl<TemplatePayload>* plannedPayloads = nullptr;
     MLIRContext* context() const { return output.outer.getContext(); }
     AffineExpr scalar(Value value, SmallVectorImpl<Value>* invariants = nullptr,
-                      bool control = false) const;
+                      bool control = false, bool specializeGeometry = true) const;
     std::optional<int64_t> integer(Value value) const;
     std::optional<bool> guard(Value value, unsigned depth = 0) const;
     bool charge(uint64_t count, uint64_t& total, uint64_t limit, Operation* anchor);

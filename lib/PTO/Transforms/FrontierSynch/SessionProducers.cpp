@@ -608,7 +608,8 @@ uint64_t FrontierAnalysis::specializedNumericConstructions() const
 }
 std::shared_ptr<const NumericBodyMathematics> FrontierAnalysis::specializedNumericDemands(scf::ForOp loop,
     const TemplateGeometryConstant& geometry, const TemplateControlConstant& control, std::string& error,
-    NumericTemplateLimits limits, std::shared_ptr<const NormalizedControlDescription> normalized)
+    NumericTemplateLimits limits, std::shared_ptr<const NormalizedControlDescription> normalized,
+    TemplateGeometryPolicy policy)
 {
     const bool valid = initialized && storage && structuralIndex && program && loop &&
         function->isProperAncestor(loop);
@@ -629,7 +630,7 @@ std::shared_ptr<const NumericBodyMathematics> FrontierAnalysis::specializedNumer
     const auto key = std::make_tuple(limits.visits, limits.payloads, limits.fragments, limits.depth);
     auto& variants = sessionState->specializedNumeric[loop];
     for (const auto& attempt : variants) {
-        if (attempt.limits != key || attempt.normalized != normalized) { continue; }
+        if (attempt.limits != key || attempt.normalized != normalized || attempt.policy != policy) { continue; }
         const bool sameGeometry = llvm::all_of(attempt.geometry, [&](const auto& entry) {
             return geometryValue(entry.second.first) == entry.second.second;
         });
@@ -638,7 +639,7 @@ std::shared_ptr<const NumericBodyMathematics> FrontierAnalysis::specializedNumer
         });
         if (sameGeometry && sameControl) { error = attempt.error; return attempt.mathematics; }
     }
-    SpecializedNumericAttempt attempt; attempt.limits = key; attempt.normalized = normalized;
+    SpecializedNumericAttempt attempt; attempt.limits = key; attempt.normalized = normalized; attempt.policy = policy;
     const auto observedGeometry = [&](Value value) {
         auto answer = geometryValue(value);
         attempt.geometry.emplace(value.getAsOpaquePointer(), std::make_pair(value, answer)); return answer;
@@ -649,7 +650,7 @@ std::shared_ptr<const NumericBodyMathematics> FrontierAnalysis::specializedNumer
     };
     ++sessionState->specializedNumericBuilds;
     auto body = recognizeSpecializedNumericBody(loop, *structuralIndex, *storage,
-        observedGeometry, observedControl, limits, normalized);
+        observedGeometry, observedControl, limits, normalized, policy);
     auto demands = analyzeNumericBody(body, attempt.error);
     if (demands) {
         attempt.mathematics = std::make_shared<const NumericBodyMathematics>(
@@ -746,8 +747,8 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver(
     };
     resolver.specializedNumeric = [this](scf::ForOp loop, const TemplateGeometryConstant& geometry,
         const TemplateControlConstant& control, std::shared_ptr<const NormalizedControlDescription> normalized,
-        std::string& error) {
-        return specializedNumericDemands(loop, geometry, control, error, {}, std::move(normalized));
+        TemplateGeometryPolicy policy, std::string& error) {
+        return specializedNumericDemands(loop, geometry, control, error, {}, std::move(normalized), policy);
     };
     resolver.specializedDemands = [this](ArithmeticRegionContext context,
         const ArithmeticEntryConstant& constants, std::string& error) {

@@ -26,7 +26,8 @@ struct NumericTemplatePlan {
 NumericTemplatePlan preflightNumericTemplate(scf::ForOp outer, const PhaseIndex& index,
     const SyncInput& input, NumericTemplateLimits limits = {}, bool regional = false,
     TemplateGeometryConstant geometry = {}, TemplateControlConstant control = {},
-    std::shared_ptr<const NormalizedControlDescription> normalized = {});
+    std::shared_ptr<const NormalizedControlDescription> normalized = {},
+    TemplateGeometryPolicy policy = TemplateGeometryPolicy::AllCertifiedMaps);
 NumericTemplate materializeNumericTemplate(const NumericTemplatePlan& plan,
     const PhaseIndex& index, const SyncInput& input);
 } // namespace mlir::pto::frontiersynch

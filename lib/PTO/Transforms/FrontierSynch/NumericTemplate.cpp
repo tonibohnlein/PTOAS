@@ -72,7 +72,8 @@ void clear(NumericTemplate& output)
 NumericTemplatePlan preflightNumericTemplate(scf::ForOp outer, const PhaseIndex& index,
                                   const SyncInput& input, NumericTemplateLimits limits, bool regional,
                                   TemplateGeometryConstant geometry, TemplateControlConstant control,
-                                  std::shared_ptr<const NormalizedControlDescription> normalized)
+                                  std::shared_ptr<const NormalizedControlDescription> normalized,
+                                  TemplateGeometryPolicy policy)
 {
     NumericTemplatePlan plan;
     plan.index = &index; plan.input = &input; plan.regional = regional;
@@ -80,6 +81,7 @@ NumericTemplatePlan preflightNumericTemplate(scf::ForOp outer, const PhaseIndex&
     auto& output = plan.form;
     output.outer = outer;
     output.limits = limits;
+    output.geometryPolicy = policy;
     output.specializedBody = static_cast<bool>(geometry);
     if (!outer) { output.result.note(RecognitionIssue::LoopDomain, nullptr, true); return plan; }
     auto lower = constant(outer.getLowerBound()), step = constant(outer.getStep());
@@ -232,10 +234,11 @@ NumericTemplate recognizeRegionalNumericTemplate(scf::ForOp outer, const PhaseIn
 }
 NumericTemplate recognizeSpecializedNumericBody(scf::ForOp outer, const PhaseIndex& index,
     const SyncInput& input, TemplateGeometryConstant geometry, TemplateControlConstant control,
-    NumericTemplateLimits limits, std::shared_ptr<const NormalizedControlDescription> normalized)
+    NumericTemplateLimits limits, std::shared_ptr<const NormalizedControlDescription> normalized,
+                                  TemplateGeometryPolicy policy)
 {
     return materializeNumericTemplate(preflightNumericTemplate(
-        outer, index, input, limits, true, std::move(geometry), std::move(control), std::move(normalized)),
+        outer, index, input, limits, true, std::move(geometry), std::move(control), std::move(normalized), policy),
         index, input);
 }
 } // namespace mlir::pto::frontiersynch

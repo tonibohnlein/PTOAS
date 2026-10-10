@@ -63,6 +63,7 @@ struct SpecializedArithmeticAttempt {
     std::string error;
 };
 struct SpecializedNumericAttempt {
+    TemplateGeometryPolicy policy = TemplateGeometryPolicy::AllCertifiedMaps;
     std::shared_ptr<const NormalizedControlDescription> normalized;
     std::tuple<uint64_t, uint64_t, uint64_t, unsigned> limits;
     std::map<const void*, std::pair<Value, std::optional<int64_t>>> geometry;

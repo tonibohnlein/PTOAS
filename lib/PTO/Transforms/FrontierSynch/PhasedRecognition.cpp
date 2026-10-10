@@ -271,7 +271,10 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
     std::vector<RegionalAnalysis> intervalViews;
     for (const auto& interval : intervals) {
         std::vector<RegionalAnalysis> phases;
+        enum class LogicalPhaseForm { OriginalParameters, NumericOccurrences };
+        std::vector<LogicalPhaseForm> logicalForms;
         for (uint64_t phase = 0; phase < period; ++phase) {
+            auto logicalForm = LogicalPhaseForm::OriginalParameters;
             auto previousAttempt = repeatedAttempt;
             std::string compactFailure;
             bool invalidExpression = false;
@@ -632,13 +635,30 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
             repeatedAttempt = previousAttempt;
             if (invalidExpression) { return unavailable(compactFailure); }
             if (!selected) {
-                if (evolvingStorage) {
-                    return unavailable(compactFailure + "; evolving phase requires an exact original-map adapter");
-                }
                 // A bounded numeric inner body is an explicit word, including
-                // genuine moving subregions. Bind geometry only after the complete
-                // periodic-map proof above; control receives independent interval
-                // facts and actual enumerated inner coordinates, never the phase IV.
+                // genuine moving subregions. Only proved-periodic geometry may
+                // use a representative phase. Evolving GM origins remain symbolic:
+                // the numeric producer must certify their discharge, and the joint
+                // storage proof below must reconstruct every original effect.
+                // Control uses interval facts and enumerated inner coordinates.
+                const auto policy = evolvingStorage ? TemplateGeometryPolicy::PreserveGlobalCoordinates :
+                    TemplateGeometryPolicy::AllCertifiedMaps;
+                if (evolvingStorage) {
+                    for (const auto& effect : input->accesses().effects()) {
+                        if (!effect.phase || !outer->isProperAncestor(effect.phase->elementOp) ||
+                            effect.memory->scope == AddressSpace::GM) { continue; }
+                        const bool periodicMaps = llvm::all_of(effect.regions, [&](const auto& region) {
+                            return normalizer.periodic(region, period);
+                        });
+                        if (!periodicMaps || (effect.regions.empty() && !effect.rangesMaterialized) ||
+                            (effect.selection && !normalizer.periodic(effect.selection->selector, period))) {
+                            return unavailable("finite phase body requires complete periodic local access maps");
+                        }
+                    }
+                }
+                // Whole-map periodicity permits the representative raw outer IV
+                // even when it occurs beneath a modulo. The policy above keeps
+                // that same raw IV unbound in every GM map.
                 TemplateGeometryConstant geometry = [&](Value value) -> std::optional<int64_t> {
                     auto bound = normalizer.atPhase(value, phase, period);
                     if (!bound) { return std::nullopt; }
@@ -657,11 +677,11 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                     auto normalized = resolveOriginal.normalized ? resolveOriginal.normalized(
                         static_cast<std::size_t>(&node - program->nodes.data())) : nullptr;
                     mathematics = resolveOriginal.specializedNumeric(
-                        outer, geometry, control, std::move(normalized), diagnostic);
+                        outer, geometry, control, std::move(normalized), policy, diagnostic);
                 } else {
                     auto finite = recognizeSpecializedNumericBody(outer, index, *input, geometry, control, {},
                         resolveOriginal.normalized ? resolveOriginal.normalized(
-                            static_cast<std::size_t>(&node - program->nodes.data())) : nullptr);
+                            static_cast<std::size_t>(&node - program->nodes.data())) : nullptr, policy);
                     auto demands = analyzeNumericBody(finite, diagnostic);
                     if (demands) {
                         mathematics = std::make_shared<const NumericBodyMathematics>(
@@ -676,12 +696,17 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                 auto body = exportNumericBody(function, *input, *mathematics, arena, enclosing, diagnostic);
                 if (failed(body)) { return unavailable(compactFailure + "; finite phase body: " + diagnostic); }
                 selected = std::move(*body);
+                // This exporter uses explicit ranks and ordinal-zero selectors.
+                // Original physical maps remain in the retained access model and
+                // deferred boundaries; they are not phase-substituted callbacks.
+                logicalForm = LogicalPhaseForm::NumericOccurrences;
             }
             auto view = std::move(*selected);
             if (!evolvingStorage && !writersExported(view)) {
                 return unavailable("discharged writer lacks an outer re-entry storage interface");
             }
             phases.push_back(std::move(view));
+            logicalForms.push_back(logicalForm);
         }
         std::shared_ptr<const RepeatedStorageTypesResult> storage;
         if (evolvingStorage) {
@@ -690,6 +715,10 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                 phase.deferredAccessBoundary.clear();
             }
             for (uint64_t phase = 0; phase < period; ++phase) {
+                // Numeric-body queries and selectors have no original outer
+                // parameter dependence. Their physical effects still participate
+                // in the mandatory original-map joint storage proof below.
+                if (logicalForms[phase] == LogicalPhaseForm::NumericOccurrences) { continue; }
                 SmallVector<std::pair<Expr, Expr>> bindings;
                 bool mapped = true;
                 auto bind = [&](Value value) {
