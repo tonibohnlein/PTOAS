@@ -904,3 +904,13 @@ upper bounds, zero and reversed trip domains, exact first/last writer ordinals,
 contradictory and missing bindings, export retry after rollback, profile isolation,
 and export of an old retained handle after context reset. This does not supply a
 general bounded-span proof or enable synchronization insertion in the public pass.
+
+### Request-driven certification
+
+`certifyRegions` visits every original structural region through the common
+minimum-demands dispatcher. It does not pre-extract whole-function or regional
+arithmetic forms: explicit regions finish without normalization or arithmetic
+construction. Arithmetic contracts appear only when a selected request reaches
+that family. Developer recognition reports can still explicitly request an
+exhaustive arithmetic-profile audit; those reports are distinct from ordinary
+compilation's request-driven certification.
