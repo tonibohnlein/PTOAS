@@ -1396,6 +1396,7 @@ int runCompactStorageBoundaryChecks(func::FuncOp function, const pto::SyncInput&
 int runCompactBoundaryRanksChecks(func::FuncOp function, const pto::SyncInput& input);
 int runFiniteRequirementReplacementChecks(func::FuncOp function, const pto::SyncInput& input);
 int runPeriodicSharedAllocationChecks();
+bool runRepeatedStorageChecks(MLIRContext* context);
 bool runRepeatedReadOnlyStorageChecks(MLIRContext*);
 bool runExpressionRelationChecks(MLIRContext*);
 int runRegionalRelationChecks();
@@ -1627,6 +1628,10 @@ int main(int argc, char **argv) {
   if (argc == 2 && StringRef(argv[1]) == "--finite-visit-checks") {
     context.disableMultithreading();
     return runFiniteVisitChecks(&context) ? 0 : 1;
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--repeated-storage-checks") {
+    context.disableMultithreading();
+    return runRepeatedStorageChecks(&context) ? 0 : 1;
   }
   if (argc == 2 && StringRef(argv[1]) == "--repeated-readonly-storage-checks") {
     context.disableMultithreading();
