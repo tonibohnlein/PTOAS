@@ -974,3 +974,24 @@ sources, same-arena requests, saturated work counts, placeholder-owner lifetime,
 bounded ownership under cyclic imports and rollback, and inherited replay
 prohibition after the source arena is destroyed.
 This is the ownership primitive for the remaining guarded phase cache.
+
+### Guarded specialized mathematics and private circuits
+
+Original guarded loops and caller-certified boundary/phase slices share one
+session cache. Keys include the original loop, slice form, certified branch
+choices, guard list and actual typed binding DAGs canonicalized into a private
+arena. Equal numeric IDs from unrelated source arenas do not imply equality.
+Canonical binding keys commit before any producer transaction; failed producers
+cannot invalidate those keys. Inconsistent chosen-predicate bindings are refused.
+Form failures retain diagnostics and leave later exact routes available.
+
+Producer/reducer outputs own shared input and the prerequisite index. Phase,
+boundary and original child adapters import every expression-bearing field into
+their speculative arena, rebind both quotient/analysis arena pointers, and retain
+one stable input/index owner. Root logical preparation and allocation certification
+also use disposable imported copies. No exporter receives the private cache arena.
+Payload replay prohibitions and typed integer recipes survive import. Construction
+and import-visit counters are exposed separately in certification diagnostics.
+
+The public pass still stops at recognition. No conservative algorithm, streaming
+emission, finite-visit emission or physical-ID repair is added by this change.

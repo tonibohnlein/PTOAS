@@ -92,13 +92,7 @@ FailureOr<SmallVector<RegionExpressions::Id>> RegionExpressions::import(
     for (Id id : roots) { imported.push_back(memo.lookup(id)); }
     // Query placeholders have owners separate from source IR. Preserve them
     // and the monotone payload replay prohibition for the target's lifetime.
-    const std::owner_less<std::shared_ptr<void>> before;
-    for (const auto& owner : source.inputOwners) {
-        const bool retained = llvm::any_of(inputOwners, [&](const auto& other) {
-            return !before(owner, other) && !before(other, owner);
-        });
-        if (!retained) { inputOwners.push_back(owner); }
-    }
+    for (const auto& owner : source.inputOwners) { retainInputOwner(owner); }
     forbiddenRecomputation.insert(source.forbiddenRecomputation.begin(), source.forbiddenRecomputation.end());
     transaction.commit();
     return imported;
