@@ -552,7 +552,13 @@ bool SequenceAnalysisState::boundaryLoop(scf::ForOp loop)
             if (auto known = expressions.constantValue(guard)) { choices[condition] = *known != 0; }
             else { bindings[condition] = guard; sliceGuards.push_back(condition); }
         }
-        auto recognized = detail::recognizeRotatingSlice(loop, index, *input, choices, sliceGuards);
+        std::string cachedError;
+        GuardedRotatingSpecialization request{loop, true, choices, sliceGuards, bindings, arena};
+        auto cached = resolveOriginal.specializedGuarded ?
+            resolveOriginal.specializedGuarded(request, arena, cachedError) : nullptr;
+        if (resolveOriginal.specializedGuarded && !cached) { repeatedAttempt += "; " + cachedError; return false; }
+        auto recognized = cached ? cached->recognition :
+            detail::recognizeRotatingSlice(loop, index, *input, choices, sliceGuards);
         if (recognized.result.state != RecognitionState::Applicable) {
             repeatedAttempt += "; boundary slice recognition";
             for (const auto& diagnostic : recognized.result.diagnostics) {
@@ -560,8 +566,13 @@ bool SequenceAnalysisState::boundaryLoop(scf::ForOp loop)
             }
             return false;
         }
-        auto analyzed = analyzeGuardedRotating(loop, *input, recognized, arena, bindings);
-        if (!analyzed.error.empty()) { repeatedAttempt += "; boundary slice: " + analyzed.error; return false; }
+        auto analyzed = cached ? cached->demands :
+            analyzeGuardedRotating(loop, *input, recognized, index, arena, bindings);
+        const bool extractionFailed = !cachedError.empty() || !analyzed.error.empty();
+        if (extractionFailed) {
+            repeatedAttempt += "; boundary slice: " + (cachedError.empty() ? analyzed.error : cachedError);
+            return false;
+        }
         std::string exportError;
         auto regional = guardedRotatingRegionalResult(function, *input, analyzed, exportError, slice.interval);
         if (failed(regional)) { repeatedAttempt += "; boundary export: " + exportError; return false; }

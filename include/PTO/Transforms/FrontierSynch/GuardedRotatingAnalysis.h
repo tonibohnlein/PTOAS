@@ -35,6 +35,31 @@ struct GuardedRotatingAnalysis {
     GuardedPeriodicQuotient periodic;
     uint64_t refreshBound = 0;
 };
+// Caller-certified slice facts: choices and bindings are exact and invariant
+// throughout the selected slice. Original SSA membership alone proves neither.
+// Bindings are interpreted in their source arena, never by numeric ID alone.
+// If a chosen predicate is also bound, its binding must prove that choice.
+struct GuardedRotatingSpecialization {
+    scf::ForOp loop;
+    bool sliced = false;
+    DenseMap<Value, bool> choices;
+    SmallVector<Value> guards;
+    DenseMap<Value, RegionExpressions::Id> bindings;
+    std::shared_ptr<RegionExpressions> expressions;
+};
+struct GuardedRotatingMathematics {
+    GuardedRecognition recognition;
+    GuardedRotatingAnalysis demands;
+    std::shared_ptr<const SyncInput> inputOwner;
+    std::shared_ptr<const PhaseIndex> indexOwner;
+    std::shared_ptr<void> exportInputOwner;
+};
+// Rewrites every expression-bearing mathematical field, preserving original
+// occurrence identities. Used for parameter substitution and native DAG import.
+void rewriteGuardedRotatingExpressions(GuardedRotatingAnalysis& analysis,
+    const std::function<RegionExpressions::Id(RegionExpressions::Id)>& rewrite);
+FailureOr<GuardedRotatingAnalysis> importGuardedRotating(const GuardedRotatingAnalysis& source,
+    std::shared_ptr<RegionExpressions> target, uint64_t* work = nullptr);
 // Immutable presence and offset parameters, exact fixed within-slot atoms, and
 // one potential payload skeleton. No iterations, slot values or guard valuations
 // are enumerated. Conditional alias normalization and strict writer selection

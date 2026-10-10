@@ -51,7 +51,13 @@ public:
     // for the whole arena lifetime; source IR itself remains caller-owned.
     void retainInputOwner(std::shared_ptr<void> owner)
     {
-        if (owner) { inputOwners.push_back(std::move(owner)); }
+        if (!owner) { return; }
+        const std::owner_less<std::shared_ptr<void>> before;
+        for (const auto& retained : inputOwners) {
+            const bool sameOwner = !before(owner, retained) && !before(retained, owner);
+            if (sameOwner) { return; }
+        }
+        inputOwners.push_back(std::move(owner));
     }
     // Inputs reachable from one circuit root, in DAG order.
     SmallVector<std::pair<Id, Value>> referencedInputs(Id expression) const;

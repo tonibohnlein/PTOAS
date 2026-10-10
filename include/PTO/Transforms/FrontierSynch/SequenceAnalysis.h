@@ -73,7 +73,13 @@ SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& i
 // Specialized phase views retain their own arena/context adapters.
 struct NormalizedControlDescription;
 struct NumericBodyMathematics;
+struct GuardedRotatingSpecialization;
+struct GuardedRotatingMathematics;
 struct SequenceRegionResolver {
+    // Cached guarded mathematics stays private; each request imports a fresh
+    // view into the supplied speculative arena before exposing any IDs.
+    std::function<std::shared_ptr<GuardedRotatingMathematics>(const GuardedRotatingSpecialization&,
+        std::shared_ptr<RegionExpressions>, std::string&)> specializedGuarded;
     std::function<std::shared_ptr<const NumericBodyMathematics>(scf::ForOp,
         const TemplateGeometryConstant&, const TemplateControlConstant&,
         std::shared_ptr<const NormalizedControlDescription>, std::string&)> specializedNumeric;

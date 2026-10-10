@@ -382,7 +382,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical
 }
 namespace {
 DictionaryAttr allocateRetained(const MathematicalResult& demands, const ProgramRecognition& program,
-    const BackendAttempt& attempt, PreparedLogicalPlan& prepared, MLIRContext* context)
+    const BackendAttempt& attempt, PreparedLogicalPlan& prepared, MLIRContext* context, uint64_t& guardedImportWork)
 {
     const auto plan = prepared.planId;
     if (demands.explicitDemands) { return explicitAllocationCertificate(*demands.explicitDemands, plan, context); }
@@ -398,7 +398,9 @@ DictionaryAttr allocateRetained(const MathematicalResult& demands, const Program
     }
     if (demands.compactDemands) { return compactBoundingAllocationCertificate(*demands.compactDemands, prepared); }
     if (demands.guardedRotatingDemands) {
-        return guardedAllocationCertificate(*demands.guardedRotatingDemands, plan, context);
+        auto imported = importGuardedRotating(*demands.guardedRotatingDemands,
+            std::make_shared<RegionExpressions>(), &guardedImportWork);
+        return succeeded(imported) ? guardedAllocationCertificate(*imported, plan, context) : DictionaryAttr{};
     }
     if (demands.arithmeticPeriodicDemands) {
         const auto& conversion = demands.arithmeticPeriodicDemands->conversion;
@@ -445,7 +447,8 @@ LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, 
     if (cached == attempt.allocation.end()) {
         if (construction.allocationExports != UINT64_MAX) { ++construction.allocationExports; }
         auto certificate = plan.allocationCertificate ? plan.allocationCertificate :
-            allocateRetained(*result.mathematical, *program, attempt, plan, function.getContext());
+            allocateRetained(*result.mathematical, *program, attempt, plan, function.getContext(),
+                sessionState->guardedImportWork);
         cached = attempt.allocation.emplace(plan.planId, certificate).first;
     }
     plan.allocationCertificate = cached->second;

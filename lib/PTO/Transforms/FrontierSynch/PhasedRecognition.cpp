@@ -119,28 +119,9 @@ std::optional<Expr> phaseTripCount(scf::ForOp loop, PhaseNormalization& normaliz
 }
 void specialize(GuardedRotatingAnalysis& analysis, RegionExpressions::Substitution& bindings)
 {
-    auto rewrite = [&](Expr& expression) { expression = analysis.expressions->substitute(expression, bindings); };
-    auto payloads = [&](auto& values) { for (auto& value : values) { rewrite(value.presence); } };
-    auto records = [&](auto& values) {
-        for (auto& value : values) { rewrite(value.active); rewrite(value.displacement); }
-    };
-    payloads(analysis.payloads);
-    payloads(analysis.periodic.payloads);
-    records(analysis.generators);
-    records(analysis.periodic.records);
-    records(analysis.periodic.nativePrerequisites);
-    for (auto& value : analysis.periodic.retained) { rewrite(value); }
-    for (auto& frontier : analysis.periodic.frontiers) {
-        for (auto& threshold : frontier.starts) {
-            rewrite(threshold.reachable); rewrite(threshold.distance);
-        }
-        for (auto& threshold : frontier.completions) {
-            rewrite(threshold.reachable); rewrite(threshold.distance);
-        }
-    }
-    for (auto& fragment : analysis.fragments) {
-        rewrite(fragment.offset); rewrite(fragment.read); rewrite(fragment.write);
-    }
+    rewriteGuardedRotatingExpressions(analysis, [&](Expr expression) {
+        return analysis.expressions->substitute(expression, bindings);
+    });
 }
 } // namespace
 bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
@@ -217,7 +198,13 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
         if (child.kind != StructureKind::Loop) { continue; }
         auto inner = dyn_cast<scf::ForOp>(child.anchor);
         if (!inner) { continue; }
-        auto recognition = recognizeGuardedRotating(inner, index, *input, input->accesses());
+        std::string guardedError;
+        GuardedRotatingSpecialization request; request.loop = inner;
+        auto cached = resolveOriginal.specializedGuarded ?
+            resolveOriginal.specializedGuarded(request, arena, guardedError) : nullptr;
+        if (resolveOriginal.specializedGuarded && !cached) { unavailable(guardedError); continue; }
+        auto recognition = cached ? cached->recognition :
+            recognizeGuardedRotating(inner, index, *input, input->accesses());
         if (recognition.result.state != RecognitionState::Applicable) { continue; }
         DenseSet<Value> seen;
         for (const auto& access : recognition.result.accesses) {
@@ -229,8 +216,12 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
             }
             if (varies) { addPeriod(access.slots); }
         }
-        auto analyzed = analyzeGuardedRotating(inner, *input, recognition, arena);
-        if (!analyzed.error.empty()) { return unavailable(analyzed.error); }
+        auto analyzed = cached ? cached->demands :
+            analyzeGuardedRotating(inner, *input, recognition, index, arena);
+        const bool guardedFailed = !guardedError.empty() || !analyzed.error.empty();
+        if (guardedFailed) {
+            unavailable(guardedError.empty() ? analyzed.error : guardedError); continue;
+        }
         rotating.emplace(id, std::move(analyzed));
     }
     if (!periodFits || (period <= 1 && !boundaryControl)) {
@@ -350,6 +341,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                             SequenceRegionResolver specialized;
                             specialized.specializedDemands = resolveOriginal.specializedDemands;
                             specialized.specializedNumeric = resolveOriginal.specializedNumeric;
+                            specialized.specializedGuarded = resolveOriginal.specializedGuarded;
                             auto analyzed = analyzeSequenceRegionWithResolver(function, *input, *program, id,
                                 arena, indexOwner, requireEndpoints, std::move(specialized));
                             if (!analyzed.error.empty()) {
@@ -491,7 +483,12 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                                 }
                                 else { guards.push_back(branch.getCondition()); }
                             });
-                            auto recognized = detail::recognizeRotatingSlice(inner, index, *input, choices, guards);
+                            GuardedRotatingSpecialization request{inner, true, choices, guards, slice.bindings, arena};
+                            auto cached = resolveOriginal.specializedGuarded ?
+                                resolveOriginal.specializedGuarded(request, arena, diagnostic) : nullptr;
+                            if (resolveOriginal.specializedGuarded && !cached) { return unavailable(diagnostic); }
+                            auto recognized = cached ? cached->recognition :
+                                detail::recognizeRotatingSlice(inner, index, *input, choices, guards);
                             if (recognized.result.state != RecognitionState::Applicable) {
                                 std::string reason = "nested slice does not supply a rotating regional interface";
                                 for (const auto& issue : recognized.result.diagnostics) {
@@ -499,8 +496,12 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                                 }
                                 return unavailable(reason);
                             }
-                            auto analyzed = analyzeGuardedRotating(inner, *input, recognized, arena, slice.bindings);
-                            if (!analyzed.error.empty()) { return unavailable(analyzed.error); }
+                            auto analyzed = cached ? cached->demands :
+                                analyzeGuardedRotating(inner, *input, recognized, index, arena, slice.bindings);
+                            const bool guardedFailed = !diagnostic.empty() || !analyzed.error.empty();
+                            if (guardedFailed) {
+                                return unavailable(diagnostic.empty() ? analyzed.error : diagnostic);
+                            }
                             SmallVector<std::pair<Expr, Expr>> replacements(
                                 domainBindings.begin(), domainBindings.end());
                             DenseSet<Value> seen;
@@ -556,6 +557,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                             SequenceRegionResolver specialized;
                             specialized.specializedDemands = resolveOriginal.specializedDemands;
                             specialized.specializedNumeric = resolveOriginal.specializedNumeric;
+                            specialized.specializedGuarded = resolveOriginal.specializedGuarded;
                             auto analyzed = analyzeSequenceRegionWithResolver(function, *input, *program, id,
                                 arena, indexOwner, requireEndpoints, std::move(specialized));
                             if (!analyzed.error.empty()) {

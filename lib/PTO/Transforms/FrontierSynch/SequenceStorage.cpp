@@ -202,8 +202,17 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         auto retained = resolveOriginal.demands ?
             resolveOriginal.demands(id, AnalysisBackend::GuardedRotating) : nullptr;
         std::shared_ptr<GuardedRotatingAnalysis> analysis;
-        if (retained) { analysis = retained->guardedRotatingDemands; }
-        else if (!resolveOriginal.demands) {
+        if (resolveOriginal.specializedGuarded) {
+            std::string diagnostic;
+            GuardedRotatingSpecialization request; request.loop = child.loop;
+            auto cached = resolveOriginal.specializedGuarded(request, arena, diagnostic);
+            if (cached && diagnostic.empty()) {
+                analysis = std::make_shared<GuardedRotatingAnalysis>(cached->demands);
+            } else { obligation(diagnostic); }
+        } else if (retained && retained->guardedRotatingDemands) {
+            auto imported = importGuardedRotating(*retained->guardedRotatingDemands, arena);
+            if (succeeded(imported)) { analysis = std::make_shared<GuardedRotatingAnalysis>(std::move(*imported)); }
+        } else if (!resolveOriginal.demands) {
             analysis = std::make_shared<GuardedRotatingAnalysis>(
                 analyzeGuardedRotating(child.loop, *input, *node.guardedRotatingResult, index, arena));
         }

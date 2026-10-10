@@ -739,7 +739,7 @@ bool checkImportOwners(Value index)
             // Aliased pointers with one control block still retain one owner.
             source.retainInputOwner(std::shared_ptr<void>(owner, input.getAsOpaquePointer()));
             auto retried = target.import(source, {source.input(input)});
-            const bool oneImportedOwner = succeeded(retried) && owner.use_count() == 5;
+            const bool oneImportedOwner = succeeded(retried) && owner.use_count() == 4;
             if (!oneImportedOwner) { return false; }
         }
         if (weak.expired()) { return false; }
