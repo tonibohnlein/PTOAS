@@ -25,6 +25,16 @@
 #include "PTO/Transforms/FrontierSynch/VaryingRotatingRegional.h"
 namespace mlir::pto::frontiersynch {
 namespace {
+void recordSequenceCosts(AnalysisSessionState& session, const SequenceAnalysis& sequence, std::size_t region)
+{
+    if (!sequence.state) { return; }
+    for (auto record : sequence.state->crossingMethods) {
+        if (record.method.empty()) { continue; }
+        record.region = region;
+        record.request = sequence.state->requireEndpoints ? 4 : 0;
+        session.costs.push_back(std::move(record));
+    }
+}
 void recordFormFailure(ProducerFailure& failure, const RecognitionResult& form)
 {
     failure.stage = AnalysisStage::Form;
@@ -768,6 +778,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::adaptNumericalSequen
     auto sequence = std::make_shared<SequenceAnalysis>(analyzeSequenceRegionWithResolver(
         function, *storage, *program, region, sessionState->expressions, structuralIndex,
         false, regionalResolver(retained)));
+    recordSequenceCosts(*sessionState, *sequence, region);
     if (!sequence->error.empty()) { error = sequence->error; return {}; }
     bool imported = retained->numericalDemands->form.emptyInvocation;
     if (region && sequence->state) {
@@ -824,6 +835,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend
         auto sequence = std::make_shared<SequenceAnalysis>(analyzeSequenceRegionWithResolver(
             function, *storage, *program, region, sessionState->expressions, structuralIndex,
             endpoints, regionalResolver()));
+        recordSequenceCosts(*sessionState, *sequence, region);
         if (!sequence->error.empty()) { error = sequence->error; return {}; }
         if (region == 0) {
             auto previous = program->sequenceContract;
@@ -926,6 +938,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
         return produceRegionBackend(backend, 0, error);
     case AnalysisBackend::Sequence: {
         const auto* sequence = analyzeSequenceFunction();
+        if (sequence) { recordSequenceCosts(*sessionState, *sequence, 0); }
         const bool complete = sequence && sequence->error.empty() && program->sequenceContract &&
             program->sequenceContract->membership == ContractStatus::Established &&
             program->sequenceContract->demands == ContractImplementation::Available;

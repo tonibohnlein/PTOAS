@@ -9,6 +9,7 @@
 #ifndef PTO_FRONTIERSYNCH_SEQUENCEANALYSISINTERNAL_H
 #define PTO_FRONTIERSYNCH_SEQUENCEANALYSISINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/SequenceAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/Transforms/FrontierSynch/RegionalNumericalInterface.h"
 #include "PTO/Transforms/FrontierSynch/ExplicitAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/RotatingAnalysis.h"
@@ -83,6 +84,8 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
     std::shared_ptr<RegionExpressions> arena;
     RegionExpressions& expressions;
     SequenceCost costs;
+    std::array<AnalysisCostRecord, 2> crossingMethods;
+    std::vector<std::string> crossingObligations;
     std::shared_ptr<NumericalChainMerge> numerical;
     std::shared_ptr<SequenceNumericalNode> numericalTree;
     std::vector<std::pair<uint32_t, PeriodicEventKind>> numericalChainKeys;
@@ -210,6 +213,8 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
     std::optional<Expr> eventReachability(std::size_t source, std::size_t target);
     bool closure();
     bool numericalCrossingReduction();
+    bool symbolicCrossingReduction();
+    bool preferNumericalCrossings();
     std::optional<std::vector<uint32_t>> numericalThresholds(
         SequenceEvent event, bool reverse, NumericalChainQueryCost& cost);
     std::optional<Expr> numericalReachability(

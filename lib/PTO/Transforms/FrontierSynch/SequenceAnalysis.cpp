@@ -70,7 +70,17 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
     }
     composer.bridges();
     if (composer.reconstructPrerequisites && !composer.valueBridges()) { result.error = composer.error; return result; }
-    if (!composer.closure()) { result.error = composer.error; return result; }
+    if (!composer.closure()) {
+        // Retain failed construction records without publishing a mathematical
+        // interface. Every query/preparation adapter rejects result.error.
+        result.error = !composer.error.empty() ? composer.error :
+            (!composer.expressions.constructionError().empty() ? composer.expressions.constructionError() :
+             "sequence crossing construction failed");
+        result.cost = composer.costs;
+        composer.resolveOriginal = {};
+        result.state = std::move(state);
+        return result;
+    }
     if (!composer.expressions.constructionError().empty()) {
         result.error = composer.expressions.constructionError(); return result;
     }
@@ -289,7 +299,7 @@ std::optional<RegionExpressions::Id> sequenceEventReachability(const SequenceAna
     const auto validKind = [](PeriodicEventKind kind) {
         return kind == PeriodicEventKind::Start || kind == PeriodicEventKind::Completion;
     };
-    if (!analysis.state || !validKind(sourceKind) || !validKind(targetKind) ||
+    if (!analysis.state || !analysis.error.empty() || !validKind(sourceKind) || !validKind(targetKind) ||
         sourcePort >= analysis.occurrences.size() || targetPort >= analysis.occurrences.size()) {
         return std::nullopt;
     }

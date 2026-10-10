@@ -8,12 +8,13 @@
 // Numerical specialization only; symbolic guards/order keep the general path.
 #include "SequenceAnalysisInternal.h"
 #include "ChainInterfaceInternal.h"
+#include "llvm/ADT/ScopeExit.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 using EventIdentity = std::tuple<uint32_t, uint64_t, PeriodicEventKind, std::vector<uint64_t>>;
 using ChainKey = std::pair<uint32_t, PeriodicEventKind>;
 std::shared_ptr<const RegionalNumericalInterface> leafInterface(const RegionalAnalysis& region,
-    const std::vector<RegionalEvent>& events)
+    const std::vector<RegionalEvent>& events, uint64_t& queries, uint64_t& operations)
 {
     if (region.referenceBefore) { return {}; }
     auto result = std::make_shared<RegionalNumericalInterface>();
@@ -43,6 +44,7 @@ std::shared_ptr<const RegionalNumericalInterface> leafInterface(const RegionalAn
         auto value = answer ? region.expressions->constantValue(*answer) : std::nullopt;
         return value ? std::optional<bool>(*value != 0) : std::nullopt;
     });
+    accumulateCost(queries, index.queries); accumulateCost(operations, index.operations);
     if (!index.error.empty()) { return {}; }
     result->index = std::make_shared<const NumericalChainInterface>(std::move(index));
     result->query = [region](RegionalEvent a, RegionalEvent b, NumericalChainQueryCost& cost) -> std::optional<bool> {
@@ -131,6 +133,64 @@ struct SequenceNumericalNode {
         return from && to ? merge->crosses(*from, *to, cost) : std::nullopt;
     }
 };
+bool SequenceAnalysisState::preferNumericalCrossings()
+{
+    AnalysisCostEstimate numeric, symbolic;
+    EstimatedCount leafWork = 0, leafSize = 0, callbackCost = 0;
+    SmallVector<uint64_t> events(children.size(), 0);
+    std::set<ChainKey> chains;
+    for (const auto& port : ports) {
+        if (port.child >= children.size() || port.type >= children[port.child].anchors.size()) { continue; }
+        accumulateCost(events[port.child], 2);
+        auto* phase = children[port.child].anchors[port.type].phase;
+        if (!phase) { continue; }
+        const auto pipe = static_cast<uint32_t>(phase->kPipeValue);
+        chains.emplace(pipe, PeriodicEventKind::Start);
+        chains.emplace(pipe, PeriodicEventKind::Completion);
+    }
+    for (std::size_t child = 0; child < children.size(); ++child) {
+        const auto& region = children[child].regional;
+        // Existing indices have constant-time local pair queries. A callback
+        // without a circuit-size description has unknown construction cost.
+        EstimatedCount queryCost = region.numerical ? EstimatedCount(1) :
+            (region.cost.expressionNodes ? EstimatedCount(region.cost.expressionNodes) : std::nullopt);
+        if (events[child]) {
+            if (!callbackCost || !queryCost) { callbackCost = std::nullopt; }
+            else { callbackCost = std::max(*callbackCost, *queryCost); }
+        }
+        if (!region.numerical) {
+            const auto pairs = estimatedMultiply(events[child], events[child]);
+            leafWork = estimatedAdd(leafWork, estimatedMultiply(pairs, queryCost));
+            leafSize = estimatedAdd(leafSize, pairs);
+        }
+    }
+    EstimatedCount links = 0;
+    for (const auto& [child, entries] : incoming) { links = estimatedAdd(links, entries.size()); }
+    uint64_t levels = 0;
+    for (auto count = children.size(); count > 1; count = count / 2 + count % 2) { ++levels; }
+    const auto vertices = estimatedMultiply(ports.size(), 2);
+    const auto chainPairs = estimatedMultiply(chains.size(), chains.size());
+    const auto routing = estimatedMultiply(estimatedAdd(vertices, links), levels);
+    numeric.generatorPieces = links; numeric.ports = vertices;
+    numeric.numericalWindow = vertices; numeric.circuitNodes = numeric.relationConversion = 0;
+    numeric.work = estimatedAdd(leafWork, estimatedMultiply(routing, chainPairs));
+    numeric.representation = estimatedAdd(leafSize,
+        estimatedMultiply(estimatedMultiply(vertices, chains.size()), levels));
+    const auto folding = estimatedMultiply(estimatedMultiply(ports.size(), ports.size()), 2);
+    const auto tests = estimatedMultiply(crossings.size(), links);
+    const auto alternateLinks = links && *links ? EstimatedCount(*links - 1) : links;
+    const auto callbacks = estimatedMultiply(estimatedMultiply(crossings.size(), alternateLinks), 2);
+    symbolic.generatorPieces = links; symbolic.ports = vertices;
+    symbolic.numericalWindow = symbolic.relationConversion = 0;
+    symbolic.circuitNodes = estimatedAdd(folding,
+        estimatedAdd(estimatedMultiply(vertices, estimatedAdd(links, 1)), estimatedMultiply(tests, 2)));
+    symbolic.work = estimatedAdd(symbolic.circuitNodes, estimatedMultiply(callbacks, callbackCost));
+    symbolic.representation = symbolic.circuitNodes;
+    crossingMethods = {{{0, 0, "sequence-crossings-numerical", numeric},
+                        {0, 0, "sequence-crossings-symbolic", symbolic}}};
+    // Work first, representation second, existing numerical order on ties.
+    return !estimatedCostLess(symbolic, numeric);
+}
 bool SequenceAnalysisState::numericalCrossingReduction()
 {
     if (children.size() < 2 || children.size() > UINT32_MAX ||
@@ -162,13 +222,19 @@ bool SequenceAnalysisState::numericalCrossingReduction()
         }
     }
     uint64_t leafQueries = 0, operations = 0, reused = 0, merges = 0;
+    auto charge = llvm::make_scope_exit([&]() {
+        accumulateCost(costs.numericalLeafQueries, leafQueries);
+        accumulateCost(costs.numericalIndexOperations, operations);
+        accumulateCost(costs.numericalReusedChildren, reused);
+        accumulateCost(costs.numericalMerges, merges);
+    });
     std::vector<std::shared_ptr<SequenceNumericalNode>> leaves;
     for (uint32_t child = 0; child < children.size(); ++child) {
         auto node = std::make_shared<SequenceNumericalNode>();
         node->begin = child; node->end = child + 1;
         node->leaf = children[child].regional.numerical;
-        if (node->leaf) { ++reused; }
-        else { node->leaf = leafInterface(children[child].regional, events[child]); }
+        if (node->leaf) { accumulateCost(reused, 1); }
+        else { node->leaf = leafInterface(children[child].regional, events[child], leafQueries, operations); }
         std::vector<uint32_t> selection;
         if (!node->leaf || !childSelection(*node->leaf, events[child], selection, expressions)) { return false; }
         // Distinct syntactic port IDs must not duplicate one semantic child
@@ -176,9 +242,6 @@ bool SequenceAnalysisState::numericalCrossingReduction()
         if (std::set<uint32_t>(selection.begin(), selection.end()).size() != selection.size()) { return false; }
         node->index = node->leaf->index; node->keys = node->leaf->chainKeys;
         for (std::size_t i = 0; i < selection.size(); ++i) { node->events.emplace(originals[child][i], selection[i]); }
-        if (!children[child].regional.numerical) {
-            leafQueries += node->index->queries; operations += node->index->operations;
-        }
         leaves.push_back(std::move(node));
     }
     std::function<std::shared_ptr<SequenceNumericalNode>(uint32_t, uint32_t, const std::vector<Pair>&)> build =
@@ -191,7 +254,7 @@ bool SequenceAnalysisState::numericalCrossingReduction()
         // Partition once per level: O(r log(children)) routing work beyond
         // the numerical merge bounds, with no rescans of unrelated links.
         for (auto pair : candidates) {
-            ++operations;
+            accumulateCost(operations, 1);
             if (ports[pair.second / 2].child < middle) { interior[0].push_back(pair); }
             else if (ports[pair.first / 2].child >= middle) { interior[1].push_back(pair); }
             else { boundary.push_back(pair); }
@@ -209,7 +272,9 @@ bool SequenceAnalysisState::numericalCrossingReduction()
             if (a == left->events.end() || b == right->events.end()) { return {}; }
             crossings.push_back({a->second, b->second}); identities.push_back(pair);
         }
-        auto covers = chain::reduce(*left->index, *right->index, crossings, operations);
+        uint64_t reductionOperations = 0;
+        auto covers = chain::reduce(*left->index, *right->index, crossings, reductionOperations);
+        accumulateCost(operations, reductionOperations);
         if (!covers) { return {}; }
         for (std::size_t i = 0; i < covers->size(); ++i) { if ((*covers)[i]) { retained.insert(identities[i]); } }
         std::map<uint32_t, NumericalChainSelection> selected;
@@ -232,10 +297,12 @@ bool SequenceAnalysisState::numericalCrossingReduction()
             for (const auto& key : node->children[side]->keys) { maps[side].push_back(directory.at(key)); }
         }
         auto merge = buildNumericalChainMerge(left->index, right->index, crossings, selection, maps[0], maps[1]);
+        accumulateCost(operations, merge.index.operations);
+        accumulateCost(merges, 1);
         if (!merge.index.error.empty()) { return {}; }
         node->merge = std::make_shared<NumericalChainMerge>(std::move(merge));
         node->index = std::shared_ptr<const NumericalChainInterface>(node->merge, &node->merge->index);
-        operations += node->index->operations; ++merges;
+
         return node;
     };
     auto tree = build(0, children.size(), std::vector<Pair>(links.begin(), links.end()));
@@ -255,8 +322,6 @@ bool SequenceAnalysisState::numericalCrossingReduction()
     // reducer, original incoming records, and original endpoint ownership.
     numericalTree = std::move(tree); numerical = numericalTree->merge;
     numericalChainKeys = numericalTree->keys;
-    costs.numericalLeafQueries += leafQueries; costs.numericalIndexOperations += operations;
-    costs.numericalReusedChildren += reused; costs.numericalMerges += merges;
     for (auto& [target, entries] : incoming) {
         std::set<Pair> seen;
         llvm::erase_if(entries, [&](const auto& link) {
