@@ -382,4 +382,3 @@ bool checkBoundedRegionalQueries(const fs::BoundedLifetimeDemandResult& demands,
     llvm::outs() << "bounded-query independent event comparisons=" << count << "\n";
     return true;
 }
-
