@@ -9,6 +9,7 @@
 // domains repeat under one common outer phase period. Phase-specialized trip
 // circuits govern queries, storage boundaries and endpoint filters together.
 #include "PhaseNormalization.h"
+#include "PhaseLogicalView.h"
 #include "BoundarySlices.h"
 #include "CountedLoop.h"
 #include "RecognitionInternal.h"
@@ -21,85 +22,6 @@
 #include "PTO/Transforms/FrontierSynch/RepeatedStorage.h"
 namespace mlir::pto::frontiersynch {
 namespace {
-// After joint storage certification, owned-cell translation is a graph
-// isomorphism. Bind only the body's parameter context, protecting caller query
-// coordinates with owned placeholders before substituting that context.
-struct PhaseLogicalView {
-    RegionalAnalysis original;
-    Block symbols;
-    SmallVector<std::pair<Expr, Expr>> parameters;
-    SmallVector<Expr> coordinates;
-    unsigned width = 1;
-    PhaseLogicalView(RegionalAnalysis original, ArrayRef<std::pair<Expr, Expr>> parameters,
-                     scf::ForOp outer)
-        : original(std::move(original)), parameters(parameters.begin(), parameters.end())
-    {
-        for (const auto& loops : this->original.outerLoops) { width = std::max(width, unsigned(loops.size() + 1)); }
-        for (unsigned i = 0; i < 2 * width; ++i) {
-            coordinates.push_back(this->original.expressions->input(
-                symbols.addArgument(IndexType::get(outer.getContext()), outer.getLoc())));
-        }
-    }
-    RegionalEvent bind(RegionalEvent event, unsigned start, SmallVectorImpl<std::pair<Expr, Expr>>& values)
-    {
-        auto& e = *original.expressions;
-        RegionExpressions::Substitution context(parameters);
-        auto protect = [&](Expr& coordinate, unsigned position) {
-            // Keep already invariant coordinates, especially literal explicit
-            // ordinals, in the form understood by the child's query provider.
-            if (e.substitute(coordinate, context) == coordinate) { return; }
-            values.emplace_back(coordinates[position], coordinate);
-            coordinate = coordinates[position];
-        };
-        protect(event.ordinal, start);
-        for (unsigned i = 0; i < event.visits.size(); ++i) { protect(event.visits[i], start + i + 1); }
-        return event;
-    }
-    std::optional<Expr> query(RegionalEvent a, std::optional<RegionalEvent> b, bool reference)
-    {
-        if (a.visits.size() >= width || (b && b->visits.size() >= width)) { return std::nullopt; }
-        SmallVector<std::pair<Expr, Expr>> values;
-        auto first = bind(a, 0, values);
-        std::optional<Expr> result;
-        if (!b) { result = regionalPresence(original, first); }
-        else {
-            auto second = bind(*b, width, values);
-            result = reference ? regionalReferenceBefore(original, first, second) :
-                                 regionalReachability(original, first, second);
-        }
-        if (!result) { return std::nullopt; }
-        auto& e = *original.expressions;
-        RegionExpressions::Substitution context(parameters), arguments(values);
-        return e.substitute(e.substitute(*result, context), arguments);
-    }
-};
-void bindLogicalPhase(RegionalAnalysis& view, ArrayRef<std::pair<Expr, Expr>> parameters, scf::ForOp outer)
-{
-    auto state = std::make_shared<PhaseLogicalView>(view, parameters, outer);
-    view.presence = [state](RegionalEvent a) { return state->query(a, std::nullopt, false); };
-    view.reachability = [state](RegionalEvent a, RegionalEvent b) { return state->query(a, b, false); };
-    view.referenceBefore = [state](RegionalEvent a, RegionalEvent b) { return state->query(a, b, true); };
-    RegionExpressions::Substitution bindings(parameters);
-    auto& e = *view.expressions;
-    auto rewrite = [&](RegionalSelector& value) {
-        value.present = e.substitute(value.present, bindings);
-        value.event.ordinal = e.substitute(value.event.ordinal, bindings);
-        for (auto& visit : value.event.visits) { visit = e.substitute(visit, bindings); }
-    };
-    for (auto* side : {&view.firstPayloads, &view.lastPayloads, &view.firstSitePayloads}) {
-        for (auto& [pipe, values] : *side) { for (auto& value : values) { rewrite(value); } }
-    }
-    for (auto& cell : view.storageBoundary) {
-        for (auto* side : {&cell.firstWriters, &cell.lastWriters}) { for (auto& value : *side) { rewrite(value); } }
-        for (auto* side : {&cell.firstReaders, &cell.lastReaders}) {
-            for (auto& [pipe, values] : *side) { for (auto& value : values) { rewrite(value); } }
-        }
-    }
-    for (auto* side : {&view.accessBoundary, &view.deferredAccessBoundary}) {
-        for (auto& access : *side) { rewrite(access.first); rewrite(access.last); }
-    }
-    view.arithmeticRelations.reset(); view.relations.reset(); view.symbolicStorage.reset(); view.numerical.reset();
-}
 std::optional<Expr> phaseTripCount(scf::ForOp loop, PhaseNormalization& normalizer,
     RegionExpressions& expressions, uint64_t phase, uint64_t period,
     SmallVectorImpl<std::pair<Expr, Expr>>& bindings)
@@ -613,6 +535,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                 // Empty selected arms still export exact absent selectors.
                 SmallVector<scf::ForOp> protectionContext(node.loops.begin(), node.loops.end());
                 protectionContext.push_back(outer);
+                const bool emptyBody = parts.empty();
                 auto composed = composeRegionalSequenceWithin(function, arena, std::move(parts), true, false,
                                                                protectionContext);
                 if (!composed.error.empty()) {
@@ -624,6 +547,12 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                 composed.state->requiredOuterLoops.assign(node.loops.begin(), node.loops.end());
                 composed.state->requiredOuterLoops.push_back(outer);
                 auto view = sequenceRegionalResult(composed);
+                // A proved empty phase still belongs to the same invocation.
+                // The context-free empty sequence has no child to supply it.
+                if (emptyBody) {
+                    view.accessModel = &input->accesses();
+                    view.gmAliasPolicy = input->memory().gmPolicy();
+                }
                 if (!evolvingStorage && !writersExported(view)) {
                     compactFailure = "discharged writer lacks an outer re-entry storage interface";
                     return std::nullopt;
@@ -719,21 +648,9 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                 // parameter dependence. Their physical effects still participate
                 // in the mandatory original-map joint storage proof below.
                 if (logicalForms[phase] == LogicalPhaseForm::NumericOccurrences) { continue; }
-                SmallVector<std::pair<Expr, Expr>> bindings;
-                bool mapped = true;
-                auto bind = [&](Value value) {
-                    if (!value.getType().isIntOrIndex() || value.getType().isInteger(1) ||
-                        normalizer.independent(value) || !index.isRelevant(value)) { return; }
-                    auto representative = normalizer.atPhase(value, phase, period);
-                    if (!representative) { mapped = false; return; }
-                    bindings.emplace_back(expressions.input(value), *representative);
-                };
-                bind(outer.getInductionVar());
-                outer.getBody()->walk([&](Operation* operation) {
-                    for (Value value : operation->getResults()) { bind(value); }
-                });
-                if (!mapped) { return unavailable("owned phase logical parameter normalization unavailable"); }
-                bindLogicalPhase(phases[phase], bindings, outer);
+                if (!detail::bindLogicalPhase(phases[phase], indexOwner, outer, phase, period)) {
+                    return unavailable("owned phase logical parameter normalization unavailable");
+                }
             }
             // The transformation is tentative until the joint proof succeeds.
             // Its physical reconstruction still consumes original shared maps;
