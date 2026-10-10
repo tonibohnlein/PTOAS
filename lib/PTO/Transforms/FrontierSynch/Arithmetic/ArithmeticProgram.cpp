@@ -220,7 +220,8 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
                                              const ArithmeticLimits& limits, ArithmeticEntryConstant entryConstant,
                                              const FiniteExpansionLimits* expansion,
                                              const FiniteExpansionPlan* plan = nullptr,
-                                             bool expandEntryArithmetic = true)
+                                             bool expandEntryArithmetic = true,
+                                             bool preferGuardedSelections = false)
 {
     ArithmeticProgram output;
     output.context = region;
@@ -266,6 +267,7 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
     detail::ProgramBuilder builder{output, configured, function.getContext(), index, DenseMap<Value, unsigned>(),
                                    std::move(entryConstant)};
     builder.expandEntryArithmetic = expandEntryArithmetic;
+    builder.preferGuardedSelections = preferGuardedSelections;
     if (expansion) { detail::collectExpanded(builder, *expansion, plan); }
     else { collect(index, builder); }
     if (output.extraction.state != RecognitionState::Applicable) {
@@ -456,24 +458,41 @@ ArithmeticProgram recognizeArithmeticProgram(ArithmeticRegionContext region, con
     const SyncInput& input, const SyncStorageEffects& effects, const ArithmeticLimits& limits,
     ArithmeticEntryConstant entryConstant)
 {
-    auto normalized = buildArithmeticProgram(region, index, input, effects, limits, entryConstant, nullptr);
-    if (normalized.extraction.state == RecognitionState::Applicable &&
-        normalized.recognition.state == RecognitionState::Applicable) { return normalized; }
-    // Expanding an entry DAG can increase its coordinate count. Preserve the
-    // existing exact representation over actual entry SSA values as another
-    // form, rather than making this optional normalization a class restriction.
-    auto original = buildArithmeticProgram(region, index, input, effects, limits,
-        std::move(entryConstant), nullptr, nullptr, false);
-    const bool originalReady = original.extraction.state == RecognitionState::Applicable &&
-        original.recognition.state == RecognitionState::Applicable;
-    auto& selected = originalReady ? original : normalized;
-    const auto& other = originalReady ? normalized : original;
-    for (auto member : {&ArithmeticProgram::machinePrimitiveConversions, &ArithmeticProgram::machineExpressionNodes,
-        &ArithmeticProgram::machinePrimitiveCacheHits, &ArithmeticProgram::machineRelationPieces,
-        &ArithmeticProgram::machineProjections}) {
-        accumulateCost(selected.*member, other.*member);
+    std::optional<ArithmeticProgram> retained;
+    auto addCosts = [](ArithmeticProgram& selected, const ArithmeticProgram& other) {
+        for (auto member : {&ArithmeticProgram::machinePrimitiveConversions, &ArithmeticProgram::machineExpressionNodes,
+            &ArithmeticProgram::machinePrimitiveCacheHits, &ArithmeticProgram::machineRelationPieces,
+            &ArithmeticProgram::machineProjections}) {
+            accumulateCost(selected.*member, other.*member);
+        }
+    };
+    // Guarded alternatives are often smaller than machine circuits. Neither
+    // that representation nor expanding entry DAGs is a class admission gate:
+    // keep the exact machine and actual-entry-SSA alternatives available.
+    bool hasIndexSelect = false;
+    auto scanSelections = [&](Operation* root) {
+        root->walk([&](arith::SelectOp selection) {
+            hasIndexSelect |= selection.getType().isIndex();
+        });
+    };
+    if (!region.roots.empty()) {
+        for (auto* root : region.roots) { if (root) { scanSelections(root); } }
+    } else if (region.root) { scanSelections(region.root); }
+    for (bool guarded : {true, false}) {
+        if (!guarded && !hasIndexSelect) { break; }
+        for (bool expanded : {true, false}) {
+            auto candidate = buildArithmeticProgram(region, index, input, effects, limits,
+                entryConstant, nullptr, nullptr, expanded, guarded);
+            if (candidate.extraction.state == RecognitionState::Applicable &&
+                candidate.recognition.state == RecognitionState::Applicable) {
+                if (retained) { addCosts(candidate, *retained); }
+                return candidate;
+            }
+            if (retained) { addCosts(*retained, candidate); }
+            else { retained = std::move(candidate); }
+        }
     }
-    return std::move(selected);
+    return std::move(*retained);
 }
 ArithmeticProgram materializeFiniteExpansion(const FiniteExpansionPlan& plan,
     const PhaseIndex& index, const SyncInput& input)

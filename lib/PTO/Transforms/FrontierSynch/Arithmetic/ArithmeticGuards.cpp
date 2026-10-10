@@ -193,10 +193,15 @@ std::optional<BoundPieces> boundPieces(ProgramBuilder& builder, Value input, con
                                      ProofContext proof = ProofContext::Occurrence)
 {
     if (depth > maxGuardDepth) { exceeded = true; return std::nullopt; }
-    if (auto affine = builder.value(input, site, offset, proof)) { return BoundPieces{{affine, {}}}; }
     auto* op = input.getDefiningOp();
     const bool minmax = op && isa<arith::MinSIOp, arith::MaxSIOp>(op);
     auto select = dyn_cast_or_null<arith::SelectOp>(op);
+    // Keep local selections as guarded alternatives before requesting a
+    // machine circuit. This preserves their branch correlation without an
+    // unnecessary bit-vector conversion. Actual entry SSA remains a parameter.
+    if (!builder.preferGuardedSelections || !select || !input.getType().isIndex() || builder.entryParameter(input)) {
+        if (auto affine = builder.value(input, site, offset, proof)) { return BoundPieces{{affine, {}}}; }
+    }
     if (!input.getType().isIndex() || (!minmax && !select)) { return std::nullopt; }
     Value left = select ? select.getTrueValue() : op->getOperand(0);
     Value right = select ? select.getFalseValue() : op->getOperand(1);
@@ -352,7 +357,11 @@ bool ProgramBuilder::prepareBound(Value input, const ArithmeticSite& site, Scala
             output.extraction.note(RecognitionIssue::TemplateExpansionLimit, value.getDefiningOp());
             return false;
         }
-        if (!seen.insert(value).second || prepareValue(value, site, proof)) { continue; }
+        if (!seen.insert(value).second) { continue; }
+        const bool localSelect = preferGuardedSelections && value.getType().isIndex() &&
+            value.getDefiningOp<arith::SelectOp>() && !entryParameter(value);
+        if (!localSelect && prepareValue(value, site, proof)) { continue; }
+        if (localSelect) { guardedSelections.insert(value); }
         auto* op = value.getDefiningOp();
         if (!value.getType().isIndex() || !op) { return false; }
         if (auto select = dyn_cast<arith::SelectOp>(op)) {

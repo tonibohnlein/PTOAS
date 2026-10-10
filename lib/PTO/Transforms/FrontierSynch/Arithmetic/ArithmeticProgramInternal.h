@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICPROGRAMINTERNAL_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICPROGRAMINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgram.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include <map>
 #include <tuple>
@@ -25,6 +26,9 @@ struct ProgramBuilder {
     const PhaseIndex& index;
     DenseMap<Value, unsigned> parameterIds;
     ArithmeticEntryConstant entryConstant;
+    // Values already admitted as exact guarded alternatives by prepareBound.
+    // Domain construction must not replace these with machine placeholders.
+    DenseSet<Value> guardedSelections = DenseSet<Value>();
     mutable DenseMap<std::pair<Value, unsigned>, bool> entryInputs = DenseMap<std::pair<Value, unsigned>, bool>();
     struct MachineBinding {
         Value value;
@@ -37,6 +41,7 @@ struct ProgramBuilder {
         std::vector<const void*>, std::vector<Operation*>>;
     std::map<MachineKey, std::vector<ResiduePiece>> machinePrimitives;
     bool expandEntryArithmetic = true;
+    bool preferGuardedSelections = false;
     bool prepareMachine(Value input, const ArithmeticSite& site);
     AffineExpr machineValue(Value input, const ArithmeticSite& site, unsigned offset) const;
     bool emitMachine(PrimitiveRelation& target, ArrayRef<AffineExpr> rows);

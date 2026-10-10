@@ -413,6 +413,80 @@ bool wideEntryFallback(MLIRContext* context, bool useArgument = false)
     }
     return true;
 }
+bool machineSelectionFallback(MLIRContext* context)
+{
+    auto module = parseSourceString<ModuleOp>(R"mlir(
+    !tile = !pto.tile_buf<vec, 1x8xf32>
+    module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 8 : i32>>} {
+      func.func @fallback() {
+        %zero = arith.constant 0 : index
+        %one = arith.constant 1 : index
+        %two = arith.constant 2 : index
+        %four = arith.constant 4 : index
+        %base = arith.constant 0 : i64
+        %tile = pto.alloc_tile addr = %base : !tile
+        scf.for %p = %zero to %one step %one {
+          %v = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+        }
+        scf.for %i = %zero to %four step %one {
+          %test = arith.cmpi ult, %i, %two : index
+          %selected = arith.select %test, %i, %two : index
+          scf.for %j = %selected to %four step %one {
+            %v = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+          }
+        }
+        return
+      }
+    })mlir", context);
+    if (!module) { return false; }
+    auto function = module->lookupSymbol<func::FuncOp>("fallback");
+    pto::SyncInput input;
+    fs::PhaseIndex index;
+    if (failed(input.build(function, pto::SyncInstructionView::PipeEnvelopes)) ||
+        failed(index.build(function, input))) { return false; }
+    fs::ArithmeticRegionContext region{function, function.getOperation()};
+    auto program = fs::recognizeArithmeticProgram(region, index, input, input.accesses(), {8, 16, 1, 4096});
+    // Unsigned local comparisons are outside the guarded-alternative grammar.
+    // The select is in the second sibling loop and must reach the exact machine retry.
+    if (program.extraction.state != fs::RecognitionState::Applicable ||
+        program.recognition.state != fs::RecognitionState::Applicable ||
+        !program.machinePrimitiveConversions || !program.parameters.empty()) {
+        llvm::errs() << "machine selection states: " << fs::recognitionName(program.extraction.state)
+                     << "," << fs::recognitionName(program.recognition.state)
+                     << " conversions=" << program.machinePrimitiveConversions
+                     << " parameters=" << program.parameters.size() << "\n";
+        for (const auto& issue : program.extraction.diagnostics) {
+            llvm::errs() << "machine selection issue: " << fs::recognitionName(issue.issue) << "\n";
+        }
+        return false;
+    }
+    for (int64_t i = -1; i <= 4; ++i) {
+        for (int64_t j = -1; j <= 4; ++j) {
+            bool present = false;
+            for (const auto& relation : program.primitives.relations) {
+                if (relation.kind != fs::PrimitiveKind::Occurrences || relation.sourceDimensions != 2) { continue; }
+                for (const auto& piece : relation.pieces) {
+                    if (!piece.machineSystem || piece.machineSystem->isKnownEmpty() ||
+                        piece.machineSystem->dimensions() != 2) { continue; }
+                    auto dot = [&](const auto& coefficients) {
+                        return coefficients[0] * fs::BoundInteger(i) + coefficients[1] * fs::BoundInteger(j);
+                    };
+                    present |= llvm::all_of(piece.machineSystem->constraints(), [&](const auto& row) {
+                        return dot(row.coefficients) <= row.bound;
+                    }) && llvm::all_of(piece.machineSystem->congruences(), [&](const auto& row) {
+                        return mod(dot(row.coefficients) - row.residue, row.modulus) == fs::BoundInteger(0);
+                    });
+                }
+            }
+            if (present != (i >= 0 && i < 4 && j >= std::min<int64_t>(i, 2) && j < 4)) {
+                llvm::errs() << "machine selection membership mismatch: " << i << "," << j
+                             << " present=" << present << "\n";
+                return false;
+            }
+        }
+    }
+    return true;
+}
 } // namespace
 bool runMachineCertificateChecks();
 bool runModularScalarChecks(MLIRContext* context)
@@ -430,6 +504,9 @@ bool runModularScalarChecks(MLIRContext* context)
     }
     if (!wideEntryFallback(context) || !wideEntryFallback(context, true)) {
         llvm::errs() << "wide entry fallback regression\n"; return false;
+    }
+    if (!machineSelectionFallback(context)) {
+        llvm::errs() << "machine selection fallback regression\n"; return false;
     }
     if (!symbolic(context, count)) { return false; }
     llvm::outs() << "modular scalar: " << count << " APInt comparisons passed\n";
