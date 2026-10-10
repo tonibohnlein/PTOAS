@@ -15,6 +15,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionalRelations.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
@@ -611,12 +612,16 @@ namespace {
 bool checkSymbolicArithmeticSiblings(func::FuncOp function, const pto::SyncInput& input)
 {
     fs::PhaseIndex index;
-    if (failed(index.build(function, input))) { return false; }
+    if (failed(index.build(function, input))) {
+        llvm::errs() << "symbolic siblings: phase index construction failed\n"; return false;
+    }
     SmallVector<scf::ForOp> loops;
     for (auto& operation : function.front()) {
         if (auto loop = dyn_cast<scf::ForOp>(operation)) { loops.push_back(loop); }
     }
-    if (loops.size() != 3) { return false; }
+    if (loops.size() != 3) {
+        llvm::errs() << "symbolic siblings: expected three original loops\n"; return false;
+    }
     auto arena = std::make_shared<fs::RegionExpressions>();
     std::vector<fs::RegionalAnalysis> children;
     std::string error;
@@ -637,7 +642,11 @@ bool checkSymbolicArithmeticSiblings(func::FuncOp function, const pto::SyncInput
         for (const auto& access : child->accessBoundary) {
             const bool gm = input.accesses().effects()[access.effect].memory->scope == pto::AddressSpace::GM;
             finiteGM |= gm;
-            if (access.representedByCells != gm) { return false; }
+            if (access.representedByCells != gm) {
+                llvm::errs() << "symbolic siblings: effect " << access.effect
+                             << " finite-cell representation=" << access.representedByCells
+                             << " expected-GM=" << gm << "\n"; return false;
+            }
         }
         if ((finiteGM && child->storageBoundary.empty()) || child->symbolicStorageEffects.empty()) {
             llvm::errs() << "partial arithmetic storage families were not retained\n"; return false;
@@ -647,14 +656,30 @@ bool checkSymbolicArithmeticSiblings(func::FuncOp function, const pto::SyncInput
     auto first = fs::composeRegionalSequence(function, arena, {children[0], children[1]}, true, false);
     if (!first.error.empty()) { llvm::errs() << first.error << "\n"; return false; }
     auto pair = fs::sequenceRegionalResult(first);
-    if (!pair.arithmeticRelations || !pair.storageSelectors) { return false; }
+    if ((!pair.arithmeticRelations && !pair.relations) || !pair.storageSelectors) {
+        llvm::errs() << "symbolic siblings: pair relations=" << bool(pair.arithmeticRelations || pair.relations)
+                     << " storage selectors=" << bool(pair.storageSelectors) << "\n"; return false;
+    }
     auto whole = fs::composeRegionalSequence(function, arena, {pair, children[2]}, true, false);
     if (!whole.error.empty()) { llvm::errs() << whole.error << "\n"; return false; }
     auto regional = fs::sequenceRegionalResult(whole);
     auto verify = [&](const fs::RegionalAnalysis& region, unsigned stages) {
-        if (!region.arithmeticRelations || region.anchors.size() != stages) { return false; }
-        const auto& relations = *region.arithmeticRelations;
-        if (relations.program.parameters.size() != 1 || relations.program.parameters[0] != function.getArgument(2)) {
+        if ((!region.arithmeticRelations && !region.relations) || region.anchors.size() != stages) {
+            llvm::errs() << "symbolic siblings: stages=" << stages << " relations="
+                         << bool(region.arithmeticRelations || region.relations)
+                         << " anchors=" << region.anchors.size() << "\n";
+            return false;
+        }
+        // Symbolic sequence composition owns producer-independent relations;
+        // arithmetic leaves retain their original specialized export.
+        const auto relations = region.relations ? region.relations->data :
+            fs::arithmeticRelationData(*region.arithmeticRelations);
+        if (!relations.completeRequiredOrder || !relations.analysis.exactMinimum) {
+            llvm::errs() << "symbolic siblings: incomplete closure or minimum-demand export\n"; return false;
+        }
+        if (relations.parameterValues.size() != 1 || relations.parameterValues[0] != function.getArgument(2)) {
+            llvm::errs() << "symbolic siblings: expected only the trip-count parameter; observed "
+                         << relations.parameterValues.size() << " parameters\n";
             return false;
         }
         auto& e = *arena;
@@ -720,7 +745,10 @@ bool checkSymbolicArithmeticSiblings(func::FuncOp function, const pto::SyncInput
                                         {e.constant(ia), e.constant(ib), e.constant(trips)},
                                         relations.analysis.period, residues);
                                     auto value = e.constantValue(member);
-                                    if (!value) { return false; }
+                                    if (!value) {
+                                        llvm::errs() << "symbolic siblings: concrete cover membership did not fold\n";
+                                        return false;
+                                    }
                                     minimum |= *value != 0;
                                 }
                             }
@@ -748,6 +776,7 @@ bool checkSymbolicArithmeticSiblings(func::FuncOp function, const pto::SyncInput
         llvm::errs() << "symbolic endpoint export: " << whole.insertionError << "\n"; return false;
     }
     if (failed(fs::insertLogicalSynchronization(function, **prepared)) || failed(mlir::verify(function))) {
+        llvm::errs() << "symbolic siblings: insertion or IR verification failed\n";
         return false;
     }
     auto trace = Interpreter(input.instructions()).run(function);

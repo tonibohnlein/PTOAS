@@ -19,7 +19,7 @@
 // MATH-SAME: "status":"recognized"
 // MATH: source-unchanged; synchronization-insertion-not-run
 // STRICT: certification-json {{.*}}"function":"evolving_nested"
-// STRICT-SAME: "exact_demands":false,"node":0
+// STRICT-SAME: "exact_demands":false,{{.*}}"node":0
 // STRICT-SAME: "status":"unresolved"
 // INVALID: invalid arithmetic profile; expected positive k:D:P:C
 

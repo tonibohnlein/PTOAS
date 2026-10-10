@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 
-from check_logical_insertion import closure_with_commands
+from check_logical_insertion import closure_with_commands, without_function_metadata
 from check_periodic_demands import closure, native
 
 
@@ -67,6 +67,11 @@ def validate(document, name, n):
     for a, (_, _, reads, writes) in enumerate(expected):
         for b in range(a + 1, len(expected)):
             later_reads, later_writes = expected[b][2:]
+            # The target guarantees same-PIPE_S storage synchronization and
+            # forbids PIPE_S barriers (ptoStorageProtection). Keep this target
+            # rule explicit; all other hazards use the authored byte sets.
+            if pipes[a] == pipes[b] == 0:
+                continue
             if writes & (later_reads | later_writes) or reads & later_writes:
                 edges.add((2 * a + 1, 2 * b))
     # The implementation's stated local policy places a barrier immediately
@@ -133,12 +138,16 @@ def main():
                           "child_preparation", "crossing_preparation")},
                   flush=True)
             small = invoke(tool, "--insert-logical", path)
-            require(small.count("scf.for") == function.count("scf.for"), "analysis unfolded a nested loop")
+            small_operations = "\n".join(without_function_metadata(small))
+            require(small_operations.count("scf.for") == function.count("scf.for"),
+                    "analysis unfolded a nested loop")
             for operation in ("pto.tadds", "pto.tgetval", "pto.tsetval"):
-                require(small.count(operation) == function.count(operation), "payload was cloned or removed")
+                require(small_operations.count(operation) == function.count(operation), "payload was cloned or removed")
             path.write_text(program.replace("array<i64: 3>", "array<i64: 1000000000>"))
             large = invoke(tool, "--insert-logical", path)
-            require(large.replace("1000000000", "3") == small, "insertion depends on dynamic trip count")
+            large_operations = "\n".join(without_function_metadata(large))
+            require(large_operations.replace("1000000000", "3") == small_operations,
+                    "insertion depends on dynamic trip count")
     print(f"arithmetic composition: {checked} independent byte-conflict command closures passed")
 
 
