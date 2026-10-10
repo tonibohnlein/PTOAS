@@ -65,6 +65,12 @@ public:
         if (binary.getKind() == AffineExprKind::Mul && (!*right || *left <= UINT64_MAX / *right)) {
             return *left * *right;
         }
+        auto divisor = dyn_cast<AffineConstantExpr>(binary.getRHS());
+        if (divisor && divisor.getValue() > 0) {
+            const auto value = uint64_t(divisor.getValue());
+            if (binary.getKind() == AffineExprKind::FloorDiv) { return *left / value; }
+            if (binary.getKind() == AffineExprKind::Mod) { return std::min(*left, value - 1); }
+        }
         return std::nullopt;
     }
 private:
@@ -143,6 +149,12 @@ std::optional<Id> expression(RegionExpressions& e, AffineExpr map, ArrayRef<Valu
         if (!factor || factor.getValue() < 0) { return std::nullopt; }
         return scaled(e, *left, factor.getValue());
     }
+    if (binary.getKind() == AffineExprKind::FloorDiv || binary.getKind() == AffineExprKind::Mod) {
+        auto divisor = dyn_cast<AffineConstantExpr>(binary.getRHS());
+        if (!divisor || divisor.getValue() <= 0) { return std::nullopt; }
+        const auto value = e.constant(uint64_t(divisor.getValue()));
+        return binary.getKind() == AffineExprKind::FloorDiv ? e.div(*left, value) : e.rem(*left, value);
+    }
     if (binary.getKind() != AffineExprKind::Add) { return std::nullopt; }
     auto right = expression(e, binary.getRHS(), symbols, depth + 1);
     return right ? std::optional<Id>(e.add(*left, *right)) : std::nullopt;
@@ -214,8 +226,21 @@ bool addFamily(State& state, const RepeatedStorageFamily& spec, llvm::DenseSet<s
     State::Family family;
     family.spec = spec;
     OriginBounds bounds(state.loop);
-    if (!bounds.upper(spec.origin.byteOffset, spec.origin.symbols)) { return false; }
-    auto origin = expression(state.expressions(), spec.origin.byteOffset, spec.origin.symbols);
+    // Factor exact common coefficients before lowering. This exposes scaled
+    // remainders to MLIR's affine simplifier without evaluating a negative
+    // subtraction in the natural-number owner circuit. Preflight coefficient
+    // folding first; failure keeps the original spelling and all obligations.
+    auto normalizedOrigin = spec.origin.byteOffset;
+    if (geometry::magnitude(normalizedOrigin)) {
+        const auto divisor = normalizedOrigin.getLargestKnownDivisor();
+        if (divisor > 1) {
+            auto normalized = geometry::checkedMul(normalizedOrigin.floorDiv(divisor),
+                getAffineConstantExpr(divisor, normalizedOrigin.getContext()));
+            if (normalized) { normalizedOrigin = normalized; }
+        }
+    }
+    if (!bounds.upper(normalizedOrigin, spec.origin.symbols)) { return false; }
+    auto origin = expression(state.expressions(), normalizedOrigin, spec.origin.symbols);
     if (!origin) { return false; }
     family.origin = *origin;
     const auto effects = state.body.accessModel->effects();

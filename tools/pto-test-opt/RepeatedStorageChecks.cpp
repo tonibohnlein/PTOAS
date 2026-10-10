@@ -9,8 +9,10 @@
 #include "PTO/Transforms/FrontierSynch/RepeatedStorage.h"
 #include "PTO/Transforms/FrontierSynch/RepeatedPhases.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/DisjointTranslations.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/PhaseLogicalView.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
+#include <array>
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 namespace {
@@ -134,6 +136,18 @@ bool originDomain(MLIRContext* context, unsigned kind)
     std::string definition = "    %limit = arith.constant 1024 : index\n";
     if (kind == 1) { definition += "    %origin = arith.minui %s, %limit : index\n"; }
     if (kind == 2) { definition += "    %origin = arith.maxsi %s, %zero : index\n"; }
+    if (kind == 3) { definition += "    %origin = arith.divsi %s, %four : index\n"; }
+    if (kind == 4) { definition += "    %origin = arith.remsi %s, %four : index\n"; }
+    if (kind == 5) {
+        definition += "    %natural = arith.maxsi %s, %zero : index\n"
+            "    %overflow = arith.muli %natural, %four overflow<nsw> : index\n"
+            "    %origin = arith.divui %overflow, %four : index\n";
+    }
+    if (kind == 6) { definition += "    %origin = arith.divui %s, %zero : index\n"; }
+    if (kind == 7) {
+        definition += "    %negative = arith.constant -4 : index\n"
+            "    %origin = arith.divsi %s, %negative : index\n";
+    }
     text.insert(loopStart, definition);
     const auto offsetEnd = text.find("\n", text.find("%offset ="));
     text.insert(offsetEnd, "\n      %shifted = arith.addi %offset, " +
@@ -174,6 +188,186 @@ bool originDomain(MLIRContext* context, unsigned kind)
         for (auto& visit : candidate.event.visits) { visit = e.substitute(visit, bindings); }
     }
     return selected(selectors->firstWriters, e, std::make_pair(1U, uint64_t(1)));
+}
+// Exercise actual dependency checks, lazy refusals, protected caller coordinates
+// and placeholders retained beyond a failed export's wrapper lifetime.
+bool logicalPhaseInputs(MLIRContext* context)
+{
+    auto module = parseSourceString<ModuleOp>(R"mlir(module {
+      func.func @phase(%n: index) {
+        %z = arith.constant 0 : index
+        %one = arith.constant 1 : index
+        %two = arith.constant 2 : index
+        scf.for %i = %z to %n step %one {
+          %quotient = arith.divui %i, %two : index
+          %guard = arith.cmpi ult, %i, %two : index
+        }
+        return
+      }
+    })mlir", context);
+    if (!module) { return false; }
+    auto function = module->lookupSymbol<func::FuncOp>("phase");
+    scf::ForOp loop;
+    Value quotient, guard;
+    function.walk([&](scf::ForOp found) { loop = found; });
+    function.walk([&](arith::DivUIOp op) { quotient = op.getResult(); });
+    function.walk([&](arith::CmpIOp op) { guard = op.getResult(); });
+    auto index = std::make_shared<fs::PhaseIndex>();
+    if (failed(index->build(function, ArrayRef<const pto::CompoundInstanceElement*>{}))) { return false; }
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto& e = *arena;
+    auto iv = e.input(loop.getInductionVar());
+    auto unsupported = e.input(quotient), boolean = e.input(guard);
+    fs::RegionalAnalysis body;
+    body.expressions = arena;
+    body.presence = [arena, iv](fs::RegionalEvent event) {
+        return std::optional<fs::RegionExpressions::Id>(arena->eq(event.ordinal, iv));
+    };
+    body.endpointEventGuard = body.presence;
+    body.storageSelectors = [arena, iv](fs::RegionalByteAddress address) {
+        fs::RegionalStorageSelectors selectors;
+        selectors.firstWriters.push_back({{0, arena->add(address.offset, iv)}, arena->boolean(true)});
+        return std::optional<fs::RegionalStorageSelectors>(std::move(selectors));
+    };
+    // An unsupported scalar in the arena is irrelevant until a logical root
+    // actually uses it. Caller iv must remain the caller's coordinate.
+    auto view = body;
+    if (!fs::detail::bindLogicalPhase(view, index, loop, 1, 2)) { return false; }
+    auto result = view.presence({0, iv});
+    if (!result) { return false; }
+    fs::RegionExpressions::Substitution zero({{iv, e.constant(0)}}), one({{iv, e.constant(1)}});
+    if (e.constantValue(e.substitute(*result, zero)) != 0 ||
+        e.constantValue(e.substitute(*result, one)) != 1) { return false; }
+    auto endpoint = view.endpointEventGuard({0, unsupported});
+    auto storage = view.storageSelectors({pto::AddressSpace::GM, {}, unsupported});
+    fs::RegionExpressions::Substitution caller({{unsupported, e.constant(5)}});
+    if (!endpoint || e.constantValue(e.substitute(*endpoint, caller)) != 0 ||
+        !storage || storage->firstWriters.size() != 1 ||
+        e.constantValue(e.substitute(storage->firstWriters.front().event.ordinal, caller)) != 6) { return false; }
+    for (auto unavailable : {unsupported, boolean}) {
+        auto eager = body;
+        eager.firstPayloads[0].push_back({{0, unavailable}, e.boolean(true)});
+        if (fs::detail::bindLogicalPhase(eager, index, loop, 0, 2)) { return false; }
+        auto lazy = body;
+        lazy.presence = [unavailable](fs::RegionalEvent) {
+            return std::optional<fs::RegionExpressions::Id>(unavailable);
+        };
+        lazy.endpointEventGuard = lazy.presence;
+        lazy.storageSelectors = [unavailable, arena](fs::RegionalByteAddress) {
+            fs::RegionalStorageSelectors selectors;
+            selectors.firstWriters.push_back({{0, unavailable}, arena->boolean(true)});
+            return std::optional<fs::RegionalStorageSelectors>(std::move(selectors));
+        };
+        if (!fs::detail::bindLogicalPhase(lazy, index, loop, 0, 2) || lazy.presence({0, e.constant(0)}) ||
+            lazy.endpointEventGuard({0, e.constant(0)}) ||
+            lazy.storageSelectors({pto::AddressSpace::GM, {}, e.constant(0)})) { return false; }
+    }
+    std::optional<fs::RegionExpressions::Id> cached;
+    auto memoized = body;
+    memoized.presence = [&cached, arena](fs::RegionalEvent event) {
+        cached = arena->eq(event.ordinal, arena->constant(7)); return cached;
+    };
+    {
+        auto transient = memoized;
+        if (!fs::detail::bindLogicalPhase(transient, index, loop, 0, 2) || !transient.presence({0, iv})) {
+            return false;
+        }
+    }
+    if (!cached) { return false; }
+    const auto inputs = e.referencedInputs(*cached);
+    return inputs.size() == 1 && isa<BlockArgument>(inputs.front().second) &&
+        inputs.front().second != loop.getInductionVar();
+}
+// Check the owner against the original integer address formula, including
+// quotient boundaries, scaled subtraction spelling, holes and nonunit visits.
+bool quotientOrigins(MLIRContext* context)
+{
+    for (unsigned width : {32U, 64U}) {
+        for (unsigned step : {1U, 3U}) {
+            for (unsigned divisor : {1U, 4U, 7U}) {
+                for (unsigned kind = 0; kind < 3; ++kind) {
+                    std::string text(source);
+                    const auto integerType = width == 32 ? "i32" : "i64";
+                    const uint64_t limit = width == 32 ? 1024 : (UINT64_MAX - 512) / 4;
+                    text.replace(text.find("%n: index)"), 10,
+                        "%n: index, %s: " + std::string(integerType) + ")");
+                    text.insert(text.find("  func.func"), "  // Owner oracle\n");
+                    text.insert(text.find("    scf.for"),
+                        "    %limit = arith.constant " + std::to_string(limit) + " : " + integerType + "\n"
+                        "    %bounded = arith.minui %s, %limit : " + integerType + "\n"
+                        "    %bounded_index = arith.index_cast %bounded : " + integerType + " to index\n"
+                        "    %divisor = arith.constant " + std::to_string(divisor) + " : index\n"
+                        "    %step = arith.constant " + std::to_string(step) + " : index\n"
+                        "    %lower = arith.constant 2 : index\n");
+                    text.replace(text.find("%zero to %n step %one"), 21, "%lower to %n step %step");
+                    text.insert(text.find("      %offset ="),
+                        "      %quotient = arith.divui %bounded_index, %divisor : index\n"
+                        "      %product = arith.muli %quotient, %divisor overflow<nsw> : index\n"
+                        "      %remainder = arith.subi %bounded_index, %product : index\n"
+                        "      %modulo = arith.remui %bounded_index, %divisor : index\n");
+                    const char* origin = kind == 0 ? "%quotient" : kind == 1 ? "%modulo" : "%remainder";
+                    text.insert(text.find("\n", text.find("%offset =")),
+                        "\n      %shifted = arith.addi %offset, " + std::string(origin) + " overflow<nsw> : index");
+                    for (auto pos = text.find("%p[%offset]"); pos != std::string::npos;
+                         pos = text.find("%p[%offset]")) {
+                        text.replace(pos, 11, "%p[%shifted]");
+                    }
+                    text.replace(text.find("pto.target_arch = \"a3\""), 22,
+                        "pto.target_arch = \"a3\", dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, " +
+                        std::to_string(width) + " : i32>>");
+                    auto module = parseSourceString<ModuleOp>(text, context);
+                    if (!module) { return false; }
+                    auto function = module->lookupSymbol<func::FuncOp>("storage");
+                    scf::ForOp loop;
+                    Value bounded;
+                    function.walk([&](scf::ForOp found) { loop = found; });
+                    function.walk([&](arith::MinUIOp op) { bounded = op.getResult(); });
+                    pto::SyncInput input(pto::GMAliasPolicy::MayNotAlias);
+                    if (failed(input.build(function))) { return false; }
+                    auto body = bodyFor(input, loop);
+                    auto& e = *body.expressions;
+                    for (uint64_t trips : {0U, 1U, 3U}) {
+                        auto certificate = fs::recognizeRepeatedStorage(body, loop, e.constant(trips));
+                        if (!certificate.storage) {
+                            llvm::errs() << "quotient origin: " << certificate.error << "\n";
+                            return false;
+                        }
+                        for (uint64_t value : std::array<uint64_t, 5>{0, divisor - 1, divisor, divisor + 1, limit}) {
+                            const uint64_t localStart = 32 % (16 * step);
+                            const uint64_t originValue = kind == 0 ? value / divisor : value % divisor;
+                            const uint64_t start = 32 - localStart + 4 * originValue;
+                            fs::RegionExpressions::Substitution binding({{e.input(bounded), e.constant(value)}});
+                            for (uint64_t delta = 0; delta < 16 * step * (trips + 1); ++delta) {
+                                const auto byte = start + delta;
+                                auto address = fs::RegionalByteAddress{pto::AddressSpace::GM,
+                                    function.getArgument(0), e.constant(byte)};
+                                auto owner = certificate.storage->owner(0, address);
+                                auto selectors = certificate.storage->selectors(address);
+                                if (!owner || !selectors) { return false; }
+                                auto eval = [&](fs::RegionExpressions::Id root) {
+                                    return e.constantValue(e.substitute(root, binding));
+                                };
+                                const bool reserved = delta / (16 * step) < trips;
+                                if (eval(owner->present) != uint64_t(reserved)) { return false; }
+                                if (reserved && (eval(owner->visit) != delta / (16 * step) ||
+                                    eval(owner->localByte) != delta % (16 * step))) { return false; }
+                                for (auto& selector : selectors->firstWriters) {
+                                    selector.present = e.substitute(selector.present, binding);
+                                    for (auto& visit : selector.event.visits) { visit = e.substitute(visit, binding); }
+                                }
+                                const auto local = delta % (16 * step);
+                                const bool touched = reserved && local >= localStart && local < localStart + 4;
+                                const auto expected = touched ? std::optional<std::pair<uint32_t, uint64_t>>(
+                                    std::make_pair(1U, delta / (16 * step))) : std::nullopt;
+                                if (!selected(selectors->firstWriters, e, expected)) { return false; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return true;
 }
 // Independently inspect the ownership export for corpus qr_proj_seed's inner
 // 16x128 tiles. This invokes the nested adapter even when the dispatcher can
@@ -551,6 +745,8 @@ bool corpusColumns()
 } // namespace
 bool runRepeatedStorageChecks(MLIRContext* context)
 {
+    if (!logicalPhaseInputs(context)) { llvm::errs() << "logical phase input checks failed\n"; return false; }
+    if (!quotientOrigins(context)) { llvm::errs() << "quotient origin checks failed\n"; return false; }
     if (!residualProjection(context)) { llvm::errs() << "residual projection check failed\n"; return false; }
     if (!alternativeOwners(context)) { llvm::errs() << "alternative owner check failed\n"; return false; }
     if (!phasedReadOnlyOverlap(context)) { llvm::errs() << "phased read-only overlap check failed\n"; return false; }
@@ -596,7 +792,7 @@ bool runRepeatedStorageChecks(MLIRContext* context)
     if (fs::recognizeRepeatedStorage(missing, loop, body.expressions->constant(2)).storage) { return false; }
     auto aliases = body; aliases.gmAliasPolicy = pto::GMAliasPolicy::MayAlias;
     if (fs::recognizeRepeatedStorage(aliases, loop, body.expressions->constant(2)).storage) { return false; }
-    for (unsigned kind = 0; kind < 3; ++kind) {
+    for (unsigned kind = 0; kind < 8; ++kind) {
         if (!originDomain(context, kind)) { return false; }
     }
     llvm::outs() << "repeated storage byte owners and boundary selectors passed\n";

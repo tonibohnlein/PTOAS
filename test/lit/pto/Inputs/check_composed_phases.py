@@ -25,7 +25,7 @@ def invoke(tool, mode, path):
 
 def check(document, n, m, repeats=1, bank_stride=32, initial_load=False, active_prefix=False,
           moving_extract=False, external_value=False, moving_stride=32, phase_lengths=(),
-          owned_stride=0, owned_probe=0, owned_probes=(), owned_consumers=True,
+          owned_stride=0, owned_probe=0, owned_probes=(), owned_consumers=True, owned_origin=0,
           read_square=False):
     assert document["accepted"], document
     trace = document["trace"]
@@ -53,7 +53,7 @@ def check(document, n, m, repeats=1, bank_stride=32, initial_load=False, active_
                 expected.append(("read", prefix + [visit, inner], set(range(read_begin, read_begin + 4)), set()))
             expected.append(("epilogue", prefix + [visit], set(), cell))
             if owned_stride:
-                owned_base = 1000000000 + 65536 * 4 + visit * owned_stride
+                owned_base = 1000000000 + 65536 * 4 + owned_origin + visit * owned_stride
                 expected.append(("owned", prefix + [visit], tile, set(range(owned_base, owned_base + 32))))
             if moving_extract:
                 expected.append(("sourcewrite", prefix + [visit], set(), set(range(4096, 4100))))

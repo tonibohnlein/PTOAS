@@ -57,6 +57,24 @@ def two_consumers(source):
         "    return")
 
 
+def quotient_source(source, seed, probe):
+    """A physical-only quotient: floor((4*visit + seed)/4) + 16*visit."""
+    source = owned_source(source, probe)
+    source = source.replace("%dst: !pto.ptr<f32, gm>)", "%dst: !pto.ptr<f32, gm>, %seed: index)")
+    source = source.replace("array<i64: 3, 2, 65536>", f"array<i64: 3, 2, {seed}>")
+    source = source.replace("    %ring = pto.alloc_multi_tile",
+        "    %four = arith.constant 4 : index\n"
+        "    %limit = arith.constant 1024 : index\n"
+        "    %bounded = arith.minui %seed, %limit : index\n"
+        "    %ring = pto.alloc_multi_tile")
+    return source.replace("      %column = arith.muli %visit, %stride overflow<nsw> : index",
+        "      %scaled_visit = arith.muli %visit, %four overflow<nsw> : index\n"
+        "      %translated = arith.addi %scaled_visit, %bounded overflow<nsw> : index\n"
+        "      %quotient = arith.divui %translated, %four : index\n"
+        "      %plain_column = arith.muli %visit, %stride overflow<nsw> : index\n"
+        "      %column = arith.addi %plain_column, %quotient overflow<nsw> : index")
+
+
 def main():
     tool, fixture = sys.argv[1:]
     source = Path(fixture).read_text()
@@ -74,6 +92,27 @@ def main():
             report = json.loads(invoke(tool, "--sequence-analysis", path))
             assert not report["error"] and report["prepared"], report
             assert report["phase_descriptions"] > 0 and report["numeric_visits"] == 0, report
+        # The quotient is deliberately unsupported by scalar phase lowering.
+        # It appears only in physical maps, whose joint ownership proof is
+        # still required. Independently compute its original byte addresses.
+        for seed in (0, 3, 4, 5):
+            cases = [(2, 1)]
+            if seed == 0:
+                cases.append((0, 0))
+            if seed == 4:
+                cases.append((3, 2))
+            for n, m in cases:
+                probe = seed // 4 + 17
+                case = quotient_source(source, seed, probe)
+                case = case.replace(f"array<i64: 3, 2, {seed}>",
+                                    f"array<i64: {n}, {m}, {seed}>")
+                path.write_text(case)
+                check(json.loads(invoke(tool, "--structured-trace", path)), n, m,
+                      owned_stride=68, owned_origin=4 * (seed // 4), owned_probe=4 * probe)
+            if seed == 4:
+                report = json.loads(invoke(tool, "--sequence-analysis", path))
+                assert not report["error"] and report["prepared"], report
+                assert report["phase_descriptions"] > 0 and report["numeric_visits"] == 0, report
         case = two_consumers(source)
         for n, m in ((0, 0), (1, 0), (2, 1), (3, 2), (5, 1)):
             path.write_text(case.replace("array<i64: 3, 2, 65536>", f"array<i64: {n}, {m}, 65536>"))
