@@ -1534,6 +1534,7 @@ int main(int argc, char **argv) {
   const bool recognitionBoundary = argc == 3 && StringRef(argv[1]) == "--recognition-boundary";
   const bool insertLogical = argc == 3 && StringRef(argv[1]) == "--insert-logical";
   const bool insertLogicalLibrary = argc == 3 && StringRef(argv[1]) == "--insert-logical-library";
+  const bool insertModuleLibrary = argc == 3 && StringRef(argv[1]) == "--insert-module-library";
   const bool preparedInsertion = argc == 3 && StringRef(argv[1]) == "--prepared-insertion-checks";
   const bool insertionTrace = argc == 3 && StringRef(argv[1]) == "--insertion-trace";
   const bool expressionChecks = argc == 3 && StringRef(argv[1]) == "--region-expression-checks";
@@ -1562,7 +1563,7 @@ int main(int argc, char **argv) {
   if (argc != 2 && !allocationSessionChecks && !regionalSessionChecks && !retainedChecks && !sessionChecks &&
       !rotatingAnalysis && !explicitAnalysis &&
       !arithmetic && !finiteExpansion && !recognition &&
-      !numericAnalysis && !insertLogical && !insertLogicalLibrary && !recognitionBoundary &&
+      !numericAnalysis && !insertLogical && !insertLogicalLibrary && !insertModuleLibrary && !recognitionBoundary &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
       !mixedSymbolicChecks && !rotatingRegionChecks && !finiteVisitInput && !arithmeticPeriodicInput &&
       !expressionChecks && !hierarchyChecks && !boundingChecks &&
@@ -1579,7 +1580,7 @@ int main(int argc, char **argv) {
                  << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
                  "--allocation-session-checks|--retained-demand-checks|--analysis-session-checks|"
                  "--recognize|--recognition-boundary|--numeric-analysis|--insert-logical|--insert-logical-library|"
-                 "--prepared-insertion-checks|--insertion-trace|"
+                 "--insert-module-library|--prepared-insertion-checks|--insertion-trace|"
                  "--finite-guarded-analysis|--finite-overlay-insertion|--region-expression-checks|--sequence-analysis|"
                  "--structured-trace|--physical-trace|--numerical-hierarchy-checks|--bounding-contract-checks|"
                  "--compact-input-checks|"
@@ -1619,7 +1620,7 @@ int main(int argc, char **argv) {
                          explicitAnalysis || expectFailure ||
                          capabilities || phaseIndex ||
                          storageEffects || recognition || numericAnalysis || insertLogical || insertLogicalLibrary ||
-                         recognitionBoundary ||
+                         insertModuleLibrary || recognitionBoundary ||
                          insertionTrace || physicalTrace ||
                          structuredTrace || sequenceAnalysis || finiteGuardedAnalysis || finiteOverlayInsertion ||
                          expressionChecks || hierarchyChecks || boundingChecks || compactInputChecks ||
@@ -1772,6 +1773,21 @@ int main(int argc, char **argv) {
   }
   // Library regressions may exercise detached endpoint recipes while the
   // production pass deliberately stops at mathematical certification.
+  if (insertModuleLibrary) {
+    const bool inserted = succeeded(pto::frontiersynch::insertModuleSynchronization(
+        *module, policy, pto::frontiersynch::prepareFunctionSynchronization));
+    if (!inserted) {
+      const bool preserved = render(module->getOperation()) == before;
+      if (!preserved) {
+        llvm::errs() << "failed module preparation mutated original IR\n";
+      }
+      return 1;
+    }
+    if (failed(verify(*module))) { return 1; }
+    module->print(llvm::outs());
+    llvm::outs() << "\n";
+    return 0;
+  }
   if (insertLogicalLibrary) {
     for (auto function : module->getOps<func::FuncOp>()) {
       if (function.isDeclaration()) { continue; }

@@ -929,3 +929,14 @@ and a later standalone request shares the same snapshot. A negative probe leaves
 the general symbolic arithmetic route available. The regression contrasts a
 fixed physical-footprint nest with repeated GM stores at an arbitrary entry
 offset, verifies retry counters and probe rollback, and resets the alias context.
+
+### Module library integration checks
+
+A private test-driver entry point invokes the common function dispatcher through
+the existing transactional module/closed-callee layer. It retains calls and
+physical-core scopes, forces the called-body alias policy, and checks original
+IR preservation on failed module preparation. The closed-callee regression now
+uses this entry point before the separate six-ID allocator. The production pass
+continues to stop at mathematical certification with its explicit unsupported
+emission diagnostic. This test entry point supports integration measurement; it
+does not add another analysis dispatcher or a production command-line option.
