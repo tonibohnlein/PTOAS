@@ -9,7 +9,8 @@
 // An instance belongs to one unchanged SyncInput, alias/hardware policy and
 // original occurrence tree. initialize/invalidate destroys every entry when
 // that context changes. Specialized parameter/phase views do not use these
-// original-region keys; their private arenas and substitutions remain separate.
+// original-region keys. Their expression-free mathematical cache revalidates
+// every observed constant binding; expression exports remain transaction-local.
 #ifndef PTO_FRONTIERSYNCH_ANALYSISSESSIONINTERNAL_H
 #define PTO_FRONTIERSYNCH_ANALYSISSESSIONINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
@@ -41,7 +42,18 @@ struct BackendAttempt {
     std::map<int64_t, DictionaryAttr> allocation;
     std::map<std::pair<std::size_t, std::size_t>, int64_t> arithmeticRecords;
 };
+struct SpecializedArithmeticAttempt {
+    SmallVector<Operation*> roots;
+    std::vector<std::tuple<unsigned, unsigned, uint64_t, uint64_t>> profiles;
+    // Include failed constant queries: a previously unknown value becoming a
+    // constant can change recognition even if it was absent from parameters.
+    std::map<const void*, std::pair<Value, std::optional<int64_t>>> bindings;
+    std::shared_ptr<const ArithmeticRegionalRelations> mathematics;
+    std::string error;
+};
 struct AnalysisSessionState {
+    std::map<Operation*, std::vector<SpecializedArithmeticAttempt>> specializedArithmetic;
+    uint64_t specializedArithmeticBuilds = 0;
     std::optional<DifferenceArithmeticGeneratorStage> differenceGenerators;
     uint64_t arithmeticGeneratorBuilds = 0;
     std::map<std::pair<std::size_t, uint8_t>, std::vector<AnalysisBackend>> arithmeticOrders;

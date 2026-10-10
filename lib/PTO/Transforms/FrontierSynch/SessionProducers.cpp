@@ -365,6 +365,57 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::arithmeticExports(
     error = attempt.arithmeticSelectorError;
     return attempt.arithmeticSelectors;
 }
+uint64_t FrontierAnalysis::specializedArithmeticConstructions() const
+{
+    return sessionState ? sessionState->specializedArithmeticBuilds : 0;
+}
+std::shared_ptr<const ArithmeticRegionalRelations> FrontierAnalysis::specializedArithmeticDemands(
+    ArithmeticRegionContext context, const ArithmeticEntryConstant& constants, std::string& error,
+    ArrayRef<ArithmeticLimits> profiles)
+{
+    const auto owned = [&](Operation* root) {
+        return root && (root == function || function->isProperAncestor(root));
+    };
+    const bool valid = initialized && storage && structuralIndex && context.function == function &&
+        owned(context.root) && llvm::all_of(context.roots, owned);
+    if (!valid) {
+        error = "specialized arithmetic request belongs to a different invocation"; return {};
+    }
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    if (profiles.empty()) { profiles = regionalArithmeticProfiles; }
+    std::vector<std::tuple<unsigned, unsigned, uint64_t, uint64_t>> profileKey;
+    for (const auto& value : profiles) {
+        profileKey.emplace_back(value.pipes, value.dimensions, value.period, value.coefficient);
+    }
+    const auto binding = [&](Value value) { return constants ? constants(value) : std::optional<int64_t>{}; };
+    auto& variants = sessionState->specializedArithmetic[context.root];
+    for (const auto& attempt : variants) {
+        if (attempt.roots != context.roots || attempt.profiles != profileKey) { continue; }
+        const bool sameBindings = llvm::all_of(attempt.bindings, [&](const auto& entry) {
+            return binding(entry.second.first) == entry.second.second;
+        });
+        if (sameBindings) { error = attempt.error; return attempt.mathematics; }
+    }
+    SpecializedArithmeticAttempt attempt;
+    attempt.roots = context.roots; attempt.profiles = std::move(profileKey);
+    auto observed = [&](Value value) {
+        auto result = binding(value);
+        attempt.bindings.emplace(value.getAsOpaquePointer(), std::make_pair(value, result));
+        return result;
+    };
+    ++sessionState->specializedArithmeticBuilds;
+    auto mathematics = analyzeSpecializedArithmeticDemands(
+        context, *structuralIndex, *storage, profiles, observed, attempt.error);
+    if (mathematics) {
+        auto ownedMathematics = std::make_shared<ArithmeticRegionalRelations>(*mathematics);
+        ownedMathematics->inputOwner = storage; ownedMathematics->indexOwner = structuralIndex;
+        attempt.mathematics = std::move(ownedMathematics);
+    }
+    error = attempt.error;
+    auto result = attempt.mathematics;
+    variants.push_back(std::move(attempt));
+    return result;
+}
 SequenceRegionResolver FrontierAnalysis::regionalResolver(
     std::shared_ptr<const MathematicalResult> retainedNumerical)
 {
@@ -417,6 +468,10 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver(
             varyingExports(*demands, true, error);
         if (!result) { return failure(); }
         return *result;
+    };
+    resolver.specializedDemands = [this](ArithmeticRegionContext context,
+        const ArithmeticEntryConstant& constants, std::string& error) {
+        return specializedArithmeticDemands(context, constants, error);
     };
     return resolver;
 }

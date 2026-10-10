@@ -845,3 +845,145 @@ LogicalResult checkDynamicUniformCrossings(func::FuncOp function, pto::GMAliasPo
     llvm::outs() << "dynamic-uniform-crossings: non-unit-coordinates zero-trips extrema exact-required-closure\n";
     return success();
 }
+
+namespace {
+LogicalResult checkSpecializedExports(func::FuncOp function,
+    const pto::frontiersynch::ArithmeticRegionalRelations& mathematics, int64_t lower)
+{
+    using namespace pto::frontiersynch;
+    auto arena = std::make_shared<RegionExpressions>();
+    const auto before = arena->size();
+    const auto binding = [&](Value value) -> std::optional<RegionExpressions::Id> {
+        if (value == function.getArgument(0)) { return arena->constant(lower); }
+        if (value == function.getArgument(1)) { return arena->constant(lower + 5); }
+        return arena->input(value);
+    };
+    std::string error;
+    {
+        RegionExpressions::Transaction transaction(*arena);
+        auto exported = exportSpecializedArithmeticRegion(mathematics, arena, true, error, binding);
+        if (failed(exported)) { return function.emitError(error); }
+        auto present = exported->presence({0, arena->constant(2), PeriodicEventKind::Start});
+        auto absent = exported->presence({0, arena->constant(3), PeriodicEventKind::Start});
+        auto forward = exported->reachability({0, arena->constant(0), PeriodicEventKind::Completion},
+            {1, arena->constant(2), PeriodicEventKind::Start});
+        auto reverse = exported->reachability({1, arena->constant(2), PeriodicEventKind::Completion},
+            {0, arena->constant(0), PeriodicEventKind::Start});
+        const bool coordinates = present && absent && forward && reverse &&
+            arena->constantValue(*present) == 1 && arena->constantValue(*absent) == 0 &&
+            arena->constantValue(*forward) == 1 && arena->constantValue(*reverse) == 0;
+        if (!coordinates) { return function.emitError("specialized nonzero origin changed event coordinates"); }
+        bool selected = false;
+        for (const auto& boundary : exported->storageBoundary) {
+            for (const auto* side : {&boundary.firstWriters, &boundary.lastWriters}) {
+                for (const auto& value : *side) {
+                    const bool active = arena->constantValue(value.present) == 1;
+                    if (!active) { continue; }
+                    auto ordinal = arena->constantValue(value.event.ordinal);
+                    const uint64_t expected = side == &boundary.firstWriters ? 0 : 2;
+                    if (!ordinal || *ordinal != expected) {
+                        return function.emitError("specialized selector lost original origin");
+                    }
+                    selected = true;
+                }
+            }
+        }
+        if (!selected) { return function.emitError("specialized writer selectors were absent"); }
+    }
+    const bool rolledBack = arena->size() == before;
+    if (!rolledBack) { return function.emitError("specialized export survived outer rollback"); }
+    auto badBinding = [&](Value value) -> std::optional<RegionExpressions::Id> {
+        if (value == function.getArgument(0)) { return arena->constant(lower + 1); }
+        return binding(value);
+    };
+    auto rejected = exportSpecializedArithmeticRegion(mathematics, arena, true, error, badBinding);
+    const bool rejectedCleanly = failed(rejected) && arena->size() == before;
+    if (!rejectedCleanly) { return function.emitError("contradictory specialization was exported or leaked IDs"); }
+    for (int64_t upper : {lower, lower - 1}) {
+        RegionExpressions::Transaction transaction(*arena);
+        auto emptyBinding = [&](Value value) -> std::optional<RegionExpressions::Id> {
+            if (value == function.getArgument(1)) { return arena->constant(upper); }
+            return binding(value);
+        };
+        auto empty = exportSpecializedArithmeticRegion(mathematics, arena, true, error, emptyBinding);
+        if (failed(empty)) { return function.emitError(error); }
+        auto present = empty->presence({0, arena->constant(0), PeriodicEventKind::Start});
+        const bool absent = present && arena->constantValue(*present) == 0;
+        if (!absent) {
+            return function.emitError("specialized zero or reversed trip domain was present");
+        }
+        for (const auto& boundary : empty->storageBoundary) {
+            for (const auto* side : {&boundary.firstWriters, &boundary.lastWriters}) {
+                for (const auto& value : *side) {
+                    const bool inactive = arena->constantValue(value.present) == 0;
+                    if (!inactive) {
+                        return function.emitError("empty specialized domain exported an active writer");
+                    }
+                }
+            }
+        }
+    }
+    auto missingBinding = [&](Value value) -> std::optional<RegionExpressions::Id> {
+        if (value == function.getArgument(0)) { return std::nullopt; }
+        return binding(value);
+    };
+    auto missing = exportSpecializedArithmeticRegion(mathematics, arena, true, error, missingBinding);
+    const bool missingRefused = failed(missing) && arena->size() == before;
+    if (!missingRefused) { return function.emitError("missing specialization binding was exported or leaked IDs"); }
+    auto exported = exportSpecializedArithmeticRegion(mathematics, arena, true, error, binding);
+    if (failed(exported)) { return function.emitError(error); }
+    auto ordinary = exportArithmeticRegion(mathematics, arena, true, error);
+    auto prepared = prepareArithmeticRegion(mathematics, arena, {}, error);
+    const bool ordinaryRefused = failed(ordinary) && failed(prepared);
+    if (!ordinaryRefused) { return function.emitError("ordinary adapter accepted specialized mathematics"); }
+    return success();
+}
+} // namespace
+LogicalResult checkSpecializedArithmeticSession(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    using namespace pto::frontiersynch;
+    FrontierAnalysis session(function);
+    if (failed(session.initialize(policy))) { return failure(); }
+    auto loop = *function.getOps<scf::ForOp>().begin();
+    const ArithmeticRegionContext context{function, loop};
+    auto constants = [&](int64_t lower, std::optional<int64_t> upper = std::nullopt) -> ArithmeticEntryConstant {
+        return [lo = function.getArgument(0), n = function.getArgument(1), lower, upper]
+            (Value value) -> std::optional<int64_t> {
+            if (value == lo) { return lower; }
+            if (value == n) { return upper; }
+            return std::nullopt;
+        };
+    };
+    std::string error;
+    auto first = session.specializedArithmeticDemands(context, constants(1), error);
+    auto retry = session.specializedArithmeticDemands(context, constants(1), error);
+    const bool reused = first && first == retry && session.specializedArithmeticConstructions() == 1 &&
+        first->parameters.empty() && first->occurrences.empty() && first->selectors.boundaries.empty() &&
+        first->inputOwner && first->indexOwner;
+    if (!reused) { return function.emitError("specialized mathematics was not retained independently: " + error); }
+    auto changed = session.specializedArithmeticDemands(context, constants(3), error);
+    auto known = session.specializedArithmeticDemands(context, constants(1, 4), error);
+    const bool isolated = changed && known && changed != first && known != first &&
+        session.specializedArithmeticConstructions() == 3;
+    if (!isolated) {
+        return function.emitError("specialized constant or unknown binding reused incompatible mathematics");
+    }
+    const SmallVector<ArithmeticLimits> invalid{{8, 0, 1, 4096}};
+    auto rejected = session.specializedArithmeticDemands(context, constants(1), error, invalid);
+    auto repeated = session.specializedArithmeticDemands(context, constants(1), error, invalid);
+    const bool scopedFailure = !rejected && !repeated && session.specializedArithmeticConstructions() == 4 &&
+        session.specializedArithmeticDemands(context, constants(1), error) == first;
+    if (!scopedFailure) { return function.emitError("specialized profile failure poisoned another request"); }
+    if (failed(checkSpecializedExports(function, *first, 1))) { return failure(); }
+    if (failed(checkSpecializedExports(function, *changed, 3))) { return failure(); }
+    const auto other = policy == pto::GMAliasPolicy::MayAlias ?
+        pto::GMAliasPolicy::MayNotAlias : pto::GMAliasPolicy::MayAlias;
+    if (failed(session.initialize(other))) { return failure(); }
+    const bool emptyCache = session.specializedArithmeticConstructions() == 0;
+    auto renewed = session.specializedArithmeticDemands(context, constants(1), error);
+    const bool reset = emptyCache && renewed && renewed != first && renewed->inputOwner != first->inputOwner;
+    if (!reset) { return function.emitError("specialized cache crossed an alias-context reset"); }
+    if (failed(checkSpecializedExports(function, *first, 1))) { return failure(); }
+    llvm::outs() << "specialized-arithmetic-session: observed-misses context-isolated nonzero-origins rollback-safe\n";
+    return success();
+}

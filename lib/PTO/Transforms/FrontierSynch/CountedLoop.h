@@ -17,7 +17,9 @@ struct CountedLoop {
     scf::ForOp loop;
     int64_t step;
     uint64_t maximumOrdinal;
-    static std::optional<CountedLoop> get(scf::ForOp loop)
+    // Optional constants are certified entry bindings of this selected view.
+    static std::optional<CountedLoop> get(scf::ForOp loop, std::optional<int64_t> boundLower = {},
+                                           std::optional<int64_t> boundUpper = {})
     {
         if (!loop || !loop.getInductionVar().getType().isIndex()) { return std::nullopt; }
         APInt step;
@@ -26,7 +28,10 @@ struct CountedLoop {
             !matchPattern(loop.getStep(), m_ConstantInt(&step)) ||
             !step.isSignedIntN(64) || step.getSExtValue() <= 0) { return std::nullopt; }
         mlir::pto::detail::ScalarEvolution range(loop.getContext(), loop);
-        auto lower = range.signedRange(loop.getLowerBound()), upper = range.signedRange(loop.getUpperBound());
+        auto lower = boundLower ? std::optional<std::pair<int64_t, int64_t>>({*boundLower, *boundLower}) :
+            range.signedRange(loop.getLowerBound());
+        auto upper = boundUpper ? std::optional<std::pair<int64_t, int64_t>>({*boundUpper, *boundUpper}) :
+            range.signedRange(loop.getUpperBound());
         if (!lower || !upper) { return std::nullopt; }
         auto distance = APInt(128, upper->second, true) - APInt(128, lower->first, true);
         auto count = distance.isStrictlyPositive() ?
