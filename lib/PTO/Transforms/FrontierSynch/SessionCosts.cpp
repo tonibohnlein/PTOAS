@@ -210,6 +210,7 @@ std::vector<AnalysisCostRecord> FrontierAnalysis::costRecords() const
     if (!sessionState) { return {}; }
     auto records = sessionState->costs;
     for (auto& record : records) {
+        if (StringRef(record.method).starts_with("sequence-crossings-")) { continue; }
         if (record.method == "form-original" || record.method == "form-expanded") {
             const auto form = record.method == "form-original" ?
                 AnalysisForm::Original : AnalysisForm::SmallCountExpanded;

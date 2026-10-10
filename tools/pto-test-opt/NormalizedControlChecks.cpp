@@ -19,6 +19,208 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/SequenceAnalysisInternal.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
+LogicalResult checkCrossingCostSelection(func::FuncOp function, pto::GMAliasPolicy)
+{
+    using namespace pto::frontiersynch;
+    auto loops = function.getOps<scf::ForOp>();
+    if (loops.empty()) { return function.emitError("crossing fixture requires an occurrence loop"); }
+    EstimatedCount callbackIndexEstimate;
+    for (unsigned variant = 0; variant < 9; ++variant) {
+        const bool poison = variant == 8;
+        const bool existing = variant == 6;
+        const bool bothUnavailable = variant == 7;
+        const bool large = variant == 1 || variant == 3 || existing;
+        const bool refuse = variant == 2 || variant == 3;
+        const unsigned count = large ? 4 : 2;
+        const unsigned visits = large ? 16 : ((variant == 2 || bothUnavailable || poison) ? 2 : 1);
+        auto arena = std::make_shared<RegionExpressions>();
+        auto state = std::make_shared<SequenceAnalysisState>(function, arena);
+        std::vector<pto::CompoundInstanceElement> phases;
+        phases.reserve(count);
+        auto refused = std::make_shared<bool>(!refuse);
+        auto memo = std::make_shared<std::optional<Expr>>();
+        auto callbackCalls = std::make_shared<uint64_t>(0);
+        for (unsigned child = 0; child < count; ++child) {
+            phases.emplace_back(child, SmallVector<const pto::BaseMemInfo*>{},
+                SmallVector<const pto::BaseMemInfo*>{}, pto::PipelineType::PIPE_V, function->getName());
+            phases.back().elementOp = function;
+            Child local;
+            local.anchors.push_back({&phases.back(), {}, {}, {}});
+            local.regional.anchors = local.anchors;
+            local.regional.occurrenceLoops.push_back(*loops.begin());
+            local.regional.expressions = arena;
+            local.regional.capabilities = {true, true, true, false};
+            local.regional.cost.expressionNodes = variant == 4 ? 0 : (variant == 5 ? UINT64_MAX : 1);
+            local.regional.presence = [arena, visits](RegionalEvent event) -> std::optional<Expr> {
+                return arena->lt(event.ordinal, arena->constant(visits));
+            };
+            local.regional.reachability = [arena, memo, refused, callbackCalls, bothUnavailable](
+                RegionalEvent a, RegionalEvent b) -> std::optional<Expr> {
+                ++*callbackCalls;
+                if (!*memo) { *memo = arena->constant(1234567); }
+                if (bothUnavailable) { return std::nullopt; }
+                if (arena->constantValue(**memo) != 1234567) { return std::nullopt; }
+                if (!*refused) { *refused = true; return std::nullopt; }
+                auto av = arena->constantValue(a.ordinal), bv = arena->constantValue(b.ordinal);
+                if (!av || !bv) { return std::nullopt; }
+                const bool forward = *av <= *bv &&
+                    (a.kind == PeriodicEventKind::Start || b.kind == PeriodicEventKind::Completion);
+                return arena->boolean(forward);
+            };
+            if (existing) {
+                auto numerical = std::make_shared<RegionalNumericalInterface>();
+                const auto pipe = static_cast<uint32_t>(pto::PipelineType::PIPE_V);
+                std::vector<std::vector<uint32_t>> chains(2);
+                for (unsigned visit = 0; visit < visits; ++visit) {
+                    for (unsigned kind = 0; kind < 2; ++kind) {
+                        numerical->events.push_back({0, arena->constant(visit),
+                            kind ? PeriodicEventKind::Completion : PeriodicEventKind::Start, {}});
+                        chains[kind].push_back(2 * visit + kind);
+                    }
+                }
+                numerical->chainKeys = {{pipe, PeriodicEventKind::Start}, {pipe, PeriodicEventKind::Completion}};
+                auto index = std::make_shared<NumericalChainInterface>(buildNumericalChainInterface(
+                    std::move(chains), [](uint32_t a, uint32_t b) -> std::optional<bool> {
+                        return a / 2 <= b / 2 && (!(a % 2) || b % 2);
+                    }));
+                if (!index->error.empty()) { return function.emitError("prebuilt child index failed"); }
+                numerical->index = index;
+                auto eventId = [arena, visits](RegionalEvent event) -> std::optional<uint32_t> {
+                    auto ordinal = arena->constantValue(event.ordinal);
+                    if (!ordinal || *ordinal >= visits || event.type || !event.visits.empty()) { return {}; }
+                    return 2 * uint32_t(*ordinal) + (event.kind == PeriodicEventKind::Completion);
+                };
+                numerical->query = [index, eventId](RegionalEvent a, RegionalEvent b,
+                    NumericalChainQueryCost&) -> std::optional<bool> {
+                    auto x = eventId(a), y = eventId(b);
+                    return x && y ? std::optional<bool>(index->reaches(*x, *y)) : std::nullopt;
+                };
+                numerical->thresholds = [index, eventId](RegionalEvent event, bool reverse,
+                    NumericalChainQueryCost&) -> std::optional<std::vector<uint32_t>> {
+                    auto id = eventId(event);
+                    if (!id) { return {}; }
+                    return reverse ? index->reverse[*id] : index->forward[*id];
+                };
+                local.regional.numerical = std::move(numerical);
+            }
+            state->children.push_back(std::move(local));
+            for (unsigned visit = 0; visit < visits; ++visit) { state->port(child, 0, arena->constant(visit)); }
+            const auto pipe = static_cast<uint32_t>(pto::PipelineType::PIPE_V);
+            state->nativeFirst.push_back({{pipe, {{child * visits, arena->boolean(true)}}}});
+            state->nativeLast.push_back({{pipe, {{(child + 1) * visits - 1, arena->boolean(true)}}}});
+        }
+        if (variant != 5) { state->crossings.push_back({0, (count - 1) * visits, arena->boolean(true)}); }
+        if (variant == 2 || bothUnavailable) { state->crossings.push_back({1, visits + 1, arena->boolean(true)}); }
+        if (poison) {
+            std::vector<RegionalAnalysis> children;
+            const auto pipe = static_cast<uint32_t>(pto::PipelineType::PIPE_V);
+            for (auto& child : state->children) {
+                auto regional = child.regional;
+                for (unsigned visit = 0; visit < visits; ++visit) {
+                    RegionalSelector selector{{0, arena->constant(visit), PeriodicEventKind::Start, {}},
+                        arena->boolean(true)};
+                    RegionalStorageBoundary boundary;
+                    boundary.cell = {pto::AddressSpace::VEC, 4 * visit, 4 * (visit + 1)};
+                    boundary.firstWriters.push_back(selector); boundary.lastWriters.push_back(selector);
+                    regional.storageBoundary.push_back(std::move(boundary));
+                }
+                regional.firstPayloads[pipe] = {{{0, arena->constant(0), PeriodicEventKind::Start, {}},
+                    arena->boolean(true)}};
+                regional.lastPayloads[pipe] = {{{0, arena->constant(visits - 1), PeriodicEventKind::Start, {}},
+                    arena->boolean(true)}};
+                regional.referenceBefore = [arena](RegionalEvent a, RegionalEvent b) -> std::optional<Expr> {
+                    (void)arena->div(arena->constant(1), arena->constant(0));
+                    return arena->lt(a.ordinal, b.ordinal);
+                };
+                children.push_back(std::move(regional));
+            }
+            auto composed = composeRegionalSequence(function, arena, std::move(children), false, false);
+            auto exported = sequenceRegionalResult(composed);
+            if (arena->constructionError().empty() || composed.error.empty() || !composed.state ||
+                composed.state->crossingMethods[0].method.empty() || exported.capabilities.exactQueries ||
+                succeeded(prepareSequenceLogicalInsertion(composed)) ||
+                sequenceEventReachability(composed, {0, 0, arena->constant(0), PeriodicEventKind::Start},
+                    {1, 0, arena->constant(0), PeriodicEventKind::Completion})) {
+                return function.emitError("poisoned crossing construction published a successful result");
+            }
+            continue;
+        }
+        const auto originalCrossings = state->crossings;
+        const unsigned events = 2 * count * visits;
+        std::vector<std::vector<bool>> expected(events, std::vector<bool>(events));
+        for (unsigned payload = 0; payload < count * visits; ++payload) {
+            expected[2 * payload][2 * payload] = expected[2 * payload + 1][2 * payload + 1] = true;
+            expected[2 * payload][2 * payload + 1] = true;
+            if (payload + 1 < count * visits) {
+                expected[2 * payload][2 * payload + 2] = true;
+                expected[2 * payload + 1][2 * payload + 3] = true;
+            }
+        }
+        for (const auto& edge : originalCrossings) { expected[2 * edge.source + 1][2 * edge.target] = true; }
+        for (unsigned k = 0; k < events; ++k) {
+            for (unsigned a = 0; a < events; ++a) {
+                for (unsigned b = 0; b < events; ++b) { expected[a][b] = expected[a][b] ||
+                    (expected[a][k] && expected[k][b]); }
+            }
+        }
+        const auto portCount = state->ports.size();
+        const bool accepted = state->closure();
+        if (bothUnavailable) {
+            bool unchanged = state->crossings.size() == originalCrossings.size();
+            for (std::size_t i = 0; unchanged && i < originalCrossings.size(); ++i) {
+                const auto& a = state->crossings[i];
+                const auto& b = originalCrossings[i];
+                unchanged = a.source == b.source && a.target == b.target && a.guard == b.guard;
+            }
+            if (accepted || state->error.empty() || state->crossingObligations.size() != 2 ||
+                state->crossingMethods[0].attemptConstructions != 1 ||
+                state->crossingMethods[1].attemptConstructions != 1 || !unchanged ||
+                state->ports.size() != portCount || state->numerical || state->numericalTree ||
+                !*memo || arena->constantValue(**memo) != 1234567 || !arena->constructionError().empty()) {
+                return function.emitError("failed crossing attempts lost graph or callback ownership");
+            }
+            continue;
+        }
+        if (!accepted) {
+            return function.emitError("estimated crossing retry failed: ") << variant << ": " << state->error;
+        }
+        if (variant == 1) { callbackIndexEstimate = state->crossingMethods[0].estimate.work; }
+        const auto reuseEstimate = state->crossingMethods[0].estimate.work;
+        if (existing && (!reuseEstimate || !callbackIndexEstimate || *reuseEstimate >= *callbackIndexEstimate ||
+            *callbackCalls || state->costs.numericalLeafQueries ||
+            state->costs.numericalReusedChildren != count)) {
+            return function.emitError("preexisting numerical indices rebuilt callback leaves");
+        }
+        const auto numerical = state->crossingMethods[0].attemptConstructions;
+        const auto symbolic = state->crossingMethods[1].attemptConstructions;
+        const bool selections = refuse ? numerical == 1 && symbolic == 1 :
+            ((large || variant == 4) ? numerical == 1 && !symbolic : symbolic == 1 && !numerical);
+        if (variant == 4 && (state->crossingMethods[0].estimate.work || state->crossingMethods[1].estimate.work)) {
+            return function.emitError("missing callback costs did not remain unknown");
+        }
+        if (variant == 5 && (state->crossingMethods[0].estimate.work || !state->crossingMethods[1].estimate.work)) {
+            return function.emitError("overflow estimate did not sort after known symbolic work");
+        }
+        if (!selections) {
+            return function.emitError("crossing estimates did not select the expected reducer: ")
+                << variant << ": " << numerical << "," << symbolic;
+        }
+        for (unsigned a = 0; a < events; ++a) {
+            for (unsigned b = 0; b < events; ++b) {
+                auto actual = state->eventReachability(a, b);
+                if (!actual || arena->constantValue(*actual) != uint64_t(expected[a][b])) {
+                    return function.emitError("crossing reducer changed the selected graph");
+                }
+            }
+        }
+        if (*memo && arena->constantValue(**memo) != 1234567) {
+            return function.emitError("crossing retry invalidated a child callback cache");
+        }
+    }
+    llvm::outs() << "crossing-costs: both preferences both retries exact-graphs unknown overflow "
+                    "cached-ids reused-indices failed-retention poisoned-export\n";
+    return success();
+}
 LogicalResult checkProducerFailureStages(func::FuncOp function, pto::GMAliasPolicy policy)
 {
     using namespace pto::frontiersynch;

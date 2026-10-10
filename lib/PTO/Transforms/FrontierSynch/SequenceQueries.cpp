@@ -485,13 +485,49 @@ bool SequenceAnalysisState::closure()
         }
     }
     for (const auto& edge : nativeValueCrossings) { add(2*edge.source+1, 2*edge.target, edge.guard); }
-    // The numerical specialization must precede symbolic endpoint folding and
-    // pairwise consolidation: its rank sweeps already deduplicate and reduce
-    // the fixed crossing graph without recursive semantic queries.
-    auto reductionLinks = incoming;
+    // Estimate before leaf callbacks or symbolic crossing circuits are built.
+    // Each attempt receives the same native and full crossing graph.
+    const auto nativeLinks = incoming;
     for (const auto& edge : crossings) { add(2 * edge.source + 1, 2 * edge.target, edge.guard); }
-    if (numericalCrossingReduction()) { return error.empty(); }
-    incoming = reductionLinks;
+    const bool numericalFirst = preferNumericalCrossings();
+    const auto allLinks = incoming;
+    for (unsigned position = 0; position < 2; ++position) {
+        const bool numeric = position == 0 ? numericalFirst : !numericalFirst;
+        auto& method = crossingMethods[numeric ? 0 : 1];
+        ++method.attemptConstructions;
+        // Normal adapter failures may append shared callback circuits. Keep
+        // their IDs alive: child caches can own them across this retry.
+        const auto savedPorts = ports;
+        const auto savedIds = portIds;
+        const auto savedChoices = portChoices;
+        const auto savedCrossings = crossings;
+        const auto savedCrossingIds = crossingIds;
+        const auto savedNative = nativeValueCrossings;
+        incoming = numeric ? allLinks : nativeLinks;
+        const bool accepted = numeric ? numericalCrossingReduction() : symbolicCrossingReduction();
+        if (accepted && error.empty() && expressions.constructionError().empty()) { return true; }
+        crossingObligations.push_back(method.method + ": " +
+            (error.empty() ? "required representation or query unavailable" : error));
+        if (!expressions.constructionError().empty()) { return false; }
+        ports = savedPorts; portIds = savedIds; portChoices = savedChoices;
+        crossings = savedCrossings; crossingIds = savedCrossingIds; nativeValueCrossings = savedNative;
+        incoming = allLinks;
+        reachabilityCache.clear();
+        numericalTree.reset(); numerical.reset(); numericalChainKeys.clear();
+        error.clear();
+    }
+    std::string diagnostic = "neither implemented crossing reducer supplied its required interfaces";
+    for (const auto& obligation : crossingObligations) { diagnostic += "; " + obligation; }
+    return fail(diagnostic);
+}
+bool SequenceAnalysisState::symbolicCrossingReduction()
+{
+    auto reductionLinks = incoming;
+    auto add = [&](std::size_t source, std::size_t target, Expr guard) {
+        if (expressions.constantValue(guard) != 0) {
+            incoming[ports[target / 2].child].push_back({source, target, guard});
+        }
+    };
     for (auto& edge : crossings) {
         auto native = no();
         for (const auto& fixed : nativeValueCrossings) {
