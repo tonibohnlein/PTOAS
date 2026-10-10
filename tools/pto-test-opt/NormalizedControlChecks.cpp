@@ -18,6 +18,90 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/SequenceAnalysisInternal.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
+LogicalResult checkNaturalRotatingExportRetry(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    using namespace pto::frontiersynch;
+    FrontierAnalysis session(function);
+    if (failed(session.initialize(policy))) { return failure(); }
+    const ArithmeticLimits profile{8, 9, 1, 4096};
+    if (failed(session.configureArithmeticProfiles({profile}, {profile}))) { return failure(); }
+    std::string before;
+    llvm::raw_string_ostream original(before); function.print(original); original.flush();
+    auto node = llvm::find_if(session.result()->nodes, [](const auto& value) {
+        return value.kind == StructureKind::Loop;
+    });
+    if (node == session.result()->nodes.end()) { return failure(); }
+    const auto id = static_cast<std::size_t>(node - session.result()->nodes.begin());
+    auto weak = session.minimumDemands(id);
+    const bool retained = weak.mathematical &&
+        (weak.mathematical->rotatingDemands || weak.mathematical->guardedRotatingDemands);
+    if (!retained) { return function.emitError("natural retry requires exact rotating mathematics"); }
+    std::string error;
+    GuardedRotatingSpecialization specialization;
+    specialization.loop = cast<scf::ForOp>(node->anchor);
+    auto guarded = session.instantiateGuardedDemands(specialization, std::make_shared<RegionExpressions>(), error);
+    if (!guarded || !error.empty()) { return function.emitError("natural guarded mathematics unavailable: " + error); }
+    auto unavailable = guardedRotatingRegionalResult(function, *session.input(), guarded->demands, error);
+    const bool naturalFailure = failed(unavailable) && error.find("supported visit limit") != std::string::npos;
+    if (!naturalFailure) {
+        return function.emitError("natural regional export did not reach its slot limit: " + error);
+    }
+    const auto reductions = session.constructionCounts().rotatingReductions;
+    const auto guardedBuilds = session.specializedGuardedConstructions();
+    AnalysisRequest strong{id}; strong.needs.queries = true; strong.needs.selectors = true;
+    auto later = session.analyze(strong);
+    auto usesArithmetic = [](const AnalysisOutcome& outcome) {
+        if (!outcome.mathematical) { return false; }
+        const auto& math = *outcome.mathematical;
+        return math.arithmeticRegionalDemands ||
+            (math.sequenceDemands && math.sequenceDemands->cost.arithmeticRegions != 0);
+    };
+    const bool laterReady = later.status == AnalysisStatus::Ready && later.mathematical &&
+        usesArithmetic(later) && later.available.queries && later.available.selectors;
+    if (!laterReady) {
+        llvm::errs() << "selected " << (later.mathematical ? later.mathematical->backend : "none") << "\n";
+        for (const auto& issue : later.obligations) {
+            llvm::errs() << issue.diagnostic << "\n";
+        }
+        return function.emitError("natural rotating export failure blocked later arithmetic");
+    }
+    const auto arithmeticBuilds = session.arithmeticRegionConstructions();
+    auto retry = session.analyze(strong);
+    auto again = session.minimumDemands(id);
+    auto exports = [](const AnalysisOutcome& outcome) {
+        return outcome.regionalExports ? outcome.regionalExports : outcome.mathematical->regionalDemands;
+    };
+    const auto snapshot = exports(later);
+    const bool reused = retry.status == AnalysisStatus::Ready && again.status == AnalysisStatus::Ready &&
+        retry.mathematical == later.mathematical && retry.regionalExports == later.regionalExports &&
+        snapshot && exports(retry) == snapshot && again.mathematical == weak.mathematical &&
+        session.constructionCounts().rotatingReductions == reductions &&
+        session.specializedGuardedConstructions() == guardedBuilds &&
+        session.arithmeticRegionConstructions() == arithmeticBuilds &&
+        !session.constructionCounts().logicalPreparations && !session.constructionCounts().allocationExports;
+    if (!reused) { return function.emitError("natural retry rebuilt mathematics or constructed commands"); }
+    FrontierAnalysis cold(function);
+    const bool coldInitialized = succeeded(cold.initialize(policy)) &&
+        succeeded(cold.configureArithmeticProfiles({profile}, {profile}));
+    if (!coldInitialized) { return failure(); }
+    auto coldResult = cold.analyze(strong);
+    const bool coldReady = coldResult.status == AnalysisStatus::Ready && coldResult.mathematical &&
+        usesArithmetic(coldResult) && coldResult.available.queries &&
+        coldResult.available.selectors && !cold.constructionCounts().logicalPreparations &&
+        !cold.constructionCounts().allocationExports;
+    if (!coldReady) { return function.emitError("cold strong request did not reach arithmetic"); }
+    auto rootRequest = strong; rootRequest.region = 0;
+    auto root = session.analyze(rootRequest);
+    const bool rootReady = root.status == AnalysisStatus::Ready && root.available.queries && root.available.selectors &&
+        !session.constructionCounts().logicalPreparations && !session.constructionCounts().allocationExports;
+    if (!rootReady) { return function.emitError("root and regional export retry outcomes disagree"); }
+    std::string after;
+    llvm::raw_string_ostream current(after); function.print(current); current.flush();
+    if (before != after) { return function.emitError("natural export retry changed original IR"); }
+    llvm::outs() << "natural-export-retry: rotating-demands retained slot-limit "
+                 << "arithmetic-ready cached source-unchanged\n";
+    return success();
+}
 LogicalResult checkNormalizedControlSession(func::FuncOp function, pto::GMAliasPolicy policy)
 {
     using namespace pto::frontiersynch;

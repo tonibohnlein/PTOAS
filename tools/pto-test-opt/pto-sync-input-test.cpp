@@ -42,6 +42,7 @@ LogicalResult checkFixedCoordinateRelations(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkUniformRelationCrossings(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSpecializedNumericSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSpecializedGuardedSession(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkNaturalRotatingExportRetry(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkFiniteArithmeticSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSpecializedArithmeticSession(func::FuncOp function, pto::GMAliasPolicy policy);
 LogicalResult checkDynamicUniformCrossings(func::FuncOp, pto::GMAliasPolicy);
@@ -1830,6 +1831,10 @@ int main(int argc, char **argv) {
     auto delegation = pto::frontiersynch::recognizeClosedCallees(*module);
     for (auto function : module->getOps<func::FuncOp>()) {
       if (function.isDeclaration()) { continue; }
+      if (certification && function->hasAttr("test.natural_rotating_export_retry")) {
+        if (failed(checkNaturalRotatingExportRetry(function, policy))) { return 1; }
+        continue;
+      }
       if (certification && function->hasAttr("test.specialized_guarded_requests")) {
         if (failed(checkSpecializedGuardedSession(function, policy))) { return 1; }
         continue;
