@@ -349,6 +349,11 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
             if (backend == AnalysisBackend::ArithmeticPeriodic) {
                 for (auto method : arithmeticMethods(request)) { if (attemptBackend(method)) { return true; } }
             } else if (attemptBackend(backend)) { return true; }
+            // A stronger child request can select another exact occurrence
+            // representation. Recompose crossings for those interfaces rather
+            // than substituting its commands into the retained weaker graph.
+            if (backend == AnalysisBackend::Sequence && request.needs.synchronization &&
+                attemptBackend(AnalysisBackend::SequenceEndpoints)) { return true; }
         }
         return false;
     };
