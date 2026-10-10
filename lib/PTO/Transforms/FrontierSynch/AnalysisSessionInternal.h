@@ -18,6 +18,7 @@ namespace mlir::pto::frontiersynch {
 struct VaryingRegionalExports;
 struct FiniteExpansionPlan;
 struct NumericTemplatePlan;
+struct NormalizedControlDescription;
 struct BackendAttempt {
     bool produced = false;
     std::shared_ptr<const MathematicalResult> mathematical;
@@ -45,6 +46,7 @@ struct AnalysisSessionState {
     uint64_t arithmeticGeneratorBuilds = 0;
     std::map<std::pair<std::size_t, uint8_t>, std::vector<AnalysisBackend>> arithmeticOrders;
     std::vector<AnalysisCostRecord> costs;
+    std::map<std::size_t, std::shared_ptr<const NormalizedControlDescription>> normalizedInputs;
     std::map<std::size_t, std::shared_ptr<const FiniteExpansionPlan>> finiteExpansionPlans;
     std::map<std::pair<std::size_t, bool>, std::shared_ptr<const NumericTemplatePlan>> numericTemplatePlans;
     uint64_t numericalRegionBuilds = 0;

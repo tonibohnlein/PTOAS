@@ -37,6 +37,7 @@
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
+LogicalResult checkNormalizedControlSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkNumericPreflight(func::FuncOp, const pto::SyncInput&,
     const pto::frontiersynch::ProgramRecognition&);
 LogicalResult dumpProgramRecognition(func::FuncOp, const pto::SyncInput &,
@@ -1852,6 +1853,9 @@ int main(int argc, char **argv) {
       }
       if (regionalRecognition && failed(analysis.recognizeRegionalArithmetic())) { return 1; }
       if (certification) {
+        const bool normalizationProbeFailed = function->hasAttr("test.normalization_requests") &&
+            failed(checkNormalizedControlSession(function, policy));
+        if (normalizationProbeFailed) { return 1; }
         const bool numericalProbeFailed = function->hasAttr("test.numerical_region_session") &&
             failed(checkNumericalRegionSession(function, policy));
         if (numericalProbeFailed) { return 1; }

@@ -8,6 +8,7 @@
 #ifndef PTO_FRONTIERSYNCH_FINITEEXPANSIONPLAN_H
 #define PTO_FRONTIERSYNCH_FINITEEXPANSIONPLAN_H
 #include "PTO/Transforms/FrontierSynch/ArithmeticProgram.h"
+#include "NormalizedControl.h"
 namespace mlir::pto::frontiersynch {
 struct FiniteGuardedAnalysis;
 // Preflight owns original occurrence identities and bounded fixed-coordinate
@@ -29,9 +30,11 @@ struct FiniteExpansionPlan {
     SmallVector<ArithmeticSite> sites;
     uint64_t foldOperations = 0, prunedArms = 0;
     bool expandsLoops = false;
+    std::shared_ptr<const NormalizedControlDescription> normalized;
 };
 FiniteExpansionPlan preflightFiniteExpansion(ArithmeticRegionContext context,
-    const PhaseIndex& index, const SyncInput& input, const FiniteExpansionLimits& limits = {});
+    const PhaseIndex& index, const SyncInput& input, const FiniteExpansionLimits& limits = {},
+    std::shared_ptr<const NormalizedControlDescription> normalized = {});
 ArithmeticProgram materializeFiniteExpansion(const FiniteExpansionPlan& plan,
     const PhaseIndex& index, const SyncInput& input);
 FiniteGuardedAnalysis analyzeExpandedFinite(const FiniteExpansionPlan& plan,

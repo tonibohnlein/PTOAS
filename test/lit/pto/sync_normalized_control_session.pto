@@ -1,0 +1,173 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
+// RUN: pto-sync-input-test --gm-alias=may-alias --certify-regions %s | FileCheck %s
+// CHECK-COUNT-7: normalized-control-session: shared-input numerical-to-finite original-coordinates isolated-context
+// CHECK: source-unchanged; synchronization-insertion-not-run
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+!right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a3"} {
+  func.func @non_unit() attributes {test.normalization_requests, test.normalization_coordinates = array<i64: 1, 3>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %five = arith.constant 5 : index
+    %seven = arith.constant 7 : index
+    %nine = arith.constant 9 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %t = %zero to %two step %one {
+      scf.for %i = %one to %five step %two {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+      }
+    }
+    return
+  }
+  func.func @runtime_guard(%choice: i1) attributes {test.normalization_requests, test.normalization_coordinates = array<i64: 1, 3>, test.normalization_runtime_guard} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %five = arith.constant 5 : index
+    %seven = arith.constant 7 : index
+    %nine = arith.constant 9 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %t = %zero to %two step %one {
+      scf.for %i = %one to %five step %two {
+        scf.if %choice {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+        }
+      }
+    }
+    return
+  }
+  func.func @zero() attributes {test.normalization_requests, test.normalization_coordinates = array<i64>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %five = arith.constant 5 : index
+    %seven = arith.constant 7 : index
+    %nine = arith.constant 9 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %t = %zero to %two step %one {
+      scf.for %i = %zero to %zero step %one {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+      }
+    }
+    return
+  }
+  func.func @one() attributes {test.normalization_requests, test.normalization_coordinates = array<i64: 7>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %five = arith.constant 5 : index
+    %seven = arith.constant 7 : index
+    %nine = arith.constant 9 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %t = %zero to %two step %one {
+      scf.for %i = %seven to %nine step %two {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+      }
+    }
+    return
+  }
+  func.func @dead_oversized_arm() attributes {test.normalization_requests, test.normalization_coordinates = array<i64>, test.normalization_compact} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %five = arith.constant 5000 : index
+    %false = arith.constant false
+    %seven = arith.constant 7 : index
+    %nine = arith.constant 9 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %t = %zero to %two step %one {
+      scf.if %false {
+      scf.for %i = %one to %five step %one {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+      }
+      }
+    }
+    return
+  }
+  func.func @dependent_nested() attributes {test.normalization_requests, test.normalization_coordinates = array<i64>, test.normalization_compact, test.normalization_deep} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %five = arith.constant 5 : index
+    %seven = arith.constant 7 : index
+    %nine = arith.constant 9 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %t = %zero to %two step %one {
+      scf.for %i = %one to %two step %one {
+        scf.for %j = %zero to %i step %one {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+        }
+      }
+    }
+    return
+  }
+  func.func @nested_failed_expansions() attributes {test.normalization_requests, test.normalization_coordinates = array<i64>, test.normalization_compact} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %five = arith.constant 5000 : index
+    %false = arith.constant false
+    %seven = arith.constant 7 : index
+    %nine = arith.constant 9 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    scf.for %t = %zero to %two step %one {
+      scf.if %false {
+      scf.for %i = %one to %five step %one {
+        scf.for %j = %one to %five step %one {
+          scf.for %k = %one to %five step %one {
+            scf.for %l = %one to %five step %one {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+        pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+            }
+          }
+        }
+      }
+      }
+    }
+    return
+  }
+}
