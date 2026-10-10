@@ -159,3 +159,59 @@ MayAlias composition must retain complete shared modeled overlap requirements.
 Missing symbolic-byte selectors or fixed-occurrence relation adapters must not
 discard child demands. A bounded-window demand circuit supplies local rows;
 those rows must never be promoted to whole-loop reachability without a proof.
+
+## Physical refresh over overlapping families
+
+Bounded-lifetime recognition can now retry independently proved access maps when
+only the rotating form's common-stride or disjoint-family premises fail. The
+retry partitions exact absolute local-memory ranges into common physical atoms.
+Allocation names do not separate overlapping bytes. Unknown ranges, unresolved
+relationships and shared prerequisite obligations retain their existing checks.
+
+For each potentially writable atom, a collectively complete writer at a fixed
+address phase proves refresh within the finite address period P. Complementary
+branches cover their parent; floating predicates remain opaque per-visit values.
+A prefetch guarded by the original IV plus a proved nonnegative literal delta
+compared with the identical upper-bound SSA value can instead prove refresh in
+the interior. Its possible exit suffix has T = ceil(delta / step) visits, yielding
+span P+T. Scalar proofs are anchored outside the loop body and require every
+machine intermediate to be nonwrapping. These facts certify coverage only; the
+actual guard values remain in all occurrence and demand circuits.
+
+The reducer uses the inclusive span+1 window. Address selection still uses
+modulo P, and physical allocation cells retain absolute byte coordinates.
+Overflow-safe preflight bounds the complete payload/guard/access expansion before
+constructing the window. Exceeding this representation bound reports a
+construction obligation, never exclusion from the mathematical class.
+
+The regression oracle derives physical-byte hazards independently of the
+certificate and compares complete command closure, including zero trips,
+nonunit original coordinates, unequal selector strides and partial periods.
+
+Inspection of the first remaining gated-delta refresh obligation identified
+padding attributed to `tlog`. Its A3 native implementation shares the masked
+unary memory path with `texp`; the A5 implementation shares the unary load/store
+path, with register-only precision selection. `TLogOp` now uses the existing
+shared target-aware pointwise contract. Its existing layout, type, shape and
+repeat-width checks still apply, including conservative A5 tail reads. No
+recognizer uses the kernel name or assumes padding is untouched without an
+applicable shared contract.
+
+### Third milestone validation
+
+The rebuilt optimized candidate passed all five focused groups: independent
+physical-byte command closure and suffix/refusal cases, 377 A3/A5 access-contract
+cases, 1,280 guard/mode provenance valuations, 784 storage-lane handoffs and the
+bounded allocation-session retention test. All 22 serial corpus requests
+completed without timeout, source mutation or exact-demand coverage loss.
+MayNotAlias improved from 232 to 233 of 240 original regions; MayAlias remains
+218 of 240. Gated delta's original runtime loop (node 11) now retains exact
+bounded-lifetime demands with span 3. Global queries/selectors are still
+unavailable, so this does not establish its parent regions' success.
+
+Both architecture and correctness reviews accepted this milestone. Artifacts,
+commands, compiled-source and binary hashes, ISA source hashes and individual
+regional outcomes are retained under
+`.local/section8-refactor/regional-gaps/m3/`. The compliance prefilter's eleven
+brace findings were independently checked as nested-parenthesis regex false
+positives; raw results and adjudication are preserved separately.

@@ -29,12 +29,18 @@ bool dischargeGlobalEffect(std::size_t effect, scf::ForOp loop,
                            const SyncStorageEffects& effects, const PhaseIndex& index);
 bool entryExpression(Value value, Operation* entry, const PhaseIndex& index,
                      SmallVectorImpl<Operation*>& recipe);
+// Complete writer coverage under the skeleton's same-visit Boolean guards.
+bool coversEveryVisit(const GuardedRecognition& skeleton, ArrayRef<std::size_t> writers);
+bool coversEveryVisitUnderFacts(const GuardedRecognition& skeleton, ArrayRef<std::size_t> writers,
+                               const DenseMap<Value, bool>& facts);
+std::optional<PhysicalRefreshDescription> certifyPhysicalRefresh(
+    const GuardedRecognition& skeleton, const SyncInput& input, scf::ForOp loop, RefreshCertificate& certificate);
 void normalizeFragments(RecognitionResult& result, const SyncStorageEffects& effects);
 void inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result);
 void inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result, bool allowEnvelopes);
 bool checkRotatingDomain(scf::ForOp loop, const PhaseIndex& index, RecognitionResult& result, bool canonical = false);
 void inspectRotatingPhases(scf::ForOp loop, ArrayRef<const CompoundInstanceElement*> phases,
                           const SyncInput& input, const SyncStorageEffects& effects, RecognitionResult& result,
-                          const PhaseIndex& index, bool allowParameters = false);
+                          const PhaseIndex& index, bool allowParameters = false, bool independentPhysicalMaps = false);
 } // namespace mlir::pto::frontiersynch::detail
 #endif
