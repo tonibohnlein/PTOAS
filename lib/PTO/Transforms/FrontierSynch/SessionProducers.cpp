@@ -416,6 +416,32 @@ std::shared_ptr<const ArithmeticRegionalRelations> FrontierAnalysis::specialized
     variants.push_back(std::move(attempt));
     return result;
 }
+uint64_t FrontierAnalysis::finiteArithmeticStorageProbes() const
+{
+    if (!sessionState) { return 0; }
+    return llvm::count_if(sessionState->arithmeticRegionAttempts,
+        [](const auto& entry) { return entry.second.finiteArithmeticStorage.has_value(); });
+}
+FailureOr<RegionalAnalysis> FrontierAnalysis::finiteArithmeticRegion(std::size_t region, std::string& error)
+{
+    const bool valid = initialized && storage && structuralIndex && program && region < program->nodes.size() &&
+        program->nodes[region].kind == StructureKind::Loop && program->nodes[region].anchor;
+    if (!valid) { error = "finite arithmetic request requires an original session loop"; return failure(); }
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    auto& cached = sessionState->arithmeticRegionAttempts[region];
+    if (!cached.finiteArithmeticStorage) {
+        const auto* form = recognizeArithmeticRegion(region);
+        if (!form) { cached.finiteArithmeticStorageError = "original arithmetic form is unavailable"; }
+        cached.finiteArithmeticStorage = form && hasFiniteArithmeticStorage(
+            *form, *storage, sessionState->expressions, cached.finiteArithmeticStorageError);
+    }
+    if (!*cached.finiteArithmeticStorage) { error = cached.finiteArithmeticStorageError; return failure(); }
+    auto mathematics = produceArithmeticRegion(region, error);
+    if (!mathematics) { return failure(); }
+    auto exported = arithmeticExports(*mathematics, true, error);
+    if (!exported) { return failure(); }
+    return *exported;
+}
 SequenceRegionResolver FrontierAnalysis::regionalResolver(
     std::shared_ptr<const MathematicalResult> retainedNumerical)
 {
@@ -468,6 +494,9 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver(
             varyingExports(*demands, true, error);
         if (!result) { return failure(); }
         return *result;
+    };
+    resolver.finiteArithmetic = [this](std::size_t region, std::string& error) {
+        return finiteArithmeticRegion(region, error);
     };
     resolver.specializedDemands = [this](ArithmeticRegionContext context,
         const ArithmeticEntryConstant& constants, std::string& error) {

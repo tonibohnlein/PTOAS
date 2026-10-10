@@ -73,6 +73,7 @@ SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& i
 // Specialized phase views retain their own arena/context adapters.
 struct NormalizedControlDescription;
 struct SequenceRegionResolver {
+    std::function<FailureOr<RegionalAnalysis>(std::size_t, std::string&)> finiteArithmetic;
     // Current-form input only; requesting it never selects another alternative.
     std::function<std::shared_ptr<const NormalizedControlDescription>(std::size_t)> normalized;
     std::function<FailureOr<RegionalAnalysis>(std::size_t, bool, std::string&)> region;

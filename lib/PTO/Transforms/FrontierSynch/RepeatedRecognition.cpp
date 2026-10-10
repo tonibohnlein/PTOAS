@@ -129,8 +129,10 @@ bool SequenceAnalysisState::repeatedChild(const StructureNode& node, Expr trips)
             // the ordinary arithmetic class check and an explicit output cost.
             // A deferred finite export leaves all compact/symbolic routes open.
             std::string diagnostic;
-            auto finite = analyzeFiniteArithmeticRegionWithProfiles({function, loop}, index, *input, arena, diagnostic,
-                program->regionalArithmeticProfiles);
+            const auto id = static_cast<std::size_t>(&node - program->nodes.data());
+            auto finite = resolveOriginal.finiteArithmetic ? resolveOriginal.finiteArithmetic(id, diagnostic) :
+                analyzeFiniteArithmeticRegionWithProfiles({function, loop}, index, *input, arena, diagnostic,
+                    program->regionalArithmeticProfiles);
             if (succeeded(finite)) {
                 Child child;
                 child.regional = std::move(*finite);

@@ -991,3 +991,56 @@ LogicalResult checkSpecializedArithmeticSession(func::FuncOp function, pto::GMAl
     llvm::outs() << "specialized-arithmetic-session: observed-misses context-isolated nonzero-origins rollback-safe\n";
     return success();
 }
+
+LogicalResult checkFiniteArithmeticSession(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    using namespace pto::frontiersynch;
+    FrontierAnalysis session(function);
+    if (failed(session.initialize(policy))) { return failure(); }
+    auto node = llvm::find_if(session.result()->nodes,
+        [](const auto& value) { return value.kind == StructureKind::Loop; });
+    if (node == session.result()->nodes.end()) { return function.emitError("finite arithmetic loop absent"); }
+    const auto id = static_cast<std::size_t>(node - session.result()->nodes.begin());
+    std::string error;
+    auto first = session.finiteArithmeticRegion(id, error);
+    const bool unavailable = function->hasAttr("test.finite_arithmetic_unavailable");
+    const bool expected = succeeded(first) != unavailable && session.finiteArithmeticStorageProbes() == 1;
+    if (!expected) {
+        return function.emitError("finite arithmetic eligibility differs from source expectation: " + error);
+    }
+    const auto builds = session.arithmeticRegionConstructions();
+    const auto queries = session.constructionCounts().arithmeticQueryBuilds;
+    const auto selectors = session.constructionCounts().arithmeticSelectorBuilds;
+    auto retry = session.finiteArithmeticRegion(id, error);
+    const bool reused = succeeded(retry) == succeeded(first) && session.finiteArithmeticStorageProbes() == 1 &&
+        session.arithmeticRegionConstructions() == builds &&
+        session.constructionCounts().arithmeticQueryBuilds == queries &&
+        session.constructionCounts().arithmeticSelectorBuilds == selectors;
+    if (!reused) { return function.emitError("finite arithmetic retry rebuilt producer or exports"); }
+    const bool deferredCleanly = !unavailable || (!error.empty() && !builds && !queries && !selectors);
+    if (!deferredCleanly) { return function.emitError("negative finite probe constructed mathematics or exports"); }
+    AnalysisRequest requested{id}; requested.needs.queries = requested.needs.selectors = true;
+    auto symbolic = session.analyzeArithmeticRegional(requested);
+    const bool extended = symbolic.status == AnalysisStatus::Ready && symbolic.mathematical &&
+        session.arithmeticRegionConstructions() == 1 && session.finiteArithmeticStorageProbes() == 1;
+    if (!extended) { return function.emitError("finite probe prevented a later exact arithmetic request"); }
+    const bool sameSnapshot = unavailable ||
+        (symbolic.regionalExports && first->arithmeticRelations == symbolic.regionalExports->arithmeticRelations);
+    if (!sameSnapshot) { return function.emitError("finite request did not share canonical selector snapshot"); }
+    if (succeeded(session.finiteArithmeticRegion(SIZE_MAX, error))) {
+        return function.emitError("invalid finite region was accepted");
+    }
+    auto arena = std::make_shared<RegionExpressions>();
+    const bool finiteStorage = hasFiniteArithmeticStorage(symbolic.mathematical->arithmeticRegionalDemands->program,
+        *session.input(), arena, error);
+    const bool probeRollback = finiteStorage != unavailable && !arena->size();
+    if (!probeRollback) { return function.emitError("finite support probe published expression IDs"); }
+    const auto other = policy == pto::GMAliasPolicy::MayAlias ?
+        pto::GMAliasPolicy::MayNotAlias : pto::GMAliasPolicy::MayAlias;
+    const bool reset = succeeded(session.initialize(other)) && !session.finiteArithmeticStorageProbes();
+    if (!reset) {
+        return function.emitError("finite eligibility cache survived alias-context reset");
+    }
+    llvm::outs() << "finite-arithmetic-session: early-gate cached-producer cached-exports later-exact-retry\n";
+    return success();
+}
