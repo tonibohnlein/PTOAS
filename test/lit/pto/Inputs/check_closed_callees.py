@@ -14,7 +14,10 @@ import tempfile
 
 
 def main():
-    opt, probe, fixture = sys.argv[1:]
+    opt, probe, fixture, *modes = sys.argv[1:]
+    library = modes == ["--library"]
+    if modes and not library:
+        raise ValueError("expected optional --library")
     source = Path(fixture).read_text()
     parts = source.split("  func.func ")
     prefix = parts[0]
@@ -26,8 +29,30 @@ def main():
 
         def run(text, flags, expected=True):
             path.write_text(text)
-            result = subprocess.run([opt, *flags, str(path)], capture_output=True,
-                                    text=True, check=False, timeout=60)
+            if library:
+                policy = "may-alias" if any("gm-alias=may-alias" in flag for flag in flags) else "may-not-alias"
+                result = subprocess.run([probe, "--gm-alias=" + policy, "--insert-module-library", str(path)],
+                                        capture_output=True, text=True, check=False, timeout=60)
+                if "failed module preparation mutated original IR" in result.stderr:
+                    raise RuntimeError(result.stderr)
+                allocate = any("pto-frontier-allocate" in flag for flag in flags)
+                if result.returncode == 0 and allocate:
+                    certificates = ("pto.cyclic_allocation", "pto.finite_allocation")
+                    if not any(name in result.stdout for name in certificates):
+                        raise RuntimeError("module preparation did not attach allocation certificates")
+                    logical = Path(directory) / "logical.pto"
+                    logical.write_text(result.stdout)
+                    allocation_flags = [flag.replace("pto-frontier-analysis,", "") for flag in flags
+                                        if flag.startswith("--pass-pipeline=")]
+                    if not allocation_flags:
+                        allocation_flags = ["--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5"]
+                    result = subprocess.run([opt, *allocation_flags, str(logical)],
+                                            capture_output=True, text=True, check=False, timeout=60)
+                    if result.returncode == 0 and any(name in result.stdout for name in certificates):
+                        raise RuntimeError("allocation did not consume nested leaf certificates")
+            else:
+                result = subprocess.run([opt, *flags, str(path)], capture_output=True,
+                                        text=True, check=False, timeout=60)
             assert (result.returncode == 0) == expected, result.stdout + result.stderr
             return result
 
