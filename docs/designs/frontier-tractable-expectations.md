@@ -1076,3 +1076,35 @@ cached retries, invalid-region requests and an exhausted whole-region demand
 request. These diagnostics do not change successful demand selection or the
 intentional public recognition-only stopping boundary. Section 8 and the two
 other pinned paper sources were reread; all three hashes remain unchanged.
+
+### Estimated selection of sequence crossing reducers
+
+Sequence composition estimates the work of its existing numerical-index and
+symbolic-circuit reducers before constructing leaf query indices or crossing
+reduction circuits. Both estimates use the selected boundary events and the
+complete native and storage crossing graph. Numerical work includes uncached
+leaf event pairs, callback construction cost, routing and index merges;
+prebuilt child numerical indices bypass leaf reconstruction. Symbolic work
+includes endpoint folding, last-entry tests and callback circuit cost.
+These are heuristic construction estimates, not class premises or guarantees
+of minimum compilation time. Arithmetic overflow and missing callback cost
+descriptions produce unknown estimates. Known work precedes unknown work;
+representation size breaks equal-work comparisons, followed by the existing
+numerical-first order.
+
+An ordinary unsupported query or representation leaves the other reducer
+available. Each attempt starts from the same complete crossing graph. A failed
+attempt restores ports, selected-coordinate choices, crossings and incoming
+links and clears derived reachability state. Shared expression storage remains
+append-only during this retry because child callbacks may memoize newly
+constructed expression IDs. An expression-arena construction error stops the
+retry. This isolation changes neither original IR nor child internal demands.
+
+The session reports both method estimates and attempt counts. Failed numerical
+leaf construction contributes to actual work counters. Failed sequence closure
+retains its construction records and diagnostics, while query and preparation
+adapters reject the unsuccessful result. This milestone adds no relational
+conversion, demand representation or emission capability. The current Section 8
+selection and cost-accounting passages were reread, and all three pinned paper
+hashes remain unchanged. These implementation claims do not establish final
+paired-campaign acceptance.

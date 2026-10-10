@@ -44,6 +44,7 @@ LogicalResult checkSpecializedNumericSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSpecializedGuardedSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkPhaseMinMax(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkProducerFailureStages(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkCrossingCostSelection(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkPiecewiseAccessCache(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSequenceEndpointRetry(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkNaturalRotatingExportRetry(func::FuncOp, pto::GMAliasPolicy);
@@ -955,7 +956,11 @@ LogicalResult checkRetainedDemands(func::FuncOp function, pto::GMAliasPolicy pol
   }
   const auto costs = session.costRecords();
   for (std::size_t i = 1; i < costs.size(); ++i) {
-    if (costs[i].request == costs[i - 1].request &&
+    const auto arithmetic = [](const AnalysisCostRecord& record) {
+      return record.method == "arithmetic" || record.method == "arithmetic-periodic";
+    };
+    if (arithmetic(costs[i]) && arithmetic(costs[i - 1]) &&
+        costs[i].region == costs[i - 1].region && costs[i].request == costs[i - 1].request &&
         estimatedCostLess(costs[i].estimate, costs[i - 1].estimate)) {
       return function.emitError("eligible arithmetic methods were not ordered by estimated work");
     }
@@ -1841,6 +1846,10 @@ int main(int argc, char **argv) {
     auto delegation = pto::frontiersynch::recognizeClosedCallees(*module);
     for (auto function : module->getOps<func::FuncOp>()) {
       if (function.isDeclaration()) { continue; }
+      if (certification && function->hasAttr("test.crossing_costs")) {
+        if (failed(checkCrossingCostSelection(function, policy))) { return 1; }
+        continue;
+      }
       if (certification && function->hasAttr("test.producer_failure")) {
         if (failed(checkProducerFailureStages(function, policy))) { return 1; }
         continue;
