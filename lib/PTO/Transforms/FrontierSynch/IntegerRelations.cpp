@@ -326,12 +326,46 @@ bool visitEliminationCandidates(const IntegerSystem& system, unsigned coordinate
     // than the Cooper endpoint/residue enumeration would already inspect.
     const auto lattice = unaryLattice(system, coordinate);
     if (lattice.empty) { return true; }
+    BoundInteger existingCount(0);
+    for (std::size_t i = 0; i < endpoints.size(); ++i) { existingCount += period; }
+    std::optional<BoundInteger> unaryCount;
+    if (lattice.lower && lattice.upper) {
+        const auto first = *lattice.lower + mod(lattice.residue - *lattice.lower, lattice.modulus);
+        if (first > *lattice.upper) { return true; }
+        unaryCount = (*lattice.upper - first) / lattice.modulus + 1;
+    }
+    // A narrow affine strip (including a floor's remainder strip) provides
+    // exact equalities for each possible integer left-side value. Prefer that
+    // finite union when cheaper than both existing candidate constructions.
+    const IntegerConstraint* strip = nullptr;
+    BoundInteger stripLower(0), stripCount = existingCount;
+    for (const auto& row : rows) {
+        if (row.coefficients[coordinate] <= 0) { continue; }
+        auto opposite = row.coefficients;
+        for (auto& value : opposite) { value = -value; }
+        auto found = std::lower_bound(rows.begin(), rows.end(), opposite,
+            [](const IntegerConstraint& atom, const Coefficients& key) { return atom.coefficients < key; });
+        if (found == rows.end() || found->coefficients != opposite) { continue; }
+        const auto count = row.bound + found->bound + 1;
+        if (count <= 0) { return true; }
+        if (count < stripCount && (!unaryCount || count < *unaryCount)) {
+            strip = &row; stripLower = -found->bound; stripCount = count;
+        }
+    }
+    if (strip) {
+        const auto denominator = strip->coefficients[coordinate];
+        for (BoundInteger offset(0); offset < stripCount; ++offset) {
+            IntegerAffine numerator{without(strip->coefficients, coordinate), stripLower + offset};
+            for (auto& value : numerator.coefficients) { value = -value; }
+            auto domain = substitute(system, coordinate, numerator, denominator);
+            if (!visit(std::move(domain), std::move(numerator), denominator)) { return false; }
+        }
+        return true;
+    }
     if (lattice.lower && lattice.upper) {
         const auto first = *lattice.lower + mod(lattice.residue - *lattice.lower, lattice.modulus);
         if (first > *lattice.upper) { return true; }
         const auto count = (*lattice.upper - first) / lattice.modulus + 1;
-        BoundInteger existingCount(0);
-        for (std::size_t i = 0; i < endpoints.size(); ++i) { existingCount += period; }
         if (count < existingCount) {
             for (auto value = first; value <= *lattice.upper; value += lattice.modulus) {
                 IntegerAffine numerator{Coefficients(system.dimensions() - 1), value};

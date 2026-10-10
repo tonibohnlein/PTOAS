@@ -942,6 +942,19 @@ bool evaluateIntegerCode(Block& code, Value input, int64_t coordinate, Value gua
     return values.lookup(guard).getZExtValue() == expectedGuard &&
         values.lookup(witness).getSExtValue() == expectedWitness;
 }
+fs::BoundInteger mappedSample(unsigned caseID, int64_t sample)
+{
+    const fs::BoundInteger value(sample), divisor(3);
+    switch (caseID) {
+    case 0: return value - fs::BoundInteger(1);
+    case 1: return value + fs::BoundInteger(1);
+    case 2: return value;
+    case 3: return value - (floorDiv(value, divisor) * fs::BoundInteger(5) + fs::BoundInteger(7));
+    case 4: return floorDiv(value, fs::BoundInteger(5)) * fs::BoundInteger(5);
+    case 5: return -floorDiv(-value, divisor);
+    default: llvm_unreachable("unknown mapped oracle case");
+    }
+}
 bool checkMappedIntegerAdapters(func::FuncOp function, ArrayRef<Operation*> cuts)
 {
     fs::RegionExpressions arena;
@@ -971,17 +984,7 @@ bool checkMappedIntegerAdapters(func::FuncOp function, ArrayRef<Operation*> cuts
         for (auto& operation : code) { if (failed(verify(&operation))) { return false; } }
         for (int64_t sample : {INT64_MIN, INT64_MAX, int64_t(-11), int64_t(-9), int64_t(-3), int64_t(-1),
                                int64_t(0), int64_t(1), int64_t(2), int64_t(9), int64_t(11)}) {
-            const fs::BoundInteger value(sample), divisor(3);
-            fs::BoundInteger mapped(0);
-            switch (caseID) {
-            case 0: mapped = value - fs::BoundInteger(1); break;
-            case 1: mapped = value + fs::BoundInteger(1); break;
-            case 2: mapped = value; break;
-            case 3: mapped = value - (floorDiv(value, divisor) * fs::BoundInteger(5) + fs::BoundInteger(7)); break;
-            case 4: mapped = floorDiv(value, fs::BoundInteger(5)) * fs::BoundInteger(5); break;
-            case 5: mapped = -floorDiv(-value, divisor); break;
-            default: return false;
-            }
+            const auto mapped = mappedSample(caseID, sample);
             const auto quotient = floorDiv(mapped, fs::BoundInteger(2));
             const bool expected = mapped - quotient * fs::BoundInteger(2) == 1 && quotient >= -5 && quotient <= 3;
             const auto fixed = arena.constant(static_cast<uint64_t>(sample));
@@ -1005,8 +1008,25 @@ bool checkMappedIntegerAdapters(func::FuncOp function, ArrayRef<Operation*> cuts
         for (auto predicate : {*query, arena.lnot(*query)}) {
             diagnostic.clear();
             auto lowered = arena.integerRelation(predicate, {x}, *domain, diagnostic);
-            const bool refusedLowering = failed(lowered) && StringRef(diagnostic).contains("mapped");
-            if (!refusedLowering) { return false; }
+            if (failed(lowered)) { llvm::errs() << diagnostic << '\n'; return false; }
+            SmallVector<int64_t> samples{INT64_MIN, INT64_MIN + 1, INT64_MAX - 1, INT64_MAX};
+            for (int64_t sample = -31; sample <= 31; ++sample) { samples.push_back(sample); }
+            for (auto sample : samples) {
+                const auto mapped = mappedSample(caseID, sample);
+                const auto quotient = floorDiv(mapped, fs::BoundInteger(2));
+                const bool present = mapped - quotient * fs::BoundInteger(2) == 1 && quotient >= -5 && quotient <= 3;
+                const bool actual = llvm::any_of(*lowered, [&](const auto& piece) {
+                    for (const auto& row : piece.constraints()) {
+                        if (row.coefficients[0] * fs::BoundInteger(sample) > row.bound) { return false; }
+                    }
+                    for (const auto& row : piece.congruences()) {
+                        if (mod(row.coefficients[0] * fs::BoundInteger(sample), row.modulus) !=
+                            mod(row.residue, row.modulus)) { return false; }
+                    }
+                    return true;
+                });
+                if (actual != (predicate == *query ? present : !present)) { return false; }
+            }
         }
     }
     auto scalar = fs::IntegerSystem::create(0, {});

@@ -8,6 +8,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/RegionalRelationsInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/SequenceAnalysisInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/ScalarPrerequisiteMapping.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/FiniteAccessPreflight.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -469,6 +470,108 @@ bool nativeScalarClosure()
     }
     return cost.relationCompositions > 0;
 }
+bool finitePairPreflight()
+{
+    fs::ArithmeticProgram program;
+    auto access = [&](std::size_t site, fs::PrimitiveKind kind, pto::AddressSpace space, unsigned pieces) {
+        fs::PrimitiveRelation relation;
+        relation.kind = kind; relation.sourceSite = site; relation.storageSpace = space;
+        relation.pieces.resize(pieces); program.primitives.relations.push_back(std::move(relation));
+    };
+    access(0, fs::PrimitiveKind::Writes, pto::AddressSpace::VEC, 4);
+    access(1, fs::PrimitiveKind::Reads, pto::AddressSpace::VEC, 3);
+    access(2, fs::PrimitiveKind::Writes, pto::AddressSpace::MAT, 100);
+    for (std::size_t source : {0, 2}) {
+        fs::PrimitiveRelation order;
+        order.kind = fs::PrimitiveKind::Order; order.sourceSite = source; order.targetSite = 1;
+        order.pieces.resize(1); program.primitives.relations.push_back(std::move(order));
+    }
+    auto count = fs::detail::finiteAccessPairEstimate(program, 12);
+    uint64_t total = 0;
+    return count && *count == 12 && !fs::detail::finiteAccessPairEstimate(program, 11) &&
+        !fs::detail::addPairProduct(UINT64_MAX, 2, UINT64_MAX, total) && total == 0 &&
+        fs::detail::addPairProduct(UINT64_MAX, 1, UINT64_MAX, total) &&
+        !fs::detail::addPairProduct(1, 1, UINT64_MAX, total);
+}
+bool fixedParameterizedCallbacks(MLIRContext& context)
+{
+    context.getOrLoadDialect<scf::SCFDialect>();
+    auto function = func::FuncOp::create(UnknownLoc::get(&context), "fixed_parameters",
+        FunctionType::get(&context, {IndexType::get(&context), IndexType::get(&context)}, {}));
+    auto* body = function.addEntryBlock();
+    auto cleanup = llvm::make_scope_exit([&] { function.erase(); });
+    OpBuilder builder(body, body->begin());
+    auto one = builder.create<arith::ConstantIndexOp>(function.getLoc(), 1);
+    auto five = builder.create<arith::ConstantIndexOp>(function.getLoc(), 5);
+    auto two = builder.create<arith::ConstantIndexOp>(function.getLoc(), 2);
+    auto loop = builder.create<scf::ForOp>(function.getLoc(), one, five, two);
+    builder.setInsertionPointToStart(loop.getBody());
+    auto op = builder.create<arith::ConstantIndexOp>(function.getLoc(), 7);
+    pto::CompoundInstanceElement phase(0, {}, {}, pto::PipelineType::PIPE_V, op->getName());
+    phase.elementOp = op;
+    pto::SyncInput input;
+    fs::PhaseIndex index;
+    if (failed(index.build(function, {&phase}))) { return false; }
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto active = arena->land(arena->slt(arena->constant(0), arena->input(function.getArgument(0))),
+                              arena->slt(arena->constant(1), arena->input(function.getArgument(1))));
+    fs::RegionalAnalysis region;
+    region.expressions = arena; region.accessModel = &input.accesses();
+    region.gmAliasPolicy = input.memory().gmPolicy(); region.capabilities = {true, true, true, false};
+    region.occurrenceLoops = {{}, {}}; region.outerLoops = {{}, {}};
+    for (int64_t iv : {1, 3}) {
+        region.anchors.push_back({&phase, {{loop, iv}}, {loop.getBody(), op},
+                                  {loop.getBody(), op->getNextNode()}});
+    }
+    region.presence = [active](fs::RegionalEvent) { return active; };
+    region.referenceBefore = [arena](fs::RegionalEvent a, fs::RegionalEvent b) {
+        return arena->boolean(a.type < b.type);
+    };
+    region.reachability = [arena](fs::RegionalEvent a, fs::RegionalEvent b) {
+        return arena->boolean(a.type < b.type || (a.type == b.type &&
+            (a.kind == b.kind || a.kind == fs::PeriodicEventKind::Start)));
+    };
+    fs::RegionalStorageBoundary boundary;
+    boundary.cell = {pto::AddressSpace::VEC, 16, 32};
+    boundary.firstWriters.push_back({{0, arena->constant(0), fs::PeriodicEventKind::Start}, active});
+    boundary.lastWriters.push_back({{1, arena->constant(0), fs::PeriodicEventKind::Start}, active});
+    region.storageBoundary.push_back(boundary);
+    region.storageSelectors = [arena, active, boundary, n = arena->input(function.getArgument(0))](
+        fs::RegionalByteAddress address) -> std::optional<fs::RegionalStorageSelectors> {
+        fs::RegionalStorageSelectors selected;
+        const auto low = arena->add(arena->constant(16), n), high = arena->add(arena->constant(32), n);
+        const auto present = arena->land(active, arena->land(arena->le(low, address.offset),
+                                                           arena->lt(address.offset, high)));
+        selected.firstWriters = boundary.firstWriters; selected.lastWriters = boundary.lastWriters;
+        selected.firstWriters.front().present = present; selected.lastWriters.front().present = present;
+        return selected;
+    };
+    std::string error;
+    auto request = fs::requestCallbackRegionalRelations(region, function, input, index, error);
+    if (failed(request) || (*request)->parameters().size() != 2) {
+        llvm::errs() << error << '\n'; return false;
+    }
+    auto data = (*request)->lower({function.getArgument(1), function.getArgument(0)}, error);
+    if (failed(data) || data->sites.size() != 2 || data->occurrences.size() != 2 ||
+        data->sites[0].fixedCoordinates[0].induction != 1 ||
+        data->sites[1].fixedCoordinates[0].induction != 3) { return false; }
+    for (int64_t n : {-1, 0, 1, 3}) {
+        for (int64_t m : {-1, 0, 2}) {
+            for (const auto& occurrence : data->occurrences) {
+                if (contains(occurrence.system, {m, n}) != (n > 0 && m > 1)) { return false; }
+            }
+            for (const auto& selected : data->selectors.boundaries) {
+                for (int64_t byte : {15, 16, 17, 19, 31, 32, 33, 35}) {
+                    bool actual = llvm::any_of(selected.selector.pieces, [&](const auto& piece) {
+                        return contains(piece.domain, {byte, m, n});
+                    });
+                    if (actual != (n > 0 && m > 1 && byte >= 16 + n && byte < 32 + n)) { return false; }
+                }
+            }
+        }
+    }
+    return data->selectors.boundaries.size() == 2;
+}
 bool retainedInputs(MLIRContext& context)
 {
     std::weak_ptr<Block> weak;
@@ -497,7 +600,8 @@ int runRegionalRelationChecks()
     if (!quotientCoordinates(context) || !association(context) ||
         !retainedResult(context) || !retainedInputs(context) ||
         !scalarCrossings(context) || !sequentialAdmission(context) ||
-        !fixedPrerequisiteMappings(context) || !nativeScalarClosure()) {
+        !fixedPrerequisiteMappings(context) || !nativeScalarClosure() ||
+        !fixedParameterizedCallbacks(context) || !finitePairPreflight()) {
         llvm::errs() << "regional relation normalization/composition oracle failed\n"; return 1;
     }
     llvm::outs() << "regional relations: raw coordinates, parameter permutations, "
