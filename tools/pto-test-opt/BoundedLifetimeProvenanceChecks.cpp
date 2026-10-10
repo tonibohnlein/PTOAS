@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/BoundedLifetime.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/PhysicalRefreshLimits.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
@@ -163,6 +164,14 @@ bool valuation(fs::RegionExpressions& e, const fs::LifetimeWindowInput& input,
 } // namespace
 int runBoundedLifetimeProvenanceChecks()
 {
+    using fs::detail::physicalRefreshWindowFits;
+    if (!physicalRefreshWindowFits(1, 1, 0, 32767) || physicalRefreshWindowFits(1, 1, 0, 32768) ||
+        !physicalRefreshWindowFits(65535, 1, 0, 0) || physicalRefreshWindowFits(65536, 1, 0, 0) ||
+        physicalRefreshWindowFits(UINT64_MAX, 1, 0, 0) ||
+        physicalRefreshWindowFits(1, UINT64_MAX, 1, UINT64_MAX) ||
+        physicalRefreshWindowFits(0, 1, 0, 0)) {
+        llvm::errs() << "physical refresh representation preflight mismatch\n"; return 1;
+    }
     mlir::MLIRContext context;
     for (unsigned scenario = 0; scenario < 5; ++scenario) {
         mlir::Block block;

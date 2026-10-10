@@ -97,9 +97,22 @@ GuardedRecognition recognizeFiniteGuarded(ArrayRef<Operation*> roots, const Phas
                                           const SyncStorageEffects& effects);
 GuardedRecognition recognizeGuardedRotating(scf::ForOp loop, const PhaseIndex& index,
                                             const SyncInput& input, const SyncStorageEffects& effects);
+// A bounded finite address schedule projected onto common absolute physical
+// atoms. Phase is the original loop's zero-based ordinal modulo period.
+struct PhysicalRefreshAccess {
+    std::size_t access = 0;
+    uint64_t phase = 0;
+    uint32_t atom = 0;
+};
+struct PhysicalRefreshDescription {
+    uint64_t period = 1;
+    SmallVector<SyncStorageCell> atoms;
+    SmallVector<PhysicalRefreshAccess, 0> accesses;
+};
 struct BoundedLifetimeRecognition {
     GuardedRecognition skeleton;
     RefreshCertificate refresh;
+    std::optional<PhysicalRefreshDescription> physical;
 };
 // Independent iteration guards are allowed; unconditional producers establish
 // refresh. This does not certify that future predicates can run at a SET cut.

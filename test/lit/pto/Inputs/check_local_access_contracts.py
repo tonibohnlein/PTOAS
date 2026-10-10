@@ -152,7 +152,7 @@ def main():
         path = Path(directory) / "case.pto"
         for arch, dtype, columns, op in itertools.product(
                 ["a3", "a5"], ["f16", "f32"], [1, 7, 8, 16, 63, 64, 65, 127, 128],
-                ["tadd", "tsub", "tmul", "tadds", "tmuls", "texp", "tsqrt"]):
+                ["tadd", "tsub", "tmul", "tadds", "tmuls", "texp", "tsqrt", "tlog"]):
             check(sys.argv[1], path, arch, op, dtype, columns)
             count += 1
         for arch, dtype, columns, op in itertools.product(

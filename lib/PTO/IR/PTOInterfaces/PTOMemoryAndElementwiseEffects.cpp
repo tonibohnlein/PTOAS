@@ -202,7 +202,11 @@ void TGatherOp::getEffects(
 }
 
 PTO_DEFINE_BINARY_EFFECTS(TGatherBOp, getSrcMutable(), getOffsetsMutable(), getDstMutable())
-PTO_DEFINE_UNARY_EFFECTS(TLogOp, getSrcMutable(), getDstMutable())
+void TLogOp::getEffects(PTOEffectList& effects) {
+  // TLOG shares the target unary memory paths with TEXP, including masked
+  // A3 operands and conservative A5 tail reads. Precision affects registers.
+  addPointwiseEffects(effects, {&getSrcMutable()}, getDstMutable());
+}
 PTO_DEFINE_UNARY_EFFECTS(TLReluOp, getSrcMutable(), getDstMutable())
 
 PTO_DEFINE_BINARY_EFFECTS(TMaxOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
