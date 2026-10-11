@@ -192,17 +192,13 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
     if (attempt.produced) { profile.cacheHit(); }
     if (backend == AnalysisBackend::NumericalSequence) {
         const uint8_t key = unsigned(request.needs.queries) | (unsigned(request.needs.selectors) << 1) |
-            (unsigned(request.needs.synchronization) << 2) | (unsigned(request.mode == AnalysisMode::Fallback) << 3);
-        const bool recorded = llvm::any_of(sessionState->ledger->estimates, [&](const auto& record) {
-            return record.region == request.region && record.request == key && record.method == "numerical-sequence";
-        });
-        if (!recorded) {
+            (unsigned(request.needs.synchronization) << 2) | (unsigned(request.mode == AnalysisMode::Fallback) << 3) |
+            (unsigned(request.needs.evaluation == AnalysisEvaluation::Stateful) << 4);
+        const auto identity = std::make_pair(request.region, key);
+        if (sessionState->numericalSequenceEstimates.insert(identity).second) {
             AnalysisCostEstimate estimate;
-            for (const auto& record : sessionState->ledger->estimates) {
-                if (record.region == request.region && record.request == key && record.method == "form-expanded") {
-                    estimate = record.estimate; break;
-                }
-            }
+            auto found = sessionState->expandedFormEstimates.find(identity);
+            if (found != sessionState->expandedFormEstimates.end()) { estimate = found->second; }
             sessionState->ledger->recordEstimate({request.region, key, "numerical-sequence", estimate});
         }
     }

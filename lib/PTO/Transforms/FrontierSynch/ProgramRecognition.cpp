@@ -396,7 +396,114 @@ void materializeProgramContractAudit(ProgramRecognition& program)
     program.contractAuditDirty = false;
 }
 
-FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input) {
+void materializeProgramForm(
+    ProgramRecognition& program, std::size_t id, ProgramForm form, const PhaseIndex& index, const SyncInput& input)
+{
+    if (id >= program.nodes.size()) {
+        return;
+    }
+    auto& node = program.nodes[id];
+    if (static_cast<unsigned>(form) > static_cast<unsigned>(ProgramForm::FiniteVisit)) {
+        return;
+    }
+    const bool loopForm = form != ProgramForm::Explicit && form != ProgramForm::FiniteGuarded;
+    if (loopForm && node.kind != StructureKind::Loop) {
+        return;
+    }
+    const auto bit = static_cast<uint8_t>(1U << static_cast<unsigned>(form));
+    if (node.attemptedForms & bit) {
+        return;
+    }
+    node.attemptedForms |= bit;
+    if (program.formConstructions != UINT64_MAX) {
+        ++program.formConstructions;
+    }
+    if (node.unsupportedContext) {
+        return;
+    }
+    const bool deferred = program.deferContractAudit;
+    program.deferContractAudit = true;
+    switch (form) {
+        case ProgramForm::Explicit:
+            if (node.kind == StructureKind::ExplicitRun) {
+                node.explicitResult = recognizeExplicitRun(node.operations, index, input.accesses());
+            }
+            break;
+        case ProgramForm::FiniteGuarded:
+            if (node.kind == StructureKind::Sequence && node.region) {
+                node.finiteGuardedResult = recognizeFiniteGuarded(*node.region, index, input.accesses());
+            } else if (node.kind == StructureKind::Conditional) {
+                Operation* root = node.anchor;
+                node.finiteGuardedResult =
+                    recognizeFiniteGuarded(ArrayRef<Operation*>(&root, 1), index, input.accesses());
+            }
+            break;
+        case ProgramForm::Rotating:
+            node.rotatingResult = recognizeRotating(cast<scf::ForOp>(node.anchor), index, input, input.accesses());
+            break;
+        case ProgramForm::GuardedRotating:
+            node.guardedRotatingResult =
+                recognizeGuardedRotating(cast<scf::ForOp>(node.anchor), index, input, input.accesses());
+            break;
+        case ProgramForm::BoundedLifetime:
+            node.boundedLifetime = recognizeBoundedLifetime(cast<scf::ForOp>(node.anchor), index, input);
+            break;
+        case ProgramForm::Varying:
+            node.varyingRotating = recognizeVaryingRotating(cast<scf::ForOp>(node.anchor), index, input);
+            break;
+        case ProgramForm::FiniteVisit: {
+            SmallVector<std::size_t> pending(node.children);
+            while (!pending.empty()) {
+                const auto child = pending.pop_back_val();
+                const auto& candidate = program.nodes[child];
+                if (candidate.kind == StructureKind::ExplicitRun && !candidate.payloadCount) {
+                    materializeProgramForm(program, child, ProgramForm::Explicit, index, input);
+                }
+                llvm::append_range(pending, candidate.children);
+            }
+            auto function = node.anchor->getParentOfType<func::FuncOp>();
+            auto finite = recognizeFiniteVisitLoop(function, input, program, id, index);
+            program.finiteVisitContracts.push_back(std::move(finite.contract));
+            break;
+        }
+    }
+    program.deferContractAudit = deferred;
+    refreshProgramContractAudit(program);
+}
+void materializeAllProgramForms(ProgramRecognition& program, const PhaseIndex& index, const SyncInput& input)
+{
+    if (program.allFormsMaterialized) {
+        return;
+    }
+    const bool deferred = program.deferContractAudit;
+    program.deferContractAudit = true;
+    for (std::size_t id = 0; id < program.nodes.size(); ++id) {
+        const auto kind = program.nodes[id].kind;
+        if (kind == StructureKind::ExplicitRun) {
+            materializeProgramForm(program, id, ProgramForm::Explicit, index, input);
+        } else if (kind == StructureKind::Sequence || kind == StructureKind::Conditional) {
+            materializeProgramForm(program, id, ProgramForm::FiniteGuarded, index, input);
+        } else if (kind == StructureKind::Loop) {
+            for (auto form :
+                 {ProgramForm::BoundedLifetime, ProgramForm::Varying, ProgramForm::Rotating,
+                  ProgramForm::GuardedRotating}) {
+                materializeProgramForm(program, id, form, index, input);
+            }
+        }
+    }
+    for (std::size_t id = 0; id < program.nodes.size(); ++id) {
+        if (program.nodes[id].kind == StructureKind::Loop) {
+            materializeProgramForm(program, id, ProgramForm::FiniteVisit, index, input);
+        }
+    }
+    program.allFormsMaterialized = true;
+    llvm::stable_sort(program.finiteVisitContracts, [](const auto& a, const auto& b) { return a.node < b.node; });
+    program.deferContractAudit = deferred;
+    refreshProgramContractAudit(program);
+}
+
+FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input)
+{
     PhaseIndex index;
     if (failed(index.build(function, input))) {
         return failure();
@@ -404,7 +511,7 @@ FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const Sync
     return recognizeProgram(function, input, index);
 }
 FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input,
-                                               const PhaseIndex& index) {
+                                               const PhaseIndex& index, ProgramRecognitionMode mode) {
     ProgramRecognition result;
     StructureBuilder builder(result, index, input);
     builder.add(StructureKind::Sequence, function, &function.getBody(), std::nullopt);
@@ -430,33 +537,7 @@ FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const Sync
             result.nodes[*node.parent].payloadCount += node.payloadCount;
         }
     }
-    for (auto& node : result.nodes) {
-        if (node.unsupportedContext) {
-            continue;
-        }
-        if (node.kind == StructureKind::ExplicitRun) {
-            node.explicitResult = recognizeExplicitRun(node.operations, index, input.accesses());
-        } else if (node.kind == StructureKind::Sequence) {
-            node.finiteGuardedResult = recognizeFiniteGuarded(*node.region, index, input.accesses());
-        } else if (node.kind == StructureKind::Conditional) {
-            Operation* root = node.anchor;
-            node.finiteGuardedResult = recognizeFiniteGuarded(ArrayRef<Operation*>(&root, 1), index, input.accesses());
-        } else if (node.kind == StructureKind::Loop) {
-            auto loop = cast<scf::ForOp>(node.anchor);
-            node.boundedLifetime = recognizeBoundedLifetime(loop, index, input);
-            node.varyingRotating = recognizeVaryingRotating(loop, index, input);
-            node.rotatingResult = recognizeRotating(loop, index, input, input.accesses());
-            node.guardedRotatingResult = recognizeGuardedRotating(loop, index, input, input.accesses());
-        }
-    }
-    // Small-count numerical expansion is owned by the analysis request, not
-    // structural recognition. Its control preflight and effects remain lazy.
-    for (std::size_t id = 0; id < result.nodes.size(); ++id) {
-        if (result.nodes[id].kind == StructureKind::Loop) {
-            auto finite = recognizeFiniteVisitLoop(function, input, result, id, index);
-            result.finiteVisitContracts.push_back(std::move(finite.contract));
-        }
-    }
+    if (mode == ProgramRecognitionMode::Exhaustive) { materializeAllProgramForms(result, index, input); }
     refreshProgramContractAudit(result);
     return result;
 }

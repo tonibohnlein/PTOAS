@@ -150,10 +150,8 @@ bool TemplateBuilder::normalized(const NormalizedControlDescription& description
     if (!contextMatches) {
         output.result.note(RecognitionIssue::TemplateContext, output.outer, true); return false;
     }
-    auto root = llvm::find_if(description.nodes, [&](const auto& node) {
-        return node.original == output.outer.getOperation() && node.fixedCoordinates.empty();
-    });
-    if (root == description.nodes.end()) {
+    auto root = description.originalNode(output.outer.getOperation());
+    if (!root) {
         output.result.note(RecognitionIssue::TemplateContext, output.outer, true); return false;
     }
     auto bind = [&](ArrayRef<FixedLoopCoordinate> fixed) {
@@ -246,7 +244,7 @@ bool TemplateBuilder::normalized(const NormalizedControlDescription& description
         }
         return true;
     };
-    for (auto child : root->children) { if (!visit(child, {}, 0)) { return false; } }
+    for (auto child : description.nodes[*root].children) { if (!visit(child, {}, 0)) { return false; } }
     return true;
 }
 } // namespace mlir::pto::frontiersynch::detail

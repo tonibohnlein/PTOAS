@@ -2144,6 +2144,9 @@ int main(int argc, char **argv) {
       if (failed(analysis.initialize(policy))) {
         return 1;
       }
+      // This command explicitly requests the exhaustive form audit. Production
+      // root compilation uses the same inventory with lazy form requests.
+      if (failed(analysis.recognizeAllForms())) { return 1; }
       if (requestedProfile && failed(analysis.configureArithmeticProfiles(
           ArrayRef<pto::frontiersynch::ArithmeticLimits>(&*requestedProfile, 1),
           ArrayRef<pto::frontiersynch::ArithmeticLimits>(&*requestedProfile, 1)))) { return 1; }

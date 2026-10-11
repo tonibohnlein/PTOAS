@@ -18,6 +18,7 @@ struct NormalizedControlNode {
     SmallVector<FixedLoopCoordinate> fixedCoordinates;
     SmallVector<std::size_t> children;
 };
+struct NormalizedControlTree;
 // Nodes retain both branch arms and all scalar/control operations. Coordinates
 // name original induction values; effects, prerequisites and cuts remain in the
 // unchanged shared input/index. Backend rejection cannot consume this owner.
@@ -29,13 +30,22 @@ struct NormalizedControlDescription {
     const SyncInput* input = nullptr;
     FiniteExpansionLimits limits;
     RecognitionResult result;
-    SmallVector<NormalizedControlNode, 0> nodes;
+    // Global backing IDs remain stable across overlapping regional views.
+    // Only roots and representedNodes describe this region's selected subtree.
+    std::shared_ptr<const NormalizedControlTree> backing;
+    ArrayRef<NormalizedControlNode> nodes;
     SmallVector<std::size_t> roots;
-    uint64_t planningVisits = 0, expandedLoops = 0, payloads = 0, effects = 0;
+    uint64_t representedNodes = 0, planningVisits = 0, expandedLoops = 0, payloads = 0, effects = 0;
+    // Lookup is restricted to this view, even though backing IDs are global.
+    std::optional<std::size_t> originalNode(Operation* operation) const;
 };
+// One compact original tree and bottom-up expansion plan per unchanged context.
+std::shared_ptr<const NormalizedControlTree> buildNormalizedControlTree(
+    func::FuncOp function, const PhaseIndex& index, const SyncInput& input, const FiniteExpansionLimits& limits = {});
+uint64_t normalizedControlSourceVisits(const NormalizedControlTree& tree);
 std::shared_ptr<const NormalizedControlDescription> normalizeSmallCountControl(
     ArithmeticRegionContext context, const PhaseIndex& index, const SyncInput& input,
-    const FiniteExpansionLimits& limits = {});
+    const FiniteExpansionLimits& limits = {}, std::shared_ptr<const NormalizedControlTree> backing = {});
 namespace detail {
 std::optional<int64_t> normalizedInteger(Value value, ArrayRef<FixedLoopCoordinate> coordinates,
                                          MLIRContext* context);

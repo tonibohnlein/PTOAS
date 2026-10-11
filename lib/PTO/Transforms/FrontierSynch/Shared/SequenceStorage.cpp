@@ -214,6 +214,9 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         repeatedAttempt += reason;
         error.clear();
     };
+    if (resolveOriginal.form) {
+        resolveOriginal.form(static_cast<std::size_t>(&node - program->nodes.data()), ProgramForm::Rotating);
+    }
     if (node.rotatingResult && node.rotatingResult->state == RecognitionState::Applicable) {
         Child candidate;
         candidate.loop = child.loop;
@@ -245,6 +248,9 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
             children.push_back(std::move(candidate));
             return true;
         }
+    }
+    if (resolveOriginal.form) {
+        resolveOriginal.form(static_cast<std::size_t>(&node - program->nodes.data()), ProgramForm::GuardedRotating);
     }
     if (node.guardedRotatingResult &&
         node.guardedRotatingResult->result.state == RecognitionState::Applicable) {
@@ -281,6 +287,9 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         }
     }
     {
+        if (resolveOriginal.form) {
+            resolveOriginal.form(static_cast<std::size_t>(&node - program->nodes.data()), ProgramForm::BoundedLifetime);
+        }
         if (node.boundedLifetime &&
             node.boundedLifetime->skeleton.result.state == RecognitionState::Applicable) {
             std::string diagnostic;
@@ -365,6 +374,9 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
             repeatedChild(node, child.trips)) { return true; }
         if ((!cachedNumeric || cachedNumeric->result.state != RecognitionState::Applicable) &&
             phasedChild(node, child.trips)) { return true; }
+        if (resolveOriginal.form) {
+            resolveOriginal.form(static_cast<std::size_t>(&node - program->nodes.data()), ProgramForm::Varying);
+        }
         if (node.varyingRotating && node.varyingRotating->result.state == RecognitionState::Applicable) {
             std::string diagnostic;
             const auto id = static_cast<std::size_t>(&node - program->nodes.data());
@@ -474,7 +486,10 @@ bool SequenceAnalysisState::collect(std::size_t rootNode)
     indexReady = true;
     if (rootNode >= program->nodes.size()) { return fail("regional sequence node is invalid"); }
     const auto& root = program->nodes[rootNode];
-    if (root.kind == StructureKind::ExplicitRun) { return explicitChild(root); }
+    if (root.kind == StructureKind::ExplicitRun) {
+        if (resolveOriginal.form) { resolveOriginal.form(rootNode, ProgramForm::Explicit); }
+        return explicitChild(root);
+    }
     if (root.kind == StructureKind::Loop) { return loopChild(root); }
     if (root.kind == StructureKind::Conditional) { return conditionalChild(root); }
     if (root.kind != StructureKind::Sequence || !root.region ||
@@ -528,6 +543,7 @@ bool SequenceAnalysisState::collect(std::size_t rootNode)
             fused.operations = roots;
             fused.explicitResult = RecognitionResult{};
             for (auto current = position; current < end; ++current) {
+                if (resolveOriginal.form) { resolveOriginal.form(root.children[current], ProgramForm::Explicit); }
                 const auto& part = program->nodes[root.children[current]];
                 if (!part.explicitResult || part.explicitResult->state != RecognitionState::Applicable) {
                     return fail("adjacent explicit child has an unmet form obligation");

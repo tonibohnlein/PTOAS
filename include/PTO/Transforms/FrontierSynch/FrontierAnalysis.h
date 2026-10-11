@@ -78,6 +78,10 @@ public:
     uint64_t numericTemplatePreflights() const;
     uint64_t numericalRegionConstructions() const;
     uint64_t normalizationConstructions() const;
+    // Original syntax planning is shared; regional views do not add visits.
+    uint64_t normalizationSourceVisits() const;
+    // Explicit audit workload; production requests materialize forms on demand.
+    LogicalResult recognizeAllForms();
     AnalysisOutcome analyzeNumericalRegion(const AnalysisRequest& request);
     // Rank supported arithmetic reducers without constructing generators.
     std::vector<AnalysisBackend> arithmeticMethods(const AnalysisRequest& request);
@@ -148,6 +152,7 @@ public:
     }
 private:
     LogicalResult recognizeStructure();
+    void recognizeForm(std::size_t region, ProgramForm form);
     std::shared_ptr<const NormalizedControlDescription> normalizedRegion(std::size_t region);
     const NumericTemplatePlan* numericalPreflight(std::size_t region);
     std::shared_ptr<const MathematicalResult> produceExpandedFinite(std::size_t region, std::string& error);

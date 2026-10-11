@@ -8,7 +8,7 @@
 // RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
 // RUN: pto-sync-input-test --gm-alias=may-alias --certify-regions %s | FileCheck %s
 // CHECK: finite-visit-session: exact-demands retained-exports cached-retry
-// CHECK: certification-json {{.*}}"exact_demands":true,"node":0
+// CHECK: certification-json {{.*}}"exact_demands":true,{{.*}}"node":0
 // CHECK-SAME: "queries":false
 // CHECK-SAME: "selectors":false
 // CHECK: finite-visit-child: exact-demands no-whole-region-evidence
