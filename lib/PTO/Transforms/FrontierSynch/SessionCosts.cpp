@@ -38,7 +38,14 @@ GeneratorShape primitiveShape(const ArithmeticProgram& program)
         if (relation.kind == PrimitiveKind::Native) { shape.native = estimatedAdd(shape.native, count); }
         pieces = estimatedAdd(pieces, count);
         for (const auto& piece : relation.pieces) {
-            rows = estimatedAdd(rows, piece.system.getNumConstraints());
+            EstimatedCount constraints;
+            if (piece.machineSystem) {
+                constraints = estimatedAdd(piece.machineSystem->constraints().size(),
+                                          piece.machineSystem->congruences().size());
+            } else if (piece.system != IntegerSet{}) {
+                constraints = piece.system.getNumConstraints();
+            }
+            rows = estimatedAdd(rows, constraints);
         }
     }
     shape.pieces = estimatedAdd(prerequisite, estimatedMultiply(writes, estimatedAdd(reads, writes)));
