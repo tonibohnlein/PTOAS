@@ -72,4 +72,3 @@ module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<vec
     return
   }
 }
-

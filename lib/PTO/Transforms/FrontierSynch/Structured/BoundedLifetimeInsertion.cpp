@@ -52,9 +52,13 @@ FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> analyzeBoundedLifetimeRe
         error = "bounded lifetime window cannot represent its potential occurrences";
         return failure();
     }
-    if (recognized.physical && !detail::physicalRefreshWindowFits(span,
-            skeleton.phases.size(), skeleton.guards.size(), recognized.physical->accesses.size())) {
-        error = "physical refresh window exceeds numerical fragment representation"; return failure();
+    // Both certificates feed the same materialized numerical window. An
+    // algebraic bank count must not bypass its representation preflight.
+    // Failure here leaves recognition and later exact representations available.
+    const auto accessCount = recognized.physical ? recognized.physical->accesses.size() :
+                                                  skeleton.result.accesses.size();
+    if (!detail::physicalRefreshWindowFits(span, m, skeleton.guards.size(), accessCount)) {
+        error = "bounded lifetime window exceeds numerical fragment representation"; return failure();
     }
     if (!arena) { arena = std::make_shared<RegionExpressions>(); }
     auto demands = std::make_shared<BoundedLifetimeDemandResult>(std::move(arena));

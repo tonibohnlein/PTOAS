@@ -169,7 +169,8 @@ int runBoundedLifetimeProvenanceChecks()
         !physicalRefreshWindowFits(65535, 1, 0, 0) || physicalRefreshWindowFits(65536, 1, 0, 0) ||
         physicalRefreshWindowFits(UINT64_MAX, 1, 0, 0) ||
         physicalRefreshWindowFits(1, UINT64_MAX, 1, UINT64_MAX) ||
-        physicalRefreshWindowFits(0, 1, 0, 0)) {
+        !physicalRefreshWindowFits(0, 1, 0, 65535) ||
+        physicalRefreshWindowFits(0, 1, 0, 65536)) {
         llvm::errs() << "physical refresh representation preflight mismatch\n"; return 1;
     }
     mlir::MLIRContext context;
