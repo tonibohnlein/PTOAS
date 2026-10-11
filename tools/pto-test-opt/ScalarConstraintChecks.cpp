@@ -578,6 +578,71 @@ bool modularBandChecks(MLIRContext* context)
                  << " independent original byte checks and eight alias cases passed\n";
     return true;
 }
+// Distinct unknown SSA values must not cancel in a range-only query.
+bool rangeQuerySymbolIsolation(MLIRContext* context)
+{
+    auto module = parseSourceString<ModuleOp>(R"mlir(
+module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 64 : i32>>} {
+  func.func @range_identity(%a: i32, %b: i32, %upper: index) {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %x = arith.index_cast %a : i32 to index
+    %y = arith.index_cast %b : i32 to index
+    %difference = arith.subi %y, %x {test.range_difference} : index
+    %same = arith.subi %x, %x {test.range_same} : index
+    scf.for %i = %z to %difference step %one {
+      %next = arith.addi %i, %one {test.range_next} : index
+      %bank = arith.remui %next, %two {test.range_bank} : index
+    }
+    scf.for %j = %z to %upper step %one {
+      %next = arith.addi %j, %one {test.range_wide_next} : index
+      %bank = arith.remui %next, %two {test.range_wide_bank} : index
+    }
+    return
+  }
+})mlir", context);
+    if (!module || failed(verify(*module))) { return false; }
+    llvm::StringMap<Value> values;
+    scf::ForOp loop;
+    module->walk([&](Operation* operation) {
+        if (auto candidate = dyn_cast<scf::ForOp>(operation); candidate && !loop) { loop = candidate; }
+        for (auto attribute : operation->getAttrs()) {
+            if (attribute.getName().strref().starts_with("test.range_")) {
+                values[attribute.getName().strref()] = operation->getResult(0);
+            }
+        }
+    });
+    auto bank = values.lookup("test.range_bank");
+    const auto difference = std::make_optional(std::make_pair(-4294967295LL, 4294967295LL));
+    for (bool expressionFirst : {false, true}) {
+        pto::detail::ScalarEvolution evolution(context, bank.getDefiningOp());
+        DenseMap<Value, unsigned> symbols;
+        auto bind = [&](Value value) {
+            auto entry = symbols.try_emplace(value, symbols.size());
+            return getAffineSymbolExpr(entry.first->second, context);
+        };
+        auto iv = bind(loop.getInductionVar());
+        if (expressionFirst) { (void)evolution.value(bank, bind); }
+        for (unsigned repeat = 0; repeat < 2; ++repeat) {
+            auto range = evolution.signedRange(values.lookup("test.range_difference"));
+            if (!range || range->first != difference->first || range->second != difference->second ||
+                evolution.signedRange(values.lookup("test.range_same")) !=
+                    std::make_optional(std::make_pair(int64_t(0), int64_t(0))) ||
+                evolution.signedRange(values.lookup("test.range_next")) !=
+                    std::make_optional(std::make_pair(int64_t(1), int64_t(4294967295LL))) ||
+                evolution.value(bank, bind) != (iv + 1) % 2) { return false; }
+            auto wideNext = values.lookup("test.range_wide_next");
+            auto wideIV = cast<scf::ForOp>(wideNext.getDefiningOp()->getParentOp()).getInductionVar();
+            if (evolution.signedRange(wideNext) !=
+                    std::make_optional(std::make_pair(int64_t(1), int64_t(INT64_MAX))) ||
+                evolution.value(values.lookup("test.range_wide_bank"), bind) != (bind(wideIV) + 1) % 2) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
 bool fixedCoordinateScalars(MLIRContext* context)
 {
     unsigned comparisons = 0;
@@ -763,7 +828,7 @@ bool runScalarConstraintChecks(MLIRContext* context)
     }
     if (!interleavedContexts(context) || !controlProofContext(context) || !failedPrimitiveStopsWork(context) ||
         !configuredPrimitiveStopsWork(context) || !correlatedCountedDomains(context) || !modularBandChecks(context) ||
-        !fixedCoordinateScalars(context) ||
+        !fixedCoordinateScalars(context) || !rangeQuerySymbolIsolation(context) ||
         !runMachinePlaceholderChecks(context)) {
         return false;
     }
