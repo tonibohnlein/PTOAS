@@ -2136,6 +2136,9 @@ int main(int argc, char **argv) {
           }
           llvm::json::Object implicationCost;
           if (arithmeticCost) {
+            implicationCost["import_query_requests"] = arithmeticCost->importQueryRequests;
+            implicationCost["import_query_hits"] = arithmeticCost->importQueryHits;
+            implicationCost["import_query_builds"] = arithmeticCost->importQueryBuilds;
             implicationCost["cache_hits"] = arithmeticCost->implicationCacheHits;
             implicationCost["rational_proofs"] = arithmeticCost->rationalImplications;
             implicationCost["integer_counterexamples"] = arithmeticCost->integerCounterexamples;

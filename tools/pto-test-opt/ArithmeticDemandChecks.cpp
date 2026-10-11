@@ -756,6 +756,7 @@ int runGeneralArithmeticDemandChecks()
         !checkLatticeImplicationCertificates() || !checkOptionalInclusionCertificates() ||
         !checkProtectedPhysicalJoinReuse() || !checkLocalAdjacencyQueries()) { return 1; }
     bool reused = false, differenceReused = false, physicalReused = false, emptyPhysicalReused = false;
+    bool importReused = false;
     auto analyze = [&](const fs::ArithmeticProgram& program) {
         auto result = fs::analyzeGeneralArithmeticDemands(program);
         reused |= result.cost.unionMergeCacheHits > 0;
@@ -763,6 +764,10 @@ int runGeneralArithmeticDemandChecks()
         physicalReused |= result.cost.physicalJoinCacheHits > 0;
         emptyPhysicalReused |= result.cost.physicalJoinEmptyHits > 0;
         const auto& cost = result.cost;
+        importReused |= cost.importQueryHits > 0;
+        if (cost.importQueryRequests != cost.importQueryBuilds + cost.importQueryHits) {
+            result.error = "arithmetic import counters disagree with actual constructions";
+        }
         if (cost.unionDifferenceAttempts != cost.unionDifferenceBuilds + cost.unionDifferenceCacheHits) {
             result.error = "numerical union difference counters disagree with actual constructions";
         }
@@ -774,6 +779,9 @@ int runGeneralArithmeticDemandChecks()
         return result;
     };
     const auto status = runChecks(analyze, "general arithmetic demand");
+    if (!status && !importReused) {
+        llvm::errs() << "independent physical DAG oracle did not exercise arithmetic import reuse\n"; return 1;
+    }
     if (!status && !reused) {
         llvm::errs() << "general arithmetic oracle did not exercise numerical union reuse\n"; return 1;
     }
