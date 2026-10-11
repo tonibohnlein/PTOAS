@@ -287,10 +287,41 @@ std::optional<BoundInteger> fixedResidue(const IntegerSystem& system, const Inte
     }
     return mod(residue, atom.modulus);
 }
+// Only feasibility changes traversal order. Every endpoint/residue candidate
+// remains available; projection and tuple witnesses keep their original order.
+void orderFeasibilityEndpoints(const IntegerSystem& system, unsigned coordinate,
+                              bool lower, std::vector<IntegerAffine>& endpoints)
+{
+    std::vector<UnaryLattice> lattices;
+    for (unsigned i = 0; i < system.dimensions(); ++i) {
+        if (i != coordinate) { lattices.push_back(unaryLattice(system, i)); }
+    }
+    using RankedEndpoint = std::pair<IntegerAffine, std::optional<BoundInteger>>;
+    std::vector<RankedEndpoint> ranked;
+    for (auto& endpoint : endpoints) {
+        std::optional<BoundInteger> bound = endpoint.constant;
+        for (unsigned i = 0; i < endpoint.coefficients.size(); ++i) {
+            const auto& coefficient = endpoint.coefficients[i];
+            if (coefficient == 0) { continue; }
+            const auto& lattice = lattices[i];
+            const auto& limit = (coefficient > 0) == lower ? lattice.lower : lattice.upper;
+            if (!limit || lattice.empty) { bound.reset(); break; }
+            *bound += coefficient * *limit;
+        }
+        ranked.emplace_back(std::move(endpoint), std::move(bound));
+    }
+    std::stable_sort(ranked.begin(), ranked.end(), [lower](const auto& a, const auto& b) {
+        if (!a.second || !b.second) { return a.second.has_value() && !b.second.has_value(); }
+        return lower ? *a.second > *b.second : *a.second < *b.second;
+    });
+    endpoints.clear();
+    for (auto& entry : ranked) { endpoints.push_back(std::move(entry.first)); }
+}
 // Projection collects every candidate. Feasibility can stop at its first
 // satisfying candidate without allocating the rest of the residue family.
 template<class Visitor>
-bool visitEliminationCandidates(const IntegerSystem& system, unsigned coordinate, Visitor&& visit)
+bool visitEliminationCandidates(const IntegerSystem& system, unsigned coordinate, Visitor&& visit,
+                                bool feasibility = false)
 {
     // Opposite tight bounds define an equality. Solve it once, retaining the
     // divisibility condition in substitute(), instead of enumerating residues
@@ -380,6 +411,7 @@ bool visitEliminationCandidates(const IntegerSystem& system, unsigned coordinate
     // interval has a satisfying t within one period above its maximal lower
     // endpoint (or below its minimal upper endpoint). Substitution checks every
     // other bound, so enumerating endpoint candidates needs no guessed maximum.
+    if (feasibility) { orderFeasibilityEndpoints(system, coordinate, fromLower, endpoints); }
     for (const auto& endpoint : endpoints) {
         for (BoundInteger offset(0); offset < period; ++offset) {
             auto numerator = endpoint;
@@ -472,7 +504,7 @@ bool IntegerSystem::isEmpty() const
         emptyCache = visitEliminationCandidates(*this, selected,
             [](const IntegerSystem& domain, const IntegerAffine&, const BoundInteger&) {
                 return domain.isEmpty();
-            });
+            }, true);
         return *emptyCache;
     }
     auto children = eliminate(selected);
