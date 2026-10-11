@@ -29,6 +29,25 @@ std::optional<uint32_t> mandatoryEnvelope(const LifetimeWindowInput& w,
     }
     return result;
 }
+// A conditionally executed site may still be mandatory at the invocation
+// boundary. Its retained presence query substitutes the original lower/step.
+std::optional<uint32_t> certifiedEnvelope(RegionExpressions& e, const LifetimeWindowInput& w,
+    llvm::ArrayRef<uint8_t> unconditional, uint32_t endpoint, bool first,
+    RegionExpressions::Id ordinal, RegionExpressions::Id active,
+    const detail::BoundedAllocationPresence& boundary)
+{
+    if (auto site = mandatoryEnvelope(w, unconditional, endpoint, first)) { return site; }
+    if (!boundary.presence || boundary.expressions.get() != &e) { return {}; }
+    for (uint32_t site = 0; site < w.sites; ++site) {
+        if (w.payloads[site].pipe != w.payloads[endpoint].pipe ||
+            (first ? site > endpoint : site < endpoint)) { continue; }
+        auto kind = first ? PeriodicEventKind::Start : PeriodicEventKind::Completion;
+        auto present = boundary.presence({site, ordinal, kind});
+        if (!present || *present >= e.size() || !e.isBoolean(*present)) { continue; }
+        if (e.implies(active, *present) || e.constantUnder(active, *present) == 1) { return site; }
+    }
+    return {};
+}
 struct RegionalPalette {
     uint64_t begin, width, offset;
     std::size_t group;
@@ -66,7 +85,7 @@ std::optional<std::vector<RegionalPalette>> regionalPalettes(
 bool appendRegionalMember(RegionExpressions& e, const LifetimeWindowInput& w,
     llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> demands,
     RegionExpressions::Id trips, uint32_t record, bool inactive, const RegionalPalette& phase,
-    RegionalAllocationGroup& group)
+    RegionalAllocationGroup& group, const detail::BoundedAllocationPresence& boundary)
 {
     const auto& edge = demands[record];
     const uint32_t target = edge.target % w.sites;
@@ -78,13 +97,13 @@ bool appendRegionalMember(RegionExpressions& e, const LifetimeWindowInput& w,
         group.members.push_back(std::move(member));
         return true;
     }
-    auto first = mandatoryEnvelope(w, unconditional, edge.source, true);
-    auto last = mandatoryEnvelope(w, unconditional, target, false);
-    if (!first || !last) { return false; }
     const auto active = e.lt(e.constant(edge.target / w.sites), trips);
     // Keep inactive coordinates defined even for zero trips. Active implies
     // that both mandatory envelope occurrences actually execute.
     const auto finalVisit = e.sub(e.select(active, trips, e.constant(1)), e.constant(1));
+    auto first = certifiedEnvelope(e, w, unconditional, edge.source, true, e.constant(0), active, boundary);
+    auto last = certifiedEnvelope(e, w, unconditional, target, false, finalVisit, active, boundary);
+    if (!first || !last) { return false; }
     RegionalAllocationMember member{record, 0, 0,
         {*first, e.constant(0), PeriodicEventKind::Start},
         {*last, finalVisit, PeriodicEventKind::Completion}, active};
@@ -100,14 +119,16 @@ bool appendRegionalMember(RegionExpressions& e, const LifetimeWindowInput& w,
     return true;
 }
 } // namespace
-std::shared_ptr<RegionalAllocationSummary> boundedLifetimeRegionalAllocation(
+std::shared_ptr<RegionalAllocationSummary> detail::boundedLifetimeRegionalAllocationWithPresence(
     RegionExpressions& producerExpressions, RegionExpressions& outputExpressions,
     const LifetimeWindowInput& w, llvm::ArrayRef<uint8_t> unconditional,
-    llvm::ArrayRef<GuardedRankEdge> demands, RegionExpressions::Id trips)
+    llvm::ArrayRef<GuardedRankEdge> demands, RegionExpressions::Id trips,
+    const BoundedAllocationPresence& boundary)
 {
     if (trips >= outputExpressions.size() || outputExpressions.isBoolean(trips) ||
         demands.size() > UINT32_MAX || !outputExpressions.constructionError().empty() ||
         !producerExpressions.constructionError().empty()) { return {}; }
+    if (boundary.presence && boundary.expressions.get() != &outputExpressions) { return {}; }
     RegionExpressions::Transaction transaction(outputExpressions);
     auto assignment = detail::boundedLifetimeAllocationAssignment(producerExpressions, w, unconditional, demands);
     if (!assignment) { return {}; }
@@ -118,11 +139,19 @@ std::shared_ptr<RegionalAllocationSummary> boundedLifetimeRegionalAllocation(
         for (auto record : assignment->palettes[i].records) {
             if (!appendRegionalMember(outputExpressions, w, unconditional, demands, trips,
                     static_cast<uint32_t>(record), assignment->inactiveRecords[record],
-                    (*phases)[i], result->groups[(*phases)[i].group])) { return {}; }
+                    (*phases)[i], result->groups[(*phases)[i].group], boundary)) { return {}; }
         }
     }
     if (!outputExpressions.constructionError().empty()) { return {}; }
     transaction.commit();
     return result;
+}
+std::shared_ptr<RegionalAllocationSummary> boundedLifetimeRegionalAllocation(
+    RegionExpressions& producerExpressions, RegionExpressions& outputExpressions,
+    const LifetimeWindowInput& window, llvm::ArrayRef<uint8_t> unconditional,
+    llvm::ArrayRef<GuardedRankEdge> demands, RegionExpressions::Id trips)
+{
+    return detail::boundedLifetimeRegionalAllocationWithPresence(producerExpressions,
+        outputExpressions, window, unconditional, demands, trips, {});
 }
 } // namespace mlir::pto::frontiersynch
