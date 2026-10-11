@@ -68,6 +68,13 @@ struct SyncStorageEffect {
     SmallVector<std::size_t> cells;
 };
 
+struct SyncUniformConflictWork {
+    uint64_t queries = 0;
+    uint64_t cacheHits = 0;
+    uint64_t constructions = 0;
+    bool counterOverflow = false;
+};
+
 class SyncStorageEffects {
 public:
     // Borrows the unchanged SyncInput and source MLIR. Does not unfold control,
@@ -96,6 +103,7 @@ public:
     // A conflict whose unresolved address relationship applies to every pair
     // of occurrences. Known iteration-dependent maps are handled by adapters.
     bool uniformConflict(std::size_t first, std::size_t second) const;
+    SyncUniformConflictWork uniformConflictWork() const { return uniformWork; }
     // Linear precheck keeps uniform-pair enumeration off fully comparable inputs.
     bool hasUniformRelationships(ArrayRef<const CompoundInstanceElement*> phases) const;
     bool needsOverlapQueries(const CompoundInstanceElement* phase, bool unresolvedBases = true) const;
@@ -120,6 +128,11 @@ private:
     // used by InsertSync's loop-backedge scan, including multi-phase operations.
     DenseMap<unsigned, SmallVector<std::size_t>> phaseEffects;
     mutable DenseMap<std::size_t, bool> independentEffects;
+    // Ordered original effect IDs in this unchanged owner; false results are
+    // cached too. Every build, including a failed rebuild, invalidates the cache.
+    mutable DenseMap<std::pair<std::size_t, std::size_t>, bool> uniformEffects;
+    mutable SyncUniformConflictWork uniformWork;
+    bool computeUniformConflict(std::size_t first, std::size_t second) const;
     void partitionRanges();
 };
 } // namespace mlir::pto

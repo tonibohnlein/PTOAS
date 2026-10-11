@@ -26,6 +26,11 @@ struct NumericalRegionDemands {
 // distinct protection identities. Used by analysis and its diagnostic exporter.
 FailureOr<std::vector<ExplicitEffects>> numericTemplateOccurrences(const NumericTemplate& input,
                                                                   unsigned visits = 1);
+struct StorageScanWork;
+// Synchronous borrowed scan for generator-only consumers. It traverses the
+// incidences without materializing or copying a complete explicit access word.
+StorageScanResult scanNumericTemplateStorage(const NumericTemplate& input, unsigned visits = 1,
+                                             bool retainWitnesses = true, StorageScanWork* work = nullptr);
 PeriodicAnalysis analyzeNumericTemplate(const NumericTemplate& input);
 } // namespace mlir::pto::frontiersynch
 #endif

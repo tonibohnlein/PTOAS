@@ -48,6 +48,8 @@ LogicalResult SyncStorageEffects::build(const SyncInput& input)
     partition.clear();
     phaseEffects.clear();
     independentEffects.clear();
+    uniformEffects.clear();
+    uniformWork = {};
     SyncStorageEffects pending;
     pending.memory = input.memory();
     pending.descriptors = input.descriptorState();
@@ -317,6 +319,25 @@ bool SyncStorageEffects::hasUniformRelationships(ArrayRef<const CompoundInstance
     return !storageBasesAreComparable(domains, memory.gmPolicy());
 }
 bool SyncStorageEffects::uniformConflict(std::size_t first, std::size_t second) const
+{
+    auto count = [&](uint64_t& value) {
+        if (value == UINT64_MAX) { uniformWork.counterOverflow = true; }
+        else { ++value; }
+    };
+    count(uniformWork.queries);
+    if (first >= records.size() || second >= records.size()) { return true; }
+    auto key = std::make_pair(first, second);
+    auto cached = uniformEffects.find(key);
+    if (cached != uniformEffects.end()) {
+        count(uniformWork.cacheHits);
+        return cached->second;
+    }
+    count(uniformWork.constructions);
+    const bool result = computeUniformConflict(first, second);
+    uniformEffects.try_emplace(key, result);
+    return result;
+}
+bool SyncStorageEffects::computeUniformConflict(std::size_t first, std::size_t second) const
 {
     if (first >= records.size() || second >= records.size()) { return true; }
     const auto& a = records[first];

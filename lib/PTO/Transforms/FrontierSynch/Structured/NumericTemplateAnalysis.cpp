@@ -8,7 +8,7 @@
 // A constant local effect word refreshes every written atom within one visit.
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateAnalysis.h"
 #include "NumericTemplateRecurringGlobal.h"
-#include "PTO/Transforms/FrontierSynch/Finite/LifetimeScan.h"
+#include "PTO/Transforms/FrontierSynch/Finite/LifetimeScanInput.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include <limits>
 #include <map>
@@ -20,25 +20,57 @@ PeriodicAnalysis reject(const char* reason)
     output.error = reason;
     return output;
 }
-bool localEffects(const NumericTemplate& input, std::vector<ExplicitEffects>& word)
-{
-    if (input.recurringGlobal && (!input.recurringGlobal->applies(input) ||
-        input.atoms.size() > UINT32_MAX - input.recurringGlobal->atomCount)) { return false; }
-    for (std::size_t i = 0; i < input.payloads.size(); ++i) {
-        const auto& payload = input.payloads[i];
-        if (!payload.phase || payload.phase->macroOpInstanceId >= 0) {
-            return false;
+// The template owns atom memberships; visits add only ordinals and protection
+// metadata. No complete incidence word is copied before or during the scan.
+class NumericOccurrences {
+public:
+    NumericOccurrences(const NumericTemplate& source, unsigned copies) : input(source)
+    {
+        if (copies == 0 || copies > 2 || input.payloads.size() > UINT32_MAX / copies ||
+            (input.recurringGlobal && (!input.recurringGlobal->applies(input) ||
+                                       input.atoms.size() > UINT32_MAX - input.recurringGlobal->atomCount))) {
+            return;
         }
-        ExplicitEffects occurrence;
-        occurrence.payload = static_cast<uint32_t>(i);
-        occurrence.pipe = static_cast<uint32_t>(payload.phase->kPipeValue);
+        std::map<std::pair<unsigned, uint64_t>, uint64_t> scopes;
+        metadata.reserve(input.payloads.size() * copies);
+        protection.reserve(input.payloads.size() * copies);
+        for (unsigned visit = 0; visit < copies; ++visit) {
+            for (const auto& payload : input.payloads) {
+                if (!payload.phase || payload.phase->macroOpInstanceId >= 0) {
+                    return;
+                }
+                metadata.push_back(
+                    {static_cast<uint32_t>(metadata.size()), static_cast<uint32_t>(payload.phase->kPipeValue)});
+                auto group = payload.invocationProtection;
+                if (group && !(group & invocationProtectionBit)) {
+                    const auto reset = group & protectionResetBit;
+                    const auto key = std::make_pair(visit, group & ~protectionResetBit);
+                    group = scopes.emplace(key, scopes.size() + 1).first->second | reset;
+                }
+                protection.push_back(group);
+            }
+        }
+        valid = true;
+    }
+    bool valid = false;
+    std::vector<StorageOccurrenceMetadata> metadata;
+    bool accesses(std::size_t ordinal, StorageAccessConsumer consume) const
+    {
+        const auto site = ordinal % input.payloads.size();
+        const auto& payload = input.payloads[site];
         for (auto [effectId, effect] : llvm::enumerate(payload.effects)) {
-            if (effect.pendingGlobalGeometry || !effect.validAtomReferences()) { return false; }
-            const auto* relative = input.recurringGlobal ? input.recurringGlobal->find(i, effectId) : nullptr;
+            if (effect.pendingGlobalGeometry || !effect.validAtomReferences()) {
+                return false;
+            }
+            const auto* relative = input.recurringGlobal ? input.recurringGlobal->find(site, effectId) : nullptr;
             if (relative) {
                 for (auto atom : relative->atoms) {
-                    occurrence.accesses.push_back({static_cast<uint32_t>(input.atoms.size() + atom),
-                        effect.mode == SyncAccessMode::Read, effect.mode == SyncAccessMode::Write});
+                    const CellAccess access{
+                        static_cast<uint32_t>(input.atoms.size() + atom), effect.mode == SyncAccessMode::Read,
+                        effect.mode == SyncAccessMode::Write};
+                    if (!consume(access)) {
+                        return false;
+                    }
                 }
                 continue;
             }
@@ -46,80 +78,99 @@ bool localEffects(const NumericTemplate& input, std::vector<ExplicitEffects>& wo
                 if (!effect.atomReferences().empty()) {
                     return false;
                 }
-                continue; // Certified whole-base GM discharge retained in input.
+                continue;
             }
-            // Undischarged effects are exactly partitioned absolute local ranges.
             for (const auto& range : effect.ranges) {
                 if (range.space == AddressSpace::GM) {
                     return false;
                 }
             }
             for (auto atom : effect.atomReferences()) {
-                if (atom >= input.atoms.size() || atom > std::numeric_limits<uint32_t>::max() ||
-                    input.atoms[atom].space == AddressSpace::GM) {
+                if (atom >= input.atoms.size() || atom > UINT32_MAX || input.atoms[atom].space == AddressSpace::GM) {
                     return false;
                 }
-                occurrence.accesses.push_back({static_cast<uint32_t>(atom),
-                    effect.mode == SyncAccessMode::Read, effect.mode == SyncAccessMode::Write});
+                const CellAccess access{
+                    static_cast<uint32_t>(atom), effect.mode == SyncAccessMode::Read,
+                    effect.mode == SyncAccessMode::Write,
+                    input.atoms[atom].space == AddressSpace::ACC ? protection[ordinal] : 0};
+                if (!consume(access)) {
+                    return false;
+                }
             }
         }
-        word.push_back(std::move(occurrence));
+        return true;
     }
-    return true;
-}
+
+private:
+    const NumericTemplate& input;
+    std::vector<uint64_t> protection;
+};
 } // namespace
 FailureOr<std::vector<ExplicitEffects>> numericTemplateOccurrences(const NumericTemplate& input, unsigned copies)
 {
-    if (copies == 0 || copies > 2 || input.payloads.size() > std::numeric_limits<uint32_t>::max() / copies) {
-        return failure();
-    }
-    std::vector<ExplicitEffects> word;
-    if (!localEffects(input, word)) {
+    NumericOccurrences source(input, copies);
+    if (!source.valid) {
         return failure();
     }
     std::vector<ExplicitEffects> output;
-    output.reserve(word.size() * copies);
-    std::map<std::pair<unsigned, uint64_t>, uint64_t> scopes;
-    for (unsigned visit = 0; visit < copies; ++visit) {
-        for (std::size_t i = 0; i < word.size(); ++i) {
-            auto occurrence = word[i];
-            occurrence.payload = static_cast<uint32_t>(output.size());
-            auto group = input.payloads[i].invocationProtection;
-            if (group && !(group & invocationProtectionBit)) {
-                const auto reset = group & protectionResetBit;
-                const auto key = std::make_pair(visit, group & ~protectionResetBit);
-                group = scopes.emplace(key, scopes.size() + 1).first->second | reset;
-            }
-            for (auto& access : occurrence.accesses) {
-                if (access.atom < input.atoms.size() && input.atoms[access.atom].space == AddressSpace::ACC) {
-                    access.protectionGroup = group;
-                }
-            }
-            output.push_back(std::move(occurrence));
+    output.reserve(source.metadata.size());
+    for (std::size_t id = 0; id < source.metadata.size(); ++id) {
+        const auto occurrence = source.metadata[id];
+        ExplicitEffects effects{occurrence.payload, occurrence.pipe, {}};
+        if (!source.accesses(id, [&](const CellAccess& access) {
+                effects.accesses.push_back(access);
+                return true;
+            })) {
+            return failure();
         }
+        output.push_back(std::move(effects));
     }
     return output;
 }
+StorageScanResult scanNumericTemplateStorage(
+    const NumericTemplate& input, unsigned copies, bool retainWitnesses, StorageScanWork* work)
+{
+    if (work) {
+        *work = {};
+    }
+    NumericOccurrences source(input, copies);
+    if (!source.valid) {
+        StorageScanResult failed;
+        failed.error = "numeric template has invalid physical atom references";
+        return failed;
+    }
+    auto occurrence = [&](std::size_t id) { return source.metadata[id]; };
+    auto accesses = [&](std::size_t id, StorageAccessConsumer consume) { return source.accesses(id, consume); };
+    auto result = scanStorageLifetimes(
+        StorageScanInput{source.metadata.size(), occurrence, accesses}, {}, ptoStorageProtection(), retainWitnesses,
+        work);
+    if (result.error == "invalid access input") {
+        result.error = "numeric template has invalid physical atom references";
+    }
+    return result;
+}
 PeriodicAnalysis analyzeNumericTemplate(const NumericTemplate& input)
 {
-    const bool certified = input.result.state == RecognitionState::Applicable &&
-        input.period == 1 && input.refresh == 1;
+    const bool certified =
+        input.result.state == RecognitionState::Applicable && input.period == 1 && input.refresh == 1;
     if (!certified || input.payloads.size() > std::numeric_limits<uint32_t>::max() / 2) {
         return reject("numeric template lacks period-one certificate");
-    }
-    auto visits = numericTemplateOccurrences(input, 2);
-    if (failed(visits)) {
-        return reject("numeric template has invalid physical atom references");
     }
     const auto count = static_cast<uint32_t>(input.payloads.size());
     std::vector<PeriodicPayload> payloads;
     payloads.reserve(count);
     for (uint32_t i = 0; i < count; ++i) {
-        payloads.push_back({(*visits)[i].pipe});
+        if (!input.payloads[i].phase) {
+            return reject("numeric template has invalid physical atom references");
+        }
+        payloads.push_back({static_cast<uint32_t>(input.payloads[i].phase->kPipeValue)});
     }
-    auto scanned = scanStorageLifetimes(*visits, {}, ptoStorageProtection());
+    auto scanned = scanNumericTemplateStorage(input, 2, false, nullptr);
     if (!scanned.error.empty()) {
-        return reject("numeric template lifetime scan failed");
+        return reject(
+            scanned.error == "numeric template has invalid physical atom references" ?
+                scanned.error.c_str() :
+                "numeric template lifetime scan failed");
     }
     std::vector<PeriodicRecord> records;
     for (const auto& generator : scanned.generators) {
@@ -131,16 +182,24 @@ PeriodicAnalysis analyzeNumericTemplate(const NumericTemplate& input)
         if (a >= payloads.size() || b >= payloads.size()) {
             return reject("numeric template conflict has invalid payload reference");
         }
-        if (ptoStorageProtection().protectsScalar(payloads[a].pipe, payloads[b].pipe)) { continue; }
+        if (ptoStorageProtection().protectsScalar(payloads[a].pipe, payloads[b].pipe)) {
+            continue;
+        }
         records.push_back({a, b, a < b ? 0U : 1U});
-        if (a != b) { records.push_back({b, a, 1}); }
+        if (a != b) {
+            records.push_back({b, a, 1});
+        }
     }
     // Every written atom has the same writer one visit later. Two visits
     // therefore contain every source-zero lifetime generator. Read-only atoms
     // yield none. Endpoint truncation handles all finite trip counts, including 0.
     std::vector<PeriodicRecord> native;
-    for (const auto& edge : input.nativePrerequisites) { native.push_back({edge.first, edge.second, 0}); }
-    for (const auto& edge : input.valueDemands) { records.push_back({edge.first, edge.second, 0}); }
+    for (const auto& edge : input.nativePrerequisites) {
+        native.push_back({edge.first, edge.second, 0});
+    }
+    for (const auto& edge : input.valueDemands) {
+        records.push_back({edge.first, edge.second, 0});
+    }
     return analyzePeriodicDemands(payloads, records, native);
 }
 } // namespace mlir::pto::frontiersynch
