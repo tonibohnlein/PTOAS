@@ -10,6 +10,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/DenseMap.h"
 #include <map>
+#include <limits>
 #include <set>
 namespace mlir::pto::frontiersynch {
 struct IntegerImplicationCache::State {
@@ -77,6 +78,105 @@ struct IntegerImplicationCache::State {
             }
         }
         return true;
+    }
+    struct LatticeRelaxation {
+        std::vector<BoundInteger> shifts, scales;
+        std::unique_ptr<presburger::Simplex> simplex;
+    };
+    std::map<std::size_t, LatticeRelaxation> latticeSystems;
+    std::map<RationalBoundKey, presburger::MaybeOptimum<presburger::Fraction>> latticeBounds;
+    static void increment(uint64_t& value)
+    {
+        if (value != std::numeric_limits<uint64_t>::max()) { ++value; }
+    }
+    LatticeRelaxation& latticeSystem(std::size_t id)
+    {
+        auto found = latticeSystems.find(id);
+        if (found != latticeSystems.end()) { return found->second; }
+        const auto& source = uniqueSystems[id];
+        LatticeRelaxation relaxation;
+        relaxation.shifts.assign(source.dimensions(), BoundInteger(0));
+        relaxation.scales.assign(source.dimensions(), BoundInteger(1));
+        bool selected = false;
+        for (const auto& row : source.congruences()) {
+            if (row.modulus <= 1) { continue; }
+            std::optional<unsigned> coordinate;
+            for (unsigned i = 0; i < source.dimensions(); ++i) {
+                if (row.coefficients[i] == 0) { continue; }
+                if (coordinate) { coordinate.reset(); break; }
+                coordinate = i;
+            }
+            if (!coordinate || relaxation.scales[*coordinate] != 1) { continue; }
+            const auto coefficient = row.coefficients[*coordinate];
+            if (coefficient != 1 && coefficient != row.modulus - 1) { continue; }
+            relaxation.scales[*coordinate] = row.modulus;
+            relaxation.shifts[*coordinate] = mod(coefficient == 1 ? row.residue : -row.residue, row.modulus);
+            selected = true;
+        }
+        if (selected) {
+            increment(cost.latticeBuilds);
+            relaxation.simplex = std::make_unique<presburger::Simplex>(source.dimensions());
+            for (const auto& row : source.constraints()) {
+                IntegerConstraint transformed{row.coefficients, row.bound};
+                BoundInteger divisor(0);
+                for (unsigned i = 0; i < source.dimensions(); ++i) {
+                    transformed.bound -= row.coefficients[i] * relaxation.shifts[i];
+                    transformed.coefficients[i] *= relaxation.scales[i];
+                    const auto coefficient = transformed.coefficients[i];
+                    divisor = gcd(divisor, coefficient < 0 ? -coefficient : coefficient);
+                }
+                // For integer q, c.q<=d is exactly equivalent after dividing
+                // by gcd(c) and rounding d down, including negative bounds.
+                // A zero row stays 0<=d and can prove the relaxation empty.
+                if (divisor != 0) {
+                    for (auto& coefficient : transformed.coefficients) { coefficient /= divisor; }
+                    transformed.bound = floorDiv(transformed.bound, divisor);
+                }
+                relaxation.simplex->addInequality(rationalRow(transformed));
+            }
+        }
+        return latticeSystems.emplace(id, std::move(relaxation)).first->second;
+    }
+    bool latticeSubsumed(std::size_t a, std::size_t b)
+    {
+        const auto& source = uniqueSystems[a];
+        const auto& target = uniqueSystems[b];
+        // The lattice LP proves inequalities only. Preserve the independent
+        // proof obligation for every modular row required by the target.
+        for (const auto& row : target.congruences()) {
+            if (!llvm::any_of(source.congruences(), [&](const auto& known) {
+                    return known.coefficients == row.coefficients && known.modulus == row.modulus &&
+                           known.residue == row.residue;
+                })) { return false; }
+        }
+        auto& relaxation = latticeSystem(a);
+        if (!relaxation.simplex) { return false; }
+        if (relaxation.simplex->isEmpty()) {
+            increment(cost.latticeEmptyProofs); increment(cost.latticeProofs); return true;
+        }
+        for (const auto& row : target.constraints()) {
+            const RationalBoundKey key{a, row.coefficients};
+            increment(cost.latticeQueries);
+            auto found = latticeBounds.find(key);
+            if (found == latticeBounds.end()) {
+                auto objective = row.coefficients;
+                BoundInteger offset(0);
+                for (unsigned i = 0; i < source.dimensions(); ++i) {
+                    offset += row.coefficients[i] * relaxation.shifts[i];
+                    objective[i] *= relaxation.scales[i];
+                }
+                objective.push_back(offset);
+                auto optimum = relaxation.simplex->computeOptimum(presburger::Simplex::Direction::Up, objective);
+                found = latticeBounds.emplace(key, std::move(optimum)).first;
+            } else { increment(cost.latticeHits); }
+            const auto& optimum = found->second;
+            // This objective is the ORIGINAL integer expression t.x, with its
+            // affine shift retained. Rational max < bound+1 is sufficient.
+            if (!optimum.isBounded() || *optimum >= presburger::Fraction(row.bound + 1, BoundInteger(1))) {
+                return false;
+            }
+        }
+        increment(cost.latticeProofs); return true;
     }
     using IntegerPoint = std::vector<BoundInteger>;
     std::map<std::size_t, std::set<IntegerPoint>> integerSamples;
@@ -220,7 +320,8 @@ struct IntegerImplicationCache::State {
         return false;
     }
     llvm::DenseMap<std::pair<std::size_t, std::size_t>, bool> inclusions;
-    bool subsumed(std::size_t a, std::size_t b)
+    llvm::DenseMap<std::pair<std::size_t, std::size_t>, bool> certificates;
+    bool subsumed(std::size_t a, std::size_t b, bool certificateOnly = false)
     {
         if (uniqueSystems[a].dimensions() != uniqueSystems[b].dimensions()) {
             return false;
@@ -229,11 +330,20 @@ struct IntegerImplicationCache::State {
             return true;
         }
         const auto key = std::make_pair(a, b);
-        if (auto found = inclusions.find(key); found != inclusions.end()) {
+        // A negative certificate cache entry means unproved, while a negative
+        // exact inclusion entry means disproved. Never mix these two contracts.
+        if (certificateOnly) {
+            if (auto found = inclusions.find(key); found != inclusions.end()) {
+                ++cost.hits;
+                return found->second;
+            }
+        }
+        auto& answers = certificateOnly ? certificates : inclusions;
+        if (auto found = answers.find(key); found != answers.end()) {
             ++cost.hits;
             return found->second;
         }
-        if (counterexample(a, b, false)) {
+        if (!certificateOnly && counterexample(a, b, false)) {
             ++cost.witnessRefutations;
             inclusions.try_emplace(key, false);
             return false;
@@ -268,7 +378,8 @@ struct IntegerImplicationCache::State {
                 if (covered) {
                     ++cost.rationalProofs;
                 }
-                if (!covered) {
+                if (!covered) { covered = latticeSubsumed(a, b); }
+                if (!covered && !certificateOnly) {
                     if (counterexample(a, b, true)) {
                         ++cost.witnessRefutations;
                     } else {
@@ -278,7 +389,7 @@ struct IntegerImplicationCache::State {
                 }
             }
         }
-        inclusions.try_emplace(key, covered);
+        answers.try_emplace(key, covered);
         return covered;
     }
 };
@@ -289,6 +400,10 @@ IntegerImplicationCache::~IntegerImplicationCache() = default;
 bool IntegerImplicationCache::isSubsetOf(std::size_t source, std::size_t target)
 {
     return state->subsumed(source, target);
+}
+bool IntegerImplicationCache::hasInclusionCertificate(std::size_t source, std::size_t target)
+{
+    return state->subsumed(source, target, true);
 }
 const IntegerImplicationCache::Cost& IntegerImplicationCache::cost() const { return state->cost; }
 } // namespace mlir::pto::frontiersynch

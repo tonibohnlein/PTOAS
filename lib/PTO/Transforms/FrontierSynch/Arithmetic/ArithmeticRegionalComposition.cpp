@@ -565,7 +565,16 @@ FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
         &ArithmeticAnalysisCost::projections, &ArithmeticAnalysisCost::relationCompositions,
         &ArithmeticAnalysisCost::differences, &ArithmeticAnalysisCost::implicationCacheHits,
         &ArithmeticAnalysisCost::rationalImplications, &ArithmeticAnalysisCost::integerCounterexamples,
-        &ArithmeticAnalysisCost::exactImplicationChecks}) {
+        &ArithmeticAnalysisCost::exactImplicationChecks, &ArithmeticAnalysisCost::latticeRelaxationBuilds,
+        &ArithmeticAnalysisCost::latticeObjectiveQueries, &ArithmeticAnalysisCost::latticeObjectiveHits,
+        &ArithmeticAnalysisCost::latticeImplicationProofs, &ArithmeticAnalysisCost::latticeEmptyProofs,
+        &ArithmeticAnalysisCost::unionDifferenceAttempts,
+        &ArithmeticAnalysisCost::unionDifferenceCacheHits, &ArithmeticAnalysisCost::unionDifferenceBuilds,
+        &ArithmeticAnalysisCost::unionMergeAttempts,
+        &ArithmeticAnalysisCost::unionMergeCacheHits, &ArithmeticAnalysisCost::unionMergeBuilds,
+        &ArithmeticAnalysisCost::physicalJoinAttempts, &ArithmeticAnalysisCost::physicalJoinCacheHits,
+        &ArithmeticAnalysisCost::physicalJoinBuilds, &ArithmeticAnalysisCost::physicalJoinEmptyHits,
+        &ArithmeticAnalysisCost::physicalJoinRemaps}) {
         out.analysis.cost.*member = left.analysis.cost.*member;
         accumulateCost(out.analysis.cost.*member, right.analysis.cost.*member);
     }

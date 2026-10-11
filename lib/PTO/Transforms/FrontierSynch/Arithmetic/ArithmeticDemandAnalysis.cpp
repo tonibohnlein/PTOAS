@@ -9,6 +9,8 @@
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "llvm/ADT/DenseSet.h"
 #include "IntegerImplicationCache.h"
+#include "NumericUnionMergeCache.h"
+#include "NumericUnionDifferenceCache.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include <algorithm>
 #include <numeric>
@@ -201,8 +203,24 @@ public:
                     accumulateCost(cost.rationalImplications, counts.rationalProofs);
                     accumulateCost(cost.integerCounterexamples, counts.witnessRefutations);
                     accumulateCost(cost.exactImplicationChecks, counts.exactChecks);
+                    accumulateCost(cost.latticeRelaxationBuilds, counts.latticeBuilds);
+                    accumulateCost(cost.latticeObjectiveQueries, counts.latticeQueries);
+                    accumulateCost(cost.latticeObjectiveHits, counts.latticeHits);
+                    accumulateCost(cost.latticeImplicationProofs, counts.latticeProofs);
+                    accumulateCost(cost.latticeEmptyProofs, counts.latticeEmptyProofs);
                 }
+                const auto& merges = analysis.unionMerges.cost();
+                accumulateCost(analysis.result.cost.unionMergeAttempts, merges.attempts);
+                accumulateCost(analysis.result.cost.unionMergeCacheHits, merges.hits);
+                accumulateCost(analysis.result.cost.unionMergeBuilds, merges.builds);
+                const auto& differences = analysis.unionDifferences.cost();
+                accumulateCost(analysis.result.cost.unionDifferenceAttempts, differences.attempts);
+                accumulateCost(analysis.result.cost.unionDifferenceCacheHits, differences.hits);
+                accumulateCost(analysis.result.cost.unionDifferenceBuilds, differences.builds);
+                analysis.unionDifferences.clear();
+                analysis.unionMerges.clear();
                 analysis.implications.reset();
+                analysis.physicalJoins.clear();
                 analysis.compositions.clear(); analysis.uniqueSystems.clear(); analysis.systemBuckets.clear();
                 analysis.unionCompositions.clear(); analysis.uniqueUnions.clear(); analysis.unionIdentities.clear();
             }
@@ -239,21 +257,42 @@ public:
         unite(covered, result.nativeOrder);
         result.minimumDemands = subtract(result.generators, covered);
         if (!result.error.empty()) { return; }
-        // A same-pipe demand is adjacent precisely when no strictly intermediate
-        // payload exists on that pipe. Remove identities explicitly even if the
-        // producer supplied the reflexive native closure.
-        auto strictPipeOrder = subtract(samePipeOrder, identity);
-        auto nonadjacent = compose(strictPipeOrder, strictPipeOrder);
-        Relation localIntervals;
-        for (const auto& [key, pieces] : nonadjacent) {
-            auto endpoints = key;
-            endpoints.source.event = ArithmeticEvent::Completion;
-            endpoints.target.event = ArithmeticEvent::Start;
-            for (const auto& piece : pieces) { append(localIntervals, endpoints, piece); }
+        // Adjacency is a boolean query over retained demand endpoints. Avoid
+        // constructing unrelated intervals or a minimized bad-local relation.
+        result.adjacentLocalDemands = true;
+        if (!result.minimumDemands.empty()) {
+            Relation queriedEndpoints;
+            for (const auto& [key, pieces] : result.minimumDemands) {
+                (void)pieces;
+                auto starts = key;
+                starts.source.event = ArithmeticEvent::Start;
+                starts.target.event = ArithmeticEvent::Start;
+                queriedEndpoints.emplace(std::move(starts), std::vector<System>{});
+            }
+            // A same-pipe demand is adjacent precisely when no strictly
+            // intermediate payload on that pipe exists. Reflexive input native
+            // relations remain supported by subtracting identities explicitly.
+            auto strictPipeOrder = subtract(samePipeOrder, identity);
+            auto nonadjacent = compose(strictPipeOrder, strictPipeOrder, &queriedEndpoints);
+            if (!result.error.empty()) { return; }
+            for (const auto& [key, intervals] : nonadjacent) {
+                auto endpoints = key;
+                endpoints.source.event = ArithmeticEvent::Completion;
+                endpoints.target.event = ArithmeticEvent::Start;
+                auto found = result.minimumDemands.find(endpoints);
+                if (found == result.minimumDemands.end()) { continue; }
+                for (const auto& demand : found->second) {
+                    for (const auto& interval : intervals) {
+                        auto overlap = demand.intersect(interval);
+                        ++result.cost.pieceJoins;
+                        if (failed(overlap)) { fail("arithmetic relation intersection failed"); return; }
+                        if (!overlap->isEmpty()) { result.adjacentLocalDemands = false; break; }
+                    }
+                    if (!result.adjacentLocalDemands) { break; }
+                }
+                if (!result.adjacentLocalDemands) { break; }
+            }
         }
-        auto badLocal = intersect(result.minimumDemands, localIntervals);
-        if (!result.error.empty()) { return; }
-        result.adjacentLocalDemands = badLocal.empty();
         result.exactMinimum = true;
         for (const auto& [key, pieces] : result.minimumDemands) {
             (void)key;
@@ -275,7 +314,7 @@ private:
     {
         if constexpr (std::is_same_v<System, IntegerSystem>) {
             if (!implications) { implications = std::make_unique<IntegerImplicationCache>(uniqueSystems); }
-            return implications->isSubsetOf(a, b);
+            return implications->hasInclusionCertificate(a, b);
         } else { return uniqueSystems[a].isSubsetOf(uniqueSystems[b]); }
     }
     void appendKnown(std::vector<System>& pieces, std::vector<std::size_t>& ids, System piece, std::size_t id)
@@ -313,14 +352,16 @@ private:
     }
     void unite(Relation& target, const Relation& source)
     {
+        if (&target == &source) { return; }
         for (const auto& [key, pieces] : source) {
             if constexpr (std::is_same_v<System, IntegerSystem>) {
                 auto& retained = target[key];
-                std::vector<std::size_t> ids;
-                for (const auto& piece : retained) { ids.push_back(systemIdentity(piece)); }
-                for (const auto& piece : pieces) {
-                    auto id = systemIdentity(piece); appendKnown(retained, ids, piece, id);
-                }
+                std::vector<std::size_t> left, right;
+                for (const auto& piece : retained) { left.push_back(systemIdentity(piece)); }
+                for (const auto& piece : pieces) { right.push_back(systemIdentity(piece)); }
+                const auto merged = mergeUnions(unionIdentity(std::move(left)), unionIdentity(std::move(right)));
+                retained.clear();
+                for (auto id : uniqueUnions[merged]) { retained.push_back(uniqueSystems[id]); }
                 if (retained.empty()) { target.erase(key); }
             } else { for (const auto& piece : pieces) { append(target, key, piece); } }
         }
@@ -577,6 +618,61 @@ private:
         return a && b && ptoStorageProtection().protectsScalar(static_cast<uint32_t>(a->kPipeValue),
                                                               static_cast<uint32_t>(b->kPipeValue));
     }
+    using PhysicalJoinKey = std::tuple<std::size_t, std::size_t, unsigned, unsigned>;
+    std::map<PhysicalJoinKey, std::vector<std::size_t>> physicalJoins;
+    FailureOr<std::vector<System>> physicalJoinPieces(const System& a, const System& b, unsigned x, unsigned y)
+    {
+        const unsigned p = result.parameterCount, joinedDimensions = x + y + 1 + p;
+        std::vector<unsigned> am(x + 1 + p), bm(y + 1 + p);
+        std::iota(am.begin(), am.begin() + x, 0);
+        std::iota(bm.begin(), bm.begin() + y, x);
+        am[x] = bm[y] = x + y;
+        std::iota(am.begin() + x + 1, am.end(), x + y + 1);
+        std::iota(bm.begin() + y + 1, bm.end(), x + y + 1);
+        auto left = a.remap(joinedDimensions, am), right = b.remap(joinedDimensions, bm);
+        if constexpr (std::is_same_v<System, IntegerSystem>) { accumulateCost(result.cost.physicalJoinRemaps, 2); }
+        if (failed(left) || failed(right)) { fail("physical-byte access join failed"); return failure(); }
+        auto joined = left->intersect(*right);
+        ++result.cost.pieceJoins;
+        if (failed(joined)) { fail("physical-byte intersection failed"); return failure(); }
+        std::vector<unsigned> keep(x + y + p);
+        std::iota(keep.begin(), keep.begin() + x + y, 0);
+        std::iota(keep.begin() + x + y, keep.end(), x + y + 1);
+        auto projected = Policy::project(*joined, keep);
+        ++result.cost.projections;
+        if (failed(projected)) { fail("physical-byte witness projection failed"); return failure(); }
+        return projected;
+    }
+    FailureOr<std::vector<System>> physicalJoin(const System& a, const System& b, unsigned x, unsigned y)
+    {
+        if constexpr (std::is_same_v<System, IntegerSystem>) {
+            accumulateCost(result.cost.physicalJoinAttempts, 1);
+            // The numerical maps are fixed by x,y and this analysis's shared
+            // parameter tuple. Storage identity, event tags and hardware scope
+            // are checked outside this memoized operation.
+            const PhysicalJoinKey key{systemIdentity(a), systemIdentity(b), x, y};
+            auto found = physicalJoins.find(key);
+            if (found == physicalJoins.end()) {
+                accumulateCost(result.cost.physicalJoinBuilds, 1);
+                // Copy before interning any output: uniqueSystems may grow.
+                const auto left = uniqueSystems[std::get<0>(key)];
+                const auto right = uniqueSystems[std::get<1>(key)];
+                auto projected = physicalJoinPieces(left, right, x, y);
+                if (failed(projected)) { return failure(); }
+                std::vector<std::size_t> ids;
+                for (const auto& piece : *projected) {
+                    if (!piece.isEmpty()) { ids.push_back(systemIdentity(piece)); }
+                }
+                found = physicalJoins.emplace(key, std::move(ids)).first;
+            } else {
+                accumulateCost(result.cost.physicalJoinCacheHits, 1);
+                if (found->second.empty()) { accumulateCost(result.cost.physicalJoinEmptyHits, 1); }
+            }
+            std::vector<System> projected;
+            for (auto id : found->second) { projected.push_back(uniqueSystems[id]); }
+            return projected;
+        } else { return physicalJoinPieces(a, b, x, y); }
+    }
     bool buildConflicts()
     {
         Relation conflicts;
@@ -610,29 +706,14 @@ private:
                 // reference-order key. An absent key cannot contribute a
                 // forward conflict, so avoid its byte join and projection.
                 if (order.find(key) == order.end()) { continue; }
-                const unsigned joinedDimensions = x + y + 1 + result.parameterCount;
-                std::vector<unsigned> am(x + 1 + result.parameterCount), bm(y + 1 + result.parameterCount);
-                std::iota(am.begin(), am.begin() + x, 0);
-                std::iota(bm.begin(), bm.begin() + y, x);
-                am[x] = bm[y] = x + y;
-                std::iota(am.begin() + x + 1, am.end(), x + y + 1);
-                std::iota(bm.begin() + y + 1, bm.end(), x + y + 1);
-                auto left = a.system.remap(joinedDimensions, am), right = b.system.remap(joinedDimensions, bm);
-                if (failed(left) || failed(right)) { fail("physical-byte access join failed"); return false; }
-                auto joined = left->intersect(*right);
-                ++result.cost.pieceJoins;
-                if (failed(joined)) { fail("physical-byte intersection failed"); return false; }
-                std::vector<unsigned> keep(x + y + result.parameterCount);
-                std::iota(keep.begin(), keep.begin() + x + y, 0);
-                std::iota(keep.begin() + x + y, keep.end(), x + y + 1);
-                auto projected = Policy::project(*joined, keep);
-                ++result.cost.projections;
-                if (failed(projected)) { fail("physical-byte witness projection failed"); return false; }
-                auto protectedRegion = protectionDomain(a, b, keep.size());
+                auto projected = physicalJoin(a.system, b.system, x, y);
+                if (failed(projected)) { return false; }
+                const unsigned outputDimensions = x + y + result.parameterCount;
+                auto protectedRegion = protectionDomain(a, b, outputDimensions);
                 if (!result.error.empty()) { return false; }
                 if (protectedRegion) {
                     const std::vector<System> protectedPieces{std::move(*protectedRegion)};
-                    projected = Policy::subtract(keep.size(), *projected, protectedPieces);
+                    projected = Policy::subtract(outputDimensions, *projected, protectedPieces);
                     ++result.cost.differences;
                     if (failed(projected)) { fail("hardware protection subtraction failed"); return false; }
                 }
@@ -751,6 +832,8 @@ private:
         compositions.emplace(key, ids);
         return ids;
     }
+    NumericUnionMergeCache unionMerges;
+    NumericUnionDifferenceCache unionDifferences;
     std::deque<std::vector<std::size_t>> uniqueUnions;
     std::map<std::vector<std::size_t>, std::size_t> unionIdentities;
     std::map<CompositionKey, std::size_t> unionCompositions;
@@ -760,6 +843,23 @@ private:
         if (auto found = unionIdentities.find(ids); found != unionIdentities.end()) { return found->second; }
         const auto id = uniqueUnions.size();
         unionIdentities.emplace(ids, id); uniqueUnions.push_back(std::move(ids)); return id;
+    }
+    std::size_t mergeUnions(std::size_t left, std::size_t right)
+    {
+        return unionMerges.getOrBuild(left, right, [&] {
+            // Optional union pruning uses the same sufficient inclusion
+            // certificates as appendKnown. An unproved inclusion retains both
+            // pieces, preserving the exact union without exact search.
+            auto retained = uniqueUnions[left];
+            for (auto id : uniqueUnions[right]) {
+                if (uniqueSystems[id].isEmpty() ||
+                    llvm::any_of(retained, [&](auto old) { return subsumed(id, old); })) { continue; }
+                retained.erase(std::remove_if(retained.begin(), retained.end(),
+                    [&](auto old) { return subsumed(old, id); }), retained.end());
+                retained.push_back(id);
+            }
+            return unionIdentity(std::move(retained));
+        });
     }
     FailureOr<std::size_t> composeUnions(std::size_t left, std::size_t right, unsigned x, unsigned z, unsigned y)
     {
@@ -790,8 +890,7 @@ private:
     {
         ++result.cost.relationCompositions;
         Relation output;
-        std::map<ArithmeticRelationKey, std::set<std::size_t>> emitted;
-        std::map<ArithmeticRelationKey, std::vector<std::size_t>> retainedIds;
+        std::map<ArithmeticRelationKey, std::size_t> retainedUnions;
         TaggedIdentities emittedUnions;
         std::map<const std::vector<System>*, std::size_t> inputUnions;
         auto inputIdentity = [&](const std::vector<System>& pieces) {
@@ -819,12 +918,12 @@ private:
                     auto product = composeUnions(inputIdentity(av), inputIdentity(bv), x, z, y);
                     if (failed(product)) { fail("arithmetic composition projection failed"); return {}; }
                     if (!emittedUnions[key].insert(*product).second) { continue; }
-                    for (auto id : uniqueUnions[*product]) {
-                        if (!emitted[key].insert(id).second ||
-                            (history && !(*history)[key].insert(id).second)) { continue; }
-                        appendKnown(output[key], retainedIds[key], uniqueSystems[id], id);
-                        if (output[key].empty()) { output.erase(key); }
-                    }
+                    // Merge complete numerical unions before tag-specific
+                    // frontier filtering, so identical mathematics has one
+                    // antichain construction even at unrelated endpoints.
+                    const auto previous = retainedUnions.find(key);
+                    const auto left = previous == retainedUnions.end() ? unionIdentity({}) : previous->second;
+                    retainedUnions[key] = mergeUnions(left, *product);
                 } else {
                     for (const auto& left : av) {
                         for (const auto& right : bv) {
@@ -836,7 +935,35 @@ private:
                 }
             }
         }
+        if constexpr (std::is_same_v<System, IntegerSystem>) {
+            for (const auto& [key, unionId] : retainedUnions) {
+                auto& pieces = output[key];
+                for (auto id : uniqueUnions[unionId]) {
+                    if (history && !(*history)[key].insert(id).second) { continue; }
+                    pieces.push_back(uniqueSystems[id]);
+                }
+                if (pieces.empty()) { output.erase(key); }
+            }
+        }
         return output;
+    }
+    FailureOr<std::size_t> subtractUnions(std::size_t left, std::size_t right, unsigned dimensions)
+    {
+        return unionDifferences.getOrBuild(left, right, dimensions, [&]() -> FailureOr<std::size_t> {
+            // Own operand values while interning the result can grow pools.
+            std::vector<System> lhs, rhs;
+            for (auto id : uniqueUnions[left]) { lhs.push_back(uniqueSystems[id]); }
+            for (auto id : uniqueUnions[right]) { rhs.push_back(uniqueSystems[id]); }
+            auto difference = Policy::subtract(dimensions, lhs, rhs);
+            if (failed(difference)) { return failure(); }
+            std::vector<System> retained;
+            std::vector<std::size_t> ids;
+            for (auto& piece : *difference) {
+                const auto id = systemIdentity(piece);
+                appendKnown(retained, ids, std::move(piece), id);
+            }
+            return unionIdentity(std::move(ids));
+        });
     }
     Relation subtract(const Relation& a, const Relation& b)
     {
@@ -845,9 +972,23 @@ private:
         for (const auto& [key, pieces] : a) {
             auto found = b.find(key);
             if (found == b.end()) { output.emplace(key, pieces); continue; }
-            auto difference = Policy::subtract(dimensions(key), pieces, found->second);
-            if (failed(difference)) { fail("exact arithmetic relation difference failed"); return {}; }
-            for (auto& piece : *difference) { append(output, key, std::move(piece)); }
+            if constexpr (std::is_same_v<System, IntegerSystem>) {
+                std::vector<std::size_t> left, right;
+                for (const auto& piece : pieces) { left.push_back(systemIdentity(piece)); }
+                for (const auto& piece : found->second) { right.push_back(systemIdentity(piece)); }
+                auto difference = subtractUnions(unionIdentity(std::move(left)), unionIdentity(std::move(right)),
+                                                dimensions(key));
+                if (failed(difference)) { fail("exact arithmetic relation difference failed"); return {}; }
+                const auto& ids = uniqueUnions[*difference];
+                if (!ids.empty()) {
+                    auto& values = output[key];
+                    for (auto id : ids) { values.push_back(uniqueSystems[id]); }
+                }
+            } else {
+                auto difference = Policy::subtract(dimensions(key), pieces, found->second);
+                if (failed(difference)) { fail("exact arithmetic relation difference failed"); return {}; }
+                for (auto& piece : *difference) { append(output, key, std::move(piece)); }
+            }
         }
         return output;
     }
