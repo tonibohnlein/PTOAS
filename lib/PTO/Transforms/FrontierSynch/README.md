@@ -233,3 +233,31 @@ disjoint local load/store buffers so recurring GM alone creates cross-pipe
 hazards, and compares emitted logical/physical command closure against original
 signed-64-bit address evaluation at wrap boundaries. Full corpus and device
 validation remain separate gates.
+
+### Whole-invocation aligned private translations
+
+The same owned relative-storage adapter can certify an original machine row
+`T + c + q * ordinal` when the loop has constant signed bounds and a positive
+constant step. Decomposition preserves the original machine width and accepts
+only exact same-width additive arithmetic and constant multiplication of the
+origin-free ordinal term. An absent origin means literal zero; it does not mean
+an unknown value. Every map of the writing base must agree on the original
+invariant origin, width, byte stride and ordinal stride.
+
+Full aligned segments conservatively enclose each nonempty access. Different
+payloads with a writer must occupy different segments within a visit, and the
+existing translation-disjointness proof checks all visits. An arbitrary-precision
+bound prevents relative segment wrap over the complete invocation; the unknown
+original origin may still cross the signed cut. Empty footprints remain in the
+sealed membership snapshot but contribute no hazards. This is a sufficient
+certificate; unsupported casts, changing origins, relative wrap or overlapping
+segments preserve the later producer attempts.
+
+Private effects retain an explicit certificate kind and no relative atoms. They
+are not published as absolute GM discharges. The whole-invocation owner retains
+all original effect maps and loop bounds, while regional selectors and generic
+storage composition remain unavailable. The regression evaluates the original
+signed machine addresses for zero, one and nonunit two-visit invocations under
+both alias policies, and checks logical closure and physical event-ID pairing.
+These are compiler-level checks; device execution and the complete corpus remain
+separate validation gates.

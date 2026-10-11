@@ -14,6 +14,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/ModularScalar.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Matchers.h"
 namespace mlir::pto::frontiersynch::detail {
 struct AlignedModularMap {
     Value base;
@@ -22,6 +23,7 @@ struct AlignedModularMap {
     unsigned alignmentBits;
     uint64_t byteStride;
     AlignedModularAccess access;
+    llvm::APInt ordinalStride;
 };
 
 struct AlignedModularMapGroup {
@@ -42,7 +44,7 @@ inline std::optional<AlignedModularMapGroup> partitionAlignedModularMaps(
     unsigned bits = first.alignmentBits;
     for (const auto& map : maps) {
         if (map.base != first.base || map.origin != first.origin || map.width != first.width ||
-            map.byteStride != first.byteStride) { return std::nullopt; }
+            map.byteStride != first.byteStride || !map.ordinalStride.isZero()) { return std::nullopt; }
         bits = std::min(bits, map.alignmentBits);
     }
     std::vector<AlignedModularAccess> accesses;
@@ -107,8 +109,8 @@ inline std::optional<uint64_t> alignedMaterializationBound(const SyncAccessRegio
 class AlignedModularMapBuilder {
 public:
     using Constant = llvm::function_ref<std::optional<llvm::APInt>(Value)>;
-    AlignedModularMapBuilder(scf::ForOp loop, ModularScalar& scalar, Constant constant)
-        : loop(loop), scalar(scalar), constant(constant) {}
+    AlignedModularMapBuilder(scf::ForOp loop, ModularScalar& scalar, Constant constant, bool allowOrdinal = false)
+        : loop(loop), scalar(scalar), constant(constant), allowOrdinal(allowOrdinal) {}
 
     std::optional<AlignedModularMap> build(const SyncAccessRegion& source, uint64_t maximumRanges = UINT32_MAX,
         std::function<void(uint64_t)> attempted = {})
@@ -132,7 +134,7 @@ public:
                 symbols.push_back(getAffineSymbolExpr(0, source.byteOffset.getContext()));
             }
         }
-        if (!origin) { return std::nullopt; }
+        if (!origin || (!origin->value && (!allowOrdinal || origin->stride.isZero()))) { return std::nullopt; }
         auto map = mlir::pto::detail::substitute(source.byteOffset, dimensions, symbols);
         if (!map) { return std::nullopt; }
         auto split = mlir::pto::detail::splitTranslation(map, dimensions.size(), 1, 0);
@@ -153,11 +155,13 @@ public:
         if (!mlir::pto::detail::materializeRegion(residual, AddressSpace::GM, ranges)) {
             return std::nullopt;
         }
-        const auto bits = std::min(alignment(origin->value, 0), origin->offset.countTrailingZeros());
+        const auto originBits = origin->value ? alignment(origin->value, 0) : origin->offset.getBitWidth();
+        const auto bits = std::min({originBits, origin->offset.countTrailingZeros(),
+                                    origin->stride.countTrailingZeros()});
         // A whole-circle segment would cross the signed representative cut.
         const auto alignmentBits = std::min(bits, origin->offset.getBitWidth() - 1);
         AlignedModularMap result{source.base, origin->value, origin->offset.getBitWidth(),
-            alignmentBits, static_cast<uint64_t>(split->second), {origin->offset, {}}};
+            alignmentBits, static_cast<uint64_t>(split->second), {origin->offset, {}}, origin->stride};
         for (const auto& range : ranges) { result.access.intervals.emplace_back(range.begin, range.end); }
         const auto granularity = uint64_t{1} << result.alignmentBits;
         if (result.byteStride > UINT64_MAX / granularity) { return std::nullopt; }
@@ -172,6 +176,7 @@ private:
     struct Origin {
         Value value;
         llvm::APInt offset;
+        llvm::APInt stride;
     };
     std::optional<llvm::APInt> checkedConstant(Value value)
     {
@@ -205,25 +210,47 @@ private:
     }
     std::optional<Origin> decompose(Value value, unsigned depth)
     {
+        auto found = decompositions.find(value);
+        if (found != decompositions.end()) { return found->second; }
+        auto result = decomposeValue(value, depth);
+        decompositions.try_emplace(value, result);
+        return result;
+    }
+    std::optional<Origin> combine(Origin left, Origin right, bool subtract)
+    {
+        if (right.value && (subtract || left.value)) { return std::nullopt; }
+        if (right.value) { left.value = right.value; }
+        left.offset += subtract ? -right.offset : right.offset;
+        left.stride += subtract ? -right.stride : right.stride;
+        return left;
+    }
+    std::optional<Origin> decomposeValue(Value value, unsigned depth)
+    {
         const auto width = scalar.width(value.getType());
         if (!width || width > 64 || depth > 64) { return std::nullopt; }
-        if (loop.isDefinedOutsideOfLoop(value)) { return Origin{value, llvm::APInt(width, 0)}; }
+        if (auto fixed = checkedConstant(value)) { return Origin{{}, *fixed, llvm::APInt(width, 0)}; }
+        if (allowOrdinal && value == loop.getInductionVar()) {
+            llvm::APInt lower, step;
+            if (!matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) ||
+                !matchPattern(loop.getStep(), m_ConstantInt(&step)) ||
+                lower.getBitWidth() != width || step.getBitWidth() != width) { return std::nullopt; }
+            return Origin{{}, lower, step};
+        }
+        if (loop.isDefinedOutsideOfLoop(value)) {
+            return Origin{value, llvm::APInt(width, 0), llvm::APInt(width, 0)};
+        }
         auto* op = value.getDefiningOp();
-        if (!op || !isa<arith::AddIOp, arith::SubIOp>(op)) { return std::nullopt; }
-        auto left = checkedConstant(op->getOperand(0)), right = checkedConstant(op->getOperand(1));
-        if (right && right->getBitWidth() == width) {
-            auto origin = decompose(op->getOperand(0), depth + 1);
-            if (!origin || origin->offset.getBitWidth() != width) { return std::nullopt; }
-            origin->offset += isa<arith::SubIOp>(op) ? -*right : *right;
-            return origin;
-        }
-        if (left && left->getBitWidth() == width && isa<arith::AddIOp>(op)) {
-            auto origin = decompose(op->getOperand(1), depth + 1);
-            if (!origin || origin->offset.getBitWidth() != width) { return std::nullopt; }
-            origin->offset += *left;
-            return origin;
-        }
-        return std::nullopt;
+        if (!op || !isa<arith::AddIOp, arith::SubIOp, arith::MulIOp>(op) ||
+            scalar.width(op->getOperand(0).getType()) != width ||
+            scalar.width(op->getOperand(1).getType()) != width) { return std::nullopt; }
+        auto left = decompose(op->getOperand(0), depth + 1);
+        auto right = decompose(op->getOperand(1), depth + 1);
+        if (!left || !right) { return std::nullopt; }
+        if (!isa<arith::MulIOp>(op)) { return combine(*left, *right, isa<arith::SubIOp>(op)); }
+        if (left->value || right->value) { return std::nullopt; }
+        if (!left->stride.isZero() && !right->stride.isZero()) { return std::nullopt; }
+        return Origin{{}, left->offset * right->offset,
+            left->stride * right->offset + right->stride * left->offset};
     }
     unsigned alignment(Value value, unsigned depth)
     {
@@ -249,6 +276,8 @@ private:
     scf::ForOp loop;
     ModularScalar& scalar;
     Constant constant;
+    bool allowOrdinal;
+    DenseMap<Value, std::optional<Origin>> decompositions;
     DenseMap<Value, std::optional<llvm::APInt>> constants;
     DenseMap<Value, unsigned> alignments;
     DenseMap<Value, bool> dependencies;
