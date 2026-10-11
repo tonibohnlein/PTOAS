@@ -10,14 +10,55 @@
 #define PTO_TEST_SYNC_PHASE_COPY_CHECKS_H
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 
+inline bool checkUniformConflictCache(const mlir::pto::SyncInput& input)
+{
+    const auto& storage = input.accesses();
+    mlir::pto::SyncStorageEffects fresh;
+    if (mlir::failed(fresh.build(input))) {
+        return false;
+    }
+    const auto count = storage.effects().size();
+    for (std::size_t a = 0; a < count; ++a) {
+        for (std::size_t b = 0; b < count; ++b) {
+            if (storage.uniformConflict(a, b) != fresh.uniformConflict(a, b)) {
+                return false;
+            }
+        }
+    }
+    const auto before = storage.uniformConflictWork();
+    for (std::size_t a = 0; a < count; ++a) {
+        for (std::size_t b = 0; b < count; ++b) {
+            if (storage.uniformConflict(a, b) != fresh.uniformConflict(a, b)) {
+                return false;
+            }
+        }
+    }
+    const auto after = storage.uniformConflictWork();
+    if (after.counterOverflow || after.constructions != before.constructions ||
+        after.cacheHits - before.cacheHits != after.queries - before.queries) {
+        return false;
+    }
+    if (mlir::failed(fresh.build(input))) {
+        return false;
+    }
+    const auto reset = fresh.uniformConflictWork();
+    if (reset.queries || reset.cacheHits || reset.constructions || reset.counterOverflow) {
+        return false;
+    }
+    if (count && storage.uniformConflict(0, count - 1) != fresh.uniformConflict(0, count - 1)) {
+        return false;
+    }
+    return true;
+}
+
 inline bool checkPhaseCopies(const mlir::pto::SyncInput& input)
 {
     using namespace mlir::pto;
     const auto& storage = input.accesses();
     llvm::SmallVector<std::unique_ptr<CompoundInstanceElement>> copies;
     for (const auto* phase : input.instructions()) {
-        auto copy = std::make_unique<CompoundInstanceElement>(phase->GetIndex(), phase->defVec,
-            phase->useVec, phase->kPipeValue, phase->opName);
+        auto copy = std::make_unique<CompoundInstanceElement>(
+            phase->GetIndex(), phase->defVec, phase->useVec, phase->kPipeValue, phase->opName);
         copy->elementOp = phase->elementOp;
         copy->compoundCoreType = phase->compoundCoreType;
         // Deliberately use the same fields as InsertBackForSync. An operation
@@ -32,12 +73,11 @@ inline bool checkPhaseCopies(const mlir::pto::SyncInput& input)
             for (auto leftMode : {SyncAccessMode::Read, SyncAccessMode::Write}) {
                 for (auto rightMode : {SyncAccessMode::Read, SyncAccessMode::Write}) {
                     DepBaseMemInfoPairVec original, cloned, mixed;
-                    bool expected = storage.dependencies(input.instructions()[i], leftMode,
-                        input.instructions()[j], rightMode, original);
-                    bool actual = storage.dependencies(copies[i].get(), leftMode,
-                        copies[j].get(), rightMode, cloned);
-                    bool partial = storage.dependencies(input.instructions()[i], leftMode,
-                        copies[j].get(), rightMode, mixed);
+                    bool expected = storage.dependencies(
+                        input.instructions()[i], leftMode, input.instructions()[j], rightMode, original);
+                    bool actual = storage.dependencies(copies[i].get(), leftMode, copies[j].get(), rightMode, cloned);
+                    bool partial =
+                        storage.dependencies(input.instructions()[i], leftMode, copies[j].get(), rightMode, mixed);
                     if (expected != actual || expected != partial || original != cloned || original != mixed) {
                         return false;
                     }
@@ -45,22 +85,27 @@ inline bool checkPhaseCopies(const mlir::pto::SyncInput& input)
             }
         }
     }
-    return true;
+    return checkUniformConflictCache(input);
 }
 // The legacy pass must keep every original macro stage and its effect lookup.
 // Frontier's view is the exact per-call/per-pipe union of those same records.
-inline bool checkMacroEnvelopeView(mlir::func::FuncOp function,
-                                  const mlir::pto::SyncInput& legacy)
+inline bool checkMacroEnvelopeView(mlir::func::FuncOp function, const mlir::pto::SyncInput& legacy)
 {
     using namespace mlir::pto;
     SyncInput envelopes(legacy.memory().gmPolicy());
     if (mlir::failed(envelopes.build(function, SyncInstructionView::PipeEnvelopes)) ||
-        legacy.ir().size() != envelopes.ir().size()) { return false; }
+        legacy.ir().size() != envelopes.ir().size()) {
+        return false;
+    }
     for (std::size_t i = 0; i < legacy.ir().size(); ++i) {
         auto* before = llvm::dyn_cast<CompoundInstanceElement>(legacy.ir()[i].get());
         auto* after = llvm::dyn_cast<CompoundInstanceElement>(envelopes.ir()[i].get());
-        if (bool(before) != bool(after)) { return false; }
-        if (!before) { continue; }
+        if (bool(before) != bool(after)) {
+            return false;
+        }
+        if (!before) {
+            continue;
+        }
         if (before->defVec.size() != after->defVec.size() || before->useVec.size() != after->useVec.size() ||
             before->GetIndex() != after->GetIndex() || before->macroOpInstanceId != after->macroOpInstanceId) {
             return false;
@@ -68,29 +113,44 @@ inline bool checkMacroEnvelopeView(mlir::func::FuncOp function,
         for (auto* memory : before->defVec) {
             if (!llvm::any_of(legacy.accesses().effectsFor(before), [&](auto id) {
                     return legacy.accesses().effects()[id].memory == memory &&
-                        legacy.accesses().effects()[id].mode == SyncAccessMode::Write;
-                })) { return false; }
+                           legacy.accesses().effects()[id].mode == SyncAccessMode::Write;
+                })) {
+                return false;
+            }
         }
         for (auto* memory : before->useVec) {
             if (!llvm::any_of(legacy.accesses().effectsFor(before), [&](auto id) {
                     return legacy.accesses().effects()[id].memory == memory &&
-                        legacy.accesses().effects()[id].mode == SyncAccessMode::Read;
-                })) { return false; }
+                           legacy.accesses().effects()[id].mode == SyncAccessMode::Read;
+                })) {
+                return false;
+            }
         }
     }
     for (const auto* phase : envelopes.instructions()) {
         llvm::SmallVector<mlir::Value> writes, reads;
         for (const auto* raw : legacy.instructions()) {
-            if (raw->elementOp != phase->elementOp || raw->kPipeValue != phase->kPipeValue) { continue; }
-            for (auto* memory : raw->defVec) { writes.push_back(memory->baseBuffer); }
-            for (auto* memory : raw->useVec) { reads.push_back(memory->baseBuffer); }
+            if (raw->elementOp != phase->elementOp || raw->kPipeValue != phase->kPipeValue) {
+                continue;
+            }
+            for (auto* memory : raw->defVec) {
+                writes.push_back(memory->baseBuffer);
+            }
+            for (auto* memory : raw->useVec) {
+                reads.push_back(memory->baseBuffer);
+            }
         }
         auto same = [](auto& values, auto& memories) {
-            return llvm::all_of(values, [&](auto value) {
-                return llvm::any_of(memories, [&](auto* memory) { return memory->baseBuffer == value; });
-            }) && llvm::all_of(memories, [&](auto* memory) { return llvm::is_contained(values, memory->baseBuffer); });
+            return llvm::all_of(
+                       values,
+                       [&](auto value) {
+                           return llvm::any_of(memories, [&](auto* memory) { return memory->baseBuffer == value; });
+                       }) &&
+                   llvm::all_of(memories, [&](auto* memory) { return llvm::is_contained(values, memory->baseBuffer); });
         };
-        if (!same(writes, phase->defVec) || !same(reads, phase->useVec)) { return false; }
+        if (!same(writes, phase->defVec) || !same(reads, phase->useVec)) {
+            return false;
+        }
     }
     return checkPhaseCopies(envelopes);
 }

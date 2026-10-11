@@ -250,8 +250,12 @@ bool prepareTemplateEffects(TemplateBuilder& builder)
                 bool conflict = false;
                 for (const auto& x : builder.output.payloads[a].effects) {
                     for (const auto& y : builder.output.payloads[b].effects) {
-                        conflict |= builder.input.accesses().uniformConflict(x.sourceEffect, y.sourceEffect);
+                        if (builder.input.accesses().uniformConflict(x.sourceEffect, y.sourceEffect)) {
+                            conflict = true;
+                            break;
+                        }
                     }
+                    if (conflict) { break; }
                 }
                 if (conflict) { builder.output.uniformConflicts.emplace_back(a, b); }
             }

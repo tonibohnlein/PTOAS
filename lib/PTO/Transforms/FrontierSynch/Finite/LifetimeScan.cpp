@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Linear lifetime scan; completion chains compress readers on the same pipe.
-#include "PTO/Transforms/FrontierSynch/Finite/LifetimeScan.h"
+#include "PTO/Transforms/FrontierSynch/Finite/LifetimeScanInput.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include <limits>
 #include <optional>
@@ -24,17 +24,23 @@ struct CellState {
 };
 class Scanner {
 public:
-    explicit Scanner(StorageProtectionPolicy policy) : protection(policy) {}
+    Scanner(StorageProtectionPolicy policy, bool witnesses, StorageScanWork* counters)
+        : protection(policy), retainWitnesses(witnesses), work(counters)
+    {}
     StorageScanResult output;
-    bool run(llvm::ArrayRef<ExplicitEffects> input, llvm::ArrayRef<StorageGenerator> prerequisites)
+    bool run(const StorageScanInput& input, llvm::ArrayRef<StorageGenerator> prerequisites)
     {
-        for (const auto& occurrence : input) {
+        for (std::size_t id = 0; id < input.size; ++id) {
+            const auto occurrence = input.occurrence(id);
             if (!positions.emplace(occurrence.payload, positions.size()).second) {
                 output.error = "duplicate payload identity";
                 return false;
             }
             std::unordered_map<uint32_t, CellAccess> modes;
-            for (const auto& access : occurrence.accesses) {
+            const bool complete = input.accesses(id, [&](const CellAccess& access) {
+                if (work) {
+                    count(work->incidenceVisits);
+                }
                 if (!access.read && !access.write) {
                     output.error = "empty access mode";
                     return false;
@@ -47,8 +53,18 @@ public:
                 }
                 mode.read |= access.read;
                 mode.write |= access.write;
+                return true;
+            });
+            if (!complete) {
+                if (output.error.empty()) {
+                    output.error = "invalid access input";
+                }
+                return false;
             }
             for (const auto& [atom, access] : modes) {
+                if (work) {
+                    count(work->consolidatedVisits);
+                }
                 if (access.protectionGroup != 0 &&
                     (!access.write || !validGroup(access.protectionGroup, occurrence.pipe))) {
                     output.error = "protection requires writers on one pipe";
@@ -71,16 +87,24 @@ public:
         }
         return true;
     }
+
 private:
     StorageProtectionPolicy protection;
+    bool retainWitnesses;
+    StorageScanWork* work;
+    void count(uint64_t& counter)
+    {
+        if (counter == UINT64_MAX) {
+            work->counterOverflow = true;
+        } else {
+            ++counter;
+        }
+    }
     std::unordered_map<uint32_t, std::size_t> positions;
     std::unordered_map<uint32_t, CellState> cells;
     std::unordered_map<uint64_t, uint32_t> emitted;
     std::unordered_map<uint64_t, uint32_t> groupPipes;
-    bool validGroup(uint64_t group, uint32_t pipe)
-    {
-        return groupPipes.emplace(group, pipe).first->second == pipe;
-    }
+    bool validGroup(uint64_t group, uint32_t pipe) { return groupPipes.emplace(group, pipe).first->second == pipe; }
     bool emit(uint32_t source, uint32_t target, uint32_t atom, StorageHazard hazard)
     {
         const uint64_t key = (uint64_t(source) << 32) | target;
@@ -94,19 +118,28 @@ private:
             found = emitted.emplace(key, id).first;
             output.generators.push_back({source, target});
         }
-        output.witnesses.push_back({found->second, atom, hazard});
+        if (work) {
+            count(work->hazardWitnesses);
+        }
+        if (retainWitnesses) {
+            output.witnesses.push_back({found->second, atom, hazard});
+            if (work) {
+                count(work->retainedWitnesses);
+            }
+        }
         return true;
     }
-    bool visit(const ExplicitEffects& occurrence, uint32_t atom, const CellAccess& access)
+    bool visit(const StorageOccurrenceMetadata& occurrence, uint32_t atom, const CellAccess& access)
     {
         auto& state = cells[atom];
         // A protected same-pipe writer chain uses native C/C order before a
         // retained software edge and I/I order after it. An entirely protected
         // chain has protected endpoints by group membership. Thus the sparse
         // scan remains complete without adding fictitious C/I hardware edges.
-        if (state.writer && (protection.protectsScalar(state.writer->pipe, occurrence.pipe) ||
-            hardwareProtectsConflict(state.writer->pipe, state.writer->protectionGroup,
-                                     occurrence.pipe, access.protectionGroup))) {
+        if (state.writer &&
+            (protection.protectsScalar(state.writer->pipe, occurrence.pipe) ||
+             hardwareProtectsConflict(
+                 state.writer->pipe, state.writer->protectionGroup, occurrence.pipe, access.protectionGroup))) {
             output.protectedHazards += unsigned(access.read) + unsigned(access.write);
         } else if (state.writer) {
             if (access.read && !emit(state.writer->payload, occurrence.payload, atom, StorageHazard::RAW)) {
@@ -137,16 +170,36 @@ private:
     }
 };
 } // namespace
-StorageScanResult scanStorageLifetimes(llvm::ArrayRef<ExplicitEffects> occurrences,
-                                      llvm::ArrayRef<StorageGenerator> prerequisites,
-                                      StorageProtectionPolicy protection)
+StorageScanResult scanStorageLifetimes(
+    const StorageScanInput& input, llvm::ArrayRef<StorageGenerator> prerequisites, StorageProtectionPolicy protection,
+    bool retainWitnesses, StorageScanWork* work)
 {
-    Scanner scanner(protection);
-    if (!scanner.run(occurrences, prerequisites)) {
+    if (work) {
+        *work = {};
+    }
+    Scanner scanner(protection, retainWitnesses, work);
+    if (!scanner.run(input, prerequisites)) {
         StorageScanResult failure;
         failure.error = scanner.output.error;
         return failure;
     }
     return std::move(scanner.output);
+}
+StorageScanResult scanStorageLifetimes(
+    llvm::ArrayRef<ExplicitEffects> occurrences, llvm::ArrayRef<StorageGenerator> prerequisites,
+    StorageProtectionPolicy protection)
+{
+    auto metadata = [&](std::size_t id) {
+        return StorageOccurrenceMetadata{occurrences[id].payload, occurrences[id].pipe};
+    };
+    auto accesses = [&](std::size_t id, StorageAccessConsumer consume) {
+        for (const auto& access : occurrences[id].accesses) {
+            if (!consume(access)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    return scanStorageLifetimes(StorageScanInput{occurrences.size(), metadata, accesses}, prerequisites, protection);
 }
 } // namespace mlir::pto::frontiersynch
