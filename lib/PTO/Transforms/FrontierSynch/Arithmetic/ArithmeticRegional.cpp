@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exact arithmetic child interfaces for sequence composition.
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
+#include "ArithmeticByteCover.h"
+#include "ArithmeticImportedPrimitives.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "../Shared/CountedLoop.h"
 #include "../Shared/RegionalRelationsInternal.h"
@@ -30,11 +32,14 @@ namespace {
 using Id = RegionExpressions::Id;
 struct State : ArithmeticRegionalRelations {
     std::optional<ArithmeticHandoffAllocation> handoffAllocation;
-    std::vector<ArithmeticIntegerPiece> primitives;
+    // Imports borrow schema identities from this state's unchanged program.
+    std::optional<ImportedArithmeticPrimitives> importedPrimitives;
+    llvm::ArrayRef<ArithmeticIntegerPiece> primitives;
     using StorageKey = std::pair<AddressSpace, Value>;
     using Interval = std::pair<uint64_t, uint64_t>;
     llvm::MapVector<StorageKey, std::vector<Interval>> finiteStorage;
     bool finiteStorageComplete = false;
+    uint64_t finiteCoverProofRequests = 0;
     std::shared_ptr<RegionExpressions> arena;
     std::vector<uint32_t> pipes;
     struct LoopGeometry { Id lower; int64_t step; uint64_t maximumOrdinal; };
@@ -340,11 +345,11 @@ bool sameReaders(const std::map<uint32_t, std::vector<RegionalSelector>>& a,
     }
     return true;
 }
-// The finite-port adapter needs a bounded set of physical bytes across every
-// entry binding. Establish this from access primitives before computing F* or
-// first/last selectors; an unsupported child can then leave its parent to try a
-// whole-region route without paying for interfaces it cannot export.
-bool collectFiniteStorage(State& state)
+// The finite-port adapter needs an enclosing set of physical bytes across
+// every entry binding. Uniform exports use sufficient rational bounds; exact
+// membership still comes from selectors. Explicit finite compatibility probes
+// retain exact projection.
+bool collectFiniteStorage(State& state, bool sufficientCovers = false)
 {
     llvm::DenseSet<State::StorageKey> symbolic;
     for (const auto& access : state.primitives) {
@@ -356,29 +361,38 @@ bool collectFiniteStorage(State& state)
         }
         const State::StorageKey key{*schema.storageSpace, schema.storageBase};
         if (symbolic.count(key)) { continue; }
-        // Imported primitives already include the exact occurrence and shared
-        // parameter context. Projection here is directly to the byte quotient.
-        auto projected = access.system.project({byteColumn});
-        if (failed(projected)) { state.error = "arithmetic storage support projection failed"; return false; }
-        for (const auto& piece : *projected) {
-            if (piece.isEmpty()) { continue; }
-            std::optional<BoundInteger> lower, upper;
-            for (const auto& row : piece.constraints()) {
-                const auto& coefficient = row.coefficients.front();
-                if (coefficient > 0) {
-                    auto bound = floorDiv(row.bound, coefficient);
-                    upper = upper ? std::min(*upper, bound) : bound;
-                } else if (coefficient < 0) {
-                    auto bound = -floorDiv(row.bound, -coefficient);
-                    lower = lower ? std::max(*lower, bound) : bound;
+        std::vector<std::pair<BoundInteger, BoundInteger>> covers;
+        if (sufficientCovers) {
+            auto cover = rationalCoordinateCover(access.system, byteColumn, state.finiteCoverProofRequests);
+            if (!cover) { symbolic.insert(key); state.finiteStorage.erase(key); continue; }
+            covers.push_back(std::move(*cover));
+        } else {
+            // Explicit finite compatibility requests retain their exact
+            // projection. Normal uniform requests need only a certified cover.
+            auto projected = access.system.project({byteColumn});
+            if (failed(projected)) { state.error = "arithmetic storage support projection failed"; return false; }
+            for (const auto& piece : *projected) {
+                if (piece.isEmpty()) { continue; }
+                std::optional<BoundInteger> lower, upper;
+                for (const auto& row : piece.constraints()) {
+                    const auto& coefficient = row.coefficients.front();
+                    if (coefficient > 0) {
+                        auto bound = floorDiv(row.bound, coefficient);
+                        upper = upper ? std::min(*upper, bound) : bound;
+                    } else if (coefficient < 0) {
+                        auto bound = -floorDiv(row.bound, -coefficient);
+                        lower = lower ? std::max(*lower, bound) : bound;
+                    }
                 }
+                if (!lower || !upper) { symbolic.insert(key); state.finiteStorage.erase(key); break; }
+                covers.emplace_back(std::move(*lower), std::move(*upper));
             }
-            if (!lower || !upper) {
-                symbolic.insert(key); state.finiteStorage.erase(key); break;
-            }
+            if (symbolic.count(key)) { continue; }
+        }
+        for (const auto& [lower, upper] : covers) {
             const BoundInteger period(state.program.primitives.period), residue(access.residues[byteColumn]);
-            const auto begin = *lower * period + residue;
-            const auto end = *upper * period + residue + 1;
+            const auto begin = lower * period + residue;
+            const auto end = upper * period + residue + 1;
             if (begin < 0 || end > BoundInteger(INT64_MAX)) {
                 symbolic.insert(key); state.finiteStorage.erase(key); break;
             }
@@ -398,6 +412,8 @@ bool collectFiniteStorage(State& state)
         }
         intervals = std::move(merged);
     }
+    // False means a finite adapter was not certified, not that storage is
+    // mathematically unbounded. Exact symbolic membership remains available.
     state.finiteStorageComplete = symbolic.empty();
     return true;
 }
@@ -514,6 +530,7 @@ FailureOr<RegionalAnalysis> exportState(const std::shared_ptr<State>& state,
     const SyncInput& input, std::string& error, bool finite, bool selectors = true)
 {
     RegionalAnalysis out; out.expressions = state->arena;
+    accumulateCost(out.cost.implicationChecks, state->finiteCoverProofRequests);
     out.accessModel = &input.accesses(); out.gmAliasPolicy = input.memory().gmPolicy();
     for (const auto& site : state->program.sites) {
         auto* operation = site.phase->elementOp;
@@ -674,10 +691,13 @@ FailureOr<RegionalAnalysis> initializeExports(const std::shared_ptr<State>& stat
     const std::function<bool()>& reduce = {})
 {
     if (!state->initialize(parameterBinding)) { error = state->error; return failure(); }
-    auto imported = importArithmeticIntegerPieces(state->program, !selectors);
+    auto imported = importOwnedArithmeticIntegerPieces(state->program, !selectors);
     if (failed(imported)) { error = "regional arithmetic primitive import failed"; return failure(); }
-    state->primitives = std::move(*imported);
-    if (selectors && !collectFiniteStorage(*state)) { error = state->error; return failure(); }
+    state->importedPrimitives.emplace(std::move(*imported));
+    state->primitives = state->importedPrimitives->pieces();
+    if (selectors && !collectFiniteStorage(*state, request == StorageExportRequest::SymbolicAllowed)) {
+        error = state->error; return failure();
+    }
     const bool finite = state->finiteStorageComplete;
     if (request == StorageExportRequest::Finite && !finite) {
         error = "finite regional export deferred: symbolic storage support remains available to other routes";
@@ -705,7 +725,8 @@ FailureOr<RegionalAnalysis> initializeExports(const std::shared_ptr<State>& stat
 
     if (reduce && !reduce()) { return failure(); }
     if (selectors) {
-        state->selectors = buildArithmeticStorageSelectors(state->program, state->pipes);
+        state->selectors = buildArithmeticStorageSelectorsFromImported(
+            state->program, *state->importedPrimitives, state->pipes);
         if (!state->selectors.error.empty()) { error = state->selectors.error; return failure(); }
     }
     return exportState(state, input, error, finite, selectors);
@@ -869,9 +890,10 @@ bool hasFiniteArithmeticStorage(const ArithmeticProgram& program, const SyncInpu
     auto state = std::make_shared<State>();
     state->program = program; state->input = &input; state->arena = expressions;
     if (!state->initialize()) { error = state->error; return false; }
-    auto imported = importArithmeticIntegerPieces(program);
+    auto imported = importOwnedArithmeticIntegerPieces(state->program);
     if (failed(imported)) { error = "finite storage primitive import failed"; return false; }
-    state->primitives = std::move(*imported);
+    state->importedPrimitives.emplace(std::move(*imported));
+    state->primitives = state->importedPrimitives->pieces();
     if (!collectFiniteStorage(*state)) { error = state->error; return false; }
     if (!state->finiteStorageComplete) {
         error = "finite regional export deferred: symbolic storage support remains available to other routes";
@@ -1082,7 +1104,17 @@ FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalR
         }
         return selected;
     };
-    auto crossingState = std::make_shared<State>(*state);
+    // This synthetic composition state owns relation mathematics, with no
+    // primitive import. Copy only its base and endpoint-lowering context;
+    // import owners and schema views must never cross program identities.
+    if (state->importedPrimitives || !state->primitives.empty()) {
+        error = "composed crossing state unexpectedly owns primitive imports"; return failure();
+    }
+    auto crossingState = std::make_shared<State>();
+    static_cast<ArithmeticRegionalRelations&>(*crossingState) = *state;
+    crossingState->arena = state->arena;
+    crossingState->geometry = state->geometry;
+    crossingState->pipes = state->pipes;
     crossingState->analysis.minimumDemands = relation->newCrossings;
     // A subset of certified minimum covers retains the endpoint functionality
     // used by the selector constructor. Internal recipes are emitted separately.
