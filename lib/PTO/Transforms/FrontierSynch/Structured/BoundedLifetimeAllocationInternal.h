@@ -15,12 +15,14 @@
 #include <memory>
 #include <optional>
 namespace mlir::pto::frontiersynch::detail {
+class BoundedLifetimeAllocationContext;
 // Exact original-coordinate presence in the explicitly identified output arena.
 // The callback owns its evaluation context; rollbackable proof attempts must
 // not write generated IDs into another retained interface's mutable cache.
 struct BoundedAllocationPresence {
     std::shared_ptr<RegionExpressions> expressions;
     std::function<std::optional<RegionExpressions::Id>(RegionalEvent)> presence;
+    std::shared_ptr<BoundedLifetimeAllocationContext> invocation;
 };
 std::shared_ptr<RegionalAllocationSummary> boundedLifetimeRegionalAllocationWithPresence(
     RegionExpressions& producerExpressions, RegionExpressions& outputExpressions,
@@ -40,6 +42,10 @@ struct BoundedLifetimeAllocationAssignment {
     // mappings, but supply neither live reuse obligations nor lane envelopes.
     std::vector<uint8_t> inactiveRecords;
 };
+std::optional<BoundedLifetimeAllocationAssignment> boundedLifetimeAllocationAssignmentWithInactive(
+    RegionExpressions& expressions, const LifetimeWindowInput& window,
+    llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> sourceDemands,
+    llvm::ArrayRef<uint8_t> invocationInactive);
 // The assignment is a proof about immutable modeled occurrences. It contains
 // original sourceDemand record IDs, not endpoint or physical-ID namespaces.
 std::optional<BoundedLifetimeAllocationAssignment> boundedLifetimeAllocationAssignment(

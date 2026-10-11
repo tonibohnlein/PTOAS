@@ -17,6 +17,7 @@
 #include <map>
 #include "../../lib/PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInactiveRecords.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeAllocationInternal.h"
+bool runBoundedAllocationContextChecks();
 namespace fs = mlir::pto::frontiersynch;
 namespace {
 std::optional<int64_t> budget(mlir::DictionaryAttr certificate, unsigned groups = 1)
@@ -447,7 +448,8 @@ int runBoundedLifetimeAllocationChecks()
     mlir::Builder builder(&context);
     mlir::OwningOpRef<mlir::func::FuncOp> function(mlir::func::FuncOp::create(
         builder.getUnknownLoc(), "bounded_allocation_checks", builder.getFunctionType({}, {})));
-    if (!ordinary(*function) || !palettes(*function) || !sharedDirections(*function) ||
+    if (!runBoundedAllocationContextChecks() || !ordinary(*function) || !palettes(*function) ||
+        !sharedDirections(*function) ||
         !constantDirections() || !protectedModes(*function) || !regionalOrdinary(*function) ||
         !certifiedBoundaries(*function) || !regionalDelayed() || !regionalRollback() ||
         !inactiveGuardProofs(*function) ||
