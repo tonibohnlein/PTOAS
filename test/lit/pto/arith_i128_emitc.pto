@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync=false --enable-plan-memory=false %s -o %t.cpp
+// RUN: FileCheck %s < %t.cpp
+// RUN: %python %S/Inputs/check_wide_scalar_emitc.py %t.cpp ptoas
+// Wide synchronization predicates use the existing C++ __int128 scalar domain.
+// Constants must use representable 64-bit literal limbs, including signed min.
+// The host oracle checks the emitted scalar functions, not device execution.
+// CHECK-LABEL: __int128 wide_min(
+// CHECK: static_cast<unsigned __int128>
+// CHECK-LABEL: __int128 wide_max(
+// CHECK: 9223372036854775807ULL
+// CHECK: 18446744073709551615ULL
+// CHECK-LABEL: __int128 wide_high(
+// CHECK: 9223372036854775808ULL
+// CHECK-LABEL: unsigned __int128 wide_unsigned_identity(
+module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
+  func.func @wide_min() -> i128 {
+    %value = arith.constant -170141183460469231731687303715884105728 : i128
+    return %value : i128
+  }
+  func.func @wide_max() -> i128 {
+    %value = arith.constant 170141183460469231731687303715884105727 : i128
+    return %value : i128
+  }
+  func.func @wide_high() -> i128 {
+    %value = arith.constant 9223372036854775808 : i128
+    return %value : i128
+  }
+  func.func @wide_negative() -> i128 {
+    %value = arith.constant -1267650600228229401496703205376 : i128
+    return %value : i128
+  }
+  func.func @wide_unsigned_identity(%value: ui128) -> ui128 {
+    return %value : ui128
+  }
+  func.func @wide_arithmetic(%x: i128, %y: i128) -> i128 {
+    %sum = arith.addi %x, %y : i128
+    %difference = arith.subi %x, %y : i128
+    %product = arith.muli %sum, %difference : i128
+    return %product : i128
+  }
+  func.func @wide_floor(%x: i128) -> i128 {
+    %seven = arith.constant 7 : i128
+    %value = arith.floordivsi %x, %seven : i128
+    return %value : i128
+  }
+  func.func @wide_signed_less(%x: i128, %y: i128) -> i1 {
+    %value = arith.cmpi slt, %x, %y : i128
+    return %value : i1
+  }
+  func.func @wide_unsigned_less(%x: i128, %y: i128) -> i1 {
+    %value = arith.cmpi ult, %x, %y : i128
+    return %value : i1
+  }
+  func.func @wide_left(%x: i128, %amount: i128) -> i128 {
+    %value = arith.shli %x, %amount : i128
+    return %value : i128
+  }
+  func.func @wide_logical_right(%x: i128, %amount: i128) -> i128 {
+    %value = arith.shrui %x, %amount : i128
+    return %value : i128
+  }
+  func.func @wide_arithmetic_right(%x: i128, %amount: i128) -> i128 {
+    %value = arith.shrsi %x, %amount : i128
+    return %value : i128
+  }
+  func.func @wide_signed_extend(%x: i64) -> i128 {
+    %value = arith.extsi %x : i64 to i128
+    return %value : i128
+  }
+  func.func @wide_unsigned_extend(%x: i64) -> i128 {
+    %value = arith.extui %x : i64 to i128
+    return %value : i128
+  }
+  func.func @wide_truncate(%x: i128) -> i64 {
+    %value = arith.trunci %x : i128 to i64
+    return %value : i64
+  }
+}
