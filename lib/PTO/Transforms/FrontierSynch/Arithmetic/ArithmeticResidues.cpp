@@ -309,6 +309,9 @@ SmallVector<AffineExpr> ProgramBuilder::domain(const ArithmeticSite& site, unsig
 void ProgramBuilder::emit(PrimitiveRelation& target, ArrayRef<AffineExpr> rows,
                          std::optional<std::pair<unsigned, uint64_t>> filter, uint64_t modulus)
 {
+    // A failed primitive invalidates this producer attempt. Continuing cannot
+    // establish a complete representation and only repeats expensive lowering.
+    if (output.extraction.state != RecognitionState::Applicable) { return; }
     bool machine = false;
     for (auto row : rows) {
         if (row) {
