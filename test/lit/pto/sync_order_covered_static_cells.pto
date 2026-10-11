@@ -1,0 +1,94 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --gm-alias=may-not-alias --certify-regions %s | FileCheck %s
+// RUN: pto-sync-input-test --gm-alias=may-alias --certify-regions %s | FileCheck %s --check-prefix=ALIAS
+// RUN: %python %S/Inputs/check_order_covered_static_cells.py pto-sync-input-test %s
+// CHECK: order-covered accepted partial_overlap
+// CHECK: order-covered rejected dynamic_local
+// CHECK: order-covered accepted ACC protection parity
+// ALIAS-COUNT-2: order-covered rejected
+!left = !pto.tile_buf<left, 64x64xf16, slayout=row_major>
+!right = !pto.tile_buf<right, 64x64xf16, slayout=col_major>
+!acc = !pto.tile_buf<acc, 64x64xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a3"} {
+  func.func @partial_overlap(%output: !pto.ptr<f32, gm>, %input: !pto.ptr<f32, gm>, %upper: index, %lower32: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>, test.order_covered_periodic, test.order_covered_static_cells} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %sixteen = arith.constant 16 : index
+    %sixtyfour = arith.constant 64 : index
+    %step = arith.constant 20 : index
+    %a0 = arith.constant 0 : i64
+    %a32 = arith.constant 32 : i64
+    %scalar = arith.constant 1.0 : f32
+    %source = pto.make_tensor_view %input, shape = [%one, %sixtyfour], strides = [%sixtyfour, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %destination = pto.make_tensor_view %output, shape = [%one, %sixtyfour], strides = [%sixtyfour, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %lower = arith.index_cast %lower32 : i32 to index
+    scf.for %iv = %lower to %upper step %step {
+      %offset = arith.muli %iv, %sixtyfour : index
+      %clamped = arith.maxsi %offset, %zero : index
+      %a = pto.alloc_tile addr = %a0 valid_row = %one valid_col = %sixteen : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+      %b = pto.alloc_tile addr = %a32 valid_row = %one valid_col = %sixteen : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+      %c = pto.alloc_tile addr = %a0 valid_row = %one valid_col = %sixteen : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+      %read = pto.partition_view %source, offsets = [%zero, %clamped], sizes = [%one, %sixteen] : !pto.tensor_view<?x?xf32>
+      pto.tload ins(%read : !pto.partition_tensor_view<1x16xf32>) outs(%a : !pto.tile_buf<vec, 1x16xf32, valid=?x?>) {layout = #pto.layout<nd>}
+      pto.tadds ins(%a, %scalar : !pto.tile_buf<vec, 1x16xf32, valid=?x?>, f32) outs(%b : !pto.tile_buf<vec, 1x16xf32, valid=?x?>)
+      pto.tadds ins(%b, %scalar : !pto.tile_buf<vec, 1x16xf32, valid=?x?>, f32) outs(%c : !pto.tile_buf<vec, 1x16xf32, valid=?x?>)
+      %write = pto.partition_view %destination, offsets = [%zero, %clamped], sizes = [%one, %sixteen] : !pto.tensor_view<?x?xf32>
+      pto.tstore ins(%c : !pto.tile_buf<vec, 1x16xf32, valid=?x?>) outs(%write : !pto.partition_tensor_view<1x16xf32>) {layout = #pto.layout<nd>}
+    }
+    return
+  }
+  func.func @dynamic_local(%output: !pto.ptr<f32, gm>, %input: !pto.ptr<f32, gm>, %upper: index, %lower32: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>, test.order_covered_periodic, test.order_covered_rejected, test.order_covered_obligation = "retained cells"} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %sixteen = arith.constant 16 : index
+    %sixtyfour = arith.constant 64 : index
+    %step = arith.constant 20 : index
+    %a0 = arith.constant 0 : i64
+    %a32 = arith.constant 32 : i64
+    %scalar = arith.constant 1.0 : f32
+    %source = pto.make_tensor_view %input, shape = [%one, %sixtyfour], strides = [%sixtyfour, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %destination = pto.make_tensor_view %output, shape = [%one, %sixtyfour], strides = [%sixtyfour, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %lower = arith.index_cast %lower32 : i32 to index
+    scf.for %iv = %lower to %upper step %step {
+      %offset = arith.muli %iv, %sixtyfour : index
+      %clamped = arith.maxsi %offset, %zero : index
+      %dynamic = arith.index_cast %iv : index to i64
+      %a = pto.alloc_tile addr = %dynamic valid_row = %one valid_col = %sixteen : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+      %b = pto.alloc_tile addr = %a32 valid_row = %one valid_col = %sixteen : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+      %c = pto.alloc_tile addr = %dynamic valid_row = %one valid_col = %sixteen : !pto.tile_buf<vec, 1x16xf32, valid=?x?>
+      %read = pto.partition_view %source, offsets = [%zero, %clamped], sizes = [%one, %sixteen] : !pto.tensor_view<?x?xf32>
+      pto.tload ins(%read : !pto.partition_tensor_view<1x16xf32>) outs(%a : !pto.tile_buf<vec, 1x16xf32, valid=?x?>) {layout = #pto.layout<nd>}
+      pto.tadds ins(%a, %scalar : !pto.tile_buf<vec, 1x16xf32, valid=?x?>, f32) outs(%b : !pto.tile_buf<vec, 1x16xf32, valid=?x?>)
+      pto.tadds ins(%b, %scalar : !pto.tile_buf<vec, 1x16xf32, valid=?x?>, f32) outs(%c : !pto.tile_buf<vec, 1x16xf32, valid=?x?>)
+      %write = pto.partition_view %destination, offsets = [%zero, %clamped], sizes = [%one, %sixteen] : !pto.tensor_view<?x?xf32>
+      pto.tstore ins(%c : !pto.tile_buf<vec, 1x16xf32, valid=?x?>) outs(%write : !pto.partition_tensor_view<1x16xf32>) {layout = #pto.layout<nd>}
+    }
+    return
+  }
+  func.func @acc_protection(%out: !pto.ptr<f32, gm>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>, test.order_covered_periodic, test.order_covered_acc} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %n = arith.constant 64 : index
+    %rows = arith.constant 128 : index
+    %a = pto.alloc_tile addr = %base : !left
+    %b = pto.alloc_tile addr = %base : !right
+    %c = pto.alloc_tile addr = %base : !acc
+    %view = pto.make_tensor_view %out, shape = [%rows, %n], strides = [%n, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    scf.for %i = %zero to %two step %one {
+      pto.tmatmul ins(%a, %b : !left, !right) outs(%c : !acc)
+      pto.tmatmul.acc ins(%c, %a, %b : !acc, !left, !right) outs(%c : !acc)
+      %row = arith.muli %i, %n : index
+      %part = pto.partition_view %view, offsets = [%row, %zero], sizes = [%n, %n] : !pto.tensor_view<?x?xf32>
+      pto.tstore ins(%c : !acc) outs(%part : !pto.partition_tensor_view<64x64xf32>) {layout = #pto.layout<nd>}
+    }
+    return
+  }
+}

@@ -23,14 +23,15 @@ std::string render(Operation* operation)
 }
 // The fixture's two GM bases are distinct under MayNotAlias. Each store writes
 // 128 row intervals, while every load writes and every store reads the same UB.
-bool globalOverlap(int64_t a, int64_t b, bool small)
+bool globalOverlap(int64_t a, int64_t b, bool small, bool physical)
 {
-    auto offset = [small](int64_t iv) {
-        auto wrapped = llvm::APInt(64, static_cast<uint64_t>(iv)) * llvm::APInt(64, small ? 1 : 256);
+    auto offset = [small, physical](int64_t iv) {
+        auto wrapped = llvm::APInt(64, static_cast<uint64_t>(iv)) * llvm::APInt(64, physical ? 64 : (small ? 1 : 256));
         return wrapped.isNegative() ? uint64_t(0) : wrapped.getZExtValue();
     };
     const auto x = offset(a), y = offset(b);
-    const uint64_t rows = small ? 1 : 128, stride = small ? 128 : 5120, width = small ? 8 : 256;
+    const uint64_t rows = small || physical ? 1 : 128, stride = physical ? 64 : (small ? 128 : 5120);
+    const uint64_t width = physical ? 16 : (small ? 8 : 256);
     for (uint64_t row = 0; row < rows; ++row) {
         for (uint64_t other = 0; other < rows; ++other) {
             const auto left = static_cast<unsigned __int128>(x) + row * stride;
@@ -40,26 +41,35 @@ bool globalOverlap(int64_t a, int64_t b, bool small)
     }
     return false;
 }
-bool concreteOrder(const fs::PeriodicAnalysis& periodic, bool small)
+bool concreteOrder(const fs::PeriodicAnalysis& periodic, bool small, bool physical = false)
 {
-    if (periodic.payloads.size() != 2 || periodic.payloads[0].pipe == periodic.payloads[1].pipe) { return false; }
+    const std::size_t sites = physical ? 4 : 2;
+    if (periodic.payloads.size() != sites) { return false; }
+    const uint32_t expectedPipes[] = {4, physical ? 1U : 5U, 1, 5};
+    for (std::size_t i = 0; i < sites; ++i) {
+        if (periodic.payloads[i].pipe != expectedPipes[i]) { return false; }
+    }
+    // Three independent 32-byte cells: A=[0,64), B=[32,96), C=[0,64).
+    const uint32_t reads[] = {0, 3, 6, 3}, writes[] = {3, 6, 3, 0};
     for (int64_t lower : {INT64_C(-41), INT64_C(-1), INT64_C(0), INT64_C(3),
                           INT64_C(1) << 55, (INT64_C(1) << 56) - 21}) {
         for (uint64_t trips = 0; trips <= 6; ++trips) {
-            const std::size_t count = trips * 2, events = count * 2;
+            const std::size_t count = trips * sites, events = count * 2;
             std::vector<std::vector<bool>> graph(events, std::vector<bool>(events));
             for (std::size_t a = 0; a < count; ++a) {
                 graph[2 * a][2 * a] = graph[2 * a + 1][2 * a + 1] = true;
                 graph[2 * a][2 * a + 1] = true;
                 for (std::size_t b = a + 1; b < count; ++b) {
-                    if (a % 2 == b % 2) {
+                    if (periodic.payloads[a % sites].pipe == periodic.payloads[b % sites].pipe) {
                         graph[2 * a][2 * b] = true;
                         graph[2 * a + 1][2 * b + 1] = true;
                     }
-                    const bool ub = !(a % 2 && b % 2);
-                    const bool gm = a % 2 && b % 2 &&
-                        globalOverlap(lower + static_cast<int64_t>(a / 2) * 20,
-                            lower + static_cast<int64_t>(b / 2) * 20, small);
+                    const bool ub = physical ?
+                        ((writes[a % sites] & (reads[b % sites] | writes[b % sites])) ||
+                         (reads[a % sites] & writes[b % sites])) : !(a % 2 && b % 2);
+                    const bool gm = a % sites == sites - 1 && b % sites == sites - 1 &&
+                        globalOverlap(lower + static_cast<int64_t>(a / sites) * 20,
+                            lower + static_cast<int64_t>(b / sites) * 20, small, physical);
                     if (ub || gm) { graph[2 * a + 1][2 * b] = true; }
                 }
             }
@@ -73,11 +83,49 @@ bool concreteOrder(const fs::PeriodicAnalysis& periodic, bool small)
             for (std::size_t a = 0; a < events; ++a) {
                 for (std::size_t b = 0; b < events; ++b) {
                     auto result = periodic.eventPrecedes(
-                        {static_cast<uint32_t>((a / 2) % 2), a % 2 ? fs::PeriodicEventKind::Completion :
-                            fs::PeriodicEventKind::Start}, a / 4,
-                        {static_cast<uint32_t>((b / 2) % 2), b % 2 ? fs::PeriodicEventKind::Completion :
-                            fs::PeriodicEventKind::Start}, b / 4, count);
+                        {static_cast<uint32_t>((a / 2) % sites), a % 2 ? fs::PeriodicEventKind::Completion :
+                            fs::PeriodicEventKind::Start}, a / (2 * sites),
+                        {static_cast<uint32_t>((b / 2) % sites), b % 2 ? fs::PeriodicEventKind::Completion :
+                            fs::PeriodicEventKind::Start}, b / (2 * sites), count);
                     if (result.error != fs::PeriodicQueryError::None || result.value != graph[a][b]) { return false; }
+                }
+            }
+        }
+    }
+    return true;
+}
+bool sameProtectedOrder(const fs::OrderCoveredPeriodicResult& proof)
+{
+    auto loop = proof.retained.loop;
+    auto recognized = fs::recognizeRotating(loop, *proof.index, *proof.input, proof.input->accesses());
+    if (recognized.state != fs::RecognitionState::Applicable) {
+        llvm::errs() << "ACC ordinary recognition: " << fs::recognitionName(recognized.state) << "\n";
+        return false;
+    }
+    auto ordinary = fs::analyzeRotating(loop, *proof.index, *proof.input, recognized, false);
+    if (!ordinary.error.empty() || !ordinary.extraction.protectedHazards ||
+        proof.retained.extraction.protectedHazards != ordinary.extraction.protectedHazards ||
+        ordinary.periodic.payloads.size() != proof.retained.periodic.payloads.size()) {
+        llvm::errs() << "ACC protection counts " << ordinary.extraction.protectedHazards << " "
+                     << proof.retained.extraction.protectedHazards << " error=" << ordinary.error << "\n";
+        return false;
+    }
+    const auto sites = ordinary.periodic.payloads.size();
+    for (uint64_t trips = 0; trips <= 4; ++trips) {
+        const uint64_t count = sites * trips;
+        for (uint64_t a = 0; a < 2 * count; ++a) {
+            for (uint64_t b = 0; b < 2 * count; ++b) {
+                fs::PeriodicEvent first{static_cast<uint32_t>((a / 2) % sites),
+                    a % 2 ? fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start};
+                fs::PeriodicEvent last{static_cast<uint32_t>((b / 2) % sites),
+                    b % 2 ? fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start};
+                const auto original = ordinary.periodic.eventPrecedes(first, a / (2 * sites),
+                    last, b / (2 * sites), count);
+                const auto materialized = proof.retained.periodic.eventPrecedes(first, a / (2 * sites),
+                    last, b / (2 * sites), count);
+                if (original.error != fs::PeriodicQueryError::None ||
+                    materialized.error != fs::PeriodicQueryError::None || original.value != materialized.value) {
+                    return false;
                 }
             }
         }
@@ -117,6 +165,7 @@ LogicalResult checkOrderCoveredPeriodic(func::FuncOp function, pto::GMAliasPolic
         return failure();
     };
     const auto before = render(function);
+    const bool physical = function->hasAttr("test.order_covered_static_cells");
     fs::FrontierAnalysis session(function);
     if (failed(session.initialize(policy))) { return failure(); }
     scf::ForOp loop;
@@ -146,15 +195,35 @@ LogicalResult checkOrderCoveredPeriodic(func::FuncOp function, pto::GMAliasPolic
             return fail("completion-dependent bound premise was not exercised");
         }
     }
+    if (function.getSymName() == "dynamic_local") {
+        SmallVector<std::size_t> local;
+        for (auto [id, effect] : llvm::enumerate(input->accesses().effects())) {
+            if (effect.memory->scope != pto::AddressSpace::GM) { local.push_back(id); }
+        }
+        if (input->accesses().hasMaterializedCellPartition(local)) {
+            return fail("dynamic local fixture unexpectedly has a materialized partition");
+        }
+    }
     uint64_t reductions = 0;
     std::string error;
     auto proof = fs::analyzeOrderCoveredPeriodic(loop, region, input, index, reductions, error);
+    if (function->hasAttr("test.order_covered_acc")) {
+        if (!proof || reductions != 1 || !sameProtectedOrder(*proof) || render(function) != before) {
+            llvm::errs() << "ACC factory diagnostic: " << error << "\n";
+            return fail("ACC materialized protection differs from existing producer");
+        }
+        llvm::outs() << "order-covered accepted ACC protection parity\n";
+        return success();
+    }
     const bool rejected = function->hasAttr("test.order_covered_rejected") || policy == pto::GMAliasPolicy::MayAlias;
     if (rejected) {
         if (proof || error.empty() || render(function) != before) { return fail("negative proof accepted"); }
         if (policy == pto::GMAliasPolicy::MayNotAlias) {
             StringRef expected = function.getSymName() == "missing_ub" ? "does not cover" :
                 (function.getSymName() == "outside" ? "outside its original owner" : "independent outermost loop");
+            if (auto requested = function->getAttrOfType<StringAttr>("test.order_covered_obligation")) {
+                expected = requested.getValue();
+            }
             if (!StringRef(error).contains(expected)) {
                 return fail("negative fixture missed its intended obligation");
             }
@@ -164,9 +233,10 @@ LogicalResult checkOrderCoveredPeriodic(func::FuncOp function, pto::GMAliasPolic
     }
     if (!proof || reductions != 1 || proof->omittedEffects.size() != 2 || proof->coveredPairs.size() != 1 ||
         !proof->applies(input.get(), index.get(), loop) || proof->applies(input.get(), nullptr, loop) ||
-        !concreteOrder(proof->retained.periodic, function->hasAttr("test.order_covered_strong"))) {
+        !concreteOrder(proof->retained.periodic, function->hasAttr("test.order_covered_strong"), physical)) {
         return fail("physical conflict oracle or context");
     }
+    if (physical && proof->retained.fragments.size() != 10) { return fail("partial cell partition changed"); }
     auto child = session.minimumDemands(region, {true});
     auto root = session.minimumDemands(0, {true});
     if (child.status != fs::AnalysisStatus::Ready || root.status != fs::AnalysisStatus::Ready ||
@@ -207,7 +277,8 @@ LogicalResult checkOrderCoveredPeriodic(func::FuncOp function, pto::GMAliasPolic
     child = {}; root = {}; certificates.clear(); proof.reset(); input.reset(); index.reset();
     second->reset(); retained.reset(); session.invalidate();
     if (weakInput.expired() || weakIndex.expired() ||
-        !concreteOrder(alias->periodic, function->hasAttr("test.order_covered_strong")) || render(function) != before) {
+        !concreteOrder(alias->periodic, function->hasAttr("test.order_covered_strong"), physical) ||
+        render(function) != before) {
         return fail("alias-only owner lifetime or source mutation");
     }
     alias.reset();
