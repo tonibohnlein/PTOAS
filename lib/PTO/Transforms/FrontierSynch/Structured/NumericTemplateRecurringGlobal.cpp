@@ -66,7 +66,14 @@ bool RecurringGlobalTemplate::applies(const NumericTemplate& form) const
             effect.discharge != TemplateDischarge::None || !effect.atoms.empty() || !effect.ranges.empty()) {
             return false;
         }
+        if (record.kind == RelativeGlobalKind::PrivateTranslation && !record.atoms.empty()) { return false; }
         for (auto atom : record.atoms) { if (atom >= atomCount) { return false; } }
+    }
+    for (const auto& group : privateGroups) {
+        llvm::APInt currentLower, currentUpper, currentStep;
+        auto trips = privateConstantTrips(form.outer, group.width, currentLower, currentUpper, currentStep);
+        if (!trips || *trips != group.trips || currentLower != group.lower || currentUpper != group.upper ||
+            currentStep != group.step) { return false; }
     }
     return true;
 }
@@ -113,7 +120,7 @@ bool extractEffect(TemplateBuilder& builder, std::size_t payloadId, std::size_t 
         const auto width = scalar.width(value.getType());
         return bits && width && width <= 64 ? std::optional<llvm::APInt>(llvm::APInt(width, *bits)) : std::nullopt;
     };
-    AlignedModularMapBuilder mapBuilder(builder.output.outer, scalar, constant);
+    AlignedModularMapBuilder mapBuilder(builder.output.outer, scalar, constant, true);
     for (const auto& region : original.regions) {
         const auto limit = builder.output.limits.fragments;
         if (builder.output.fragments > limit || output.materializedFragments >= limit - builder.output.fragments) {
@@ -131,6 +138,66 @@ bool extractEffect(TemplateBuilder& builder, std::size_t payloadId, std::size_t 
     return expressions.constructionError().empty();
 }
 }
+namespace {
+struct BaseProof {
+    std::optional<AlignedModularMapGroup> recurring;
+    std::optional<AlignedPrivateMapGroup> privateTranslation;
+};
+std::optional<BaseProof> proveBase(TemplateBuilder& builder, const BaseExtraction& extracted, uint64_t remaining)
+{
+    BaseProof proof;
+    auto attempted = [&](uint64_t count) { chargeAttempt(builder.output, count); };
+    if (extracted.maps.front().ordinalStride.isZero()) {
+        proof.recurring = partitionAlignedModularMaps(extracted.maps, remaining, attempted);
+        return proof.recurring ? std::optional<BaseProof>(std::move(proof)) : std::nullopt;
+    }
+    std::vector<std::size_t> payloads;
+    std::vector<uint8_t> writes;
+    for (auto id : extracted.owners) {
+        const auto& record = extracted.effects[id];
+        payloads.push_back(record.payload);
+        const auto mode = builder.output.payloads[record.payload].effects[record.effect].mode;
+        writes.push_back(mode == SyncAccessMode::Write);
+    }
+    proof.privateTranslation = provePrivateAlignedMaps(builder.output.outer, extracted.maps, payloads, writes,
+        remaining, attempted);
+    return proof.privateTranslation ? std::optional<BaseProof>(std::move(proof)) : std::nullopt;
+}
+uint64_t bindRelativeAtoms(BaseExtraction& extracted, const BaseProof& proof, uint64_t atomOffset)
+{
+    uint64_t charge = extracted.maps.size() + (proof.recurring ? proof.recurring->partition.atoms.size() :
+        proof.privateTranslation->relativeSegments.size());
+    for (const auto& map : extracted.maps) { charge += map.access.intervals.size(); }
+    if (proof.recurring) {
+        for (auto [id, references] : llvm::enumerate(proof.recurring->partition.references)) {
+            charge += references.size();
+            auto& record = extracted.effects[extracted.owners[id]];
+            for (auto atom : references) { record.atoms.push_back(static_cast<uint32_t>(atomOffset + atom)); }
+        }
+    }
+    return charge;
+}
+void publishBase(TemplateBuilder& builder, BaseExtraction& extracted, BaseProof& proof,
+    RecurringGlobalTemplate& owner)
+{
+    for (auto& record : extracted.effects) {
+        if (proof.privateTranslation) { record.kind = RelativeGlobalKind::PrivateTranslation; }
+        llvm::sort(record.atoms);
+        record.atoms.erase(std::unique(record.atoms.begin(), record.atoms.end()), record.atoms.end());
+        auto& effect = builder.output.payloads[record.payload].effects[record.effect];
+        effect.regions.clear(); effect.ranges.clear(); effect.atoms.clear();
+        effect.pendingGlobalGeometry = false; effect.discharge = TemplateDischarge::None; effect.outerStride = 0;
+        owner.effectIndex.emplace(std::make_pair(record.payload, record.effect), owner.effects.size());
+        owner.effects.push_back(std::move(record));
+    }
+    if (proof.recurring) {
+        owner.atomCount += proof.recurring->partition.atoms.size();
+        owner.groups.push_back(std::move(*proof.recurring));
+    } else {
+        owner.privateGroups.push_back(std::move(*proof.privateTranslation));
+    }
+}
+}
 bool prepareRecurringGlobalBase(TemplateBuilder& builder,
     ArrayRef<std::pair<std::size_t, std::size_t>> effects)
 {
@@ -139,43 +206,27 @@ bool prepareRecurringGlobalBase(TemplateBuilder& builder,
     for (auto [payload, effect] : effects) {
         if (!extractEffect(builder, payload, effect, extracted)) { return false; }
     }
-    if (builder.output.fragments > builder.output.limits.fragments) { return false; }
+    if (builder.output.fragments > builder.output.limits.fragments || extracted.maps.empty()) { return false; }
     const auto remaining = builder.output.limits.fragments - builder.output.fragments;
-    auto group = partitionAlignedModularMaps(extracted.maps, remaining,
-        [&](uint64_t count) { chargeAttempt(builder.output, count); });
-    if (!group) { return false; }
+    auto proof = proveBase(builder, extracted, remaining);
+    if (!proof) { return false; }
     auto owner = builder.output.recurringGlobal ?
         std::make_shared<RecurringGlobalTemplate>(*builder.output.recurringGlobal) :
         std::make_shared<RecurringGlobalTemplate>();
     owner->input = &builder.input; owner->index = &builder.index; owner->outer = builder.output.outer;
     owner->payloadCount = builder.output.payloads.size();
-    if (owner->atomCount > UINT32_MAX - group->partition.atoms.size()) { return false; }
-    uint64_t charge = extracted.maps.size() + group->partition.atoms.size();
-    for (const auto& map : extracted.maps) { charge += map.access.intervals.size(); }
-    for (auto [id, references] : llvm::enumerate(group->partition.references)) {
-        charge += references.size();
-        auto& record = extracted.effects[extracted.owners[id]];
-        for (auto atom : references) { record.atoms.push_back(static_cast<uint32_t>(owner->atomCount + atom)); }
-    }
+    const auto atoms = proof->recurring ? proof->recurring->partition.atoms.size() : 0;
+    if (owner->atomCount > UINT32_MAX - atoms) { return false; }
+    const auto charge = bindRelativeAtoms(extracted, *proof, owner->atomCount);
     if (charge > remaining) {
         builder.output.result.note(RecognitionIssue::TemplateExpansionLimit, builder.output.outer);
         return false;
     }
-    builder.output.fragments += charge;
     for (const auto& record : extracted.effects) {
         if (owner->find(record.payload, record.effect)) { return false; }
     }
-    for (auto& record : extracted.effects) {
-        llvm::sort(record.atoms);
-        record.atoms.erase(std::unique(record.atoms.begin(), record.atoms.end()), record.atoms.end());
-        auto& effect = builder.output.payloads[record.payload].effects[record.effect];
-        effect.regions.clear(); effect.ranges.clear(); effect.atoms.clear();
-        effect.pendingGlobalGeometry = false; effect.discharge = TemplateDischarge::None; effect.outerStride = 0;
-        owner->effectIndex.emplace(std::make_pair(record.payload, record.effect), owner->effects.size());
-        owner->effects.push_back(std::move(record));
-    }
-    owner->atomCount += group->partition.atoms.size();
-    owner->groups.push_back(std::move(*group));
+    builder.output.fragments += charge;
+    publishBase(builder, extracted, *proof, *owner);
     builder.output.recurringGlobal = std::move(owner);
     return true;
 }

@@ -161,6 +161,39 @@ bool recurringBudget(func::FuncOp function, const pto::SyncInput& input, const f
     return limited.result.state != fs::RecognitionState::Applicable && limited.estimatedAttemptedFragments &&
         !limited.fragments && limited.payloads.empty() && limited.atoms.empty();
 }
+bool privateBoundSnapshot(const fs::NumericTemplate& form)
+{
+    auto loop = form.outer;
+    const auto upper = loop.getUpperBound();
+    loop->setOperand(1, loop.getLowerBound());
+    const bool refused = !form.recurringGlobal->applies(form) && failed(fs::numericTemplateOccurrences(form));
+    loop->setOperand(1, upper);
+    return refused && form.recurringGlobal->applies(form);
+}
+bool privateWithinVisitRefusal(const fs::NumericTemplate& form)
+{
+    const auto& group = form.recurringGlobal->privateGroups.front();
+    if (group.accesses.empty()) { return false; }
+    fs::detail::AlignedModularMap map;
+    map.base = group.base; map.origin = group.origin; map.width = group.width;
+    map.alignmentBits = group.alignmentBits; map.byteStride = group.byteStride;
+    map.ordinalStride = group.ordinalStride; map.access = group.accesses.front();
+    auto zeroOrigin = map;
+    zeroOrigin.origin = Value{};
+    const SmallVector<std::size_t> singlePayload{0};
+    const SmallVector<uint8_t> singleWrite{1};
+    if (!fs::detail::provePrivateAlignedMaps(form.outer, {zeroOrigin}, singlePayload, singleWrite, UINT32_MAX)) {
+        return false;
+    }
+    SmallVector<fs::detail::AlignedModularMap> maps{map, map};
+    const SmallVector<std::size_t> payloads{0, 1};
+    const SmallVector<uint8_t> writes{0, 1};
+    if (fs::detail::provePrivateAlignedMaps(form.outer, maps, payloads, writes, UINT32_MAX)) { return false; }
+    for (auto& empty : maps) { empty.access.intervals.clear(); }
+    if (!fs::detail::provePrivateAlignedMaps(form.outer, maps, payloads, writes, UINT32_MAX)) { return false; }
+    maps.front().width = 0;
+    return !fs::detail::provePrivateAlignedMaps(form.outer, maps, payloads, writes, UINT32_MAX);
+}
 bool recurringMembership(const fs::NumericTemplate& form)
 {
     const auto owner = form.recurringGlobal;
@@ -250,6 +283,16 @@ LogicalResult checkRecurringNumericExports(func::FuncOp function, const pto::Syn
     }
     if (!form || !form->recurringGlobal->applies(*form) || !form->estimatedAttemptedFragments) {
         return function.emitError("missing sealed recurring numerical proof");
+    }
+    if (function->hasAttr("test.private_global_numeric")) {
+        const auto& owner = *form->recurringGlobal;
+        if (owner.privateGroups.size() != 1 || !owner.groups.empty() ||
+            llvm::any_of(owner.effects, [](const auto& effect) {
+                return effect.kind != fs::detail::RelativeGlobalKind::PrivateTranslation || !effect.atoms.empty();
+            })) { return function.emitError("expected the original private-translation certificate"); }
+        if (!privateBoundSnapshot(*form) || !privateWithinVisitRefusal(*form)) {
+            return function.emitError("private bound snapshot or same-segment writer refusal failed");
+        }
     }
     if (!recurringBudget(function, input, *form) || !recurringMembership(*form) ||
         !recurringExportRefusal(function, input, *form) || !recurringFreshPlans(function, program) ||

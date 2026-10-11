@@ -8,9 +8,10 @@
 // Owned relative storage identities for a certified whole numerical word.
 #ifndef PTO_FRONTIERSYNCH_NUMERICTEMPLATERECURRINGGLOBAL_H
 #define PTO_FRONTIERSYNCH_NUMERICTEMPLATERECURRINGGLOBAL_H
-#include "AlignedModularMap.h"
+#include "AlignedPrivateMap.h"
 #include "NumericTemplateInternal.h"
 namespace mlir::pto::frontiersynch::detail {
+enum class RelativeGlobalKind { Recurring, PrivateTranslation };
 struct RecurringGlobalEffect {
     std::size_t payload;
     std::size_t effect;
@@ -19,6 +20,7 @@ struct RecurringGlobalEffect {
     SmallVector<TemplateCoordinate> coordinates;
     SmallVector<SyncAccessRegion> originalMaps;
     std::vector<uint32_t> atoms;
+    RelativeGlobalKind kind = RelativeGlobalKind::Recurring;
 };
 struct RecurringGlobalTemplate {
     const SyncInput* input = nullptr;
@@ -27,6 +29,7 @@ struct RecurringGlobalTemplate {
     std::shared_ptr<const SyncInput> inputOwner;
     std::shared_ptr<const PhaseIndex> indexOwner;
     std::vector<AlignedModularMapGroup> groups;
+    std::vector<AlignedPrivateMapGroup> privateGroups;
     std::vector<RecurringGlobalEffect> effects;
     std::map<std::pair<std::size_t, std::size_t>, std::size_t> effectIndex;
     uint64_t atomCount = 0;
