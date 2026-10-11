@@ -11,11 +11,13 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/CountedLoop.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgramInternal.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/AsmParser/AsmParser.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 using namespace mlir;
@@ -413,6 +415,168 @@ bool correlatedCountedDomains(MLIRContext* context)
     }
     return true;
 }
+
+struct ModularBandCase {
+    int64_t coefficientA, coefficientB, offsetA, offsetB;
+    int64_t strideA, strideB, sizeA, sizeB;
+    unsigned bytes;
+    bool disjoint, floorOrigin = false;
+    int64_t rowStride = 0, rows = 1;
+};
+bool modularBandCase(MLIRContext* context, Value base, Value iv, const ModularBandCase& test,
+                     uint64_t& comparisons)
+{
+    auto symbol = getAffineSymbolExpr(0, context), dimension = getAffineDimExpr(0, context);
+    if (test.floorOrigin) { symbol = symbol.floorDiv(3); }
+    auto region = [&](int64_t coefficient, int64_t offset, int64_t stride, int64_t size) {
+        pto::SyncAccessRegion value;
+        value.base = base;
+        value.byteOffset = symbol * coefficient + offset + dimension * stride +
+            getAffineDimExpr(1, context) * test.rowStride;
+        value.extents = {getAffineConstantExpr(size, context), getAffineConstantExpr(test.rows, context)};
+        value.symbols = {iv};
+        value.elementBytes = test.bytes;
+        return value;
+    };
+    auto a = region(test.coefficientA, test.offsetA, test.strideA, test.sizeA);
+    auto b = region(test.coefficientB, test.offsetB, test.strideB, test.sizeB);
+    if (pto::regionsProvablyDisjoint(a, b) != test.disjoint ||
+        pto::regionsProvablyDisjoint(b, a) != test.disjoint) { return false; }
+    auto footprint = [&](int64_t original, int64_t coefficient, int64_t offset, int64_t stride, int64_t size) {
+        const int64_t row = test.floorOrigin ? original / 3 - (original % 3 < 0) : original;
+        std::set<uint64_t> bytes;
+        for (int64_t rowIndex = 0; rowIndex < test.rows; ++rowIndex) {
+            for (int64_t coordinate = 0; coordinate < size; ++coordinate) {
+                const uint64_t start = static_cast<uint64_t>(row) * static_cast<uint64_t>(coefficient) +
+                    static_cast<uint64_t>(offset) + static_cast<uint64_t>(coordinate) * static_cast<uint64_t>(stride) +
+                    static_cast<uint64_t>(rowIndex) * static_cast<uint64_t>(test.rowStride);
+                for (unsigned byte = 0; byte < test.bytes; ++byte) { bytes.insert(start + byte); }
+            }
+        }
+        return bytes;
+    };
+    for (int64_t x : {INT64_MIN, INT64_MIN + 1, int64_t{-3}, int64_t{-1}, int64_t{0}, int64_t{1}, INT64_MAX}) {
+        auto left = footprint(x, test.coefficientA, test.offsetA, test.strideA, test.sizeA);
+        for (int64_t y : {INT64_MIN, INT64_MIN + 1, int64_t{-3}, int64_t{-1}, int64_t{0}, int64_t{1}, INT64_MAX}) {
+            auto right = footprint(y, test.coefficientB, test.offsetB, test.strideB, test.sizeB);
+            for (auto byte : left) {
+                ++comparisons;
+                if (test.disjoint && right.count(byte)) { return false; }
+            }
+        }
+    }
+    return true;
+}
+bool modularBandAliases(MLIRContext* context, bool sameBase, bool overlapping, pto::GMAliasPolicy policy)
+{
+    const std::string tile = "!pto.tile_buf<vec, 1x64xbf16, valid=1x64>";
+    std::string source = "module attributes {pto.target_arch = \"a3\"} {func.func @bands(";
+    source += "%a: !pto.ptr<bf16, gm>, %b: !pto.ptr<bf16, gm>) {\n";
+    source += "%zero = arith.constant 0 : index\n%one = arith.constant 1 : index\n";
+    source += "%eight = arith.constant 8 : index\n%width = arith.constant 128 : index\n";
+    source += "%height = arith.constant 1024 : index\n%size = arith.constant 64 : index\n";
+    source += "%shift = arith.constant " + std::to_string(overlapping ? 32 : 64) + " : index\n";
+    source += "%address = arith.constant 0 : i64\n%tile = pto.alloc_tile addr = %address : " + tile + "\n";
+    source += "%x = pto.make_tensor_view %a, shape = [%height, %width], strides = [%width, %one] "
+              ": !pto.tensor_view<?x?xbf16>\n";
+    source += "%y = pto.make_tensor_view " + std::string(sameBase ? "%a" : "%b") +
+              ", shape = [%height, %width], strides = [%width, %one] : !pto.tensor_view<?x?xbf16>\n";
+    source += "scf.for %i = %zero to %eight step %one {\n";
+    source += "%u = pto.partition_view %x, offsets = [%i, %zero], sizes = [%one, %size] "
+              ": !pto.tensor_view<?x?xbf16>\n";
+    source += "%v = pto.partition_view %y, offsets = [%i, %shift], sizes = [%one, %size] "
+              ": !pto.tensor_view<?x?xbf16>\n";
+    for (const auto* view : {"%u", "%v"}) {
+        source += "pto.tstore ins(%tile : " + tile + ") outs(" + view +
+                  " : !pto.partition_tensor_view<1x64xbf16>)\n";
+    }
+    source += "} return }}";
+    auto module = parseSourceString<ModuleOp>(source, context);
+    if (!module || failed(verify(*module))) { return false; }
+    pto::SyncInput input(policy);
+    if (failed(input.build(module->lookupSymbol<func::FuncOp>("bands")))) { return false; }
+    SmallVector<std::size_t> globals;
+    for (auto [id, effect] : llvm::enumerate(input.accesses().effects())) {
+        if (effect.memory->scope == pto::AddressSpace::GM && effect.mode == pto::SyncAccessMode::Write) {
+            globals.push_back(id);
+        }
+    }
+    const bool expected = sameBase ? overlapping : policy == pto::GMAliasPolicy::MayAlias;
+    return globals.size() == 2 && input.accesses().mayConflict(globals[0], globals[1]) == expected &&
+        input.accesses().mayConflict(globals[1], globals[0]) == expected;
+}
+bool modularBandChecks(MLIRContext* context)
+{
+    auto module = parseSourceString<ModuleOp>(R"mlir(module {
+      func.func @bands(%a: !pto.ptr<i8, gm>, %b: !pto.ptr<i8, gm>) {
+        %zero = arith.constant 0 : index
+        %one = arith.constant 1 : index
+        scf.for %i = %zero to %one step %one { }
+        return
+      }
+    })mlir", context);
+    if (!module || failed(verify(*module))) { return false; }
+    auto function = module->lookupSymbol<func::FuncOp>("bands");
+    scf::ForOp loop;
+    function.walk([&](scf::ForOp value) { loop = value; });
+    const SmallVector<ModularBandCase> cases{
+        {256, 256, 0, 128, 2, 2, 64, 64, 2, true},
+        {256, 512, 0, 128, 2, 2, 64, 64, 2, true},
+        {256, -256, 0, 128, 2, 2, 64, 64, 2, true},
+        {256, 256, 0, 126, 2, 2, 64, 64, 2, false},
+        {256, 256, 0, 128, 4, 2, 32, 64, 2, true},
+        {16, 16, -2, 2, 1, 1, 4, 4, 1, true},
+        {16, 16, -2, 1, 1, 1, 4, 4, 1, false},
+        {16, 16, 0, 8, 1, 1, 16, 4, 1, false},
+        {255, 256, 0, 128, 2, 2, 64, 64, 2, false},
+        {256, 256, INT64_MIN, 128, 2, 2, 64, 64, 2, false},
+        {256, 256, 0, 128, -2, 2, 64, 64, 2, false},
+        {256, 256, 0, 128, 2, 2, 64, 64, 2, true, true},
+        {1, 1, 0, 128, 1, 1, 4, 4, 1, false},
+        {256, 256, 0, 128, 2, 2, 64, 64, 2, true, false, 256, 8},
+        {256, 256, 0, 128, 2, 2, 64, 64, 2, true, false, 512, 8},
+        {256, 256, 0, 128, 2, 2, 64, 64, 2, true, false, 0, 8},
+        {256, 256, 0, 128, 2, 2, 64, 64, 2, false, false, 257, 8},
+        {256, 256, 0, 126, 2, 2, 64, 64, 2, false, false, 256, 8},
+        {256, 256, -128, 0, 2, 2, 64, 64, 2, true, false, 256, 8},
+        {256, 256, 0, 128, 2, 2, 128, 64, 2, false, false, 256, 8}};
+    uint64_t comparisons = 0;
+    for (const auto& test : cases) {
+        if (!modularBandCase(context, function.getArgument(0), loop.getInductionVar(), test, comparisons)) {
+            llvm::errs() << "modular-band independent-visit case failed\n"; return false;
+        }
+    }
+    auto symbol = getAffineSymbolExpr(0, context), dimension = getAffineDimExpr(0, context);
+    pto::SyncAccessRegion a{function.getArgument(0), symbol * 256 + dimension,
+                           {getAffineConstantExpr(4, context)}, {loop.getInductionVar()}, 1, {}};
+    auto b = a;
+    b.byteOffset = b.byteOffset + 128;
+    b.base = function.getArgument(1);
+    if (pto::regionsProvablyDisjoint(a, b)) { return false; }
+    b.base = {};
+    if (pto::regionsProvablyDisjoint(a, b)) { return false; }
+    b.base = a.base;
+    b.extents = {symbol};
+    if (pto::regionsProvablyDisjoint(a, b)) { return false; }
+    b.extents = {getAffineConstantExpr(0, context)};
+    if (!pto::regionsProvablyDisjoint(a, b)) { return false; }
+    b.extents = a.extents;
+    auto layout = parseAttribute("#dlti.dl_spec<#dlti.dl_entry<index, 32 : i32>>", context);
+    if (!layout) { return false; }
+    (*module)->setAttr("dlti.dl_spec", layout);
+    if (pto::regionsProvablyDisjoint(a, b)) { return false; }
+    (*module)->removeAttr("dlti.dl_spec");
+    for (auto policy : {pto::GMAliasPolicy::MayNotAlias, pto::GMAliasPolicy::MayAlias}) {
+        for (bool sameBase : {false, true}) {
+            for (bool overlapping : {false, true}) {
+                if (!modularBandAliases(context, sameBase, overlapping, policy)) { return false; }
+            }
+        }
+    }
+    llvm::outs() << "modular bands: " << comparisons
+                 << " independent original byte checks and eight alias cases passed\n";
+    return true;
+}
 } // namespace
 bool runScalarConstraintChecks(MLIRContext* context)
 {
@@ -505,7 +669,7 @@ bool runScalarConstraintChecks(MLIRContext* context)
         }
     }
     if (!interleavedContexts(context) || !controlProofContext(context) || !failedPrimitiveStopsWork(context) ||
-        !configuredPrimitiveStopsWork(context) || !correlatedCountedDomains(context) ||
+        !configuredPrimitiveStopsWork(context) || !correlatedCountedDomains(context) || !modularBandChecks(context) ||
         !runMachinePlaceholderChecks(context)) {
         return false;
     }
