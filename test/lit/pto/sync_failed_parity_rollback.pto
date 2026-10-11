@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --finite-expansion %s | FileCheck %s
+// CHECK: "failed_parity_rollback":true
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+!banks = !pto.multi_tile_buf<!pto.tile_buf<left, 16x16xf16, slayout=row_major>, count=2>
+module attributes {pto.target_arch = "a3"} {
+  func.func @failed_parity(%raw: i32) attributes {test.failed_parity} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %three = arith.constant 3 : index
+    %seven = arith.constant 7 : index
+    %x = arith.index_cast %raw : i32 to index
+    %slot = arith.remui %x, %two : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %banks = pto.alloc_multi_tile addr = %base : !banks
+    %left = pto.multi_tile_get %banks[%slot] : !banks -> !left
+    scf.for %i = %zero to %one step %one {
+      %sum = arith.addi %x, %i : index
+      %q = arith.divsi %sum, %three : index
+      %guard = arith.cmpi slt, %q, %seven : index
+      scf.if %guard {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+      }
+    } {frontier.test_expanded_region}
+    return
+  }
+}

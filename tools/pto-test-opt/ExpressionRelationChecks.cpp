@@ -6,6 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
+#include "PTO/Transforms/FrontierSynch/Shared/ModularScalar.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
@@ -50,6 +53,95 @@ bool check(fs::RegionExpressions& arena, Id predicate, ArrayRef<Id> variables,
         const bool want = contains(domain, point) && expected(point);
         if (actual != want) { llvm::errs() << "expression relation differs at point\n"; return false; }
         ++count;
+    }
+    return true;
+}
+bool signedDivisionChecks(MLIRContext* context, uint64_t& count)
+{
+    context->getOrLoadDialect<arith::ArithDialect>();
+    Block block;
+    const auto location = UnknownLoc::get(context);
+    auto input = block.addArgument(IntegerType::get(context, 64), location);
+    auto output = block.addArgument(IntegerType::get(context, 64), location);
+    OpBuilder builder(context);
+    builder.setInsertionPointToEnd(&block);
+    for (int64_t divisor : {int64_t(3), int64_t(64), INT64_MAX}) {
+        auto constant = builder.create<arith::ConstantIntOp>(location, divisor, 64);
+        auto division = builder.create<arith::DivSIOp>(location, input, constant);
+        auto eight = builder.create<arith::ConstantIntOp>(location, 8, 64);
+        auto nested = builder.create<arith::DivSIOp>(location, division, eight);
+        fs::RegionExpressions arena;
+        const auto x = arena.input(input), y = arena.input(output);
+        fs::ModularScalar scalar(arena, division);
+        auto bind = [&](Value value) -> std::optional<Id> {
+            return value == input ? std::optional<Id>(x) : std::nullopt;
+        };
+        auto quotient = scalar.value(division, bind);
+        auto nestedQuotient = scalar.value(nested, bind);
+        if (!quotient || !nestedQuotient || !arena.constructionError().empty()) { return false; }
+        for (int64_t sample : {INT64_MIN, INT64_MIN + 1, int64_t(-129), int64_t(-65),
+                              int64_t(-3), int64_t(-1), int64_t(0), int64_t(1),
+                              int64_t(3), int64_t(65), INT64_MAX}) {
+            const auto expected = sample / divisor;
+            std::vector<std::vector<int64_t>> points{{sample, expected}, {sample, expected / 8},
+                {sample, expected - 1}, {sample, expected / 8 + 1}};
+            const auto domain = box({{sample, sample}, {INT64_MIN, INT64_MAX}});
+            if (!check(arena, arena.eq(*quotient, y), {x, y}, domain, points,
+                    [&](auto point) { return point[1] == expected; }, count) ||
+                !check(arena, arena.eq(*nestedQuotient, y), {x, y}, domain, points,
+                    [&](auto point) { return point[1] == expected / 8; }, count) ||
+                !check(arena, arena.slt(*quotient, arena.constant(0)), {x, y}, domain, points,
+                    [&](auto) { return expected < 0; }, count) ||
+                !check(arena, arena.lt(*quotient, arena.constant(100)), {x, y}, domain, points,
+                    [&](auto) { return uint64_t(expected) < 100; }, count)) { return false; }
+        }
+    }
+    return true;
+}
+bool signedIntegerRecipeChecks(MLIRContext* context, uint64_t& count)
+{
+    Block block;
+    const auto location = UnknownLoc::get(context);
+    fs::RegionExpressions arena;
+    const auto x = arena.input(block.addArgument(IndexType::get(context), location));
+    const auto y = arena.input(block.addArgument(IndexType::get(context), location));
+    auto floor = [](int64_t value, int64_t divisor) {
+        return value / divisor - (value % divisor < 0);
+    };
+    auto witness = arena.integerWitness({{I(3)}, I(-2)}, I(2), {x}, 3, {1}, 2);
+    auto mappedDomain = *fs::IntegerSystem::create(1, {{{I(1)}, I(2)}});
+    std::string error;
+    const auto dim = getAffineDimExpr(0, context);
+    auto mapped = arena.integerMappedPredicate(mappedDomain, {witness},
+        {dim.floorDiv(2)}, 2, {1}, error);
+    if (!mapped) { return false; }
+    std::vector<std::vector<int64_t>> points;
+    for (int64_t input = -10; input <= 10; ++input) {
+        for (int64_t output = -20; output <= 20; ++output) { points.push_back({input, output}); }
+    }
+    auto expected = [&](int64_t input) { return 3 * floor(3 * floor(input, 3) - 2, 2) + 2; };
+    const auto domain = box({{-10, 10}, {-20, 20}});
+    if (!check(arena, arena.eq(witness, y), {x, y}, domain, points,
+            [&](auto point) { return expected(point[0]) == point[1]; }, count) ||
+        !check(arena, arena.sle(witness, y), {x, y}, domain, points,
+            [&](auto point) { return expected(point[0]) <= point[1]; }, count) ||
+        !check(arena, arena.lt(witness, arena.constant(100)), {x, y}, domain, points,
+            [&](auto point) { return uint64_t(expected(point[0])) < 100; }, count) ||
+        !check(arena, *mapped, {x, y}, domain, points, [&](auto point) {
+            const auto coordinate = floor(expected(point[0]), 2);
+            return (coordinate % 2 + 2) % 2 == 1 && floor(coordinate, 2) <= 2;
+        }, count)) { return false; }
+    auto doubled = arena.integerWitness({{I(2)}, I(0)}, I(1), {x}, 1, {0}, 0);
+    for (int64_t sample : {INT64_MIN, INT64_MIN + 1, INT64_MAX - 1, INT64_MAX}) {
+        const auto value = llvm::APInt(64, uint64_t(sample) * uint64_t(2)).getSExtValue();
+        std::vector<std::vector<int64_t>> boundary{{sample, value}, {sample, sample}};
+        const auto singleton = box({{sample, sample}, {INT64_MIN, INT64_MAX}});
+        if (!check(arena, arena.eq(doubled, y), {x, y}, singleton, boundary,
+                [&](auto point) { return point[1] == value; }, count) ||
+            !check(arena, arena.slt(doubled, arena.constant(0)), {x, y}, singleton, boundary,
+                [&](auto) { return value < 0; }, count) ||
+            !check(arena, arena.lt(doubled, arena.constant(100)), {x, y}, singleton, boundary,
+                [&](auto) { return uint64_t(value) < 100; }, count)) { return false; }
     }
     return true;
 }
@@ -196,6 +288,7 @@ bool runExpressionRelationChecks(MLIRContext* context)
     auto empty = box({{1, 0}});
     if (succeeded(arena.integerRelation(zero, {x}, empty, error)) ||
         succeeded(arena.integerRelation(arena.eq(x, y), {x}, empty, error))) { return false; }
+    if (!signedDivisionChecks(context, count) || !signedIntegerRecipeChecks(context, count)) { return false; }
     llvm::outs() << "regional expression relation checked " << count << " signed/unsigned points\n";
     return true;
 }

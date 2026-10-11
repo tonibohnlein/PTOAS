@@ -13,9 +13,12 @@
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 using namespace mlir;
+bool runMachinePlaceholderChecks(MLIRContext* context);
 namespace {
 struct Case {
     const char* name;
@@ -251,6 +254,108 @@ bool failedPrimitiveStopsWork(MLIRContext* context)
     retry.emit(accepted, {});
     return fresh.extraction.state == fs::RecognitionState::Applicable && accepted.pieces.size() == 1;
 }
+std::optional<pto::frontiersynch::PrimitiveRelation> configuredPrimitive(
+    pto::frontiersynch::detail::ProgramBuilder& builder, MLIRContext* context, bool machine, int64_t scale)
+{
+    namespace fs = pto::frontiersynch;
+    auto relation = builder.relation(fs::PrimitiveKind::Context, 2);
+    if (machine) {
+        auto system = fs::IntegerSystem::create(2, {},
+            {{{fs::BoundInteger(1), fs::BoundInteger(0)}, fs::BoundInteger(0), fs::BoundInteger(2)},
+             {{fs::BoundInteger(0), fs::BoundInteger(1)}, fs::BoundInteger(0), fs::BoundInteger(2)}});
+        if (failed(system)) { return std::nullopt; }
+        fs::ResiduePiece piece;
+        piece.residues = {0, 0};
+        piece.machineSystem = std::make_shared<const fs::IntegerSystem>(std::move(*system));
+        relation.pieces.push_back(std::move(piece));
+    } else {
+        auto a = getAffineDimExpr(0, context), b = getAffineDimExpr(1, context);
+        builder.emit(relation, {a * (3 * scale) + b * (2 * scale)});
+    }
+    return relation;
+}
+bool sameMachineSystem(const std::shared_ptr<const pto::frontiersynch::IntegerSystem>& a,
+                       const std::shared_ptr<const pto::frontiersynch::IntegerSystem>& b)
+{
+    if (!a || !b) { return !a && !b; }
+    if (a->dimensions() != b->dimensions() || a->constraints().size() != b->constraints().size() ||
+        a->congruences().size() != b->congruences().size()) { return false; }
+    for (std::size_t i = 0; i < a->constraints().size(); ++i) {
+        if (a->constraints()[i].coefficients != b->constraints()[i].coefficients ||
+            a->constraints()[i].bound != b->constraints()[i].bound) { return false; }
+    }
+    for (std::size_t i = 0; i < a->congruences().size(); ++i) {
+        const auto& x = a->congruences()[i];
+        const auto& y = b->congruences()[i];
+        if (x.coefficients != y.coefficients || x.residue != y.residue || x.modulus != y.modulus) { return false; }
+    }
+    return true;
+}
+bool sameRecognition(const pto::frontiersynch::ArithmeticRecognition& a,
+                     const pto::frontiersynch::ArithmeticRecognition& b)
+{
+    if (a.state != b.state || a.arithmeticClass != b.arithmeticClass ||
+        a.observedDimensions != b.observedDimensions || a.observedCoefficient != b.observedCoefficient ||
+        !a.diagnostics.empty() || !b.diagnostics.empty() || a.pieces.size() != b.pieces.size()) { return false; }
+    for (std::size_t i = 0; i < a.pieces.size(); ++i) {
+        const auto& x = a.pieces[i];
+        const auto& y = b.pieces[i];
+        if (x.relation != y.relation || x.piece != y.piece || x.empty != y.empty ||
+            x.rows.size() != y.rows.size() || !sameMachineSystem(x.machineSystem, y.machineSystem)) { return false; }
+        for (std::size_t j = 0; j < x.rows.size(); ++j) {
+            if (x.rows[j].coefficients != y.rows[j].coefficients || x.rows[j].constant != y.rows[j].constant ||
+                x.rows[j].equality != y.rows[j].equality) { return false; }
+        }
+    }
+    return true;
+}
+bool checkConfiguredPrimitive(MLIRContext* context, func::FuncOp function,
+    const pto::frontiersynch::PhaseIndex& index, pto::frontiersynch::ArithmeticLimits limits,
+    bool machine, int64_t scale, std::optional<pto::frontiersynch::ArithmeticIssue> issue)
+{
+    namespace fs = pto::frontiersynch;
+    fs::ArithmeticProgram output;
+    output.context = {function, function};
+    fs::detail::ProgramBuilder builder{output, limits, context, index, DenseMap<Value, unsigned>(), {}};
+    auto relation = configuredPrimitive(builder, context, machine, scale);
+    if (!relation || builder.appendPrimitive(std::move(*relation)) != !issue.has_value()) { return false; }
+    if (!issue) {
+        for (auto kind : {fs::PrimitiveKind::Occurrences, fs::PrimitiveKind::Order, fs::PrimitiveKind::Native,
+                         fs::PrimitiveKind::Reads, fs::PrimitiveKind::Writes, fs::PrimitiveKind::Prerequisites}) {
+            if (!builder.appendPrimitive(builder.relation(kind, 0))) { return false; }
+        }
+        fs::finishArithmeticRecognition(output.primitives, limits, output.recognition);
+        return output.recognition.state == fs::RecognitionState::Applicable &&
+            sameRecognition(output.recognition, fs::recognizeArithmetic(output.primitives, limits));
+    }
+    if (output.recognition.state == fs::RecognitionState::Applicable || !output.recognition.pieces.empty() ||
+        output.recognition.diagnostics.size() != 1 || output.recognition.diagnostics.front().issue != *issue) {
+        return false;
+    }
+    const auto relations = output.primitives.relations.size();
+    auto later = builder.relation(fs::PrimitiveKind::Context, 0);
+    builder.emit(later, {});
+    SmallVector<SmallVector<AffineExpr>> recipes;
+    builder.emitForSites(later, {}, {}, &recipes);
+    return later.pieces.empty() && recipes.empty() && !builder.appendPrimitive(std::move(later)) &&
+        output.primitives.relations.size() == relations && !output.machinePrimitiveConversions;
+}
+bool configuredPrimitiveStopsWork(MLIRContext* context)
+{
+    auto module = parseSourceString<ModuleOp>("module { func.func @configured() { return } }", context);
+    if (!module || failed(verify(*module))) { return false; }
+    auto function = module->lookupSymbol<func::FuncOp>("configured");
+    namespace fs = pto::frontiersynch;
+    fs::PhaseIndex index;
+    if (failed(index.build(function, ArrayRef<const pto::CompoundInstanceElement*>{}))) { return false; }
+    return checkConfiguredPrimitive(context, function, index, {8, 3, 1, 3}, true, 1,
+               fs::ArithmeticIssue::DimensionLimit) &&
+        checkConfiguredPrimitive(context, function, index, {8, 4, 1, 2}, false, 1,
+               fs::ArithmeticIssue::CoefficientLimit) &&
+        checkConfiguredPrimitive(context, function, index, {8, 4, 1, 3}, true, 1, std::nullopt) &&
+        checkConfiguredPrimitive(context, function, index, {8, 4, 1, 3}, false, 1, std::nullopt) &&
+        checkConfiguredPrimitive(context, function, index, {8, 4, 1, 3}, false, 2, std::nullopt);
+}
 } // namespace
 bool runScalarConstraintChecks(MLIRContext* context)
 {
@@ -342,7 +447,8 @@ bool runScalarConstraintChecks(MLIRContext* context)
             return false;
         }
     }
-    if (!interleavedContexts(context) || !controlProofContext(context) || !failedPrimitiveStopsWork(context)) {
+    if (!interleavedContexts(context) || !controlProofContext(context) || !failedPrimitiveStopsWork(context) ||
+        !configuredPrimitiveStopsWork(context) || !runMachinePlaceholderChecks(context)) {
         return false;
     }
     // Independent bit-vector witness: start=0, end=-5, iv=2^61 is an

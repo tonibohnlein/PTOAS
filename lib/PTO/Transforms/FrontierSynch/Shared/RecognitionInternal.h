@@ -35,6 +35,9 @@ bool coversEveryVisitUnderFacts(const GuardedRecognition& skeleton, ArrayRef<std
                                const DenseMap<Value, bool>& facts);
 std::optional<PhysicalRefreshDescription> certifyPhysicalRefresh(
     const GuardedRecognition& skeleton, const SyncInput& input, scf::ForOp loop, RefreshCertificate& certificate);
+// Reuse only a retained producer proof in its unchanged physical/guard context.
+bool physicalWriterCoverageApplies(const BoundedLifetimeRecognition& recognized, const SyncInput& input,
+                                   scf::ForOp loop, unsigned cell, uint64_t horizon);
 void normalizeFragments(RecognitionResult& result, const SyncStorageEffects& effects);
 void inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result);
 void inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result, bool allowEnvelopes);

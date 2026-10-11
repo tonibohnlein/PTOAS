@@ -17,7 +17,8 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
-void dumpArithmeticJSON(func::FuncOp function, const fs::ArithmeticProgram& program)
+static llvm::json::Object arithmeticDocument(func::FuncOp function, const fs::ArithmeticProgram& program,
+                                               bool includeCosts = true)
 {
     llvm::json::Array relations;
     for (auto [id, relation] : llvm::enumerate(program.primitives.relations)) {
@@ -125,10 +126,40 @@ void dumpArithmeticJSON(func::FuncOp function, const fs::ArithmeticProgram& prog
         }
         document["parameter_kinds"] = std::move(bindings);
     }
-    llvm::outs() << "arithmetic-json " << llvm::json::Value(std::move(document)) << "\n";
+    if (!includeCosts) {
+        for (auto key : {"machine_conversions", "machine_primitive_cache_hits", "machine_expression_nodes",
+                         "machine_relation_pieces", "machine_projections"}) { document.erase(key); }
+    }
+    return document;
+}
+void dumpArithmeticJSON(func::FuncOp function, const fs::ArithmeticProgram& program)
+{
+    llvm::outs() << "arithmetic-json " << llvm::json::Value(arithmeticDocument(function, program)) << "\n";
 }
 
 namespace {
+bool sameArithmeticMappings(const fs::ArithmeticProgram& a, const fs::ArithmeticProgram& b)
+{
+    if (a.parameters != b.parameters || a.sites.size() != b.sites.size() ||
+        a.primitives.relations.size() != b.primitives.relations.size()) { return false; }
+    for (auto [x, y] : llvm::zip(a.sites, b.sites)) {
+        if (x.phase != y.phase || x.loops != y.loops || x.guards.size() != y.guards.size() ||
+            x.fixedCoordinates.size() != y.fixedCoordinates.size()) { return false; }
+        for (auto [g, h] : llvm::zip(x.guards, y.guards)) {
+            if (g.branch != h.branch || g.takeThen != h.takeThen || g.provenTaken != h.provenTaken) { return false; }
+        }
+        for (auto [g, h] : llvm::zip(x.fixedCoordinates, y.fixedCoordinates)) {
+            if (g.loop != h.loop || g.induction != h.induction) { return false; }
+        }
+    }
+    for (auto [x, y] : llvm::zip(a.primitives.relations, b.primitives.relations)) {
+        if (x.coordinates.size() != y.coordinates.size() || x.storageBase != y.storageBase) { return false; }
+        for (auto [g, h] : llvm::zip(x.coordinates, y.coordinates)) {
+            if (g.name != h.name || g.kind != h.kind) { return false; }
+        }
+    }
+    return true;
+}
 bool checkFiniteTranslation(const fs::ArithmeticProgram& form)
 {
     auto normalized = fs::detail::normalizeFiniteDemandAccesses(form);
@@ -374,6 +405,26 @@ void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
                         form.context, index, input, input.accesses(), limits);
                     document["period_budget_fallback"] = smaller.extraction.state == fs::RecognitionState::Applicable &&
                         smaller.recognition.state == fs::RecognitionState::Applicable && smaller.primitives.period == 1;
+                }
+                if (function->hasAttr("test.failed_parity")) {
+                    fs::FiniteExpansionLimits limits;
+                    // P1 fits within the observed P1 plus failed-P2 count.
+                    // The full P2 preflight cannot fit, omitting its attempt.
+                    limits.fragments = form.expandedFragments;
+                    auto withoutRetry = fs::expandFiniteArithmeticProgram(
+                        form.context, index, input, input.accesses(), limits);
+                    document["failed_parity_rollback"] =
+                        form.primitives.period == 1 && form.machinePrimitiveConversions &&
+                        form.recognition.state == fs::RecognitionState::Applicable &&
+                        form.recognition.diagnostics.empty() &&
+                        withoutRetry.recognition.state == fs::RecognitionState::Applicable &&
+                        withoutRetry.primitives.period == 1 &&
+                        form.expandedFragments > withoutRetry.expandedFragments &&
+                        form.recognition.arithmeticClass == withoutRetry.recognition.arithmeticClass &&
+                        form.recognition.observedDimensions == withoutRetry.recognition.observedDimensions &&
+                        form.recognition.observedCoefficient == withoutRetry.recognition.observedCoefficient &&
+                        sameArithmeticMappings(form, withoutRetry) &&
+                        arithmeticDocument(function, form, false) == arithmeticDocument(function, withoutRetry, false);
                 }
                 document["visits"] = form.expandedVisits;
                 document["fold_operations"] = form.expandedFoldOperations;

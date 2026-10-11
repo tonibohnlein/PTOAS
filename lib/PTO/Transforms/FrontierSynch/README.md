@@ -64,6 +64,20 @@ allocation certificates to physical commands. Missing route-specific exports
 still produce explicit failures; mathematical class membership alone does not
 establish executable synchronization or allocation support.
 
+The arithmetic producer checks each completed primitive with the same
+normalization and profile checks used by batch recognition. A failed primitive
+stops construction of that representation; later profiles and routes remain
+available. Failed optional residue reconstruction restores the earlier accepted
+result. Machine scalar recipes use sparse, simultaneous substitution: profile
+dimension ceilings never determine allocation sizes or placeholder identities.
+
+Bounded regional selectors retain the physical-refresh producer's collective
+writer-coverage certificate, including its original guards, phases and interior
+tail bound. A full window of at least `period + tail` visits can reuse that
+certificate for writable atoms. Read-only per-pipe coverage and effect-specific
+confinement still require their separate proofs; inconclusive reuse leaves the
+existing exact proof available.
+
 `pto-frontier-analysis=analysis-only` retains the Step 2 certification checkpoint:
 it reports original-region mathematical outcomes and stops before emission with
 the original IR unchanged. The standalone diagnostic test tools also expose

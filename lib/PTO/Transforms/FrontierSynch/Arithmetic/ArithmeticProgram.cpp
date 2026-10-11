@@ -117,7 +117,7 @@ void occurrence(detail::ProgramBuilder& builder, std::size_t id)
     relation.sourceSite = id;
     relation.sourceDimensions = site.loops.size();
     builder.emitForSites(relation, builder.domain(site, 0), {{&site, 0}});
-    builder.output.primitives.relations.push_back(std::move(relation));
+    if (!builder.appendPrimitive(std::move(relation))) { return; }
 }
 void order(detail::ProgramBuilder& builder, std::size_t a, std::size_t b)
 {
@@ -145,7 +145,7 @@ void order(detail::ProgramBuilder& builder, std::size_t a, std::size_t b)
     if (a < b) {
         builder.emitForSites(relation, rows, {{&first, 0}, {&second, left}});
     }
-    builder.output.primitives.relations.push_back(relation);
+    if (!builder.appendPrimitive(relation)) { return; }
     if (first.phase->kPipeValue != second.phase->kPipeValue) {
         return;
     }
@@ -155,7 +155,7 @@ void order(detail::ProgramBuilder& builder, std::size_t a, std::size_t b)
                         std::make_pair(ArithmeticEvent::Start, ArithmeticEvent::Completion)}) {
         relation.sourceEvent = events.first;
         relation.targetEvent = events.second;
-        builder.output.primitives.relations.push_back(relation);
+        if (!builder.appendPrimitive(relation)) { return; }
     }
     if (a == b) {
         // I_a -> C_a also for the same occurrence, using both endpoint tuples.
@@ -167,7 +167,7 @@ void order(detail::ProgramBuilder& builder, std::size_t a, std::size_t b)
             rows.push_back(-difference);
         }
         builder.emitForSites(relation, rows, {{&first, 0}, {&second, left}});
-        builder.output.primitives.relations.push_back(std::move(relation));
+        if (!builder.appendPrimitive(std::move(relation))) { return; }
     }
 }
 void prerequisites(detail::ProgramBuilder& builder, const PhaseIndex& index)
@@ -199,13 +199,14 @@ void prerequisites(detail::ProgramBuilder& builder, const PhaseIndex& index)
                     rows.push_back(equal); rows.push_back(-equal);
                 }
                 builder.emitForSites(relation, rows, {{&source, 0}, {&target, left}});
-                builder.output.primitives.relations.push_back(std::move(relation));
+                if (!builder.appendPrimitive(std::move(relation))) { return; }
             }
         }
     }
 }
 void clearExports(ArithmeticProgram& output)
 {
+    output.recognition.pieces.clear();
     output.primitives = {};
     output.sites.clear();
     output.parameters.clear();
@@ -382,6 +383,7 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
         return output;
     }
     auto construct = [&]() {
+        output.recognition = {};
         output.primitives.period = configured.period;
         output.primitives.relations.clear();
         output.uniformConflicts.clear();
@@ -395,24 +397,23 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
             if (kind == PrimitiveKind::Context) {
                 builder.emit(relation, {});
             }
-            output.primitives.relations.push_back(std::move(relation));
-            if (output.extraction.state != RecognitionState::Applicable) { return false; }
+            if (!builder.appendPrimitive(std::move(relation))) { return false; }
         }
         for (std::size_t a = 0; a < output.sites.size(); ++a) {
             occurrence(builder, a);
-            if (output.extraction.state != RecognitionState::Applicable) { return false; }
+            if (!builder.constructionReady()) { return false; }
             for (std::size_t b = 0; b < output.sites.size(); ++b) {
                 order(builder, a, b);
-                if (output.extraction.state != RecognitionState::Applicable) { return false; }
+                if (!builder.constructionReady()) { return false; }
             }
         }
         prerequisites(builder, index);
-        if (output.extraction.state != RecognitionState::Applicable) { return false; }
+        if (!builder.constructionReady()) { return false; }
         detail::extractAccesses(builder, input, effects);
-        if (output.extraction.state != RecognitionState::Applicable) {
+        if (!builder.constructionReady()) {
             return false;
         }
-        output.recognition = recognizeArithmetic(output.primitives, configured);
+        finishArithmeticRecognition(output.primitives, configured, output.recognition);
         return output.recognition.state == RecognitionState::Applicable;
     };
     const bool constructed = construct();

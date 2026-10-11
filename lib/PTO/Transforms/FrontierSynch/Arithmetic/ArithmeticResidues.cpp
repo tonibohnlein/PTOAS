@@ -7,12 +7,26 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exact substitution x = P*q+r, with checked fixed-width coefficients.
 #include "ArithmeticProgramInternal.h"
+#include <climits>
 #include "ArithmeticRows.h"
 #include "../../InsertSync/SyncScalarEvolution.h"
 #include "../../InsertSync/SyncScalarReplay.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/Support/MathExtras.h"
 namespace mlir::pto::frontiersynch::detail {
+bool ProgramBuilder::constructionReady() const
+{
+    return output.extraction.state == RecognitionState::Applicable &&
+           output.recognition.state == RecognitionState::Applicable;
+}
+bool ProgramBuilder::appendPrimitive(PrimitiveRelation primitive)
+{
+    if (!constructionReady()) { return false; }
+    recognizeArithmeticPrimitive(output.primitives, limits, primitive,
+                                output.primitives.relations.size(), output.recognition);
+    output.primitives.relations.push_back(std::move(primitive));
+    return constructionReady();
+}
 PrimitiveRelation ProgramBuilder::relation(PrimitiveKind kind, unsigned dimensions) const
 {
     PrimitiveRelation result;
@@ -207,6 +221,11 @@ std::optional<int64_t> ProgramBuilder::constant(Value value) const
 AffineExpr ProgramBuilder::registerParameter(Value value)
 {
     if (auto fixed = constant(value)) { return getAffineConstantExpr(*fixed, context); }
+    if (!parameterIds.count(value) && (output.parameters.size() >= UINT_MAX ||
+        machineBindings.size() > UINT_MAX - output.parameters.size())) {
+        output.extraction.note(RecognitionIssue::ArithmeticConfiguration, output.context.root, true);
+        return {};
+    }
     auto inserted = parameterIds.try_emplace(value, output.parameters.size());
     if (inserted.second) {
         output.parameters.push_back(value);
@@ -311,13 +330,13 @@ void ProgramBuilder::emit(PrimitiveRelation& target, ArrayRef<AffineExpr> rows,
 {
     // A failed primitive invalidates this producer attempt. Continuing cannot
     // establish a complete representation and only repeats expensive lowering.
-    if (output.extraction.state != RecognitionState::Applicable) { return; }
+    if (!constructionReady()) { return; }
     bool machine = false;
     for (auto row : rows) {
         if (row) {
             row.walk([&](AffineExpr expression) {
                 if (auto symbol = dyn_cast<AffineSymbolExpr>(expression)) {
-                    machine |= symbol.getPosition() >= limits.dimensions;
+                    machine |= symbol.getPosition() >= output.parameters.size();
                 }
             });
         }

@@ -9,9 +9,11 @@
 // The arithmetic-tractability appendix supplies the fixed-dimension/coefficient
 // contract. Congruence periods are class constants, never distances or trips.
 #include "PTO/Transforms/FrontierSynch/Arithmetic/IntegerRelations.h"
+#include "IntegerCongruenceConsistency.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <algorithm>
 #include <map>
+#include <iterator>
 #include <numeric>
 #include <utility>
 namespace mlir::pto::frontiersynch {
@@ -65,6 +67,22 @@ bool normalize(IntegerCongruence& atom)
     atom.modulus /= divisor;
     return true;
 }
+// Subtracting two congruences gives a necessary divisibility condition:
+// gcd(m,n,a_0-b_0,...) divides residueA-residueB. Failure proves emptiness.
+// Other coupled contradictions remain for the exact solver.
+bool incompatibleCongruences(llvm::ArrayRef<BoundInteger> a, const BoundInteger& residueA,
+    const BoundInteger& modulusA, llvm::ArrayRef<BoundInteger> b,
+    const BoundInteger& residueB, const BoundInteger& modulusB)
+{
+    auto common = gcd(modulusA, modulusB);
+    const auto difference = residueA - residueB;
+    if (common == 1 || mod(difference, common) == 0) { return false; }
+    for (unsigned coordinate = 0; coordinate < a.size(); ++coordinate) {
+        common = gcd(common, magnitude(a[coordinate] - b[coordinate]));
+        if (common == 1) { return false; }
+    }
+    return mod(difference, common) != 0;
+}
 }
 FailureOr<IntegerSystem> IntegerSystem::create(unsigned dimensions,
     llvm::ArrayRef<IntegerConstraint> constraints, llvm::ArrayRef<IntegerCongruence> congruences)
@@ -89,6 +107,17 @@ FailureOr<IntegerSystem> IntegerSystem::create(unsigned dimensions,
         if (atom.modulus == 1) { continue; }
         auto found = residues.emplace(std::make_pair(atom.coefficients, atom.modulus), atom.residue);
         if (!found.second && found.first->second != atom.residue) { result.contradiction = true; }
+    }
+    // Catch incompatible nested residue choices before elimination expands
+    // them further, including congruences with different moduli.
+    for (auto a = residues.begin(); a != residues.end() && !result.contradiction; ++a) {
+        for (auto b = std::next(a); b != residues.end(); ++b) {
+            if (incompatibleCongruences(a->first.first, a->second, a->first.second,
+                                       b->first.first, b->second, b->first.second)) {
+                result.contradiction = true;
+                break;
+            }
+        }
     }
     // Opposite affine bounds can contradict before any variable elimination.
     // Coefficients and constants are arbitrary-precision mathematical integers.
@@ -474,6 +503,15 @@ bool IntegerSystem::isEmpty() const
 {
     if (emptyCache) { return *emptyCache; }
     if (!dimensionCount) { return contradiction; }
+    const auto congruenceResult = detail::congruenceConsistency(dimensionCount, divisibilities);
+    if (congruenceResult == detail::CongruenceConsistency::Inconsistent) {
+        emptyCache = true;
+        return true;
+    }
+    if (inequalities.empty() && congruenceResult == detail::CongruenceConsistency::Consistent) {
+        emptyCache = false;
+        return false;
+    }
     // Every recursive call removes one coordinate. Unlike project(), this
     // search returns at the first witness and never builds the full union.
     // Existential feasibility is independent of elimination order. Prefer a
@@ -517,6 +555,73 @@ bool IntegerSystem::isEmpty() const
     emptyCache = std::all_of(children->begin(), children->end(), [](const auto& child) { return child.isEmpty(); });
     return *emptyCache;
 }
+namespace {
+std::vector<unsigned> projectionEqualityRanks(const IntegerSystem& system)
+{
+    std::vector<unsigned> equalityRank(system.dimensions(), 2);
+    std::map<Coefficients, BoundInteger> bounds;
+    for (const auto& row : system.constraints()) { bounds.emplace(row.coefficients, row.bound); }
+    for (const auto& row : system.constraints()) {
+        auto opposite = row.coefficients;
+        for (auto& coefficient : opposite) { coefficient = -coefficient; }
+        auto found = bounds.find(opposite);
+        if (found == bounds.end() || row.bound + found->second != 0) { continue; }
+        for (unsigned column = 0; column < equalityRank.size(); ++column) {
+            const auto factor = magnitude(row.coefficients[column]);
+            if (factor != 0) { equalityRank[column] = std::min(equalityRank[column], factor == 1 ? 0U : 1U); }
+        }
+    }
+    return equalityRank;
+}
+BoundInteger projectionCandidateCost(const IntegerSystem& system, unsigned coordinate)
+{
+    BoundInteger scale(1);
+    unsigned lower = 0, upper = 0;
+    for (const auto& row : system.constraints()) {
+        const auto& factor = row.coefficients[coordinate];
+        if (factor == 0) { continue; }
+        scale = commonMultiple(scale, magnitude(factor));
+        if (factor < 0) { ++lower; } else { ++upper; }
+    }
+    BoundInteger period = scale;
+    for (const auto& row : system.congruences()) {
+        const auto modulus = scale * row.modulus;
+        period = commonMultiple(period,
+            modulus / gcd(magnitude(row.coefficients[coordinate]), modulus));
+    }
+    const auto count = std::max(1U, lower ? lower : upper);
+    return period * BoundInteger(static_cast<int64_t>(count));
+}
+std::optional<unsigned> projectionCoordinate(const IntegerSystem& system,
+    const std::vector<unsigned>& coordinates, const std::vector<bool>& retained)
+{
+    const auto equalityRank = projectionEqualityRanks(system);
+    std::optional<unsigned> selected;
+    unsigned selectedRank = 2;
+    std::optional<BoundInteger> leastCost;
+    // Stable descending original order resolves equal estimates.
+    for (unsigned coordinate = system.dimensions(); coordinate-- > 0;) {
+        if (retained[coordinates[coordinate]]) { continue; }
+        const auto cost = projectionCandidateCost(system, coordinate);
+        const auto rank = equalityRank[coordinate];
+        if (!selected || rank < selectedRank || (rank == selectedRank && cost < *leastCost)) {
+            selected = coordinate; selectedRank = rank; leastCost = cost;
+        }
+    }
+    return selected;
+}
+FailureOr<IntegerSystem> restoreProjectionOrder(const IntegerSystem& system,
+    const std::vector<unsigned>& coordinates, llvm::ArrayRef<unsigned> keep)
+{
+    std::vector<unsigned> map;
+    for (auto originalColumn : coordinates) {
+        auto position = std::find(keep.begin(), keep.end(), originalColumn);
+        if (position == keep.end()) { return failure(); }
+        map.push_back(static_cast<unsigned>(position - keep.begin()));
+    }
+    return system.remap(static_cast<unsigned>(keep.size()), map);
+}
+} // namespace
 FailureOr<std::vector<IntegerSystem>> IntegerSystem::project(llvm::ArrayRef<unsigned> keep) const
 {
     std::vector<bool> retained(dimensionCount, false);
@@ -524,31 +629,33 @@ FailureOr<std::vector<IntegerSystem>> IntegerSystem::project(llvm::ArrayRef<unsi
         if (coordinate >= dimensionCount || retained[coordinate]) { return failure(); }
         retained[coordinate] = true;
     }
-    std::vector<IntegerSystem> pieces{*this};
-    for (unsigned coordinate = dimensionCount; coordinate > 0; --coordinate) {
-        if (retained[coordinate - 1]) { continue; }
-        std::vector<IntegerSystem> next;
-        for (const auto& piece : pieces) {
-            auto projected = piece.eliminate(coordinate - 1);
-            if (failed(projected)) { return failure(); }
-            for (auto& part : *projected) { next.push_back(std::move(part)); }
-        }
-        pieces = std::move(next);
-    }
-    std::vector<unsigned> ordered;
-    for (unsigned coordinate = 0; coordinate < dimensionCount; ++coordinate) {
-        if (retained[coordinate]) { ordered.push_back(coordinate); }
-    }
-    std::vector<unsigned> map(ordered.size());
-    for (unsigned i = 0; i < keep.size(); ++i) {
-        const auto position = std::lower_bound(ordered.begin(), ordered.end(), keep[i]) - ordered.begin();
-        map[position] = i;
-    }
+    struct WorkItem {
+        IntegerSystem system;
+        // Current column -> original column. Elimination preserves this order.
+        std::vector<unsigned> coordinates;
+    };
+    std::vector<unsigned> original(dimensionCount);
+    std::iota(original.begin(), original.end(), 0);
+    std::vector<WorkItem> pending{{*this, std::move(original)}};
     std::vector<IntegerSystem> result;
-    for (const auto& piece : pieces) {
-        auto reordered = piece.remap(static_cast<unsigned>(keep.size()), map);
-        if (failed(reordered)) { return failure(); }
-        if (!reordered->isEmpty()) { result.push_back(std::move(*reordered)); }
+    while (!pending.empty()) {
+        auto item = std::move(pending.back());
+        pending.pop_back();
+        if (item.system.isKnownEmpty()) { continue; }
+        auto selected = projectionCoordinate(item.system, item.coordinates, retained);
+        if (!selected) {
+            auto reordered = restoreProjectionOrder(item.system, item.coordinates, keep);
+            if (failed(reordered)) { return failure(); }
+            if (!reordered->isEmpty()) { result.push_back(std::move(*reordered)); }
+            continue;
+        }
+        auto projected = item.system.eliminate(*selected);
+        if (failed(projected)) { return failure(); }
+        item.coordinates.erase(item.coordinates.begin() + *selected);
+        // Reverse insertion preserves the producer's order under depth-first descent.
+        for (auto child = projected->rbegin(); child != projected->rend(); ++child) {
+            pending.push_back({std::move(*child), item.coordinates});
+        }
     }
     return result;
 }

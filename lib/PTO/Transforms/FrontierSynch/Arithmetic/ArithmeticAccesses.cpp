@@ -176,7 +176,7 @@ void emitRange(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEff
             builder.output.finiteAccessRecipes.push_back(std::move(recipe));
         }
     }
-    builder.output.primitives.relations.push_back(std::move(relation));
+    if (!builder.appendPrimitive(std::move(relation))) { return; }
 }
 bool symbolicRegion(ProgramBuilder& builder, std::size_t siteId, const SyncStorageEffect& effect,
                     const SyncAccessRegion& region)

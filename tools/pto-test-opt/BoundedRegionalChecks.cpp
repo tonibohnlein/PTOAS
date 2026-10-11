@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/CountedLoop.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/RecognitionInternal.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/BitVector.h"
@@ -320,10 +321,79 @@ bool check(const fs::BoundedLifetimeDemandResult& demands, const fs::BoundedLife
     }
     return true;
 }
+bool checkCoverageCorruption(const fs::BoundedLifetimeDemandResult& demands,
+    const fs::BoundedLifetimeRecognition& isolated, unsigned cell, uint64_t horizon)
+{
+    auto rejects = [&](auto mutate) {
+        auto changed = isolated;
+        mutate(changed);
+        return !fs::detail::physicalWriterCoverageApplies(changed, *demands.input, demands.loop, cell, horizon);
+    };
+    if (!rejects([](auto& v) { v.physical->coverageInput = nullptr; }) ||
+        !rejects([](auto& v) { v.physical->coverageLoop = nullptr; }) ||
+        !rejects([](auto& v) { ++v.physical->coveragePeriod; }) ||
+        !rejects([](auto& v) { ++v.physical->writerCoverage.front().cell.begin; }) ||
+        !rejects([](auto& v) { v.physical->writerCoverage.front().phase = v.physical->period; }) ||
+        !rejects([](auto& v) { v.physical->writerCoverage.front().payloads.clear(); }) ||
+        !rejects([](auto& v) { v.physical->writerCoverage.front().payloads.push_back(v.skeleton.phases.size()); }) ||
+        !rejects([](auto& v) { v.physical->coveragePhases.clear(); }) ||
+        !rejects([](auto& v) { v.physical->accesses.clear(); }) ||
+        !rejects([](auto& v) { for (auto& access : v.skeleton.result.accesses) { access.writes = false; } })) {
+        return false;
+    }
+    if (!isolated.physical->coverageGuards.empty() &&
+        !rejects([](auto& v) { v.physical->coverageGuards.front().takeThen ^= true; })) { return false; }
+    return true;
+}
+bool checkIncompleteCoverage(const fs::BoundedLifetimeDemandResult& demands,
+    const fs::BoundedLifetimeRecognition& recognized)
+{
+    for (const auto& proof : recognized.physical->writerCoverage) {
+        if (proof.payloads.empty() || !llvm::any_of(proof.payloads,
+                [&](auto payload) { return payload != proof.payloads.front(); })) { continue; }
+        auto incomplete = recognized;
+        incomplete.physical->writerCoverage.assign(1, proof);
+        auto& payloads = incomplete.physical->writerCoverage.front().payloads;
+        const auto removed = payloads.front();
+        llvm::erase_if(payloads, [&](auto payload) { return payload == removed; });
+        if (fs::detail::physicalWriterCoverageApplies(incomplete, *demands.input, demands.loop,
+                proof.atom, UINT64_MAX)) { return false; }
+        llvm::outs() << "bounded writer coverage: missing complementary writer rejected\n";
+        return true;
+    }
+    llvm::errs() << "bounded coverage fixture lacks a complementary writer witness\n";
+    return false;
+}
+bool checkWriterCoverage(const fs::BoundedLifetimeDemandResult& demands,
+    const fs::BoundedLifetimeRecognition& recognized)
+{
+    if (!recognized.physical || recognized.physical->writerCoverage.empty()) { return false; }
+    auto selected = recognized.physical->writerCoverage.front();
+    for (const auto& proof : recognized.physical->writerCoverage) {
+        if (proof.tail > selected.tail) { selected = proof; }
+    }
+    if (!selected.tail) { llvm::errs() << "bounded fixture lacks an interior-tail witness\n"; return false; }
+    auto isolated = recognized;
+    isolated.physical->writerCoverage.assign(1, selected);
+    const auto period = isolated.physical->period;
+    if (selected.tail > UINT64_MAX - period) { return false; }
+    const auto horizon = period + selected.tail;
+    auto applies = [&](const auto& value, uint64_t length) {
+        return fs::detail::physicalWriterCoverageApplies(value, *demands.input, demands.loop, selected.atom, length);
+    };
+    if (!applies(isolated, horizon) || applies(isolated, horizon - 1) ||
+        !applies(isolated, UINT64_MAX) || !checkCoverageCorruption(demands, isolated, selected.atom, horizon) ||
+        !checkIncompleteCoverage(demands, recognized)) {
+        return false;
+    }
+    llvm::outs() << "bounded writer coverage: horizon boundaries and context isolation passed\n";
+    return true;
+}
 } // namespace
 bool checkBoundedRegionalQueries(const fs::BoundedLifetimeDemandResult& demands,
     const fs::BoundedLifetimeRecognition& recognized, const fs::PhaseIndex& index, fs::RegionalAnalysis& queries)
 {
+    if (!checkWriterCoverage(demands, recognized)) { return false; }
     APInt lower, step;
     auto loop = demands.loop;
     if (!matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) || !lower.isZero() ||

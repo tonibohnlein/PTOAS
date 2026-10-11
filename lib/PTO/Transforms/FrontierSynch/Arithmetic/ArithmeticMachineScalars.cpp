@@ -9,6 +9,7 @@
 // Affine rows retain mathematical (checked i128) semantics; only the original
 // scalar definitions use bit-vector arithmetic. Projection is charged separately.
 #include "ArithmeticProgramInternal.h"
+#include <climits>
 #include "PTO/Transforms/FrontierSynch/Shared/ModularScalar.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -47,7 +48,6 @@ public:
           rows(rows),
           count(target.coordinates.size()),
           output(builder.output),
-          limits(builder.limits),
           context(builder.context),
           machineBindings(builder.machineBindings),
           parameterIds(builder.parameterIds),
@@ -89,15 +89,14 @@ private:
     ArrayRef<AffineExpr> rows;
     const unsigned count;
     ArithmeticProgram& output;
-    const ArithmeticLimits& limits;
     MLIRContext* context;
     const std::vector<ProgramBuilder::MachineBinding>& machineBindings;
     const DenseMap<Value, unsigned>& parameterIds;
     RegionExpressions e;
     Block inputs;
     SmallVector<RegionExpressions::Id> variables, mapped;
-    SmallVector<bool> available, referenced;
-    SmallVector<AffineExpr> dims, symbols;
+    SmallVector<bool> referenced;
+    DenseMap<AffineExpr, AffineExpr> replacements;
     bool bindInputs()
     {
         bool validReferences = true;
@@ -107,14 +106,12 @@ private:
             }
             row.walk([&](AffineExpr expression) {
                 if (auto symbol = dyn_cast<AffineSymbolExpr>(expression)) {
-                    if (symbol.getPosition() >= limits.dimensions) {
-                        const auto id = symbol.getPosition() - limits.dimensions;
-                        if (id >= referenced.size()) {
-                            validReferences = false;
-                        } else {
-                            referenced[id] = true;
-                        }
-                    }
+                    if (symbol.getPosition() < output.parameters.size()) { return; }
+                    auto id = builder.machineBinding(symbol);
+                    if (!id) { validReferences = false; }
+                    else { referenced[*id] = true; }
+                } else if (auto dim = dyn_cast<AffineDimExpr>(expression)) {
+                    validReferences &= dim.getPosition() < target.dimensions;
                 }
             });
         }
@@ -127,23 +124,20 @@ private:
                 i < target.dimensions ? IndexType::get(context) : output.parameters[i - target.dimensions].getType();
             variables.push_back(e.input(inputs.addArgument(type, location)));
             auto coordinate = getAffineDimExpr(i, context);
-            (i < target.dimensions ? dims : symbols).push_back(coordinate);
+            auto source = i < target.dimensions ? getAffineDimExpr(i, context) :
+                getAffineSymbolExpr(i - target.dimensions, context);
+            replacements.try_emplace(source, coordinate);
         }
         return true;
     }
     bool bindMachineRecipes()
     {
         mapped = variables;
-        // The reserved gap cannot alias a true parameter. Unused gap columns are
-        // constants, and every referenced machine placeholder gets an exact recipe.
-        symbols.resize(limits.dimensions, getAffineConstantExpr(0, context));
-        for (unsigned bindingId = 0; bindingId < machineBindings.size(); ++bindingId) {
+        // Substitute only actual inputs and referenced recipes. Placeholder
+        // identities are sparse names, never a request for a dense symbol array.
+        for (std::size_t bindingId = 0; bindingId < machineBindings.size(); ++bindingId) {
+            if (!referenced[bindingId]) { continue; }
             const auto& binding = machineBindings[bindingId];
-            if (!referenced[bindingId]) {
-                symbols.push_back(getAffineConstantExpr(0, context));
-                available.push_back(false);
-                continue;
-            }
             ModularScalar scalar(e, binding.site.phase ? binding.site.phase->elementOp : output.context.root);
             auto value = scalar.signedValue(binding.value, [&](Value leaf) -> std::optional<RegionExpressions::Id> {
                 for (auto fixed : binding.site.fixedCoordinates) {
@@ -169,10 +163,10 @@ private:
                            std::optional<RegionExpressions::Id>(variables[target.dimensions + found->second]) :
                            std::nullopt;
             });
-            // Placeholders belonging to another endpoint/primitive may be unused.
-            symbols.push_back(getAffineDimExpr(mapped.size(), context));
-            mapped.push_back(value.value_or(e.constant(0)));
-            available.push_back(value.has_value());
+            if (!value) { return false; }
+            auto placeholder = getAffineSymbolExpr(UINT_MAX - static_cast<unsigned>(bindingId), context);
+            replacements.try_emplace(placeholder, getAffineDimExpr(mapped.size(), context));
+            mapped.push_back(*value);
         }
         return true;
     }
@@ -184,24 +178,7 @@ private:
             if (!row) {
                 return std::nullopt;
             }
-            bool valid = true;
-            row.walk([&](AffineExpr expression) {
-                if (auto symbol = dyn_cast<AffineSymbolExpr>(expression)) {
-                    if (symbol.getPosition() >= limits.dimensions) {
-                        auto bindingId = symbol.getPosition() - limits.dimensions;
-                        if (bindingId >= machineBindings.size()) {
-                            valid = false;
-                        } else {
-                            // A missing recipe must never silently become zero.
-                            valid &= available[bindingId];
-                        }
-                    }
-                }
-            });
-            if (!valid) {
-                return std::nullopt;
-            }
-            auto coordinate = row.replaceDimsAndSymbols(dims, symbols);
+            auto coordinate = row.replace(replacements);
             coordinates.push_back(coordinate);
             IntegerConstraint constraint;
             constraint.coefficients.resize(rows.size());
@@ -288,6 +265,13 @@ bool ProgramBuilder::prepareMachine(Value input, const ArithmeticSite& site)
         });
     return normalized.has_value() && arena.constructionError().empty();
 }
+std::optional<std::size_t> ProgramBuilder::machineBinding(AffineExpr expression) const
+{
+    auto symbol = dyn_cast_or_null<AffineSymbolExpr>(expression);
+    if (!symbol || symbol.getPosition() < output.parameters.size()) { return std::nullopt; }
+    const auto id = UINT_MAX - symbol.getPosition();
+    return id < machineBindings.size() ? std::optional<std::size_t>(id) : std::nullopt;
+}
 AffineExpr ProgramBuilder::machineValue(Value input, const ArithmeticSite& site, unsigned offset) const
 {
     // Admission registered every true leaf before the common parameter schema
@@ -310,11 +294,16 @@ AffineExpr ProgramBuilder::machineValue(Value input, const ArithmeticSite& site,
                 return std::get<0>(pair).loop == std::get<1>(pair).loop &&
                        std::get<0>(pair).induction == std::get<1>(pair).induction;
             })) {
-            return getAffineSymbolExpr(limits.dimensions + id, context);
+            return getAffineSymbolExpr(UINT_MAX - static_cast<unsigned>(id), context);
         }
     }
+    // True parameters grow upwards; sparse placeholder names grow downwards.
+    // Check their namespace before creating another identity, without wrap.
+    if (output.parameters.size() > UINT_MAX ||
+        machineBindings.size() > UINT_MAX - output.parameters.size()) { return {}; }
+    const auto position = UINT_MAX - static_cast<unsigned>(machineBindings.size());
     machineBindings.push_back({input, site, offset, scalar.width(IndexType::get(context))});
-    return getAffineSymbolExpr(limits.dimensions + machineBindings.size() - 1, context);
+    return getAffineSymbolExpr(position, context);
 }
 bool ProgramBuilder::emitMachine(PrimitiveRelation& target, ArrayRef<AffineExpr> rows)
 {
@@ -322,7 +311,8 @@ bool ProgramBuilder::emitMachine(PrimitiveRelation& target, ArrayRef<AffineExpr>
     // profiles retain their existing producer and can request this adapter
     // after an explicit residue conversion, never by relabeling coordinates.
     const unsigned count = target.coordinates.size();
-    if (limits.period != 1 || count > limits.dimensions || target.dimensions > count) {
+    if (limits.period != 1 || count > limits.dimensions || target.dimensions > count ||
+        output.parameters.size() != count - target.dimensions) {
         return false;
     }
     std::vector<const void*> rowIdentity;
