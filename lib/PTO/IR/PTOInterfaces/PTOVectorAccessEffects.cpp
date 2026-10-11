@@ -29,18 +29,30 @@ static bool plainVectorAccessTile(Value value, unsigned alignment, bool allowCol
         shape[inner] > 0 && shape[inner] <= 65535 && (shape[inner] * width) % alignment == 0;
 }
 
-// The native ND/DN DMA consumes rank-two view dimensions and a uint32_t byte
-// gap. Qualification keeps every narrowed field representable. The GM side
+// The native ND/DN DMA consumes row/column dimensions and a uint32_t byte
+// gap. Rank-one ND views occupy the column axis. Qualification keeps every
+// narrowed field representable. The GM side
 // uses the byte count even for short rows; local fringes are handled separately.
-static bool vectorTransferView(Value value, Value tile, SmallVectorImpl<int64_t>& shape)
+static bool vectorTransferView(Value value, Value tile, SmallVectorImpl<int64_t>& shape,
+                               mlir::AffineMap& globalCoordinates)
 {
     auto layout = getLogicalViewLayout(value);
     if (!layout ||
         (*layout != pto::Layout::ND && *layout != pto::Layout::DN) ||
-        !getLogicalViewShape(value, shape) || shape.size() != 2) {
+        !getLogicalViewShape(value, shape) || (shape.size() != 1 && shape.size() != 2)) {
         return false;
     }
     auto type = cast<pto::TileBufType>(tile.getType());
+    const bool rankOne = shape.size() == 1;
+    if (rankOne) {
+        // ND right-aligns a rank-one view with the contiguous column axis.
+        // Certify only the conventional one-row consumer, without reshaping.
+        if (*layout != pto::Layout::ND || type.getShape()[0] != 1 ||
+            type.getBLayoutValueI32() != static_cast<int>(pto::BLayout::RowMajor)) {
+            return false;
+        }
+        shape.insert(shape.begin(), 1);
+    }
     const int64_t width = pto::linearAccessBytes(type.getElementType());
     if (shape[0] <= 0 || shape[0] > type.getShape()[0] || shape[1] <= 0 ||
         shape[1] > type.getShape()[1]) {
@@ -51,10 +63,19 @@ static bool vectorTransferView(Value value, Value tile, SmallVectorImpl<int64_t>
         base = part.getSource();
     }
     auto view = base.getDefiningOp<pto::MakeTensorViewOp>();
-    if (!view || view.getStrides().size() != 2) {
+    if (!view || view.getStrides().size() != (rankOne ? 1 : 2)) {
         return false;
     }
     auto viewType = dyn_cast<pto::TensorViewType>(view.getResult().getType());
+    if (rankOne) {
+        auto stride = getConstIndexValue(view.getStrides()[0]);
+        if (!viewType || viewType.getElementType() != type.getElementType() || !stride || *stride != 1) {
+            return false;
+        }
+        globalCoordinates = mlir::AffineMap::get(2, 0, mlir::getAffineDimExpr(1, value.getContext()));
+        return true;
+    }
+    globalCoordinates = mlir::AffineMap::getMultiDimIdentityMap(2, value.getContext());
     const unsigned inner = type.getBLayoutValueI32() == static_cast<int>(pto::BLayout::RowMajor) ? 1 : 0;
     const unsigned outer = 1 - inner;
     auto contiguous = getConstIndexValue(view.getStrides()[inner]);
@@ -88,14 +109,15 @@ static void addCheckedVectorAccess(PTOEffectList& effects, OpOperand& operand, O
 // short bursts. Export the exact GM rectangle independently; do not assert a
 // local overwrite of padding.
 static void addVectorTransferAccess(PTOEffectList& effects, OpOperand& global, OpOperand& local,
-                                    ArrayRef<int64_t> shape, bool load)
+                                    ArrayRef<int64_t> shape, mlir::AffineMap globalCoordinates, bool load)
 {
     SmallVector<int64_t> conditions{static_cast<int64_t>(local.getOperandNumber()), shape[0], shape[1]};
     MemoryEffects::Effect* read = MemoryEffects::Read::get();
     MemoryEffects::Effect* write = MemoryEffects::Write::get();
     auto* globalMode = load ? read : write;
     auto* localMode = load ? write : read;
-    addCheckedVectorAccess(effects, global, local, globalMode, conditions);
+    pto::addAccessRegion(effects, global, globalMode,
+                         pto::makeCheckedAccessRegion(local, globalCoordinates, conditions));
     auto type = cast<pto::TileBufType>(local.get().getType());
     const unsigned inner = type.getBLayoutValueI32() == static_cast<int>(pto::BLayout::RowMajor) ? 1 : 0;
     const auto burstBytes = shape[inner] * pto::linearAccessBytes(type.getElementType());
@@ -117,10 +139,11 @@ static bool addVectorLoadAccessEffects(pto::TLoadOp op, PTOEffectList& effects)
         return false;
     }
     SmallVector<int64_t> shape;
-    if (!vectorTransferView(op.getSrc(), op.getDst(), shape)) {
+    mlir::AffineMap globalCoordinates;
+    if (!vectorTransferView(op.getSrc(), op.getDst(), shape, globalCoordinates)) {
         return false;
     }
-    addVectorTransferAccess(effects, op.getSrcMutable(), op.getDstMutable(), shape, true);
+    addVectorTransferAccess(effects, op.getSrcMutable(), op.getDstMutable(), shape, globalCoordinates, true);
     return true;
 }
 
@@ -133,10 +156,11 @@ static bool addVectorStoreAccessEffects(pto::TStoreOp op, PTOEffectList& effects
         return false;
     }
     SmallVector<int64_t> shape;
-    if (!vectorTransferView(op.getDst(), op.getSrc(), shape)) {
+    mlir::AffineMap globalCoordinates;
+    if (!vectorTransferView(op.getDst(), op.getSrc(), shape, globalCoordinates)) {
         return false;
     }
-    addVectorTransferAccess(effects, op.getDstMutable(), op.getSrcMutable(), shape, false);
+    addVectorTransferAccess(effects, op.getDstMutable(), op.getSrcMutable(), shape, globalCoordinates, false);
     return true;
 }
 
