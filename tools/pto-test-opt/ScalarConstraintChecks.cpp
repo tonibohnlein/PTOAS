@@ -8,6 +8,7 @@
 // Check path isolation and machine-semantic range proofs independently of
 // recognizer selection, including the literal prefill wrapping counterexample.
 #include "../../lib/PTO/Transforms/InsertSync/SyncScalarEvolution.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/CountedLoop.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgramInternal.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Verifier.h"
@@ -356,6 +357,62 @@ bool configuredPrimitiveStopsWork(MLIRContext* context)
         checkConfiguredPrimitive(context, function, index, {8, 4, 1, 3}, false, 1, std::nullopt) &&
         checkConfiguredPrimitive(context, function, index, {8, 4, 1, 3}, false, 2, std::nullopt);
 }
+bool correlatedCountedDomain(MLIRContext* context, int64_t offset, int64_t stride, bool swapped, unsigned bits = 64)
+{
+    namespace fs = pto::frontiersynch;
+    const auto operands = swapped ? "%delta, %lower" : "%lower, %delta";
+    std::string source = "module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, " +
+        std::to_string(bits) + " : i32>>} { func.func @counted(%lower: index, %foreign: index) { "
+        "%delta = arith.constant " + std::to_string(offset) + " : index\n"
+        "%step = arith.constant " + std::to_string(stride) + " : index\n"
+        "%upper = arith.addi " + operands + " : index\n"
+        "scf.for %iv = %lower to %upper step %step {} return } }";
+    auto module = parseSourceString<ModuleOp>(source, context);
+    if (!module || failed(verify(*module))) { return false; }
+    auto function = module->lookupSymbol<func::FuncOp>("counted");
+    scf::ForOp loop;
+    function.walk([&](scf::ForOp value) { loop = value; });
+    auto domain = fs::CountedLoop::get(loop);
+    if (bits != 64) { return !domain; }
+    if (offset < 0) { return static_cast<bool>(domain) == (stride > 1); }
+    if (!domain) { return false; }
+    const uint64_t maximum = offset ? (static_cast<uint64_t>(offset) - 1) / stride + 1 : 0;
+    if (domain->maximumOrdinal != (maximum ? maximum - 1 : 0)) { return false; }
+    fs::RegionExpressions arena;
+    const auto trips = domain->trips(arena);
+    const auto lowerInput = arena.input(loop.getLowerBound()), upperInput = arena.input(loop.getUpperBound());
+    for (int64_t lower : {INT64_MIN, INT64_MIN + 1, int64_t{-11}, int64_t{-1}, int64_t{0},
+                         int64_t{1}, INT64_MAX - 8, INT64_MAX - 1, INT64_MAX}) {
+        APInt low(64, static_cast<uint64_t>(lower)), high = low + APInt(64, static_cast<uint64_t>(offset));
+        APInt distance = high.sgt(low) ? high.sext(128) - low.sext(128) : APInt(128, 0);
+        APInt expected = distance.isZero() ? distance : (distance - 1).udiv(APInt(128, stride)) + 1;
+        fs::RegionExpressions::Substitution binding({{lowerInput, arena.constant(low.getZExtValue())},
+                                                    {upperInput, arena.constant(high.getZExtValue())}});
+        if (arena.constantValue(arena.substitute(trips, binding)) != expected.getZExtValue() ||
+            expected.getZExtValue() > maximum) { return false; }
+    }
+    // A certified selected view must use its supplied constants, not the
+    // original correlated expression; unrelated upper operands remain unknown.
+    auto selected = fs::CountedLoop::get(loop, 0, 100);
+    if (!selected || selected->maximumOrdinal != 99 / static_cast<uint64_t>(stride)) { return false; }
+    auto lowerOnly = fs::CountedLoop::get(loop, 0);
+    auto upperOnly = fs::CountedLoop::get(loop, std::nullopt, 0);
+    if (!lowerOnly || static_cast<bool>(upperOnly) != (stride > 1)) { return false; }
+    auto sum = loop.getUpperBound().getDefiningOp<arith::AddIOp>();
+    sum->setOperand(swapped ? 1 : 0, function.getArgument(1));
+    return static_cast<bool>(fs::CountedLoop::get(loop)) == (stride > 1);
+}
+bool correlatedCountedDomains(MLIRContext* context)
+{
+    if (!correlatedCountedDomain(context, 8, 1, false, 32)) { return false; }
+    for (int64_t offset : {int64_t{-1}, int64_t{0}, int64_t{1}, int64_t{8}, INT64_MAX}) {
+        for (int64_t step : {int64_t{1}, int64_t{3}, INT64_MAX}) {
+            if (!correlatedCountedDomain(context, offset, step, false) ||
+                !correlatedCountedDomain(context, offset, step, true)) { return false; }
+        }
+    }
+    return true;
+}
 } // namespace
 bool runScalarConstraintChecks(MLIRContext* context)
 {
@@ -448,7 +505,8 @@ bool runScalarConstraintChecks(MLIRContext* context)
         }
     }
     if (!interleavedContexts(context) || !controlProofContext(context) || !failedPrimitiveStopsWork(context) ||
-        !configuredPrimitiveStopsWork(context) || !runMachinePlaceholderChecks(context)) {
+        !configuredPrimitiveStopsWork(context) || !correlatedCountedDomains(context) ||
+        !runMachinePlaceholderChecks(context)) {
         return false;
     }
     // Independent bit-vector witness: start=0, end=-5, iv=2^61 is an
