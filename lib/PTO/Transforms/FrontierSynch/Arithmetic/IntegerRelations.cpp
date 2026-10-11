@@ -130,23 +130,26 @@ FailureOr<IntegerSystem> IntegerSystem::create(unsigned dimensions,
             break;
         }
     }
+    auto storage = std::make_shared<Storage>();
     if (result.contradiction) {
-        result.inequalities.push_back({Coefficients(dimensions), BoundInteger(-1)});
+        storage->inequalities.push_back({Coefficients(dimensions), BoundInteger(-1)});
         result.emptyCache = true;
+        result.storage = std::move(storage);
         return result;
     }
-    for (auto& [coefficients, bound] : bounds) { result.inequalities.push_back({coefficients, bound}); }
-    for (auto& [key, residue] : residues) { result.divisibilities.push_back({key.first, residue, key.second}); }
+    for (auto& [coefficients, bound] : bounds) { storage->inequalities.push_back({coefficients, bound}); }
+    for (auto& [key, residue] : residues) { storage->divisibilities.push_back({key.first, residue, key.second}); }
+    result.storage = std::move(storage);
     if (!dimensions) { result.emptyCache = false; }
     return result;
 }
 FailureOr<IntegerSystem> IntegerSystem::intersect(const IntegerSystem& other) const
 {
     if (dimensionCount != other.dimensionCount) { return failure(); }
-    auto rows = inequalities;
-    rows.insert(rows.end(), other.inequalities.begin(), other.inequalities.end());
-    auto congruences = divisibilities;
-    congruences.insert(congruences.end(), other.divisibilities.begin(), other.divisibilities.end());
+    auto rows = this->constraints();
+    rows.insert(rows.end(), other.constraints().begin(), other.constraints().end());
+    auto congruences = this->congruences();
+    congruences.insert(congruences.end(), other.congruences().begin(), other.congruences().end());
     return create(dimensionCount, rows, congruences);
 }
 FailureOr<IntegerSystem> IntegerSystem::remap(unsigned newDimensions, llvm::ArrayRef<unsigned> oldToNew) const
@@ -162,16 +165,16 @@ FailureOr<IntegerSystem> IntegerSystem::remap(unsigned newDimensions, llvm::Arra
     };
     std::vector<IntegerConstraint> rows;
     std::vector<IntegerCongruence> congruences;
-    for (const auto& atom : inequalities) { rows.push_back({map(atom.coefficients), atom.bound}); }
-    for (const auto& atom : divisibilities) {
+    for (const auto& atom : this->constraints()) { rows.push_back({map(atom.coefficients), atom.bound}); }
+    for (const auto& atom : this->congruences()) {
         congruences.push_back({map(atom.coefficients), atom.residue, atom.modulus});
     }
     return create(newDimensions, rows, congruences);
 }
 bool IntegerSystem::isOctagonal() const
 {
-    if (!divisibilities.empty()) { return false; }
-    for (const auto& atom : inequalities) {
+    if (!this->congruences().empty()) { return false; }
+    for (const auto& atom : this->constraints()) {
         unsigned count = 0;
         for (const auto& coefficient : atom.coefficients) {
             if (coefficient != 0 && (++count > 2 || magnitude(coefficient) != 1)) { return false; }
@@ -472,9 +475,9 @@ FailureOr<std::vector<IntegerSystem>> IntegerSystem::eliminate(unsigned coordina
     std::vector<IntegerSystem> result;
     if (contradiction) { return result; }
     if (isOctagonal()) {
-        const auto bounds = endpointBounds(inequalities, coordinate);
+        const auto bounds = endpointBounds(this->constraints(), coordinate);
         std::vector<IntegerConstraint> rows;
-        for (const auto& atom : inequalities) {
+        for (const auto& atom : this->constraints()) {
             if (atom.coefficients[coordinate] == 0) {
                 rows.push_back({without(atom.coefficients, coordinate), atom.bound});
             }
@@ -503,12 +506,12 @@ bool IntegerSystem::isEmpty() const
 {
     if (emptyCache) { return *emptyCache; }
     if (!dimensionCount) { return contradiction; }
-    const auto congruenceResult = detail::congruenceConsistency(dimensionCount, divisibilities);
+    const auto congruenceResult = detail::congruenceConsistency(dimensionCount, this->congruences());
     if (congruenceResult == detail::CongruenceConsistency::Inconsistent) {
         emptyCache = true;
         return true;
     }
-    if (inequalities.empty() && congruenceResult == detail::CongruenceConsistency::Consistent) {
+    if (this->constraints().empty() && congruenceResult == detail::CongruenceConsistency::Consistent) {
         emptyCache = false;
         return false;
     }
@@ -522,14 +525,14 @@ bool IntegerSystem::isEmpty() const
     for (unsigned coordinate = 0; coordinate < dimensionCount; ++coordinate) {
         BoundInteger scale(1);
         unsigned lower = 0, upper = 0;
-        for (const auto& atom : inequalities) {
+        for (const auto& atom : this->constraints()) {
             const auto& coefficient = atom.coefficients[coordinate];
             if (coefficient == 0) { continue; }
             scale = commonMultiple(scale, magnitude(coefficient));
             if (coefficient < 0) { ++lower; } else { ++upper; }
         }
         BoundInteger period = scale;
-        for (const auto& atom : divisibilities) {
+        for (const auto& atom : this->congruences()) {
             const auto modulus = scale * atom.modulus;
             period = commonMultiple(period,
                 modulus / gcd(magnitude(atom.coefficients[coordinate]), modulus));
@@ -663,8 +666,8 @@ bool IntegerSystem::isSubsetOf(const IntegerSystem& other) const
 {
     if (dimensionCount != other.dimensionCount) { return false; }
     if (isKnownEmpty()) { return true; }
-    for (const auto& atom : other.inequalities) {
-        if (std::any_of(inequalities.begin(), inequalities.end(), [&](const auto& known) {
+    for (const auto& atom : other.constraints()) {
+        if (std::any_of(this->constraints().begin(), this->constraints().end(), [&](const auto& known) {
                 return known.coefficients == atom.coefficients && known.bound <= atom.bound;
             })) { continue; }
         auto coefficients = atom.coefficients;
@@ -676,8 +679,8 @@ bool IntegerSystem::isSubsetOf(const IntegerSystem& other) const
         }
         if (!overlap->isEmpty()) { return false; }
     }
-    for (const auto& atom : other.divisibilities) {
-        if (std::any_of(divisibilities.begin(), divisibilities.end(), [&](const auto& known) {
+    for (const auto& atom : other.congruences()) {
+        if (std::any_of(this->congruences().begin(), this->congruences().end(), [&](const auto& known) {
                 return known.coefficients == atom.coefficients && known.modulus == atom.modulus &&
                        known.residue == atom.residue;
             })) { continue; }

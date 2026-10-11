@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_INTEGERRELATIONS_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_INTEGERRELATIONS_H
 #include "PTO/Transforms/FrontierSynch/Arithmetic/DifferenceBoundRelations.h"
+#include <memory>
 namespace mlir::pto::frontiersynch {
 struct IntegerConstraint {
     std::vector<BoundInteger> coefficients;
@@ -32,8 +33,16 @@ public:
     static FailureOr<IntegerSystem> create(unsigned dimensions,
         llvm::ArrayRef<IntegerConstraint> constraints, llvm::ArrayRef<IntegerCongruence> congruences = {});
     unsigned dimensions() const { return dimensionCount; }
-    const std::vector<IntegerConstraint>& constraints() const { return inequalities; }
-    const std::vector<IntegerCongruence>& congruences() const { return divisibilities; }
+    const std::vector<IntegerConstraint>& constraints() const
+    {
+        static const std::vector<IntegerConstraint> empty;
+        return storage ? storage->inequalities : empty;
+    }
+    const std::vector<IntegerCongruence>& congruences() const
+    {
+        static const std::vector<IntegerCongruence> empty;
+        return storage ? storage->divisibilities : empty;
+    }
     // Representation/cache observation only; never invokes an emptiness solver.
     bool isKnownEmpty() const { return contradiction || (emptyCache && *emptyCache); }
     bool isEmpty() const;
@@ -51,8 +60,13 @@ public:
     bool operator==(const IntegerSystem& other) const;
 private:
     unsigned dimensionCount = 0;
-    std::vector<IntegerConstraint> inequalities;
-    std::vector<IntegerCongruence> divisibilities;
+    // Endpoint-tagged relations share immutable numerical atoms. Construction
+    // publishes a fresh backing only after normalization has finished.
+    struct Storage {
+        std::vector<IntegerConstraint> inequalities;
+        std::vector<IntegerCongruence> divisibilities;
+    };
+    std::shared_ptr<const Storage> storage;
     bool contradiction = false;
     mutable std::optional<bool> emptyCache;
     bool isOctagonal() const;
