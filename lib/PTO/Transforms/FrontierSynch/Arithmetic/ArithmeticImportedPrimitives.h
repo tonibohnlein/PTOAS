@@ -19,25 +19,31 @@ public:
     ImportedArithmeticPrimitives(const ImportedArithmeticPrimitives&) = delete;
     ImportedArithmeticPrimitives& operator=(const ImportedArithmeticPrimitives&) = delete;
     ImportedArithmeticPrimitives(ImportedArithmeticPrimitives&& other) noexcept
-        : source(std::exchange(other.source, nullptr)), complete(other.complete), values(std::move(other.values)) {}
+        : source(std::exchange(other.source, nullptr)), complete(other.complete),
+          values(std::move(other.values)), cost(other.cost) {}
     ImportedArithmeticPrimitives& operator=(ImportedArithmeticPrimitives&& other) noexcept
     {
         if (this != &other) {
             source = std::exchange(other.source, nullptr);
             complete = other.complete;
             values = std::move(other.values);
+            cost = other.cost;
         }
         return *this;
     }
     llvm::ArrayRef<ArithmeticIntegerPiece> pieces() const { return values; }
+    const ArithmeticStorageSelectorCost& constructionCost() const { return cost; }
     bool isCompleteFor(const ArithmeticProgram& program) const { return source == &program && complete; }
 private:
     ImportedArithmeticPrimitives(const ArithmeticProgram& program, bool occurrencesOnly,
-                                std::vector<ArithmeticIntegerPiece> pieces)
-        : source(&program), complete(!occurrencesOnly), values(std::move(pieces)) {}
+                                std::vector<ArithmeticIntegerPiece> pieces,
+                                ArithmeticStorageSelectorCost constructionCost)
+        : source(&program), complete(!occurrencesOnly),
+          values(std::move(pieces)), cost(constructionCost) {}
     const ArithmeticProgram* source;
     bool complete;
     std::vector<ArithmeticIntegerPiece> values;
+    ArithmeticStorageSelectorCost cost;
     friend FailureOr<ImportedArithmeticPrimitives> importOwnedArithmeticIntegerPieces(
         const ArithmeticProgram&, bool);
     friend FailureOr<std::vector<ArithmeticIntegerPiece>> importArithmeticIntegerPieces(

@@ -48,7 +48,10 @@ FailureOr<std::vector<fs::ArithmeticStorageSelectors>> selectorAdapters(
         return failure();
     }
     std::vector<fs::ArithmeticIntegerPiece> before(imported->pieces().begin(), imported->pieces().end());
+    const auto importCost = imported->constructionCost();
+    if (!importCost.remapHits || !importCost.intersectionHits || !importCost.emptinessHits) { return failure(); }
     auto moved = std::move(*imported);
+    if (moved.constructionCost().remapRequests != importCost.remapRequests) { return failure(); }
     if (fs::buildArithmeticStorageSelectorsFromImported(program, *imported, pipes).error.empty()) { return failure(); }
     std::vector<fs::ArithmeticStorageSelectors> results;
     results.push_back(fs::buildArithmeticStorageSelectors(program, pipes));
@@ -542,7 +545,8 @@ bool check()
         if (!result.error.empty()) { llvm::errs() << result.error << "\n"; return false; }
         if (result.boundaries.empty() || result.support.empty() || !result.cost.projectionHits ||
             !result.cost.emptinessHits || !result.cost.remapHits || !result.cost.intersectionHits ||
-            !result.cost.witnessHits ||
+            !result.cost.witnessHits || !result.importCost.remapHits ||
+            !result.importCost.intersectionHits || !result.importCost.emptinessHits ||
             result.cost.witnessRequests != result.cost.witnessHits + result.cost.witnessBuilds ||
             result.cost.remapRequests != result.cost.remapHits + result.cost.remapBuilds ||
             result.cost.intersectionRequests != result.cost.intersectionHits + result.cost.intersectionBuilds ||

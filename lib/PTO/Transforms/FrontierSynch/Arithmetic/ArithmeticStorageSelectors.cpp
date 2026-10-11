@@ -132,16 +132,16 @@ FailureOr<std::vector<Piece>> Builder::importPiece(const NormalizedPiece& normal
     }
     std::vector<Piece> imported;
     if (liftedDimensions == schema.coordinates.size()) {
-        system = system->remap(schema.coordinates.size(), permutation);
-        if (failed(system)) { return failure(); }
-        imported.push_back({&schema, std::move(residues), std::move(*system)});
+        auto remapped = numericalQueries.remap(*system, schema.coordinates.size(), permutation);
+        if (failed(remapped)) { return failure(); }
+        imported.push_back({&schema, std::move(residues), **remapped});
     } else {
         std::vector<unsigned> keep(schema.coordinates.size());
         for (unsigned i = 0; i < keep.size(); ++i) { keep[permutation[i]] = i; }
-        auto projected = system->project(keep);
+        auto projected = numericalQueries.project(*system, keep);
         if (failed(projected)) { return failure(); }
-        for (auto& selected : *projected) {
-            imported.push_back({&schema, residues, std::move(selected)});
+        for (const auto& selected : *projected) {
+            imported.push_back({&schema, residues, selected});
         }
     }
     return imported;
@@ -193,12 +193,12 @@ LogicalResult Builder::import(bool occurrencesOnly)
             }
             std::vector<unsigned> map(result.parameterCount);
             std::iota(map.begin(), map.end(), piece.schema->dimensions);
-            auto lifted = context.system.remap(piece.system.dimensions(), map);
+            auto lifted = numericalQueries.remap(context.system, piece.system.dimensions(), map);
             if (failed(lifted)) { return failure(); }
-            auto restricted = piece.system.intersect(*lifted);
+            auto restricted = numericalQueries.intersect(piece.system, **lifted);
             if (failed(restricted)) { return failure(); }
-            if (!restricted->isEmpty()) {
-                ownedPieces.push_back({piece.schema, piece.residues, std::move(*restricted)});
+            if (!numericalQueries.isEmpty(**restricted)) {
+                ownedPieces.push_back({piece.schema, piece.residues, **restricted});
             }
         }
     }
@@ -466,7 +466,8 @@ FailureOr<ImportedArithmeticPrimitives> importOwnedArithmeticIntegerPieces(
         program.recognition.state != RecognitionState::Applicable || !program.primitives.period) { return failure(); }
     Builder builder(program, {});
     if (failed(builder.import(occurrencesOnly))) { return failure(); }
-    return ImportedArithmeticPrimitives(program, occurrencesOnly, std::move(builder.ownedPieces));
+    return ImportedArithmeticPrimitives(program, occurrencesOnly, std::move(builder.ownedPieces),
+                                        builder.numericalQueries.cost());
 }
 FailureOr<std::vector<ArithmeticIntegerPiece>> importArithmeticIntegerPieces(
     const ArithmeticProgram& program, bool occurrencesOnly)
@@ -485,6 +486,7 @@ ArithmeticStorageSelectors buildArithmeticStorageSelectorsFromImported(
         return result;
     }
     Builder builder(program, sitePipes, imported.pieces());
+    builder.result.importCost = imported.constructionCost();
     if (failed(builder.run())) {
         builder.result.boundaries.clear();
         builder.result.support.clear();
