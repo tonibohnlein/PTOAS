@@ -2218,9 +2218,17 @@ int main(int argc, char **argv) {
         }
         const auto attempts = counts.mathematicalAttempts;
         const auto forms = analysis.result()->arithmeticContracts.size();
+        const auto arithmeticRegions = analysis.arithmeticRegionConstructions();
+        const auto arithmeticGenerators = analysis.arithmeticGeneratorConstructions();
+        const auto numericalRegions = analysis.numericalRegionConstructions();
+        const auto normalizations = analysis.normalizationConstructions();
         (void)analysis.certifyRegions();
         if (analysis.constructionCounts().mathematicalAttempts != attempts ||
-            analysis.result()->arithmeticContracts.size() != forms) {
+            analysis.result()->arithmeticContracts.size() != forms ||
+            analysis.arithmeticRegionConstructions() != arithmeticRegions ||
+            analysis.arithmeticGeneratorConstructions() != arithmeticGenerators ||
+            analysis.numericalRegionConstructions() != numericalRegions ||
+            analysis.normalizationConstructions() != normalizations) {
           function.emitError("repeated certification reconstructed analysis");
           return 1;
         }
@@ -2228,6 +2236,10 @@ int main(int argc, char **argv) {
             {"function", function.getSymName()}, {"regions", std::move(regions)},
             {"mathematical_attempts", attempts}, {"logical_preparations", counts.logicalPreparations},
             {"allocation_exports", counts.allocationExports},
+            {"canonical_arithmetic_region_constructions", arithmeticRegions},
+            {"canonical_arithmetic_generator_constructions", arithmeticGenerators},
+            {"numerical_region_constructions", numericalRegions},
+            {"normalization_constructions", normalizations},
             {"specialized_arithmetic_constructions", analysis.specializedArithmeticConstructions()},
             {"specialized_numeric_constructions", analysis.specializedNumericConstructions()},
             {"specialized_guarded_constructions", analysis.specializedGuardedConstructions()},
