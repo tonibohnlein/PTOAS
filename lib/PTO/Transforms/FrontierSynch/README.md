@@ -109,6 +109,40 @@ allocation export is unsupported. Closed-callee and section regressions cover
 nested modules, alias policies and physical execution contexts. These are
 compiler and command-graph checks, not device runtime validation.
 
+## Retained-order coverage of residual memory effects
+
+`Structured/OrderCoveredPeriodic` can certify a periodic required order even
+when the original GM footprints are not periodic. It first builds an exact
+unguarded graph from invariant local cells. A separate owned certificate then
+checks every original potential hazard involving an omitted GM effect: the
+retained completion-to-start threshold must cover all forward occurrence pairs,
+including a site's later visits. Any possible hazard outside the original loop
+prevents this proof. The hypothesis cannot use an omitted effect's generator
+or a uniform conflict involving that effect to prove its own redundancy.
+
+This adapter preserves the original shared input and ordinary form diagnostics.
+Its reported class is `periodic-required-order`, with representation
+`order-covered-periodic`. The omitted effects are never marked disjoint or put
+in `dischargedEffects`. The initial implementation supports an independent
+counted loop directly in a single-block function with a return terminator,
+unconditional payloads, invariant exact local cells,
+and no uniform modeled relationships. Counted-domain representability,
+carried-state, scalar-control prerequisites and macro restrictions remain in
+force. These are the scope of this implemented proof adapter, not a claim that
+other inputs are outside the mathematical class.
+
+The retained graph supports existing periodic queries, detached logical plans
+and their allocation certificate. Original-coordinate GM selectors and regional
+re-entry/composition adapters remain unavailable. A stronger export request
+retains these exact demands and can select another supported route. Root
+promotion still requires the independent whole-function scope check.
+
+The common endpoint adapter also accepts a certified `CountedLoop` domain,
+including negative or runtime lower bounds. It keeps signed span selection
+and unsigned distance division, so a distance above INT64_MAX need not
+overflow when the certified visit count fits. The original normalized-domain
+admission, 64-bit layout and endpoint-cut checks remain in force.
+
 ## Maintaining the layout
 
 Keep new route-specific recognition, analysis, emission and allocation adapters

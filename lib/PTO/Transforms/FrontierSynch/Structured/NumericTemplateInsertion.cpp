@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.h"
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
+#include "../Shared/CountedLoop.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/IR/Dominance.h"
@@ -194,7 +195,11 @@ LogicalResult prepareCountedEndpointCode(func::FuncOp function, const NumericTem
     auto lower = constant(loop.getLowerBound()), step = constant(loop.getStep());
     const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
     DominanceInfo dominance(function);
-    if (!lower || *lower < 0 || !step || *step <= 0 || !loop.getInductionVar().getType().isIndex() ||
+    // Family endpoint ordinals use exact unsigned distances, including signed
+    // intervals crossing zero. Retain the original normalized-domain route.
+    const bool normalized = lower && *lower >= 0 && step && *step > 0;
+    if ((!normalized && !CountedLoop::get(loop)) || !step || *step <= 0 ||
+        !loop.getInductionVar().getType().isIndex() ||
         bits.isScalable() || bits.getFixedValue() != 64 || !validCuts(endpoints, dominance)) {
         return failure();
     }

@@ -215,6 +215,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Structured/PeriodicSharedCertificate.cpp
   FrontierSynch/Structured/PhysicalRefresh.cpp
   FrontierSynch/Structured/ResolvedLifetimeStream.cpp
+  FrontierSynch/Structured/OrderCoveredPeriodic.cpp
   FrontierSynch/Structured/RotatingAnalysis.cpp
   FrontierSynch/Structured/RotatingBoundary.cpp
   FrontierSynch/Structured/RotatingExtraction.cpp

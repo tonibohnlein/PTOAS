@@ -8,6 +8,7 @@
 // Detached preparation consumes retained mathematics. Producer and reducer
 // work is never repeated after a missing synchronization export.
 #include "AnalysisSessionInternal.h"
+#include "Structured/OrderCoveredPeriodic.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/Structured/MixedStrideAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompactBoundingInsertion.h"
@@ -86,6 +87,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
     }
     if (demands.rotatingDemands) {
         const auto& rotating = *demands.rotatingDemands;
+        if (demands.orderCoveredDemands &&
+            (!demands.orderCoveredDemands->applies(storage.get(), structuralIndex.get(), rotating.loop) ||
+             &demands.orderCoveredDemands->retained != &rotating)) { return failure(); }
         auto& recipe = sessionState->attempts[demands.region][AnalysisBackend::Rotating].periodicEndpoints;
         if (!recipe) {
             SmallVector<TemplateEndpointAnchor> anchors;

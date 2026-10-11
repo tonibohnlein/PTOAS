@@ -157,6 +157,7 @@ add_llvm_executable(pto-sync-input-test
   MachineCertificateChecks.cpp
   BoundedRegionalChecks.cpp
   BoundedSessionChecks.cpp
+  OrderCoveredPeriodicChecks.cpp
   RepeatedStorageChecks.cpp
   RepeatedPhaseChecks.cpp
   NestedRegionalChecks.cpp

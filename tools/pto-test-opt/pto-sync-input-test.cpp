@@ -1395,6 +1395,7 @@ int runPhysicalExecutedCounterChecks();
 int runStorageLaneAllocationChecks();
 int runBoundedLifetimeProvenanceChecks();
 int runBoundedLifetimeAllocationChecks();
+LogicalResult checkOrderCoveredPeriodic(func::FuncOp, pto::GMAliasPolicy);
 int runSharedHandoffAllocationChecks();
 int runFiniteAllocationQueryChecks();
 int runNumericalHierarchyChecks(func::FuncOp function);
@@ -1942,6 +1943,10 @@ int main(int argc, char **argv) {
       }
       if (certification && function->hasAttr("test.piecewise_access_cache")) {
         if (failed(checkPiecewiseAccessCache(function, policy))) { return 1; }
+        continue;
+      }
+      if (certification && function->hasAttr("test.order_covered_periodic")) {
+        if (failed(checkOrderCoveredPeriodic(function, policy))) { return 1; }
         continue;
       }
       if (certification && function->hasAttr("test.sequence_endpoint_retry")) {

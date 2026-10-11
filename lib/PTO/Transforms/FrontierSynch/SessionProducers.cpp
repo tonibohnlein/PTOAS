@@ -13,6 +13,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateRegional.h"
 #include "Shared/SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingAnalysis.h"
+#include "Structured/OrderCoveredPeriodic.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeRegional.h"
@@ -350,7 +351,24 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
         if (!node->rotatingResult || node->rotatingResult->state != RecognitionState::Applicable) {
             if (node->rotatingResult) { recordFormFailure(producerFailure, *node->rotatingResult); }
             else { producerFailure.stage = AnalysisStage::Form; }
-            error = "rotating form is not established"; return {};
+            // Failure of the ordinary footprint form does not exclude the
+            // distinct retained-order proof attempted below.
+            producerFailure.status = AnalysisStatus::UnmetObligation;
+            const auto reductionsBefore = construction.rotatingReductions;
+            auto covered = analyzeOrderCoveredPeriodic(loop, region, storage, structuralIndex,
+                construction.rotatingReductions, error);
+            if (!covered) {
+                if (construction.rotatingReductions != reductionsBefore) {
+                    producerFailure.stage = AnalysisStage::Demands;
+                    producerFailure.status = AnalysisStatus::UnmetObligation;
+                }
+                return {};
+            }
+            owned->orderCoveredDemands = std::move(covered);
+            owned->rotatingDemands = std::shared_ptr<const RotatingAnalysis>(
+                owned->orderCoveredDemands, &owned->orderCoveredDemands->retained);
+            owned->backend = "order-covered-periodic";
+            break;
         }
         if (construction.rotatingReductions != UINT64_MAX) { ++construction.rotatingReductions; }
         auto demands = std::make_shared<RotatingAnalysis>(
