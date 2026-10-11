@@ -8,6 +8,7 @@
 // Detached preparation consumes retained mathematics. Producer and reducer
 // work is never repeated after a missing synchronization export.
 #include "AnalysisSessionInternal.h"
+#include "WholeInvocationIdentity.h"
 #include "Structured/OrderCoveredPeriodic.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/Structured/MixedStrideAnalysis.h"
@@ -57,6 +58,23 @@ bool sameOriginalCoordinates(const RegionalAnalysis& a, const RegionalAnalysis& 
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetained(const MathematicalResult& demands)
 {
     std::string error;
+    if (demands.identityComposition) {
+        const auto& owner = *demands.identityComposition;
+        if (demands.region != owner.region ||
+            !owner.applies(storage.get(), structuralIndex.get(), program.get(), function)) { return failure(); }
+        AnalysisOutcome child;
+        child.mathematical = owner.child;
+        auto prepared = prepareLogical(child);
+        if (succeeded(prepared)) {
+            auto& attempts = sessionState->attempts[owner.childRegion];
+            auto found = attempts.find(owner.childBackend);
+            if (found != attempts.end() && found->second.mathematical == owner.child) {
+                found->second.endpoints = true;
+            }
+            (*prepared)->completeInvocation = true;
+        }
+        return prepared;
+    }
     if (demands.explicitDemands) {
         auto plan = prepareExplicitInsertion(function, *demands.explicitDemands, false);
         const bool nativeScalar = succeeded(plan) && demands.backend == "native-scalar";

@@ -1387,6 +1387,7 @@ int runRotatingRegionChecks(func::FuncOp);
 int runLifetimeStreamChecks();
 int runArithmeticPeriodicConversionChecks();
 int runArithmeticPeriodicInputChecks(func::FuncOp, const pto::SyncInput&);
+int runWholeInvocationIdentityChecks(func::FuncOp, pto::GMAliasPolicy);
 int runResolvedLifetimeStreamChecks();
 int runGuardedRankChecks();
 int runGeneralArithmeticAllocationChecks();
@@ -1548,6 +1549,7 @@ int main(int argc, char **argv) {
     for (int i = 1; i + 1 < argc; ++i) { argv[i] = argv[i + 1]; }
     --argc;
   }
+  const bool identitySessionChecks = argc == 3 && StringRef(argv[1]) == "--identity-session-checks";
   const bool allocationSessionChecks = argc == 3 && StringRef(argv[1]) == "--allocation-session-checks";
   const bool regionalSessionChecks = argc == 3 && StringRef(argv[1]) == "--regional-session-checks";
   const bool retainedChecks = argc == 3 && StringRef(argv[1]) == "--retained-demand-checks";
@@ -1613,7 +1615,8 @@ int main(int argc, char **argv) {
   const bool sequenceAnalysis = argc == 3 && StringRef(argv[1]) == "--sequence-analysis";
   const bool structuredTrace = argc == 3 && StringRef(argv[1]) == "--structured-trace";
   const bool physicalTrace = argc == 3 && StringRef(argv[1]) == "--physical-trace";
-  if (argc != 2 && !boundedQueries && !allocationSessionChecks && !regionalSessionChecks && !retainedChecks &&
+  if (argc != 2 && !boundedQueries && !identitySessionChecks && !allocationSessionChecks &&
+      !regionalSessionChecks && !retainedChecks &&
       !sessionChecks && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !finiteExpansion && !recognition &&
       !numericAnalysis && !insertLogical && !insertLogicalLibrary && !insertModuleLibrary && !recognitionBoundary &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
@@ -1629,7 +1632,8 @@ int main(int argc, char **argv) {
           << "usage: pto-sync-input-test "
           << "[--gm-alias=may-alias|may-not-alias] "
           << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
-             "--allocation-session-checks|--retained-demand-checks|--analysis-session-checks|"
+             "--identity-session-checks|--allocation-session-checks|"
+             "--retained-demand-checks|--analysis-session-checks|"
              "--recognize|--recognition-boundary|--numeric-analysis|--insert-logical|--insert-logical-library|"
              "--insert-module-library|--prepared-insertion-checks|--insertion-trace|"
              "--finite-guarded-analysis|--finite-overlay-insertion|--region-expression-checks|--sequence-analysis|"
@@ -1683,7 +1687,8 @@ int main(int argc, char **argv) {
   }
   context.disableMultithreading();
   const bool hasOption =
-      boundedQueries || allocationSessionChecks || regionalSessionChecks || retainedChecks || sessionChecks ||
+      boundedQueries || identitySessionChecks || allocationSessionChecks || regionalSessionChecks ||
+      retainedChecks || sessionChecks ||
       mixedSymbolicChecks || rotatingAnalysis || explicitAnalysis || expectFailure || capabilities || phaseIndex ||
       storageEffects || recognition || numericAnalysis || insertLogical || insertLogicalLibrary ||
       insertModuleLibrary || recognitionBoundary || insertionTrace || physicalTrace || structuredTrace ||
@@ -1737,6 +1742,13 @@ int main(int argc, char **argv) {
       }
     }
     return checked && before == render(module->getOperation()) ? 0 : 1;
+  }
+  if (identitySessionChecks) {
+    const auto before = render(module->getOperation());
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (runWholeInvocationIdentityChecks(function, policy)) { return 1; }
+    }
+    return before == render(module->getOperation()) ? 0 : 1;
   }
   if (allocationSessionChecks) {
     const auto before = render(module->getOperation());

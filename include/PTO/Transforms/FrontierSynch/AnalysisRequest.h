@@ -15,6 +15,7 @@
 #include <memory>
 namespace mlir::pto::frontiersynch {
 struct ProgramRecognition;
+struct WholeInvocationIdentity;
 struct RegionalAnalysis;
 struct ArithmeticRegionalRelations;
 struct RotatingAnalysis;
@@ -66,6 +67,7 @@ struct AnalysisObligation {
 // Original MLIR must still outlive it and remain unchanged, as with MLIR analyses.
 struct MathematicalResult {
     std::shared_ptr<const SyncInput> input;
+    std::shared_ptr<const WholeInvocationIdentity> identityComposition;
     std::shared_ptr<const ExplicitAnalysis> explicitDemands;
     std::shared_ptr<const ProgramRecognition> recognition;
     std::shared_ptr<const RotatingAnalysis> rotatingDemands;

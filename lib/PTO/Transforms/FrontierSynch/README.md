@@ -49,6 +49,16 @@ Mathematics, code preparation and allocation remain separate requests inside
 each end-to-end route. IDs must be assigned against the selected composed graph;
 allocating children independently does not establish parent allocation.
 
+A sequence containing the sole whole-invocation loop can forward the loop's
+retained mathematical result without constructing storage selectors. The scope
+certificate checks all modeled payloads and outside operations independently of
+child success. The regional identity consumes its Sequence attempt once and
+continues the shared family order; it never recursively analyzes the same node.
+Stronger exports stay on the same retained child graph. Preparation revalidates
+the original scope, and allocation uses that graph's record namespace and existing
+certificate or query interface. This identity adapter introduces no crossing
+requirements or new storage representation.
+
 ## Entry points and current limits
 
 `FrontierAnalysis` is the common session entry point. `SessionProducers.cpp`

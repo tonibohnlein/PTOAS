@@ -169,6 +169,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/FrontierAnalysis.cpp
   FrontierSynch/ProgramRecognition.cpp
   FrontierSynch/SessionCosts.cpp
+  FrontierSynch/SessionIdentity.cpp
   FrontierSynch/SessionPreparation.cpp
   FrontierSynch/SessionProducers.cpp
 
