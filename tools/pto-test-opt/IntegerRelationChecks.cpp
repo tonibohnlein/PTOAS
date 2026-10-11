@@ -8,6 +8,7 @@
 // Independent finite integer witnesses for projection and Boolean subtraction.
 #include "PTO/Transforms/FrontierSynch/Arithmetic/IntegerRelations.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 #include <functional>
 namespace fs = mlir::pto::frontiersynch;
 using namespace mlir;
@@ -320,6 +321,42 @@ bool seededDifferenceChecks(uint64_t& checked)
     }
     return true;
 }
+bool multiSeedDifferenceChecks(uint64_t& checked)
+{
+    auto left = System::create(2, {row({1, 0}, 1), row({-1, 0}, 4),
+        row({0, 1}, 2), row({0, -1}, 2)}, {congruence({1, 0}, 1, 2)});
+    auto right = System::create(2, {row({1, 0}, 4), row({-1, 0}, 1),
+        row({0, 1}, 1), row({0, -1}, 3)}, {congruence({0, 1}, 0, 2)});
+    auto empty = System::create(2, {row({0, 0}, -1)});
+    auto diagonal = System::create(2, {row({1, 1}, 1)}, {congruence({0, 1}, 1, 2)});
+    auto high = System::create(2, {row({-1, 0}, -3)});
+    auto all = System::create(2, {});
+    if (failed(left) || failed(right) || failed(empty) || failed(diagonal) || failed(high) || failed(all)) {
+        return false;
+    }
+    // Distinct overlapping seeds, duplicate/empty seeds and seed-specific
+    // congruences stress distribution and relative membership independently.
+    const std::vector<System> sources{*left, *right, *empty, *left};
+    for (const auto& blockers : std::vector<std::vector<System>>{
+            {*diagonal, *high, *empty}, {*empty}, {*all}, {*diagonal, *diagonal}}) {
+        auto difference = fs::subtractIntegerUnions(2, sources, blockers);
+        auto reversedSources = sources;
+        std::reverse(reversedSources.begin(), reversedSources.end());
+        auto reversed = fs::subtractIntegerUnions(2, reversedSources, blockers);
+        if (failed(difference) || failed(reversed)) { return false; }
+        for (int64_t x = -6; x <= 6; ++x) {
+            for (int64_t y = -6; y <= 6; ++y) {
+                const Point point{Integer(x), Integer(y)};
+                ++checked;
+                const bool expected = contains(sources, point) && !contains(blockers, point);
+                if (contains(*difference, point) != expected || contains(*reversed, point) != expected) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
 bool remapAndDifferenceChecks(uint64_t& checked)
 {
     auto different = System::create(2, {row({1, -1}, -1)});
@@ -365,6 +402,7 @@ int runIntegerRelationChecks()
     if (!seeded) {
         llvm::errs() << "integer seeded difference failed\n"; return 1;
     }
+    if (!multiSeedDifferenceChecks(checked)) { llvm::errs() << "integer multi-seed difference failed\n"; return 1; }
     if (!remapAndDifferenceChecks(checked)) { llvm::errs() << "integer remap/difference check failed\n"; return 1; }
     llvm::outs() << "integer relation exactness passed " << checked << " bounded points\n";
     return 0;

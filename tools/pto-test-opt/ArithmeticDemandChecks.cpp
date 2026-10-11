@@ -7,16 +7,220 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent finite physical-conflict DAGs for the symbolic demand backend.
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticSelectors.h"
+#include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
+#include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/IntegerImplicationCache.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/NumericUnionMergeCache.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/NumericUnionDifferenceCache.h"
 #include "mlir/IR/AffineExpr.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
+#include <algorithm>
 #include <set>
 #include <tuple>
 namespace fs = mlir::pto::frontiersynch;
 using namespace mlir;
 namespace {
+bool checkNumericalUnionMergeCache()
+{
+    fs::NumericUnionMergeCache cache;
+    std::vector<std::set<int>> unions{{}, {1}, {1, 2}, {3}};
+    unsigned builds = 0;
+    auto merge = [&](std::size_t left, std::size_t right) {
+        ++builds;
+        auto merged = unions[left];
+        merged.insert(unions[right].begin(), unions[right].end());
+        auto found = std::find(unions.begin(), unions.end(), merged);
+        if (found != unions.end()) { return static_cast<std::size_t>(found - unions.begin()); }
+        unions.push_back(std::move(merged)); return unions.size() - 1;
+    };
+    std::map<std::pair<unsigned, unsigned>, std::size_t> tagged;
+    // Compare the cached result with an independent pointwise union, including
+    // reversed operands, empty unions, and a subsumed operand. Endpoint tags
+    // deliberately vary while each numerical operand pair stays unchanged.
+    for (const auto& operands : std::vector<std::pair<std::size_t, std::size_t>>{
+            {1, 3}, {3, 1}, {0, 2}, {2, 1}, {2, 2}}) {
+        const auto left = operands.first, right = operands.second;
+        const auto before = builds;
+        for (unsigned tag = 0; tag < 3; ++tag) {
+            const auto id = cache.getOrBuild(left, right, [&] { return merge(left, right); });
+            tagged[{tag, static_cast<unsigned>(left + right)}] = id;
+            for (int point = -1; point <= 4; ++point) {
+                const bool expected = unions[left].count(point) || unions[right].count(point);
+                if (static_cast<bool>(unions[id].count(point)) != expected) {
+                    llvm::errs() << "cached numerical union changes its integer points\n"; return false;
+                }
+            }
+        }
+        if (builds != before + 1) {
+            llvm::errs() << "numerical union merge rebuilt under distinct endpoint tags\n"; return false;
+        }
+    }
+    if (cache.cost().attempts != 15 || cache.cost().hits != 10 || cache.cost().builds != 5) {
+        llvm::errs() << "numerical union merge diagnostics differ\n"; return false;
+    }
+    // Growing the external pool cannot invalidate a cached numerical identity.
+    const auto oldCapacity = unions.capacity();
+    while (unions.size() <= oldCapacity) { unions.push_back({-2}); }
+    const auto before = builds;
+    const auto again = cache.getOrBuild(1, 3, [&] { return merge(1, 3); });
+    if (builds != before || unions[again] != std::set<int>({1, 3})) {
+        llvm::errs() << "numerical union merge failed after pool growth\n"; return false;
+    }
+    cache.clear();
+    if (cache.cost().attempts || cache.cost().hits || cache.cost().builds) { return false; }
+    const auto refreshed = cache.getOrBuild(1, 3, [&] { return merge(1, 3); });
+    if (builds != before + 1 || unions[refreshed] != std::set<int>({1, 3})) {
+        llvm::errs() << "numerical union merge escaped its reducer context\n"; return false;
+    }
+    llvm::outs() << "numerical union merge cache: tags, reverse, empty, subsumption, growth, reset\n";
+    return true;
+}
+bool checkNumericalUnionDifferenceCache()
+{
+    fs::NumericUnionDifferenceCache cache;
+    std::vector<std::set<int>> unions{{}, {1}, {1, 2}, {3}};
+    unsigned builds = 0;
+    auto difference = [&](std::size_t left, std::size_t right) -> FailureOr<std::size_t> {
+        ++builds;
+        std::set<int> result;
+        for (auto point : unions[left]) { if (!unions[right].count(point)) { result.insert(point); } }
+        auto found = std::find(unions.begin(), unions.end(), result);
+        if (found != unions.end()) { return static_cast<std::size_t>(found - unions.begin()); }
+        unions.push_back(std::move(result)); return unions.size() - 1;
+    };
+    for (auto operands : std::vector<std::pair<std::size_t, std::size_t>>{
+            {2, 1}, {1, 2}, {2, 2}, {0, 2}, {2, 0}}) {
+        const auto left = operands.first;
+        const auto right = operands.second;
+        const auto before = builds;
+        for (unsigned endpointTag = 0; endpointTag < 3; ++endpointTag) {
+            auto id = cache.getOrBuild(left, right, 1, [&] { return difference(left, right); });
+            if (failed(id)) { return false; }
+            for (int point = -1; point <= 4; ++point) {
+                if (static_cast<bool>(unions[*id].count(point)) !=
+                    (unions[left].count(point) && !unions[right].count(point))) { return false; }
+            }
+        }
+        if (builds != before + 1) { return false; }
+    }
+    if (cache.cost().attempts != 15 || cache.cost().hits != 10 || cache.cost().builds != 5) { return false; }
+    // Distinct schemas and ordered operand pairs never share an answer.
+    auto schema = cache.getOrBuild(2, 1, 2, [&] { return difference(2, 1); });
+    if (failed(schema) || builds != 6) { return false; }
+    const auto capacity = unions.capacity();
+    while (unions.size() <= capacity) { unions.push_back({-2}); }
+    auto afterGrowth = cache.getOrBuild(2, 1, 1, [&] { return difference(2, 1); });
+    if (failed(afterGrowth) || unions[*afterGrowth] != std::set<int>({2}) || builds != 6) { return false; }
+    unsigned retries = 0;
+    auto failOnce = [&]() -> FailureOr<std::size_t> {
+        if (!retries++) { return failure(); }
+        return std::size_t(0); // Successful empty union must be cached.
+    };
+    if (succeeded(cache.getOrBuild(3, 3, 1, failOnce)) ||
+        failed(cache.getOrBuild(3, 3, 1, failOnce)) ||
+        failed(cache.getOrBuild(3, 3, 1, failOnce)) || retries != 2) { return false; }
+    cache.clear();
+    if (cache.cost().attempts || cache.cost().hits || cache.cost().builds ||
+        failed(cache.getOrBuild(2, 1, 1, [&] { return difference(2, 1); })) || builds != 7) { return false; }
+    llvm::outs() << "numerical union difference cache: ordered, tags, empty, failure, schema, growth, reset\n";
+    return true;
+}
+bool checkLatticeImplicationCertificates()
+{
+    using B = fs::BoundInteger;
+    std::vector<fs::IntegerSystem> systems;
+    auto add = [&](unsigned dimensions, std::vector<fs::IntegerConstraint> rows,
+                   std::vector<fs::IntegerCongruence> congruences = {}) {
+        auto value = fs::IntegerSystem::create(dimensions, rows, congruences);
+        if (failed(value)) { return std::size_t(-1); }
+        systems.push_back(std::move(*value)); return systems.size() - 1;
+    };
+    auto even = add(1, {{{B(-1)}, B(0)}, {{B(1)}, B(1)}}, {{{B(1)}, B(0), B(2)}});
+    auto zero = add(1, {{{B(1)}, B(0)}});
+    auto odd = add(1, {{{B(-1)}, B(0)}, {{B(1)}, B(2)}}, {{{B(1)}, B(1), B(2)}});
+    auto one = add(1, {{{B(1)}, B(1)}});
+    auto negative = add(1, {{{B(-1)}, B(5)}, {{B(1)}, B(-2)}}, {{{B(1)}, B(-1), B(2)}});
+    auto minusThree = add(1, {{{B(1)}, B(-3)}});
+    auto minusCoefficient = add(1, {{{B(-1)}, B(4)}, {{B(1)}, B(3)}}, {{{B(-1)}, B(1), B(3)}});
+    auto two = add(1, {{{B(1)}, B(2)}});
+    auto coupled = add(2, {{{B(-1), B(0)}, B(0)}, {{B(1), B(0)}, B(2)},
+        {{B(0), B(-1)}, B(0)}, {{B(0), B(1)}, B(2)}, {{B(1), B(1)}, B(2)}},
+        {{{B(1), B(0)}, B(0), B(2)}, {{B(0), B(1)}, B(1), B(2)}});
+    auto coupledTarget = add(2, {{{B(1), B(1)}, B(1)}});
+    B wide(1); for (unsigned i = 0; i < 70; ++i) { wide *= B(2); }
+    auto wideSource = add(1, {{{B(-1)}, B(0)}, {{B(1)}, wide}}, {{{B(1)}, wide - 1, wide}});
+    auto wideTarget = add(1, {{{B(1)}, wide - 1}});
+    auto extra = add(2, {{{B(-1), B(0)}, B(0)}, {{B(1), B(0)}, B(1)},
+        {{B(0), B(-1)}, B(0)}, {{B(0), B(1)}, B(2)}},
+        {{{B(1), B(0)}, B(0), B(2)}, {{B(1), B(1)}, B(0), B(3)}});
+    auto xZero = add(2, {{{B(1), B(0)}, B(0)}});
+    auto empty = add(1, {{{B(-1)}, B(-1)}, {{B(1)}, B(1)}}, {{{B(1)}, B(0), B(2)}});
+    auto unbounded = add(1, {}, {{{B(1)}, B(0), B(2)}});
+    auto nonUnary = add(2, {{{B(-1), B(0)}, B(0)}, {{B(1), B(0)}, B(1)},
+        {{B(0), B(-1)}, B(0)}, {{B(0), B(1)}, B(0)}}, {{{B(1), B(1)}, B(0), B(2)}});
+    auto newCongruence = add(1, {}, {{{B(1)}, B(0), B(3)}});
+    auto unsupported = add(1, {{{B(-1)}, B(0)}, {{B(1)}, B(2)}}, {{{B(2)}, B(0), B(5)}});
+    fs::IntegerImplicationCache cache(systems);
+    // The designated positives require the stronger lattice proof, while
+    // unhandled congruences keep the original exact fallback available.
+    for (auto [a, b, expected, requireLattice] :
+        std::vector<std::tuple<std::size_t, std::size_t, bool, bool>>{
+            {even, zero, true, true}, {odd, one, true, true}, {negative, minusThree, true, true},
+            {minusCoefficient, two, true, true}, {coupled, coupledTarget, true, true},
+            {wideSource, wideTarget, true, true}, {extra, xZero, true, true}, {empty, zero, true, true},
+            {unbounded, zero, false, false}, {nonUnary, xZero, true, false},
+            {even, newCongruence, true, false}, {unsupported, zero, true, false}, {odd, zero, false, false}}) {
+        if (a == std::size_t(-1) || b == std::size_t(-1)) { return false; }
+        const auto before = cache.cost().latticeProofs;
+        if (cache.isSubsetOf(a, b) != expected || systems[a].isSubsetOf(systems[b]) != expected ||
+            (requireLattice && cache.cost().latticeProofs == before)) {
+            llvm::errs() << "lattice implication differs or bypassed its designated proof\n"; return false;
+        }
+    }
+    // An already queried original direction is shared across different target
+    // bounds. Its transformed objective includes the source-dependent shift.
+    auto negativeTarget = add(1, {{{B(1)}, B(-1)}});
+    // Isolate objective reuse from the verified counterexample samples left
+    // by the fallback cases above; those may settle a negative query sooner.
+    fs::IntegerImplicationCache objectiveCache(systems);
+    if (!objectiveCache.isSubsetOf(even, zero)) { return false; }
+    const auto beforeHits = objectiveCache.cost().latticeHits;
+    if (objectiveCache.isSubsetOf(even, negativeTarget) || objectiveCache.cost().latticeHits == beforeHits ||
+        !cache.cost().latticeEmptyProofs || !cache.cost().exactChecks) {
+        llvm::errs() << "lattice objective caching/empty/exact paths were not exercised\n"; return false;
+    }
+    const auto capacity = systems.capacity();
+    while (systems.size() <= capacity) { add(1, {{{B(1)}, B(7)}}); }
+    if (!cache.isSubsetOf(even, zero) || !cache.isSubsetOf(wideSource, wideTarget)) {
+        llvm::errs() << "lattice proof cache failed after numerical pool growth\n"; return false;
+    }
+    llvm::outs() << "lattice implication: signs, offsets, coupled gcd, wide coefficients, fallback, growth\n";
+    return true;
+}
+bool checkOptionalInclusionCertificates()
+{
+    using B = fs::BoundInteger;
+    auto source = fs::IntegerSystem::create(2,
+        {{{B(-1), B(0)}, B(0)}, {{B(1), B(0)}, B(1)},
+         {{B(0), B(-1)}, B(0)}, {{B(0), B(1)}, B(0)}},
+        {{{B(1), B(1)}, B(0), B(2)}});
+    auto target = fs::IntegerSystem::create(2, {{{B(1), B(0)}, B(0)}});
+    if (failed(source) || failed(target)) { return false; }
+    std::vector<fs::IntegerSystem> systems{*source, *target};
+    fs::IntegerImplicationCache cache(systems);
+    // x+y even, y=0 and 0<=x<=1 imply x=0, but the implemented
+    // sufficient proofs intentionally ignore this coupled modular fact.
+    if (cache.hasInclusionCertificate(0, 1) || cache.hasInclusionCertificate(0, 1) ||
+        cache.cost().exactChecks || cache.cost().witnessRefutations ||
+        !cache.isSubsetOf(0, 1) || !cache.cost().exactChecks || !cache.hasInclusionCertificate(0, 1) ||
+        !cache.hasInclusionCertificate(0, 0)) {
+        llvm::errs() << "unproved union inclusion blocked the independent exact query\n"; return false;
+    }
+    llvm::outs() << "optional inclusion certificate preserves unproved pieces and exact queries\n";
+    return true;
+}
 bool checkImplicationCertificates()
 {
     using B = fs::BoundInteger;
@@ -35,6 +239,8 @@ bool checkImplicationCertificates()
     auto unbounded = add(2, {{{B(-1), B(0)}, B(0)}});
     auto even = add(1, {{{B(-1)}, B(0)}, {{B(1)}, B(1)}}, {{{B(1)}, B(0), B(2)}});
     auto scalarZero = add(1, {{{B(1)}, B(0)}});
+    // No sufficient LP certificate infers this new target congruence.
+    auto multipleOfThree = add(1, {}, {{{B(1)}, B(0), B(3)}});
     auto odd = add(1, {}, {{{B(1)}, B(1), B(2)}});
     auto empty = add(1, {{{B(0)}, B(-1)}});
     B wide(1); for (unsigned i = 0; i < 70; ++i) { wide *= B(2); }
@@ -43,7 +249,7 @@ bool checkImplicationCertificates()
     fs::IntegerImplicationCache cache(systems);
     const std::vector<std::tuple<std::size_t, std::size_t, bool>> cases{
         {fractional, zero, true}, {fractional, negative, false}, {unbounded, zero, false},
-        {even, scalarZero, true}, {even, odd, false}, {empty, scalarZero, true},
+        {even, scalarZero, true}, {even, multipleOfThree, true}, {even, odd, false}, {empty, scalarZero, true},
         {wideSource, wideTarget, false}};
     for (auto [a, b, expected] : cases) {
         if (cache.isSubsetOf(a, b) != expected || cache.isSubsetOf(a, b) != systems[a].isSubsetOf(systems[b])) {
@@ -79,6 +285,7 @@ struct Occurrence {
 std::vector<uint32_t> pipes(unsigned scene)
 {
     if (scene == 3) { return {0, 1, 2, 0}; }
+    if (scene == 4 || scene == 5) { return {0, 1, 1, 2, 0}; }
     return scene == 0 ? std::vector<uint32_t>{0, 1, 2} :
            scene == 1 ? std::vector<uint32_t>{0, 1} : std::vector<uint32_t>{0, 0, 0};
 }
@@ -102,6 +309,20 @@ std::vector<Occurrence> execution(unsigned scene, int64_t trips, int64_t guard)
             result.push_back({1, i, 1, {0}, {1}});
             result.push_back({2, i, 2, {1}, {2}});
             result.push_back({3, i, 0, {2}, {}});
+        } else if (scene == 4 || scene == 5) {
+            // Scene4: the short path holds only at n=1, while the longer
+            // path holds at every nonempty trip count. Scene5 reverses the
+            // domains, exercising both directions of frontier subsumption.
+            const bool special = trips == 1 && guard == 0;
+            result.push_back({0, i, 0, {}, {0}});
+            if (scene == 5 || special) { result.push_back({1, i, 1, {0}, {1}}); }
+            if (scene == 4 || special) {
+                result.push_back({2, i, 1, {0}, {2}});
+                result.push_back({3, i, 2, {2}, {3}});
+            }
+            result.push_back({4, i, 0, {1, 3}, {}});
+        } else if (scene == 6) {
+            for (unsigned site = 0; site < 3; ++site) { result.push_back({site, i, 0, {}, {0}}); }
         } else {
             result.push_back({0, i, 0, {}, {0}});
             result.push_back({1, i, 0, {}, {1}});
@@ -179,7 +400,7 @@ public:
         for (int64_t n = 0; n <= 3; ++n) {
             for (int64_t g = 0; g <= 1; ++g) { addExecution(scene, n, g); }
         }
-        if (scene == 3 && period == 1) { broadenFirstVisit(); }
+        if (scene >= 3 && period == 1) { broadenFirstVisit(scene); }
         program.recognition = fs::recognizeArithmetic(program.primitives, {3, 4, period, 1});
     }
     fs::ArithmeticProgram program;
@@ -227,13 +448,20 @@ private:
         relation.pieces.push_back({IntegerSet::get(relation.dimensions, 2, rows,
                                                   SmallVector<bool>(rows.size(), true)), residues});
     }
-    void broadenFirstVisit()
+    void broadenFirstVisit(unsigned scene)
     {
         // Every first-visit tuple for trips=1 also occurs at trips=2/3.
         // Append its exact interval hull after the individual points, forcing
         // subsumption to replace an earlier numerical piece without changing
         // the concrete relation checked by the independent graph oracle.
         for (auto& relation : program.primitives.relations) {
+            auto conditional = [&](auto site) {
+                return site && ((scene == 4 && *site == 1) ||
+                    (scene == 5 && (*site == 2 || *site == 3)));
+            };
+            // Conditional path domains must stay at n=1. Broaden only the
+            // original first-visit tuples present for every n=1,2,3.
+            if (conditional(relation.sourceSite) || conditional(relation.targetSite)) { continue; }
             const auto original = relation.pieces.size();
             for (std::size_t i = 0; i < original; ++i) {
                 const auto& piece = relation.pieces[i];
@@ -333,6 +561,75 @@ bool member(const fs::TypedArithmeticRelation<System>& relation,
         fs::BoundInteger(n / p), fs::BoundInteger(g / p)};
     return llvm::any_of(found->second, [&](const auto& piece) { return containsPoint(piece, coordinates); });
 }
+bool checkProtectedPhysicalJoinReuse()
+{
+    MLIRContext context;
+    context.disableMultithreading();
+    Bundle bundle(context, 6, 1);
+    std::vector<std::unique_ptr<mlir::pto::CompoundInstanceElement>> phases;
+    fs::StructuredProtection protection;
+    for (unsigned site = 0; site < 3; ++site) {
+        phases.push_back(std::make_unique<mlir::pto::CompoundInstanceElement>(site,
+            SmallVector<const mlir::pto::BaseMemInfo*>{}, SmallVector<const mlir::pto::BaseMemInfo*>{},
+            mlir::pto::PipelineType::PIPE_M, OperationName("pto.test", &context)));
+        bundle.program.sites[site].phase = phases.back().get();
+        protection.facts[phases.back().get()] = {site < 2 ? uint64_t(7) : uint64_t(8), nullptr};
+    }
+    for (auto& relation : bundle.program.primitives.relations) {
+        if (relation.kind == fs::PrimitiveKind::Reads || relation.kind == fs::PrimitiveKind::Writes) {
+            relation.storageSpace = mlir::pto::AddressSpace::ACC;
+        }
+    }
+    auto analysis = fs::analyzeGeneralArithmeticDemandsWithProtection(bundle.program, protection);
+    if (!analysis.error.empty() || !analysis.exactMinimum || !analysis.cost.physicalJoinCacheHits) {
+        llvm::errs() << "protected numerical access join did not construct and reuse\n"; return false;
+    }
+    // All three writes have identical numerical access relations. Only 0->1
+    // shares a hardware protection group. Protection must be applied after
+    // numerical join reuse, preserving the other two completion/start hazards.
+    for (unsigned a = 0; a < 3; ++a) {
+        for (unsigned b = a + 1; b < 3; ++b) {
+            const bool expected = !(a == 0 && b == 1);
+            if (member(analysis.generators, 1, a, 0, 1, b, 0, 0, 1, 0) != expected) {
+                llvm::errs() << "numerical access join reused endpoint-specific protection\n"; return false;
+            }
+        }
+    }
+    // Independent event DAG at one visit: native issue/issue, completion/
+    // completion and each instruction's issue/completion; add only the two
+    // nonprotected write hazards, then compute reachability and covers.
+    auto occurrences = execution(6, 1, 0);
+    auto reach = closure(occurrences, false);
+    reach[1][4] = reach[3][4] = true;
+    for (unsigned via = 0; via < 6; ++via) {
+        for (unsigned a = 0; a < 6; ++a) {
+            for (unsigned b = 0; b < 6; ++b) { reach[a][b] = reach[a][b] || (reach[a][via] && reach[via][b]); }
+        }
+    }
+    for (unsigned a = 0; a < 3; ++a) {
+        for (unsigned b = 0; b < 3; ++b) {
+            for (unsigned ea = 0; ea < 2; ++ea) {
+                for (unsigned eb = 0; eb < 2; ++eb) {
+                    const unsigned source = 2 * a + ea, target = 2 * b + eb;
+                    bool cover = a < b && ea == 1 && eb == 0 && !(a == 0 && b == 1);
+                    for (unsigned via = 0; via < 6; ++via) {
+                        if (via != source && via != target && reach[source][via] && reach[via][target]) {
+                            cover = false;
+                        }
+                    }
+                    if (member(analysis.requiredOrder, 1, a, 0, ea, b, 0, eb, 1, 0) !=
+                            (source != target && reach[source][target]) ||
+                        member(analysis.minimumDemands, 1, a, 0, ea, b, 0, eb, 1, 0) != cover) {
+                        llvm::errs() << "protected numerical access join differs from independent event DAG\n";
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    llvm::outs() << "numerical access join reuse preserves distinct hardware protection groups\n";
+    return true;
+}
 template<class System>
 bool checkCase(const fs::TypedArithmeticDemandAnalysis<System>& analysis,
                unsigned scene, int64_t n, int64_t g,
@@ -379,13 +676,48 @@ bool checkCase(const fs::TypedArithmeticDemandAnalysis<System>& analysis,
     }
     return true;
 }
+bool checkLocalAdjacencyQueries()
+{
+    MLIRContext context;
+    context.disableMultithreading();
+    // Isolate empty execution, cross-pipe-only demands and a same-pipe demand
+    // with an intervening same-pipe payload. Every expected event/cover is
+    // still derived by the independent finite physical DAG above.
+    for (const auto& item : std::vector<std::tuple<unsigned, int64_t, bool>>{
+            {2, 0, true}, {0, 1, true}, {2, 1, false}}) {
+        const auto scene = std::get<0>(item);
+        const auto trips = std::get<1>(item);
+        const auto expectedAdjacent = std::get<2>(item);
+        Bundle bundle(context, scene, 1);
+        for (auto& relation : bundle.program.primitives.relations) {
+            relation.pieces.erase(std::remove_if(relation.pieces.begin(), relation.pieces.end(),
+                [&](const auto& piece) {
+                    const auto rows = piece.system.getConstraints();
+                    return rows[relation.dimensions] != getAffineSymbolExpr(0, &context) - trips ||
+                           rows[relation.dimensions + 1] != getAffineSymbolExpr(1, &context);
+                }), relation.pieces.end());
+        }
+        bundle.program.recognition = fs::recognizeArithmetic(bundle.program.primitives, {3, 4, 1, 1});
+        auto analysis = fs::analyzeGeneralArithmeticDemands(bundle.program);
+        bool oracleAdjacent = true;
+        if (!analysis.error.empty() || !analysis.exactMinimum ||
+            !checkCase(analysis, scene, trips, 0, oracleAdjacent) ||
+            oracleAdjacent != expectedAdjacent || analysis.adjacentLocalDemands != expectedAdjacent ||
+            (trips == 0 && !analysis.minimumDemands.empty()) ||
+            (trips != 0 && analysis.minimumDemands.empty())) {
+            llvm::errs() << "local-adjacency boolean query differs from independent DAG\n"; return false;
+        }
+    }
+    llvm::outs() << "local-adjacency queries: empty, cross-pipe-only, nonadjacent same-pipe\n";
+    return true;
+}
 template<class Analyze>
 int runChecks(Analyze analyze, llvm::StringRef name)
 {
     MLIRContext context;
     context.disableMultithreading();
     unsigned checked = 0;
-    for (unsigned scene = 0; scene < 4; ++scene) {
+    for (unsigned scene = 0; scene < 6; ++scene) {
         for (uint64_t period : {1, 2}) {
             Bundle bundle(context, scene, period);
             auto analysis = analyze(bundle.program);
@@ -420,6 +752,39 @@ int runArithmeticDemandChecks()
 }
 int runGeneralArithmeticDemandChecks()
 {
-    if (!checkImplicationCertificates()) { return 1; }
-    return runChecks(fs::analyzeGeneralArithmeticDemands, "general arithmetic demand");
+    if (!checkNumericalUnionMergeCache() || !checkNumericalUnionDifferenceCache() || !checkImplicationCertificates() ||
+        !checkLatticeImplicationCertificates() || !checkOptionalInclusionCertificates() ||
+        !checkProtectedPhysicalJoinReuse() || !checkLocalAdjacencyQueries()) { return 1; }
+    bool reused = false, differenceReused = false, physicalReused = false, emptyPhysicalReused = false;
+    auto analyze = [&](const fs::ArithmeticProgram& program) {
+        auto result = fs::analyzeGeneralArithmeticDemands(program);
+        reused |= result.cost.unionMergeCacheHits > 0;
+        differenceReused |= result.cost.unionDifferenceCacheHits > 0;
+        physicalReused |= result.cost.physicalJoinCacheHits > 0;
+        emptyPhysicalReused |= result.cost.physicalJoinEmptyHits > 0;
+        const auto& cost = result.cost;
+        if (cost.unionDifferenceAttempts != cost.unionDifferenceBuilds + cost.unionDifferenceCacheHits) {
+            result.error = "numerical union difference counters disagree with actual constructions";
+        }
+        if (cost.physicalJoinAttempts != cost.physicalJoinBuilds + cost.physicalJoinCacheHits ||
+            cost.physicalJoinRemaps != 2 * cost.physicalJoinBuilds ||
+            cost.physicalJoinEmptyHits > cost.physicalJoinCacheHits) {
+            result.error = "physical access join counters disagree with actual constructions";
+        }
+        return result;
+    };
+    const auto status = runChecks(analyze, "general arithmetic demand");
+    if (!status && !reused) {
+        llvm::errs() << "general arithmetic oracle did not exercise numerical union reuse\n"; return 1;
+    }
+    if (!status && !differenceReused) {
+        llvm::errs() << "independent physical DAG oracle did not exercise numerical difference reuse\n"; return 1;
+    }
+    if (!status && !physicalReused) {
+        llvm::errs() << "independent physical DAG oracle did not exercise numerical access join reuse\n"; return 1;
+    }
+    if (!status && !emptyPhysicalReused) {
+        llvm::errs() << "independent physical DAG oracle did not reuse an empty access join\n"; return 1;
+    }
+    return status;
 }

@@ -16,10 +16,16 @@ class IntegerImplicationCache {
 public:
     struct Cost {
         uint64_t hits = 0, rationalProofs = 0, witnessRefutations = 0, exactChecks = 0;
+        uint64_t latticeBuilds = 0, latticeQueries = 0, latticeHits = 0;
+        uint64_t latticeProofs = 0, latticeEmptyProofs = 0;
     };
     explicit IntegerImplicationCache(const std::vector<IntegerSystem>& systems);
     ~IntegerImplicationCache();
     bool isSubsetOf(std::size_t source, std::size_t target);
+    // True is a sound inclusion proof. False means unproved, not noninclusion.
+    // This skips exact search and is suitable only for optional union pruning;
+    // the exact isSubsetOf query remains available with an independent cache.
+    bool hasInclusionCertificate(std::size_t source, std::size_t target);
     const Cost& cost() const;
 
 private:

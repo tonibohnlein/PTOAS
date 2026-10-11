@@ -2140,6 +2140,22 @@ int main(int argc, char **argv) {
             implicationCost["rational_proofs"] = arithmeticCost->rationalImplications;
             implicationCost["integer_counterexamples"] = arithmeticCost->integerCounterexamples;
             implicationCost["exact_checks"] = arithmeticCost->exactImplicationChecks;
+            implicationCost["lattice_builds"] = arithmeticCost->latticeRelaxationBuilds;
+            implicationCost["lattice_queries"] = arithmeticCost->latticeObjectiveQueries;
+            implicationCost["lattice_hits"] = arithmeticCost->latticeObjectiveHits;
+            implicationCost["lattice_proofs"] = arithmeticCost->latticeImplicationProofs;
+            implicationCost["lattice_empty_proofs"] = arithmeticCost->latticeEmptyProofs;
+            implicationCost["union_difference_attempts"] = arithmeticCost->unionDifferenceAttempts;
+            implicationCost["union_difference_hits"] = arithmeticCost->unionDifferenceCacheHits;
+            implicationCost["union_difference_builds"] = arithmeticCost->unionDifferenceBuilds;
+            implicationCost["union_merge_attempts"] = arithmeticCost->unionMergeAttempts;
+            implicationCost["union_merge_hits"] = arithmeticCost->unionMergeCacheHits;
+            implicationCost["union_merge_builds"] = arithmeticCost->unionMergeBuilds;
+            implicationCost["physical_join_attempts"] = arithmeticCost->physicalJoinAttempts;
+            implicationCost["physical_join_hits"] = arithmeticCost->physicalJoinCacheHits;
+            implicationCost["physical_join_builds"] = arithmeticCost->physicalJoinBuilds;
+            implicationCost["physical_join_empty_hits"] = arithmeticCost->physicalJoinEmptyHits;
+            implicationCost["physical_join_remaps"] = arithmeticCost->physicalJoinRemaps;
           }
           regions.push_back(llvm::json::Object{{"node", result.region},
               {"status", result.status == pto::frontiersynch::CertificationStatus::Recognized ?

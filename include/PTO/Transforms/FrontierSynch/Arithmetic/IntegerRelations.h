@@ -63,8 +63,9 @@ struct IntegerEliminationWitness {
     IntegerAffine numerator;
     BoundInteger denominator; // Strictly positive.
 };
-// Exact union difference through a single arrangement of affine thresholds and
-// modular residues. No convex joining or successive Boolean piece splitting.
+// Exact union difference through seeded arrangements of affine thresholds and
+// modular residues, one per left conjunction. Output pieces may overlap.
+// No convex joining or successive Boolean piece splitting.
 // The direction/modulus count is class-bounded only when callers preserve the
 // fixed primitive coefficient bounds and fixed witness/projection depth.
 // Malformed schemas fail; no machine coefficient, period or branch-count cap.

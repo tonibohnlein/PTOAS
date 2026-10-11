@@ -43,6 +43,12 @@ struct ArithmeticAnalysisCost {
     uint64_t outputPieces = 0;
     uint64_t implicationCacheHits = 0, rationalImplications = 0;
     uint64_t integerCounterexamples = 0, exactImplicationChecks = 0;
+    uint64_t latticeRelaxationBuilds = 0, latticeObjectiveQueries = 0, latticeObjectiveHits = 0;
+    uint64_t latticeImplicationProofs = 0, latticeEmptyProofs = 0;
+    uint64_t unionMergeAttempts = 0, unionMergeCacheHits = 0, unionMergeBuilds = 0;
+    uint64_t unionDifferenceAttempts = 0, unionDifferenceCacheHits = 0, unionDifferenceBuilds = 0;
+    uint64_t physicalJoinAttempts = 0, physicalJoinCacheHits = 0, physicalJoinBuilds = 0;
+    uint64_t physicalJoinEmptyHits = 0, physicalJoinRemaps = 0;
 };
 template<class System>
 struct TypedArithmeticDemandAnalysis {

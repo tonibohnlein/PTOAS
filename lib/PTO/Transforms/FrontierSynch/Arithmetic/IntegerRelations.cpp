@@ -707,18 +707,17 @@ FailureOr<std::vector<IntegerSystem>> subtractIntegerUnions(unsigned dimensions,
     if (std::all_of(rhs.begin(), rhs.end(), [](const auto& piece) { return piece.isEmpty(); })) {
         return std::vector<IntegerSystem>(lhs.begin(), lhs.end());
     }
-    if (std::all_of(lhs.begin(), lhs.end(), [&](const auto& piece) { return contained(piece, rhs); })) {
-        return std::vector<IntegerSystem>{};
-    }
-    if (lhs.size() == 1) {
-        // Every descendant already belongs to this conjunction. Partition only
-        // right-hand membership, retaining exact integer emptiness checks.
-        // This avoids exploring the universe outside a selector's domain.
-        const auto relative = relativeMembership(lhs.front(), rhs);
+    std::vector<IntegerSystem> result;
+    // Union difference distributes over its left conjunctions. Restrict each
+    // arrangement to its seed, so left-only thresholds never partition the
+    // universe and RHS atoms already implied by that seed add no axes.
+    for (const auto& seed : lhs) {
+        if (seed.isEmpty() || contained(seed, rhs)) { continue; }
+        const auto relative = relativeMembership(seed, rhs);
         const auto axes = arrangementAxes({}, relative);
-        return arrange(dimensions, lhs, relative, axes, &lhs.front());
+        auto selected = arrange(dimensions, {seed}, relative, axes, &seed);
+        for (auto& piece : selected) { result.push_back(std::move(piece)); }
     }
-    const auto axes = arrangementAxes(lhs, rhs);
-    return arrange(dimensions, lhs, rhs, axes);
+    return result;
 }
 } // namespace mlir::pto::frontiersynch
