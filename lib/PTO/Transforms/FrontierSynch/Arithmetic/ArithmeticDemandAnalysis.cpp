@@ -9,6 +9,8 @@
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "llvm/ADT/DenseSet.h"
 #include "IntegerImplicationCache.h"
+#include "IntegerProjectionCache.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "NumericUnionMergeCache.h"
 #include "NumericUnionDifferenceCache.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
@@ -394,8 +396,51 @@ private:
         }
         return true;
     }
+    IntegerProjectionCache importQueries;
+    FailureOr<System> importRemap(const System& system, unsigned dimensions, ArrayRef<unsigned> map)
+    {
+        if constexpr (std::is_same_v<System, IntegerSystem>) {
+            auto value = importQueries.remap(system, dimensions, map);
+            if (failed(value)) { return failure(); }
+            return **value;
+        } else { return system.remap(dimensions, map); }
+    }
+    FailureOr<System> importIntersection(const System& left, const System& right)
+    {
+        if constexpr (std::is_same_v<System, IntegerSystem>) {
+            auto value = importQueries.intersect(left, right);
+            if (failed(value)) { return failure(); }
+            return **value;
+        } else { return left.intersect(right); }
+    }
+    bool importEmpty(const System& system)
+    {
+        if constexpr (std::is_same_v<System, IntegerSystem>) { return importQueries.isEmpty(system); }
+        else { return system.isEmpty(); }
+    }
+    FailureOr<std::vector<System>> importProject(const System& system, ArrayRef<unsigned> keep)
+    {
+        if constexpr (std::is_same_v<System, IntegerSystem>) {
+            auto value = importQueries.project(system, keep);
+            if (failed(value)) { return failure(); }
+            return value->vec();
+        } else { return Policy::project(system, keep); }
+    }
+    void finishImportQueries()
+    {
+        const auto& cost = importQueries.cost();
+        for (auto count : {cost.remapRequests, cost.intersectionRequests, cost.projectionRequests,
+                           cost.emptinessRequests}) { accumulateCost(result.cost.importQueryRequests, count); }
+        for (auto count : {cost.remapHits, cost.intersectionHits, cost.projectionHits,
+                           cost.emptinessHits}) { accumulateCost(result.cost.importQueryHits, count); }
+        for (auto count : {cost.remapBuilds, cost.intersectionBuilds, cost.projectionBuilds,
+                           cost.emptinessBuilds}) { accumulateCost(result.cost.importQueryBuilds, count); }
+        // Every imported piece owns its system. No query view survives import.
+        importQueries = IntegerProjectionCache{};
+    }
     bool import()
     {
+        auto finishQueries = llvm::make_scope_exit([&] { finishImportQueries(); });
         std::vector<Piece> raw;
         DenseMap<Value, DenseSet<unsigned>> writtenSpaces;
         if (program.finiteExpansion) {
@@ -419,12 +464,13 @@ private:
             if (!canonicalOrder(schema, keep)) { return false; }
             const auto liftedDimensions = normalized.machineSystem ? normalized.machineSystem->dimensions() :
                 schema.pieces[normalized.piece].system.getNumInputs();
-            auto primitive = Policy::create(liftedDimensions, normalized.rows);
-            if (normalized.machineSystem) {
-                if constexpr (std::is_same_v<typename Policy::System, IntegerSystem>) {
-                    primitive = *normalized.machineSystem;
-                } else { primitive = failure(); }
-            }
+            auto primitive = [&]() -> FailureOr<System> {
+                if (normalized.machineSystem) {
+                    if constexpr (std::is_same_v<System, IntegerSystem>) { return *normalized.machineSystem; }
+                    else { return failure(); }
+                }
+                return Policy::create(liftedDimensions, normalized.rows);
+            }();
             if (failed(primitive)) { fail("arithmetic primitive construction failed"); return false; }
             if (program.finiteExpansion && schema.kind == PrimitiveKind::Reads) {
                 const bool valid = schema.storageSpace && schema.sourceSite &&
@@ -445,19 +491,19 @@ private:
                 // conjunction path when there are no existential quotients.
                 std::vector<unsigned> permutation(keep.size());
                 for (unsigned i = 0; i < keep.size(); ++i) { permutation[keep[i]] = i; }
-                auto canonical = primitive->remap(keep.size(), permutation);
+                auto canonical = importRemap(*primitive, keep.size(), permutation);
                 if (failed(canonical)) { fail("arithmetic parameter reorder failed"); return false; }
                 ++result.cost.primitivePieces;
-                if (!canonical->isEmpty()) { raw.push_back({&schema, std::move(residues), std::move(*canonical)}); }
+                if (!importEmpty(*canonical)) { raw.push_back({&schema, std::move(residues), std::move(*canonical)}); }
             } else {
                 // Exact projection can split and introduce congruences; retain
                 // every resulting conjunction with the original endpoint tags.
-                auto projected = Policy::project(*primitive, keep);
+                auto projected = importProject(*primitive, keep);
                 if (failed(projected)) { fail("arithmetic quotient projection failed"); return false; }
                 ++result.cost.projections;
                 for (auto& canonical : *projected) {
                     ++result.cost.primitivePieces;
-                    if (!canonical.isEmpty()) { raw.push_back({&schema, residues, std::move(canonical)}); }
+                    if (!importEmpty(canonical)) { raw.push_back({&schema, residues, std::move(canonical)}); }
                 }
             }
         }
@@ -474,12 +520,12 @@ private:
                 if (parameterResidues(*context) != parameterResidues(piece)) { continue; }
                 std::vector<unsigned> map(result.parameterCount);
                 std::iota(map.begin(), map.end(), piece.schema->dimensions);
-                auto expanded = context->system.remap(piece.system.dimensions(), map);
+                auto expanded = importRemap(context->system, piece.system.dimensions(), map);
                 if (failed(expanded)) { fail("parameter-context remapping failed"); return false; }
-                auto restricted = piece.system.intersect(*expanded);
+                auto restricted = importIntersection(piece.system, *expanded);
                 ++result.cost.pieceJoins;
                 if (failed(restricted)) { fail("parameter-context intersection failed"); return false; }
-                if (!restricted->isEmpty()) {
+                if (!importEmpty(*restricted)) {
                     pieces.push_back({piece.schema, piece.residues, std::move(*restricted)});
                 }
             }

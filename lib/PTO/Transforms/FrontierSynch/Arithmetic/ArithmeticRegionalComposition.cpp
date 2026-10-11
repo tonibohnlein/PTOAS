@@ -561,7 +561,9 @@ FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
     }
     // Cumulative work is retained by the reusable parent export. outputPieces
     // below describes the current result, not a sum of intermediate snapshots.
-    for (auto member : {&ArithmeticAnalysisCost::primitivePieces, &ArithmeticAnalysisCost::pieceJoins,
+    for (auto member : {&ArithmeticAnalysisCost::primitivePieces,
+        &ArithmeticAnalysisCost::importQueryRequests, &ArithmeticAnalysisCost::importQueryHits,
+        &ArithmeticAnalysisCost::importQueryBuilds, &ArithmeticAnalysisCost::pieceJoins,
         &ArithmeticAnalysisCost::projections, &ArithmeticAnalysisCost::relationCompositions,
         &ArithmeticAnalysisCost::differences, &ArithmeticAnalysisCost::implicationCacheHits,
         &ArithmeticAnalysisCost::rationalImplications, &ArithmeticAnalysisCost::integerCounterexamples,

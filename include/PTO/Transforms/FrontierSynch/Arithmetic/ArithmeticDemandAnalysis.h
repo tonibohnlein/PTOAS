@@ -36,6 +36,7 @@ using ArithmeticRelation = TypedArithmeticRelation<DifferenceBoundSystem>;
 using GeneralArithmeticRelation = TypedArithmeticRelation<IntegerSystem>;
 struct ArithmeticAnalysisCost {
     uint64_t primitivePieces = 0;
+    uint64_t importQueryRequests = 0, importQueryHits = 0, importQueryBuilds = 0;
     uint64_t pieceJoins = 0;
     uint64_t projections = 0;
     uint64_t relationCompositions = 0;
