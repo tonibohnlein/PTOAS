@@ -44,6 +44,8 @@ struct ArithmeticStorageSupportPiece {
 };
 struct ArithmeticStorageSelectorCost {
     uint64_t projectionRequests = 0, projectionHits = 0, projectionBuilds = 0, projectionPieces = 0;
+    uint64_t remapRequests = 0, remapHits = 0, remapBuilds = 0;
+    uint64_t intersectionRequests = 0, intersectionHits = 0, intersectionBuilds = 0;
     uint64_t emptinessRequests = 0, emptinessHits = 0, emptinessBuilds = 0;
 };
 struct ArithmeticStorageSelectors {

@@ -8,6 +8,8 @@
 #include "ArithmeticImportedPrimitives.h"
 #include "IntegerProjectionCache.h"
 #include "llvm/ADT/STLExtras.h"
+#include <algorithm>
+#include <iterator>
 #include <map>
 #include <tuple>
 #include <numeric>
@@ -36,10 +38,14 @@ public:
     llvm::ArrayRef<Piece> pieces;
 private:
     void indexOrders();
+    void indexCandidates();
+    std::vector<std::size_t> candidates(const Piece& candidate, ArithmeticBoundaryKind kind) const;
     const ArithmeticProgram& program;
     llvm::ArrayRef<uint32_t> pipes;
     using OrderKey = std::tuple<std::size_t, std::size_t, unsigned, unsigned, std::vector<uint64_t>>;
     std::map<OrderKey, std::vector<std::size_t>> orderIndex;
+    using CandidateKey = std::pair<PrimitiveKind, std::vector<uint64_t>>;
+    std::map<CandidateKey, std::vector<std::size_t>> candidateIndex;
     LogicalResult support();
     FailureOr<std::vector<Piece>> importPiece(const NormalizedPiece& normalized);
     FailureOr<Systems> blockers(const Piece& candidate, const Piece& other, bool earlier, bool equal);
@@ -212,6 +218,32 @@ void Builder::indexOrders()
                     schema.targetDimensions, order.residues}].push_back(i);
     }
 }
+// Only occurrence and storage pieces can block an endpoint. Parameters are
+// shared entry bindings, so pieces with different parameter residues cannot
+// meet. Keep the original ordering, including writes from every pipe for readers.
+void Builder::indexCandidates()
+{
+    candidateIndex.clear();
+    for (std::size_t i = 0; i < pieces.size(); ++i) {
+        const auto& piece = pieces[i];
+        if (piece.schema->kind != PrimitiveKind::Occurrences && !storage(piece)) { continue; }
+        candidateIndex[{piece.schema->kind, parameters(piece).vec()}].push_back(i);
+    }
+}
+std::vector<std::size_t> Builder::candidates(const Piece& candidate, ArithmeticBoundaryKind kind) const
+{
+    const auto residues = parameters(candidate).vec();
+    auto matching = candidateIndex.find({candidate.schema->kind, residues});
+    std::vector<std::size_t> result;
+    if (matching != candidateIndex.end()) { result = matching->second; }
+    if (!reader(kind)) { return result; }
+    auto writes = candidateIndex.find({PrimitiveKind::Writes, residues});
+    if (writes == candidateIndex.end()) { return result; }
+    std::vector<std::size_t> merged;
+    std::merge(result.begin(), result.end(), writes->second.begin(), writes->second.end(),
+               std::back_inserter(merged));
+    return merged;
+}
 // Combined columns: candidate coordinates, other coordinates, shared byte (if
 // present), shared parameters. The order join never gives independent copies
 // of the region-entry parameters or the queried physical byte.
@@ -232,15 +264,16 @@ FailureOr<Systems> Builder::blockers(const Piece& candidate, const Piece& other,
     std::iota(am.begin() + da, am.end(), da + db);
     std::iota(bm.begin(), bm.end(), da);
     keep = am;
-    auto left = candidate.system.remap(dimensions, am), right = other.system.remap(dimensions, bm);
+    auto left = numericalQueries.remap(candidate.system, dimensions, am);
+    auto right = numericalQueries.remap(other.system, dimensions, bm);
     if (failed(left) || failed(right)) { return failure(); }
-    auto both = left->intersect(*right);
+    auto both = numericalQueries.intersect(**left, **right);
     if (failed(both)) { return failure(); }
-    if (numericalQueries.isEmpty(*both)) { return resultPieces; }
+    if (numericalQueries.isEmpty(**both)) { return resultPieces; }
     auto add = [&](const IntegerSystem& order) -> LogicalResult {
-        auto joined = both->intersect(order);
+        auto joined = numericalQueries.intersect(**both, order);
         if (failed(joined)) { return failure(); }
-        auto projected = numericalQueries.project(*joined, keep);
+        auto projected = numericalQueries.project(**joined, keep);
         if (failed(projected)) { return failure(); }
         for (auto& piece : *projected) {
             if (!numericalQueries.isEmpty(piece)) { resultPieces.push_back(piece); }
@@ -289,8 +322,8 @@ FailureOr<Systems> Builder::blockers(const Piece& candidate, const Piece& other,
         std::iota(map.begin(), map.begin() + ds, earlier ? da : 0);
         std::iota(map.begin() + ds, map.begin() + ds + dt, earlier ? 0 : da);
         std::iota(map.begin() + ds + dt, map.end(), da + db + (storage(candidate) ? 1 : 0));
-        auto lifted = order.system.remap(dimensions, map);
-        if (failed(lifted) || failed(add(*lifted))) { return failure(); }
+        auto lifted = numericalQueries.remap(order.system, dimensions, map);
+        if (failed(lifted) || failed(add(**lifted))) { return failure(); }
     }
     return resultPieces;
 }
@@ -320,7 +353,8 @@ FailureOr<Systems> Builder::select(const Piece& candidate, ArithmeticBoundaryKin
 {
     Systems forbidden;
     const uint32_t pipe = pipes[*candidate.schema->sourceSite];
-    for (const auto& other : pieces) {
+    for (auto index : candidates(candidate, kind)) {
+        const auto& other = pieces[index];
         bool relevant = other.schema->kind == candidate.schema->kind &&
                         ((!native(kind) && !reader(kind)) || pipes[*other.schema->sourceSite] == pipe);
         if ((kind == ArithmeticBoundaryKind::FirstSite || kind == ArithmeticBoundaryKind::LastSite) &&
@@ -403,6 +437,7 @@ LogicalResult Builder::run()
         return failure();
     }
     indexOrders();
+    indexCandidates();
     for (const auto& candidate : pieces) {
         SmallVector<ArithmeticBoundaryKind> kinds;
         switch (candidate.schema->kind) {
