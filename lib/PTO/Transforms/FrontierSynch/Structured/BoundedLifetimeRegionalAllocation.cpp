@@ -65,11 +65,19 @@ std::optional<std::vector<RegionalPalette>> regionalPalettes(
 }
 bool appendRegionalMember(RegionExpressions& e, const LifetimeWindowInput& w,
     llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> demands,
-    RegionExpressions::Id trips, uint32_t record, const RegionalPalette& phase,
+    RegionExpressions::Id trips, uint32_t record, bool inactive, const RegionalPalette& phase,
     RegionalAllocationGroup& group)
 {
     const auto& edge = demands[record];
     const uint32_t target = edge.target % w.sites;
+    if (inactive) {
+        RegionalAllocationMember member{record, 0, 0,
+            {edge.source, e.constant(0), PeriodicEventKind::Start},
+            {target, e.constant(0), PeriodicEventKind::Completion}, e.boolean(false)};
+        member.tupleRule = PhysicalTupleRule{1, phase.begin, {{0, 1, phase.offset, phase.width, 1}}};
+        group.members.push_back(std::move(member));
+        return true;
+    }
     auto first = mandatoryEnvelope(w, unconditional, edge.source, true);
     auto last = mandatoryEnvelope(w, unconditional, target, false);
     if (!first || !last) { return false; }
@@ -109,7 +117,8 @@ std::shared_ptr<RegionalAllocationSummary> boundedLifetimeRegionalAllocation(
     for (std::size_t i = 0; i < assignment->palettes.size(); ++i) {
         for (auto record : assignment->palettes[i].records) {
             if (!appendRegionalMember(outputExpressions, w, unconditional, demands, trips,
-                    static_cast<uint32_t>(record), (*phases)[i], result->groups[(*phases)[i].group])) { return {}; }
+                    static_cast<uint32_t>(record), assignment->inactiveRecords[record],
+                    (*phases)[i], result->groups[(*phases)[i].group])) { return {}; }
         }
     }
     if (!outputExpressions.constructionError().empty()) { return {}; }

@@ -10,10 +10,12 @@
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Block.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
+#include "../../lib/PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInactiveRecords.h"
 namespace fs = mlir::pto::frontiersynch;
 namespace {
 std::optional<int64_t> budget(mlir::DictionaryAttr certificate, unsigned groups = 1)
@@ -68,7 +70,7 @@ bool palettes(mlir::func::FuncOp function)
     // Alternative records of one source site share a single cyclic palette.
     std::vector<fs::GuardedRankEdge> demands{{0, 1, e.boolean(true)}, {0, 3, e.boolean(false)}};
     auto certificate = fs::boundedLifetimeAllocationCertificate(function, e, w, {1, 0}, demands, 0);
-    if (budget(certificate) != 2) { return false; }
+    if (budget(certificate) != 1) { return false; }
     auto group = mlir::cast<mlir::DictionaryAttr>(certificate.getAs<mlir::ArrayAttr>("groups")[0]);
     auto records = group.getAs<mlir::DenseI64ArrayAttr>("records");
     auto rules = group.getAs<mlir::ArrayAttr>("tuple_rules");
@@ -286,6 +288,83 @@ bool regionalRollback()
         !fs::boundedLifetimeRegionalAllocation(producer, output, w, {1, 0, 1, 1, 1}, demands, trips) &&
         output.size() == poisonedSize;
 }
+bool inactiveGuardProofs(mlir::func::FuncOp function)
+{
+    mlir::Block symbols;
+    auto location = function.getLoc();
+    auto remaining = symbols.addArgument(mlir::IndexType::get(function.getContext()), location);
+    auto branch = symbols.addArgument(mlir::IntegerType::get(function.getContext(), 1), location);
+    fs::RegionExpressions e;
+    auto w = window(e, 1);
+    auto p0 = e.lt(e.constant(0), e.input(remaining));
+    auto p1 = e.lt(e.constant(1), e.input(remaining));
+    for (unsigned d = 0; d <= 1; ++d) {
+        for (unsigned site = 0; site < 2; ++site) { w.payloads[2 * d + site].present = d ? p1 : p0; }
+    }
+    auto rank = [&](fs::RegionExpressions::Id present) {
+        return e.select(present, e.constant(1), e.constant(0));
+    };
+    auto impossible = e.lt(rank(p0), rank(p1));
+    fs::detail::BoundedInactiveRecordProof proof(e, w, {1, 1});
+    if (!proof.proves(impossible) || !proof.proves(e.land(e.land(p1, e.lnot(p0)), e.input(branch))) ||
+        proof.proves(e.land(p1, e.input(branch)))) { return false; }
+    // Independent presence bits admit the supposedly impossible ordering.
+    // An unavailable monotonicity proof must preserve the old live obligation.
+    auto a = e.input(branch);
+    auto other = symbols.addArgument(mlir::IntegerType::get(function.getContext(), 1), location);
+    auto b = e.input(other);
+    w.payloads[0].present = a; w.payloads[2].present = b;
+    fs::detail::BoundedInactiveRecordProof unproved(e, w, {1, 1});
+    return !unproved.proves(e.lt(rank(a), rank(b)));
+}
+bool inactiveRegionalMapping(mlir::func::FuncOp function)
+{
+    mlir::Block symbols;
+    auto remaining = symbols.addArgument(mlir::IndexType::get(function.getContext()), function.getLoc());
+    fs::RegionExpressions producer, output;
+    auto w = window(producer, 1);
+    auto p0 = producer.lt(producer.constant(0), producer.input(remaining));
+    auto p1 = producer.lt(producer.constant(1), producer.input(remaining));
+    for (unsigned d = 0; d <= 1; ++d) {
+        for (unsigned site = 0; site < 2; ++site) { w.payloads[2 * d + site].present = d ? p1 : p0; }
+    }
+    auto impossible = producer.lt(producer.select(p0, producer.constant(1), producer.constant(0)),
+        producer.select(p1, producer.constant(1), producer.constant(0)));
+    std::vector<fs::GuardedRankEdge> demands{{0, 1, producer.boolean(true)}, {0, 3, impossible}};
+    const auto retained = demands;
+    for (unsigned trips = 0; trips <= 5; ++trips) {
+        auto allocation = fs::boundedLifetimeRegionalAllocation(producer, output, w, {1, 1},
+            demands, output.constant(trips));
+        if (!allocation || allocation->groups.size() != 1) { return false; }
+        const auto& group = allocation->groups.front();
+        if (group.budget != 1 || group.members.size() != 2 || group.lanes.size() != 1 ||
+            group.lanes.front().firstSources.size() != 1 || group.lanes.front().lastTargets.size() != 1) {
+            return false;
+        }
+        for (const auto& member : group.members) {
+            if (!member.tupleRule || !fs::validPhysicalTupleRule(*member.tupleRule, group.budget) ||
+                (member.record == 1 && output.constantValue(member.active) != 0)) { return false; }
+        }
+    }
+    return demands[0].guard == retained[0].guard && demands[1].guard == retained[1].guard;
+}
+bool inactiveOnlyMapping(mlir::func::FuncOp function)
+{
+    fs::RegionExpressions producer, output;
+    auto w = window(producer, 1);
+    std::vector<fs::GuardedRankEdge> demands{{0, 3, producer.boolean(false)}};
+    auto allocation = fs::boundedLifetimeRegionalAllocation(producer, output, w, {0, 0},
+        demands, output.constant(7));
+    if (!allocation || allocation->groups.size() != 1 ||
+        budget(fs::boundedLifetimeAllocationCertificate(function, producer, w, {0, 0}, demands, 0)) != 1) {
+        return false;
+    }
+    const auto& group = allocation->groups.front();
+    return group.budget == 1 && group.members.size() == 1 && group.members.front().record == 0 &&
+        output.constantValue(group.members.front().active) == 0 && group.members.front().tupleRule &&
+        fs::validPhysicalTupleRule(*group.members.front().tupleRule, group.budget) && group.lanes.size() == 1 &&
+        group.lanes.front().firstSources.empty() && group.lanes.front().lastTargets.empty();
+}
 } // namespace
 int runBoundedLifetimeAllocationChecks()
 {
@@ -296,7 +375,8 @@ int runBoundedLifetimeAllocationChecks()
         builder.getUnknownLoc(), "bounded_allocation_checks", builder.getFunctionType({}, {})));
     if (!ordinary(*function) || !palettes(*function) || !sharedDirections(*function) ||
         !constantDirections() || !protectedModes(*function) || !regionalOrdinary(*function) ||
-        !regionalDelayed() || !regionalRollback()) {
+        !regionalDelayed() || !regionalRollback() || !inactiveGuardProofs(*function) ||
+        !inactiveRegionalMapping(*function) || !inactiveOnlyMapping(*function)) {
         llvm::errs() << "bounded lifetime allocation certificate check failed\n";
         return 1;
     }

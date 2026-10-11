@@ -12,6 +12,7 @@
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PeriodicAnalysisInternal.h"
 #include "BoundedLifetimeAllocationInternal.h"
+#include "BoundedLifetimeInactiveRecords.h"
 #include <algorithm>
 #include <map>
 #include <set>
@@ -117,6 +118,100 @@ bool certifyShared(const PeriodicReuseMatrix& costs, const PeriodicSharedAllocat
     }
     return true;
 }
+std::optional<LifetimeWindowInput> normalizeAllocationModes(RegionExpressions& e, const LifetimeWindowInput& w)
+{
+    // Use the same occurrence/cell modes as demand generation. In particular,
+    // separate read/write declarations of an RMW must not introduce a read
+    // edge that bypasses the shared protected-writer rule.
+    std::map<std::pair<uint32_t, uint32_t>, LifetimeAccess> modes;
+    for (auto access : w.accesses) {
+        if (access.payload >= w.payloads.size() || !e.isBoolean(access.read) || !e.isBoolean(access.write) ||
+            !e.constantValue(access.read) || !e.constantValue(access.write)) { return {}; }
+        auto [entry, added] = modes.emplace(std::make_pair(access.payload, access.cell), access);
+        if (!added) {
+            auto& prior = entry->second;
+            prior.read = e.lor(prior.read, access.read); prior.write = e.lor(prior.write, access.write);
+            if (prior.protectionGroup != access.protectionGroup) { prior.protectionGroup = 0; }
+        }
+    }
+    auto normalized = w;
+    normalized.accesses.clear();
+    for (const auto& [key, access] : modes) { normalized.accesses.push_back(access); }
+    return normalized;
+}
+bool buildLivePalettes(const LifetimeWindowInput& w, llvm::ArrayRef<GuardedRankEdge> demands,
+    const Witness& proof, detail::BoundedLifetimeAllocationAssignment& result)
+{
+    auto& palettes = result.palettes;
+    std::map<std::pair<uint32_t, uint32_t>, std::size_t> bySource;
+    for (std::size_t r = 0; r < demands.size(); ++r) {
+        const auto& edge = demands[r];
+        if (edge.source >= w.sites || edge.target >= w.payloads.size() || r > INT64_MAX) { return false; }
+        const auto p = w.payloads[edge.source].pipe, q = w.payloads[edge.target].pipe;
+        if (p == q || result.inactiveRecords[r]) { continue; }
+        const auto h = proof.threshold(edge.target % w.sites, edge.source);
+        uint64_t gap;
+        if (!h || !periodic::add(edge.target / w.sites, *h, gap) || gap > INT64_MAX) { return false; }
+        auto [entry, added] = bySource.emplace(std::make_pair(edge.source, q), palettes.size());
+        if (added) { palettes.push_back({p, q, edge.source, 1, {}}); }
+        auto& palette = palettes[entry->second];
+        palette.gap = std::max(palette.gap, gap);
+        palette.records.push_back(r);
+    }
+    return true;
+}
+std::optional<uint64_t> paletteReturnCost(const LifetimeWindowInput& w, llvm::ArrayRef<GuardedRankEdge> demands,
+    const Witness& proof, const detail::BoundedLifetimeAllocationAssignment& assignment, std::size_t i, std::size_t j)
+{
+    const auto& palettes = assignment.palettes;
+    // An empty event family cannot overlap another notification. Zero here
+    // certifies disjointness, not an invented event-order path. Its own mapping
+    // still requires one valid eligible label.
+    if (palettes[i].inactive || palettes[j].inactive) { return i == j ? 1 : 0; }
+    uint64_t maximum = 0;
+    for (auto record : palettes[i].records) {
+        if (assignment.inactiveRecords[record]) { continue; }
+        const auto& edge = demands[record];
+        const auto consumer = edge.target % w.sites, producer = palettes[j].site;
+        // WAIT blocks consumer start; SET follows producer issue. Native start
+        // order suffices on one pipe, including equality.
+        auto h = w.payloads[consumer].pipe == w.payloads[producer].pipe ?
+            std::optional<uint64_t>(consumer <= producer ? 0 : 1) : proof.threshold(consumer, producer);
+        uint64_t gap;
+        if (!h || !periodic::add(edge.target / w.sites, *h, gap) || gap > INT64_MAX) { return {}; }
+        maximum = std::max(maximum, gap);
+    }
+    return maximum;
+}
+PeriodicReuseMatrix paletteReuseCosts(const LifetimeWindowInput& w, llvm::ArrayRef<GuardedRankEdge> demands,
+    const Witness& proof, const detail::BoundedLifetimeAllocationAssignment& assignment)
+{
+    const auto n = assignment.palettes.size();
+    PeriodicReuseMatrix costs(n, std::vector<std::optional<uint64_t>>(n));
+    for (std::size_t i = 0; i < n; ++i) {
+        for (std::size_t j = 0; j < n; ++j) { costs[i][j] = paletteReturnCost(w, demands, proof, assignment, i, j); }
+    }
+    return costs;
+}
+// Certified-empty records retain a same-direction physical formula without
+// reserving another live palette. An entirely empty direction needs one valid
+// dummy label; ordinary eligible-ID and macro-reservation checks still apply.
+void appendInactivePalettes(const LifetimeWindowInput& w, llvm::ArrayRef<GuardedRankEdge> demands,
+    detail::BoundedLifetimeAllocationAssignment& result)
+{
+    for (std::size_t r = 0; r < demands.size(); ++r) {
+        if (!result.inactiveRecords[r]) { continue; }
+        const auto& edge = demands[r];
+        const auto p = w.payloads[edge.source].pipe, q = w.payloads[edge.target].pipe;
+        if (p == q) { continue; }
+        auto found = std::find_if(result.palettes.begin(), result.palettes.end(), [&](const auto& palette) {
+            return palette.source == p && palette.target == q;
+        });
+        if (found == result.palettes.end()) {
+            result.palettes.push_back({p, q, edge.source, 1, {static_cast<int64_t>(r)}, true});
+        } else { found->records.push_back(static_cast<int64_t>(r)); }
+    }
+}
 DictionaryAttr encode(func::FuncOp function, llvm::ArrayRef<Palette> palettes, int64_t plan,
                       const PeriodicSharedAllocation* shared = nullptr)
 {
@@ -195,63 +290,23 @@ std::optional<detail::BoundedLifetimeAllocationAssignment> detail::boundedLifeti
     if (!w.sites || w.span >= UINT32_MAX || w.sites > UINT32_MAX / (w.span + 1) ||
         w.payloads.size() != w.sites * (w.span + 1) || unconditional.size() != w.sites ||
         (!w.operations.empty() && w.operations.size() != w.payloads.size())) { return {}; }
-    // Use the same occurrence/cell modes as demand generation. In particular,
-    // separate read/write declarations of an RMW must not introduce a read
-    // edge that bypasses the shared protected-writer rule.
-    std::map<std::pair<uint32_t, uint32_t>, LifetimeAccess> modes;
-    for (auto access : w.accesses) {
-        if (access.payload >= w.payloads.size() || !e.isBoolean(access.read) || !e.isBoolean(access.write) ||
-            !e.constantValue(access.read) || !e.constantValue(access.write)) { return {}; }
-        auto [entry, added] = modes.emplace(std::make_pair(access.payload, access.cell), access);
-        if (!added) {
-            auto& prior = entry->second;
-            prior.read = e.lor(prior.read, access.read); prior.write = e.lor(prior.write, access.write);
-            if (prior.protectionGroup != access.protectionGroup) { prior.protectionGroup = 0; }
-        }
+    auto normalized = normalizeAllocationModes(e, w);
+    if (!normalized) { return {}; }
+    for (const auto& payload : w.payloads) {
+        if (!e.isBoolean(payload.present)) { return {}; }
     }
-    auto normalized = w;
-    normalized.accesses.clear();
-    for (const auto& [key, access] : modes) { normalized.accesses.push_back(access); }
-    auto proof = witness(e, normalized, unconditional);
+    for (const auto& edge : demands) {
+        if (edge.source >= w.sites || edge.target >= w.payloads.size() || !e.isBoolean(edge.guard)) { return {}; }
+    }
+    auto proof = witness(e, *normalized, unconditional);
     if (!proof.mandatory.error.empty()) { return {}; }
     BoundedLifetimeAllocationAssignment result;
+    BoundedInactiveRecordProof inactiveProof(e, w, unconditional);
+    for (const auto& edge : demands) { result.inactiveRecords.push_back(inactiveProof.proves(edge.guard)); }
     auto& palettes = result.palettes;
-    std::map<std::pair<uint32_t, uint32_t>, std::size_t> bySource;
-    for (std::size_t r = 0; r < demands.size(); ++r) {
-        const auto& edge = demands[r];
-        if (edge.source >= w.sites || edge.target >= w.payloads.size() || r > INT64_MAX) { return {}; }
-        const auto p = w.payloads[edge.source].pipe, q = w.payloads[edge.target].pipe;
-        if (p == q) { continue; }
-        const auto h = proof.threshold(edge.target % w.sites, edge.source);
-        uint64_t gap;
-        if (!h || !periodic::add(edge.target / w.sites, *h, gap) || gap > INT64_MAX) { return {}; }
-        auto [entry, added] = bySource.emplace(std::make_pair(edge.source, q), palettes.size());
-        if (added) { palettes.push_back({p, q, edge.source, 1, {}}); }
-        auto& palette = palettes[entry->second];
-        palette.gap = std::max(palette.gap, gap);
-        palette.records.push_back(r);
-    }
-    PeriodicReuseMatrix costs(palettes.size(),
-        std::vector<std::optional<uint64_t>>(palettes.size()));
-    for (std::size_t i = 0; i < palettes.size(); ++i) {
-        for (std::size_t j = 0; j < palettes.size(); ++j) {
-            std::optional<uint64_t> maximum = 0;
-            for (auto record : palettes[i].records) {
-                const auto& edge = demands[record];
-                const auto consumer = edge.target % w.sites, producer = palettes[j].site;
-                // WAIT blocks the consumer's start; SET is after producer issue.
-                // On one pipe native start order suffices, including equality.
-                auto h = w.payloads[consumer].pipe == w.payloads[producer].pipe ?
-                    std::optional<uint64_t>(consumer <= producer ? 0 : 1) : proof.threshold(consumer, producer);
-                uint64_t gap;
-                if (!h || !periodic::add(edge.target / w.sites, *h, gap) || gap > INT64_MAX) {
-                    maximum.reset(); break;
-                }
-                maximum = std::max(*maximum, gap);
-            }
-            costs[i][j] = maximum;
-        }
-    }
+    if (!buildLivePalettes(w, demands, proof, result)) { return {}; }
+    appendInactivePalettes(w, demands, result);
+    auto costs = paletteReuseCosts(w, demands, proof, result);
     std::vector<std::pair<uint32_t, uint32_t>> directions;
     for (const auto& palette : palettes) { directions.emplace_back(palette.source, palette.target); }
     auto shared = allocateDirectedPeriodic(costs, directions);

@@ -15,10 +15,14 @@ struct BoundedLifetimePalette {
     uint32_t source, target, site;
     uint64_t gap = 1;
     SmallVector<int64_t> records;
+    bool inactive = false;
 };
 struct BoundedLifetimeAllocationAssignment {
     std::vector<BoundedLifetimePalette> palettes;
     std::optional<PeriodicSharedAllocation> shared;
+    // Uniformly false original guards. These records still require physical
+    // mappings, but supply neither live reuse obligations nor lane envelopes.
+    std::vector<uint8_t> inactiveRecords;
 };
 // The assignment is a proof about immutable modeled occurrences. It contains
 // original sourceDemand record IDs, not endpoint or physical-ID namespaces.
