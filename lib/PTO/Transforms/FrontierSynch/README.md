@@ -71,6 +71,11 @@ available. Failed optional residue reconstruction restores the earlier accepted
 result. Machine scalar recipes use sparse, simultaneous substitution: profile
 dimension ceilings never determine allocation sizes or placeholder identities.
 
+Integer relations share immutable normalized constraints across endpoint-tagged
+values. Derived intersections, remappings and projections own fresh results;
+each value keeps its own emptiness memo. This preserves the numerical relation
+API without copying all arbitrary-precision coefficients for every endpoint.
+
 Bounded regional selectors retain the physical-refresh producer's collective
 writer-coverage certificate, including its original guards, phases and interior
 tail bound. A full window of at least `period + tail` visits can reuse that

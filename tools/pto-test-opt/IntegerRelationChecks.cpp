@@ -10,6 +10,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <functional>
+#include <optional>
 namespace fs = mlir::pto::frontiersynch;
 using namespace mlir;
 namespace {
@@ -243,6 +244,54 @@ bool coupledCongruenceChecks(uint64_t& checked)
     return succeeded(empty) && empty->isEmpty() && succeeded(consistent) && !consistent->isEmpty() &&
         succeeded(infeasible) && infeasible->isEmpty() && succeeded(zero) && !zero->isEmpty() &&
         succeeded(zeroEmpty) && zeroEmpty->isEmpty();
+}
+bool sharedSystemMemoChecks()
+{
+    auto source = System::create(2, {row({-1, 0}, 0), row({0, -1}, 0), row({1, 1}, -1)});
+    if (failed(source) || source->isKnownEmpty()) { return false; }
+    auto before = *source;
+    auto solved = *source;
+    if (!solved.isEmpty() || !solved.isKnownEmpty() || before.isKnownEmpty() || source->isKnownEmpty()) {
+        return false;
+    }
+    auto moved = std::move(solved);
+    solved = System{};
+    return moved.isEmpty() && !solved.isEmpty() && solved.dimensions() == 0 &&
+        before.isEmpty() && source->isEmpty();
+}
+std::optional<System> sharedSystemFixture()
+{
+    auto source = System::create(2, {row({1, 0}, 3), row({-1, 0}, 3),
+        row({0, 1}, 3), row({0, -1}, 3)}, {congruence({1, 1}, 1, 2)});
+    if (failed(source)) { return std::nullopt; }
+    return *source;
+}
+bool sharedSystemOwnershipChecks(uint64_t& checked)
+{
+    auto retained = sharedSystemFixture();
+    if (!retained) { return false; }
+    // Grow and move the owning pool after the original creator has died.
+    std::vector<System> pool;
+    for (unsigned i = 0; i < 64; ++i) { pool.push_back(*retained); }
+    retained.reset();
+    auto swapped = pool.front().remap(2, {1, 0});
+    auto restriction = System::create(2, {row({1, 0}, -4)});
+    if (failed(restriction)) { return false; }
+    auto restricted = pool.front().intersect(*restriction);
+    auto projected = pool.front().project({0});
+    if (failed(swapped) || failed(restricted) || !restricted->isEmpty() || failed(projected)) { return false; }
+    for (int64_t x = -4; x <= 4; ++x) {
+        for (int64_t y = -4; y <= 4; ++y) {
+            const bool expected = x >= -3 && x <= 3 && y >= -3 && y <= 3 && (x + y) % 2 != 0;
+            for (const auto& copy : pool) {
+                if (contains(copy, {Integer(x), Integer(y)}) != expected || copy.isEmpty()) { return false; }
+                ++checked;
+            }
+            if (contains(*swapped, {Integer(y), Integer(x)}) != expected) { return false; }
+        }
+        if (contains(*projected, {Integer(x)}) != (x >= -3 && x <= 3)) { return false; }
+    }
+    return sharedSystemMemoChecks();
 }
 bool feasibilityAndWitnessChecks()
 {
@@ -619,6 +668,9 @@ int runIntegerRelationChecks()
     }
     if (!coupledCongruenceChecks(checked)) {
         llvm::errs() << "integer coupled congruence consistency differs\n"; return 1;
+    }
+    if (!sharedSystemOwnershipChecks(checked)) {
+        llvm::errs() << "integer immutable ownership or per-value memo isolation failed\n"; return 1;
     }
     if (!feasibilityAndWitnessChecks()) { llvm::errs() << "integer feasibility/witness check failed\n"; return 1; }
     if (!narrowStripChecks(checked)) { llvm::errs() << "integer narrow strip check failed\n"; return 1; }
