@@ -114,6 +114,9 @@ struct ArithAddUIExtendedToEmitC
 
     const unsigned bitWidth =
         intTy ? intTy.getWidth() : static_cast<unsigned>(kPTOIndexBitWidth);
+    if (bitWidth > kInt64BitWidth) {
+      return rewriter.notifyMatchFailure(op, "extended addition requires an unavailable wider integer type");
+    }
 
     SmallVector<Type> newResultTypes;
     if (failed(getTypeConverter()->convertTypes(op->getResultTypes(),
@@ -176,6 +179,9 @@ struct ArithMulExtendedToEmitC : public OpConversionPattern<ArithOp> {
 
     const unsigned bitWidth =
         intTy ? intTy.getWidth() : static_cast<unsigned>(kPTOIndexBitWidth);
+    if (bitWidth > kInt64BitWidth) {
+      return rewriter.notifyMatchFailure(op, "extended multiplication requires an unavailable wider integer type");
+    }
 
     SmallVector<Type> newResultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),

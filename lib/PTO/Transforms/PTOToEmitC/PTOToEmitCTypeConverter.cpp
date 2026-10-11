@@ -86,10 +86,13 @@ void PTOToEmitCTypeConverter::registerIntegerConversions(MLIRContext *Ctx) {addC
   case kInt64BitWidth:
     return emitc::OpaqueType::get(Ctx,
                                   isUnsigned ? "uint64_t" : "int64_t");
+  case kInt128BitWidth:
+    return isUnsigned ? getUnsignedIntOpaqueType(Ctx, kInt128BitWidth)
+                      : getSignedIntOpaqueType(Ctx, kInt128BitWidth);
   default:
     llvm::errs() << "[Debug] Unsupported IntegerType width: "
                  << type.getWidth() << "\n";
-    return emitc::OpaqueType::get(Ctx, "int32_t"); // Fallback
+    return Type{};
   }
 });
 

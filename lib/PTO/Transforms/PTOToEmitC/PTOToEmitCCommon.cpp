@@ -276,11 +276,42 @@ buildDefaultLastUseTileSlotOrder(Operation *op) {
   return ordered;
 }
 
+// Construct wide literals from representable 64-bit limbs. A decimal i128
+// literal is not a C++ integer literal, even when assigned to __int128.
+static FailureOr<std::string> buildWideIntegerLiteral(emitc::OpaqueType targetType, Attribute valueAttr) {
+  auto integer = dyn_cast_or_null<IntegerAttr>(valueAttr);
+  const bool isUnsigned = targetType.getValue() == "unsigned __int128";
+  if (!integer || integer.getValue().getBitWidth() != kInt128BitWidth ||
+      (!isUnsigned && targetType.getValue() != "__int128")) {
+    return failure();
+  }
+  APInt value = integer.getValue();
+  const bool negative = !isUnsigned && value.isNegative();
+  // For a negative signed value, ~value fits in the positive signed range,
+  // including INT128_MIN. Negating it and subtracting one cannot overflow.
+  if (negative) {
+    value = ~value;
+  }
+  const auto high = value.extractBitsAsZExtValue(kInt64BitWidth, kInt64BitWidth);
+  const auto low = value.extractBitsAsZExtValue(kInt64BitWidth, 0);
+  std::string literal = "((static_cast<unsigned __int128>(" + std::to_string(high) +
+      "ULL) << 64) | " + std::to_string(low) + "ULL)";
+  if (isUnsigned) {
+    return literal;
+  }
+  literal = "static_cast<__int128>(" + literal + ")";
+  return negative ? "(-" + literal + " - 1)" : literal;
+}
+
 FailureOr<std::string> buildEmitCOpaqueConstantLiteral(Type targetType,
                                                               Attribute valueAttr) {
   auto opaqueTy = dyn_cast<emitc::OpaqueType>(targetType);
   if (!opaqueTy)
     return failure();
+
+  if (opaqueTy.getValue() == "__int128" || opaqueTy.getValue() == "unsigned __int128") {
+    return buildWideIntegerLiteral(opaqueTy, valueAttr);
+  }
 
   if (opaqueTy.getValue() == "pto::MrgSortExecutedNumList") {
     auto dense = dyn_cast_or_null<DenseIntElementsAttr>(valueAttr);
