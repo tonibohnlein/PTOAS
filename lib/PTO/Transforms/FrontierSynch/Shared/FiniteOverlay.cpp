@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "RegionalCapabilitiesInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FiniteOverlay.h"
 #include <limits>
 #include <tuple>
@@ -174,9 +175,7 @@ FiniteOverlayAnalysis analyzeFiniteOverlay(RegionalAnalysis base,
     result.state = state;
     result.retainBase = [state](RegionalEvent source, RegionalEvent target) { return state->retain(source, target); };
     result.regional = state->base;
-    result.regional.numerical.reset();
-    result.regional.arithmeticRelations.reset(); result.regional.relations.reset();
-    result.regional.symbolicStorage.reset();
+    invalidateDerivedRegionalCertificates(result.regional);
     result.regional.reachability = [state](RegionalEvent source, RegionalEvent target) {
         return state->query(source, target);
     };

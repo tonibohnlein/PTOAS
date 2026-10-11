@@ -5,13 +5,14 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "RegionalCapabilitiesInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/BoundingSequence.h"
 #include "SequenceAnalysisInternal.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 bool sameFrame(const RegionalAnalysis& a, const RegionalAnalysis& b)
 {
-    if (a.expressions != b.expressions || a.accessModel != b.accessModel || a.gmAliasPolicy != b.gmAliasPolicy ||
+    if (!matchesRegionalContext(a, regionalContext(b)) ||
         a.anchors.size() != b.anchors.size() || a.occurrenceLoops != b.occurrenceLoops ||
         a.outerLoops != b.outerLoops || a.outerDivisors != b.outerDivisors) { return false; }
     for (std::size_t i = 0; i < a.anchors.size(); ++i) {

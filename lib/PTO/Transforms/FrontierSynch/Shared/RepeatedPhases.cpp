@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "RegionalCapabilitiesInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RepeatedPhases.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RepeatedStorage.h"
 #include "RepeatedRegionInternal.h"
@@ -477,9 +478,7 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
     out.firstPayloads = std::move(full.firstPayloads);
     out.lastPayloads = std::move(full.lastPayloads);
     appendPartial(out, phases, starts, periods, remainder);
-    out.numerical.reset();
-    out.arithmeticRelations.reset(); out.relations.reset();
-    out.symbolicStorage.reset();
+    invalidateDerivedRegionalCertificates(out);
     auto originalPresence = out.presence;
     auto originalQuery = out.reachability;
     auto actual = [arena, periods, remainder, firstPeriod, firstPhase, typePhases](RegionalEvent event)

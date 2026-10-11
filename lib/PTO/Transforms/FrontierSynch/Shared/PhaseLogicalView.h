@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #ifndef PTO_FRONTIERSYNCH_PHASELOGICALVIEW_H
 #define PTO_FRONTIERSYNCH_PHASELOGICALVIEW_H
+#include "RegionalCapabilitiesInternal.h"
 #include "PhaseNormalization.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAnalysis.h"
 namespace mlir::pto::frontiersynch::detail {
@@ -158,7 +159,7 @@ inline bool bindLogicalPhase(RegionalAnalysis& view, std::shared_ptr<PhaseIndex>
             return selectors;
         };
     }
-    view.arithmeticRelations.reset(); view.relations.reset(); view.symbolicStorage.reset(); view.numerical.reset();
+    invalidateDerivedRegionalCertificates(view);
     return true;
 }
 } // namespace mlir::pto::frontiersynch::detail

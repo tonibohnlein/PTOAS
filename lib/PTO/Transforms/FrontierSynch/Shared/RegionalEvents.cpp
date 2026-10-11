@@ -6,8 +6,62 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Typed nested identities and flat-backend compatibility checks.
-#include "PTO/Transforms/FrontierSynch/Shared/RegionalAnalysis.h"
+#include "RegionalCapabilitiesInternal.h"
 namespace mlir::pto::frontiersynch {
+RegionalContextView regionalContext(const RegionalAnalysis& region)
+{
+    return {region.expressions.get(), region.accessModel, region.gmAliasPolicy};
+}
+bool matchesRegionalContext(const RegionalAnalysis& region, RegionalContextView expected)
+{
+    return region.expressions.get() == expected.expressions && region.accessModel == expected.accessModel &&
+           region.gmAliasPolicy == expected.gmAliasPolicy;
+}
+void invalidateDerivedRegionalCertificates(RegionalAnalysis& region)
+{
+    region.numerical.reset();
+    region.arithmeticRelations.reset();
+    region.relations.reset();
+    region.symbolicStorage.reset();
+}
+bool validRegionalOccurrenceSchema(const RegionalAnalysis& domain)
+{
+    const auto count = domain.anchors.size();
+    if (domain.occurrenceLoops.size() != count) {
+        return false;
+    }
+    if (domain.outerLoops.empty()) {
+        return domain.outerDivisors.empty();
+    }
+    if (domain.outerLoops.size() != count || (!domain.outerDivisors.empty() && domain.outerDivisors.size() != count)) {
+        return false;
+    }
+    for (std::size_t type = 0; type < count; ++type) {
+        if (llvm::any_of(domain.outerLoops[type], [](scf::ForOp loop) { return !loop; })) {
+            return false;
+        }
+        if (domain.outerDivisors.empty()) {
+            continue;
+        }
+        const auto& divisors = domain.outerDivisors[type];
+        if (divisors.size() != domain.outerLoops[type].size() ||
+            llvm::any_of(divisors, [](uint64_t divisor) { return divisor == 0; })) {
+            return false;
+        }
+    }
+    return true;
+}
+namespace {
+std::optional<RegionExpressions::Id> checkedPredicate(
+    const RegionalAnalysis& region, std::optional<RegionExpressions::Id> result)
+{
+    if (!result || !region.expressions || *result >= region.expressions->size() ||
+        !region.expressions->isBoolean(*result)) {
+        return std::nullopt;
+    }
+    return result;
+}
+} // namespace
 bool validRegionalEvent(const RegionalAnalysis& region, const RegionalEvent& event)
 {
     if (!region.expressions || (!region.anchors.empty() && event.type >= region.anchors.size()) ||
@@ -27,7 +81,7 @@ bool validRegionalEvent(const RegionalAnalysis& region, const RegionalEvent& eve
 std::optional<RegionExpressions::Id> regionalPresence(const RegionalAnalysis& region, RegionalEvent event)
 {
     if (!validRegionalEvent(region, event) || !region.presence) { return std::nullopt; }
-    return region.presence(std::move(event));
+    return checkedPredicate(region, region.presence(std::move(event)));
 }
 std::optional<RegionExpressions::Id> regionalReachability(
     const RegionalAnalysis& region, RegionalEvent source, RegionalEvent target)
@@ -66,7 +120,7 @@ std::optional<RegionExpressions::Id> regionalReachability(
             return e.land(e.land(*ps, *pt), e.lnot(*reverse));
         }
     }
-    return region.reachability(std::move(source), std::move(target));
+    return checkedPredicate(region, region.reachability(std::move(source), std::move(target)));
 }
 std::optional<RegionExpressions::Id> regionalHandoffReuse(
     const RegionalAnalysis& region, RegionalEvent consumer, RegionalEvent producer)
@@ -86,7 +140,9 @@ std::optional<RegionExpressions::Id> regionalReferenceBefore(
     const RegionalAnalysis& region, RegionalEvent source, RegionalEvent target)
 {
     if (!validRegionalEvent(region, source) || !validRegionalEvent(region, target)) { return std::nullopt; }
-    if (region.referenceBefore) { return region.referenceBefore(std::move(source), std::move(target)); }
+    if (region.referenceBefore) {
+        return checkedPredicate(region, region.referenceBefore(std::move(source), std::move(target)));
+    }
     if (!source.visits.empty() || !target.visits.empty()) { return std::nullopt; }
     auto& e = *region.expressions;
     return e.lor(e.lt(source.ordinal, target.ordinal),

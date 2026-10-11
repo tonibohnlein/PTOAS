@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "RegionalCapabilitiesInternal.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "RegionalRelationsInternal.h"
 #include "CountedLoop.h"
@@ -206,8 +207,8 @@ bool Request::build(std::string& diagnostic)
 {
     auto finish = [&](bool success) { diagnostic = error; return success; };
     if (!region.capabilities.completeStorageModel || !region.capabilities.exactQueries ||
-        !region.capabilities.exactSelectors || region.accessModel != &input.accesses() ||
-        region.gmAliasPolicy != input.memory().gmPolicy() || region.occurrenceLoops.size() != region.anchors.size()) {
+        !region.capabilities.exactSelectors ||
+        !matchesRegionalContext(region, {region.expressions.get(), &input.accesses(), input.memory().gmPolicy()})) {
         return finish(fail("regional relations require compatible complete modeled queries and selectors"));
     }
     data.input = &input; data.context.function = function;
@@ -492,6 +493,10 @@ FailureOr<std::unique_ptr<RegionalRelationRequest>> requestCallbackRegionalRelat
     const RegionalAnalysis& region, func::FuncOp function, const SyncInput& input,
     const PhaseIndex& index, std::string& error)
 {
+    if (!region.expressions) { error = "regional relation expression arena unavailable"; return failure(); }
+    if (!validRegionalOccurrenceSchema(region)) {
+        error = "regional relation occurrence schema malformed"; return failure();
+    }
     auto request = std::make_unique<Request>(region, function, input, index);
     if (!request->build(error)) { return failure(); }
     return std::unique_ptr<RegionalRelationRequest>(std::move(request));

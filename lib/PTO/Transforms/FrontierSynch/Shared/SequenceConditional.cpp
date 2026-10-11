@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Guard original arm interfaces; mutually exclusive arms may share the sequence
 // composer because all query and boundary membership is masked by arm presence.
+#include "RegionalCapabilitiesInternal.h"
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 namespace mlir::pto::frontiersynch {
@@ -54,9 +55,7 @@ RegionalAnalysis guardedArm(RegionalAnalysis body, Expr guard)
 {
     auto owner = std::make_shared<const RegionalAnalysis>(std::move(body));
     auto out = *owner;
-    out.numerical.reset();
-    out.arithmeticRelations.reset(); out.relations.reset();
-    out.symbolicStorage.reset();
+    invalidateDerivedRegionalCertificates(out);
     auto arena = owner->expressions;
     auto mask = [&](auto& values) {
         for (auto& value : values) { value.present = arena->select(guard, value.present, arena->boolean(false)); }

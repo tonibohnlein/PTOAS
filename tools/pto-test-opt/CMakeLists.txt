@@ -123,6 +123,7 @@ add_llvm_executable(pto-sync-input-test
   BoundedAllocationContextChecks.cpp
   ArithmeticStorageSelectorChecks.cpp
   RegionalRelationChecks.cpp
+  RegionalCapabilityChecks.cpp
   ArithmeticDemandChecks.cpp
   ArithmeticSelectorChecks.cpp
   ArithmeticProgramDump.cpp
