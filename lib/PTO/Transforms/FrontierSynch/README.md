@@ -126,7 +126,13 @@ Its reported class is `periodic-required-order`, with representation
 in `dischargedEffects`. The initial implementation supports an independent
 counted loop directly in a single-block function with a return terminator,
 unconditional payloads, invariant exact local cells,
-and no uniform modeled relationships. Counted-domain representability,
+and no uniform modeled relationships. Materialized local effects use the shared
+physical-cell partition, so overlapping allocation SSA roots and partial byte
+reuse retain their original common identity. Exactness is relative to those
+supplied modeled ranges, including preexisting allocation-bound models; the
+adapter does not claim a more precise hardware footprint. Missing materialized
+cells retain the prior invariant-family attempt and its explicit obligations.
+Counted-domain representability,
 carried-state, scalar-control prerequisites and macro restrictions remain in
 force. These are the scope of this implemented proof adapter, not a claim that
 other inputs are outside the mathematical class.

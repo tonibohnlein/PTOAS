@@ -13,6 +13,43 @@
 #include <set>
 namespace mlir::pto::frontiersynch {
 namespace {
+bool appendMaterializedCells(RotatingPrimitives& result, ArrayRef<std::size_t> effectIds,
+                             const SyncInput& input, scf::ForOp loop)
+{
+    // Shared partition IDs are disjoint across address spaces and bases.
+    // These are the supplied modeled ranges, including existing buffer bounds.
+    const auto& storage = input.accesses();
+    const auto protection = structuredProtection(storage);
+    DenseMap<const CompoundInstanceElement*, uint32_t> positions;
+    for (auto [position, phase] : llvm::enumerate(result.phases)) { positions[phase] = position; }
+    DenseMap<std::pair<uint32_t, uint32_t>, std::size_t> fragments;
+    for (auto id : effectIds) {
+        const auto& effect = storage.effects()[id];
+        auto position = positions.find(effect.phase);
+        if (position == positions.end()) { return false; }
+        for (auto cell : effect.cells) {
+            if (cell >= storage.cells().size() || cell > UINT32_MAX || result.fragments.size() >= UINT32_MAX) {
+                return false;
+            }
+            const auto& physical = storage.cells()[cell];
+            if (physical.base || physical.space != effect.memory->scope || physical.begin >= physical.end) {
+                return false;
+            }
+            const auto atom = static_cast<uint32_t>(cell);
+            const auto [found, inserted] = fragments.try_emplace({position->second, atom}, result.fragments.size());
+            if (inserted) { result.fragments.push_back({position->second, 0, atom, 1, 0, 0, false, false, 0}); }
+            auto& fragment = result.fragments[found->second];
+            fragment.read |= effect.mode == SyncAccessMode::Read;
+            fragment.write |= effect.mode == SyncAccessMode::Write;
+            // Protected accumulator RMW must be one writer fragment before the
+            // extractor validates it; read-only cells retain ordinary hazards.
+            if (fragment.write && physical.space == AddressSpace::ACC) {
+                fragment.protectionGroup = protection.inLoop(effect.phase, loop);
+            }
+        }
+    }
+    return true;
+}
 bool coverEffects(OrderCoveredPeriodicResult& result, std::string& error)
 {
     const auto& effects = result.input->accesses();
@@ -71,6 +108,9 @@ std::shared_ptr<const OrderCoveredPeriodicResult> analyzeOrderCoveredPeriodic(
     if (!hypothesis) { return {}; }
     auto primitives = collectRotatingPrimitives(loop, *index, *input, hypothesis->retained);
     if (!primitives.error.empty()) { error = primitives.error; return {}; }
+    if (!appendMaterializedCells(primitives, hypothesis->materializedEffects, *input, loop)) {
+        error = "materialized local cell identities are unavailable"; return {};
+    }
     auto result = std::make_shared<OrderCoveredPeriodicResult>();
     result->input = std::move(input); result->index = std::move(index); result->originalRegion = originalRegion;
     result->omittedEffects = std::move(hypothesis->omittedEffects);

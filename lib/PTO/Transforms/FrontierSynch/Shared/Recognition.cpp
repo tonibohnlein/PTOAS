@@ -464,14 +464,23 @@ std::optional<detail::OrderCoveredHypothesis> detail::recognizeOrderCoveredInvar
     if (effects.hasUniformRelationships(*phases)) {
         return fail("order coverage has no uniform-relationship hypothesis adapter");
     }
-    Families families;
+    std::vector<std::size_t> localEffects;
     for (auto* phase : *phases) {
         for (auto id : effects.effectsFor(phase)) {
             const auto& effect = effects.effects()[id];
             if (!effect.memory) { return fail("order coverage lacks modeled memory identity"); }
-            if (effect.memory->scope == AddressSpace::GM) { hypothesis.omittedEffects.push_back(id); continue; }
-            inspectAccess(id, loop, input, effects, families, retained, index, false, false);
+            if (effect.memory->scope == AddressSpace::GM) { hypothesis.omittedEffects.push_back(id); }
+            else { localEffects.push_back(id); }
         }
+    }
+    if (!hypothesis.omittedEffects.empty() && !localEffects.empty() &&
+        effects.hasMaterializedCellPartition(localEffects)) {
+        hypothesis.materializedEffects = std::move(localEffects);
+        return hypothesis;
+    }
+    Families families;
+    for (auto id : localEffects) {
+        inspectAccess(id, loop, input, effects, families, retained, index, false, false);
     }
     checkDisjoint(families, retained, loop);
     normalizeFragments(retained, effects);

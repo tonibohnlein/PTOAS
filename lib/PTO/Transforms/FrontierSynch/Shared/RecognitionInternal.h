@@ -42,6 +42,8 @@ bool physicalWriterCoverageApplies(const BoundedLifetimeRecognition& recognized,
 struct OrderCoveredHypothesis {
     RecognitionResult retained;
     std::vector<std::size_t> omittedEffects;
+    // Canonical shared physical cells; no allocation SSA-family identity.
+    std::vector<std::size_t> materializedEffects;
 };
 std::optional<OrderCoveredHypothesis> recognizeOrderCoveredInvariant(
     scf::ForOp loop, const SyncInput& input, const PhaseIndex& index, std::string& error);
