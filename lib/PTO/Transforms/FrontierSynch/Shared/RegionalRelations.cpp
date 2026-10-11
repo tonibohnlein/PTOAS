@@ -8,6 +8,33 @@
 #include "RegionalRelationsInternal.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
+FailureOr<RegionalRelationData> composeBalancedRegionalRelations(std::vector<RegionalRelationData> children,
+    ArithmeticRegionContext context, std::string& error)
+{
+    if (children.empty()) {
+        error = "symbolic sequence requires at least one exact child";
+        return failure();
+    }
+    // Each node covers an adjacent interval in the unchanged reference order.
+    // Exact required/native relations, extrema and still-incoming prerequisites
+    // survive every merge; interval locality preserves internal minimum demands.
+    // Site concatenation never permutes the original child ownership map.
+    while (children.size() > 1) {
+        std::vector<RegionalRelationData> next;
+        next.reserve(children.size() / 2 + children.size() % 2);
+        for (std::size_t i = 0; i < children.size(); i += 2) {
+            if (i + 1 == children.size()) {
+                next.push_back(std::move(children[i]));
+                continue;
+            }
+            auto combined = composeRegionalRelationData(children[i], children[i + 1], context, error);
+            if (failed(combined)) { return failure(); }
+            next.push_back(std::move(*combined));
+        }
+        children = std::move(next);
+    }
+    return std::move(children.front());
+}
 FailureOr<RegionalAnalysis> composeSymbolicRegionalSequence(
     ArrayRef<RegionalAnalysis> children, func::FuncOp function, const SyncInput& input,
     const PhaseIndex& index, std::string& error)
@@ -109,13 +136,13 @@ FailureOr<RegionalAnalysis> composeSymbolicRegionalSequence(
         }
         if (failed(normalizeRegionalRelationData(exports[i], parameters, bindings, error))) { return failure(); }
     }
-    carrier->data = std::move(exports.front());
-    std::vector<unsigned> owner(carrier->data.sites.size(), 0);
-    for (unsigned i = 1; i < exports.size(); ++i) {
-        auto combined = composeRegionalRelationData(carrier->data, exports[i], {function, root}, error);
-        if (failed(combined)) { return failure(); }
-        carrier->data = std::move(*combined); owner.insert(owner.end(), exports[i].sites.size(), i);
+    std::vector<unsigned> owner;
+    for (unsigned i = 0; i < exports.size(); ++i) {
+        owner.insert(owner.end(), exports[i].sites.size(), i);
     }
+    auto combined = composeBalancedRegionalRelations(std::move(exports), {function, root}, error);
+    if (failed(combined)) { return failure(); }
+    carrier->data = std::move(*combined);
     for (const auto& [key, pieces] : carrier->data.analysis.minimumDemands) {
         if (owner[key.source.site] != owner[key.target.site]) { carrier->newCrossings.emplace(key, pieces); }
     }

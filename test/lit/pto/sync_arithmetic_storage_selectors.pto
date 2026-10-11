@@ -9,4 +9,5 @@
 // CHECK: arithmetic storage boundary selectors match independent byte lifetimes
 // RUN: pto-sync-input-test --regional-relation-checks | FileCheck %s --check-prefix=RELATIONS
 // RELATIONS: regional relations: raw coordinates, parameter permutations, symbolic bytes and associative covers passed
+// RUN: pto-sync-input-test --expression-relation-checks
 module {}

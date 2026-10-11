@@ -8,20 +8,45 @@
 #ifndef PTO_FRONTIERSYNCH_REGIONALRELATIONSINTERNAL_H
 #define PTO_FRONTIERSYNCH_REGIONALRELATIONSINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalRelations.h"
+#include <map>
 namespace mlir::pto::frontiersynch {
 // Lossless quotient-to-raw conversion and shared parameter-column alignment.
-LogicalResult normalizeRegionalRelationData(RegionalRelationData& data,
-    ArrayRef<Value> parameters, ArrayRef<RegionExpressions::Id> bindings, std::string& error);
+LogicalResult normalizeRegionalRelationData(
+    RegionalRelationData& data, ArrayRef<Value> parameters, ArrayRef<RegionExpressions::Id> bindings,
+    std::string& error);
+// One synchronous adapter invocation with a fixed arena and unconstrained
+// signed-column domain. Destroy before any arena transaction rolls back. The
+// ordered schema includes every coordinate, parameter and selector output.
+class RegionalRelationTranslation {
+public:
+    RegionalRelationTranslation(const RegionExpressions& expressions, RegionExpressions::RelationCost& cost)
+        : expressions(expressions), cost(cost)
+    {}
+    FailureOr<std::vector<IntegerSystem>> translate(
+        RegionExpressions::Id predicate, ArrayRef<RegionExpressions::Id> variables, std::string& error);
+
+private:
+    struct Entry {
+        std::optional<std::vector<IntegerSystem>> systems;
+        std::string error;
+    };
+    const RegionExpressions& expressions;
+    RegionExpressions::RelationCost& cost;
+    std::map<std::pair<RegionExpressions::Id, std::vector<RegionExpressions::Id>>, Entry> cache;
+};
 struct RegionalRelationRequest {
     virtual ~RegionalRelationRequest() = default;
     virtual ArrayRef<Value> parameters() const = 0;
     virtual FailureOr<RegionalRelationData> lower(ArrayRef<Value> parameters, std::string& error) = 0;
     std::shared_ptr<Block> variables;
 };
+// Adjacent merges preserve the supplied exact schemas and original site order.
+FailureOr<RegionalRelationData> composeBalancedRegionalRelations(
+    std::vector<RegionalRelationData> children, ArithmeticRegionContext context, std::string& error);
 FailureOr<std::unique_ptr<RegionalRelationRequest>> requestCallbackRegionalRelations(
-    const RegionalAnalysis& region, func::FuncOp function, const SyncInput& input,
-    const PhaseIndex& index, std::string& error);
-FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalRelations> relation,
-    std::shared_ptr<RegionExpressions> expressions, std::string& error);
+    const RegionalAnalysis& region, func::FuncOp function, const SyncInput& input, const PhaseIndex& index,
+    std::string& error);
+FailureOr<RegionalAnalysis> exportRegionalRelationData(
+    std::shared_ptr<RegionalRelations> relation, std::shared_ptr<RegionExpressions> expressions, std::string& error);
 } // namespace mlir::pto::frontiersynch
 #endif

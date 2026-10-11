@@ -161,6 +161,276 @@ bool association(MLIRContext& context)
     return true;
 }
 
+bool restrictPresence(fs::RegionalRelationData& child, int64_t lower)
+{
+    auto restrict = [&](fs::IntegerSystem& system) {
+        std::vector<I> coefficients(system.dimensions());
+        coefficients.back() = I(-1);
+        auto domain = fs::IntegerSystem::create(system.dimensions(), {{coefficients, I(-lower)}});
+        if (failed(domain)) {
+            return false;
+        }
+        auto result = system.intersect(*domain);
+        if (failed(result)) {
+            return false;
+        }
+        system = std::move(*result);
+        return true;
+    };
+    for (auto* relation : {&child.analysis.nativeOrder, &child.analysis.requiredOrder}) {
+        for (auto& [key, systems] : *relation) {
+            for (auto& system : systems) {
+                if (!restrict(system)) {
+                    return false;
+                }
+            }
+        }
+    }
+    for (auto& occurrence : child.occurrences) {
+        if (!restrict(occurrence.system)) {
+            return false;
+        }
+    }
+    for (auto& support : child.selectors.support) {
+        if (!restrict(support.domain)) {
+            return false;
+        }
+    }
+    for (auto& boundary : child.selectors.boundaries) {
+        for (auto& piece : boundary.selector.pieces) {
+            if (!restrict(piece.domain)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+using Graph = std::vector<std::vector<bool>>;
+std::pair<Graph, Graph> expectedSequenceGraphs(int64_t n)
+{
+    // Independent graph of native order, byte conflicts and scalar prerequisites.
+    Graph native(18, std::vector<bool>(18)), required = native;
+    for (unsigned i = 0; i < 9; ++i) {
+        if (n < int64_t(i % 3 + 1)) {
+            continue;
+        }
+        native[2 * i][2 * i + 1] = true;
+        for (unsigned j = i + 1; j < 9; ++j) {
+            if (n >= int64_t(j % 3 + 1) && i % 3 == j % 3) {
+                native[2 * i][2 * j] = true;
+                native[2 * i + 1][2 * j + 1] = true;
+            }
+        }
+    }
+    auto close = [](Graph& graph) {
+        for (unsigned k = 0; k < graph.size(); ++k) {
+            for (unsigned i = 0; i < graph.size(); ++i) {
+                for (unsigned j = 0; j < graph.size(); ++j) {
+                    graph[i][j] = graph[i][j] || (graph[i][k] && graph[k][j]);
+                }
+            }
+        }
+    };
+    close(native);
+    required = native;
+    std::optional<unsigned> writer;
+    std::vector<unsigned> readers;
+    for (unsigned i = 0; i < 9; ++i) {
+        if (i == 4 || i == 7 || n < int64_t(i % 3 + 1)) {
+            continue;
+        }
+        if (writer) {
+            required[2 * *writer + 1][2 * i] = true;
+        }
+        if (i == 1 || i == 5) {
+            for (auto reader : readers) {
+                required[2 * reader + 1][2 * i] = true;
+            }
+            readers.clear();
+            writer = i;
+        } else {
+            readers.push_back(i);
+        }
+    }
+    if (n >= 1) {
+        required[1][12] = true;
+    }
+    if (n >= 3) {
+        required[1][16] = true;
+    }
+    close(required);
+
+    return {std::move(native), std::move(required)};
+}
+using Boundary = fs::ArithmeticBoundaryKind;
+using Choice = std::tuple<Boundary, int64_t, unsigned>;
+std::set<Choice> expectedSequenceBoundary(int64_t n, int64_t byte, ArrayRef<pto::PipelineType> pipes)
+{
+    std::set<Choice> expected;
+    if (n <= 0 || byte < 0 || byte >= n) {
+        return expected;
+    }
+    std::optional<unsigned> firstWriter, lastWriter;
+    for (unsigned site : {1U, 5U}) {
+        if (n < int64_t(site % 3 + 1)) {
+            continue;
+        }
+        if (!firstWriter) {
+            firstWriter = site;
+        }
+        lastWriter = site;
+    }
+    if (firstWriter) {
+        expected.emplace(Boundary::FirstWriter, -1, *firstWriter);
+    }
+    if (lastWriter) {
+        expected.emplace(Boundary::LastWriter, -1, *lastWriter);
+    }
+    std::map<int64_t, unsigned> firstReaders, lastReaders;
+    for (unsigned site = 0; site < 9; ++site) {
+        if (site == 1 || site == 4 || site == 5 || site == 7 || n < int64_t(site % 3 + 1)) {
+            continue;
+        }
+        const auto pipe = int64_t(pipes[site % pipes.size()]);
+        if (!firstWriter || site < *firstWriter) {
+            firstReaders.emplace(pipe, site);
+        }
+        if (!lastWriter || site > *lastWriter) {
+            lastReaders[pipe] = site;
+        }
+    }
+    for (const auto& [pipe, site] : firstReaders) {
+        expected.emplace(Boundary::FirstReaderBeforeWrite, pipe, site);
+    }
+    for (const auto& [pipe, site] : lastReaders) {
+        expected.emplace(Boundary::LastReaderAfterWrite, pipe, site);
+    }
+    return expected;
+}
+bool balancedComposition(MLIRContext& context)
+{
+    context.getOrLoadDialect<arith::ArithDialect>();
+    auto function = func::FuncOp::create(
+        UnknownLoc::get(&context), "balanced", FunctionType::get(&context, {IndexType::get(&context)}, {}));
+    auto* body = function.addEntryBlock();
+    auto cleanup = llvm::make_scope_exit([&] { function.erase(); });
+    OpBuilder builder(body, body->begin());
+    pto::SyncInput input;
+    std::vector<std::unique_ptr<pto::CompoundInstanceElement>> phases;
+    std::vector<fs::RegionalRelationData> children;
+    const std::vector<pto::PipelineType> pipes{
+        pto::PipelineType::PIPE_MTE2, pto::PipelineType::PIPE_V, pto::PipelineType::PIPE_MTE3};
+    for (unsigned i = 0; i < 9; ++i) {
+        Operation* operation = nullptr;
+        if (i == 6 || i == 8) {
+            operation = builder.create<arith::AddIOp>(
+                function.getLoc(), phases[0]->elementOp->getResult(0), function.getArgument(0));
+        } else {
+            operation = builder.create<arith::ConstantIndexOp>(function.getLoc(), i + 1);
+        }
+        auto phase = std::make_unique<pto::CompoundInstanceElement>(
+            i, SmallVector<const pto::BaseMemInfo*>{}, SmallVector<const pto::BaseMemInfo*>{}, pipes[i % pipes.size()],
+            operation->getName());
+        phase->elementOp = operation;
+        auto child = leaf(input, function, phase.get(), i == 1 || i == 5);
+        if (i == 4 || i == 7) {
+            child.selectors.boundaries.clear();
+            child.selectors.support.clear();
+        }
+        if (!restrictPresence(child, i % 3 + 1)) {
+            return false;
+        }
+        children.push_back(std::move(child));
+        phases.push_back(std::move(phase));
+    }
+    children[6].incomingPrerequisites = {{phases[0].get(), phases[6]->elementOp, false, true}};
+    children.back().incomingPrerequisites = {{phases[0].get(), phases[8]->elementOp, false, true}};
+    auto empty = children[3];
+    empty.sites.clear();
+    empty.occurrences.clear();
+    empty.analysis.nativeOrder.clear();
+    empty.analysis.requiredOrder.clear();
+    empty.analysis.pipeCount = 0;
+    empty.selectors.boundaries.clear();
+    empty.selectors.support.clear();
+    children.insert(children.begin() + 3, std::move(empty));
+    std::string error;
+    auto balanced = fs::composeBalancedRegionalRelations(children, {function, function}, error);
+    if (failed(balanced)) {
+        llvm::errs() << error << '\n';
+        return false;
+    }
+    auto sequential = children.front();
+    for (unsigned i = 1; i < children.size(); ++i) {
+        auto next = fs::composeRegionalRelationData(sequential, children[i], {function, function}, error);
+        if (failed(next)) {
+            return false;
+        }
+        sequential = std::move(*next);
+    }
+    for (const auto* data : {&*balanced, &sequential}) {
+        if (data->sites.size() != 9 || !data->incomingPrerequisites.empty()) {
+            return false;
+        }
+        for (unsigned i = 0; i < 9; ++i) {
+            if (data->sites[i].phase != phases[i].get()) {
+                return false;
+            }
+        }
+        for (int64_t n : {0, 1, 2, 3, 4}) {
+            const auto [native, required] = expectedSequenceGraphs(n);
+            auto has = [&](const auto& relation, unsigned a, unsigned b) {
+                using Event = fs::ArithmeticEvent;
+                fs::ArithmeticRelationKey key{
+                    {a / 2, a % 2 ? Event::Completion : Event::Start, {}},
+                    {b / 2, b % 2 ? Event::Completion : Event::Start, {}},
+                    {0}};
+                auto found = relation.find(key);
+                return found != relation.end() &&
+                       llvm::any_of(found->second, [&](const auto& piece) { return contains(piece, {n}); });
+            };
+            for (unsigned a = 0; a < 18; ++a) {
+                for (unsigned b = 0; b < 18; ++b) {
+                    if (a == b) {
+                        continue;
+                    }
+                    if (has(data->analysis.requiredOrder, a, b) != (n > 0 && required[a][b]) ||
+                        has(data->analysis.nativeOrder, a, b) != (n > 0 && native[a][b])) {
+                        return false;
+                    }
+                    if (a % 2 != 1 || b % 2 != 0) {
+                        continue;
+                    }
+                    bool cover = required[a][b] && !native[a][b];
+                    for (unsigned k = 0; k < 18; ++k) {
+                        if (k != a && k != b && required[a][k] && required[k][b]) {
+                            cover = false;
+                        }
+                    }
+                    if (has(data->analysis.minimumDemands, a, b) != (n > 0 && cover)) {
+                        return false;
+                    }
+                }
+            }
+            for (int64_t byte : {-1, 0, 1, 3}) {
+                std::set<Choice> actual, expected;
+                for (const auto& boundary : data->selectors.boundaries) {
+                    for (const auto& piece : boundary.selector.pieces) {
+                        if (contains(piece.domain, {byte, n})) {
+                            actual.emplace(
+                                boundary.kind, boundary.pipe ? int64_t(*boundary.pipe) : -1, piece.outputSite);
+                        }
+                    }
+                }
+                expected = expectedSequenceBoundary(n, byte, pipes);
+                if (actual != expected) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
 bool retainedResult(MLIRContext& context)
 {
     context.getOrLoadDialect<func::FuncDialect>();
@@ -572,6 +842,101 @@ bool fixedParameterizedCallbacks(MLIRContext& context)
     }
     return data->selectors.boundaries.size() == 2;
 }
+bool scopedTranslations(MLIRContext& context)
+{
+    Block arguments;
+    for (unsigned i = 0; i < 2; ++i) {
+        arguments.addArgument(IndexType::get(&context), UnknownLoc::get(&context));
+    }
+    fs::RegionExpressions arena;
+    const auto x = arena.input(arguments.getArgument(0)), y = arena.input(arguments.getArgument(1));
+    const auto predicate = arena.sle(x, arena.constant(2));
+    fs::RegionExpressions::RelationCost cost;
+    fs::RegionalRelationTranslation translation(arena, cost);
+    std::string error;
+    auto first = translation.translate(predicate, {x, y}, error);
+    const auto gates = cost.gates, products = cost.formulaProducts;
+    auto repeated = translation.translate(predicate, {x, y}, error);
+    if (failed(first) || failed(repeated) || cost.conversionRequests != 2 || cost.conversionCacheHits != 1 ||
+        cost.gates != gates || cost.formulaProducts != products) {
+        return false;
+    }
+    auto reordered = translation.translate(predicate, {y, x}, error);
+    if (failed(reordered) || cost.conversionCacheHits != 1) {
+        return false;
+    }
+    for (int64_t a : {-4, 0, 2, 3}) {
+        for (int64_t b : {-4, 0, 2, 3}) {
+            auto has = [&](const auto& systems) {
+                return llvm::any_of(systems, [&](const auto& system) { return contains(system, {a, b}); });
+            };
+            if (has(*first) != (a <= 2) || has(*repeated) != (a <= 2) || has(*reordered) != (b <= 2)) {
+                return false;
+            }
+        }
+    }
+    if (succeeded(translation.translate(predicate, {y}, error)) || error.empty()) {
+        return false;
+    }
+    const auto failureMessage = error;
+    const auto hits = cost.conversionCacheHits;
+    if (succeeded(translation.translate(predicate, {y}, error)) || error != failureMessage ||
+        cost.conversionCacheHits != hits + 1 || succeeded(translation.translate(predicate, {x, x}, error))) {
+        return false;
+    }
+    auto strongerSchema = translation.translate(predicate, {x}, error);
+    if (failed(strongerSchema) || !error.empty()) {
+        return false;
+    }
+    // Equal normalized alternatives are deduplicated without semantic solving.
+    const auto one = arena.constant(1);
+    auto a = arena.land(arena.sle(x, one), arena.sle(one, x));
+    auto b = arena.land(arena.lnot(arena.slt(x, one)), arena.lnot(arena.slt(one, x)));
+    auto identical = translation.translate(arena.lor(a, b), {x}, error);
+    if (failed(identical) || identical->size() != 1) {
+        return false;
+    }
+    for (int64_t sample : {-1, 0, 1, 2, 3}) {
+        if (contains(identical->front(), {sample}) != (sample == 1)) {
+            return false;
+        }
+    }
+    // Distinct spellings force a product with duplicate mixed clauses.
+    const auto upperX = arena.sle(x, one), upperY = arena.sle(y, one);
+    const auto otherX = arena.lnot(arena.slt(one, x)), otherY = arena.lnot(arena.slt(one, y));
+    const auto product = arena.land(arena.lor(upperX, upperY), arena.lor(otherX, otherY));
+    const auto duplicatesBefore = cost.duplicateClauses;
+    auto distributed = translation.translate(product, {x, y}, error);
+    if (failed(distributed) || cost.duplicateClauses <= duplicatesBefore) {
+        return false;
+    }
+    for (int64_t a : {-1, 0, 1, 2, 3}) {
+        for (int64_t b : {-1, 0, 1, 2, 3}) {
+            const bool present =
+                llvm::any_of(*distributed, [&](const auto& system) { return contains(system, {a, b}); });
+            if (present != (a <= 1 || b <= 1)) {
+                return false;
+            }
+        }
+    }
+    // The memo is scoped to a lowering invocation, never reused after rollback.
+    fs::RegionExpressions::Id removed = 0;
+    {
+        fs::RegionExpressions::Transaction attempt(arena);
+        fs::RegionExpressions::RelationCost temporaryCost;
+        fs::RegionalRelationTranslation temporary(arena, temporaryCost);
+        removed = arena.sle(x, arena.constant(17));
+        if (failed(temporary.translate(removed, {x}, error))) {
+            return false;
+        }
+    }
+    const auto replacement = arena.slt(x, arena.constant(17));
+    fs::RegionExpressions::RelationCost freshCost;
+    fs::RegionalRelationTranslation fresh(arena, freshCost);
+    auto result = fresh.translate(replacement, {x}, error);
+    return succeeded(result) && freshCost.conversionCacheHits == 0 &&
+           !llvm::any_of(*result, [&](const auto& system) { return contains(system, {17}); });
+}
 bool retainedInputs(MLIRContext& context)
 {
     std::weak_ptr<Block> weak;
@@ -598,10 +963,10 @@ int runRegionalRelationChecks()
 {
     MLIRContext context;
     if (!quotientCoordinates(context) || !association(context) ||
-        !retainedResult(context) || !retainedInputs(context) ||
+        !retainedResult(context) || !retainedInputs(context) || !balancedComposition(context) ||
         !scalarCrossings(context) || !sequentialAdmission(context) ||
         !fixedPrerequisiteMappings(context) || !nativeScalarClosure() ||
-        !fixedParameterizedCallbacks(context) || !finitePairPreflight()) {
+        !fixedParameterizedCallbacks(context) || !finitePairPreflight() || !scopedTranslations(context)) {
         llvm::errs() << "regional relation normalization/composition oracle failed\n"; return 1;
     }
     llvm::outs() << "regional relations: raw coordinates, parameter permutations, "
