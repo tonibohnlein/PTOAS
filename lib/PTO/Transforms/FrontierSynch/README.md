@@ -286,3 +286,35 @@ partition index orders and bases, failed retries, lifetime after cache/form
 destruction, and protected read/write parity with the legacy representation.
 The numeric diagnostic also retains actual cache requests, hits, expansions and
 expanded IDs on success and failure, separately from estimated attempted work.
+
+## Opt-in stage diagnostics
+
+Use `pto-frontier-analysis="profile-stages=true"` to write one
+`frontier-profile` JSON record per analyzed function to stderr, including failed
+preparations. `analysis-only=true` measures exhaustive certification separately
+from the production root request. The test driver accepts `--profile-stages`
+before `--certify-regions`, `--insert-logical`, or `--recognition-boundary`.
+Profiling adds no IR attributes and does not change family selection.
+
+Stage IDs and request IDs are local to one unchanged-input session. Parent stage
+and request IDs identify nested work. A top-level preparation/allocation stage also
+records its originating analysis request in `parent_request`. `elapsed_ns` includes descendants;
+`exclusive_ns` subtracts immediate child durations, so summing exclusive times
+does not count nested work twice. `first_dispatches` counts newly opened backend
+attempts, including immediate refusals and internal cache reuse; it is not a
+measure of mathematical work. `constructions` and `cache_hits` describe the
+instrumented normalization, export, preparation, and allocation-support stages.
+A null construction count means that canonical construction work is not
+instrumented by that scope; it never means zero mathematical work. Session-wide
+canonical builder totals are reported separately. Timings cover the named
+instrumented stages, rather than every internal relation operation. These
+timings do not include subsequent IR attachment, physical-ID lowering,
+C++ emission, or device execution. External campaign receipts measure complete
+process elapsed time and peak RSS separately.
+
+Outcomes retain the session diagnostic ledger and request identity instead of
+copying cumulative estimate history. `costRecords()` explicitly materializes a
+report snapshot. Contract-audit refreshes in a session mark the report dirty in
+constant work; `result()` publishes it once at a reporting boundary. Reacquire
+`result()` after a mutating analysis request before reading its audit. Standalone
+program recognition keeps its eager audit behavior.

@@ -10,7 +10,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ANALYSISREQUEST_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ANALYSISREQUEST_H
 #include "PTO/Transforms/FrontierSynch/Finite/ExplicitAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisLedger.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticDemandAnalysis.h"
 #include <memory>
 namespace mlir::pto::frontiersynch {
@@ -101,7 +101,8 @@ struct AnalysisOutcome {
     std::shared_ptr<const RegionalAnalysis> regionalExports;
     AnalysisExports available;
     std::vector<AnalysisObligation> obligations;
-    std::vector<AnalysisCostRecord> costs;
+    std::shared_ptr<const AnalysisLedger> ledger;
+    uint64_t requestId = 0;
 };
 // Exhausting implemented attempts cannot establish absence of a paper class.
 // OutsideCatalog requires conclusive premise failures for every scoped form.

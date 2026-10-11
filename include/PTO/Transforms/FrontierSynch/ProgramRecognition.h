@@ -99,6 +99,10 @@ struct ProgramGuard {
     SmallVector<scf::ForOp> loops;
     SmallVector<bool> availableBeforeLoops;
 };
+// Saturating counts of diagnostic bookkeeping, separate from recognition work.
+struct ProgramContractAuditWork {
+    uint64_t refreshRequests = 0, materializations = 0, nodeVisits = 0, candidatesPublished = 0;
+};
 struct ProgramRecognition {
     // Immutable session configuration for all specialized composition views.
     // Direct library clients retain the historical regional defaults.
@@ -117,11 +121,18 @@ struct ProgramRecognition {
     // preparation. Generic selected/bounding compositions cannot supply it.
     std::optional<ProgramContractCandidate> sequenceContract;
     SmallVector<ProgramContractCandidate, 0> finiteVisitContracts;
+    // Session snapshots are refreshed at result()/report boundaries. Reacquire
+    // the session result after mutation before reading this diagnostic vector.
     SmallVector<ProgramContractCandidate, 0> contractAudit;
+    ProgramContractAuditWork contractAuditWork;
+    bool deferContractAudit = false, contractAuditDirty = false;
 };
 // Rebuild only from existing recognition/backend observations; no extraction,
 // demands, regional preparation, emission or allocation is invoked here.
+// Direct recognition remains eager; session refreshes only invalidate the snapshot.
 void refreshProgramContractAudit(ProgramRecognition& program);
+// Publishes a pending snapshot once; repeated reads perform no rebuild.
+void materializeProgramContractAudit(ProgramRecognition& program);
 void recordArithmeticContractAttempt(ProgramRecognition& program, const ArithmeticLimits& limits,
                                      const ArithmeticProgram& arithmetic);
 void recordArithmeticContractAttempt(ProgramRecognition& program, const ArithmeticLimits& limits,

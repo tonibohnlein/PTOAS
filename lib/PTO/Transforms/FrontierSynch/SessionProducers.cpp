@@ -36,7 +36,7 @@ void recordSequenceCosts(AnalysisSessionState& session, const SequenceAnalysis& 
         if (record.method.empty()) { continue; }
         record.region = region;
         record.request = sequence.state->requireEndpoints ? 4 : 0;
-        session.costs.push_back(std::move(record));
+        session.ledger->recordEstimate(std::move(record));
     }
 }
 void recordFormFailure(ProducerFailure& failure, const RecognitionResult& form)
@@ -85,8 +85,10 @@ std::shared_ptr<const NormalizedControlDescription> normalizedInput(AnalysisSess
     func::FuncOp function, const ProgramRecognition& program, std::size_t region,
     const PhaseIndex& index, const SyncInput& input)
 {
+    AnalysisProfileScope profile(session.ledger, "normalization", region);
     auto found = session.normalizedInputs.find(region);
-    if (found != session.normalizedInputs.end()) { return found->second; }
+    if (found != session.normalizedInputs.end()) { profile.cacheHit(); return found->second; }
+    profile.constructed();
     auto description = normalizeSmallCountControl(originalContext(function, program, region), index, input);
     return session.normalizedInputs.emplace(region, std::move(description)).first->second;
 }
@@ -110,6 +112,7 @@ uint64_t FrontierAnalysis::numericalRegionConstructions() const
 const NumericTemplate& FrontierAnalysis::materializeNumericRegion(std::size_t region)
 {
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    sessionState->requestsStarted = true;
     auto& node = program->nodes[region];
     if (node.numericTemplate) { return *node.numericTemplate; }
     auto found = sessionState->numericTemplatePlans.find({region, false});
@@ -125,12 +128,14 @@ const NumericTemplate& FrontierAnalysis::materializeNumericRegion(std::size_t re
 void FrontierAnalysis::recordWholeRegion(AnalysisBackend backend)
 {
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    sessionState->requestsStarted = true;
     sessionState->wholeRegionEvidence.insert(backend);
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRotatingFunction(bool guarded)
 {
     if (failed(recognizeStructure())) { return failure(); }
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    sessionState->requestsStarted = true;
     auto result = requestBackend(guarded ? AnalysisBackend::GuardedRotating : AnalysisBackend::Rotating, {});
     if (result.status != AnalysisStatus::Ready) { return failure(); }
     auto prepared = prepareLogical(result);
@@ -429,7 +434,10 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::varyingExports(
     if (!demands.varyingNode || !demands.varyingBoundaryDemands) { return {}; }
     auto id = *demands.varyingNode;
     auto& attempt = sessionState->loopAttempts[{id, AnalysisBackend::VaryingBoundary}];
+    AnalysisProfileScope queryProfile(sessionState->ledger, "queries", demands.region, "varying-boundary");
+    if (attempt.varyingQueriesAttempted) { queryProfile.cacheHit(); }
     if (!attempt.varyingQueriesAttempted) {
+        queryProfile.constructed();
         attempt.varyingQueriesAttempted = true;
         if (construction.varyingQueryBuilds != UINT64_MAX) { ++construction.varyingQueryBuilds; }
         attempt.varyingExports = buildVaryingQueries(function, *program->nodes[id].varyingRotating,
@@ -438,7 +446,10 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::varyingExports(
     }
     if (!attempt.varyingExports) { error = attempt.varyingQueryError; return {}; }
     if (!selectors) { return varyingQueryResult(*attempt.varyingExports); }
+    AnalysisProfileScope selectorProfile(sessionState->ledger, "selectors", demands.region, "varying-boundary");
+    if (attempt.varyingSelectorsAttempted) { selectorProfile.cacheHit(); }
     if (!attempt.varyingSelectorsAttempted) {
+        selectorProfile.constructed();
         attempt.varyingSelectorsAttempted = true;
         if (construction.varyingSelectorBuilds != UINT64_MAX) { ++construction.varyingSelectorBuilds; }
     }
@@ -456,7 +467,10 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::boundedExports(
     if (!node.boundedLifetime) { return {}; }
     const auto loopRegion = static_cast<std::size_t>(std::distance(program->nodes.begin(), original));
     auto& attempt = sessionState->loopAttempts[{loopRegion, AnalysisBackend::BoundedLifetime}];
+    AnalysisProfileScope queryProfile(sessionState->ledger, "queries", demands.region, "bounded-lifetime");
+    if (attempt.boundedQueriesAttempted) { queryProfile.cacheHit(); }
     if (!attempt.boundedQueriesAttempted) {
+        queryProfile.constructed();
         attempt.boundedQueriesAttempted = true;
         if (construction.boundedQueryBuilds != UINT64_MAX) { ++construction.boundedQueryBuilds; }
         auto result = boundedLifetimeRegionalQueries(demands.boundedDemands, *node.boundedLifetime,
@@ -467,7 +481,10 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::boundedExports(
     }
     if (!attempt.boundedQueries) { error = attempt.boundedQueryError; return {}; }
     if (!selectors) { error.clear(); return attempt.boundedQueries; }
+    AnalysisProfileScope selectorProfile(sessionState->ledger, "selectors", demands.region, "bounded-lifetime");
+    if (attempt.boundedSelectorsAttempted) { selectorProfile.cacheHit(); }
     if (!attempt.boundedSelectorsAttempted) {
+        selectorProfile.constructed();
         attempt.boundedSelectorsAttempted = true;
         if (construction.boundedSelectorBuilds != UINT64_MAX) { ++construction.boundedSelectorBuilds; }
         auto result = boundedLifetimeRegionalSelectors(*demands.boundedDemands, *node.boundedLifetime,
@@ -484,7 +501,10 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::arithmeticExports(
 {
     if (!demands.arithmeticRegionalDemands) { return {}; }
     auto& attempt = sessionState->arithmeticRegionAttempts[demands.region];
+    AnalysisProfileScope queryProfile(sessionState->ledger, "queries", demands.region, "arithmetic");
+    if (attempt.arithmeticQueriesAttempted) { queryProfile.cacheHit(); }
     if (!attempt.arithmeticQueriesAttempted) {
+        queryProfile.constructed();
         attempt.arithmeticQueriesAttempted = true;
         if (construction.arithmeticQueryBuilds != UINT64_MAX) { ++construction.arithmeticQueryBuilds; }
         auto queries = exportArithmeticRegion(*demands.arithmeticRegionalDemands,
@@ -495,7 +515,10 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::arithmeticExports(
     }
     if (!attempt.arithmeticQueries) { error = attempt.arithmeticQueryError; return {}; }
     if (!selectors) { return attempt.arithmeticQueries; }
+    AnalysisProfileScope selectorProfile(sessionState->ledger, "selectors", demands.region, "arithmetic");
+    if (attempt.arithmeticSelectorsAttempted) { selectorProfile.cacheHit(); }
     if (!attempt.arithmeticSelectorsAttempted) {
+        selectorProfile.constructed();
         attempt.arithmeticSelectorsAttempted = true;
         if (construction.arithmeticSelectorBuilds != UINT64_MAX) { ++construction.arithmeticSelectorBuilds; }
         auto selected = exportArithmeticRegion(*demands.arithmeticRegionalDemands,
@@ -524,6 +547,7 @@ std::shared_ptr<const ArithmeticRegionalRelations> FrontierAnalysis::specialized
         error = "specialized arithmetic request belongs to a different invocation"; return {};
     }
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    sessionState->requestsStarted = true;
     if (profiles.empty()) { profiles = regionalArithmeticProfiles; }
     std::vector<std::tuple<unsigned, unsigned, uint64_t, uint64_t>> profileKey;
     for (const auto& value : profiles) {
@@ -602,6 +626,7 @@ std::shared_ptr<const GuardedRotatingMathematics> FrontierAnalysis::specializedG
         keys.push_back(value); roots.push_back(expression);
     }
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    sessionState->requestsStarted = true;
     auto arena = sessionState->guardedExpressions;
     // Canonicalize the actual circuits, not their source IDs. Import commits
     // before the producer transaction so failed attempts cannot recycle keys.
@@ -679,6 +704,7 @@ std::shared_ptr<const NumericBodyMathematics> FrontierAnalysis::specializedNumer
         function->isProperAncestor(loop);
     if (!valid) { error = "specialized numeric body belongs to a different invocation"; return {}; }
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    sessionState->requestsStarted = true;
     const auto node = llvm::find_if(program->nodes, [&](const auto& node) { return node.anchor == loop; });
     if (node == program->nodes.end()) { error = "specialized numeric body requires an original loop"; return {}; }
     if (!normalized) {
@@ -735,6 +761,7 @@ FailureOr<RegionalAnalysis> FrontierAnalysis::finiteArithmeticRegion(std::size_t
         program->nodes[region].kind == StructureKind::Loop && program->nodes[region].anchor;
     if (!valid) { error = "finite arithmetic request requires an original session loop"; return failure(); }
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    sessionState->requestsStarted = true;
     auto& cached = sessionState->arithmeticRegionAttempts[region];
     if (!cached.finiteArithmeticStorage) {
         const auto* form = recognizeArithmeticRegion(region);

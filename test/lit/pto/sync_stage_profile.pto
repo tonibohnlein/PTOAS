@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_frontier_stage_profile.py pto-test-opt %s
+// RUN: pto-sync-input-test --stage-profile-checks %s | FileCheck %s
+// RUN: pto-sync-input-test --profile-stages --certify-regions %s 2>&1 | FileCheck %s --check-prefix=PROFILE
+// RUN: pto-test-opt --pto-frontier-analysis="profile-stages=true" %s 2>&1 | FileCheck %s --check-prefix=PUBLIC
+// CHECK: stage-profile: shared ledger cached requests exclusive timing unchanged route audit reuse
+// PROFILE: frontier-profile
+// PROFILE-SAME: "workload":"exhaustive-certification"
+// PUBLIC: frontier-profile
+// PUBLIC-SAME: "workload":"production-root"
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @profile_finite() {
+    %c0 = arith.constant 0 : index
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %zero : !tile
+    pto.texpands ins(%one : f32) outs(%tile : !tile)
+    %v = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32
+    return
+  }
+}
