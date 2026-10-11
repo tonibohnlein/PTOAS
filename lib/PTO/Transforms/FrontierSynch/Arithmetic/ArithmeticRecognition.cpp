@@ -137,7 +137,10 @@ void inspectPiece(const ResiduePiece& source, const ArithmeticLimits& limits, No
         }
         normalized.machineSystem = std::make_shared<const IntegerSystem>(std::move(*lifted));
         output.arithmeticClass = ArithmeticClass::BoundedCoefficients;
-        const BoundInteger coefficientLimit(static_cast<int64_t>(std::min<uint64_t>(limits.coefficient, INT64_MAX)));
+        // DynamicAPInt has a signed constructor. Split the unsigned profile
+        // value so neither construction nor observed-value reporting narrows it.
+        const BoundInteger coefficientLimit = BoundInteger(static_cast<int64_t>(limits.coefficient >> 1)) *
+            BoundInteger(2) + BoundInteger(static_cast<int64_t>(limits.coefficient & 1));
         auto inspect = [&](const std::vector<BoundInteger>& coefficients) {
             for (const auto& coefficient : coefficients) {
                 auto magnitude = coefficient < BoundInteger(0) ? -coefficient : coefficient;
@@ -145,7 +148,8 @@ void inspectPiece(const ResiduePiece& source, const ArithmeticLimits& limits, No
                     reject(output, ArithmeticIssue::CoefficientLimit, normalized.relation, normalized.piece);
                 } else {
                     output.observedCoefficient = std::max(output.observedCoefficient,
-                        static_cast<uint64_t>(static_cast<int64_t>(magnitude)));
+                        static_cast<uint64_t>(static_cast<int64_t>(magnitude / BoundInteger(2))) * 2 +
+                        static_cast<uint64_t>(static_cast<int64_t>(magnitude % BoundInteger(2))));
                 }
             }
         };
