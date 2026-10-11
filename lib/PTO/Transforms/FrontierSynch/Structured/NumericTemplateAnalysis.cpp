@@ -33,7 +33,7 @@ bool localEffects(const NumericTemplate& input, std::vector<ExplicitEffects>& wo
         occurrence.payload = static_cast<uint32_t>(i);
         occurrence.pipe = static_cast<uint32_t>(payload.phase->kPipeValue);
         for (auto [effectId, effect] : llvm::enumerate(payload.effects)) {
-            if (effect.pendingGlobalGeometry) { return false; }
+            if (effect.pendingGlobalGeometry || !effect.validAtomReferences()) { return false; }
             const auto* relative = input.recurringGlobal ? input.recurringGlobal->find(i, effectId) : nullptr;
             if (relative) {
                 for (auto atom : relative->atoms) {
@@ -43,7 +43,7 @@ bool localEffects(const NumericTemplate& input, std::vector<ExplicitEffects>& wo
                 continue;
             }
             if (effect.discharge != TemplateDischarge::None) {
-                if (!effect.atoms.empty()) {
+                if (!effect.atomReferences().empty()) {
                     return false;
                 }
                 continue; // Certified whole-base GM discharge retained in input.
@@ -54,7 +54,7 @@ bool localEffects(const NumericTemplate& input, std::vector<ExplicitEffects>& wo
                     return false;
                 }
             }
-            for (auto atom : effect.atoms) {
+            for (auto atom : effect.atomReferences()) {
                 if (atom >= input.atoms.size() || atom > std::numeric_limits<uint32_t>::max() ||
                     input.atoms[atom].space == AddressSpace::GM) {
                     return false;

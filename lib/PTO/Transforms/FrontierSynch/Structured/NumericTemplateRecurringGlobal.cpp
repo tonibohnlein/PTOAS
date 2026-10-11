@@ -18,7 +18,8 @@ bool sameEffect(const TemplateEffect& a, const TemplateEffect& b)
 {
     if (a.sourceEffect != b.sourceEffect || a.mode != b.mode || a.discharge != b.discharge ||
         a.outerStride != b.outerStride || a.pendingGlobalGeometry != b.pendingGlobalGeometry ||
-        a.atoms != b.atoms || a.ranges.size() != b.ranges.size() || a.regions.size() != b.regions.size()) {
+        !a.validAtomReferences() || !b.validAtomReferences() || a.atomReferences() != b.atomReferences() ||
+        a.ranges.size() != b.ranges.size() || a.regions.size() != b.regions.size()) {
         return false;
     }
     for (auto [x, y] : llvm::zip(a.ranges, b.ranges)) {
@@ -63,7 +64,8 @@ bool RecurringGlobalTemplate::applies(const NumericTemplate& form) const
         if (record.sourceEffect >= input->accesses().effects().size() ||
             effect.mode != input->accesses().effects()[record.sourceEffect].mode ||
             effect.sourceEffect != record.sourceEffect || effect.pendingGlobalGeometry ||
-            effect.discharge != TemplateDischarge::None || !effect.atoms.empty() || !effect.ranges.empty()) {
+            effect.discharge != TemplateDischarge::None || !effect.validAtomReferences() ||
+            !effect.atomReferences().empty() || !effect.ranges.empty()) {
             return false;
         }
         if (record.kind == RelativeGlobalKind::PrivateTranslation && !record.atoms.empty()) { return false; }
@@ -185,7 +187,7 @@ void publishBase(TemplateBuilder& builder, BaseExtraction& extracted, BaseProof&
         llvm::sort(record.atoms);
         record.atoms.erase(std::unique(record.atoms.begin(), record.atoms.end()), record.atoms.end());
         auto& effect = builder.output.payloads[record.payload].effects[record.effect];
-        effect.regions.clear(); effect.ranges.clear(); effect.atoms.clear();
+        effect.regions.clear(); effect.ranges.clear(); effect.atoms.clear(); effect.sharedAtoms.reset();
         effect.pendingGlobalGeometry = false; effect.discharge = TemplateDischarge::None; effect.outerStride = 0;
         owner.effectIndex.emplace(std::make_pair(record.payload, record.effect), owner.effects.size());
         owner.effects.push_back(std::move(record));

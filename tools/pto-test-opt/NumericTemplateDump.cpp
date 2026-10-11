@@ -13,6 +13,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateRegional.h"
 #include "AlignedModularCellOracle.h"
+#include "NumericAtomReferenceChecks.h"
 #include "mlir/IR/AsmState.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
@@ -75,11 +76,12 @@ llvm::json::Object dumpNumericTemplate(const fs::NumericTemplate& result, AsmSta
             for (const auto& item : effect.ranges) {
                 ranges.push_back(range(item));
             }
-            for (auto atom : effect.atoms) {
-                ids.push_back(atom);
+            if (effect.validAtomReferences()) {
+                for (auto atom : effect.atomReferences()) { ids.push_back(atom); }
             }
             effects.push_back(llvm::json::Object{{"source_effect", effect.sourceEffect},
                 {"mode", effect.mode == pto::SyncAccessMode::Read ? "read" : "write"},
+                {"valid_atom_references", effect.validAtomReferences()},
                 {"maps", std::move(maps)}, {"ranges", std::move(ranges)}, {"atoms", std::move(ids)},
                 {"discharge", static_cast<unsigned>(effect.discharge)}, {"outer_stride", effect.outerStride}});
         }
@@ -108,6 +110,10 @@ llvm::json::Object dumpNumericTemplate(const fs::NumericTemplate& result, AsmSta
         {"upper", name(outer.getUpperBound(), state)}, {"counted_visits", result.countedVisits},
         {"counted_payloads", result.countedPayloads}, {"fragments", result.fragments},
         {"estimated_attempted_fragments", result.estimatedAttemptedFragments},
+        {"atom_reference_requests", result.atomReferenceCost.requests},
+        {"atom_reference_hits", result.atomReferenceCost.hits},
+        {"atom_reference_expansions", result.atomReferenceCost.expansions},
+        {"atom_reference_expanded_ids", result.atomReferenceCost.expandedIds},
         {"period", result.period}, {"refresh", result.refresh}, {"scope", "whole-function"},
         {"interfaces_ready", false}, {"payloads", std::move(payloads)}, {"atoms", std::move(atoms)}};
 }
@@ -115,6 +121,9 @@ llvm::json::Object dumpNumericTemplate(const fs::NumericTemplate& result, AsmSta
 LogicalResult checkNumericPreflight(func::FuncOp function, const pto::SyncInput& input,
     const fs::ProgramRecognition& program)
 {
+    if (!numericAtomReferenceChecks(function.getContext())) {
+        return function.emitError("numeric atom reference cache ownership/protection checks failed");
+    }
     fs::PhaseIndex index;
     if (failed(index.build(function, input))) { return failure(); }
     for (const auto& node : program.nodes) {
@@ -159,7 +168,8 @@ bool recurringBudget(func::FuncOp function, const pto::SyncInput& input, const f
     limits.fragments = form.fragments - 1;
     const auto limited = fs::recognizeNumericTemplate(form.outer, limitIndex, input, limits);
     return limited.result.state != fs::RecognitionState::Applicable && limited.estimatedAttemptedFragments &&
-        !limited.fragments && limited.payloads.empty() && limited.atoms.empty();
+        !limited.fragments && limited.payloads.empty() && limited.atoms.empty() &&
+        limited.atomReferenceCost.requests && limited.atomReferenceCost.expansions;
 }
 bool privateBoundSnapshot(const fs::NumericTemplate& form)
 {
@@ -212,7 +222,11 @@ bool recurringMembership(const fs::NumericTemplate& form)
             x.payloads[record.payload].effects[record.effect].mode == pto::SyncAccessMode::Read ?
                 pto::SyncAccessMode::Write : pto::SyncAccessMode::Read; }) &&
         rejected([&](auto& x) { x.payloads[record.payload].effects[record.effect].ranges.push_back(
-            pto::SyncStorageCell{pto::AddressSpace::GM, 0, 1}); });
+            pto::SyncStorageCell{pto::AddressSpace::GM, 0, 1}); }) &&
+        rejected([&](auto& x) { x.payloads[record.payload].effects[record.effect].sharedAtoms =
+            std::make_shared<const std::vector<std::size_t>>(std::vector<std::size_t>{0}); }) &&
+        rejected([&](auto& x) { auto& e = x.payloads[record.payload].effects[record.effect];
+            e.sharedAtoms = std::make_shared<const std::vector<std::size_t>>(); e.atoms.push_back(0); });
 }
 bool recurringExportRefusal(func::FuncOp function, const pto::SyncInput& input, const fs::NumericTemplate& form)
 {

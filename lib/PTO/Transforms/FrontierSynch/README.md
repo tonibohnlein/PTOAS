@@ -261,3 +261,28 @@ signed machine addresses for zero, one and nonunit two-visit invocations under
 both alias policies, and checks logical closure and physical event-ID pairing.
 These are compiler-level checks; device execution and the complete corpus remain
 separate validation gates.
+
+### Shared local atom references
+
+A numerical template's finalized local partition now owns each distinct atom
+reference vector once. A cache scoped to that partition canonicalizes complete
+storage ranges, including address space and base identity, before expanding
+range-to-atom references. Equal keys reuse immutable backing; copied effect
+records retain ownership. Source identity, access modes, invocation protection
+and the number of logical occurrences remain per effect and are unchanged.
+
+Each canonical range union must be exactly covered by complete disjoint partition
+atoms. Partial
+atoms, missing coverage and malformed dual legacy/shared representations are
+refused. Sealed relative-storage owners compare reference contents rather than
+pointer identity. No cache survives into a different partition or invocation.
+
+The existing fragment limit charges each constructed backing ID once and one
+retained handle per effect. Other maps, ranges and partition atoms retain their
+existing charges. Estimated attempted work includes canonical range processing
+and expansion misses, including failed construction; sharing is not reported as
+fewer physical occurrences. Focused checks cover repeated keys, independent
+partition index orders and bases, failed retries, lifetime after cache/form
+destruction, and protected read/write parity with the legacy representation.
+The numeric diagnostic also retains actual cache requests, hits, expansions and
+expanded IDs on success and failure, separately from estimated attempted work.
