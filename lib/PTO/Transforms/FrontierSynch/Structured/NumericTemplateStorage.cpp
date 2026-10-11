@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Whole-base GM discharges and a common partition of absolute local storage.
 #include "NumericTemplateInternal.h"
+#include "NumericTemplateAtomReferences.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "NumericTemplateRecurringGlobal.h"
 #include "../Shared/DisjointTranslations.h"
 #include "../../InsertSync/SyncEffectRanges.h"
@@ -179,10 +181,7 @@ bool partition(TemplateBuilder& builder)
             }
         }
     }
-    std::map<AddressSpace, std::pair<std::size_t, std::size_t>> atomSpans;
     for (const auto& [space, points] : endpoints) {
-        auto& span = atomSpans[space];
-        span.first = builder.output.atoms.size();
         int64_t active = 0;
         uint64_t previous = 0;
         for (const auto& [point, change] : points) {
@@ -196,30 +195,24 @@ bool partition(TemplateBuilder& builder)
             active += change;
             previous = point;
         }
-        span.second = builder.output.atoms.size();
     }
+    NumericAtomReferences references(builder.output.atoms, builder.output.limits.fragments);
+    auto recordCost = llvm::make_scope_exit([&] { builder.output.atomReferenceCost = references.cost(); });
+    auto attempted = [&](uint64_t count) {
+        auto& work = builder.output.estimatedAttemptedFragments;
+        work = count > UINT64_MAX - work ? UINT64_MAX : work + count;
+    };
     for (auto& payload : builder.output.payloads) {
         for (auto& effect : payload.effects) {
-            if (effect.discharge != TemplateDischarge::None) {
-                continue;
-            }
-            for (const auto& range : effect.ranges) {
-                const auto span = atomSpans.at(range.space);
-                auto begin = builder.output.atoms.begin() + span.first;
-                auto end = builder.output.atoms.begin() + span.second;
-                auto atom = std::lower_bound(begin, end, range.begin, [](const SyncStorageCell& item, uint64_t point) {
-                    return item.begin < point;
-                });
-                for (; atom != end && atom->begin < range.end; ++atom) {
-                    if (!builder.charge(1, builder.output.fragments, builder.output.limits.fragments,
-                                        payload.phase->elementOp)) {
-                        return false;
-                    }
-                    effect.atoms.push_back(atom - builder.output.atoms.begin());
-                }
-            }
-            llvm::sort(effect.atoms);
-            effect.atoms.erase(std::unique(effect.atoms.begin(), effect.atoms.end()), effect.atoms.end());
+            if (effect.discharge != TemplateDischarge::None) { continue; }
+            auto charge = [&](uint64_t count) {
+                return builder.charge(count, builder.output.fragments, builder.output.limits.fragments,
+                                      payload.phase->elementOp);
+            };
+            auto backing = references.get(effect.ranges, charge, attempted);
+            if (!backing) { return false; }
+            effect.atoms.clear();
+            effect.sharedAtoms = std::move(backing);
         }
     }
     return true;

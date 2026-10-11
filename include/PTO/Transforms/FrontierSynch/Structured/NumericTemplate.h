@@ -10,15 +10,19 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_NUMERICTEMPLATE_H
 #include <functional>
 #include <memory>
+#include <vector>
 #include "PTO/Transforms/FrontierSynch/Shared/Recognition.h"
 namespace mlir::pto::frontiersynch {
 struct NumericTemplateLimits {
     uint64_t visits = 65536; // Expanded operation visits, including metadata.
     uint64_t payloads = 4096;
-    uint64_t fragments = 65536; // Maps, concrete ranges, atoms and atom references.
+    uint64_t fragments = 65536; // Maps, ranges, atoms, unique reference backing and effect handles.
     unsigned depth = 16;
 };
 namespace detail { struct RecurringGlobalTemplate; }
+struct NumericAtomReferenceCost {
+    uint64_t requests = 0, hits = 0, expansions = 0, expandedIds = 0;
+};
 struct TemplateCoordinate {
     scf::ForOp loop;
     int64_t induction = 0;
@@ -41,7 +45,13 @@ struct TemplateEffect {
     // Local absolute bytes, or GM at ordinal zero relative to its certified
     // common invariant origin. GM ranges are used only for the discharge proof.
     SmallVector<SyncStorageCell> ranges;
-    SmallVector<std::size_t> atoms; // Indices into the template-wide physical partition.
+    SmallVector<std::size_t> atoms; // Legacy owned indices; empty when sharedAtoms is present.
+    std::shared_ptr<const std::vector<std::size_t>> sharedAtoms;
+    bool validAtomReferences() const { return !sharedAtoms || atoms.empty(); }
+    ArrayRef<std::size_t> atomReferences() const
+    {
+        return sharedAtoms ? ArrayRef<std::size_t>(*sharedAtoms) : ArrayRef<std::size_t>(atoms);
+    }
     TemplateDischarge discharge = TemplateDischarge::None;
     int64_t outerStride = 0; // Certified translation for iteration-private GM.
     bool pendingGlobalGeometry = false; // Private construction state; never a certified result.
@@ -73,8 +83,9 @@ struct NumericTemplate {
     uint64_t countedVisits = 0; // Preflight upper bound before allocating visits.
     uint64_t countedPayloads = 0; // Includes both arms before guard specialization.
     uint64_t fragments = 0;
-    // Conservative recurring-adapter construction charges, retained on failure.
+    // Conservative adapter construction charges, retained on failure.
     uint64_t estimatedAttemptedFragments = 0;
+    NumericAtomReferenceCost atomReferenceCost; // Actual cache work, retained after failed construction.
     SmallVector<TemplatePayload, 0> payloads;
     SmallVector<SyncStorageCell> atoms;
     SmallVector<std::pair<uint32_t, uint32_t>> uniformConflicts;
