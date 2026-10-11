@@ -43,12 +43,14 @@ bool hasCompleteSharedProvenance(Value value, DenseMap<Value, bool>& cache)
 
 LogicalResult SyncStorageEffects::build(const SyncInput& input)
 {
+    descriptors.reset();
     records.clear();
     partition.clear();
     phaseEffects.clear();
     independentEffects.clear();
     SyncStorageEffects pending;
     pending.memory = input.memory();
+    pending.descriptors = input.descriptorState();
     DenseMap<Value, bool> provenance;
     for (const auto* phase : input.instructions()) {
         if (!phase || !phase->elementOp) {

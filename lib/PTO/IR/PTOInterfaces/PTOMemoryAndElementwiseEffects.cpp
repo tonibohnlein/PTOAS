@@ -63,12 +63,12 @@ void GetValidShapeOp::getEffects(
 
 // Elementwise + reductions: mostly PIPE_V tilebuf ops
 void TAddOp::getEffects(PTOEffectList& effects) {
-  addPointwiseEffects(effects, {&getSrc0Mutable(), &getSrc1Mutable()}, getDstMutable());
+  (void)addDefaultLocalAccessEffects(getOperation(), effects);
 }
 PTO_DEFINE_BINARY_EFFECTS(TAddReluOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
 PTO_DEFINE_TERNARY_EFFECTS(TAddCOp, getSrc0Mutable(), getSrc1Mutable(), getSrc2Mutable(), getDstMutable())
 void TAddSOp::getEffects(PTOEffectList& effects) {
-  addPointwiseEffects(effects, {&getSrcMutable()}, getDstMutable());
+  (void)addDefaultLocalAccessEffects(getOperation(), effects);
 }
 PTO_DEFINE_BINARY_EFFECTS(TAddSCOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
 void TAxpyOp::getEffects(
@@ -129,7 +129,7 @@ void TColSumOp::getEffects(
 }
 
 void TCvtOp::getEffects(PTOEffectList& effects) {
-  if (addConversionAccess(*this, effects)) { return; }
+  if (addDefaultLocalAccessEffects(getOperation(), effects)) { return; }
   PTO_ADD_READ(effects, getSrcMutable());
   addA2A3ScratchEffects(effects, getOperation(), getTmpMutable());
   PTO_ADD_WRITE(effects, getDstMutable());
@@ -149,7 +149,7 @@ void TDivSOp::getEffects(
 }
 
 void TExpOp::getEffects(PTOEffectList& effects) {
-  addPointwiseEffects(effects, {&getSrcMutable()}, getDstMutable());
+  (void)addDefaultLocalAccessEffects(getOperation(), effects);
 }
 
 // TEXPANDS: Write(dst) (broadcast scalar)
@@ -205,7 +205,7 @@ PTO_DEFINE_BINARY_EFFECTS(TGatherBOp, getSrcMutable(), getOffsetsMutable(), getD
 void TLogOp::getEffects(PTOEffectList& effects) {
   // TLOG shares the target unary memory paths with TEXP, including masked
   // A3 operands and conservative A5 tail reads. Precision affects registers.
-  addPointwiseEffects(effects, {&getSrcMutable()}, getDstMutable());
+  (void)addDefaultLocalAccessEffects(getOperation(), effects);
 }
 PTO_DEFINE_UNARY_EFFECTS(TLReluOp, getSrcMutable(), getDstMutable())
 
@@ -234,10 +234,10 @@ void TMrgSortOp::getEffects(
 }
 
 void TMulOp::getEffects(PTOEffectList& effects) {
-  addPointwiseEffects(effects, {&getSrc0Mutable(), &getSrc1Mutable()}, getDstMutable());
+  (void)addDefaultLocalAccessEffects(getOperation(), effects);
 }
 void TMulSOp::getEffects(PTOEffectList& effects) {
-  addPointwiseEffects(effects, {&getSrc0Mutable()}, getDstMutable());
+  (void)addDefaultLocalAccessEffects(getOperation(), effects);
 }
 PTO_DEFINE_UNARY_EFFECTS(TNegOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_UNARY_EFFECTS(TNotOp, getSrcMutable(), getDstMutable())

@@ -18,6 +18,7 @@ namespace mlir {
 class Operation;
 namespace pto {
 class SyncInput;
+class SyncDescriptorState;
 class SyncStorageEffects;
 class CompoundInstanceElement;
 namespace frontiersynch {
@@ -44,7 +45,7 @@ inline bool hardwareProtectsConflict(uint32_t sourcePipe, uint64_t sourceGroup,
 class HardwareProtectionBuilder {
 public:
     void observe(Operation* operation, ExplicitEffects& occurrence,
-                 llvm::ArrayRef<uint32_t> accumulatorAtoms);
+                 llvm::ArrayRef<uint32_t> accumulatorAtoms, const SyncDescriptorState* descriptors = nullptr);
     void endScope();
     uint64_t currentGroup() const { return activeGroup; }
 private:
@@ -71,7 +72,8 @@ public:
 };
 StructuredProtection structuredProtection(const SyncStorageEffects& storage);
 struct MatrixProtectionInfo { Type accumulator; bool initializes = false; };
-std::optional<MatrixProtectionInfo> matrixProtectionInfo(Operation* operation);
+std::optional<MatrixProtectionInfo> matrixProtectionInfo(Operation* operation,
+    const SyncDescriptorState* descriptors = nullptr);
 // Protection for residual effect pairs with identical buffer operands. This
 // preserves the same target rule when physical addresses are symbolic. Results
 // are indexed by shared effect ID; zero requires ordinary software ordering.

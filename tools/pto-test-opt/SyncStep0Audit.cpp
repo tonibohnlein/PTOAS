@@ -10,6 +10,8 @@
 // This checks preservation, not native footprint completeness or F* readiness.
 #include "PTO/Transforms/FrontierSynch/Shared/PhaseIndex.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
+#include "PTO/Transforms/InsertSync/SyncDescriptorState.h"
+#include "PTO/IR/PTOAccessRegion.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/IR/AsmState.h"
@@ -19,6 +21,19 @@ using namespace mlir;
 using namespace mlir::pto;
 
 namespace {
+llvm::StringRef fallbackName(SyncAccessFallback reason)
+{
+    switch (reason) {
+    case SyncAccessFallback::None: return "none";
+    case SyncAccessFallback::MissingStorage: return "missing-storage";
+    case SyncAccessFallback::MacroEnvelope: return "macro-envelope";
+    case SyncAccessFallback::AmbiguousBuffer: return "ambiguous-buffer";
+    case SyncAccessFallback::NoDeclaration: return "no-declaration";
+    case SyncAccessFallback::UnresolvedDeclaration: return "unresolved-declaration-or-qualification";
+    }
+    return "unknown";
+}
+
 bool sameDeclaration(const SyncMemoryEffect& a, const SyncMemoryEffect& b)
 {
     return a.getEffect() == b.getEffect() && a.getValue() == b.getValue() &&
@@ -115,7 +130,21 @@ llvm::json::Array effectDescriptions(func::FuncOp function, const SyncInput& inp
             {"space", static_cast<unsigned>(memory.scope)}, {"allocation_bytes", memory.allocateSize},
             {"known_physical_address", memory.hasKnownPhysicalAddresses},
             {"ranges_materialized", effect.rangesMaterialized},
+            {"access_description", effect.description == SyncAccessDescription::DeclaredRegion ?
+                "declared-region" : "allocation-enclosure"},
+            {"fallback_reason", fallbackName(effect.fallback)},
             {"regions", std::move(regions)}, {"ranges", std::move(ranges)}};
+        if (auto descriptors = input.descriptorState()) {
+            if (auto shape = descriptors->before(memory.baseBuffer, effect.phase->elementOp)) {
+                llvm::json::Array dimensions;
+                for (const auto& dim : *shape) {
+                    if (dim.constant) { dimensions.push_back(*dim.constant); }
+                    else if (dim.value) { dimensions.push_back(valueIdentity(dim.value, state)); }
+                    else { dimensions.push_back("unknown"); }
+                }
+                entry["descriptor_valid_shape"] = std::move(dimensions);
+            }
+        }
         if (effect.descriptorRegion) { entry["descriptor"] = regionDescription(*effect.descriptorRegion, state); }
         result.push_back(std::move(entry));
     }
@@ -151,8 +180,19 @@ struct Audit {
             return;
         }
         for (auto [a, b] : llvm::zip(original, saved)) {
-            valid &= sameDeclaration(a, b);
+            // Contextual footprints may refine coverage, never operand roles,
+            // stages or resources. Independent family/byte tests verify semantics.
+            valid &= a.getEffect() == b.getEffect() && a.getValue() == b.getValue() &&
+                a.getStage() == b.getStage() && a.getResource() == b.getResource();
         }
+        SmallVector<SyncMemoryEffect> contextual;
+        auto descriptors = input.descriptorState();
+        const bool handled = descriptors && getContextualLocalAccessEffects(op, contextual, [&](Value value) {
+            return descriptors->constantShape(value, op);
+        });
+        auto expected = handled ? ArrayRef<SyncMemoryEffect>(contextual) : ArrayRef<SyncMemoryEffect>(original);
+        if (expected.size() != saved.size()) { valid = false; return; }
+        for (auto [a, b] : llvm::zip(expected, saved)) { valid &= sameDeclaration(a, b); }
         declarations += saved.size();
         if (!saved.empty() && index.phasesFor(op).empty()) {
             unphased += saved.size();

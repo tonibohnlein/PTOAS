@@ -59,6 +59,28 @@ the original scope, and allocation uses that graph's record namespace and existi
 certificate or query interface. This identity adapter introduces no crossing
 requirements or new storage representation.
 
+## Shared descriptor and scalar facts
+
+`SyncInput` owns the reaching valid-shape index for its unchanged function. Access
+contracts, physical geometry and matrix protection consume that same descriptor
+state. Identity follows the descriptor SSA value, independently of physical
+allocation reuse. Equal branch states survive joins; unknown loop counts include
+zero visits, and loop-local scalar values cannot survive a backedge unchanged.
+Opaque calls and unknown control invalidate dynamic metadata. Queries do not
+rescan descriptor users or block prefixes.
+
+Scalar normalization is cached by block and effective index width, with injective
+canonical symbols rebound to each requested region. Fixed-coordinate analyses
+retain separate contexts. Rebuilding the input replaces both owners; retained
+storage results keep the original descriptor owner. Source IR must outlive the
+borrowed anchors.
+
+Access-audit records distinguish declared regions from retained allocation
+enclosures and report failed qualification provenance. A materialized range is a
+representation of the supplied model, not a claim about exact native footprints.
+These facts refine shared inputs without changing Section 5.4 algorithms or
+introducing an address-precision admission gate.
+
 ## Entry points and current limits
 
 `FrontierAnalysis` is the common session entry point. `SessionProducers.cpp`

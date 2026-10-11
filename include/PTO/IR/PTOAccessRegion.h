@@ -11,8 +11,19 @@
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
+#include <array>
+#include <optional>
 
 namespace mlir::pto {
+// The caller certifies current descriptor dimensions at this operation. The
+// callback is synchronous and never retained; unknown must not mean initial
+// metadata. Shared IR family rules preserve target, padding and scratch effects.
+using TileValidShapeQuery = llvm::function_ref<std::optional<std::array<int64_t, 2>>(Value)>;
+// Success appends a complete family effect list; failure leaves effects intact
+// and requires the ordinary MemoryEffectOpInterface fallback. No IR is mutated.
+bool getContextualLocalAccessEffects(Operation* operation,
+    SmallVectorImpl<MemoryEffects::EffectInstance>& effects, TileValidShapeQuery validShape);
 // Exact access coordinates in the affected operand. Dimensions range over the
 // shape operand's valid extents, or static capacity when capacity is true.
 // Map symbols refer to scalar operands of this same operation, by operand index.

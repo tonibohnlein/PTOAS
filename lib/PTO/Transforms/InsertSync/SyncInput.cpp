@@ -7,6 +7,10 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOAccessRegion.h"
+#include "PTO/Transforms/InsertSync/SyncDescriptorState.h"
+#include "PTO/Transforms/InsertSync/SyncScalarFacts.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
@@ -49,6 +53,8 @@ LogicalResult SyncInput::build(func::FuncOp function) {
 }
 LogicalResult SyncInput::build(func::FuncOp function, SyncInstructionView view) {
   resolvedAccesses = std::make_unique<SyncStorageEffects>();
+  descriptors.reset();
+  scalars = std::make_shared<SyncScalarFacts>();
   declaredEffects.clear();
   phases.clear();
   macroEnvelopes.clear();
@@ -68,7 +74,28 @@ LogicalResult SyncInput::build(func::FuncOp function, SyncInstructionView view) 
   } else {
     if (failed(buildPipeEnvelopes(function))) { return failure(); }
   }
+  SmallVector<SyncDescriptorState::Query> queries;
+  auto queryMemory = [&](const CompoundInstanceElement* phase, const BaseMemInfo* memory) {
+    if (!memory) { return; }
+    queries.emplace_back(phase->elementOp, memory->rootBuffer);
+    // Physical mapping can consult compact strides on enclosing descriptors,
+    // including view ancestors that are not literal operands of this access.
+    for (Value value = memory->baseBuffer; value;) {
+      queries.emplace_back(phase->elementOp, value);
+      auto view = dyn_cast_or_null<ViewLikeOpInterface>(value.getDefiningOp());
+      if (!view || view.getViewSource() == value) { break; }
+      value = view.getViewSource();
+    }
+  };
+  for (const auto* phase : phases) {
+    for (const auto* memory : phase->useVec) { queryMemory(phase, memory); }
+    for (const auto* memory : phase->defVec) { queryMemory(phase, memory); }
+  }
+  descriptors = std::make_shared<SyncDescriptorState>(function, queries, scalars);
   function.walk([&](Operation* operation) {
+    if (getContextualLocalAccessEffects(operation, declaredEffects[operation], [&](Value value) {
+          return descriptors->constantShape(value, operation);
+        })) { return; }
     if (auto interface = dyn_cast<MemoryEffectOpInterface>(operation)) {
       interface.getEffects(declaredEffects[operation]);
     }

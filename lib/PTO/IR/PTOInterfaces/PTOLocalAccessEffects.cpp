@@ -9,10 +9,17 @@
 // Instruction-family contracts for plain local vector tiles. Descriptor guards
 // are checked at the access, so mutable valid shapes cannot reuse stale type
 // metadata. Unsupported effects retain the shared allocation bound.
-static pto::TileBufType localAccessTile(Value value, bool allowBFloat = false)
+static pto::TileBufType localAccessTile(Value value, pto::TileValidShapeQuery validShape, bool allowBFloat = false)
 {
     if (!plainVectorAccessTile(value, 32)) { return {}; }
     auto type = cast<pto::TileBufType>(value.getType());
+    auto current = validShape(value);
+    if (!current || (*current)[0] <= 0 || (*current)[1] <= 0 ||
+        (*current)[0] > type.getShape()[0] || (*current)[1] > type.getShape()[1]) { return {}; }
+    // Reuse immutable type-based qualification without changing the original
+    // descriptor type, allocation capacity, layout, element type or padding.
+    type = pto::TileBufType::get(value.getContext(), type.getShape(), type.getElementType(),
+        type.getMemorySpace(), *current, type.getConfigAttr());
     auto element = type.getElementType();
     auto valid = type.getValidShape();
     const bool floating = element.isF16() || element.isF32() || (allowBFloat && element.isBF16());
@@ -24,9 +31,9 @@ static pto::TileBufType localAccessTile(Value value, bool allowBFloat = false)
     return type;
 }
 
-static pto::TileBufType pointwiseAccessTile(Value value)
+static pto::TileBufType pointwiseAccessTile(Value value, pto::TileValidShapeQuery validShape)
 {
-    auto type = localAccessTile(value);
+    auto type = localAccessTile(value, validShape);
     if (!type) { return {}; }
     // A3 arithmetic row-repeat strides narrow to eight-bit block counts;
     // A5's flattened path narrows its total vector count to uint16_t.
@@ -38,9 +45,9 @@ static pto::TileBufType pointwiseAccessTile(Value value)
     return type;
 }
 
-static void appendLocalShapeGuard(SmallVectorImpl<int64_t>& guards, OpOperand& operand)
+static void appendLocalShapeGuard(SmallVectorImpl<int64_t>& guards, OpOperand& operand, pto::TileBufType type)
 {
-    auto valid = cast<pto::TileBufType>(operand.get().getType()).getValidShape();
+    auto valid = type.getValidShape();
     guards.append({static_cast<int64_t>(operand.getOperandNumber()), valid[0], valid[1]});
 }
 
@@ -50,17 +57,17 @@ static bool matchingLocalShapes(pto::TileBufType source, pto::TileBufType destin
 }
 
 static bool addLocalPointwiseAccess(PTOEffectList& effects, ArrayRef<OpOperand*> sources,
-                                    OpOperand& destination)
+                                    OpOperand& destination, pto::TileValidShapeQuery validShape)
 {
-    auto dst = pointwiseAccessTile(destination.get());
+    auto dst = pointwiseAccessTile(destination.get(), validShape);
     if (!dst) { return false; }
     SmallVector<int64_t> guards;
-    appendLocalShapeGuard(guards, destination);
+    appendLocalShapeGuard(guards, destination, dst);
     for (auto* operand : sources) {
-        auto src = operand ? pointwiseAccessTile(operand->get()) : pto::TileBufType{};
+        auto src = operand ? pointwiseAccessTile(operand->get(), validShape) : pto::TileBufType{};
         const bool compatible = matchingLocalShapes(src, dst) && src.getElementType() == dst.getElementType();
         if (!compatible) { return false; }
-        appendLocalShapeGuard(guards, *operand);
+        appendLocalShapeGuard(guards, *operand, src);
     }
     const bool a3 = pto::getTargetArch(destination.getOwner()) == pto::PTOArch::A3;
     const auto rowBytes = dst.getValidShape()[1] * pto::linearAccessBytes(dst.getElementType());
@@ -77,9 +84,10 @@ static bool addLocalPointwiseAccess(PTOEffectList& effects, ArrayRef<OpOperand*>
     return true;
 }
 
-static void addPointwiseEffects(PTOEffectList& effects, ArrayRef<OpOperand*> sources, OpOperand& destination)
+static void addPointwiseEffects(PTOEffectList& effects, ArrayRef<OpOperand*> sources, OpOperand& destination,
+                                pto::TileValidShapeQuery validShape)
 {
-    const bool selected = addLocalPointwiseAccess(effects, sources, destination) ||
+    const bool selected = addLocalPointwiseAccess(effects, sources, destination, validShape) ||
                           addAlignedPointwiseAccessEffects(effects, sources, destination);
     if (selected) {
         return;
@@ -88,10 +96,10 @@ static void addPointwiseEffects(PTOEffectList& effects, ArrayRef<OpOperand*> sou
     addEffect(effects, &destination, MemoryEffects::Write::get());
 }
 
-static bool addConversionAccess(pto::TCvtOp op, PTOEffectList& effects)
+static bool addConversionAccess(pto::TCvtOp op, PTOEffectList& effects, pto::TileValidShapeQuery validShape)
 {
-    auto src = localAccessTile(op.getSrc(), true);
-    auto dst = localAccessTile(op.getDst(), true);
+    auto src = localAccessTile(op.getSrc(), validShape, true);
+    auto dst = localAccessTile(op.getDst(), validShape, true);
     const bool compatible = matchingLocalShapes(src, dst) &&
                             (src.getElementType().isF32() != dst.getElementType().isF32());
     if (!compatible) { return false; }
@@ -106,23 +114,23 @@ static bool addConversionAccess(pto::TCvtOp op, PTOEffectList& effects)
         return false;
     }
     SmallVector<int64_t> guards;
-    appendLocalShapeGuard(guards, op.getSrcMutable());
-    appendLocalShapeGuard(guards, op.getDstMutable());
+    appendLocalShapeGuard(guards, op.getSrcMutable(), src);
+    appendLocalShapeGuard(guards, op.getDstMutable(), dst);
     addCheckedVectorAccess(effects, op.getSrcMutable(), op.getSrcMutable(), MemoryEffects::Read::get(), guards);
     addA2A3ScratchEffects(effects, op.getOperation(), op.getTmpMutable());
     addCheckedVectorAccess(effects, op.getDstMutable(), op.getDstMutable(), MemoryEffects::Write::get(), guards);
     return true;
 }
 
-static bool addLocalMoveAccess(pto::TMovOp op, PTOEffectList& effects)
+static bool addLocalMoveAccess(pto::TMovOp op, PTOEffectList& effects, pto::TileValidShapeQuery validShape)
 {
     const bool specialForm = op.getFp() || op.getPreQuantScalar() || op.getAccToVecModeAttr() ||
                              op.getGrpAxisAttr() || op.getReluPreMode() != pto::ReluPreMode::NoRelu;
     if (specialForm) {
         return false;
     }
-    auto src = localAccessTile(op.getSrc());
-    auto dst = localAccessTile(op.getDst());
+    auto src = localAccessTile(op.getSrc(), validShape);
+    auto dst = localAccessTile(op.getDst(), validShape);
     const bool compatible = matchingLocalShapes(src, dst) && src.getElementType() == dst.getElementType();
     if (!compatible) { return false; }
     const auto bytes = src.getValidShape()[1] * pto::linearAccessBytes(src.getElementType());
@@ -133,8 +141,8 @@ static bool addLocalMoveAccess(pto::TMovOp op, PTOEffectList& effects)
         return false;
     }
     SmallVector<int64_t> guards;
-    appendLocalShapeGuard(guards, op.getSrcMutable());
-    appendLocalShapeGuard(guards, op.getDstMutable());
+    appendLocalShapeGuard(guards, op.getSrcMutable(), src);
+    appendLocalShapeGuard(guards, op.getDstMutable(), dst);
     if (a3 || bytes % 256 == 0) {
         addCheckedVectorAccess(effects, op.getSrcMutable(), op.getSrcMutable(), MemoryEffects::Read::get(), guards);
     } else {
@@ -144,12 +152,12 @@ static bool addLocalMoveAccess(pto::TMovOp op, PTOEffectList& effects)
     return true;
 }
 
-static bool addSingleRowSumAccess(pto::TRowSumOp op, PTOEffectList& effects)
+static bool addSingleRowSumAccess(pto::TRowSumOp op, PTOEffectList& effects, pto::TileValidShapeQuery validShape)
 {
     const bool a3 = pto::getTargetArch(op.getOperation()) == pto::PTOArch::A3;
     if (!a3) { return false; }
-    auto src = localAccessTile(op.getSrc());
-    auto dst = localAccessTile(op.getDst());
+    auto src = localAccessTile(op.getSrc(), validShape);
+    auto dst = localAccessTile(op.getDst(), validShape);
     const bool compatible = src && dst && src.getElementType() == dst.getElementType();
     if (!compatible) { return false; }
     auto valid = src.getValidShape();
@@ -161,10 +169,52 @@ static bool addSingleRowSumAccess(pto::TRowSumOp op, PTOEffectList& effects)
     // The A3 single-repeat floating reduction masks its source and writes one
     // result. Preserve existing scratch effects independently of these exports.
     SmallVector<int64_t> guards;
-    appendLocalShapeGuard(guards, op.getSrcMutable());
-    appendLocalShapeGuard(guards, op.getDstMutable());
+    appendLocalShapeGuard(guards, op.getSrcMutable(), src);
+    appendLocalShapeGuard(guards, op.getDstMutable(), dst);
     addCheckedVectorAccess(effects, op.getSrcMutable(), op.getSrcMutable(), MemoryEffects::Read::get(), guards);
     addA2A3ScratchEffects(effects, op.getOperation(), op.getTmpMutable());
     addCheckedVectorAccess(effects, op.getDstMutable(), op.getDstMutable(), MemoryEffects::Write::get(), guards);
     return true;
+}
+
+// Operand roles are declared once here for both static and contextual queries.
+// Nonlocal/special forms retain their existing ordinary interface fallback.
+static bool dispatchLocalAccessEffects(Operation* operation, PTOEffectList& effects,
+                                       pto::TileValidShapeQuery validShape)
+{
+    return TypeSwitch<Operation*, bool>(operation)
+        .Case<pto::TAddOp, pto::TMulOp, pto::TSubOp>([&](auto op) {
+            addPointwiseEffects(effects, {&op.getSrc0Mutable(), &op.getSrc1Mutable()}, op.getDstMutable(), validShape);
+            return true;
+        })
+        .Case<pto::TAddSOp, pto::TExpOp, pto::TLogOp, pto::TSqrtOp>([&](auto op) {
+            addPointwiseEffects(effects, {&op.getSrcMutable()}, op.getDstMutable(), validShape);
+            return true;
+        })
+        .Case<pto::TMulSOp>([&](auto op) {
+            addPointwiseEffects(effects, {&op.getSrc0Mutable()}, op.getDstMutable(), validShape);
+            return true;
+        })
+        .Case<pto::TCvtOp>([&](auto op) { return addConversionAccess(op, effects, validShape); })
+        .Case<pto::TMovOp>([&](auto op) { return addLocalMoveAccess(op, effects, validShape); })
+        .Case<pto::TRowSumOp>([&](auto op) { return addSingleRowSumAccess(op, effects, validShape); })
+        .Default(false);
+}
+bool mlir::pto::getContextualLocalAccessEffects(Operation* operation, PTOEffectList& effects,
+                                               TileValidShapeQuery validShape)
+{
+    if (!operation || !validShape) { return false; }
+    SmallVector<MemoryEffects::EffectInstance> pending;
+    if (!dispatchLocalAccessEffects(operation, pending, validShape)) { return false; }
+    llvm::append_range(effects, pending);
+    return true;
+}
+static bool addDefaultLocalAccessEffects(Operation* operation, PTOEffectList& effects)
+{
+    return pto::getContextualLocalAccessEffects(operation, effects, [](Value value)
+        -> std::optional<std::array<int64_t, 2>> {
+        auto type = dyn_cast<pto::TileBufType>(value.getType());
+        if (!type || type.getValidShape().size() != 2) { return std::nullopt; }
+        return std::array<int64_t, 2>{type.getValidShape()[0], type.getValidShape()[1]};
+    });
 }
