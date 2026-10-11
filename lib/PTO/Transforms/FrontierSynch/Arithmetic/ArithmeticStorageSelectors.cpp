@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticStorageSelectors.h"
 #include "llvm/ADT/STLExtras.h"
+#include <map>
+#include <tuple>
 #include <numeric>
 #include <limits>
 namespace mlir::pto::frontiersynch {
@@ -27,6 +29,8 @@ public:
 private:
     const ArithmeticProgram& program;
     llvm::ArrayRef<uint32_t> pipes;
+    using OrderKey = std::tuple<std::size_t, std::size_t, unsigned, unsigned, std::vector<uint64_t>>;
+    std::map<OrderKey, std::vector<std::size_t>> orderIndex;
     LogicalResult support();
     FailureOr<std::vector<Piece>> importPiece(const NormalizedPiece& normalized);
     FailureOr<Systems> blockers(const Piece& candidate, const Piece& other, bool earlier, bool equal);
@@ -157,9 +161,18 @@ LogicalResult Builder::import(bool occurrencesOnly)
             raw.push_back(std::move(*piece));
         }
     }
+    // Context pieces are immutable now. Preserve their original order while
+    // avoiding an all-raw-piece scan for every noncontext primitive.
+    std::map<std::vector<uint64_t>, std::vector<std::size_t>> contexts;
+    for (std::size_t i = 0; i < raw.size(); ++i) {
+        if (raw[i].schema->kind == PrimitiveKind::Context) { contexts[parameters(raw[i]).vec()].push_back(i); }
+    }
     for (const auto& piece : raw) {
         if (piece.schema->kind == PrimitiveKind::Context) { continue; }
-        for (const auto& context : raw) {
+        auto matching = contexts.find(parameters(piece).vec());
+        if (matching == contexts.end()) { continue; }
+        for (auto index : matching->second) {
+            const auto& context = raw[index];
             if (context.schema->kind != PrimitiveKind::Context || parameters(piece) != parameters(context)) {
                 continue;
             }
@@ -171,6 +184,16 @@ LogicalResult Builder::import(bool occurrencesOnly)
             if (failed(restricted)) { return failure(); }
             if (!restricted->isEmpty()) { pieces.push_back({piece.schema, piece.residues, std::move(*restricted)}); }
         }
+    }
+    // All imported pieces have their final storage before recording indices.
+    // Keep each matching order list in its original iteration order.
+    orderIndex.clear();
+    for (std::size_t i = 0; i < pieces.size(); ++i) {
+        const auto& order = pieces[i];
+        const auto& schema = *order.schema;
+        if (schema.kind != PrimitiveKind::Order) { continue; }
+        orderIndex[{*schema.sourceSite, *schema.targetSite, schema.sourceDimensions,
+                    schema.targetDimensions, order.residues}].push_back(i);
     }
     return success();
 }
@@ -224,10 +247,20 @@ FailureOr<Systems> Builder::blockers(const Piece& candidate, const Piece& other,
         auto identity = rows(dimensions, diagonal);
         if (failed(identity) || failed(add(*identity))) { return failure(); }
     }
-    for (const auto& order : pieces) {
+    const auto& source = earlier ? other : candidate;
+    const auto& target = earlier ? candidate : other;
+    const unsigned sourceDepth = source.schema->sourceDimensions;
+    const unsigned targetDepth = target.schema->sourceDimensions;
+    std::vector<uint64_t> orderResidues(source.residues.begin(), source.residues.begin() + sourceDepth);
+    orderResidues.insert(orderResidues.end(), target.residues.begin(), target.residues.begin() + targetDepth);
+    const auto parameterResidues = parameters(candidate);
+    orderResidues.insert(orderResidues.end(), parameterResidues.begin(), parameterResidues.end());
+    auto matching = orderIndex.find({*source.schema->sourceSite, *target.schema->sourceSite,
+                                    sourceDepth, targetDepth, std::move(orderResidues)});
+    if (matching == orderIndex.end()) { return resultPieces; }
+    for (auto index : matching->second) {
+        const auto& order = pieces[index];
         const auto& schema = *order.schema;
-        const auto& source = earlier ? other : candidate;
-        const auto& target = earlier ? candidate : other;
         if (schema.kind != PrimitiveKind::Order || schema.sourceSite != source.schema->sourceSite ||
             schema.targetSite != target.schema->sourceSite || parameters(order) != parameters(candidate) ||
             schema.sourceDimensions != source.schema->sourceDimensions ||

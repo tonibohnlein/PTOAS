@@ -146,7 +146,7 @@ std::optional<fs::ArithmeticSelectedEndpoint> expected(
     }
     return std::nullopt;
 }
-bool residueCheck()
+bool residueCheck(bool splitContextsAndOrders = false)
 {
     MLIRContext context;
     fs::ArithmeticProgram program;
@@ -192,7 +192,20 @@ bool residueCheck()
                 equalities.append({false, false, false});
             }
             if (access) { constraints.push_back(variables[1] - residues[0]); equalities.push_back(true); }
-            relation.pieces.push_back({IntegerSet::get(relation.dimensions, 1, constraints, equalities), residues});
+            if (splitContextsAndOrders && (kind == Kind::Context || kind == Kind::Order)) {
+                // Two disjoint alternatives share exactly the same residue key.
+                // Both must survive indexed context and order enumeration.
+                for (bool low : {true, false}) {
+                    auto selectedRows = constraints;
+                    auto selectedEqualities = equalities;
+                    selectedRows.push_back(low ? 3 - variables.back() : variables.back() - 4);
+                    selectedEqualities.push_back(false);
+                    relation.pieces.push_back({IntegerSet::get(relation.dimensions, 1,
+                        selectedRows, selectedEqualities), residues});
+                }
+            } else {
+                relation.pieces.push_back({IntegerSet::get(relation.dimensions, 1, constraints, equalities), residues});
+            }
         }
         program.primitives.relations.push_back(std::move(relation));
     }
@@ -317,7 +330,7 @@ bool check()
 } // namespace
 int runArithmeticStorageSelectorChecks()
 {
-    if (!check() || !residueCheck() || !quotientImportCheck()) {
+    if (!check() || !residueCheck() || !residueCheck(true) || !quotientImportCheck()) {
         llvm::errs() << "arithmetic storage selector checks failed\n";
         return 1;
     }
