@@ -207,6 +207,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Structured/NumericTemplateInsertion.cpp
   FrontierSynch/Structured/NumericTemplateRegional.cpp
   FrontierSynch/Structured/NumericTemplateStorage.cpp
+  FrontierSynch/Structured/NumericTemplateRecurringGlobal.cpp
   FrontierSynch/Structured/PeriodicAllocation.cpp
   FrontierSynch/Structured/PeriodicAllocationQueries.cpp
   FrontierSynch/Structured/PeriodicDemandGraph.cpp

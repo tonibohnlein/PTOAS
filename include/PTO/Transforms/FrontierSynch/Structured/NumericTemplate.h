@@ -18,6 +18,7 @@ struct NumericTemplateLimits {
     uint64_t fragments = 65536; // Maps, concrete ranges, atoms and atom references.
     unsigned depth = 16;
 };
+namespace detail { struct RecurringGlobalTemplate; }
 struct TemplateCoordinate {
     scf::ForOp loop;
     int64_t induction = 0;
@@ -43,6 +44,7 @@ struct TemplateEffect {
     SmallVector<std::size_t> atoms; // Indices into the template-wide physical partition.
     TemplateDischarge discharge = TemplateDischarge::None;
     int64_t outerStride = 0; // Certified translation for iteration-private GM.
+    bool pendingGlobalGeometry = false; // Private construction state; never a certified result.
 };
 struct TemplatePayload {
     const CompoundInstanceElement* phase = nullptr;
@@ -71,11 +73,14 @@ struct NumericTemplate {
     uint64_t countedVisits = 0; // Preflight upper bound before allocating visits.
     uint64_t countedPayloads = 0; // Includes both arms before guard specialization.
     uint64_t fragments = 0;
+    // Conservative recurring-adapter construction charges, retained on failure.
+    uint64_t estimatedAttemptedFragments = 0;
     SmallVector<TemplatePayload, 0> payloads;
     SmallVector<SyncStorageCell> atoms;
     SmallVector<std::pair<uint32_t, uint32_t>> uniformConflicts;
     SmallVector<std::pair<uint32_t, uint32_t>> nativePrerequisites, valueDemands;
     uint64_t period = 0; // 1 only after complete contract verification.
+    std::shared_ptr<const detail::RecurringGlobalTemplate> recurringGlobal;
     uint64_t refresh = 0; // 1 for every written local atom; read-only atoms need none.
     // No selectors, reachability, allocation or synchronization are exported.
     // Regional candidates additionally prove discharged GM effects cannot conflict

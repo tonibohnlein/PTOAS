@@ -19,6 +19,7 @@ struct TemplateBuilder {
     SmallVector<TemplateCoordinate> path;
     uint64_t visits = 0;
     uint64_t phases = 0;
+    std::optional<bool> wholeInvocation;
     TemplateGeometryConstant geometryConstant;
     TemplateControlConstant controlConstant;
     SmallVectorImpl<TemplatePayload>* plannedPayloads = nullptr;
@@ -32,5 +33,6 @@ struct TemplateBuilder {
     bool payload(const CompoundInstanceElement* phase);
 };
 bool prepareTemplateEffects(TemplateBuilder& builder);
+bool allowRecurringGlobal(TemplateBuilder& builder);
 } // namespace mlir::pto::frontiersynch::detail
 #endif

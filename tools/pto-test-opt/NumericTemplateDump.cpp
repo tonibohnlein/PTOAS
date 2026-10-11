@@ -9,6 +9,10 @@
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Structured/NumericTemplatePlan.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Structured/NumericTemplateRecurringGlobal.h"
+#include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateRegional.h"
+#include "AlignedModularCellOracle.h"
 #include "mlir/IR/AsmState.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
@@ -103,6 +107,7 @@ llvm::json::Object dumpNumericTemplate(const fs::NumericTemplate& result, AsmSta
         {"empty_invocation", result.emptyInvocation},
         {"upper", name(outer.getUpperBound(), state)}, {"counted_visits", result.countedVisits},
         {"counted_payloads", result.countedPayloads}, {"fragments", result.fragments},
+        {"estimated_attempted_fragments", result.estimatedAttemptedFragments},
         {"period", result.period}, {"refresh", result.refresh}, {"scope", "whole-function"},
         {"interfaces_ready", false}, {"payloads", std::move(payloads)}, {"atoms", std::move(atoms)}};
 }
@@ -142,5 +147,115 @@ LogicalResult checkNumericPreflight(func::FuncOp function, const pto::SyncInput&
         }
         if (!same) { return function.emitError("numeric retained preflight changed original mapping or construction"); }
     }
+    return success();
+}
+
+namespace {
+bool recurringBudget(func::FuncOp function, const pto::SyncInput& input, const fs::NumericTemplate& form)
+{
+    fs::PhaseIndex limitIndex;
+    if (failed(limitIndex.build(function, input)) || !form.fragments) { return false; }
+    auto limits = form.limits;
+    limits.fragments = form.fragments - 1;
+    const auto limited = fs::recognizeNumericTemplate(form.outer, limitIndex, input, limits);
+    return limited.result.state != fs::RecognitionState::Applicable && limited.estimatedAttemptedFragments &&
+        !limited.fragments && limited.payloads.empty() && limited.atoms.empty();
+}
+bool recurringMembership(const fs::NumericTemplate& form)
+{
+    const auto owner = form.recurringGlobal;
+    const auto& record = owner->effects.front();
+    auto rejected = [&](auto mutate) {
+        auto changed = form;
+        mutate(changed);
+        return !owner->applies(changed) && failed(fs::numericTemplateOccurrences(changed));
+    };
+    return rejected([&](auto& x) { x.payloads[record.payload].effects.push_back(
+            x.payloads[record.payload].effects[record.effect]); }) &&
+        rejected([&](auto& x) { x.payloads[record.payload].effects.erase(
+            x.payloads[record.payload].effects.begin() + record.effect); }) &&
+        rejected([&](auto& x) { ++x.payloads[record.payload].effects[record.effect].sourceEffect; }) &&
+        rejected([&](auto& x) { x.payloads[record.payload].effects[record.effect].mode =
+            x.payloads[record.payload].effects[record.effect].mode == pto::SyncAccessMode::Read ?
+                pto::SyncAccessMode::Write : pto::SyncAccessMode::Read; }) &&
+        rejected([&](auto& x) { x.payloads[record.payload].effects[record.effect].ranges.push_back(
+            pto::SyncStorageCell{pto::AddressSpace::GM, 0, 1}); });
+}
+bool recurringExportRefusal(func::FuncOp function, const pto::SyncInput& input, const fs::NumericTemplate& form)
+{
+    const auto owner = form.recurringGlobal;
+    std::string error;
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    fs::NumericBodyMathematics body{form, {}, {}, {}, {}};
+    return failed(fs::exportNumericBody(function, input, body, arena, {}, error)) &&
+        error == "relative recurring GM storage has no regional selector adapter" &&
+        form.recurringGlobal == owner && owner->applies(form);
+}
+bool independentPlans(const fs::PreparedLogicalPlan& first, const fs::PreparedLogicalPlan& second)
+{
+    DenseSet<Operation*> operations;
+    DenseSet<Block*> blocks;
+    for (const auto& stage : first.preparation) {
+        blocks.insert(stage.code.get());
+        stage.code->walk([&](Operation* op) {
+            operations.insert(op);
+            for (auto& region : op->getRegions()) { for (auto& block : region) { blocks.insert(&block); } }
+        });
+    }
+    bool independent = true;
+    for (const auto& stage : second.preparation) {
+        independent &= !blocks.contains(stage.code.get());
+        stage.code->walk([&](Operation* op) {
+            independent &= !operations.contains(op);
+            for (auto value : op->getOperands()) {
+                if (auto argument = dyn_cast<BlockArgument>(value)) {
+                    independent &= !blocks.contains(argument.getOwner());
+                } else { independent &= !operations.contains(value.getDefiningOp()); }
+            }
+        });
+    }
+    return independent;
+}
+std::string renderPreparation(const fs::PreparedLogicalPlan& plan)
+{
+    std::string text;
+    llvm::raw_string_ostream stream(text);
+    for (const auto& stage : plan.preparation) { stage.code->print(stream); }
+    return text;
+}
+bool recurringFreshPlans(func::FuncOp function, const fs::ProgramRecognition& program)
+{
+    auto first = fs::prepareNumericTemplateInsertion(function, program);
+    auto second = fs::prepareNumericTemplateInsertion(function, program);
+    if (failed(first) || failed(second) || !(*first)->allocationCertificate || !(*second)->allocationCertificate ||
+        (*first)->preparation.empty() || (*second)->preparation.empty() || !independentPlans(**first, **second)) {
+        return false;
+    }
+    const auto before = renderPreparation(**second);
+    first->reset();
+    return before == renderPreparation(**second);
+}
+} // namespace
+LogicalResult checkRecurringNumericExports(func::FuncOp function, const pto::SyncInput& input,
+    const fs::ProgramRecognition& program)
+{
+    if (!function->hasAttr("test.recurring_global_numeric")) { return success(); }
+    if (!alignedCellOracle()) { return function.emitError("aligned original-byte oracle failed"); }
+    const fs::NumericTemplate* form = nullptr;
+    for (const auto& node : program.nodes) {
+        if (node.numericTemplate && node.numericTemplate->recurringGlobal) {
+            if (form) { return function.emitError("expected one recurring numerical owner"); }
+            form = &*node.numericTemplate;
+        }
+    }
+    if (!form || !form->recurringGlobal->applies(*form) || !form->estimatedAttemptedFragments) {
+        return function.emitError("missing sealed recurring numerical proof");
+    }
+    if (!recurringBudget(function, input, *form) || !recurringMembership(*form) ||
+        !recurringExportRefusal(function, input, *form) || !recurringFreshPlans(function, program) ||
+        !form->recurringGlobal->applies(*form)) {
+        return function.emitError("recurring budget, sealed membership or export ownership check failed");
+    }
+    llvm::errs() << "recurring-numeric: sealed membership fresh plans retained math unavailable selectors\n";
     return success();
 }

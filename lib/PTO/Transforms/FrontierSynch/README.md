@@ -203,3 +203,33 @@ repetition, slicing, or relational conversion that requires complete storage.
 Endpoint preparation uses the shared deterministic scalar replay checks at
 original cuts, including late pure loop-bound definitions. Stronger unavailable
 selector requests retain the same exact mathematics.
+
+### Whole numerical words with recurring global storage
+
+The numerical template adapter can retain a writing GM base whose original
+shared byte maps have one invariant signed machine origin and fixed aligned
+inner offsets. It re-extracts every original effect on that base at its original
+fixed coordinates. A common power-of-two segment size must divide the machine
+circle and the signed-representative cut; exact residual intervals must fit
+within one segment. Unknown origin translation permutes segment identities, so
+relative atom overlap is exact without treating mathematical byte addresses as
+wrapped machine values. Different bases retain the original alias-policy
+conflict generators, and local target protection and prerequisites are unchanged.
+
+This certificate belongs to one complete whole invocation. Its sealed snapshot
+checks the full payload/effect word, including modes, source IDs and geometry.
+Relative atoms are not absolute shared storage cells and are never declared
+GM-disjoint. Regional body/selectors and storage-pattern composition explicitly
+refuse this representation; retained whole numerical mathematics and its direct
+endpoint/allocation adapters remain available. A missing map, changing outer
+origin, incomplete scope or fragment limit leaves an unmet adapter obligation.
+
+The recurring adapter preflights a conservative materialization slice bound
+before allocation. `estimated_attempted_fragments` separately records saturated
+construction charges, including failed attempts and conservative slice bounds;
+it is not an exact allocation or wall-time measurement. `fragments` retains the
+existing published/budgeted representation count. The generic regression uses
+disjoint local load/store buffers so recurring GM alone creates cross-pipe
+hazards, and compares emitted logical/physical command closure against original
+signed-64-bit address evaluation at wrap boundaries. Full corpus and device
+validation remain separate gates.

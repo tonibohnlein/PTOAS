@@ -89,6 +89,10 @@ bool SequenceAnalysisState::explicitChild(const StructureNode& node)
 }
 bool SequenceAnalysisState::numericPatterns(Child& child, const NumericTemplate& numeric)
 {
+    if (numeric.recurringGlobal) {
+        error = "relative recurring GM storage requires an unavailable crossing adapter";
+        return false;
+    }
     for (uint32_t type = 0; type < numeric.payloads.size(); ++type) {
         for (const auto& effect : numeric.payloads[type].effects) {
             if (effect.discharge != TemplateDischarge::None) {
