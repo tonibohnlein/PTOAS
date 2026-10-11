@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "ArithmeticImportedPrimitives.h"
+#include "IntegerProjectionCache.h"
 #include "llvm/ADT/STLExtras.h"
 #include <map>
 #include <tuple>
@@ -30,6 +31,7 @@ public:
     ArithmeticStorageSelectors result;
     LogicalResult run();
     LogicalResult import(bool occurrencesOnly = false);
+    IntegerProjectionCache numericalQueries;
     std::vector<Piece> ownedPieces;
     llvm::ArrayRef<Piece> pieces;
 private:
@@ -234,14 +236,14 @@ FailureOr<Systems> Builder::blockers(const Piece& candidate, const Piece& other,
     if (failed(left) || failed(right)) { return failure(); }
     auto both = left->intersect(*right);
     if (failed(both)) { return failure(); }
-    if (both->isEmpty()) { return resultPieces; }
+    if (numericalQueries.isEmpty(*both)) { return resultPieces; }
     auto add = [&](const IntegerSystem& order) -> LogicalResult {
         auto joined = both->intersect(order);
         if (failed(joined)) { return failure(); }
-        auto projected = joined->project(keep);
+        auto projected = numericalQueries.project(*joined, keep);
         if (failed(projected)) { return failure(); }
         for (auto& piece : *projected) {
-            if (!piece.isEmpty()) { resultPieces.push_back(std::move(piece)); }
+            if (!numericalQueries.isEmpty(piece)) { resultPieces.push_back(piece); }
         }
         return success();
     };
@@ -375,16 +377,20 @@ LogicalResult Builder::append(const Piece& candidate, ArithmeticBoundaryKind kin
 }
 LogicalResult Builder::support()
 {
-    for (const auto& piece : pieces) {
-        if (!storage(piece)) { continue; }
-        std::vector<unsigned> keep(1 + result.parameterCount);
-        std::iota(keep.begin(), keep.end(), piece.schema->sourceDimensions);
-        auto projected = piece.system.project(keep);
-        if (failed(projected)) { return failure(); }
-        for (auto& domain : *projected) {
-            if (domain.isEmpty()) { continue; }
-            result.support.push_back({*piece.schema->storageSpace, piece.schema->storageBase,
-                piece.residues[piece.schema->sourceDimensions], parameters(piece).vec(), std::move(domain)});
+    // A touched byte either has a writer, or has a first reader on some
+    // pipe without a writer. These already constructed selector domains
+    // therefore cover exactly the access support, including empty executions.
+    for (const auto& boundary : result.boundaries) {
+        if (boundary.kind != ArithmeticBoundaryKind::FirstWriter &&
+            boundary.kind != ArithmeticBoundaryKind::FirstReaderBeforeWrite) { continue; }
+        if (!boundary.storageSpace || boundary.selector.inputDimensions != 1) { return failure(); }
+        for (const auto& piece : boundary.selector.pieces) {
+            if (piece.inputResidues.size() != 1 || piece.parameterResidues.size() != result.parameterCount ||
+                piece.domain.dimensions() != static_cast<std::size_t>(result.parameterCount) + 1) {
+                return failure();
+            }
+            result.support.push_back({*boundary.storageSpace, boundary.storageBase,
+                piece.inputResidues.front(), piece.parameterResidues, piece.domain});
         }
     }
     return success();
@@ -397,7 +403,6 @@ LogicalResult Builder::run()
         return failure();
     }
     indexOrders();
-    if (failed(support())) { return failure(); }
     for (const auto& candidate : pieces) {
         SmallVector<ArithmeticBoundaryKind> kinds;
         switch (candidate.schema->kind) {
@@ -416,7 +421,7 @@ LogicalResult Builder::run()
             if (failed(selected) || failed(append(candidate, kind, *selected))) { return failure(); }
         }
     }
-    return success();
+    return support();
 }
 } // namespace
 FailureOr<ImportedArithmeticPrimitives> importOwnedArithmeticIntegerPieces(
@@ -451,6 +456,7 @@ ArithmeticStorageSelectors buildArithmeticStorageSelectorsFromImported(
         builder.result.error = "arithmetic storage boundary construction requires complete valid primitives "
                                "and exact projections";
     }
+    builder.result.cost = builder.numericalQueries.cost();
     return std::move(builder.result);
 }
 ArithmeticStorageSelectors buildArithmeticStorageSelectors(
