@@ -169,6 +169,16 @@ and unsigned distance division, so a distance above INT64_MAX need not
 overflow when the certified visit count fits. The original normalized-domain
 admission, 64-bit layout and endpoint-cut checks remain in force.
 
+The shared overlap query can additionally prove disjoint modular byte bands
+for the same canonical GM base under a known 64-bit index layout. It derives
+independent origin residues and validates each original linear access map;
+dimension strides divisible by the common power-of-two period contribute no
+residue span. Disjoint enclosing bands prove disjoint bytes across independently
+varying visits, without cancelling equal SSA symbols. Unknown bases, layouts,
+extents or unsupported maps retain the existing conservative overlap answer.
+This optional proof refines the shared conflict query; it introduces no analysis
+admission gate and does not change the retained access descriptions.
+
 ## Maintaining the layout
 
 Keep new route-specific recognition, analysis, emission and allocation adapters

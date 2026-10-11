@@ -5,14 +5,15 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Concrete spans and conservative symbolic interval comparisons. Symbolic
-// addresses remain exact descriptions when an overlap query is unresolved.
+// Concrete spans, independent modular byte bands and invariant interval
+// comparisons. Unresolved overlap preserves the original symbolic addresses.
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "SyncEffectRanges.h"
 #include "SyncRegionArithmetic.h"
 #include "SyncRegionDigits.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "llvm/Support/MathExtras.h"
 
 namespace mlir::pto {
@@ -39,8 +40,10 @@ std::optional<SmallVector<int64_t>> sizes(const SyncAccessRegion& region)
     return result;
 }
 // An affine rectangular map has monotone extrema when all dimension strides
-// are nonnegative constants. Nonlinear layout maps keep conservative overlap.
-std::optional<std::pair<AffineExpr, AffineExpr>> bounds(const SyncAccessRegion& region)
+// are nonnegative constants. With a residue period, the end instead encloses
+// residue contributions after whole-period strides are removed. Nonlinear
+// layout maps keep conservative overlap.
+std::optional<std::pair<AffineExpr, AffineExpr>> bounds(const SyncAccessRegion& region, uint64_t residuePeriod = 0)
 {
     auto shape = sizes(region);
     if (!shape) {
@@ -69,6 +72,9 @@ std::optional<std::pair<AffineExpr, AffineExpr>> bounds(const SyncAccessRegion& 
         if (llvm::MulOverflow(*stride, std::max<int64_t>(0, (*shape)[i] - 1), distance)) {
             return std::nullopt;
         }
+        // A complete row stride divisible by the residue period changes no
+        // byte residue, independently of the dimension coordinate.
+        if (residuePeriod && static_cast<uint64_t>(*stride) % residuePeriod == 0) { distance = 0; }
         end = detail::checkedAdd(end, getAffineConstantExpr(distance, context));
         if (!end) {
             return std::nullopt;
@@ -80,6 +86,103 @@ std::optional<std::pair<AffineExpr, AffineExpr>> bounds(const SyncAccessRegion& 
     }
     end = detail::checkedAdd(end, getAffineConstantExpr(region.elementBytes, context));
     return end ? std::optional<std::pair<AffineExpr, AffineExpr>>(std::make_pair(begin, end)) : std::nullopt;
+}
+
+// The low bits hold independently for every valuation of every symbol. In
+// particular, equal SSA values in different loop visits are never cancelled.
+struct LowBits {
+    unsigned count = 0;
+    uint64_t residue = 0;
+};
+uint64_t bitMask(unsigned count)
+{
+    return count ? (uint64_t{1} << count) - 1 : 0;
+}
+LowBits combineBits(AffineExpr expression, const DenseMap<AffineExpr, LowBits>& known)
+{
+    if (auto value = integer(expression)) {
+        return {63, static_cast<uint64_t>(*value) & bitMask(63)};
+    }
+    auto binary = dyn_cast<AffineBinaryOpExpr>(expression);
+    if (!binary) { return {}; }
+    if (expression.getKind() == AffineExprKind::Add) {
+        auto a = known.lookup(binary.getLHS()), b = known.lookup(binary.getRHS());
+        const auto count = std::min(a.count, b.count);
+        return {count, (a.residue + b.residue) & bitMask(count)};
+    }
+    if (expression.getKind() != AffineExprKind::Mul) { return {}; }
+    auto coefficient = integer(binary.getRHS());
+    auto operand = binary.getLHS();
+    if (!coefficient) { coefficient = integer(binary.getLHS()); operand = binary.getRHS(); }
+    if (!coefficient) { return {}; }
+    const auto multiplier = static_cast<uint64_t>(*coefficient);
+    if (!multiplier) { return {63, 0}; }
+    auto value = known.lookup(operand);
+    const auto count = std::min<unsigned>(63, value.count + llvm::countr_zero(multiplier));
+    return {count, (value.residue * multiplier) & bitMask(count)};
+}
+LowBits lowBits(AffineExpr expression)
+{
+    DenseMap<AffineExpr, LowBits> known;
+    SmallVector<std::pair<AffineExpr, bool>> pending{{expression, false}};
+    while (!pending.empty()) {
+        auto [current, ready] = pending.pop_back_val();
+        if (known.count(current)) { continue; }
+        auto binary = dyn_cast<AffineBinaryOpExpr>(current);
+        const bool combine = binary && (current.getKind() == AffineExprKind::Add ||
+                                         current.getKind() == AffineExprKind::Mul);
+        if (combine && !ready) {
+            pending.push_back({current, true});
+            pending.push_back({binary.getRHS(), false});
+            pending.push_back({binary.getLHS(), false});
+            continue;
+        }
+        known.try_emplace(current, combineBits(current, known));
+    }
+    return known.lookup(expression);
+}
+using ByteBand = std::pair<uint64_t, uint64_t>;
+SmallVector<ByteBand, 2> residueBands(uint64_t begin, uint64_t span, uint64_t period)
+{
+    const auto end = begin + span; // Both operands are below period <= 2^63.
+    if (end <= period) { return {{begin, end}}; }
+    return {{begin, period}, {0, end - period}};
+}
+bool modularBandsDisjoint(const SyncAccessRegion& a, const SyncAccessRegion& b)
+{
+    if (a.base != b.base || !isCanonicalGMBase(a.base) || !a.byteOffset || !b.byteOffset ||
+        a.byteOffset.getContext() != b.byteOffset.getContext() || !a.elementBytes || !b.elementBytes) {
+        return false;
+    }
+    auto function = cast<func::FuncOp>(cast<BlockArgument>(a.base).getOwner()->getParentOp());
+    const auto width = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
+    if (width.isScalable() || width.getFixedValue() != 64) { return false; }
+    auto first = bounds(a), second = bounds(b);
+    if (!first || !second) { return false; }
+    auto span = [](const auto& endpoints, const SyncAccessRegion& region) {
+        auto negative = detail::checkedMul(endpoints.first, getAffineConstantExpr(-1, region.byteOffset.getContext()));
+        auto difference = detail::checkedAdd(endpoints.second, negative);
+        return integer(simplify(difference, region));
+    };
+    const auto bitsA = lowBits(first->first), bitsB = lowBits(second->first);
+    const auto count = std::min(bitsA.count, bitsB.count);
+    if (!count) { return false; }
+    const uint64_t period = uint64_t{1} << count;
+    // The checks above validate the original linear maps. Only their
+    // modular enclosing spans omit whole-period dimension contributions.
+    auto reducedA = bounds(a, period), reducedB = bounds(b, period);
+    if (!reducedA || !reducedB) { return false; }
+    auto spanA = span(*reducedA, a), spanB = span(*reducedB, b);
+    if (!spanA || !spanB || *spanA <= 0 || *spanB <= 0) { return false; }
+    if (static_cast<uint64_t>(*spanA) >= period || static_cast<uint64_t>(*spanB) >= period) { return false; }
+    const auto firstBands = residueBands(bitsA.residue & (period - 1), *spanA, period);
+    const auto secondBands = residueBands(bitsB.residue & (period - 1), *spanB, period);
+    for (const auto& x : firstBands) {
+        for (const auto& y : secondBands) {
+            if (std::max(x.first, y.first) < std::min(x.second, y.second)) { return false; }
+        }
+    }
+    return true;
 }
 } // namespace
 
@@ -96,6 +199,8 @@ bool isCanonicalGMBase(Value base)
 
 bool regionsProvablyDisjoint(const SyncAccessRegion& a, const SyncAccessRegion& b)
 {
+    if (a.empty() || b.empty()) { return true; }
+    if (modularBandsDisjoint(a, b)) { return true; }
     // A static phase can execute at different iteration coordinates. Equal SSA
     // symbols under repeated control do not denote equal dynamic values across
     // those occurrences. This query has no occurrence context, so do not cancel
