@@ -9,6 +9,7 @@
 // export checks; detached command fragments always have fresh ownership.
 #include "AnalysisSessionInternal.h"
 #include "Shared/SequenceAnalysisInternal.h"
+#include "WholeInvocationIdentity.h"
 #include "Structured/OrderCoveredPeriodic.h"
 #include "Shared/NormalizedControl.h"
 #include "PTO/Transforms/FrontierSynch/Structured/MixedStrideAnalysis.h"
@@ -114,7 +115,9 @@ std::vector<RegionCertification> FrontierAnalysis::certifyRegions()
         result.analysis = minimumDemands(id);
         if (!result.analysis.mathematical) { continue; }
         result.status = CertificationStatus::Recognized;
-        const auto& math = *result.analysis.mathematical;
+        const MathematicalResult* selected = result.analysis.mathematical.get();
+        while (selected->identityComposition) { selected = selected->identityComposition->child.get(); }
+        const auto& math = *selected;
         if (math.backend == "native-scalar") {
             result.status = CertificationStatus::Unresolved;
             result.analysis.obligations.push_back({AnalysisStage::Form,
@@ -159,7 +162,8 @@ std::vector<RegionCertification> FrontierAnalysis::certifyRegions()
     refreshProgramContractAudit(*program);
     return results;
 }
-AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const AnalysisRequest& request)
+AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const AnalysisRequest& request,
+    bool sameNodeContinuation)
 {
     auto& attempt = sessionState->attempts[request.region][backend];
     if (backend == AnalysisBackend::NumericalSequence) {
@@ -186,7 +190,11 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
             const auto parent = sessionState->activeRegions.back();
             auto ancestor = program->nodes[request.region].parent;
             while (ancestor && *ancestor != parent) { ancestor = program->nodes[*ancestor].parent; }
-            descends = ancestor.has_value();
+            // Only the consumed unary Sequence attempt may continue on the
+            // same original region; ordinary recursive requests still descend.
+            const bool continuation = sameNodeContinuation && parent == request.region &&
+                backend != AnalysisBackend::Sequence && backend != AnalysisBackend::SequenceEndpoints;
+            descends = ancestor.has_value() || continuation;
         }
         if (descends) {
             sessionState->activeRegions.push_back(request.region);
@@ -215,6 +223,7 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
         return result;
     }
     const auto& demands = *result.mathematical;
+    if (demands.identityComposition) { return requestIdentity(request, attempt); }
     if (demands.orderCoveredDemands) {
         for (const auto& diagnostic : attempt.failure.diagnostics) {
             result.obligations.push_back({AnalysisStage::Form,
@@ -320,6 +329,38 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
     }
     return result;
 }
+std::vector<AnalysisBackend> FrontierAnalysis::exactAttemptFamilies(
+    const AnalysisRequest& request, AnalysisForm form, bool alternative)
+{
+    if (form == AnalysisForm::SmallCountExpanded) {
+        return {AnalysisBackend::NumericalPeriodic, AnalysisBackend::NumericalSequence,
+            AnalysisBackend::ExpandedFinite};
+    }
+    std::vector<AnalysisBackend> result;
+    if (!alternative) { result.push_back(AnalysisBackend::NumericalPeriodic); }
+    for (auto backend : {AnalysisBackend::Rotating, AnalysisBackend::MixedStride, AnalysisBackend::GuardedRotating,
+            AnalysisBackend::BoundedLifetime, AnalysisBackend::Sequence, AnalysisBackend::VaryingBoundary,
+            AnalysisBackend::FiniteVisit, AnalysisBackend::ExpandedFinite, AnalysisBackend::ArithmeticPeriodic,
+            AnalysisBackend::FiniteGuarded}) {
+        if (backend == AnalysisBackend::ExpandedFinite && alternative) { continue; }
+        result.push_back(backend);
+        if (backend == AnalysisBackend::Sequence && request.needs.synchronization) {
+            result.push_back(AnalysisBackend::SequenceEndpoints);
+        }
+    }
+    return result;
+}
+bool FrontierAnalysis::visitExactFamily(const AnalysisRequest& request, AnalysisBackend family,
+    const std::function<bool(AnalysisBackend)>& attempt)
+{
+    // Arithmetic recognition remains lazy: earlier successful families never
+    // construct arithmetic forms merely to enumerate the dispatch order.
+    if (family != AnalysisBackend::ArithmeticPeriodic) { return attempt(family); }
+    for (auto method : arithmeticMethods(request)) {
+        if (attempt(method)) { return true; }
+    }
+    return false;
+}
 AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
 {
     AnalysisOutcome result;
@@ -376,27 +417,8 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
     const bool alternative = forms.size() > 1;
     auto attemptForm = [&](AnalysisForm form) {
         sessionState->formAttempts[{request.region, form}] = 1;
-        if (form == AnalysisForm::SmallCountExpanded) {
-            return attemptBackend(AnalysisBackend::NumericalPeriodic) ||
-                attemptBackend(AnalysisBackend::NumericalSequence) || attemptBackend(AnalysisBackend::ExpandedFinite);
-        }
-        // Keep the paper's family order inside the original description. With
-        // no distinct expanded view the existing numerical/finite producers
-        // may interpret retained finite domains as charged backend work.
-        if (!alternative && attemptBackend(AnalysisBackend::NumericalPeriodic)) { return true; }
-        for (auto backend : {AnalysisBackend::Rotating, AnalysisBackend::MixedStride, AnalysisBackend::GuardedRotating,
-                AnalysisBackend::BoundedLifetime, AnalysisBackend::Sequence, AnalysisBackend::VaryingBoundary,
-                AnalysisBackend::FiniteVisit, AnalysisBackend::ExpandedFinite, AnalysisBackend::ArithmeticPeriodic,
-                AnalysisBackend::FiniteGuarded}) {
-            if (backend == AnalysisBackend::ExpandedFinite && alternative) { continue; }
-            if (backend == AnalysisBackend::ArithmeticPeriodic) {
-                for (auto method : arithmeticMethods(request)) { if (attemptBackend(method)) { return true; } }
-            } else if (attemptBackend(backend)) { return true; }
-            // A stronger child request can select another exact occurrence
-            // representation. Recompose crossings for those interfaces rather
-            // than substituting its commands into the retained weaker graph.
-            if (backend == AnalysisBackend::Sequence && request.needs.synchronization &&
-                attemptBackend(AnalysisBackend::SequenceEndpoints)) { return true; }
+        for (auto backend : exactAttemptFamilies(request, form, alternative)) {
+            if (visitExactFamily(request, backend, attemptBackend)) { return true; }
         }
         return false;
     };
@@ -486,6 +508,30 @@ DictionaryAttr allocateRetained(const MathematicalResult& demands, const Program
     return encodeGeneralArithmeticAllocationCertificate(proof, pipes, attempt.arithmeticRecords, plan, context);
 }
 } // namespace
+DictionaryAttr FrontierAnalysis::allocateIdentity(const MathematicalResult& demands, PreparedLogicalPlan& plan)
+{
+    const MathematicalResult* retained = &demands;
+    AnalysisBackend backend = AnalysisBackend::Explicit;
+    while (retained->identityComposition) {
+        const auto& owner = *retained->identityComposition;
+        if (retained->region != owner.region ||
+            !owner.applies(storage.get(), structuralIndex.get(), program.get(), function)) { return {}; }
+        backend = owner.childBackend;
+        retained = owner.child.get();
+    }
+    auto& attempt = sessionState->attempts[retained->region][backend];
+    if (attempt.mathematical.get() != retained) { return {}; }
+    auto certificate = allocateRetained(*retained, *program, attempt, plan, function.getContext(),
+        sessionState->guardedImportWork);
+    if (certificate || !plan.regionalAllocation) { return certificate; }
+    AnalysisRequest request;
+    request.region = retained->region;
+    request.needs.queries = true;
+    auto exported = requestBackend(backend, request);
+    if (exported.mathematical.get() != retained || !exported.available.queries) { return {}; }
+    auto region = exported.regionalExports ? exported.regionalExports : retained->regionalDemands;
+    return region ? regionalAllocationCertificate(*region, plan) : DictionaryAttr{};
+}
 LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan)
 {
     // Allocation is a separate request on this prepared graph. Its readiness is
@@ -504,9 +550,13 @@ LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, 
     prepareAllocationSupport(plan);
     if (cached == attempt.allocation.end()) {
         if (construction.allocationExports != UINT64_MAX) { ++construction.allocationExports; }
-        auto certificate = plan.allocationCertificate ? plan.allocationCertificate :
-            allocateRetained(*result.mathematical, *program, attempt, plan, function.getContext(),
-                sessionState->guardedImportWork);
+        auto certificate = plan.allocationCertificate;
+        if (!certificate) {
+            certificate = result.mathematical->identityComposition ?
+                allocateIdentity(*result.mathematical, plan) :
+                allocateRetained(*result.mathematical, *program, attempt, plan, function.getContext(),
+                    sessionState->guardedImportWork);
+        }
         cached = attempt.allocation.emplace(plan.planId, certificate).first;
     }
     plan.allocationCertificate = cached->second;

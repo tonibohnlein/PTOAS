@@ -8,6 +8,7 @@
 // Existing mathematical producers behind the session request protocol. No
 // endpoint code or allocation is constructed by these adapters.
 #include "AnalysisSessionInternal.h"
+#include "WholeInvocationIdentity.h"
 #include "Shared/FiniteExpansionPlan.h"
 #include "Structured/NumericTemplatePlan.h"
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateRegional.h"
@@ -176,6 +177,11 @@ const StructureNode* wholeLoop(func::FuncOp function, const SyncInput& input,
     return outside.state == RecognitionState::Applicable ? selected : nullptr;
 }
 } // namespace
+const StructureNode* wholeInvocationLoop(func::FuncOp function, const SyncInput& input,
+    const ProgramRecognition& program, const PhaseIndex& index)
+{
+    return wholeLoop(function, input, program, index);
+}
 std::shared_ptr<const NormalizedControlDescription> FrontierAnalysis::normalizedRegion(std::size_t region)
 {
     // A complete root-loop view shares its original loop's representation.
@@ -888,6 +894,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend
     if (backend == AnalysisBackend::NumericalSequence) { return adaptNumericalSequence(region, error); }
     if (backend == AnalysisBackend::Sequence || backend == AnalysisBackend::SequenceEndpoints) {
         const bool endpoints = backend == AnalysisBackend::SequenceEndpoints;
+        if (auto identity = produceIdentitySequence(region, endpoints, error)) { return identity; }
+        error.clear();
         auto sequence = std::make_shared<SequenceAnalysis>(analyzeSequenceRegionWithResolver(
             function, *storage, *program, region, sessionState->expressions, structuralIndex,
             endpoints, regionalResolver()));
@@ -993,6 +1001,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
     case AnalysisBackend::SequenceEndpoints:
         return produceRegionBackend(backend, 0, error);
     case AnalysisBackend::Sequence: {
+        if (auto identity = produceIdentitySequence(0, false, error)) { return identity; }
+        error.clear();
         const auto* sequence = analyzeSequenceFunction();
         if (sequence) { recordSequenceCosts(*sessionState, *sequence, 0); }
         const bool complete = sequence && sequence->error.empty() && program->sequenceContract &&

@@ -46,7 +46,7 @@ def main():
         ("sync_finite_guarded_analysis.pto", "sequence"),
         ("sync_physical_allocation.pto", "numerical-periodic"),
         ("sync_bounded_allocation_session.pto", "bounded-lifetime"),
-        ("sync_general_arithmetic_insertion.pto", "sequence"),
+        ("sync_general_arithmetic_insertion.pto", "identity-sequence"),
     )
     for filename, backend in cases:
         program = (fixtures / filename).read_text(encoding="utf-8")

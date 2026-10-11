@@ -12,7 +12,7 @@
 // RUN: pto-sync-input-test --allocation-session-checks %S/sync_arithmetic_periodic_conversion.pto | FileCheck %s --check-prefix=NUMERICAL
 // NUMERICAL: allocation-session: numerical-periodic available=1 retained-demands cached-export
 // RUN: pto-sync-input-test --allocation-session-checks %S/sync_arithmetic_insertion.pto | FileCheck %s --check-prefix=SEQUENCE
-// SEQUENCE: allocation-session: sequence available=1 retained-demands cached-export
+// SEQUENCE: allocation-session: {{(identity-)?}}sequence available=1 retained-demands cached-export
 // RUN: pto-sync-input-test --allocation-session-checks %S/sync_rotating_analysis.pto | FileCheck %s --check-prefix=ROTATING
 // ROTATING: allocation-session: rotating available=1 retained-demands cached-export
 // RUN: pto-sync-input-test --allocation-session-checks %S/sync_mixed_stride.pto | FileCheck %s --check-prefix=MIXED

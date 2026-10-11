@@ -17,6 +17,8 @@
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticPeriodicConversion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
+#include <functional>
+#include <utility>
 namespace mlir::pto::frontiersynch {
 // Detached whole-function producer shared by module coordination and tests.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFunctionSynchronization(
@@ -28,6 +30,7 @@ struct ArithmeticPeriodicExports {
 struct FiniteVisitAnalysis;
 struct BoundedLifetimeDemandResult;
 struct AnalysisSessionState;
+struct BackendAttempt;
 struct NumericTemplatePlan;
 class FrontierAnalysis {
 public:
@@ -152,7 +155,18 @@ private:
     std::shared_ptr<const RegionalAnalysis> varyingExports(
         const MathematicalResult& demands, bool selectors, std::string& error);
     void recordWholeRegion(AnalysisBackend backend);
-    AnalysisOutcome requestBackend(AnalysisBackend backend, const AnalysisRequest& request);
+    AnalysisOutcome requestBackend(AnalysisBackend backend, const AnalysisRequest& request,
+        bool sameNodeContinuation = false);
+    std::vector<AnalysisBackend> exactAttemptFamilies(
+        const AnalysisRequest& request, AnalysisForm form, bool alternative);
+    bool visitExactFamily(const AnalysisRequest& request, AnalysisBackend family,
+        const std::function<bool(AnalysisBackend)>& attempt);
+    std::pair<AnalysisOutcome, AnalysisBackend> selectIdentityChild(
+        const AnalysisRequest& request, bool continueSameRegion);
+    std::shared_ptr<const MathematicalResult> produceIdentitySequence(
+        std::size_t region, bool endpoints, std::string& error);
+    AnalysisOutcome requestIdentity(const AnalysisRequest& request, BackendAttempt& attempt);
+    DictionaryAttr allocateIdentity(const MathematicalResult& demands, PreparedLogicalPlan& plan);
     std::shared_ptr<const MathematicalResult> produceBackend(AnalysisBackend backend, std::string& error);
     std::shared_ptr<const MathematicalResult> produceRegionBackend(
         AnalysisBackend backend, std::size_t region, std::string& error);
