@@ -2157,6 +2157,19 @@ int main(int argc, char **argv) {
             implicationCost["physical_join_empty_hits"] = arithmeticCost->physicalJoinEmptyHits;
             implicationCost["physical_join_remaps"] = arithmeticCost->physicalJoinRemaps;
           }
+          llvm::json::Object selectorCost;
+          if (const auto& regional = result.analysis.regionalExports) {
+            if (const auto& arithmetic = regional->arithmeticRelations) {
+              const auto& cost = arithmetic->selectors.cost;
+              selectorCost["projection_requests"] = cost.projectionRequests;
+              selectorCost["projection_hits"] = cost.projectionHits;
+              selectorCost["projection_builds"] = cost.projectionBuilds;
+              selectorCost["projection_pieces"] = cost.projectionPieces;
+              selectorCost["emptiness_requests"] = cost.emptinessRequests;
+              selectorCost["emptiness_hits"] = cost.emptinessHits;
+              selectorCost["emptiness_builds"] = cost.emptinessBuilds;
+            }
+          }
           regions.push_back(llvm::json::Object{{"node", result.region},
               {"status", result.status == pto::frontiersynch::CertificationStatus::Recognized ?
                   "recognized" : "unresolved"},
@@ -2164,6 +2177,7 @@ int main(int argc, char **argv) {
               {"exact_demands", static_cast<bool>(result.analysis.mathematical)},
               {"queries", result.analysis.available.queries}, {"selectors", result.analysis.available.selectors},
               {"implication_cost", std::move(implicationCost)},
+              {"arithmetic_selector_cost", std::move(selectorCost)},
               {"obligations", std::move(obligations)}});
         }
         const auto& counts = analysis.constructionCounts();

@@ -11,6 +11,7 @@
 #include "mlir/IR/AffineExpr.h"
 #include <set>
 #include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticByteCover.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/IntegerProjectionCache.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticImportedPrimitives.h"
 namespace fs = mlir::pto::frontiersynch;
 using namespace mlir;
@@ -168,6 +169,25 @@ std::vector<Occurrence> execution(int64_t n, int64_t guard)
     }
     return result;
 }
+bool supportMatches(const fs::ArithmeticStorageSelectors& result, const std::vector<Occurrence>& execution,
+                    int64_t byte, llvm::ArrayRef<Integer> parameters)
+{
+    const bool touched = llvm::any_of(execution, [&](const Occurrence& occurrence) {
+        return occurrence.reads.count(byte) || occurrence.writes.count(byte);
+    });
+    for (auto space : {pto::AddressSpace::VEC, pto::AddressSpace::GM}) {
+        fs::GeneralArithmeticEndpointSelector membership;
+        membership.inputDimensions = 1;
+        membership.parameterCount = parameters.size();
+        for (const auto& piece : result.support) {
+            if (piece.space != space || piece.base) { continue; }
+            membership.pieces.push_back({piece.domain, {piece.byteResidue}, piece.parameterResidues, 0, {}});
+        }
+        auto selected = fs::evaluateGeneralArithmeticSelector(membership, result.period, {Integer(byte)}, parameters);
+        if (failed(selected) || selected->has_value() != (space == pto::AddressSpace::VEC && touched)) { return false; }
+    }
+    return true;
+}
 std::optional<fs::ArithmeticSelectedEndpoint> expected(
     const std::vector<Occurrence>& occurrences, const fs::ArithmeticBoundarySelector& boundary, int64_t byte)
 {
@@ -262,6 +282,9 @@ bool residueCheck(bool splitContextsAndOrders = false)
         for (int64_t n = 0; n <= 5; ++n) {
             std::vector<Occurrence> occurrences;
             for (int64_t i = 0; i < n; ++i) { occurrences.push_back({0, i, 0, {i % 2}, {i % 2}}); }
+            for (int64_t byte = -1; byte <= 2; ++byte) {
+                if (!supportMatches(result, occurrences, byte, {Integer(n)})) { return false; }
+            }
             for (const auto& boundary : result.boundaries) {
                 for (int64_t byte = -1; byte <= 2; ++byte) {
                     SmallVector<Integer> input;
@@ -343,6 +366,77 @@ bool quotientImportCheck()
     }
     return true;
 }
+bool projectionCacheChecks()
+{
+    using Row = fs::IntegerConstraint;
+    auto system = fs::IntegerSystem::create(2,
+        {Row{{Integer(1), Integer(-1)}, Integer(1)}, Row{{Integer(-1), Integer(1)}, Integer(-1)},
+         Row{{Integer(0), Integer(-1)}, Integer(0)}, Row{{Integer(0), Integer(1)}, Integer(3)}},
+        {{{Integer(1), Integer(0)}, Integer(0), Integer(2)}});
+    if (failed(system)) { return false; }
+    fs::IntegerProjectionCache cache;
+    auto first = cache.project(*system, {0});
+    auto repeated = cache.project(*system, {0});
+    if (failed(first) || failed(repeated) || first->empty() || first->data() != repeated->data() ||
+        cache.cost().projectionBuilds != 1 || cache.cost().projectionHits != 1) { return false; }
+    if (cache.isEmpty(*system) || cache.isEmpty(*system) || cache.cost().emptinessBuilds != 1 ||
+        cache.cost().emptinessHits != 1) { return false; }
+    auto contains = [](llvm::ArrayRef<fs::IntegerSystem> unionPieces, llvm::ArrayRef<Integer> point) {
+        std::vector<Row> binding;
+        for (unsigned i = 0; i < point.size(); ++i) {
+            std::vector<Integer> positive(point.size(), Integer(0)), negative(point.size(), Integer(0));
+            positive[i] = 1; negative[i] = -1;
+            binding.push_back({std::move(positive), point[i]});
+            binding.push_back({std::move(negative), -point[i]});
+        }
+        auto fixed = fs::IntegerSystem::create(point.size(), binding);
+        if (failed(fixed)) { return false; }
+        for (const auto& piece : unionPieces) {
+            auto intersection = piece.intersect(*fixed);
+            if (succeeded(intersection) && !intersection->isEmpty()) { return true; }
+        }
+        return false;
+    };
+    auto second = cache.project(*system, {1});
+    auto reversed = cache.project(*system, {1, 0});
+    if (failed(second) || failed(reversed)) { return false; }
+    for (int64_t x = -1; x <= 5; ++x) {
+        if (contains(*first, {Integer(x)}) != (x == 2 || x == 4) ||
+            contains(*second, {Integer(x)}) != (x == 1 || x == 3)) { return false; }
+        for (int64_t y = -1; y <= 5; ++y) {
+            const bool expected = y >= 0 && y <= 3 && x == y + 1 && x % 2 == 0;
+            if (contains(*reversed, {Integer(y), Integer(x)}) != expected) { return false; }
+        }
+    }
+    // Different bound/residue contexts must not share cached answers. Growing
+    // the pool also must not invalidate an earlier map-owned projection view.
+    for (int64_t bound = 0; bound <= 32; ++bound) {
+        for (int64_t residue = 0; residue < 2; ++residue) {
+            auto changed = fs::IntegerSystem::create(1,
+                {Row{{Integer(-1)}, Integer(0)}, Row{{Integer(1)}, Integer(bound)}},
+                {{{Integer(1)}, Integer(residue), Integer(2)}});
+            if (failed(changed)) { return false; }
+            auto projected = cache.project(*changed, {0});
+            if (failed(projected)) { return false; }
+            for (int64_t point = -1; point <= 33; ++point) {
+                const bool expected = point >= 0 && point <= bound && point % 2 == residue;
+                if (contains(*projected, {Integer(point)}) != expected) { return false; }
+            }
+        }
+    }
+    if (!contains(*first, {Integer(2)}) || contains(*first, {Integer(3)})) { return false; }
+    const auto builds = cache.cost().projectionBuilds, hits = cache.cost().projectionHits;
+    if (succeeded(cache.project(*system, {2})) || succeeded(cache.project(*system, {2})) ||
+        succeeded(cache.project(*system, {0, 0})) || cache.cost().projectionBuilds != builds + 3 ||
+        cache.cost().projectionHits != hits) { return false; }
+    auto empty = fs::IntegerSystem::create(0, {Row{{}, Integer(-1)}});
+    auto nonempty = fs::IntegerSystem::create(0, {});
+    if (failed(empty) || failed(nonempty)) { return false; }
+    auto emptyProjection = cache.project(*empty, {}), trueProjection = cache.project(*nonempty, {});
+    auto emptyRetry = cache.project(*empty, {});
+    return succeeded(emptyProjection) && emptyProjection->empty() && succeeded(trueProjection) &&
+        trueProjection->size() == 1 && succeeded(emptyRetry) && emptyRetry->empty();
+}
 bool rationalCoverChecks()
 {
     using Row = fs::IntegerConstraint;
@@ -395,11 +489,20 @@ bool check()
     if (failed(adapters)) { return false; }
     for (const auto& result : *adapters) {
         if (!result.error.empty()) { llvm::errs() << result.error << "\n"; return false; }
-        if (result.boundaries.empty() || result.support.empty()) { return false; }
+        if (result.boundaries.empty() || result.support.empty() || !result.cost.projectionHits ||
+            !result.cost.emptinessHits ||
+            result.cost.projectionRequests != result.cost.projectionHits + result.cost.projectionBuilds) {
+            return false;
+        }
         for (int64_t n : {0, 1, 2, 4, 1000000000}) {
             for (int64_t guard = 0; guard <= 1; ++guard) {
                 // The large instance checks constant-size selectors without unfolding.
                 const auto occurrences = n < 5 ? execution(n, guard) : std::vector<Occurrence>{};
+                if (n < 5) {
+                    for (int64_t byte = -1; byte <= 5; ++byte) {
+                        if (!supportMatches(result, occurrences, byte, {Integer(n), Integer(guard)})) { return false; }
+                    }
+                }
                 for (const auto& boundary : result.boundaries) {
                     for (int64_t byte = -1; byte <= 5; ++byte) {
                         SmallVector<Integer> input;
@@ -426,7 +529,8 @@ bool check()
 } // namespace
 int runArithmeticStorageSelectorChecks()
 {
-    if (!rationalCoverChecks() || !check() || !residueCheck() || !residueCheck(true) || !quotientImportCheck()) {
+    if (!projectionCacheChecks() || !rationalCoverChecks() || !check() || !residueCheck() ||
+        !residueCheck(true) || !quotientImportCheck()) {
         llvm::errs() << "arithmetic storage selector checks failed\n";
         return 1;
     }

@@ -42,12 +42,17 @@ struct ArithmeticStorageSupportPiece {
     std::vector<uint64_t> parameterResidues;
     IntegerSystem domain; // Byte quotient, shared parameter quotients.
 };
+struct ArithmeticStorageSelectorCost {
+    uint64_t projectionRequests = 0, projectionHits = 0, projectionBuilds = 0, projectionPieces = 0;
+    uint64_t emptinessRequests = 0, emptinessHits = 0, emptinessBuilds = 0;
+};
 struct ArithmeticStorageSelectors {
     std::string error;
     uint64_t period = 1;
     unsigned parameterCount = 0;
     std::vector<ArithmeticBoundarySelector> boundaries;
     std::vector<ArithmeticStorageSupportPiece> support;
+    ArithmeticStorageSelectorCost cost;
 };
 // Requires complete accepted primitives and their reference order. Extrema are
 // unique by that total occurrence order, independently of F* functionality.
