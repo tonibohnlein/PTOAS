@@ -2161,6 +2161,12 @@ int main(int argc, char **argv) {
           if (const auto& regional = result.analysis.regionalExports) {
             if (const auto& arithmetic = regional->arithmeticRelations) {
               const auto& cost = arithmetic->selectors.cost;
+              selectorCost["remap_requests"] = cost.remapRequests;
+              selectorCost["remap_hits"] = cost.remapHits;
+              selectorCost["remap_builds"] = cost.remapBuilds;
+              selectorCost["intersection_requests"] = cost.intersectionRequests;
+              selectorCost["intersection_hits"] = cost.intersectionHits;
+              selectorCost["intersection_builds"] = cost.intersectionBuilds;
               selectorCost["projection_requests"] = cost.projectionRequests;
               selectorCost["projection_hits"] = cost.projectionHits;
               selectorCost["projection_builds"] = cost.projectionBuilds;

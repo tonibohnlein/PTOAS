@@ -397,6 +397,27 @@ bool projectionCacheChecks()
         }
         return false;
     };
+    auto mapped = cache.remap(*system, 2, {1, 0});
+    auto mappedRetry = cache.remap(*system, 2, {1, 0});
+    auto unchanged = cache.remap(*system, 2, {0, 1});
+    auto limit = fs::IntegerSystem::create(2, {Row{{Integer(1), Integer(0)}, Integer(1)}});
+    if (failed(mapped) || failed(mappedRetry) || failed(unchanged) || failed(limit) ||
+        *mapped != *mappedRetry || cache.cost().remapBuilds != 2 || cache.cost().remapHits != 1) {
+        return false;
+    }
+    auto limited = cache.intersect(**mapped, *limit);
+    auto limitedRetry = cache.intersect(**mapped, *limit);
+    if (failed(limited) || failed(limitedRetry) || *limited != *limitedRetry ||
+        cache.cost().intersectionBuilds != 1 || cache.cost().intersectionHits != 1) { return false; }
+    for (int64_t x = -1; x <= 5; ++x) {
+        for (int64_t y = -1; y <= 5; ++y) {
+            const bool expected = y >= 0 && y <= 3 && x == y + 1 && x % 2 == 0;
+            if (contains(llvm::ArrayRef<fs::IntegerSystem>(*mapped, 1), {Integer(y), Integer(x)}) != expected ||
+                contains(llvm::ArrayRef<fs::IntegerSystem>(*unchanged, 1), {Integer(x), Integer(y)}) != expected ||
+                contains(llvm::ArrayRef<fs::IntegerSystem>(*limited, 1), {Integer(y), Integer(x)}) !=
+                    (expected && y <= 1)) { return false; }
+        }
+    }
     auto second = cache.project(*system, {1});
     auto reversed = cache.project(*system, {1, 0});
     if (failed(second) || failed(reversed)) { return false; }
@@ -425,6 +446,20 @@ bool projectionCacheChecks()
         }
     }
     if (!contains(*first, {Integer(2)}) || contains(*first, {Integer(3)})) { return false; }
+    if (!contains(llvm::ArrayRef<fs::IntegerSystem>(*mapped, 1), {Integer(3), Integer(4)}) ||
+        !contains(llvm::ArrayRef<fs::IntegerSystem>(*limited, 1), {Integer(1), Integer(2)})) { return false; }
+    const auto remapBuilds = cache.cost().remapBuilds, remapHits = cache.cost().remapHits;
+    if (succeeded(cache.remap(*system, 2, {0})) || succeeded(cache.remap(*system, 2, {0})) ||
+        cache.cost().remapBuilds != remapBuilds + 2 || cache.cost().remapHits != remapHits) { return false; }
+    auto wrongDimensions = fs::IntegerSystem::create(1, {});
+    if (failed(wrongDimensions)) { return false; }
+    const auto intersectionBuilds = cache.cost().intersectionBuilds;
+    const auto intersectionHits = cache.cost().intersectionHits;
+    if (succeeded(cache.intersect(*system, *wrongDimensions)) ||
+        succeeded(cache.intersect(*system, *wrongDimensions)) ||
+        cache.cost().intersectionBuilds != intersectionBuilds + 2 ||
+        cache.cost().intersectionHits != intersectionHits) { return false; }
+
     const auto builds = cache.cost().projectionBuilds, hits = cache.cost().projectionHits;
     if (succeeded(cache.project(*system, {2})) || succeeded(cache.project(*system, {2})) ||
         succeeded(cache.project(*system, {0, 0})) || cache.cost().projectionBuilds != builds + 3 ||
@@ -490,7 +525,9 @@ bool check()
     for (const auto& result : *adapters) {
         if (!result.error.empty()) { llvm::errs() << result.error << "\n"; return false; }
         if (result.boundaries.empty() || result.support.empty() || !result.cost.projectionHits ||
-            !result.cost.emptinessHits ||
+            !result.cost.emptinessHits || !result.cost.remapHits || !result.cost.intersectionHits ||
+            result.cost.remapRequests != result.cost.remapHits + result.cost.remapBuilds ||
+            result.cost.intersectionRequests != result.cost.intersectionHits + result.cost.intersectionBuilds ||
             result.cost.projectionRequests != result.cost.projectionHits + result.cost.projectionBuilds) {
             return false;
         }

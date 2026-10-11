@@ -11,11 +11,12 @@
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticStorageSelectors.h"
 #include "llvm/ADT/Hashing.h"
 #include <map>
+#include <tuple>
 #include <unordered_map>
 namespace mlir::pto::frontiersynch {
 // Numerical queries in one unchanged builder context. Every assumption is in
 // the owned system; tags, physical bases and coordinate residues stay outside.
-// Structural equality needs no mathematical query. Map-owned projection values
+// Structural equality needs no mathematical query. Map-owned operation values
 // remain stable while new systems are interned; failures are never cached.
 class IntegerProjectionCache {
 public:
@@ -47,6 +48,32 @@ public:
         auto position = projected.emplace(key, std::move(*value)).first;
         return llvm::ArrayRef<IntegerSystem>(position->second);
     }
+    FailureOr<const IntegerSystem*> remap(const IntegerSystem& system, unsigned dimensions,
+                                         llvm::ArrayRef<unsigned> columns)
+    {
+        accumulateCost(counts.remapRequests, 1);
+        const auto key = std::make_tuple(identity(system), dimensions, columns.vec());
+        if (auto found = remapped.find(key); found != remapped.end()) {
+            accumulateCost(counts.remapHits, 1); return &found->second;
+        }
+        accumulateCost(counts.remapBuilds, 1);
+        auto value = system.remap(dimensions, columns);
+        if (failed(value)) { return failure(); }
+        return &remapped.emplace(key, std::move(*value)).first->second;
+    }
+    FailureOr<const IntegerSystem*> intersect(const IntegerSystem& left, const IntegerSystem& right)
+    {
+        accumulateCost(counts.intersectionRequests, 1);
+        const auto leftID = identity(left), rightID = identity(right);
+        const auto key = std::make_pair(leftID, rightID);
+        if (auto found = intersected.find(key); found != intersected.end()) {
+            accumulateCost(counts.intersectionHits, 1); return &found->second;
+        }
+        accumulateCost(counts.intersectionBuilds, 1);
+        auto value = left.intersect(right);
+        if (failed(value)) { return failure(); }
+        return &intersected.emplace(key, std::move(*value)).first->second;
+    }
     const ArithmeticStorageSelectorCost& cost() const { return counts; }
 private:
     ArithmeticStorageSelectorCost counts;
@@ -54,6 +81,8 @@ private:
     std::unordered_map<std::size_t, std::vector<std::size_t>> buckets;
     std::map<std::size_t, bool> empty;
     std::map<std::pair<std::size_t, std::vector<unsigned>>, std::vector<IntegerSystem>> projected;
+    std::map<std::tuple<std::size_t, unsigned, std::vector<unsigned>>, IntegerSystem> remapped;
+    std::map<std::pair<std::size_t, std::size_t>, IntegerSystem> intersected;
     static bool same(const IntegerSystem& a, const IntegerSystem& b)
     {
         if (a.dimensions() != b.dimensions() || a.constraints().size() != b.constraints().size() ||
