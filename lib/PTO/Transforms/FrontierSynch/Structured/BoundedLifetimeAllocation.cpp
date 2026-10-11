@@ -283,10 +283,12 @@ DictionaryAttr encode(func::FuncOp function, llvm::ArrayRef<Palette> palettes, i
         b.getNamedAttr("macro_reservations", b.getUnitAttr()), b.getNamedAttr("groups", b.getArrayAttr(groups))});
 }
 } // namespace
-std::optional<detail::BoundedLifetimeAllocationAssignment> detail::boundedLifetimeAllocationAssignment(
+std::optional<detail::BoundedLifetimeAllocationAssignment> detail::boundedLifetimeAllocationAssignmentWithInactive(
     RegionExpressions& e, const LifetimeWindowInput& w,
-    llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> demands)
+    llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> demands,
+    llvm::ArrayRef<uint8_t> invocationInactive)
 {
+    if (!invocationInactive.empty() && invocationInactive.size() != demands.size()) { return {}; }
     if (!w.sites || w.span >= UINT32_MAX || w.sites > UINT32_MAX / (w.span + 1) ||
         w.payloads.size() != w.sites * (w.span + 1) || unconditional.size() != w.sites ||
         (!w.operations.empty() && w.operations.size() != w.payloads.size())) { return {}; }
@@ -302,7 +304,10 @@ std::optional<detail::BoundedLifetimeAllocationAssignment> detail::boundedLifeti
     if (!proof.mandatory.error.empty()) { return {}; }
     BoundedLifetimeAllocationAssignment result;
     BoundedInactiveRecordProof inactiveProof(e, w, unconditional);
-    for (const auto& edge : demands) { result.inactiveRecords.push_back(inactiveProof.proves(edge.guard)); }
+    for (auto [record, edge] : llvm::enumerate(demands)) {
+        result.inactiveRecords.push_back(inactiveProof.proves(edge.guard) ||
+            (!invocationInactive.empty() && invocationInactive[record]));
+    }
     auto& palettes = result.palettes;
     if (!buildLivePalettes(w, demands, proof, result)) { return {}; }
     appendInactivePalettes(w, demands, result);
@@ -312,6 +317,12 @@ std::optional<detail::BoundedLifetimeAllocationAssignment> detail::boundedLifeti
     auto shared = allocateDirectedPeriodic(costs, directions);
     if (certifyShared(costs, shared)) { result.shared = std::move(shared); }
     return result;
+}
+std::optional<detail::BoundedLifetimeAllocationAssignment> detail::boundedLifetimeAllocationAssignment(
+    RegionExpressions& e, const LifetimeWindowInput& w, llvm::ArrayRef<uint8_t> unconditional,
+    llvm::ArrayRef<GuardedRankEdge> demands)
+{
+    return boundedLifetimeAllocationAssignmentWithInactive(e, w, unconditional, demands, {});
 }
 DictionaryAttr boundedLifetimeAllocationCertificate(
     func::FuncOp function, RegionExpressions& e, const LifetimeWindowInput& w,

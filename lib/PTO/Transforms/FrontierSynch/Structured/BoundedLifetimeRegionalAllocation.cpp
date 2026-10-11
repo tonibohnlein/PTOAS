@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "BoundedLifetimeAllocationInternal.h"
+#include "BoundedLifetimeAllocationContext.h"
 #include <algorithm>
 #include <map>
 namespace mlir::pto::frontiersynch {
@@ -130,7 +131,13 @@ std::shared_ptr<RegionalAllocationSummary> detail::boundedLifetimeRegionalAlloca
         !producerExpressions.constructionError().empty()) { return {}; }
     if (boundary.presence && boundary.expressions.get() != &outputExpressions) { return {}; }
     RegionExpressions::Transaction transaction(outputExpressions);
-    auto assignment = detail::boundedLifetimeAllocationAssignment(producerExpressions, w, unconditional, demands);
+    std::optional<llvm::ArrayRef<uint8_t>> inactive;
+    if (boundary.invocation) {
+        inactive = boundary.invocation->inactive(producerExpressions, w, unconditional, demands);
+        if (!inactive) { return {}; }
+    }
+    auto assignment = detail::boundedLifetimeAllocationAssignmentWithInactive(producerExpressions,
+        w, unconditional, demands, inactive.value_or(llvm::ArrayRef<uint8_t>{}));
     if (!assignment) { return {}; }
     auto result = std::make_shared<RegionalAllocationSummary>();
     auto phases = regionalPalettes(*assignment, *result);

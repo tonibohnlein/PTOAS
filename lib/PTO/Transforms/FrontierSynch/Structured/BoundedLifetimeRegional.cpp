@@ -15,6 +15,7 @@
 #include "../Shared/CountedLoop.h"
 #include "PhysicalRefreshLimits.h"
 #include "BoundedLifetimeAllocationInternal.h"
+#include "BoundedLifetimeAllocationContext.h"
 #include "llvm/ADT/BitVector.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
@@ -316,8 +317,9 @@ FailureOr<RegionalAnalysis> boundedLifetimeRegionalQueries(
     // Cache the requested allocation capability, including an unavailable
     // ordinary export, independently of detached endpoint instantiation.
     auto allocation = std::make_shared<std::optional<std::shared_ptr<RegionalAllocationSummary>>>();
+    auto invocation = std::make_shared<std::shared_ptr<detail::BoundedLifetimeAllocationContext>>();
     out.prepareWithVisits = [demands, owner, enclosing, allocation, arena,
-        trips = queries->trips, queries](ArrayRef<scf::ForOp> visits)
+        trips = queries->trips, queries, invocation](ArrayRef<scf::ForOp> visits)
         -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
         if (visits != ArrayRef<scf::ForOp>(enclosing)) { return failure(); }
         std::string diagnostic;
@@ -325,8 +327,9 @@ FailureOr<RegionalAnalysis> boundedLifetimeRegionalQueries(
         if (succeeded(plan)) {
             (*plan)->mathematicalOwner = owner;
             (*plan)->allocationPreparation =
-                [demands, trips, allocation, arena, queries](PreparedLogicalPlan& prepared) {
+                [demands, trips, allocation, arena, queries, invocation](PreparedLogicalPlan& prepared) {
                 if (!allocation->has_value()) {
+                    *invocation = detail::BoundedLifetimeAllocationContext::create(demands, queries->inputOwner);
                     SmallVector<const CompoundInstanceElement*> phases;
                     for (const auto& anchor : demands->anchors) { phases.push_back(anchor.phase); }
                     // Allocation rollback must not leave IDs in retained query caches.
@@ -336,7 +339,7 @@ FailureOr<RegionalAnalysis> boundedLifetimeRegionalQueries(
                         demands->analysis.sourceDemands, trips,
                         {arena, [queries, predicates](RegionalEvent event) {
                             return queries->presence(event, *predicates);
-                        }}));
+                        }, *invocation}));
                 }
                 prepared.regionalAllocation = **allocation;
             };
