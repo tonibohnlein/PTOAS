@@ -357,6 +357,45 @@ bool multiSeedDifferenceChecks(uint64_t& checked)
     }
     return true;
 }
+bool arrangementMembershipChecks(uint64_t& checked)
+{
+    auto seed = System::create(2, {row({1, 0}, 5), row({-1, 0}, 5),
+                                  row({0, 1}, 5), row({0, -1}, 5)});
+    auto mixed = System::create(2, {row({1, 0}, 1), row({0, -1}, 2)},
+        {congruence({1, 0}, 1, 2), congruence({1, 0}, 1, 3)});
+    auto diagonal = System::create(2, {row({1, 1}, 2), row({-1, 0}, 1)},
+        {congruence({-1, 0}, -2, 4), congruence({0, 1}, 1, 2)});
+    auto low = System::create(2, {row({1, 0}, -3)});
+    // This nonconstant contradictory conjunction must not contribute tests
+    // after exact feasibility removes it from the active RHS axis list.
+    auto empty = System::create(2, {row({1, -1}, -1), row({-1, 1}, -1)});
+    auto all = System::create(2, {});
+    if (failed(seed) || failed(mixed) || failed(diagonal) || failed(low) || failed(empty) || failed(all)) {
+        return false;
+    }
+    for (auto blockers : std::vector<std::vector<System>>{
+             {*mixed, *diagonal, *low, *empty}, {*mixed, *mixed}, {*empty}, {*all}, {}}) {
+        for (unsigned order = 0; order < 2; ++order) {
+            auto difference = fs::subtractIntegerUnions(2, {*seed}, blockers);
+            if (failed(difference)) { return false; }
+            for (int64_t x = -7; x <= 7; ++x) {
+                for (int64_t y = -7; y <= 7; ++y) {
+                    const Point point{Integer(x), Integer(y)};
+                    ++checked;
+                    const bool expected = contains(*seed, point) && !contains(blockers, point);
+                    if (contains(*difference, point) != expected) { return false; }
+                }
+            }
+            std::reverse(blockers.begin(), blockers.end());
+        }
+    }
+    auto zero = System::create(0, {});
+    auto zeroEmpty = System::create(0, {row({}, -1)});
+    if (failed(zero) || failed(zeroEmpty)) { return false; }
+    auto covered = fs::subtractIntegerUnions(0, {*zero}, {*zero});
+    auto retained = fs::subtractIntegerUnions(0, {*zero}, {*zeroEmpty});
+    return succeeded(covered) && covered->empty() && succeeded(retained) && contains(*retained, {});
+}
 bool remapAndDifferenceChecks(uint64_t& checked)
 {
     auto different = System::create(2, {row({1, -1}, -1)});
@@ -403,6 +442,7 @@ int runIntegerRelationChecks()
         llvm::errs() << "integer seeded difference failed\n"; return 1;
     }
     if (!multiSeedDifferenceChecks(checked)) { llvm::errs() << "integer multi-seed difference failed\n"; return 1; }
+    if (!arrangementMembershipChecks(checked)) { llvm::errs() << "arrangement membership failed\n"; return 1; }
     if (!remapAndDifferenceChecks(checked)) { llvm::errs() << "integer remap/difference check failed\n"; return 1; }
     llvm::outs() << "integer relation exactness passed " << checked << " bounded points\n";
     return 0;

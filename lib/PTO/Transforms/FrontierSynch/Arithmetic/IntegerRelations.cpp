@@ -600,18 +600,6 @@ bool contained(const IntegerSystem& region, llvm::ArrayRef<IntegerSystem> pieces
 {
     return std::any_of(pieces.begin(), pieces.end(), [&](const auto& piece) { return region.isSubsetOf(piece); });
 }
-bool useful(const IntegerSystem& region, llvm::ArrayRef<IntegerSystem> lhs, llvm::ArrayRef<IntegerSystem> rhs)
-{
-    if (contained(region, rhs)) { return false; }
-    for (const auto& piece : lhs) {
-        auto overlap = region.intersect(piece);
-        if (failed(overlap)) {
-            llvm::report_fatal_error("integer relation invariant: validated arrangement schemas disagree");
-        }
-        if (!overlap->isEmpty()) { return true; }
-    }
-    return false;
-}
 IntegerSystem thresholdSlice(unsigned dimensions, const Axis& axis, std::size_t interval)
 {
     std::vector<IntegerConstraint> rows;
@@ -650,42 +638,106 @@ std::vector<IntegerSystem> relativeMembership(const IntegerSystem& seed, llvm::A
     }
     return result;
 }
-std::vector<IntegerSystem> arrange(unsigned dimensions, llvm::ArrayRef<IntegerSystem> lhs,
-                                  llvm::ArrayRef<IntegerSystem> rhs, llvm::ArrayRef<Axis> axes,
-                                  const IntegerSystem* seed = nullptr)
+// Each arrangement axis fixes the truth of its RHS atoms. Reuse that
+// partition information instead of solving inclusion again for every cell.
+struct MembershipTest {
+    std::size_t clause = 0, threshold = 0;
+    BoundInteger residue{0}, modulus{0};
+};
+struct ClauseState {
+    std::size_t remaining = 0;
+    bool rejected = false;
+};
+std::vector<std::vector<MembershipTest>> membershipTests(llvm::ArrayRef<IntegerSystem> rhs,
+                                                       llvm::ArrayRef<Axis> axes)
+{
+    std::vector<std::vector<MembershipTest>> tests(axes.size());
+    for (std::size_t clause = 0; clause < rhs.size(); ++clause) {
+        for (const auto& atom : rhs[clause].constraints()) {
+            bool found = false;
+            for (std::size_t axis = 0; axis < axes.size(); ++axis) {
+                if (axes[axis].modulus != 0 || axes[axis].coefficients != atom.coefficients) { continue; }
+                auto threshold = std::lower_bound(axes[axis].thresholds.begin(), axes[axis].thresholds.end(),
+                                                 atom.bound);
+                if (threshold == axes[axis].thresholds.end() || *threshold != atom.bound) { break; }
+                tests[axis].push_back({clause, static_cast<std::size_t>(threshold - axes[axis].thresholds.begin()),
+                                       BoundInteger(0), BoundInteger(0)});
+                found = true;
+                break;
+            }
+            if (!found) { llvm::report_fatal_error("integer arrangement: missing affine membership axis"); }
+        }
+        for (const auto& atom : rhs[clause].congruences()) {
+            bool found = false;
+            for (std::size_t axis = 0; axis < axes.size(); ++axis) {
+                if (axes[axis].modulus == 0 || axes[axis].coefficients != atom.coefficients) { continue; }
+                assert(axes[axis].modulus % atom.modulus == 0);
+                tests[axis].push_back({clause, 0, atom.residue, atom.modulus});
+                found = true;
+                break;
+            }
+            if (!found) { llvm::report_fatal_error("integer arrangement: missing modular membership axis"); }
+        }
+    }
+    return tests;
+}
+std::vector<IntegerSystem> arrange(const IntegerSystem& seed, llvm::ArrayRef<IntegerSystem> rhs,
+                                  llvm::ArrayRef<Axis> axes)
 {
     struct Frame {
         IntegerSystem region;
+        std::vector<ClauseState> clauses;
         std::size_t axis = 0, interval = 0;
         BoundInteger residue{0};
     };
-    std::vector<Frame> stack{{seed ? *seed : validSystem(dimensions, {}), 0, 0, BoundInteger(0)}};
+    std::vector<ClauseState> initial;
+    for (const auto& piece : rhs) {
+        const auto atoms = piece.constraints().size() + piece.congruences().size();
+        if (!atoms) { return {}; } // A true conjunction covers the seed.
+        initial.push_back({atoms, false});
+    }
+    if (initial.empty()) { return {seed}; }
+    const auto tests = membershipTests(rhs, axes);
+    std::vector<Frame> stack{{seed, std::move(initial), 0, 0, BoundInteger(0)}};
     std::vector<IntegerSystem> result;
     while (!stack.empty()) {
         auto& current = stack.back();
-        if (current.axis == axes.size()) {
-            if ((seed || contained(current.region, lhs)) && !contained(current.region, rhs)) {
-                result.push_back(std::move(current.region));
-            }
-            stack.pop_back();
-            continue;
-        }
+        // Every surviving clause must be decided when all axes are assigned.
+        assert(current.axis < axes.size());
         const auto& axis = axes[current.axis];
         IntegerSystem slice;
+        std::size_t interval = current.interval;
+        BoundInteger residue = current.residue;
         if (axis.modulus != 0) {
-            if (current.residue >= axis.modulus) { stack.pop_back(); continue; }
-            slice = validSystem(dimensions, {}, {{axis.coefficients, current.residue, axis.modulus}});
+            if (residue >= axis.modulus) { stack.pop_back(); continue; }
+            slice = validSystem(seed.dimensions(), {}, {{axis.coefficients, residue, axis.modulus}});
             ++current.residue;
         } else {
-            if (current.interval > axis.thresholds.size()) { stack.pop_back(); continue; }
-            slice = thresholdSlice(dimensions, axis, current.interval++);
+            if (interval > axis.thresholds.size()) { stack.pop_back(); continue; }
+            slice = thresholdSlice(seed.dimensions(), axis, current.interval++);
+        }
+        auto clauses = current.clauses; // Sibling cells own independent assignments.
+        for (const auto& test : tests[current.axis]) {
+            auto& clause = clauses[test.clause];
+            if (clause.rejected) { continue; }
+            const bool satisfied = axis.modulus == 0 ? interval <= test.threshold :
+                                   residue % test.modulus == test.residue;
+            if (!satisfied) { clause.rejected = true; }
+            else { assert(clause.remaining); --clause.remaining; }
+        }
+        if (llvm::any_of(clauses, [](const auto& clause) { return !clause.rejected && !clause.remaining; })) {
+            continue; // A complete true RHS clause covers this entire cell.
         }
         auto next = current.region.intersect(slice);
         if (failed(next)) {
             llvm::report_fatal_error("integer relation invariant: validated arrangement slice has an invalid schema");
         }
-        if (!next->isEmpty() && (seed ? !contained(*next, rhs) : useful(*next, lhs, rhs))) {
-            stack.push_back({std::move(*next), current.axis + 1, 0, BoundInteger(0)});
+        if (next->isEmpty()) { continue; } // Geometric feasibility remains exact.
+        if (llvm::all_of(clauses, [](const auto& clause) { return clause.rejected; })) {
+            // Every RHS clause has a false atom, even on unassigned axes.
+            result.push_back(std::move(*next));
+        } else {
+            stack.push_back({std::move(*next), std::move(clauses), current.axis + 1, 0, BoundInteger(0)});
         }
     }
     return result;
@@ -713,9 +765,11 @@ FailureOr<std::vector<IntegerSystem>> subtractIntegerUnions(unsigned dimensions,
     // universe and RHS atoms already implied by that seed add no axes.
     for (const auto& seed : lhs) {
         if (seed.isEmpty() || contained(seed, rhs)) { continue; }
-        const auto relative = relativeMembership(seed, rhs);
+        auto relative = relativeMembership(seed, rhs);
+        relative.erase(std::remove_if(relative.begin(), relative.end(),
+                                      [](const auto& piece) { return piece.isEmpty(); }), relative.end());
         const auto axes = arrangementAxes({}, relative);
-        auto selected = arrange(dimensions, {seed}, relative, axes, &seed);
+        auto selected = arrange(seed, relative, axes);
         for (auto& piece : selected) { result.push_back(std::move(piece)); }
     }
     return result;
