@@ -43,6 +43,9 @@ using namespace mlir;
 bool checkBoundedRegionalQueries(const pto::frontiersynch::BoundedLifetimeDemandResult&,
     const pto::frontiersynch::BoundedLifetimeRecognition&, const pto::frontiersynch::PhaseIndex&,
     pto::frontiersynch::RegionalAnalysis&);
+bool checkBoundedMacroSelectors(const pto::frontiersynch::BoundedLifetimeDemandResult&,
+    const pto::frontiersynch::BoundedLifetimeRecognition&, const pto::frontiersynch::PhaseIndex&,
+    pto::frontiersynch::RegionalAnalysis&);
 LogicalResult checkNormalizedControlSession(func::FuncOp, pto::GMAliasPolicy);
 bool checkBoundedRegionalAllocationRecipe(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkFixedCoordinateRelations(func::FuncOp, pto::GMAliasPolicy);
@@ -1737,9 +1740,11 @@ int main(int argc, char **argv) {
                      << " error=" << error << "\n";
         llvm::outs().flush();
         if (failed(selectors)) { return 1; }
-        if ((!boundedEndpoint &&
-             !checkBoundedRegionalQueries(**demands, *node.boundedLifetime, index, *selectors)) ||
-            !checkBoundedSession(function, policy, id, boundedEndpoint)) { return 1; }
+        if (function->hasAttr("test.bounded_macro_selectors")) {
+          if (!checkBoundedMacroSelectors(**demands, *node.boundedLifetime, index, *selectors)) { return 1; }
+        } else if ((!boundedEndpoint &&
+                    !checkBoundedRegionalQueries(**demands, *node.boundedLifetime, index, *selectors)) ||
+                   !checkBoundedSession(function, policy, id, boundedEndpoint)) { return 1; }
         ++checked;
       }
     }

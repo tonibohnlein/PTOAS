@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Entry/exit selector certificates are independent of global query transport.
+// Macro envelopes share one occurrence boundary: none suppresses a sibling.
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeRegional.h"
 #include "../Shared/CountedLoop.h"
 #include "../Shared/RecognitionInternal.h"
@@ -13,6 +14,7 @@
 #include "../../InsertSync/SyncScalarEvolution.h"
 #include "mlir/IR/Matchers.h"
 #include <set>
+#include <tuple>
 namespace mlir::pto::frontiersynch {
 namespace {
 using Id = RegionExpressions::Id;
@@ -372,6 +374,59 @@ private:
         }
         return true;
     }
+    using OccurrenceKey = std::tuple<Operation*, Id, std::vector<Id>,
+                                    std::vector<std::pair<Operation*, int64_t>>>;
+    std::vector<std::vector<Use>> occurrenceGroups(ArrayRef<Use> fringe)
+    {
+        std::map<OccurrenceKey, std::size_t> positions;
+        std::vector<std::vector<Use>> groups;
+        for (const auto& use : fringe) {
+            const auto& anchor = demands.anchors[use.event.type];
+            std::vector<std::pair<Operation*, int64_t>> fixed;
+            for (auto coordinate : anchor.coordinates) {
+                fixed.emplace_back(coordinate.loop.getOperation(), coordinate.induction);
+            }
+            OccurrenceKey key{anchor.phase->elementOp, use.event.ordinal, use.event.visits, std::move(fixed)};
+            auto inserted = positions.try_emplace(std::move(key), groups.size());
+            if (inserted.second) { groups.emplace_back(); }
+            groups[inserted.first->second].push_back(use);
+        }
+        return groups;
+    }
+    void selectGroup(ArrayRef<Use> group, bool tail, RegionalStorageBoundary& boundary,
+                     Id& noWriter, std::map<uint32_t, Id>& noReader)
+    {
+        auto writes = e.boolean(false);
+        std::map<uint32_t, Id> reads;
+        for (const auto& use : group) {
+            auto writer = RegionalSelector{use.event, e.land(noWriter, use.write)};
+            if (e.constantValue(writer.present) != 0) {
+                (tail ? boundary.lastWriters : boundary.firstWriters).push_back(writer);
+            }
+            auto unseen = noReader.try_emplace(use.pipe, e.boolean(true)).first->second;
+            auto present = e.land(noWriter, e.land(unseen, e.land(use.read, e.lnot(use.write))));
+            if (e.constantValue(present) != 0) {
+                (tail ? boundary.lastReaders : boundary.firstReaders)[use.pipe].push_back({use.event, present});
+            }
+            auto accumulated = reads.try_emplace(use.pipe, e.boolean(false)).first;
+            accumulated->second = e.lor(accumulated->second, use.read);
+            writes = e.lor(writes, use.write);
+        }
+        // All envelopes above observe the incoming group state. Only a
+        // different original occurrence can be hidden by these accesses.
+        noWriter = e.land(noWriter, e.lnot(writes));
+        for (auto [pipe, read] : reads) { noReader[pipe] = e.land(noReader[pipe], e.lnot(read)); }
+    }
+    void selectBoundary(unsigned cell, bool tail, RegionalStorageBoundary& boundary)
+    {
+        auto fringe = uses(cell, tail ? tailBegin() : e.constant(0));
+        auto groups = occurrenceGroups(fringe);
+        auto noWriter = e.boolean(true);
+        std::map<uint32_t, Id> noReader;
+        for (std::size_t index = 0; index < groups.size(); ++index) {
+            selectGroup(groups[tail ? groups.size() - 1 - index : index], tail, boundary, noWriter, noReader);
+        }
+    }
     bool storage(unsigned cell)
     {
         const auto& atom = recognized.physical->atoms[cell];
@@ -400,27 +455,8 @@ private:
         }
         RegionalStorageBoundary boundary;
         boundary.cell = atom;
-        auto select = [&](bool tail) {
-            auto fringe = uses(cell, tail ? tailBegin() : e.constant(0));
-            auto noWriter = e.boolean(true);
-            std::map<uint32_t, Id> noReader;
-            for (unsigned index = 0; index < fringe.size(); ++index) {
-                auto use = fringe[tail ? fringe.size() - 1 - index : index];
-                auto writer = RegionalSelector{use.event, e.land(noWriter, use.write)};
-                if (e.constantValue(writer.present) != 0) {
-                    (tail ? boundary.lastWriters : boundary.firstWriters).push_back(writer);
-                }
-                auto seen = noReader.try_emplace(use.pipe, e.boolean(true)).first;
-                auto present = e.land(noWriter, e.land(seen->second, e.land(use.read, e.lnot(use.write))));
-                if (e.constantValue(present) != 0) {
-                    (tail ? boundary.lastReaders : boundary.firstReaders)[use.pipe].push_back({use.event, present});
-                }
-                seen->second = e.land(seen->second, e.lnot(use.read));
-                noWriter = e.land(noWriter, e.lnot(use.write));
-            }
-        };
-        select(false);
-        select(true);
+        selectBoundary(cell, false, boundary);
+        selectBoundary(cell, true, boundary);
         out.storageBoundary.push_back(std::move(boundary));
         return true;
     }

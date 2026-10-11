@@ -6,9 +6,12 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent concrete event graphs check every site pair around transport.
+// Boundary extrema are checked by competing occurrence pairs, including all
+// simultaneous envelopes of the same original macro invocation.
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeRegional.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
+#include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/CountedLoop.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RecognitionInternal.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -60,6 +63,16 @@ bool check(const fs::BoundedLifetimeDemandResult& demands, const fs::BoundedLife
         positions[recognized.skeleton.phases[site].phase] = site;
         phases.push_back(recognized.skeleton.phases[site].phase);
     }
+    auto sameOccurrence = [&](unsigned a, unsigned b) {
+        const auto& left = demands.anchors[a % m];
+        const auto& right = demands.anchors[b % m];
+        if (a / m != b / m || left.phase->elementOp != right.phase->elementOp ||
+            left.coordinates.size() != right.coordinates.size()) { return false; }
+        return llvm::all_of(llvm::zip(left.coordinates, right.coordinates), [](const auto& pair) {
+            const auto& [x, y] = pair;
+            return x.loop == y.loop && x.induction == y.induction;
+        });
+    };
     auto edge = [&](unsigned a, unsigned b) { graph[a].push_back(b); };
     for (unsigned visit = 0; visit < trips; ++visit) {
         for (unsigned site = 0; site < m; ++site) {
@@ -121,8 +134,7 @@ bool check(const fs::BoundedLifetimeDemandResult& demands, const fs::BoundedLife
             for (auto b = std::next(a); b != cell.end(); ++b) {
                 const auto p = static_cast<uint32_t>(phases[a->first % m]->kPipeValue);
                 const auto q = static_cast<uint32_t>(phases[b->first % m]->kPipeValue);
-                const bool simultaneous = a->first / m == b->first / m &&
-                    phases[a->first % m]->elementOp == phases[b->first % m]->elementOp;
+                const bool simultaneous = sameOccurrence(a->first, b->first);
                 if (simultaneous || fs::ptoStorageProtection().protectsScalar(p, q)) { continue; }
                 if ((a->second.write && (b->second.read || b->second.write)) || (a->second.read && b->second.write)) {
                     edge(2 * a->first + 1, 2 * b->first);
@@ -195,17 +207,22 @@ bool check(const fs::BoundedLifetimeDemandResult& demands, const fs::BoundedLife
         llvm::sort(result);
         return result;
     };
-    auto extrema = [](const auto& uses, bool last, bool writer, std::optional<uint32_t> pipe,
-                      const auto& phases, unsigned m) {
+    auto extrema = [&](const auto& uses, bool last, bool writer, std::optional<uint32_t> pipe,
+                       const auto& originalPhases, unsigned sites) {
         std::vector<unsigned> result;
-        for (unsigned i = 0; i < uses.size(); ++i) {
-            const auto& use = uses[last ? uses.size() - 1 - i : i];
-            if (writer ? use.second.write : use.second.read && !use.second.write &&
-                static_cast<uint32_t>(phases[use.first % m]->kPipeValue) == *pipe) {
-                result.push_back(use.first); break;
-            }
-            if (!writer && use.second.write) { break; }
+        for (const auto& candidate : uses) {
+            const auto candidatePipe = static_cast<uint32_t>(originalPhases[candidate.first % sites]->kPipeValue);
+            if (!(writer ? candidate.second.write :
+                    candidate.second.read && !candidate.second.write && candidatePipe == *pipe)) { continue; }
+            const bool blocked = llvm::any_of(uses, [&](const auto& other) {
+                if (sameOccurrence(candidate.first, other.first) ||
+                    (last ? other.first <= candidate.first : other.first >= candidate.first)) { return false; }
+                const auto otherPipe = static_cast<uint32_t>(originalPhases[other.first % sites]->kPipeValue);
+                return other.second.write || (!writer && other.second.read && otherPipe == *pipe);
+            });
+            if (!blocked) { result.push_back(candidate.first); }
         }
+        llvm::sort(result);
         return result;
     };
     if (queries.capabilities.exactSelectors) {
@@ -389,6 +406,103 @@ bool checkWriterCoverage(const fs::BoundedLifetimeDemandResult& demands,
     llvm::outs() << "bounded writer coverage: horizon boundaries and context isolation passed\n";
     return true;
 }
+
+std::optional<bool> evaluateMacroComposition(fs::RegionExpressions& e, fs::RegionExpressions::Id value,
+    scf::ForOp loop, unsigned trips, bool enabled)
+{
+    SmallVector<std::pair<fs::RegionExpressions::Id, fs::RegionExpressions::Id>> bindings{
+        {e.input(loop.getUpperBound()), e.constant(trips)}};
+    for (auto [id, input] : e.referencedInputs(value)) {
+        if (input.getType().isInteger(1)) { bindings.emplace_back(id, e.boolean(enabled)); }
+    }
+    fs::RegionExpressions::Substitution substitution(bindings);
+    auto result = e.constantValue(e.substitute(value, substitution));
+    if (!result || *result > 1) { return std::nullopt; }
+    return *result != 0;
+}
+bool macroSitePresent(const fs::BoundedLifetimeRecognition& recognized, unsigned site, bool enabled)
+{
+    for (auto guard = recognized.skeleton.phases[site].guard; guard;
+        guard = recognized.skeleton.guards[*guard].parent) {
+        if (recognized.skeleton.guards[*guard].takeThen != enabled) { return false; }
+    }
+    return true;
+}
+std::vector<unsigned> macroCrossingSites(const fs::BoundedLifetimeDemandResult& demands,
+    const fs::BoundedLifetimeRecognition& recognized, const fs::RegionalAnalysis& outside)
+{
+    std::vector<unsigned> result;
+    for (unsigned site = 0; site < demands.anchors.size(); ++site) {
+        const auto* phase = demands.anchors[site].phase;
+        if (!phase->elementOp->getName().getStringRef().starts_with("pto.tscatter") &&
+            !phase->elementOp->getName().getStringRef().starts_with("pto.tgather")) { continue; }
+        for (const auto& projection : recognized.physical->accesses) {
+            const auto& access = recognized.skeleton.result.accesses[projection.access];
+            if (demands.input->accesses().effects()[access.effect].phase != phase) { continue; }
+            const auto& cell = recognized.physical->atoms[projection.atom];
+            const bool overlap = llvm::any_of(outside.storageBoundary, [&](const auto& boundary) {
+                return pto::sameStorageDomain(cell, boundary.cell) && cell.begin < boundary.cell.end &&
+                    boundary.cell.begin < cell.end && !boundary.firstWriters.empty();
+            });
+            if (overlap) { result.push_back(site); break; }
+        }
+    }
+    return result;
+}
+bool checkMacroCrossings(fs::SequenceAnalysis& composed, const fs::BoundedLifetimeDemandResult& demands,
+    const fs::BoundedLifetimeRecognition& recognized, ArrayRef<unsigned> sites, bool incoming, uint64_t& count)
+{
+    auto& e = *fs::sequenceExpressions(composed);
+    for (unsigned trips : {0U, 1U, 2U, 5U}) {
+        for (bool enabled : {false, true}) {
+            for (unsigned site : sites) {
+                const auto ordinal = e.constant(incoming || !trips ? 0 : trips - 1);
+                fs::SequenceEvent inner{1, site, ordinal, incoming ? fs::PeriodicEventKind::Start :
+                    fs::PeriodicEventKind::Completion};
+                fs::SequenceEvent outer{incoming ? 0U : 2U, 0, e.constant(0), incoming ?
+                    fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start};
+                auto query = incoming ? fs::sequenceEventReachability(composed, outer, inner) :
+                    fs::sequenceEventReachability(composed, inner, outer);
+                if (!query) { return false; }
+                auto value = evaluateMacroComposition(e, *query, demands.loop, trips, enabled);
+                const bool expected = trips && macroSitePresent(recognized, site, enabled);
+                if (!value || *value != expected) {
+                    llvm::errs() << "macro parent crossing mismatch site=" << site << " trips=" << trips
+                                 << " incoming=" << incoming << " enabled=" << enabled << "\n";
+                    return false;
+                }
+                ++count;
+            }
+        }
+    }
+    return true;
+}
+bool checkMacroComposition(const fs::BoundedLifetimeDemandResult& demands,
+    const fs::BoundedLifetimeRecognition& recognized, const fs::PhaseIndex& index, fs::RegionalAnalysis& queries)
+{
+    auto program = fs::recognizeProgram(demands.function, *demands.input, index);
+    if (failed(program)) { return false; }
+    std::vector<fs::RegionalAnalysis> outside;
+    for (auto [id, node] : llvm::enumerate(program->nodes)) {
+        if (node.kind != fs::StructureKind::ExplicitRun || !node.loops.empty() || !node.payloadCount) { continue; }
+        auto analysis = fs::analyzeSequenceRegion(demands.function, *demands.input, *program, id,
+            queries.expressions, {}, false);
+        if (!analysis.error.empty()) { llvm::errs() << analysis.error << "\n"; return false; }
+        outside.push_back(fs::sequenceRegionalResult(analysis));
+    }
+    if (outside.size() != 2 || outside[0].anchors.size() != 1 || outside[1].anchors.size() != 1) { return false; }
+    auto incoming = macroCrossingSites(demands, recognized, outside[0]);
+    auto outgoing = macroCrossingSites(demands, recognized, outside[1]);
+    if (incoming.size() < 2 || outgoing.size() < 2) { return false; }
+    auto composed = fs::composeRegionalSequence(demands.function, queries.expressions,
+        {outside[0], queries, outside[1]}, false, false);
+    if (!composed.error.empty()) { llvm::errs() << composed.error << "\n"; return false; }
+    uint64_t count = 0;
+    if (!checkMacroCrossings(composed, demands, recognized, incoming, true, count) ||
+        !checkMacroCrossings(composed, demands, recognized, outgoing, false, count)) { return false; }
+    llvm::outs() << "bounded macro composition comparisons=" << count << "\n";
+    return true;
+}
 } // namespace
 bool checkBoundedRegionalQueries(const fs::BoundedLifetimeDemandResult& demands,
     const fs::BoundedLifetimeRecognition& recognized, const fs::PhaseIndex& index, fs::RegionalAnalysis& queries)
@@ -451,4 +565,38 @@ bool checkBoundedRegionalQueries(const fs::BoundedLifetimeDemandResult& demands,
     }
     llvm::outs() << "bounded-query independent event comparisons=" << count << "\n";
     return true;
+}
+
+bool checkBoundedMacroSelectors(const fs::BoundedLifetimeDemandResult& demands,
+    const fs::BoundedLifetimeRecognition& recognized, const fs::PhaseIndex& index, fs::RegionalAnalysis& queries)
+{
+    if (!queries.capabilities.exactSelectors || !recognized.physical) { return false; }
+    bool simultaneousWriters = false, simultaneousReaderWriter = false;
+    const auto& effects = demands.input->accesses().effects();
+    for (const auto& a : recognized.physical->accesses) {
+        for (const auto& b : recognized.physical->accesses) {
+            if (a.atom != b.atom || a.phase != b.phase || a.access == b.access) { continue; }
+            const auto& x = recognized.skeleton.result.accesses[a.access];
+            const auto& y = recognized.skeleton.result.accesses[b.access];
+            const auto* first = effects[x.effect].phase;
+            const auto* second = effects[y.effect].phase;
+            if (first == second || first->elementOp != second->elementOp) { continue; }
+            simultaneousWriters |= x.writes && y.writes;
+            simultaneousReaderWriter |= x.reads && !x.writes && y.writes;
+        }
+    }
+    if (!simultaneousWriters ||
+        (demands.function->hasAttr("test.bounded_macro_readers") && !simultaneousReaderWriter)) {
+        llvm::errs() << "bounded macro fixture did not expose simultaneous boundary accesses\n";
+        return false;
+    }
+    uint64_t comparisons = 0;
+    for (unsigned trips : {0U, 1U, 2U, 5U}) {
+        for (unsigned pattern = 0; pattern < 4; ++pattern) {
+            if (!check(demands, recognized, index, queries, trips, pattern, comparisons)) { return false; }
+        }
+    }
+    llvm::outs() << "bounded macro selectors: simultaneous writers=" << simultaneousWriters
+                 << " reader-writer=" << simultaneousReaderWriter << " comparisons=" << comparisons << "\n";
+    return checkMacroComposition(demands, recognized, index, queries);
 }

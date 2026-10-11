@@ -298,7 +298,13 @@ void recordArithmeticContractAttempt(ProgramRecognition& program, const Arithmet
                         for (const auto& constraint : piece.machineSystem->constraints()) {
                             LinearRow row;
                             for (const auto& coefficient : constraint.coefficients) {
-                                // Admission checked every coefficient against a signed-i64 limit.
+                                // Difference/octagon rows use only zero and unit
+                                // coefficients. Wide admitted values must never
+                                // narrow merely to classify the diagnostic.
+                                if (coefficient < BoundInteger(-1) || coefficient > BoundInteger(1)) {
+                                    rowClass = ArithmeticClass::BoundedCoefficients;
+                                    break;
+                                }
                                 row.coefficients.push_back(static_cast<int64_t>(coefficient));
                             }
                             rowClass = std::max(rowClass, detail::classifyRow(row));
