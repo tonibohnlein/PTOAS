@@ -10,7 +10,9 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_BOUNDEDLIFETIMEALLOCATION_H
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetime.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include <memory>
 namespace mlir::pto::frontiersynch {
+struct RegionalAllocationSummary;
 // The supplied window comes from one common storage-renaming template. The
 // unconditional flags certify that those sites execute in every iteration;
 // numeric access modes, cell identities and operation identities repeat under
@@ -26,5 +28,19 @@ DictionaryAttr boundedLifetimeAllocationCertificate(
     func::FuncOp function, RegionExpressions& expressions, const LifetimeWindowInput& window,
     llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> sourceDemands, int64_t plan,
     llvm::ArrayRef<uint32_t> originalRecords = {});
+// Ordinary palettes only: retain the same mandatory-return reuse assignment
+// and one-coordinate source-ordinal rules as the whole-invocation proof. Every
+// optional endpoint requires guaranteed native-pipe enclosing occurrences.
+// Coarse guarded envelopes are safe but may prevent palette sharing. No storage
+// lane coordinate is added; storage-backed regional allocation is unsupported.
+// Window guards belong to producerExpressions; trips and every returned event,
+// activity predicate and selector belong to outputExpressions. The numerical
+// assignment carries no expression IDs across this explicit arena boundary.
+// Empty means no supported regional proof; demand/endpoint results stay valid.
+std::shared_ptr<RegionalAllocationSummary> boundedLifetimeRegionalAllocation(
+    RegionExpressions& producerExpressions, RegionExpressions& outputExpressions,
+    const LifetimeWindowInput& window,
+    llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> sourceDemands,
+    RegionExpressions::Id trips);
 } // namespace mlir::pto::frontiersynch
 #endif

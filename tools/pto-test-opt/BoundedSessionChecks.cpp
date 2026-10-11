@@ -81,6 +81,31 @@ bool checkRegionalAllocationFailure(func::FuncOp function, pto::GMAliasPolicy po
 }
 } // namespace
 
+bool checkBoundedRegionalAllocationRecipe(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    fs::FrontierAnalysis session(function);
+    if (failed(session.initialize(policy))) { return false; }
+    for (std::size_t region = 1; region < session.result()->nodes.size(); ++region) {
+        if (session.result()->nodes[region].kind != fs::StructureKind::Loop) { continue; }
+        fs::AnalysisRequest request;
+        request.region = region;
+        request.needs.queries = request.needs.selectors = request.needs.synchronization = true;
+        auto selected = session.analyze(request);
+        if (!selected.mathematical || !selected.mathematical->boundedDemands) { continue; }
+        auto first = session.prepareLogical(selected), second = session.prepareLogical(selected);
+        if (failed(first) || failed(second) || !(*first)->allocationPreparation ||
+            (*first)->regionalAllocation || (*second)->regionalAllocation) { return false; }
+        const auto work = session.constructionCounts().mathematicalAttempts;
+        fs::prepareAllocationSupport(**first);
+        fs::prepareAllocationSupport(**second);
+        if (!(*first)->regionalAllocation || (*first)->regionalAllocation != (*second)->regionalAllocation ||
+            session.constructionCounts().mathematicalAttempts != work) { return false; }
+        llvm::outs() << "bounded regional allocation: session recipe consumed, cached export\n";
+        return true;
+    }
+    return false;
+}
+
 bool checkBoundedSession(func::FuncOp function, pto::GMAliasPolicy policy, std::size_t region, bool requireEndpoint)
 {
     auto owner = std::make_unique<fs::FrontierAnalysis>(function);

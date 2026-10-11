@@ -8,6 +8,7 @@
 // A finite mandatory graph proves transport; local rows answer near queries.
 // Neither a demand span nor sampled branch executions prove global queries.
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeRegional.h"
+#include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
 #include "../Shared/IterationPredicates.h"
@@ -307,12 +308,25 @@ FailureOr<RegionalAnalysis> boundedLifetimeRegionalQueries(
     auto owner = std::make_shared<MathematicalResult>();
     owner->input = queries->inputOwner;
     owner->boundedDemands = demands;
-    out.prepareWithVisits = [demands, owner, enclosing](ArrayRef<scf::ForOp> visits)
+    // Cache the requested allocation capability, including an unavailable
+    // ordinary export, independently of detached endpoint instantiation.
+    auto allocation = std::make_shared<std::optional<std::shared_ptr<RegionalAllocationSummary>>>();
+    out.prepareWithVisits = [demands, owner, enclosing, allocation, arena,
+        trips = queries->trips](ArrayRef<scf::ForOp> visits)
         -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
         if (visits != ArrayRef<scf::ForOp>(enclosing)) { return failure(); }
         std::string diagnostic;
         auto plan = prepareBoundedLifetimeLogicalResult(demands, diagnostic, false);
-        if (succeeded(plan)) { (*plan)->mathematicalOwner = owner; }
+        if (succeeded(plan)) {
+            (*plan)->mathematicalOwner = owner;
+            (*plan)->allocationPreparation = [demands, trips, allocation, arena](PreparedLogicalPlan& prepared) {
+                if (!allocation->has_value()) {
+                    allocation->emplace(boundedLifetimeRegionalAllocation(demands->expressions, *arena,
+                        demands->window, demands->unconditional, demands->analysis.sourceDemands, trips));
+                }
+                prepared.regionalAllocation = **allocation;
+            };
+        }
         return plan;
     };
     if (enclosing.empty()) {
