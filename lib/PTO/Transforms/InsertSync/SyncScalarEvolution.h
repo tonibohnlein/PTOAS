@@ -215,7 +215,13 @@ public:
         query.indexBits = indexBits;
         query.rangeQueries = rangeQueries;
         query.constraints = constraints;
-        auto range = query.resolve(value, [&](Value) { return getAffineSymbolExpr(0, context); }, 0).range;
+        // Range-only expressions still require distinct original SSA identities:
+        // collapsing symbols can manufacture constants through cancellation.
+        DenseMap<Value, unsigned> symbols;
+        auto range = query.resolve(value, [&](Value symbol) {
+            auto entry = symbols.try_emplace(symbol, symbols.size());
+            return getAffineSymbolExpr(entry.first->second, context);
+        }, 0).range;
         --rangeQueries->depth;
         const unsigned bits = width(value.getType());
         if (bits && bits <= 64 &&
