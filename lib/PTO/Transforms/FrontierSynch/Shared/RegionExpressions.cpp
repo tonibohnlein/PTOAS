@@ -355,28 +355,40 @@ std::optional<uint64_t> RegionExpressions::fold(Kind kind, uint64_t a, uint64_t 
         default: return std::nullopt;
     }
 }
-RegionExpressions::Id RegionExpressions::absorbBoolean(Kind kind, Id a, Id b) const
+RegionExpressions::Id RegionExpressions::absorbBoolean(Kind kind, Id a, Id b)
 {
-    // Ordered unsigned thresholds on one expression absorb each other. The
-    // returned atom already exists; inspecting two comparison nodes is O(1).
-    struct Threshold { Id operand; uint64_t bound; bool lower; };
+    // Inclusive thresholds use an order-preserving rank. Signed and unsigned
+    // comparisons never share a rank domain; all base operands are i64 bits.
+    struct Threshold { Id operand; uint64_t bound; bool lower, signedOrder; };
     auto threshold = [&](Id id) -> std::optional<Threshold> {
         const Node& node = nodes[id];
-        if (node.kind != Kind::Lt && node.kind != Kind::Le) { return std::nullopt; }
+        const bool signedOrder = node.kind == Kind::SLt || node.kind == Kind::SLe;
+        const bool strict = node.kind == Kind::Lt || node.kind == Kind::SLt;
+        if (!signedOrder && node.kind != Kind::Lt && node.kind != Kind::Le) { return std::nullopt; }
+        const uint64_t sign = signedOrder ? uint64_t(1) << 63 : 0;
         if (auto left = constantValue(node.a)) {
-            if (node.kind == Kind::Lt && *left == UINT64_MAX) { return std::nullopt; }
-            return Threshold{node.b, *left + (node.kind == Kind::Lt), true};
+            const auto rank = *left ^ sign;
+            if (strict && rank == UINT64_MAX) { return std::nullopt; }
+            return Threshold{node.b, rank + strict, true, signedOrder};
         }
         if (auto right = constantValue(node.b)) {
-            if (node.kind == Kind::Lt && *right == 0) { return std::nullopt; }
-            return Threshold{node.a, *right - (node.kind == Kind::Lt), false};
+            const auto rank = *right ^ sign;
+            if (strict && rank == 0) { return std::nullopt; }
+            return Threshold{node.a, rank - strict, false, signedOrder};
         }
         return std::nullopt;
     };
     auto left = threshold(a), right = threshold(b);
-    if (left && right && left->operand == right->operand && left->lower == right->lower) {
-        const bool chooseLarger = (kind == Kind::And) == left->lower;
-        return (chooseLarger ? left->bound >= right->bound : left->bound <= right->bound) ? a : b;
+    if (left && right && left->operand == right->operand && left->signedOrder == right->signedOrder) {
+        if (left->lower == right->lower) {
+            const bool chooseLarger = (kind == Kind::And) == left->lower;
+            return (chooseLarger ? left->bound >= right->bound : left->bound <= right->bound) ? a : b;
+        }
+        const auto lower = left->lower ? left->bound : right->bound;
+        const auto upper = left->lower ? right->bound : left->bound;
+        if (kind == Kind::And && lower > upper) { return boolean(false); }
+        // Inclusive intervals cover a discrete domain even when merely adjacent.
+        if (kind == Kind::Or && (upper == UINT64_MAX || lower <= upper + 1)) { return boolean(true); }
     }
     Kind opposite = kind == Kind::And ? Kind::Or : Kind::And;
     // Inspect only immediate children: absorption and repeated-factor removal

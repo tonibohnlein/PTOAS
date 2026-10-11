@@ -131,21 +131,72 @@ void tightenLatticeBounds(std::vector<IntegerConstraint>& rows,
         }
     }
 }
-Formula conjoin(const Formula& a, const Formula& b)
+struct AtomLess {
+    bool operator()(const Atom& a, const Atom& b) const
+    {
+        if (a.expression.coefficients != b.expression.coefficients) {
+            return a.expression.coefficients < b.expression.coefficients;
+        }
+        if (a.expression.constant != b.expression.constant) { return a.expression.constant < b.expression.constant; }
+        if (a.modulus != b.modulus) { return a.modulus < b.modulus; }
+        return a.bound < b.bound;
+    }
+};
+struct ClauseLess {
+    bool operator()(const Clause& a, const Clause& b) const
+    {
+        return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(), AtomLess{});
+    }
+};
+bool canonicalize(Clause& clause)
+{
+    if (!simplify(clause)) { return false; }
+    for (auto& atom : clause) {
+        atom.bound -= atom.expression.constant;
+        atom.expression.constant = Integer(0);
+        if (atom.modulus != 0) { atom.bound = mod(atom.bound, atom.modulus); }
+    }
+    const AtomLess less;
+    std::sort(clause.begin(), clause.end(), less);
+    clause.erase(std::unique(clause.begin(), clause.end(), [&](const Atom& a, const Atom& b) {
+        return !less(a, b) && !less(b, a);
+    }), clause.end());
+    return true;
+}
+using Clauses = std::set<Clause, ClauseLess>;
+Formula release(Clauses clauses)
 {
     Formula result;
+    result.reserve(clauses.size());
+    while (!clauses.empty()) {
+        auto node = clauses.extract(clauses.begin());
+        result.push_back(std::move(node.value()));
+    }
+    return result;
+}
+Formula conjoin(const Formula& a, const Formula& b, uint64_t* duplicates)
+{
+    Clauses unique;
     for (const auto& x : a) {
         for (const auto& y : b) {
             auto both = x;
             both.insert(both.end(), y.begin(), y.end());
-            if (simplify(both)) { result.push_back(std::move(both)); }
+            if (canonicalize(both) && !unique.insert(std::move(both)).second && duplicates) {
+                accumulateCost(*duplicates, 1);
+            }
         }
     }
-    return result;
+    return release(std::move(unique));
 }
 void append(Formula& to, Formula from)
 {
-    to.insert(to.end(), std::make_move_iterator(from.begin()), std::make_move_iterator(from.end()));
+    Clauses unique;
+    for (auto* formulas : {&to, &from}) {
+        for (auto& clause : *formulas) {
+            if (canonicalize(clause)) { unique.insert(std::move(clause)); }
+        }
+    }
+    to = release(std::move(unique));
 }
 } // namespace
 // Definitions are shared across all Boolean alternatives. Base expressions are
@@ -187,7 +238,9 @@ private:
         if (!a.empty() && b.size() > UINT64_MAX / a.size()) {
             reject("regional relation formula size exceeds representation"); return {};
         }
-        auto result = conjoin(a, b);
+        // duplicateClauses counts conjunction-product duplicates; OR union
+        // normalization does not contribute to this product-work counter.
+        auto result = conjoin(a, b, cost ? &cost->duplicateClauses : nullptr);
         if (cost) {
             accumulateCost(cost->formulaProducts, a.size() * b.size());
             cost->peakClauses = std::max<uint64_t>(cost->peakClauses, result.size());

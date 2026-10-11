@@ -145,12 +145,61 @@ bool signedIntegerRecipeChecks(MLIRContext* context, uint64_t& count)
     }
     return true;
 }
+bool checkOppositeThresholds(Value index)
+{
+    using Arena = fs::RegionExpressions;
+    const std::vector<uint64_t> bounds{
+        0, 1, 2, uint64_t(INT64_MAX), uint64_t(1) << 63, (uint64_t(1) << 63) + 1, UINT64_MAX - 1, UINT64_MAX};
+    for (bool signedOrder : {false, true}) {
+        for (bool lowerStrict : {false, true}) {
+            for (bool upperStrict : {false, true}) {
+                for (auto low : bounds) {
+                    for (auto high : bounds) {
+                        Arena e;
+                        const auto x = e.input(index), l = e.constant(low), h = e.constant(high);
+                        const auto lower = signedOrder ? (lowerStrict ? e.slt(l, x) : e.sle(l, x)) :
+                                                         (lowerStrict ? e.lt(l, x) : e.le(l, x));
+                        const auto upper = signedOrder ? (upperStrict ? e.slt(x, h) : e.sle(x, h)) :
+                                                         (upperStrict ? e.lt(x, h) : e.le(x, h));
+                        const auto both = e.land(lower, upper), either = e.lor(lower, upper);
+                        for (auto sample : bounds) {
+                            const APInt value(64, sample), lo(64, low), hi(64, high);
+                            const bool a = signedOrder ? (lowerStrict ? lo.slt(value) : lo.sle(value)) :
+                                                         (lowerStrict ? low < sample : low <= sample);
+                            const bool b = signedOrder ? (upperStrict ? value.slt(hi) : value.sle(hi)) :
+                                                         (upperStrict ? sample < high : sample <= high);
+                            Arena::Substitution fixed({{x, e.constant(sample)}});
+                            if (e.constantValue(e.substitute(both, fixed)) != (a && b) ||
+                                e.constantValue(e.substitute(either, fixed)) != (a || b)) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Arena e;
+    const auto x = e.input(index);
+    auto tautology = e.boolean(true);
+    for (uint64_t i = 1; i <= 64; ++i) {
+        tautology = e.land(tautology, e.lor(e.sle(x, e.constant(i)), e.sle(e.constant(0 - i), x)));
+    }
+    if (e.constantValue(tautology) != 1) {
+        return false;
+    }
+    // Mixing the order domains would incorrectly erase the missing value zero.
+    auto mixed = e.lor(e.sle(x, e.constant(UINT64_MAX)), e.le(e.constant(1), x));
+    Arena::Substitution zero({{x, e.constant(0)}});
+    return e.constantValue(e.substitute(mixed, zero)) == 0 && e.constantValue(mixed) == std::nullopt;
+}
 } // namespace
 bool runExpressionRelationChecks(MLIRContext* context)
 {
     Block block;
     auto location = UnknownLoc::get(context);
     auto xValue = block.addArgument(IndexType::get(context), location);
+    if (!checkOppositeThresholds(xValue)) { return false; }
     auto yValue = block.addArgument(IndexType::get(context), location);
     auto pValue = block.addArgument(IntegerType::get(context, 1), location);
     auto byteValue = block.addArgument(IntegerType::get(context, 8), location);

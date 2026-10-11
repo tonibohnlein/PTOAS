@@ -309,6 +309,7 @@ FailureOr<ArithmeticStorageSelectors> mappedFiniteSelectors(const ExpandedStorag
         auto result = arena.integerRelation(*predicate, inputs, *universe, error, &actual);
         accumulateCost(cost.gates, actual.gates); accumulateCost(cost.projections, actual.projections);
         accumulateCost(cost.formulaProducts, actual.formulaProducts); accumulateCost(cost.pieces, actual.pieces);
+        accumulateCost(cost.duplicateClauses, actual.duplicateClauses);
         cost.peakClauses = std::max(cost.peakClauses, actual.peakClauses);
         return result;
     };

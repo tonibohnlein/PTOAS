@@ -14,6 +14,42 @@
 #include <set>
 #include "llvm/ADT/ScopeExit.h"
 namespace mlir::pto::frontiersynch {
+FailureOr<std::vector<IntegerSystem>> RegionalRelationTranslation::translate(
+    RegionExpressions::Id predicate, ArrayRef<RegionExpressions::Id> variables, std::string& error)
+{
+    accumulateCost(cost.conversionRequests, 1);
+    const auto key = std::make_pair(predicate, variables.vec());
+    auto found = cache.find(key);
+    if (found != cache.end()) {
+        accumulateCost(cost.conversionCacheHits, 1);
+        error = found->second.error;
+        if (!found->second.systems) { return failure(); }
+        return *found->second.systems;
+    }
+    Entry entry;
+    if (variables.size() > UINT_MAX) {
+        entry.error = "regional relation schema exceeds representation";
+    } else {
+        auto domain = IntegerSystem::create(static_cast<unsigned>(variables.size()), {});
+        RegionExpressions::RelationCost actual;
+        if (failed(domain)) {
+            entry.error = "regional relation domain construction failed";
+        } else {
+            auto result = expressions.integerRelation(predicate, variables, *domain, entry.error, &actual);
+            if (succeeded(result)) { entry.systems = std::move(*result); }
+        }
+        for (auto member : {&RegionExpressions::RelationCost::gates, &RegionExpressions::RelationCost::pieces,
+            &RegionExpressions::RelationCost::projections, &RegionExpressions::RelationCost::formulaProducts,
+            &RegionExpressions::RelationCost::duplicateClauses}) {
+            accumulateCost(cost.*member, actual.*member);
+        }
+        cost.peakClauses = std::max(cost.peakClauses, actual.peakClauses);
+    }
+    auto retained = cache.emplace(key, std::move(entry)).first;
+    error = retained->second.error;
+    if (!retained->second.systems) { return failure(); }
+    return *retained->second.systems;
+}
 namespace {
 using Id = RegionExpressions::Id;
 using Kind = ArithmeticBoundaryKind;
@@ -399,17 +435,9 @@ FailureOr<RegionalRelationData> Request::lower(ArrayRef<Value> parameters, std::
     std::set<uint32_t> pipes;
     for (const auto& site : data.sites) { pipes.insert(static_cast<uint32_t>(site.phase->kPipeValue)); }
     data.analysis.pipeCount = pipes.size();
-    auto translate = [&](Id predicate, std::vector<Id> values) -> FailureOr<std::vector<IntegerSystem>> {
-        auto domain = IntegerSystem::create(values.size(), {});
-        if (failed(domain)) { return failure(); }
-        RegionExpressions::RelationCost cost;
-        auto result = e.integerRelation(predicate, values, *domain, diagnostic, &cost);
-        for (auto member : {&RegionExpressions::RelationCost::gates, &RegionExpressions::RelationCost::pieces,
-            &RegionExpressions::RelationCost::projections, &RegionExpressions::RelationCost::formulaProducts}) {
-            accumulateCost(data.translationCost.*member, cost.*member);
-        }
-        data.translationCost.peakClauses = std::max(data.translationCost.peakClauses, cost.peakClauses);
-        return result;
+    RegionalRelationTranslation translation(e, data.translationCost);
+    auto translate = [&](Id predicate, const std::vector<Id>& values) {
+        return translation.translate(predicate, values, diagnostic);
     };
     for (const auto& formula : formulas) {
         auto values = formula.coordinates; llvm::append_range(values, data.parameters);

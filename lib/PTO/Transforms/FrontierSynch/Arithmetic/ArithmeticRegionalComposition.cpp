@@ -581,7 +581,9 @@ FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
         accumulateCost(out.analysis.cost.*member, right.analysis.cost.*member);
     }
     for (auto member : {&RegionExpressions::RelationCost::gates, &RegionExpressions::RelationCost::pieces,
-        &RegionExpressions::RelationCost::projections, &RegionExpressions::RelationCost::formulaProducts}) {
+        &RegionExpressions::RelationCost::projections, &RegionExpressions::RelationCost::formulaProducts,
+        &RegionExpressions::RelationCost::duplicateClauses, &RegionExpressions::RelationCost::conversionRequests,
+        &RegionExpressions::RelationCost::conversionCacheHits}) {
         out.translationCost.*member = left.translationCost.*member;
         accumulateCost(out.translationCost.*member, right.translationCost.*member);
     }

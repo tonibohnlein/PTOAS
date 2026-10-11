@@ -127,7 +127,8 @@ public:
                       llvm::ArrayRef<uint64_t> residues, uint64_t outputResidue);
     struct RelationCost {
         uint64_t gates = 0, pieces = 0, projections = 0;
-        uint64_t formulaProducts = 0, peakClauses = 0;
+        uint64_t formulaProducts = 0, peakClauses = 0, duplicateClauses = 0;
+        uint64_t conversionRequests = 0, conversionCacheHits = 0;
     };
     // Exact domain intersection with a Boolean circuit. Columns are the signed
     // i64 bit interpretations of distinct supplied Input nodes. Narrow integer
@@ -218,7 +219,7 @@ private:
     Id reject(const char* message);
     bool valid(Id id) const { return id < nodes.size(); }
     Id binary(Kind kind, Id a, Id b);
-    Id absorbBoolean(Kind kind, Id a, Id b) const;
+    Id absorbBoolean(Kind kind, Id a, Id b);
     std::optional<uint64_t> fold(Kind kind, uint64_t a, uint64_t b) const;
     bool prepareEmission(Id expression, OpBuilder& builder, Operation* cut,
                          const llvm::DenseMap<Id, Value>& memo, SmallVectorImpl<Id>& order);

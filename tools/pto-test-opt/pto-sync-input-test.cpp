@@ -2365,6 +2365,23 @@ int main(int argc, char **argv) {
               selectorCost["emptiness_builds"] = cost.emptinessBuilds;
             }
           }
+          llvm::json::Object conversionCost;
+          const auto* regional = result.analysis.regionalExports.get();
+          if (!regional && result.analysis.mathematical) {
+            regional = result.analysis.mathematical->regionalDemands.get();
+          }
+          if (regional && regional->relations) {
+            const auto& cost = regional->relations->data.translationCost;
+            conversionCost["scope"] = "cumulative-selected-export";
+            conversionCost["requests"] = cost.conversionRequests;
+            conversionCost["cache_hits"] = cost.conversionCacheHits;
+            conversionCost["gates"] = cost.gates;
+            conversionCost["pieces"] = cost.pieces;
+            conversionCost["projections"] = cost.projections;
+            conversionCost["formula_products"] = cost.formulaProducts;
+            conversionCost["duplicate_product_clauses"] = cost.duplicateClauses;
+            conversionCost["peak_clauses"] = cost.peakClauses;
+          }
           regions.push_back(llvm::json::Object{{"node", result.region},
               {"status", result.status == pto::frontiersynch::CertificationStatus::Recognized ?
                   "recognized" : "unresolved"},
@@ -2373,6 +2390,7 @@ int main(int argc, char **argv) {
               {"queries", result.analysis.available.queries}, {"selectors", result.analysis.available.selectors},
               {"implication_cost", std::move(implicationCost)},
               {"arithmetic_selector_cost", std::move(selectorCost)},
+              {"relation_conversion_cost", std::move(conversionCost)},
               {"obligations", std::move(obligations)}});
         }
         const auto& counts = analysis.constructionCounts();
