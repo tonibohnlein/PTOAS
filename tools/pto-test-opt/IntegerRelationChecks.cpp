@@ -239,6 +239,58 @@ bool unaryLatticeChecks(uint64_t& checked)
     auto witnesses = wide->eliminateWithWitness(0);
     return succeeded(witnesses) && witnesses->size() <= 3;
 }
+bool feasibilityEndpointChecks(uint64_t& checked)
+{
+    // Independent finite witnesses cover satisfiable and empty intersections,
+    // signed affine endpoints, ties and modular restrictions.
+    for (int64_t a = -2; a <= 2; ++a) {
+        for (int64_t b = -2; b <= 2; ++b) {
+            for (int64_t residue = 0; residue < 4; ++residue) {
+                auto source = System::create(2, {row({-1, 0}, 6), row({1, 0}, 6),
+                    row({0, -1}, 2), row({0, 1}, 2), row({-1, 2}, a), row({1, -3}, b)},
+                    {congruence({1, 1}, residue, 4)});
+                if (failed(source)) { return false; }
+                bool exists = false;
+                for (int64_t x = -6; x <= 6; ++x) {
+                    for (int64_t y = -2; y <= 2; ++y) {
+                        exists |= contains(*source, {Integer(x), Integer(y)}); ++checked;
+                    }
+                }
+                if (source->isEmpty() == exists) { return false; }
+            }
+        }
+    }
+    return true;
+}
+bool wideFeasibilityEndpointChecks()
+{
+    // A loose machine bound precedes a much stronger affine endpoint. Both
+    // signs check signed ranking arithmetic with an explicit feasible witness.
+    Integer machine(1), parameter(1), wide(1);
+    for (unsigned i = 0; i < 63; ++i) { machine *= 2; }
+    for (unsigned i = 0; i < 31; ++i) { parameter *= 2; }
+    for (unsigned i = 0; i < 72; ++i) { wide *= 2; }
+    std::vector<Constraint> rows{row({-1, 0, 0}, 0), row({-1, 0, 256}, -1279),
+        row({0, -1, 0}, 0), row({0, -1, 1}, 0), row({0, 0, -1}, 0),
+        row({0, 0, 1}, 0), row({0, 1, -1}, -4), row({0, 1, 0}, 0),
+        row({1, -256, 0}, 0), row({1, 0, -256}, 0), row({1, 0, 0}, 0)};
+    rows[0].bound = machine; rows[10].bound = machine - 1;
+    rows[2].bound = rows[4].bound = parameter;
+    rows[5].bound = rows[7].bound = parameter - 1;
+    rows[3].bound = machine * 2; rows[8].bound = rows[9].bound = wide - 1;
+    std::vector<Congruence> congruences{congruence({0, 1, 3}, 0, 4),
+                                      congruence({1, 0, 768}, 255, 1024)};
+    for (int64_t sign : {1, -1}) {
+        auto source = System::create(3, rows, congruences);
+        if (failed(source) || !contains(*source, {Integer(sign * 1279), Integer(sign * -4), Integer(0)}) ||
+            source->isEmpty()) { return false; }
+        for (auto& atom : rows) { for (auto& coefficient : atom.coefficients) { coefficient = -coefficient; } }
+        for (auto& atom : congruences) {
+            for (auto& coefficient : atom.coefficients) { coefficient = -coefficient; }
+        }
+    }
+    return true;
+}
 bool unaryResidueInclusionChecks()
 {
     Integer huge(1);
@@ -432,6 +484,9 @@ int runIntegerRelationChecks()
     if (!feasibilityAndWitnessChecks()) { llvm::errs() << "integer feasibility/witness check failed\n"; return 1; }
     if (!narrowStripChecks(checked)) { llvm::errs() << "integer narrow strip check failed\n"; return 1; }
     if (!unaryLatticeChecks(checked)) { llvm::errs() << "integer unary lattice check failed\n"; return 1; }
+    if (!feasibilityEndpointChecks(checked) || !wideFeasibilityEndpointChecks()) {
+        llvm::errs() << "integer feasibility endpoint ordering failed\n"; return 1;
+    }
     if (!unaryResidueInclusionChecks()) { llvm::errs() << "integer unary residue inclusion failed\n"; return 1; }
     const bool uncached = uncachedInclusionChecks();
     if (!uncached) {
