@@ -43,9 +43,12 @@ struct ProgramBuilder {
     bool expandEntryArithmetic = true;
     bool preferGuardedSelections = false;
     bool prepareMachine(Value input, const ArithmeticSite& site);
+    std::optional<std::size_t> machineBinding(AffineExpr expression) const;
     AffineExpr machineValue(Value input, const ArithmeticSite& site, unsigned offset) const;
     bool emitMachine(PrimitiveRelation& target, ArrayRef<AffineExpr> rows);
     std::optional<int64_t> constant(Value value) const;
+    bool appendPrimitive(PrimitiveRelation relation);
+    bool constructionReady() const;
     PrimitiveRelation relation(PrimitiveKind kind, unsigned dimensions) const;
     bool staticallyEmpty(const ArithmeticSite& site) const;
     bool entryParameter(Value value, bool regionalLeaves = false) const;

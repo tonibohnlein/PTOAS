@@ -158,6 +158,15 @@ std::optional<ModularScalar::Id> ModularScalar::operation(Value input, Binding b
     // magnitude in unsigned bits, which also handles signed MIN exactly.
     if (*divisor >= (uint64_t(1) << (bits - 1))) { return std::nullopt; }
     auto negative = e.slt(signedBits(*a, bits), e.constant(0));
+    if (isa<arith::DivSIOp>(op)) {
+        // Truncation toward zero equals floor after the sign-dependent bias.
+        // Form the numerator mathematically: adding the bias in source bits
+        // would wrap at the positive signed endpoint.
+        IntegerAffine numerator{{BoundInteger(1), BoundInteger(*divisor - 1)}, BoundInteger(0)};
+        auto result = e.integerFloor(numerator, BoundInteger(*divisor),
+            {signedBits(*a, bits), negative}, 1, {0, 0});
+        return truncate(result, bits);
+    }
     auto magnitude = e.select(negative, truncate(e.sub(e.constant(0), *a), bits), *a);
     auto quotient = isa<arith::DivSIOp>(op) ? e.div(magnitude, *b) : e.rem(magnitude, *b);
     return truncate(e.select(negative, e.sub(e.constant(0), quotient), quotient), bits);

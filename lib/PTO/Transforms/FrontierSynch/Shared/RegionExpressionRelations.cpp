@@ -279,6 +279,16 @@ private:
             // introduce a wide quotient. This is an adapter cost choice only.
             result = floorDiv(fused.high + sign, modulus) - floorDiv(fused.low + sign, modulus) <= 1 ?
                 signedWrap(fused) : signedValue(value(id));
+        } else if (node.kind == Kind::Integer && node.integer && !node.integer->predicate) {
+            // Integer recipes already denote mathematical signed values.
+            // Avoid converting to unsigned bits and immediately back again.
+            const auto& recipe = *node.integer;
+            auto originals = integerInputs(recipe);
+            auto divided = quotient(affine(recipe.numerator, originals), recipe.denominator);
+            auto offset = literal(Integer(recipe.outputResidue));
+            result = signedWrap({addLinear(scaled(divided.expression, Integer(recipe.period)), offset),
+                divided.low * Integer(recipe.period) + Integer(recipe.outputResidue),
+                divided.high * Integer(recipe.period) + Integer(recipe.outputResidue)});
         } else { result = signedValue(value(id)); }
         signedValues.emplace(id, result);
         return result;

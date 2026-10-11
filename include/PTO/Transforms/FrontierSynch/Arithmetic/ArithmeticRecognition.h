@@ -111,6 +111,14 @@ struct ArithmeticRecognition {
 // finite admitted executions and the core-native/control contract. This checks
 // their representation only. Configuration is fixed across an input class;
 // never infer it by taking the maxima of the current input. No backend runs.
+// Validate each completed primitive once; finish checks whole-program metadata
+// and role completeness without repeating normalization. Failed partial output
+// must never be passed to an exact backend.
+void recognizeArithmeticPrimitive(const ArithmeticPrimitives& input, const ArithmeticLimits& limits,
+                                  const PrimitiveRelation& relation, std::size_t relationId,
+                                  ArithmeticRecognition& output);
+void finishArithmeticRecognition(const ArithmeticPrimitives& input, const ArithmeticLimits& limits,
+                                 ArithmeticRecognition& output);
 ArithmeticRecognition recognizeArithmetic(const ArithmeticPrimitives& input, const ArithmeticLimits& limits);
 StringRef recognitionName(ArithmeticClass kind);
 StringRef recognitionName(ArithmeticIssue issue);

@@ -104,10 +104,25 @@ struct PhysicalRefreshAccess {
     uint64_t phase = 0;
     uint32_t atom = 0;
 };
+// A retained producer proof: these payloads collectively write this atom at
+// the specified physical phase whenever ordinal + tail < trips.
+struct PhysicalWriterCoverage {
+    uint32_t atom = 0;
+    SyncStorageCell cell;
+    uint64_t phase = 0;
+    uint64_t tail = 0;
+    SmallVector<std::size_t> payloads;
+};
 struct PhysicalRefreshDescription {
     uint64_t period = 1;
     SmallVector<SyncStorageCell> atoms;
     SmallVector<PhysicalRefreshAccess, 0> accesses;
+    const SyncInput* coverageInput = nullptr;
+    Operation* coverageLoop = nullptr;
+    uint64_t coveragePeriod = 0;
+    SmallVector<GuardNode> coverageGuards;
+    SmallVector<GuardedPhase> coveragePhases;
+    SmallVector<PhysicalWriterCoverage, 0> writerCoverage;
 };
 struct BoundedLifetimeRecognition {
     GuardedRecognition skeleton;

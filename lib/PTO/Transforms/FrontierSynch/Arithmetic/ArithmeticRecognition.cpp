@@ -38,6 +38,13 @@ void reject(ArithmeticRecognition& output, ArithmeticIssue issue, std::size_t re
         output.state = RecognitionState::MissingPremise;
     }
 }
+bool configured(const ArithmeticLimits& limits, ArithmeticRecognition& output)
+{
+    if (limits.pipes && limits.period && limits.coefficient) { return true; }
+    reject(output, ArithmeticIssue::InvalidConfiguration, 0, 0, true);
+    output.pieces.clear();
+    return false;
+}
 bool tags(const PrimitiveRelation& relation)
 {
     if (relation.sourceDimensions > relation.dimensions ||
@@ -177,16 +184,55 @@ void inspectPiece(const ResiduePiece& source, const ArithmeticLimits& limits, No
 }
 } // namespace
 
-ArithmeticRecognition recognizeArithmetic(const ArithmeticPrimitives& input, const ArithmeticLimits& limits)
+void recognizeArithmeticPrimitive(const ArithmeticPrimitives& input, const ArithmeticLimits& limits,
+                                  const PrimitiveRelation& relation, std::size_t id,
+                                  ArithmeticRecognition& output)
 {
-    ArithmeticRecognition output;
-    if (!limits.pipes || !limits.period || !limits.coefficient) {
-        reject(output, ArithmeticIssue::InvalidConfiguration, 0, 0, true);
-        return output;
+    if (!configured(limits, output)) { return; }
+    if (relation.coordinates.size() > limits.dimensions) {
+        reject(output, ArithmeticIssue::DimensionLimit, id);
+        output.pieces.clear();
+        return;
     }
+    if (!schema(relation, input, limits)) {
+        reject(output, ArithmeticIssue::InvalidCoordinate, id, 0, true);
+        output.pieces.clear();
+        return;
+    }
+    output.observedDimensions = std::max(output.observedDimensions,
+                                         static_cast<unsigned>(relation.coordinates.size()));
+    for (auto [pieceId, piece] : llvm::enumerate(relation.pieces)) {
+        if (!validPiece(piece, relation, input.period)) {
+            reject(output, ArithmeticIssue::InvalidResidue, id, pieceId, true);
+            continue;
+        }
+        const auto pieceDimensions = piece.machineSystem ? piece.machineSystem->dimensions() :
+            piece.system.getNumInputs();
+        if (pieceDimensions > limits.dimensions) {
+            reject(output, ArithmeticIssue::DimensionLimit, id, pieceId);
+            continue;
+        }
+        output.observedDimensions = std::max(output.observedDimensions, pieceDimensions);
+        // General integer projection retains congruences introduced by
+        // quotient elimination. Do not hand these lifted pieces to a
+        // cheaper backend whose import assumes no existential locals.
+        if (pieceDimensions > relation.coordinates.size()) {
+            output.arithmeticClass = ArithmeticClass::BoundedCoefficients;
+        }
+        NormalizedPiece normalized{id, pieceId, false, {}};
+        inspectPiece(piece, limits, normalized, output);
+        output.pieces.push_back(std::move(normalized));
+    }
+    if (output.state != RecognitionState::Applicable) { output.pieces.clear(); }
+}
+void finishArithmeticRecognition(const ArithmeticPrimitives& input, const ArithmeticLimits& limits,
+                                 ArithmeticRecognition& output)
+{
+    if (!configured(limits, output)) { return; }
     if (input.relations.empty()) {
         reject(output, ArithmeticIssue::MissingPrimitives, 0, 0, true);
-        return output;
+        output.pieces.clear();
+        return;
     }
     if (input.pipeCount > limits.pipes) {
         reject(output, ArithmeticIssue::PipeLimit);
@@ -205,41 +251,7 @@ ArithmeticRecognition recognizeArithmetic(const ArithmeticPrimitives& input, con
         const auto role = static_cast<unsigned>(relation.kind);
         if (role >= roles.size()) {
             reject(output, ArithmeticIssue::MissingRole, id, 0, true);
-        } else {
-            roles[role] = true;
-        }
-        if (relation.coordinates.size() > limits.dimensions) {
-            reject(output, ArithmeticIssue::DimensionLimit, id);
-            continue;
-        }
-        if (!schema(relation, input, limits)) {
-            reject(output, ArithmeticIssue::InvalidCoordinate, id, 0, true);
-            continue;
-        }
-        output.observedDimensions = std::max(output.observedDimensions,
-                                             static_cast<unsigned>(relation.coordinates.size()));
-        for (auto [pieceId, piece] : llvm::enumerate(relation.pieces)) {
-            if (!validPiece(piece, relation, input.period)) {
-                reject(output, ArithmeticIssue::InvalidResidue, id, pieceId, true);
-                continue;
-            }
-            const auto pieceDimensions = piece.machineSystem ? piece.machineSystem->dimensions() :
-                piece.system.getNumInputs();
-            if (pieceDimensions > limits.dimensions) {
-                reject(output, ArithmeticIssue::DimensionLimit, id, pieceId);
-                continue;
-            }
-            output.observedDimensions = std::max(output.observedDimensions, pieceDimensions);
-            // General integer projection retains congruences introduced by
-            // quotient elimination. Do not hand these lifted pieces to a
-            // cheaper backend whose import assumes no existential locals.
-            if (pieceDimensions > relation.coordinates.size()) {
-                output.arithmeticClass = ArithmeticClass::BoundedCoefficients;
-            }
-            NormalizedPiece normalized{id, pieceId, false, {}};
-            inspectPiece(piece, limits, normalized, output);
-            output.pieces.push_back(std::move(normalized));
-        }
+        } else { roles[role] = true; }
     }
     if (llvm::is_contained(roles, false)) {
         reject(output, ArithmeticIssue::MissingRole, 0, 0, true);
@@ -249,6 +261,18 @@ ArithmeticRecognition recognizeArithmetic(const ArithmeticPrimitives& input, con
     if (output.state != RecognitionState::Applicable) {
         output.pieces.clear();
     }
+}
+ArithmeticRecognition recognizeArithmetic(const ArithmeticPrimitives& input, const ArithmeticLimits& limits)
+{
+    ArithmeticRecognition output;
+    if (!limits.pipes || !limits.period || !limits.coefficient || input.relations.empty()) {
+        finishArithmeticRecognition(input, limits, output);
+        return output;
+    }
+    for (auto [id, relation] : llvm::enumerate(input.relations)) {
+        recognizeArithmeticPrimitive(input, limits, relation, id, output);
+    }
+    finishArithmeticRecognition(input, limits, output);
     return output;
 }
 StringRef recognitionName(ArithmeticClass kind)

@@ -114,6 +114,136 @@ bool projectionChecks(uint64_t& checked)
                                        {congruence({2, -1}, -1, 4), congruence({1, 1}, 1, 3)});
     return succeeded(divisibility) && boundedProjection(*divisibility, {1}, {{-3, 3}, {-3, 3}}, checked);
 }
+bool permutedProjectionChecks(const System& source, llvm::ArrayRef<unsigned> keep,
+    const std::vector<std::pair<int64_t, int64_t>>& bounds, uint64_t& checked)
+{
+    const auto dimensions = source.dimensions();
+    for (unsigned shift = 0; shift < dimensions; ++shift) {
+        for (bool reverse : {false, true}) {
+            std::vector<unsigned> map(dimensions), selected;
+            auto reorderedBounds = bounds;
+            for (unsigned i = 0; i < dimensions; ++i) {
+                map[i] = ((reverse ? dimensions - 1 - i : i) + shift) % dimensions;
+                reorderedBounds[map[i]] = bounds[i];
+            }
+            for (auto column : keep) { selected.push_back(map[column]); }
+            auto reordered = source.remap(dimensions, map);
+            if (failed(reordered) || !boundedProjection(*reordered, selected, reorderedBounds, checked)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+bool projectionDefinitionChecks(uint64_t& checked)
+{
+    // x, y, sign, q, r: truncating division by three with an exact sign
+    // branch, x=3*q+r and y=2*r+q. Enumerate witnesses independently of
+    // elimination order; rotating/reflected columns also permute keep order.
+    for (int64_t negative : {0, 1}) {
+        auto source = System::create(5, {
+            row({1, 0, 0, 0, 0}, negative ? -1 : 7),
+            row({-1, 0, 0, 0, 0}, negative ? 7 : 0),
+            row({0, 1, 0, 0, 0}, 8), row({0, -1, 0, 0, 0}, 8),
+            row({0, 0, 1, 0, 0}, negative), row({0, 0, -1, 0, 0}, -negative),
+            row({0, 0, 0, 1, 0}, 2), row({0, 0, 0, -1, 0}, 2),
+            row({0, 0, 0, 0, 1}, 2), row({0, 0, 0, 0, -1}, 2),
+            row({-1, 0, -2, 3, 0}, 0), row({1, 0, 2, -3, 0}, 2),
+            row({1, 0, 0, -3, -1}, 0), row({-1, 0, 0, 3, 1}, 0),
+            row({0, 1, 0, -1, -2}, 0), row({0, -1, 0, 1, 2}, 0)});
+        if (failed(source) || !permutedProjectionChecks(*source, {1, 0},
+            {{negative ? -7 : 0, negative ? -1 : 7}, {-8, 8}, {0, 1}, {-2, 2}, {-2, 2}}, checked)) {
+            return false;
+        }
+    }
+    // A signed four-bit wrap followed by a nonunit defining equality.
+    // Odd wrapped values cannot satisfy y*2=r; projection must retain this
+    // divisibility condition even after reordering auxiliary definitions.
+    auto wrap = System::create(4, {
+        row({1, 0, 0, 0}, 20), row({-1, 0, 0, 0}, 20),
+        row({0, 1, 0, 0}, 4), row({0, -1, 0, 0}, 4),
+        row({0, 0, 1, 0}, 7), row({0, 0, -1, 0}, 8),
+        row({0, 0, 0, 1}, 2), row({0, 0, 0, -1}, 2),
+        row({1, 0, -1, -16}, 0), row({-1, 0, 1, 16}, 0),
+        row({0, 2, -1, 0}, 0), row({0, -2, 1, 0}, 0)});
+    return succeeded(wrap) && permutedProjectionChecks(*wrap, {1, 0},
+        {{-20, 20}, {-4, 4}, {-8, 7}, {-2, 2}}, checked);
+}
+bool congruenceCompatibilityChecks(uint64_t& checked)
+{
+    const std::vector<std::pair<bool, std::vector<Congruence>>> cases{
+        {true, {congruence({1, 0}, 0, 8), congruence({1, 0}, 6, 64)}},
+        {true, {congruence({1, 3}, 1, 4), congruence({5, 7}, 2, 8)}},
+        {true, {congruence({-1, 3}, 1, 4), congruence({7, -1}, 2, 8)}},
+        {true, {congruence({2, 6}, 2, 8), congruence({5, 7}, 6, 8)}},
+        {true, {congruence({1, 1}, 0, 4), congruence({1, -1}, 1, 8)}},
+        {false, {congruence({1, 3}, 1, 4), congruence({5, 7}, 5, 8)}},
+        {false, {congruence({1, 0}, 0, 2), congruence({1, 0}, 1, 3)}},
+        {false, {congruence({1, 1}, 0, 4), congruence({1, -1}, 2, 8)}}};
+    for (const auto& [empty, atoms] : cases) {
+        auto source = System::create(2, {row({1, 0}, 8), row({-1, 0}, 8),
+                                        row({0, 1}, 8), row({0, -1}, 8)}, atoms);
+        if (failed(source) || (empty && !source->isKnownEmpty())) { return false; }
+        bool witnessed = false;
+        for (int64_t x = -8; x <= 8; ++x) {
+            for (int64_t y = -8; y <= 8; ++y) {
+                const Point point{Integer(x), Integer(y)};
+                bool expected = true;
+                for (const auto& atom : atoms) {
+                    expected &= (evaluate(atom.coefficients, point) - atom.residue) % atom.modulus == 0;
+                }
+                if (contains(*source, point) != expected) { return false; }
+                witnessed |= expected;
+                ++checked;
+            }
+        }
+        if (witnessed == empty) { return false; }
+    }
+    Integer huge(1);
+    for (unsigned bit = 0; bit < 130; ++bit) { huge *= 2; }
+    const Congruence first{{Integer(1), huge}, Integer(7), Integer(2) * huge};
+    const Congruence incompatible{{Integer(1), Integer(3) * huge}, Integer(8), Integer(4) * huge};
+    const Congruence compatible{{Integer(1), Integer(3) * huge}, Integer(7), Integer(4) * huge};
+    auto empty = System::create(2, {}, {first, incompatible});
+    auto witnessed = System::create(2, {}, {first, compatible});
+    checked += 2;
+    return succeeded(empty) && empty->isKnownEmpty() && succeeded(witnessed) &&
+        contains(*witnessed, {Integer(7), Integer(0)});
+}
+bool coupledCongruenceChecks(uint64_t& checked)
+{
+    const std::vector<std::pair<bool, std::vector<Congruence>>> cases{
+        {true, {congruence({1, 0}, 0, 2), congruence({0, 1}, 0, 2), congruence({1, 1}, 1, 2)}},
+        {false, {congruence({1, 0}, 0, 2), congruence({0, 1}, 0, 2), congruence({1, 1}, 0, 2)}},
+        {true, {congruence({1, 0}, 1, 4), congruence({0, 1}, 2, 6), congruence({1, 1}, 4, 8)}},
+        {false, {congruence({1, 0}, 1, 4), congruence({0, 1}, 2, 6), congruence({1, 1}, 3, 8)}},
+        {true, {congruence({-1, 0}, -1, 4), congruence({0, -1}, -2, 6), congruence({-1, -1}, -4, 8)}}};
+    for (const auto& [empty, atoms] : cases) {
+        for (bool reverse : {false, true}) {
+            auto ordered = atoms;
+            if (reverse) { std::reverse(ordered.begin(), ordered.end()); }
+            auto source = System::create(2, {row({1, 0}, 8), row({-1, 0}, 8),
+                                            row({0, 1}, 8), row({0, -1}, 8)}, ordered);
+            if (failed(source) || source->isEmpty() != empty ||
+                !permutedProjectionChecks(*source, {1, 0}, {{-8, 8}, {-8, 8}}, checked)) { return false; }
+        }
+    }
+    Integer huge(1);
+    for (unsigned bit = 0; bit < 130; ++bit) { huge *= 2; }
+    auto empty = System::create(2, {}, {{{Integer(1), Integer(0)}, Integer(0), huge},
+        {{Integer(0), Integer(1)}, Integer(0), huge}, {{Integer(1), Integer(1)}, Integer(1), huge}});
+    auto consistent = System::create(2, {}, {{{Integer(1), Integer(0)}, Integer(0), huge},
+        {{Integer(0), Integer(1)}, Integer(0), huge}, {{Integer(1), Integer(1)}, Integer(0), huge}});
+    // Consistent congruences must not hide an inequality contradiction.
+    auto infeasible = System::create(2, {row({-1, 0}, 0), row({0, -1}, 0), row({1, 1}, -1)},
+        {congruence({1, 0}, 0, 2), congruence({0, 1}, 0, 2), congruence({1, 1}, 0, 2)});
+    auto zero = System::create(0, {}, {{{}, Integer(0), huge}});
+    auto zeroEmpty = System::create(0, {}, {{{}, Integer(1), huge}});
+    checked += 5;
+    return succeeded(empty) && empty->isEmpty() && succeeded(consistent) && !consistent->isEmpty() &&
+        succeeded(infeasible) && infeasible->isEmpty() && succeeded(zero) && !zero->isEmpty() &&
+        succeeded(zeroEmpty) && zeroEmpty->isEmpty();
+}
 bool feasibilityAndWitnessChecks()
 {
     auto half = System::create(1, {row({2}, 1), row({-2}, -1)});
@@ -481,6 +611,15 @@ int runIntegerRelationChecks()
 {
     uint64_t checked = 0;
     if (!projectionChecks(checked)) { llvm::errs() << "integer projection oracle differs\n"; return 1; }
+    if (!projectionDefinitionChecks(checked)) {
+        llvm::errs() << "integer projection definition ordering differs\n"; return 1;
+    }
+    if (!congruenceCompatibilityChecks(checked)) {
+        llvm::errs() << "integer congruence compatibility differs\n"; return 1;
+    }
+    if (!coupledCongruenceChecks(checked)) {
+        llvm::errs() << "integer coupled congruence consistency differs\n"; return 1;
+    }
     if (!feasibilityAndWitnessChecks()) { llvm::errs() << "integer feasibility/witness check failed\n"; return 1; }
     if (!narrowStripChecks(checked)) { llvm::errs() << "integer narrow strip check failed\n"; return 1; }
     if (!unaryLatticeChecks(checked)) { llvm::errs() << "integer unary lattice check failed\n"; return 1; }

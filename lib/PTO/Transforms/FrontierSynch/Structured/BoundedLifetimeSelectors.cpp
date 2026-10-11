@@ -8,6 +8,7 @@
 // Entry/exit selector certificates are independent of global query transport.
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeRegional.h"
 #include "../Shared/CountedLoop.h"
+#include "../Shared/RecognitionInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ModularScalar.h"
 #include "../../InsertSync/SyncScalarEvolution.h"
 #include "mlir/IR/Matchers.h"
@@ -231,6 +232,14 @@ private:
         if (auto found = emptiness.find(predicate); found != emptiness.end()) {
             return found->second;
         }
+        // Preserve shared Boolean structure before requesting a distributed
+        // integer relation. This sufficient proof treats arithmetic atoms as
+        // opaque; an inconclusive result leaves exact integer lowering available.
+        ++out.cost.implicationChecks;
+        if (e.implies(predicate, e.boolean(false))) {
+            emptiness.emplace(predicate, true);
+            return true;
+        }
         auto referenced = e.referencedInputs(predicate);
         SmallVector<Id> variables;
         for (auto [id, input] : referenced) { (void)input; variables.push_back(id); }
@@ -312,6 +321,12 @@ private:
     }
     bool coverage(unsigned cell, std::optional<uint32_t> readerPipe)
     {
+        // A full window contains the producer-certified writer phase before
+        // its interior tail. Keep original guards on the actual fringe events.
+        if (!readerPipe && detail::physicalWriterCoverageApplies(
+                recognized, *demands.input, demands.loop, cell, horizon)) {
+            return true;
+        }
         // A complete unconditional physical orbit proves coverage directly.
         // Every visit in the quantified full window exists; a window at least
         // one period long includes every residue, independently of its start.

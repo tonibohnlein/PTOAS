@@ -138,6 +138,68 @@ InteriorFacts interiorFacts(const GuardedRecognition& skeleton, scf::ForOp loop)
     }
     return result;
 }
+bool coverageContext(const PhysicalRefreshDescription& physical, const GuardedRecognition& skeleton,
+                     const SyncInput& input, scf::ForOp loop)
+{
+    if (physical.coverageInput != &input || physical.coverageLoop != loop.getOperation() ||
+        physical.coveragePeriod != physical.period || !physical.period ||
+        physical.coverageGuards.size() != skeleton.guards.size() ||
+        physical.coveragePhases.size() != skeleton.phases.size()) {
+        return false;
+    }
+    for (auto [proof, current] : llvm::zip(physical.coverageGuards, skeleton.guards)) {
+        if (proof.parent != current.parent || proof.condition != current.condition ||
+            proof.takeThen != current.takeThen) {
+            return false;
+        }
+    }
+    for (auto [proof, current] : llvm::zip(physical.coveragePhases, skeleton.phases)) {
+        if (proof.phase != current.phase || proof.guard != current.guard) {
+            return false;
+        }
+    }
+    return true;
+}
+bool coveragePayload(const PhysicalWriterCoverage& proof, std::size_t payload,
+                     const PhysicalRefreshDescription& physical, const GuardedRecognition& skeleton,
+                     const SyncInput& input)
+{
+    if (payload >= skeleton.phases.size()) {
+        return false;
+    }
+    return llvm::any_of(physical.accesses, [&](const auto& projection) {
+        if (projection.atom != proof.atom || projection.phase != proof.phase ||
+            projection.access >= skeleton.result.accesses.size()) {
+            return false;
+        }
+        const auto& access = skeleton.result.accesses[projection.access];
+        return access.writes && access.effect < input.accesses().effects().size() &&
+               input.accesses().effects()[access.effect].phase == skeleton.phases[payload].phase;
+    });
+}
+bool completeCoveragePayloads(const PhysicalWriterCoverage& proof, const PhysicalRefreshDescription& physical,
+                              const GuardedRecognition& skeleton, const SyncInput& input)
+{
+    return llvm::all_of(physical.accesses, [&](const auto& projection) {
+        if (projection.atom != proof.atom || projection.phase != proof.phase) {
+            return true;
+        }
+        if (projection.access >= skeleton.result.accesses.size()) {
+            return false;
+        }
+        const auto& access = skeleton.result.accesses[projection.access];
+        if (!access.writes) {
+            return true;
+        }
+        if (access.effect >= input.accesses().effects().size()) {
+            return false;
+        }
+        const auto* phase = input.accesses().effects()[access.effect].phase;
+        return llvm::any_of(proof.payloads, [&](std::size_t payload) {
+            return payload < skeleton.phases.size() && skeleton.phases[payload].phase == phase;
+        });
+    });
+}
 class PhysicalRefreshBuilder {
 public:
     PhysicalRefreshBuilder(const GuardedRecognition& skeleton, const SyncInput& input)
@@ -242,12 +304,29 @@ private:
         }
         return true;
     }
+    void retainCoverage(const std::pair<uint64_t, uint32_t>& key,
+                        ArrayRef<std::size_t> payloads, uint64_t tail)
+    {
+        PhysicalWriterCoverage proof;
+        proof.atom = key.second;
+        proof.cell = result.atoms[key.second];
+        proof.phase = key.first;
+        proof.tail = tail;
+        proof.payloads.append(payloads.begin(), payloads.end());
+        result.writerCoverage.push_back(std::move(proof));
+    }
     bool refresh(scf::ForOp loop, RefreshCertificate& certificate)
     {
+        result.coverageInput = &input;
+        result.coverageLoop = loop.getOperation();
+        result.coveragePeriod = result.period;
+        result.coverageGuards = skeleton.guards;
+        result.coveragePhases = skeleton.phases;
         std::vector<uint8_t> refreshed(result.atoms.size());
         for (const auto& [key, payloads] : writers) {
             if (coversEveryVisit(skeleton, payloads)) {
                 refreshed[key.second] = 1;
+                retainCoverage(key, payloads, 0);
             }
         }
         bool incomplete = false;
@@ -259,8 +338,9 @@ private:
             auto facts = interiorFacts(skeleton, loop);
             tail = facts.tail;
             for (const auto& [key, payloads] : writers) {
-                if (coversEveryVisitUnderFacts(skeleton, payloads, facts.values)) {
+                if (!refreshed[key.second] && coversEveryVisitUnderFacts(skeleton, payloads, facts.values)) {
                     refreshed[key.second] = 1;
+                    retainCoverage(key, payloads, tail);
                 }
             }
             for (std::size_t cell = 0; cell < writable.size(); ++cell) {
@@ -287,6 +367,29 @@ private:
     }
 };
 } // namespace
+bool physicalWriterCoverageApplies(const BoundedLifetimeRecognition& recognized, const SyncInput& input,
+                                   scf::ForOp loop, unsigned cell, uint64_t horizon)
+{
+    if (!recognized.physical || cell >= recognized.physical->atoms.size()) {
+        return false;
+    }
+    const auto& physical = *recognized.physical;
+    if (!coverageContext(physical, recognized.skeleton, input, loop)) {
+        return false;
+    }
+    const auto& atom = physical.atoms[cell];
+    return llvm::any_of(physical.writerCoverage, [&](const auto& proof) {
+        if (proof.atom != cell || !sameStorageDomain(proof.cell, atom) ||
+            proof.cell.begin != atom.begin || proof.cell.end != atom.end || proof.phase >= physical.period ||
+            proof.tail > horizon || physical.period > horizon - proof.tail || proof.payloads.empty()) {
+            return false;
+        }
+        return completeCoveragePayloads(proof, physical, recognized.skeleton, input) &&
+               llvm::all_of(proof.payloads, [&](std::size_t payload) {
+                   return coveragePayload(proof, payload, physical, recognized.skeleton, input);
+               });
+    });
+}
 std::optional<PhysicalRefreshDescription> certifyPhysicalRefresh(
     const GuardedRecognition& skeleton, const SyncInput& input, scf::ForOp loop, RefreshCertificate& certificate)
 {
