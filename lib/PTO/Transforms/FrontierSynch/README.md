@@ -66,8 +66,10 @@ establish executable synchronization or allocation support.
 
 The arithmetic producer checks each completed primitive with the same
 normalization and profile checks used by batch recognition. A failed primitive
-stops construction of that representation; later profiles and routes remain
-available. Failed optional residue reconstruction restores the earlier accepted
+stops construction of that representation. Occurrences and accesses are checked
+before pairwise order and native relations; access extraction runs once per
+attempt, and recipe indices follow the actual retained relation order. Later
+profiles and routes remain available. Failed optional residue reconstruction restores the earlier accepted
 result. Machine scalar recipes use sparse, simultaneous substitution: profile
 dimension ceilings never determine allocation sizes or placeholder identities.
 

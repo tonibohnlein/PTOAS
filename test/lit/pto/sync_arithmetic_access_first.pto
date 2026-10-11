@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --arithmetic-periodic-input-checks %s | FileCheck %s
+// CHECK: access failure precedes order; permissive profile remains available
+!tile = !pto.tile_buf<vec, 1x8xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func @access_first(%pointer: !pto.ptr<f32, gm>) attributes {test.access_first} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %four = arith.constant 4 : index
+    %eight = arith.constant 8 : index
+    %size = arith.constant 32 : index
+    %address = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %address : !tile
+    %tensor = pto.make_tensor_view %pointer, shape = [%size, %size], strides = [%eight, %one] : !pto.tensor_view<?x?xf32>
+    scf.for %i = %zero to %four step %one {
+      %view = pto.partition_view %tensor, offsets = [%i, %zero], sizes = [%one, %eight] : !pto.tensor_view<?x?xf32>
+      pto.tstore ins(%tile : !tile) outs(%view : !pto.partition_tensor_view<1x8xf32>)
+    }
+    return
+  }
+}

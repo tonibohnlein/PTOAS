@@ -240,6 +240,33 @@ static bool costOrderingChecks()
 int runArithmeticPeriodicInputChecks(mlir::func::FuncOp function, const mlir::pto::SyncInput& input)
 {
     if (!costOrderingChecks()) { return 1; }
+    if (function->hasAttr("test.access_first")) {
+        fs::PhaseIndex index;
+        if (failed(index.build(function, input))) { return 1; }
+        auto program = fs::recognizeArithmeticProgram(function, index, input, input.accesses(), {8, 8, 1, 1});
+        // Seven role placeholders and one occurrence precede the local read
+        // and GM write. The write must fail before any pairwise order/native
+        // relation is constructed; failure clears partial exports as usual.
+        const bool stopped = !program.recognition.diagnostics.empty() &&
+            llvm::all_of(program.recognition.diagnostics, [](const auto& diagnostic) {
+                return diagnostic.issue == fs::ArithmeticIssue::CoefficientLimit && diagnostic.relation == 9;
+            }) &&
+            program.primitives.relations.empty() && program.finiteAccessRecipes.empty();
+        if (!stopped) {
+            llvm::errs() << "access obligation did not stop pairwise construction: "
+                         << program.recognition.diagnostics.size();
+            for (const auto& diagnostic : program.recognition.diagnostics) {
+                llvm::errs() << " issue=" << static_cast<unsigned>(diagnostic.issue)
+                             << " relation=" << diagnostic.relation;
+            }
+            llvm::errs() << "\n";
+            return 1;
+        }
+        auto retry = fs::recognizeArithmeticProgram(function, index, input, input.accesses(), {8, 8, 1, 4096});
+        if (retry.recognition.state != fs::RecognitionState::Applicable) { return 1; }
+        llvm::outs() << "access failure precedes order; permissive profile remains available\n";
+        return 0;
+    }
     if (function->hasAttr("test.lazy_arithmetic")) {
         auto prepared = fs::prepareFunctionSynchronization(function, mlir::pto::GMAliasPolicy::MayNotAlias);
         if (failed(prepared) || !(*prepared)->recognitionReport) { return 1; }
