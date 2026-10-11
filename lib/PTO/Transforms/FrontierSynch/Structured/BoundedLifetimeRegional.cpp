@@ -14,6 +14,7 @@
 #include "../Shared/IterationPredicates.h"
 #include "../Shared/CountedLoop.h"
 #include "PhysicalRefreshLimits.h"
+#include "BoundedLifetimeAllocationInternal.h"
 #include "llvm/ADT/BitVector.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
@@ -182,7 +183,7 @@ struct Queries {
         auto inserted = substitutions.try_emplace(base, bindings);
         return e.substitute(root, inserted.first->second);
     }
-    std::optional<Id> presence(RegionalEvent event)
+    std::optional<Id> presence(RegionalEvent event, IterationPredicates& predicates)
     {
         auto& e = window->expressions;
         if ((event.kind != PeriodicEventKind::Start && event.kind != PeriodicEventKind::Completion) ||
@@ -190,10 +191,14 @@ struct Queries {
             event.ordinal >= e.size() || e.isBoolean(event.ordinal)) { return std::nullopt; }
         auto present = e.lt(event.ordinal, trips);
         for (auto [condition, takeThen] : guards[event.type]) {
-            auto value = window->predicates->at(condition, event.ordinal);
+            auto value = predicates.at(condition, event.ordinal);
             present = e.land(present, takeThen ? value : e.lnot(value));
         }
         return present;
+    }
+    std::optional<Id> presence(RegionalEvent event)
+    {
+        return presence(event, *window->predicates);
     }
     std::optional<Id> query(RegionalEvent source, RegionalEvent target)
     {
@@ -312,17 +317,26 @@ FailureOr<RegionalAnalysis> boundedLifetimeRegionalQueries(
     // ordinary export, independently of detached endpoint instantiation.
     auto allocation = std::make_shared<std::optional<std::shared_ptr<RegionalAllocationSummary>>>();
     out.prepareWithVisits = [demands, owner, enclosing, allocation, arena,
-        trips = queries->trips](ArrayRef<scf::ForOp> visits)
+        trips = queries->trips, queries](ArrayRef<scf::ForOp> visits)
         -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
         if (visits != ArrayRef<scf::ForOp>(enclosing)) { return failure(); }
         std::string diagnostic;
         auto plan = prepareBoundedLifetimeLogicalResult(demands, diagnostic, false);
         if (succeeded(plan)) {
             (*plan)->mathematicalOwner = owner;
-            (*plan)->allocationPreparation = [demands, trips, allocation, arena](PreparedLogicalPlan& prepared) {
+            (*plan)->allocationPreparation =
+                [demands, trips, allocation, arena, queries](PreparedLogicalPlan& prepared) {
                 if (!allocation->has_value()) {
-                    allocation->emplace(boundedLifetimeRegionalAllocation(demands->expressions, *arena,
-                        demands->window, demands->unconditional, demands->analysis.sourceDemands, trips));
+                    SmallVector<const CompoundInstanceElement*> phases;
+                    for (const auto& anchor : demands->anchors) { phases.push_back(anchor.phase); }
+                    // Allocation rollback must not leave IDs in retained query caches.
+                    auto predicates = std::make_shared<IterationPredicates>(demands->loop, *arena, phases);
+                    allocation->emplace(detail::boundedLifetimeRegionalAllocationWithPresence(
+                        demands->expressions, *arena, demands->window, demands->unconditional,
+                        demands->analysis.sourceDemands, trips,
+                        {arena, [queries, predicates](RegionalEvent event) {
+                            return queries->presence(event, *predicates);
+                        }}));
                 }
                 prepared.regionalAllocation = **allocation;
             };

@@ -10,7 +10,23 @@
 #define PTO_FRONTIERSYNCH_BOUNDEDLIFETIMEALLOCATIONINTERNAL_H
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
+#include <functional>
+#include <memory>
+#include <optional>
 namespace mlir::pto::frontiersynch::detail {
+// Exact original-coordinate presence in the explicitly identified output arena.
+// The callback owns its evaluation context; rollbackable proof attempts must
+// not write generated IDs into another retained interface's mutable cache.
+struct BoundedAllocationPresence {
+    std::shared_ptr<RegionExpressions> expressions;
+    std::function<std::optional<RegionExpressions::Id>(RegionalEvent)> presence;
+};
+std::shared_ptr<RegionalAllocationSummary> boundedLifetimeRegionalAllocationWithPresence(
+    RegionExpressions& producerExpressions, RegionExpressions& outputExpressions,
+    const LifetimeWindowInput& window, llvm::ArrayRef<uint8_t> unconditional,
+    llvm::ArrayRef<GuardedRankEdge> sourceDemands, RegionExpressions::Id trips,
+    const BoundedAllocationPresence& boundary);
 struct BoundedLifetimePalette {
     uint32_t source, target, site;
     uint64_t gap = 1;

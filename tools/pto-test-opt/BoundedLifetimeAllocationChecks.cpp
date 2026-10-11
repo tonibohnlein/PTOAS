@@ -16,6 +16,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include <map>
 #include "../../lib/PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInactiveRecords.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeAllocationInternal.h"
 namespace fs = mlir::pto::frontiersynch;
 namespace {
 std::optional<int64_t> budget(mlir::DictionaryAttr certificate, unsigned groups = 1)
@@ -247,6 +248,79 @@ bool regionalOrdinary(mlir::func::FuncOp function)
     malformed.payloads.pop_back();
     return !fs::boundedLifetimeRegionalAllocation(e, e, malformed, always, demands, e.constant(5));
 }
+fs::detail::BoundedAllocationPresence boundaryPresence(
+    const std::shared_ptr<fs::RegionExpressions>& arena, uint64_t trips, int64_t lower, uint64_t step,
+    std::optional<fs::RegionExpressions::Id> optionalGuard = {})
+{
+    return {arena, [arena, trips, lower, step, optionalGuard](fs::RegionalEvent event)
+        -> std::optional<fs::RegionExpressions::Id> {
+        auto& e = *arena;
+        if (event.type != 0 && event.type != 3) { return e.boolean(false); }
+        // A source-level test of the original IV, not a test of its ordinal.
+        auto offset = e.constant(0);
+        for (uint64_t i = 0; i < step; ++i) { offset = e.add(offset, event.ordinal); }
+        auto iv = e.add(e.constant(static_cast<uint64_t>(lower)), offset);
+        const uint64_t expected = static_cast<uint64_t>(lower) +
+            (event.type == 3 && trips ? trips - 1 : 0) * step;
+        auto first = e.eq(iv, e.constant(expected));
+        auto present = e.land(e.lt(event.ordinal, e.constant(trips)), first);
+        if (optionalGuard) { present = e.land(present, *optionalGuard); }
+        return present;
+    }};
+}
+bool certifiedBoundaryCase(mlir::func::FuncOp function, unsigned trips, int64_t lower, uint64_t step)
+{
+    mlir::Block symbols;
+    auto branch = symbols.addArgument(mlir::IntegerType::get(function.getContext(), 1), function.getLoc());
+    fs::RegionExpressions producer;
+    auto output = std::make_shared<fs::RegionExpressions>();
+    auto w = guardedWindow(producer);
+    for (unsigned d = 0; d <= w.span; ++d) {
+        w.accesses.push_back({5 * d + 4, d % 2, producer.boolean(false), producer.boolean(true), 0});
+    }
+    const std::vector<uint8_t> always{0, 0, 0, 0, 1};
+    std::vector<fs::GuardedRankEdge> demands{{1, 2, producer.boolean(true)}};
+    auto call = [&](const fs::detail::BoundedAllocationPresence& proof) {
+        return fs::detail::boundedLifetimeRegionalAllocationWithPresence(producer, *output,
+            w, always, demands, output->constant(trips), proof);
+    };
+    if (call({})) { return false; }
+    auto good = call(boundaryPresence(output, trips, lower, step));
+    if (!good || good->groups.empty() || good->groups.front().members.front().firstSource.type != 0 ||
+        (trips && good->groups.front().members.front().lastTarget.type != 3)) {
+        llvm::errs() << "conditional boundary proof unavailable: trips=" << trips << " lower=" << lower
+                     << " step=" << step << " allocation=" << bool(good) << "\n";
+        return false;
+    }
+    // Under zero trips the envelope is inactive, so its conditional site need
+    // not exist. For live invocations an opaque optional boundary is unproved.
+    if (trips && call(boundaryPresence(output, trips, lower, step, output->input(branch)))) { return false; }
+    const auto retainedSize = output->size();
+    fs::detail::BoundedAllocationPresence broken{output, [output](fs::RegionalEvent)
+        -> std::optional<fs::RegionExpressions::Id> {
+        output->add(fs::RegionExpressions::invalid, output->constant(991));
+        return std::nullopt;
+    }};
+    if (call(broken) || output->size() != retainedSize || !output->constructionError().empty()) { return false; }
+    if (!call(boundaryPresence(output, trips, lower, step))) { return false; }
+    auto foreign = std::make_shared<fs::RegionExpressions>();
+    return !call(boundaryPresence(foreign, trips, lower, step));
+}
+bool certifiedBoundaries(mlir::func::FuncOp function)
+{
+    for (int64_t lower : {-11, 0, 11}) {
+        for (uint64_t step : {1U, 7U}) {
+            for (unsigned trips = 0; trips <= 5; ++trips) {
+                if (!certifiedBoundaryCase(function, trips, lower, step)) {
+                    llvm::errs() << "certified boundary case failed: trips=" << trips << " lower=" << lower
+                                 << " step=" << step << "\n";
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
 bool regionalDelayed()
 {
     fs::RegionExpressions producer, output;
@@ -375,7 +449,8 @@ int runBoundedLifetimeAllocationChecks()
         builder.getUnknownLoc(), "bounded_allocation_checks", builder.getFunctionType({}, {})));
     if (!ordinary(*function) || !palettes(*function) || !sharedDirections(*function) ||
         !constantDirections() || !protectedModes(*function) || !regionalOrdinary(*function) ||
-        !regionalDelayed() || !regionalRollback() || !inactiveGuardProofs(*function) ||
+        !certifiedBoundaries(*function) || !regionalDelayed() || !regionalRollback() ||
+        !inactiveGuardProofs(*function) ||
         !inactiveRegionalMapping(*function) || !inactiveOnlyMapping(*function)) {
         llvm::errs() << "bounded lifetime allocation certificate check failed\n";
         return 1;
