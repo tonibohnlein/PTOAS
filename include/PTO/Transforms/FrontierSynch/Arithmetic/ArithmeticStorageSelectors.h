@@ -56,6 +56,7 @@ struct ArithmeticStorageSelectors {
     std::vector<ArithmeticBoundarySelector> boundaries;
     std::vector<ArithmeticStorageSupportPiece> support;
     ArithmeticStorageSelectorCost cost;
+    ArithmeticStorageSelectorCost importCost;
 };
 // Requires complete accepted primitives and their reference order. Extrema are
 // unique by that total occurrence order, independently of F* functionality.
