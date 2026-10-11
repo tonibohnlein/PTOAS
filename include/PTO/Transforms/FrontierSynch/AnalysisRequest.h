@@ -18,6 +18,7 @@ struct ProgramRecognition;
 struct RegionalAnalysis;
 struct ArithmeticRegionalRelations;
 struct RotatingAnalysis;
+struct OrderCoveredPeriodicResult;
 struct MixedStrideDemands;
 struct CompactBoundingOwner;
 struct GuardedRotatingAnalysis;
@@ -68,6 +69,7 @@ struct MathematicalResult {
     std::shared_ptr<const ExplicitAnalysis> explicitDemands;
     std::shared_ptr<const ProgramRecognition> recognition;
     std::shared_ptr<const RotatingAnalysis> rotatingDemands;
+    std::shared_ptr<const OrderCoveredPeriodicResult> orderCoveredDemands;
     std::shared_ptr<const MixedStrideDemands> mixedStrideDemands;
     std::shared_ptr<const CompactBoundingOwner> compactDemands;
     std::shared_ptr<GuardedRotatingAnalysis> guardedRotatingDemands;

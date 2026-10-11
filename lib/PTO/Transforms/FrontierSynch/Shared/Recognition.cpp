@@ -441,6 +441,52 @@ RecognitionResult recognizeRotating(scf::ForOp loop, const PhaseIndex& index,
     return result;
 }
 
+std::optional<detail::OrderCoveredHypothesis> detail::recognizeOrderCoveredInvariant(
+    scf::ForOp loop, const SyncInput& input, const PhaseIndex& index, std::string& error)
+{
+    auto fail = [&](StringRef reason) -> std::optional<OrderCoveredHypothesis> {
+        error = reason.str(); return std::nullopt;
+    };
+    auto function = loop ? dyn_cast<func::FuncOp>(loop->getParentOp()) : func::FuncOp{};
+    if (!function || !function.getBody().hasOneBlock() ||
+        !isa<func::ReturnOp>(function.getBody().front().getTerminator()) || index.hasUnprovedCarriedState(loop) ||
+        index.needsValuePrerequisite(loop)) { return fail("order coverage requires an independent outermost loop"); }
+    OrderCoveredHypothesis hypothesis;
+    auto& retained = hypothesis.retained;
+    if (!fixedBody(*loop.getBody(), index, retained) || retained.state != RecognitionState::Applicable) {
+        return fail("order coverage requires an unconditional fixed original body");
+    }
+    auto phases = index.explicitSequence(*loop.getBody());
+    if (failed(phases) || phases->empty()) { return fail("order coverage has no original payload sequence"); }
+    const auto& effects = input.accesses();
+    // This initial adapter never admits a uniform relationship into its own
+    // proof graph. Such effects need a separate masked-uniform adapter.
+    if (effects.hasUniformRelationships(*phases)) {
+        return fail("order coverage has no uniform-relationship hypothesis adapter");
+    }
+    Families families;
+    for (auto* phase : *phases) {
+        for (auto id : effects.effectsFor(phase)) {
+            const auto& effect = effects.effects()[id];
+            if (!effect.memory) { return fail("order coverage lacks modeled memory identity"); }
+            if (effect.memory->scope == AddressSpace::GM) { hypothesis.omittedEffects.push_back(id); continue; }
+            inspectAccess(id, loop, input, effects, families, retained, index, false, false);
+        }
+    }
+    checkDisjoint(families, retained, loop);
+    normalizeFragments(retained, effects);
+    if (hypothesis.omittedEffects.empty() || retained.state != RecognitionState::Applicable) {
+        return fail("order coverage lacks candidate effects or exact retained cells");
+    }
+    for (const auto& access : retained.accesses) {
+        if (access.slots != 1 || access.stride != 0 || access.offset != 0 ||
+            access.guard || access.parameterOffset || !access.atom) {
+            return fail("order coverage requires ordinal-invariant retained cells");
+        }
+    }
+    return hypothesis;
+}
+
 StringRef recognitionName(RecognitionState state)
 {
     switch (state) {

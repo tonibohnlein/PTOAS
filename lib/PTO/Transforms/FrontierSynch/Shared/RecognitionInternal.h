@@ -38,6 +38,13 @@ std::optional<PhysicalRefreshDescription> certifyPhysicalRefresh(
 // Reuse only a retained producer proof in its unchanged physical/guard context.
 bool physicalWriterCoverageApplies(const BoundedLifetimeRecognition& recognized, const SyncInput& input,
                                    scf::ForOp loop, unsigned cell, uint64_t horizon);
+// Private hypothesis only: GM effects remain obligations until retained order proves coverage.
+struct OrderCoveredHypothesis {
+    RecognitionResult retained;
+    std::vector<std::size_t> omittedEffects;
+};
+std::optional<OrderCoveredHypothesis> recognizeOrderCoveredInvariant(
+    scf::ForOp loop, const SyncInput& input, const PhaseIndex& index, std::string& error);
 void normalizeFragments(RecognitionResult& result, const SyncStorageEffects& effects);
 void inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result);
 void inspectLeaf(Operation& op, const PhaseIndex& index, RecognitionResult& result, bool allowEnvelopes);

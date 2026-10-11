@@ -174,7 +174,9 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         const auto id = static_cast<std::size_t>(&node - program->nodes.data());
         auto retained = resolveOriginal.demands ? resolveOriginal.demands(id, AnalysisBackend::Rotating) : nullptr;
         RotatingAnalysis analysis;
-        if (retained && retained->rotatingDemands) {
+        if (retained && retained->orderCoveredDemands) {
+            analysis.error = "order-covered periodic child has no proof-preserving storage or re-entry adapter";
+        } else if (retained && retained->rotatingDemands) {
             analysis = *retained->rotatingDemands;
             SmallVector<TemplateEndpointAnchor> anchors;
             for (auto* phase : analysis.phases) {

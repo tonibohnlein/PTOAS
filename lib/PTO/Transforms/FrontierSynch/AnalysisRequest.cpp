@@ -8,6 +8,7 @@
 // Request protocol adapters. Cache mathematical construction independently of
 // export checks; detached command fragments always have fresh ownership.
 #include "AnalysisSessionInternal.h"
+#include "Structured/OrderCoveredPeriodic.h"
 #include "Shared/NormalizedControl.h"
 #include "PTO/Transforms/FrontierSynch/Structured/MixedStrideAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompactBoundingInsertion.h"
@@ -122,6 +123,9 @@ std::vector<RegionCertification> FrontierAnalysis::certifyRegions()
             if (math.normalizedInput && math.normalizedInput->original) {
                 result.representation = "small-count-expanded";
             }
+        } else if (math.orderCoveredDemands) {
+            result.selectedClass = "periodic-required-order";
+            result.representation = "order-covered-periodic";
         } else if (math.rotatingDemands || math.mixedStrideDemands || math.arithmeticPeriodicDemands) {
             result.selectedClass = "periodic-storage";
         } else if (math.guardedRotatingDemands) {
@@ -210,6 +214,12 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
         return result;
     }
     const auto& demands = *result.mathematical;
+    if (demands.orderCoveredDemands) {
+        for (const auto& diagnostic : attempt.failure.diagnostics) {
+            result.obligations.push_back({AnalysisStage::Form,
+                "ordinary rotating form: " + recognitionName(diagnostic.issue).str()});
+        }
+    }
     result.available.queries = demands.explicitDemands || demands.rotatingDemands ||
         demands.guardedRotatingDemands || demands.numericNode || demands.sequenceDemands ||
         demands.finiteGuardedDemands;
@@ -426,6 +436,13 @@ DictionaryAttr allocateRetained(const MathematicalResult& demands, const Program
             encodePeriodicSharedAllocation(demands.numericalDemands->analysis, plan, context) : DictionaryAttr{};
     }
     if (demands.rotatingDemands) {
+        if (demands.orderCoveredDemands) {
+            const auto& owner = *demands.orderCoveredDemands;
+            auto originalLoop = owner.retained.loop;
+            if (!owner.applies(demands.input.get(), owner.index.get(), demands.rotatingDemands->loop) ||
+                &owner.retained != demands.rotatingDemands.get() || owner.originalRegion >= program.nodes.size() ||
+                program.nodes[owner.originalRegion].anchor != originalLoop.getOperation()) { return {}; }
+        }
         return encodePeriodicSharedAllocation(demands.rotatingDemands->periodic, plan, context);
     }
     if (demands.mixedStrideDemands) {
