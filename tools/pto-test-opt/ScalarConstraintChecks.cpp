@@ -216,6 +216,41 @@ module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 64 : i32>>
     return builder.prepareValue(quotient, site) && geometry == expected && definition && definition != geometry &&
            builder.prepareGuard(comparison, site) && !builder.machineBindings.empty() && output.parameters.empty();
 }
+bool failedPrimitiveStopsWork(MLIRContext* context)
+{
+    auto module = parseSourceString<ModuleOp>("module { func.func @failed() { return } }", context);
+    if (!module || failed(verify(*module))) { return false; }
+    auto function = module->lookupSymbol<func::FuncOp>("failed");
+    namespace fs = pto::frontiersynch;
+    fs::PhaseIndex index;
+    if (failed(index.build(function, ArrayRef<const pto::CompoundInstanceElement*>{}))) { return false; }
+    fs::ArithmeticProgram output;
+    output.context = {function, function};
+    const fs::ArithmeticLimits limits{8, 8, 2, 8};
+    fs::detail::ProgramBuilder builder{output, limits, context, index, DenseMap<Value, unsigned>(), {}};
+    auto relation = builder.relation(fs::PrimitiveKind::Context, 0);
+    builder.emit(relation, {});
+    if (relation.pieces.size() != 1) { return false; }
+    // A machine placeholder cannot use this period-two representation. This
+    // is an actual primitive failure, not an injected diagnostic or timer.
+    builder.emit(relation, {getAffineSymbolExpr(limits.dimensions, context)});
+    if (output.extraction.state == fs::RecognitionState::Applicable ||
+        output.extraction.diagnostics.size() != 1 || output.machinePrimitiveConversions) { return false; }
+    const auto pieces = relation.pieces.size();
+    builder.emit(relation, {});
+    SmallVector<SmallVector<AffineExpr>> recipes;
+    builder.emitForSites(relation, {}, {}, &recipes);
+    if (relation.pieces.size() != pieces || !recipes.empty() ||
+        output.extraction.diagnostics.size() != 1 || output.machinePrimitiveConversions) { return false; }
+    // Failure belongs to this producer attempt. A fresh context can still
+    // construct the supported representation without inheriting that failure.
+    fs::ArithmeticProgram fresh;
+    fresh.context = {function, function};
+    fs::detail::ProgramBuilder retry{fresh, limits, context, index, DenseMap<Value, unsigned>(), {}};
+    auto accepted = retry.relation(fs::PrimitiveKind::Context, 0);
+    retry.emit(accepted, {});
+    return fresh.extraction.state == fs::RecognitionState::Applicable && accepted.pieces.size() == 1;
+}
 } // namespace
 bool runScalarConstraintChecks(MLIRContext* context)
 {
@@ -307,7 +342,7 @@ bool runScalarConstraintChecks(MLIRContext* context)
             return false;
         }
     }
-    if (!interleavedContexts(context) || !controlProofContext(context)) {
+    if (!interleavedContexts(context) || !controlProofContext(context) || !failedPrimitiveStopsWork(context)) {
         return false;
     }
     // Independent bit-vector witness: start=0, end=-5, iv=2^61 is an

@@ -396,14 +396,18 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
                 builder.emit(relation, {});
             }
             output.primitives.relations.push_back(std::move(relation));
+            if (output.extraction.state != RecognitionState::Applicable) { return false; }
         }
         for (std::size_t a = 0; a < output.sites.size(); ++a) {
             occurrence(builder, a);
+            if (output.extraction.state != RecognitionState::Applicable) { return false; }
             for (std::size_t b = 0; b < output.sites.size(); ++b) {
                 order(builder, a, b);
+                if (output.extraction.state != RecognitionState::Applicable) { return false; }
             }
         }
         prerequisites(builder, index);
+        if (output.extraction.state != RecognitionState::Applicable) { return false; }
         detail::extractAccesses(builder, input, effects);
         if (output.extraction.state != RecognitionState::Applicable) {
             return false;

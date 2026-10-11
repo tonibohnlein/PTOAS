@@ -435,7 +435,7 @@ void ProgramBuilder::emitForSites(PrimitiveRelation& relation, ArrayRef<AffineEx
                                  ArrayRef<std::pair<const ArithmeticSite*, unsigned>> endpoints,
                                  SmallVector<SmallVector<AffineExpr>>* recipes)
 {
-    if (output.finiteExpansion && output.extraction.state != RecognitionState::Applicable) { return; }
+    if (output.extraction.state != RecognitionState::Applicable) { return; }
     Pieces pieces{Rows(rows)};
     for (auto [site, offset] : endpoints) {
         GuardCache cache;
@@ -467,7 +467,7 @@ void ProgramBuilder::emitForSites(PrimitiveRelation& relation, ArrayRef<AffineEx
     for (const auto& piece : pieces) {
         if (recipes) { recipes->push_back(piece); }
         emit(relation, piece);
-        if (output.finiteExpansion && output.extraction.state != RecognitionState::Applicable) { return; }
+        if (output.extraction.state != RecognitionState::Applicable) { return; }
     }
 }
 } // namespace mlir::pto::frontiersynch::detail
