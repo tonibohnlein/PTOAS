@@ -38,7 +38,10 @@ struct Pattern {
     bool read = false;
     bool write = false;
 };
+struct OrderCoveredPeriodicResult;
 struct Child {
+    // Owned proof for this original root sequence only; never a disjoint-effect certificate.
+    std::shared_ptr<const OrderCoveredPeriodicResult> orderCovered;
     RegionalAnalysis regional;
     RegionalCost costs;
     scf::ForOp loop;
@@ -186,6 +189,10 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
         if (added) { crossings.push_back({source.port, target.port, guard}); }
         else { crossings[position->second].guard = either(crossings[position->second].guard, guard); }
     }
+    bool partialStorage() const {
+        return llvm::any_of(children, [](const Child& child) { return bool(child.orderCovered); });
+    }
+    bool orderCoveredChild(const StructureNode& node);
     bool collect(std::size_t rootNode = 0);
     FailureOr<RegionalAnalysis> originalRegion(std::size_t node, std::string& diagnostic);
     bool resolvedChild(std::size_t node);

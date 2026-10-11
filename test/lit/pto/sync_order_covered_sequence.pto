@@ -1,0 +1,73 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --gm-alias=may-not-alias --certify-regions %s | FileCheck %s --check-prefix=MNA
+// RUN: pto-sync-input-test --gm-alias=may-alias --certify-regions %s | FileCheck %s --check-prefix=MA
+// RUN: %python %S/Inputs/check_order_covered_sequence.py pto-sync-input-test %s
+// MNA: order-covered root sequence: ownership, partial exports, retry and fresh plans passed
+// MNA: order-covered root sequence rejected unsafe omitted effects
+// MA-COUNT-2: order-covered root sequence rejected unsafe omitted effects
+module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a3"} {
+  func.func @prefix(%out: !pto.ptr<f32, gm>, %src: !pto.ptr<f32, gm>, %before: !pto.ptr<f32, gm>, %after: !pto.ptr<f32, gm>, %upper: index, %lower32: i32) attributes {test.order_covered_sequence, pto.kernel_kind = #pto.kernel_kind<vector>, test.trace_arguments = array<i64: 40, -1>, test.eligible_ids = array<i64: 0, 1, 2, 3, 4, 5>} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %eight = arith.constant 8 : index
+    %width = arith.constant 128 : index
+    %step = arith.constant 20 : index
+    %a0 = arith.constant 0 : i64
+    %a32 = arith.constant 32 : i64
+    %v0 = pto.make_tensor_view %out, shape = [%one, %width], strides = [%width, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %v1 = pto.make_tensor_view %src, shape = [%one, %width], strides = [%width, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %v2 = pto.make_tensor_view %before, shape = [%one, %width], strides = [%width, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %v3 = pto.make_tensor_view %after, shape = [%one, %width], strides = [%width, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %a = pto.alloc_tile addr = %a0 valid_row = %one valid_col = %eight : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+    %b = pto.alloc_tile addr = %a32 valid_row = %one valid_col = %eight : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+    %pre = pto.partition_view %v2, offsets = [%z, %z], sizes = [%one, %eight] : !pto.tensor_view<?x?xf32>
+    pto.tload ins(%pre : !pto.partition_tensor_view<1x8xf32>) outs(%a : !pto.tile_buf<vec, 1x8xf32, valid=?x?>) {layout = #pto.layout<nd>}
+    %lower = arith.index_cast %lower32 : i32 to index
+    scf.for %iv = %lower to %upper step %step {
+      %offset = arith.maxsi %iv, %z : index
+      %read = pto.partition_view %v1, offsets = [%z, %offset], sizes = [%one, %eight] : !pto.tensor_view<?x?xf32>
+      pto.tload ins(%read : !pto.partition_tensor_view<1x8xf32>) outs(%b : !pto.tile_buf<vec, 1x8xf32, valid=?x?>) {layout = #pto.layout<nd>}
+      pto.tadd ins(%a, %b : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%b : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %write = pto.partition_view %v0, offsets = [%z, %offset], sizes = [%one, %eight] : !pto.tensor_view<?x?xf32>
+      pto.tstore ins(%b : !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%write : !pto.partition_tensor_view<1x8xf32>) {layout = #pto.layout<nd>}
+    }
+    %post = pto.partition_view %v3, offsets = [%z, %z], sizes = [%one, %eight] : !pto.tensor_view<?x?xf32>
+    pto.tstore ins(%b : !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%post : !pto.partition_tensor_view<1x8xf32>) {layout = #pto.layout<nd>}
+    return
+  }
+  func.func @sibling_conflict(%out: !pto.ptr<f32, gm>, %src: !pto.ptr<f32, gm>, %before: !pto.ptr<f32, gm>, %after: !pto.ptr<f32, gm>, %upper: index, %lower32: i32) attributes {test.order_covered_sequence, test.order_covered_sibling_conflict, pto.kernel_kind = #pto.kernel_kind<vector>, test.trace_arguments = array<i64: 40, -1>, test.eligible_ids = array<i64: 0, 1, 2, 3, 4, 5>} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %eight = arith.constant 8 : index
+    %width = arith.constant 128 : index
+    %step = arith.constant 20 : index
+    %a0 = arith.constant 0 : i64
+    %a32 = arith.constant 32 : i64
+    %v0 = pto.make_tensor_view %out, shape = [%one, %width], strides = [%width, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %v1 = pto.make_tensor_view %src, shape = [%one, %width], strides = [%width, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %v2 = pto.make_tensor_view %out, shape = [%one, %width], strides = [%width, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %v3 = pto.make_tensor_view %after, shape = [%one, %width], strides = [%width, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %a = pto.alloc_tile addr = %a0 valid_row = %one valid_col = %eight : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+    %b = pto.alloc_tile addr = %a32 valid_row = %one valid_col = %eight : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+    %pre = pto.partition_view %v2, offsets = [%z, %z], sizes = [%one, %eight] : !pto.tensor_view<?x?xf32>
+    pto.tload ins(%pre : !pto.partition_tensor_view<1x8xf32>) outs(%a : !pto.tile_buf<vec, 1x8xf32, valid=?x?>) {layout = #pto.layout<nd>}
+    %lower = arith.index_cast %lower32 : i32 to index
+    scf.for %iv = %lower to %upper step %step {
+      %offset = arith.maxsi %iv, %z : index
+      %read = pto.partition_view %v1, offsets = [%z, %offset], sizes = [%one, %eight] : !pto.tensor_view<?x?xf32>
+      pto.tload ins(%read : !pto.partition_tensor_view<1x8xf32>) outs(%b : !pto.tile_buf<vec, 1x8xf32, valid=?x?>) {layout = #pto.layout<nd>}
+      pto.tadd ins(%a, %b : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%b : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %write = pto.partition_view %v0, offsets = [%z, %offset], sizes = [%one, %eight] : !pto.tensor_view<?x?xf32>
+      pto.tstore ins(%b : !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%write : !pto.partition_tensor_view<1x8xf32>) {layout = #pto.layout<nd>}
+    }
+    %post = pto.partition_view %v3, offsets = [%z, %z], sizes = [%one, %eight] : !pto.tensor_view<?x?xf32>
+    pto.tstore ins(%b : !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%post : !pto.partition_tensor_view<1x8xf32>) {layout = #pto.layout<nd>}
+    return
+  }
+}

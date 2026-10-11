@@ -8,6 +8,7 @@
 // Request protocol adapters. Cache mathematical construction independently of
 // export checks; detached command fragments always have fresh ownership.
 #include "AnalysisSessionInternal.h"
+#include "Shared/SequenceAnalysisInternal.h"
 #include "Structured/OrderCoveredPeriodic.h"
 #include "Shared/NormalizedControl.h"
 #include "PTO/Transforms/FrontierSynch/Structured/MixedStrideAnalysis.h"
@@ -224,6 +225,8 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
         demands.guardedRotatingDemands || demands.numericNode || demands.sequenceDemands ||
         demands.finiteGuardedDemands;
     result.available.selectors = demands.explicitDemands || demands.sequenceDemands || demands.finiteGuardedDemands;
+    if (demands.sequenceDemands && demands.sequenceDemands->state &&
+        demands.sequenceDemands->state->partialStorage()) { result.available.selectors = false; }
     if (demands.regionalDemands) {
         result.available.queries = demands.regionalDemands->capabilities.exactQueries;
         result.available.selectors = demands.regionalDemands->capabilities.exactSelectors;

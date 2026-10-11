@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
 #include "CountedLoop.h"
+#include "../Structured/OrderCoveredPeriodic.h"
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingRegion.h"
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
@@ -145,6 +146,48 @@ bool SequenceAnalysisState::rotatingPatterns(Child& child, const RotatingAnalysi
                                       residue, period, access.reads, access.writes});
         }
     }
+    return true;
+}
+bool SequenceAnalysisState::orderCoveredChild(const StructureNode& node)
+{
+    if (!completeInvocation || !requiredOuterLoops.empty() || !resolveOriginal.demands) { return false; }
+    const auto id = static_cast<std::size_t>(&node - program->nodes.data());
+    auto retained = resolveOriginal.demands(id, AnalysisBackend::Rotating);
+    if (!retained || !retained->orderCoveredDemands) { return false; }
+    const auto& proof = retained->orderCoveredDemands;
+    auto loop = dyn_cast<scf::ForOp>(node.anchor);
+    if (!proof->applies(input, &index, loop) || proof->originalRegion != id) { return false; }
+    auto domain = CountedLoop::get(loop);
+    if (!domain) { return false; }
+    RegionExpressions::Transaction transaction(expressions);
+    Child child;
+    child.loop = loop; child.trips = domain->trips(expressions); child.orderCovered = proof;
+    SmallVector<std::size_t> local;
+    const auto& accesses = input->accesses();
+    for (auto* phase : proof->retained.phases) {
+        for (auto effect : accesses.effectsFor(phase)) {
+            if (!llvm::is_contained(proof->omittedEffects, effect)) { local.push_back(effect); }
+        }
+    }
+    if (!accesses.hasMaterializedCellPartition(local)) { return false; }
+    for (auto [type, phase] : llvm::enumerate(proof->retained.phases)) {
+        auto* op = phase->elementOp;
+        child.anchors.push_back({phase, {}, {op->getBlock(), op}, {op->getBlock(), op->getNextNode()}});
+        for (auto effect : accesses.effectsFor(phase)) {
+            if (!llvm::is_contained(local, effect)) { continue; }
+            const auto& record = accesses.effects()[effect];
+            for (auto cell : record.cells) {
+                if (cell >= accesses.cells().size()) { return false; }
+                child.patterns.push_back({accesses.cells()[cell], static_cast<uint32_t>(type), 0, 1,
+                    record.mode == SyncAccessMode::Read, record.mode == SyncAccessMode::Write});
+            }
+        }
+    }
+    child.periodic = proof->retained.periodic;
+    child.endpoints = bindPeriodicEndpoints(loop, child.anchors, child.periodic);
+    if (!child.endpoints.logical.error.empty()) { return false; }
+    children.push_back(std::move(child));
+    transaction.commit();
     return true;
 }
 bool SequenceAnalysisState::loopChild(const StructureNode& node)
@@ -437,6 +480,7 @@ bool SequenceAnalysisState::collect(std::size_t rootNode)
     for (std::size_t position = 0; position < root.children.size();) {
         const auto& node = program->nodes[root.children[position]];
         if (node.kind == StructureKind::Loop) {
+            if (orderCoveredChild(node)) { ++position; continue; }
             const bool accepted = resolveOriginal ? resolvedChild(root.children[position]) : loopChild(node);
             if (!accepted) { return false; }
             ++position; continue;

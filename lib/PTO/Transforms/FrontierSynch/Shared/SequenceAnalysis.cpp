@@ -194,7 +194,8 @@ void recordSequenceContractAttempt(ProgramRecognition& program, const SyncInput&
     // value prerequisites and completing the crossing closure. Composed views
     // lack the original program/input identities and cannot prove this claim.
     for (const char* obligation : {"original-structured-occurrence-tree", "shared-context-exact-child-queries",
-        "complete-storage-boundary-selectors", "native-first-last-and-supplied-prerequisite-coverage"}) {
+        state && state->partialStorage() ? "complete-local-boundaries-and-certified-external-omissions" :
+            "complete-storage-boundary-selectors", "native-first-last-and-supplied-prerequisite-coverage"}) {
         candidate.obligations.push_back({obligation,
             established ? ContractStatus::Established : ContractStatus::Unproved});
     }
