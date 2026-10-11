@@ -54,8 +54,13 @@ def main():
         run = subprocess.run([tool, "--sequence-analysis", str(path)], capture_output=True,
                              text=True, check=True, timeout=10)
         rejected = json.loads(run.stdout)
-        if "slot expansion" not in rejected["error"] or not rejected["unchanged"]:
-            raise RuntimeError(("large compact bank family was materialized", rejected))
+        # The bounded numerical producer must preflight algebraic windows too.
+        # Its unavailable representation leaves later exact attempts available;
+        # the final diagnostic must retain both stages, with original IR intact.
+        if ("bounded lifetime window exceeds numerical fragment representation" not in rejected["error"]
+                or "regional arithmetic:" not in rejected["error"] or not rejected["unchanged"]
+                or rejected["bounded_cached_demands"] != 0 or rejected["prepared"]):
+            raise RuntimeError(("large compact bank family preflight or retry failed", rejected))
     print("physical rotation: six trip counts, shared aliases, and emitted-order checks passed")
 
 

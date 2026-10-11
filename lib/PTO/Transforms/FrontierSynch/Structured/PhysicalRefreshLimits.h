@@ -14,7 +14,7 @@ namespace mlir::pto::frontiersynch::detail {
 constexpr uint64_t physicalRefreshFragmentLimit = 65536;
 inline bool physicalRefreshWindowFits(uint64_t span, uint64_t payloads, uint64_t guards, uint64_t accesses)
 {
-    if (!span || span >= physicalRefreshFragmentLimit) {
+    if (span >= physicalRefreshFragmentLimit) {
         return false;
     }
     uint64_t perVisit = 0;
