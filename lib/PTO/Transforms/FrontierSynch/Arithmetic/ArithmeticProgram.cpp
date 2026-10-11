@@ -402,6 +402,12 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
         for (std::size_t a = 0; a < output.sites.size(); ++a) {
             occurrence(builder, a);
             if (!builder.constructionReady()) { return false; }
+        }
+        // Access class obligations can fail independently of pairwise order.
+        // Check them once before constructing the quadratic order family.
+        detail::extractAccesses(builder, input, effects);
+        if (!builder.constructionReady()) { return false; }
+        for (std::size_t a = 0; a < output.sites.size(); ++a) {
             for (std::size_t b = 0; b < output.sites.size(); ++b) {
                 order(builder, a, b);
                 if (!builder.constructionReady()) { return false; }
@@ -409,10 +415,6 @@ static ArithmeticProgram buildArithmeticProgram(ArithmeticRegionContext region, 
         }
         prerequisites(builder, index);
         if (!builder.constructionReady()) { return false; }
-        detail::extractAccesses(builder, input, effects);
-        if (!builder.constructionReady()) {
-            return false;
-        }
         finishArithmeticRecognition(output.primitives, configured, output.recognition);
         return output.recognition.state == RecognitionState::Applicable;
     };
