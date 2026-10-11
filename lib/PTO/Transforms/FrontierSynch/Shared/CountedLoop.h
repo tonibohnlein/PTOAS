@@ -9,6 +9,7 @@
 #define PTO_FRONTIERSYNCH_COUNTEDLOOP_H
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include "../../InsertSync/SyncScalarEvolution.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 namespace mlir::pto::frontiersynch {
 // Original signed index coordinates remain in the IR. Regional interfaces use
 // nonnegative ordinals. Bounds prove the ordinal fits signed i64, as required
@@ -27,6 +28,24 @@ struct CountedLoop {
         if (bits.isScalable() || bits.getFixedValue() != 64 ||
             !matchPattern(loop.getStep(), m_ConstantInt(&step)) ||
             !step.isSignedIntN(64) || step.getSExtValue() <= 0) { return std::nullopt; }
+        // For upper = lower + c in the original machine type, a nonnegative
+        // signed c either gives the exact forward distance c or wraps upper
+        // below lower, making the signed loop empty. Keep trips() unchanged:
+        // this certifies its maximum, not unconditional execution of c/step.
+        if (!boundLower && !boundUpper) {
+            auto sum = loop.getUpperBound().getDefiningOp<arith::AddIOp>();
+            Value offset;
+            if (sum && sum.getLhs() == loop.getLowerBound()) { offset = sum.getRhs(); }
+            else if (sum && sum.getRhs() == loop.getLowerBound()) { offset = sum.getLhs(); }
+            APInt constant;
+            if (offset && matchPattern(offset, m_ConstantInt(&constant)) &&
+                constant.isSignedIntN(64) && !constant.isNegative()) {
+                auto distance = constant.zextOrTrunc(128);
+                auto count = distance.isZero() ? distance :
+                    (distance - 1).udiv(step.zextOrTrunc(128)) + 1;
+                return CountedLoop{loop, step.getSExtValue(), count.isZero() ? 0 : count.getZExtValue() - 1};
+            }
+        }
         mlir::pto::detail::ScalarEvolution range(loop.getContext(), loop);
         auto lower = boundLower ? std::optional<std::pair<int64_t, int64_t>>({*boundLower, *boundLower}) :
             range.signedRange(loop.getLowerBound());

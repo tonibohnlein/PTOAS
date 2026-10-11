@@ -73,6 +73,14 @@ profiles and routes remain available. Failed optional residue reconstruction res
 result. Machine scalar recipes use sparse, simultaneous substitution: profile
 dimension ceilings never determine allocation sizes or placeholder identities.
 
+The counted-domain certificate also recognizes an original signed 64-bit bound
+`upper = lower + c` for a nonnegative signed constant `c`. A nonempty signed
+loop has exact unsigned distance `c`; wrapping across the signed maximum makes
+that invocation empty. Its maximum trip count is `ceil(c / step)`, which fits signed 64 bits
+because `c <= INT64_MAX` and `step >= 1`. Runtime trip expressions still use
+the original bounds and preserve wrapping behavior. Certified selected-view
+bound overrides use the existing range proof instead of this correlation.
+
 Integer relations share immutable normalized constraints across endpoint-tagged
 values. Derived intersections, remappings and projections own fresh results;
 each value keeps its own emptiness memo. This preserves the numerical relation
