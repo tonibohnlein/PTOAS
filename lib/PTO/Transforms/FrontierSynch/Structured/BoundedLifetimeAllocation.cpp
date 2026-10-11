@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedAllocation.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PeriodicAnalysisInternal.h"
+#include "BoundedLifetimeAllocationInternal.h"
 #include <algorithm>
 #include <map>
 #include <set>
@@ -92,11 +93,7 @@ Witness witness(RegionExpressions& e, const LifetimeWindowInput& w, llvm::ArrayR
     result.mandatory = analyzePeriodicDemands(payloads, generators, native);
     return result;
 }
-struct Palette {
-    uint32_t source, target, site;
-    uint64_t gap = 1;
-    SmallVector<int64_t> records;
-};
+using Palette = detail::BoundedLifetimePalette;
 // Optional occurrences cannot justify reuse through an absent phase. Check
 // every pair that maps to the same numeric label, not just cycle successors.
 bool certifyShared(const PeriodicReuseMatrix& costs, const PeriodicSharedAllocation& assignment)
@@ -191,13 +188,10 @@ DictionaryAttr encode(func::FuncOp function, llvm::ArrayRef<Palette> palettes, i
         b.getNamedAttr("macro_reservations", b.getUnitAttr()), b.getNamedAttr("groups", b.getArrayAttr(groups))});
 }
 } // namespace
-DictionaryAttr boundedLifetimeAllocationCertificate(
-    func::FuncOp function, RegionExpressions& e, const LifetimeWindowInput& w,
-    llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> demands, int64_t plan,
-    llvm::ArrayRef<uint32_t> originalRecords)
+std::optional<detail::BoundedLifetimeAllocationAssignment> detail::boundedLifetimeAllocationAssignment(
+    RegionExpressions& e, const LifetimeWindowInput& w,
+    llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> demands)
 {
-    if (!originalRecords.empty() && (originalRecords.size() != demands.size() ||
-        std::set<uint32_t>(originalRecords.begin(), originalRecords.end()).size() != demands.size())) { return {}; }
     if (!w.sites || w.span >= UINT32_MAX || w.sites > UINT32_MAX / (w.span + 1) ||
         w.payloads.size() != w.sites * (w.span + 1) || unconditional.size() != w.sites ||
         (!w.operations.empty() && w.operations.size() != w.payloads.size())) { return {}; }
@@ -220,7 +214,8 @@ DictionaryAttr boundedLifetimeAllocationCertificate(
     for (const auto& [key, access] : modes) { normalized.accesses.push_back(access); }
     auto proof = witness(e, normalized, unconditional);
     if (!proof.mandatory.error.empty()) { return {}; }
-    std::vector<Palette> palettes;
+    BoundedLifetimeAllocationAssignment result;
+    auto& palettes = result.palettes;
     std::map<std::pair<uint32_t, uint32_t>, std::size_t> bySource;
     for (std::size_t r = 0; r < demands.size(); ++r) {
         const auto& edge = demands[r];
@@ -260,12 +255,23 @@ DictionaryAttr boundedLifetimeAllocationCertificate(
     std::vector<std::pair<uint32_t, uint32_t>> directions;
     for (const auto& palette : palettes) { directions.emplace_back(palette.source, palette.target); }
     auto shared = allocateDirectedPeriodic(costs, directions);
+    if (certifyShared(costs, shared)) { result.shared = std::move(shared); }
+    return result;
+}
+DictionaryAttr boundedLifetimeAllocationCertificate(
+    func::FuncOp function, RegionExpressions& e, const LifetimeWindowInput& w,
+    llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> demands, int64_t plan,
+    llvm::ArrayRef<uint32_t> originalRecords)
+{
+    if (!originalRecords.empty() && (originalRecords.size() != demands.size() ||
+        std::set<uint32_t>(originalRecords.begin(), originalRecords.end()).size() != demands.size())) { return {}; }
+    auto assignment = detail::boundedLifetimeAllocationAssignment(e, w, unconditional, demands);
+    if (!assignment) { return {}; }
     if (!originalRecords.empty()) {
-        for (auto& palette : palettes) {
+        for (auto& palette : assignment->palettes) {
             for (auto& record : palette.records) { record = originalRecords[record]; }
         }
     }
-    if (certifyShared(costs, shared)) { return encode(function, palettes, plan, &shared); }
-    return encode(function, palettes, plan);
+    return encode(function, assignment->palettes, plan, assignment->shared ? &*assignment->shared : nullptr);
 }
 } // namespace mlir::pto::frontiersynch

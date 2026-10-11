@@ -44,6 +44,7 @@ bool checkBoundedRegionalQueries(const pto::frontiersynch::BoundedLifetimeDemand
     const pto::frontiersynch::BoundedLifetimeRecognition&, const pto::frontiersynch::PhaseIndex&,
     pto::frontiersynch::RegionalAnalysis&);
 LogicalResult checkNormalizedControlSession(func::FuncOp, pto::GMAliasPolicy);
+bool checkBoundedRegionalAllocationRecipe(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkFixedCoordinateRelations(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkUniformRelationCrossings(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSpecializedNumericSession(func::FuncOp, pto::GMAliasPolicy);
@@ -262,6 +263,10 @@ LogicalResult checkAllocationSession(func::FuncOp function, pto::GMAliasPolicy p
       session.constructionCounts().mathematicalAttempts != work ||
       session.minimumDemands().mathematical != demands.mathematical) {
     return function.emitError("allocation retry repeated work, changed commands or lost exact demands");
+  }
+  if (function->hasAttr("test.require_bounded_regional_allocation") &&
+      !checkBoundedRegionalAllocationRecipe(function, policy)) {
+    return function.emitError("bounded regional allocation recipe was not consumed");
   }
   llvm::outs() << "allocation-session: " << logical.mathematical->backend
                << " available=" << succeeded(allocation) << " retained-demands cached-export\n";

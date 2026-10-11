@@ -167,6 +167,7 @@ add_mlir_dialect_library(PTOTransforms
   # Bounded lifetime and periodic storage
   FrontierSynch/Structured/BoundedLifetime.cpp
   FrontierSynch/Structured/BoundedLifetimeAllocation.cpp
+  FrontierSynch/Structured/BoundedLifetimeRegionalAllocation.cpp
   FrontierSynch/Structured/BoundedLifetimeInsertion.cpp
   FrontierSynch/Structured/BoundedLifetimeRegional.cpp
   FrontierSynch/Structured/BoundedLifetimeSelectors.cpp

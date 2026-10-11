@@ -124,6 +124,12 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
         return prepareCompactBoundingLogicalInsertion(function, demands.compactDemands, error);
     }
     if (demands.boundedDemands) {
+        if (demands.region != 0) {
+            auto regional = boundedExports(demands, false, error);
+            if (regional && regional->prepareWithVisits) {
+                return regional->prepareWithVisits(program->nodes[demands.region].loops);
+            }
+        }
         return prepareBoundedLifetimeLogicalResult(demands.boundedDemands, error, demands.region == 0);
     }
     if (demands.varyingBoundaryDemands) {

@@ -33,9 +33,11 @@ obligations; none establishes exclusion from every paper class.
 
 ## Baseline distinction
 
-The current production CLI intentionally stops after mathematical analysis with
-the previously requested not-implemented diagnostic. Consequently it cannot be
-used to infer an end-to-end compilation regression from the regional audit.
+At the starting revision, the production CLI stopped after mathematical analysis
+with the previously requested not-implemented diagnostic. The current CLI uses
+the common analysis session for logical compilation and separate allocation.
+The historical regional audit below measures mathematical coverage; it does not
+establish current end-to-end compilation coverage.
 
 At the starting revision, the retained library insertion path produces logical
 synchronization for PyPTO GEMM, and the allocator succeeds with IDs 0 through 5.
@@ -297,3 +299,27 @@ all affected original nodes rather than promoting child or normalized-root
 success to those regions. No unresolved region is claimed outside every paper
 class. The broader PTO/PyPTO/pypto-lib campaign and deferred emission/allocation
 algorithms remain separate from this eleven-input Step2 audit.
+
+## Composable bounded allocation
+
+Bounded-lifetime children now expose ordinary allocation palettes through their
+cached regional preparation recipe. The exporter reuses the whole-loop
+mandatory-return proof before serialization and preserves original demand record
+numbers and source-ordinal lane rules. Each optional endpoint must have a
+guaranteed enclosing occurrence on its own pipe: a source bound in the first
+visit and a target bound in the last visit. These conservative bounds also
+populate the lane summaries consumed by parent repetition. Empty and short
+invocations guard the envelopes by the handoff displacement.
+
+The producer's expression arena supplies the reuse proof; the composing arena
+owns returned lifetime expressions. Construction is transactional, and failed
+exports preserve cached mathematics and detached logical plans. Nonroot session
+preparation consumes this same regional recipe rather than bypassing its lazy
+allocation hook.
+
+Storage-backed regional palettes requiring additional lane coordinates remain
+unsupported. Missing mandatory envelopes or an insufficient six-ID assignment
+remain allocation obligations. No fallback synchronization or scarcity repair
+is introduced. The regression fixture checks the session recipe explicitly,
+and independent command traces check matching and causal reuse across zero,
+one, partial, nonzero-origin and nonunit-step loop domains.
