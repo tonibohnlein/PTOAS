@@ -2167,6 +2167,10 @@ int main(int argc, char **argv) {
               selectorCost["intersection_requests"] = cost.intersectionRequests;
               selectorCost["intersection_hits"] = cost.intersectionHits;
               selectorCost["intersection_builds"] = cost.intersectionBuilds;
+              selectorCost["witness_requests"] = cost.witnessRequests;
+              selectorCost["witness_hits"] = cost.witnessHits;
+              selectorCost["witness_builds"] = cost.witnessBuilds;
+              selectorCost["witness_pieces"] = cost.witnessPieces;
               selectorCost["projection_requests"] = cost.projectionRequests;
               selectorCost["projection_hits"] = cost.projectionHits;
               selectorCost["projection_builds"] = cost.projectionBuilds;

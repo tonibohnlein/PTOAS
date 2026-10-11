@@ -397,14 +397,14 @@ LogicalResult Builder::append(const Piece& candidate, ArithmeticBoundaryKind kin
     for (const auto& system : selected) {
         auto ordered = system.remap(system.dimensions(), map);
         if (failed(ordered)) { return failure(); }
-        auto witnesses = buildIntegerTupleWitnesses(*ordered, inputs,
+        auto witnesses = numericalQueries.witnesses(*ordered, inputs,
             llvm::ArrayRef<uint64_t>(candidate.residues).take_front(depth));
         if (failed(witnesses)) { return failure(); }
-        for (auto& witness : *witnesses) {
+        for (const auto& witness : *witnesses) {
             std::vector<uint64_t> inputResidues;
             if (storage(candidate)) { inputResidues.push_back(candidate.residues[depth]); }
-            target->selector.pieces.push_back({std::move(witness.domain), std::move(inputResidues),
-                parameters(candidate).vec(), *schema.sourceSite, std::move(witness.outputs)});
+            target->selector.pieces.push_back({witness.domain, std::move(inputResidues),
+                parameters(candidate).vec(), *schema.sourceSite, witness.outputs});
         }
     }
     return success();

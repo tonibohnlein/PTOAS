@@ -418,6 +418,18 @@ bool projectionCacheChecks()
                     (expected && y <= 1)) { return false; }
         }
     }
+    auto witnesses = cache.witnesses(*system, 1, {0});
+    auto witnessesRetry = cache.witnesses(*system, 1, {0});
+    auto shiftedResidue = cache.witnesses(*system, 1, {1});
+    if (failed(witnesses) || failed(witnessesRetry) || failed(shiftedResidue) || witnesses->empty() ||
+        witnesses->data() != witnessesRetry->data() || shiftedResidue->empty() ||
+        cache.cost().witnessBuilds != 2 || cache.cost().witnessHits != 1) { return false; }
+    for (const auto& witness : *witnesses) {
+        if (witness.outputs.size() != 1 || witness.outputs.front().residue != 0) { return false; }
+    }
+    for (const auto& witness : *shiftedResidue) {
+        if (witness.outputs.size() != 1 || witness.outputs.front().residue != 1) { return false; }
+    }
     auto second = cache.project(*system, {1});
     auto reversed = cache.project(*system, {1, 0});
     if (failed(second) || failed(reversed)) { return false; }
@@ -448,6 +460,10 @@ bool projectionCacheChecks()
     if (!contains(*first, {Integer(2)}) || contains(*first, {Integer(3)})) { return false; }
     if (!contains(llvm::ArrayRef<fs::IntegerSystem>(*mapped, 1), {Integer(3), Integer(4)}) ||
         !contains(llvm::ArrayRef<fs::IntegerSystem>(*limited, 1), {Integer(1), Integer(2)})) { return false; }
+    if (witnesses->empty() || witnesses->front().outputs.front().residue != 0) { return false; }
+    const auto witnessBuilds = cache.cost().witnessBuilds, witnessHits = cache.cost().witnessHits;
+    if (succeeded(cache.witnesses(*system, 2, {0})) || succeeded(cache.witnesses(*system, 2, {0})) ||
+        cache.cost().witnessBuilds != witnessBuilds + 2 || cache.cost().witnessHits != witnessHits) { return false; }
     const auto remapBuilds = cache.cost().remapBuilds, remapHits = cache.cost().remapHits;
     if (succeeded(cache.remap(*system, 2, {0})) || succeeded(cache.remap(*system, 2, {0})) ||
         cache.cost().remapBuilds != remapBuilds + 2 || cache.cost().remapHits != remapHits) { return false; }
@@ -526,6 +542,8 @@ bool check()
         if (!result.error.empty()) { llvm::errs() << result.error << "\n"; return false; }
         if (result.boundaries.empty() || result.support.empty() || !result.cost.projectionHits ||
             !result.cost.emptinessHits || !result.cost.remapHits || !result.cost.intersectionHits ||
+            !result.cost.witnessHits ||
+            result.cost.witnessRequests != result.cost.witnessHits + result.cost.witnessBuilds ||
             result.cost.remapRequests != result.cost.remapHits + result.cost.remapBuilds ||
             result.cost.intersectionRequests != result.cost.intersectionHits + result.cost.intersectionBuilds ||
             result.cost.projectionRequests != result.cost.projectionHits + result.cost.projectionBuilds) {

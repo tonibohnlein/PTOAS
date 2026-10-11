@@ -74,6 +74,21 @@ public:
         if (failed(value)) { return failure(); }
         return &intersected.emplace(key, std::move(*value)).first->second;
     }
+    FailureOr<llvm::ArrayRef<IntegerTupleWitness>> witnesses(
+        const IntegerSystem& system, unsigned inputs, llvm::ArrayRef<uint64_t> outputResidues)
+    {
+        accumulateCost(counts.witnessRequests, 1);
+        const auto key = std::make_tuple(identity(system), inputs, outputResidues.vec());
+        if (auto found = witnessed.find(key); found != witnessed.end()) {
+            accumulateCost(counts.witnessHits, 1); return llvm::ArrayRef<IntegerTupleWitness>(found->second);
+        }
+        accumulateCost(counts.witnessBuilds, 1);
+        auto value = buildIntegerTupleWitnesses(system, inputs, outputResidues);
+        if (failed(value)) { return failure(); }
+        accumulateCost(counts.witnessPieces, value->size());
+        auto position = witnessed.emplace(key, std::move(*value)).first;
+        return llvm::ArrayRef<IntegerTupleWitness>(position->second);
+    }
     const ArithmeticStorageSelectorCost& cost() const { return counts; }
 private:
     ArithmeticStorageSelectorCost counts;
@@ -83,6 +98,8 @@ private:
     std::map<std::pair<std::size_t, std::vector<unsigned>>, std::vector<IntegerSystem>> projected;
     std::map<std::tuple<std::size_t, unsigned, std::vector<unsigned>>, IntegerSystem> remapped;
     std::map<std::pair<std::size_t, std::size_t>, IntegerSystem> intersected;
+    std::map<std::tuple<std::size_t, unsigned, std::vector<uint64_t>>,
+             std::vector<IntegerTupleWitness>> witnessed;
     static bool same(const IntegerSystem& a, const IntegerSystem& b)
     {
         if (a.dimensions() != b.dimensions() || a.constraints().size() != b.constraints().size() ||
