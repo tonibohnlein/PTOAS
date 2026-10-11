@@ -10,12 +10,57 @@
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/AffineExpr.h"
 #include <set>
+#include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticByteCover.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticImportedPrimitives.h"
 namespace fs = mlir::pto::frontiersynch;
 using namespace mlir;
 namespace {
 using Kind = fs::PrimitiveKind;
 using Boundary = fs::ArithmeticBoundaryKind;
 using Integer = fs::BoundInteger;
+bool sameImportedPiece(const fs::ArithmeticIntegerPiece& a, const fs::ArithmeticIntegerPiece& b)
+{
+    if (a.schema != b.schema || a.residues != b.residues || a.system.dimensions() != b.system.dimensions() ||
+        a.system.constraints().size() != b.system.constraints().size() ||
+        a.system.congruences().size() != b.system.congruences().size()) { return false; }
+    for (std::size_t i = 0; i < a.system.constraints().size(); ++i) {
+        const auto& x = a.system.constraints()[i];
+        const auto& y = b.system.constraints()[i];
+        if (x.coefficients != y.coefficients || x.bound != y.bound) { return false; }
+    }
+    for (std::size_t i = 0; i < a.system.congruences().size(); ++i) {
+        const auto& x = a.system.congruences()[i];
+        const auto& y = b.system.congruences()[i];
+        if (x.coefficients != y.coefficients || x.residue != y.residue || x.modulus != y.modulus) { return false; }
+    }
+    return true;
+}
+FailureOr<std::vector<fs::ArithmeticStorageSelectors>> selectorAdapters(
+    const fs::ArithmeticProgram& program, llvm::ArrayRef<uint32_t> pipes)
+{
+    auto imported = fs::importOwnedArithmeticIntegerPieces(program);
+    auto incomplete = fs::importOwnedArithmeticIntegerPieces(program, true);
+    if (failed(imported) || failed(incomplete)) { return failure(); }
+    const auto otherProgram = program;
+    if (fs::buildArithmeticStorageSelectorsFromImported(otherProgram, *imported, pipes).error.empty() ||
+        fs::buildArithmeticStorageSelectorsFromImported(program, *incomplete, pipes).error.empty()) {
+        return failure();
+    }
+    std::vector<fs::ArithmeticIntegerPiece> before(imported->pieces().begin(), imported->pieces().end());
+    auto moved = std::move(*imported);
+    if (fs::buildArithmeticStorageSelectorsFromImported(program, *imported, pipes).error.empty()) { return failure(); }
+    std::vector<fs::ArithmeticStorageSelectors> results;
+    results.push_back(fs::buildArithmeticStorageSelectors(program, pipes));
+    results.push_back(fs::buildArithmeticStorageSelectorsFromImported(program, moved, pipes));
+    results.push_back(fs::buildArithmeticStorageSelectorsFromImported(program, moved, pipes));
+    if (before.size() != moved.pieces().size()) { return failure(); }
+    for (std::size_t i = 0; i < before.size(); ++i) {
+        if (!sameImportedPiece(before[i], moved.pieces()[i])) { return failure(); }
+    }
+    // All results leave the import owner's lifetime here. The independent
+    // execution oracle below must still evaluate their owned mathematical data.
+    return results;
+}
 struct Occurrence {
     std::size_t site;
     int64_t i;
@@ -210,22 +255,25 @@ bool residueCheck(bool splitContextsAndOrders = false)
         program.primitives.relations.push_back(std::move(relation));
     }
     program.recognition = fs::recognizeArithmetic(program.primitives, {1, 3, 2, 2});
-    auto result = fs::buildArithmeticStorageSelectors(program, {0});
-    if (!result.error.empty()) { llvm::errs() << result.error << "\n"; return false; }
-    for (int64_t n = 0; n <= 5; ++n) {
-        std::vector<Occurrence> occurrences;
-        for (int64_t i = 0; i < n; ++i) { occurrences.push_back({0, i, 0, {i % 2}, {i % 2}}); }
-        for (const auto& boundary : result.boundaries) {
-            for (int64_t byte = -1; byte <= 2; ++byte) {
-                SmallVector<Integer> input;
-                if (boundary.storageSpace) { input.push_back(Integer(byte)); }
-                auto selected = fs::evaluateGeneralArithmeticSelector(boundary.selector, 2, input, {Integer(n)});
-                if (failed(selected)) { return false; }
-                auto wanted = expected(occurrences, boundary, byte);
-                if (selected->has_value() != wanted.has_value() ||
-                    (wanted && ((*selected)->site != wanted->site ||
-                                (*selected)->coordinates != wanted->coordinates))) {
-                    return false;
+    auto adapters = selectorAdapters(program, {0});
+    if (failed(adapters)) { return false; }
+    for (const auto& result : *adapters) {
+        if (!result.error.empty()) { llvm::errs() << result.error << "\n"; return false; }
+        for (int64_t n = 0; n <= 5; ++n) {
+            std::vector<Occurrence> occurrences;
+            for (int64_t i = 0; i < n; ++i) { occurrences.push_back({0, i, 0, {i % 2}, {i % 2}}); }
+            for (const auto& boundary : result.boundaries) {
+                for (int64_t byte = -1; byte <= 2; ++byte) {
+                    SmallVector<Integer> input;
+                    if (boundary.storageSpace) { input.push_back(Integer(byte)); }
+                    auto selected = fs::evaluateGeneralArithmeticSelector(boundary.selector, 2, input, {Integer(n)});
+                    if (failed(selected)) { return false; }
+                    auto wanted = expected(occurrences, boundary, byte);
+                    if (selected->has_value() != wanted.has_value() ||
+                        (wanted && ((*selected)->site != wanted->site ||
+                                    (*selected)->coordinates != wanted->coordinates))) {
+                        return false;
+                    }
                 }
             }
         }
@@ -295,31 +343,79 @@ bool quotientImportCheck()
     }
     return true;
 }
+bool rationalCoverChecks()
+{
+    using Row = fs::IntegerConstraint;
+    auto coupled = fs::IntegerSystem::create(3,
+        {Row{{Integer(-1), Integer(0), Integer(0)}, Integer(0)},
+         Row{{Integer(1), Integer(0), Integer(-1)}, Integer(0)},
+         Row{{Integer(0), Integer(0), Integer(1)}, Integer(3)},
+         Row{{Integer(-4), Integer(1), Integer(0)}, Integer(1)},
+         Row{{Integer(4), Integer(-1), Integer(0)}, Integer(-1)}},
+        {{{Integer(0), Integer(1), Integer(0)}, Integer(1), Integer(2)}});
+    if (failed(coupled)) { return false; }
+    uint64_t requests = 0;
+    auto cover = fs::rationalCoordinateCover(*coupled, 1, requests);
+    if (!cover || *cover != std::make_pair(Integer(1), Integer(13)) || requests != 2) { return false; }
+    // Direct integer inequalities supply the expected accesses independently.
+    for (int64_t i = -1; i <= 4; ++i) {
+        for (int64_t parameter = -1; parameter <= 4; ++parameter) {
+            for (int64_t byte = -2; byte <= 16; ++byte) {
+                const bool accessed = i >= 0 && i <= parameter && parameter <= 3 && byte == 4 * i + 1;
+                if (accessed && (Integer(byte) < cover->first || Integer(byte) > cover->second)) { return false; }
+            }
+        }
+    }
+    auto negative = fs::IntegerSystem::create(2,
+        {Row{{Integer(1), Integer(1)}, Integer(-3)}, Row{{Integer(1), Integer(-1)}, Integer(0)},
+         Row{{Integer(-1), Integer(0)}, Integer(4)}});
+    auto half = fs::IntegerSystem::create(2,
+        {Row{{Integer(1), Integer(1)}, Integer(1)}, Row{{Integer(-1), Integer(-1)}, Integer(-1)},
+         Row{{Integer(1), Integer(-1)}, Integer(0)}, Row{{Integer(-1), Integer(1)}, Integer(0)}});
+    auto empty = fs::IntegerSystem::create(1, {Row{{Integer(0)}, Integer(-1)}});
+    auto free = fs::IntegerSystem::create(1, {});
+    if (failed(negative) || failed(half) || failed(empty) || failed(free)) { return false; }
+    auto signedCover = fs::rationalCoordinateCover(*negative, 0, requests);
+    auto emptyIntegerCover = fs::rationalCoordinateCover(*half, 0, requests);
+    if (!signedCover || *signedCover != std::make_pair(Integer(-4), Integer(-2)) ||
+        !emptyIntegerCover || *emptyIntegerCover != std::make_pair(Integer(1), Integer(0)) ||
+        fs::rationalCoordinateCover(*empty, 0, requests) || fs::rationalCoordinateCover(*free, 0, requests) ||
+        fs::rationalCoordinateCover(*negative, 2, requests)) { return false; }
+    Integer huge(1);
+    for (unsigned bit = 0; bit < 100; ++bit) { huge *= 2; }
+    auto wide = fs::IntegerSystem::create(1, {Row{{huge}, -huge * 3}, Row{{-huge}, huge * 7}});
+    if (failed(wide)) { return false; }
+    auto wideCover = fs::rationalCoordinateCover(*wide, 0, requests);
+    return wideCover && *wideCover == std::make_pair(Integer(-7), Integer(-3));
+}
 bool check()
 {
     Fixture fixture;
-    const auto result = fs::buildArithmeticStorageSelectors(fixture.program, fixture.pipes);
-    if (!result.error.empty()) { llvm::errs() << result.error << "\n"; return false; }
-    if (result.boundaries.empty() || result.support.empty()) { return false; }
-    for (int64_t n : {0, 1, 2, 4, 1000000000}) {
-        for (int64_t guard = 0; guard <= 1; ++guard) {
-            // The large instance checks constant-size selectors without unfolding.
-            const auto occurrences = n < 5 ? execution(n, guard) : std::vector<Occurrence>{};
-            for (const auto& boundary : result.boundaries) {
-                for (int64_t byte = -1; byte <= 5; ++byte) {
-                    SmallVector<Integer> input;
-                    if (boundary.storageSpace) { input.push_back(Integer(byte)); }
-                    auto selected = fs::evaluateGeneralArithmeticSelector(boundary.selector, result.period,
-                                                                           input, {Integer(n), Integer(guard)});
-                    if (failed(selected)) { return false; }
-                    if (n >= 5) { continue; }
-                    const auto wanted = expected(occurrences, boundary, byte);
-                    if (selected->has_value() != wanted.has_value() ||
-                        (wanted && ((*selected)->site != wanted->site ||
-                                    (*selected)->coordinates != wanted->coordinates))) {
-                        llvm::errs() << "boundary mismatch kind=" << static_cast<unsigned>(boundary.kind)
-                                     << " n=" << n << " guard=" << guard << " byte=" << byte << "\n";
-                        return false;
+    auto adapters = selectorAdapters(fixture.program, fixture.pipes);
+    if (failed(adapters)) { return false; }
+    for (const auto& result : *adapters) {
+        if (!result.error.empty()) { llvm::errs() << result.error << "\n"; return false; }
+        if (result.boundaries.empty() || result.support.empty()) { return false; }
+        for (int64_t n : {0, 1, 2, 4, 1000000000}) {
+            for (int64_t guard = 0; guard <= 1; ++guard) {
+                // The large instance checks constant-size selectors without unfolding.
+                const auto occurrences = n < 5 ? execution(n, guard) : std::vector<Occurrence>{};
+                for (const auto& boundary : result.boundaries) {
+                    for (int64_t byte = -1; byte <= 5; ++byte) {
+                        SmallVector<Integer> input;
+                        if (boundary.storageSpace) { input.push_back(Integer(byte)); }
+                        auto selected = fs::evaluateGeneralArithmeticSelector(boundary.selector, result.period,
+                                                                               input, {Integer(n), Integer(guard)});
+                        if (failed(selected)) { return false; }
+                        if (n >= 5) { continue; }
+                        const auto wanted = expected(occurrences, boundary, byte);
+                        if (selected->has_value() != wanted.has_value() ||
+                            (wanted && ((*selected)->site != wanted->site ||
+                                        (*selected)->coordinates != wanted->coordinates))) {
+                            llvm::errs() << "boundary mismatch kind=" << static_cast<unsigned>(boundary.kind)
+                                         << " n=" << n << " guard=" << guard << " byte=" << byte << "\n";
+                            return false;
+                        }
                     }
                 }
             }
@@ -330,7 +426,7 @@ bool check()
 } // namespace
 int runArithmeticStorageSelectorChecks()
 {
-    if (!check() || !residueCheck() || !residueCheck(true) || !quotientImportCheck()) {
+    if (!rationalCoverChecks() || !check() || !residueCheck() || !residueCheck(true) || !quotientImportCheck()) {
         llvm::errs() << "arithmetic storage selector checks failed\n";
         return 1;
     }

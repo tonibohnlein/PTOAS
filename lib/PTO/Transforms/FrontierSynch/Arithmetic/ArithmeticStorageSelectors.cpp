@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticStorageSelectors.h"
+#include "ArithmeticImportedPrimitives.h"
 #include "llvm/ADT/STLExtras.h"
 #include <map>
 #include <tuple>
@@ -22,11 +22,18 @@ public:
         result.period = program.primitives.period;
         result.parameterCount = program.primitives.parameters.size();
     }
+    Builder(const ArithmeticProgram& program, llvm::ArrayRef<uint32_t> pipes,
+            llvm::ArrayRef<Piece> imported) : Builder(program, pipes)
+    {
+        pieces = imported;
+    }
     ArithmeticStorageSelectors result;
     LogicalResult run();
     LogicalResult import(bool occurrencesOnly = false);
-    std::vector<Piece> pieces;
+    std::vector<Piece> ownedPieces;
+    llvm::ArrayRef<Piece> pieces;
 private:
+    void indexOrders();
     const ArithmeticProgram& program;
     llvm::ArrayRef<uint32_t> pipes;
     using OrderKey = std::tuple<std::size_t, std::size_t, unsigned, unsigned, std::vector<uint64_t>>;
@@ -182,10 +189,17 @@ LogicalResult Builder::import(bool occurrencesOnly)
             if (failed(lifted)) { return failure(); }
             auto restricted = piece.system.intersect(*lifted);
             if (failed(restricted)) { return failure(); }
-            if (!restricted->isEmpty()) { pieces.push_back({piece.schema, piece.residues, std::move(*restricted)}); }
+            if (!restricted->isEmpty()) {
+                ownedPieces.push_back({piece.schema, piece.residues, std::move(*restricted)});
+            }
         }
     }
-    // All imported pieces have their final storage before recording indices.
+    pieces = ownedPieces;
+    return success();
+}
+void Builder::indexOrders()
+{
+    // Every indexed piece remains immutable throughout synchronous construction.
     // Keep each matching order list in its original iteration order.
     orderIndex.clear();
     for (std::size_t i = 0; i < pieces.size(); ++i) {
@@ -195,7 +209,6 @@ LogicalResult Builder::import(bool occurrencesOnly)
         orderIndex[{*schema.sourceSite, *schema.targetSite, schema.sourceDimensions,
                     schema.targetDimensions, order.residues}].push_back(i);
     }
-    return success();
 }
 // Combined columns: candidate coordinates, other coordinates, shared byte (if
 // present), shared parameters. The order join never gives independent copies
@@ -383,7 +396,8 @@ LogicalResult Builder::run()
         pipes.size() != program.sites.size()) {
         return failure();
     }
-    if (failed(import()) || failed(support())) { return failure(); }
+    indexOrders();
+    if (failed(support())) { return failure(); }
     for (const auto& candidate : pieces) {
         SmallVector<ArithmeticBoundaryKind> kinds;
         switch (candidate.schema->kind) {
@@ -405,19 +419,32 @@ LogicalResult Builder::run()
     return success();
 }
 } // namespace
-FailureOr<std::vector<ArithmeticIntegerPiece>> importArithmeticIntegerPieces(
+FailureOr<ImportedArithmeticPrimitives> importOwnedArithmeticIntegerPieces(
     const ArithmeticProgram& program, bool occurrencesOnly)
 {
     if (program.extraction.state != RecognitionState::Applicable ||
         program.recognition.state != RecognitionState::Applicable || !program.primitives.period) { return failure(); }
     Builder builder(program, {});
     if (failed(builder.import(occurrencesOnly))) { return failure(); }
-    return std::move(builder.pieces);
+    return ImportedArithmeticPrimitives(program, occurrencesOnly, std::move(builder.ownedPieces));
 }
-ArithmeticStorageSelectors buildArithmeticStorageSelectors(
-    const ArithmeticProgram& program, llvm::ArrayRef<uint32_t> sitePipes)
+FailureOr<std::vector<ArithmeticIntegerPiece>> importArithmeticIntegerPieces(
+    const ArithmeticProgram& program, bool occurrencesOnly)
 {
-    Builder builder(program, sitePipes);
+    auto imported = importOwnedArithmeticIntegerPieces(program, occurrencesOnly);
+    if (failed(imported)) { return failure(); }
+    return std::move(imported->values);
+}
+ArithmeticStorageSelectors buildArithmeticStorageSelectorsFromImported(
+    const ArithmeticProgram& program, const ImportedArithmeticPrimitives& imported,
+    llvm::ArrayRef<uint32_t> sitePipes)
+{
+    if (!imported.isCompleteFor(program)) {
+        ArithmeticStorageSelectors result;
+        result.error = "arithmetic storage selectors require a complete import of the unchanged source program";
+        return result;
+    }
+    Builder builder(program, sitePipes, imported.pieces());
     if (failed(builder.run())) {
         builder.result.boundaries.clear();
         builder.result.support.clear();
@@ -425,5 +452,17 @@ ArithmeticStorageSelectors buildArithmeticStorageSelectors(
                                "and exact projections";
     }
     return std::move(builder.result);
+}
+ArithmeticStorageSelectors buildArithmeticStorageSelectors(
+    const ArithmeticProgram& program, llvm::ArrayRef<uint32_t> sitePipes)
+{
+    auto imported = importOwnedArithmeticIntegerPieces(program);
+    if (failed(imported)) {
+        ArithmeticStorageSelectors result;
+        result.error = "arithmetic storage boundary construction requires complete valid primitives "
+                       "and exact projections";
+        return result;
+    }
+    return buildArithmeticStorageSelectorsFromImported(program, *imported, sitePipes);
 }
 } // namespace mlir::pto::frontiersynch
