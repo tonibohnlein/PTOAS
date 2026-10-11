@@ -14,6 +14,7 @@
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/raw_ostream.h"
 #include <memory>
 #include <optional>
@@ -577,6 +578,98 @@ bool modularBandChecks(MLIRContext* context)
                  << " independent original byte checks and eight alias cases passed\n";
     return true;
 }
+bool fixedCoordinateScalars(MLIRContext* context)
+{
+    unsigned comparisons = 0;
+    for (unsigned bits : {32U, 64U}) {
+        std::string text;
+        llvm::raw_string_ostream stream(text);
+        stream << "module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, " << bits
+               << " : i32>>} { func.func @fixed(%x: index, %small: i8) {\n"
+               << "%z = arith.constant 0 : index\n%one = arith.constant 1 : index\n"
+               << "%two = arith.constant 2 : index\n%three = arith.constant 3 : index\n"
+               << "%four = arith.constant 4 : index\n%fourteen = arith.constant 14 : index\n"
+               << "%thirtytwo = arith.constant 32 : index\n"
+               << "%add = arith.addi %x, %one {test.fixed_add} : index\n"
+               << "%mul = arith.muli %x, %two {test.fixed_mul} : index\n"
+               << "%rem = arith.remui %x, %four {test.fixed_rem} : index\n"
+               << "%div = arith.divui %x, %four {test.fixed_div} : index\n"
+               << "%smallone = arith.constant 1 : i8\n"
+               << "%smalladd = arith.addi %small, %smallone {test.fixed_small} : i8\n"
+               << "scf.for %j = %z to %three step %one {\n"
+               << "%scaled = arith.muli %j, %fourteen : index\n"
+               << "%left = arith.subi %thirtytwo, %scaled : index\n"
+               << "%count = arith.minsi %left, %fourteen {test.fixed_min} : index\n"
+               << "}\nreturn\n}}";
+        auto module = parseSourceString<ModuleOp>(text, context);
+        if (!module || failed(verify(*module))) { return false; }
+        auto render = [&]() {
+            std::string output;
+            llvm::raw_string_ostream printed(output);
+            module->print(printed);
+            return output;
+        };
+        const auto before = render();
+        auto function = module->lookupSymbol<func::FuncOp>("fixed");
+        llvm::StringMap<Operation*> probes;
+        scf::ForOp loop;
+        module->walk([&](Operation* operation) {
+            if (auto candidate = dyn_cast<scf::ForOp>(operation)) { loop = candidate; }
+            for (auto attribute : operation->getAttrs()) {
+                if (attribute.getName().strref().starts_with("test.fixed_")) {
+                    probes[attribute.getName().strref()] = operation;
+                }
+            }
+        });
+        auto evaluate = [&](StringRef name, Value bound, int64_t value) {
+            auto* operation = probes.lookup(name);
+            pto::detail::ScalarEvolution evolution(context, operation);
+            auto callback = [&](Value queried) -> AffineExpr {
+                return queried == bound ? getAffineConstantExpr(value, context) : AffineExpr{};
+            };
+            auto result = evolution.value(operation->getResult(0), callback);
+            if (evolution.value(operation->getResult(0), callback) != result) { return AffineExpr{}; }
+            ++comparisons;
+            return result;
+        };
+        auto exact = [&](AffineExpr expression, int64_t expected) {
+            return expression == getAffineConstantExpr(expected, context);
+        };
+        // Each original middle visit has an independently specialized context.
+        for (int64_t visit : {0, 2, 1, 0, 1, 2}) {
+            if (!exact(evaluate("test.fixed_min", loop.getInductionVar(), visit),
+                       std::min<int64_t>(32 - 14 * visit, 14))) { return false; }
+        }
+        const int64_t low = bits == 64 ? INT64_MIN : INT32_MIN;
+        const int64_t high = bits == 64 ? INT64_MAX : INT32_MAX;
+        for (int64_t value : {low, low + 1, int64_t(-1), int64_t(0), int64_t(1), high - 1, high}) {
+            const auto x = function.getArgument(0);
+            const auto add = evaluate("test.fixed_add", x, value);
+            const auto mul = evaluate("test.fixed_mul", x, value);
+            // Existing checked-affine magnitude limits may refuse a valid
+            // extreme sum. Any produced constant must still match machine bits.
+            if (value == high ? static_cast<bool>(add) : (add && !exact(add, value + 1))) { return false; }
+            if (value >= -1 && value <= 1 && !exact(add, value + 1)) { return false; }
+            const bool doubles = value >= low / 2 && value <= high / 2;
+            if (doubles ? !exact(mul, value * 2) : static_cast<bool>(mul)) { return false; }
+            const auto remainder = APInt(bits, value, true).urem(APInt(bits, 4)).getZExtValue();
+            if (!exact(evaluate("test.fixed_rem", x, value), remainder)) { return false; }
+            const auto div = evaluate("test.fixed_div", x, value);
+            if (value < 0 ? static_cast<bool>(div) : !exact(div, value / 4)) { return false; }
+        }
+        for (int64_t value : {-128, -1, 0, 126, 127}) {
+            const auto result = evaluate("test.fixed_small", function.getArgument(1), value);
+            if (value == 127 ? static_cast<bool>(result) : !exact(result, value + 1)) { return false; }
+        }
+        if (bits == 32 && evaluate("test.fixed_add", function.getArgument(0), INT64_MAX)) { return false; }
+        pto::detail::ScalarEvolution unbound(context, probes.lookup("test.fixed_min"));
+        if (unbound.value(probes.lookup("test.fixed_min")->getResult(0), [](Value) { return AffineExpr{}; }) ||
+            unbound.signedRange(loop.getInductionVar()) != std::make_optional(std::make_pair(int64_t(0), int64_t(2))) ||
+            render() != before) { return false; }
+    }
+    llvm::outs() << "fixed-coordinate scalars: " << comparisons << " contextual machine comparisons passed\n";
+    return true;
+}
 } // namespace
 bool runScalarConstraintChecks(MLIRContext* context)
 {
@@ -670,6 +763,7 @@ bool runScalarConstraintChecks(MLIRContext* context)
     }
     if (!interleavedContexts(context) || !controlProofContext(context) || !failedPrimitiveStopsWork(context) ||
         !configuredPrimitiveStopsWork(context) || !correlatedCountedDomains(context) || !modularBandChecks(context) ||
+        !fixedCoordinateScalars(context) ||
         !runMachinePlaceholderChecks(context)) {
         return false;
     }
