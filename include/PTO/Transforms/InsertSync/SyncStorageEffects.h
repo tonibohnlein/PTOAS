@@ -42,12 +42,19 @@ struct SyncSlotSelection {
     SmallVector<uint64_t> addresses;
 };
 
+// Provenance describes the supplied model, not a proof of native instruction
+// footprint precision. Failed qualifications retain the allocation enclosure.
+enum class SyncAccessDescription { AllocationEnclosure, DeclaredRegion };
+enum class SyncAccessFallback { None, MissingStorage, MacroEnvelope, AmbiguousBuffer,
+                                NoDeclaration, UnresolvedDeclaration };
 struct SyncStorageEffect {
     const CompoundInstanceElement* phase = nullptr;
     const BaseMemInfo* memory = nullptr;
     // Legacy roots/ranges do not include arbitrary structured-control backedges.
     bool sharedProvenanceComplete = false;
     SyncAccessMode mode = SyncAccessMode::Read;
+    SyncAccessDescription description = SyncAccessDescription::AllocationEnclosure;
+    SyncAccessFallback fallback = SyncAccessFallback::MissingStorage;
     // Buffer geometry is retained independently from access selections.
     std::optional<SyncAccessRegion> descriptorRegion;
     // Preserve address-table selection even when it has no affine byte map.
@@ -67,6 +74,7 @@ public:
     // enumerate conflicting pairs, insert commands, or establish completeness of
     // the upstream operation-effect registry. Failure publishes no partial state.
     LogicalResult build(const SyncInput& input);
+    std::shared_ptr<const SyncDescriptorState> descriptorState() const { return descriptors; }
     ArrayRef<SyncStorageEffect> effects() const { return records; }
     ArrayRef<SyncStorageCell> cells() const { return partition; }
     ArrayRef<std::size_t> effectsFor(const CompoundInstanceElement* phase) const;
@@ -104,6 +112,7 @@ public:
                       DepBaseMemInfoPairVec& result, Value secondOperand = {}) const;
 
 private:
+    std::shared_ptr<const SyncDescriptorState> descriptors;
     MemoryDependentAnalyzer memory;
     SmallVector<SyncStorageEffect, 0> records;
     SmallVector<SyncStorageCell> partition;

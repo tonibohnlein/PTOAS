@@ -27,6 +27,8 @@ enum class SyncResultAvailability { NonScalar, SynchronousScalar, RequiresComple
 SyncResultAvailability resultAvailability(const CompoundInstanceElement& phase, Value result);
 
 class SyncStorageEffects;
+class SyncDescriptorState;
+class SyncScalarFacts;
 enum class SyncInstructionView { TranslatorStages, PipeEnvelopes };
 
 class SyncInput {
@@ -54,6 +56,8 @@ public:
   // Their classification remains explicit work for the consuming analysis.
   ArrayRef<SyncMemoryEffect> effectsFor(Operation* operation) const;
   const SyncStorageEffects &accesses() const;
+  std::shared_ptr<const SyncScalarFacts> scalarFacts() const { return scalars; }
+  std::shared_ptr<const SyncDescriptorState> descriptorState() const { return descriptors; }
   MemoryDependentAnalyzer &memory() { return analyzer; }
   const MemoryDependentAnalyzer &memory() const { return analyzer; }
 private:
@@ -65,6 +69,8 @@ private:
   SmallVector<const CompoundInstanceElement *> phases;
   DenseMap<Operation*, SmallVector<SyncMemoryEffect>> declaredEffects;
   std::unique_ptr<SyncStorageEffects> resolvedAccesses;
+  std::shared_ptr<const SyncDescriptorState> descriptors;
+  std::shared_ptr<const SyncScalarFacts> scalars;
   // Separate ownership: ir() remains the unmodified legacy translator output.
   SmallVector<std::unique_ptr<CompoundInstanceElement>> macroEnvelopes;
 };

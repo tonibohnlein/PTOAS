@@ -1,0 +1,109 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --contextual-local-access-checks %s | FileCheck %s
+// RUN: sed 's/pto.target_arch = "a3"/pto.target_arch = "a5"/' %s > %t.a5.pto
+// RUN: pto-sync-input-test --contextual-local-access-checks %t.a5.pto | FileCheck %s
+// Context facts are supplied independently by the checker. Static twins verify
+// unchanged default effects; dynamic twins exercise the callback-only path.
+// CHECK: contextual local contracts: pointwise_static checked=1
+// CHECK: contextual local contracts: pointwise_dynamic checked=1
+// CHECK: contextual local contracts: binary_static checked=1
+// CHECK: contextual local contracts: binary_dynamic checked=1
+// CHECK: contextual local contracts: conversion_static checked=1
+// CHECK: contextual local contracts: conversion_dynamic checked=1
+// CHECK: contextual local contracts: move_static checked=1
+// CHECK: contextual local contracts: move_dynamic checked=1
+// CHECK: contextual local contracts: reduction_static checked=1
+// CHECK: contextual local contracts: reduction_dynamic checked=1
+module attributes {pto.target_arch = "a3"} {
+  func.func @pointwise_static(%src: !pto.tile_buf<vec, 1x256xf32, valid=1x32>, %dst: !pto.tile_buf<vec, 1x256xf32, valid=1x32>) {
+    pto.texp ins(%src : !pto.tile_buf<vec, 1x256xf32, valid=1x32>) outs(%dst : !pto.tile_buf<vec, 1x256xf32, valid=1x32>) {
+      test.contextual_shapes = array<i64: 0, 1, 32, 1, 1, 32>,
+      test.effects_a3 = array<i64: 0, 0, 1, 1, 1, 1>,
+      test.effects_a5 = array<i64: 0, 0, 0, 1, 1, 1>,
+      test.static_equivalent
+    }
+    return
+  }
+  func.func @pointwise_dynamic(%src: !pto.tile_buf<vec, 1x256xf32, valid=?x?>, %dst: !pto.tile_buf<vec, 1x256xf32, valid=?x?>) {
+    pto.texp ins(%src : !pto.tile_buf<vec, 1x256xf32, valid=?x?>) outs(%dst : !pto.tile_buf<vec, 1x256xf32, valid=?x?>) {
+      test.contextual_shapes = array<i64: 0, 1, 32, 1, 1, 32>,
+      test.effects_a3 = array<i64: 0, 0, 1, 1, 1, 1>,
+      test.effects_a5 = array<i64: 0, 0, 0, 1, 1, 1>
+    }
+    return
+  }
+  func.func @binary_static(%src: !pto.tile_buf<vec, 1x256xf32, valid=1x32>, %other: !pto.tile_buf<vec, 1x256xf32, valid=1x32>, %dst: !pto.tile_buf<vec, 1x256xf32, valid=1x32>) {
+    pto.tadd ins(%src, %other : !pto.tile_buf<vec, 1x256xf32, valid=1x32>, !pto.tile_buf<vec, 1x256xf32, valid=1x32>) outs(%dst : !pto.tile_buf<vec, 1x256xf32, valid=1x32>) {
+      test.contextual_shapes = array<i64: 0, 1, 32, 1, 1, 32, 2, 1, 32>,
+      test.effects_a3 = array<i64: 0, 0, 1, 1, 0, 1, 2, 1, 1>,
+      test.effects_a5 = array<i64: 0, 0, 0, 1, 0, 0, 2, 1, 1>,
+      test.static_equivalent
+    }
+    return
+  }
+  func.func @binary_dynamic(%src: !pto.tile_buf<vec, 1x256xf32, valid=?x?>, %other: !pto.tile_buf<vec, 1x256xf32, valid=?x?>, %dst: !pto.tile_buf<vec, 1x256xf32, valid=?x?>) {
+    pto.tadd ins(%src, %other : !pto.tile_buf<vec, 1x256xf32, valid=?x?>, !pto.tile_buf<vec, 1x256xf32, valid=?x?>) outs(%dst : !pto.tile_buf<vec, 1x256xf32, valid=?x?>) {
+      test.contextual_shapes = array<i64: 0, 1, 32, 1, 1, 32, 2, 1, 32>,
+      test.effects_a3 = array<i64: 0, 0, 1, 1, 0, 1, 2, 1, 1>,
+      test.effects_a5 = array<i64: 0, 0, 0, 1, 0, 0, 2, 1, 1>
+    }
+    return
+  }
+  func.func @conversion_static(%src: !pto.tile_buf<vec, 1x256xf32, valid=1x128>, %dst: !pto.tile_buf<vec, 1x256xf16, valid=1x128>) {
+    pto.tcvt ins(%src {
+      test.contextual_shapes = array<i64: 0, 1, 128, 1, 1, 128>,
+      test.effects_a3 = array<i64: 0, 0, 1, 1, 1, 1>,
+      test.effects_a5 = array<i64: 0, 0, 1, 1, 1, 1>,
+      test.static_equivalent
+    } : !pto.tile_buf<vec, 1x256xf32, valid=1x128>) outs(%dst : !pto.tile_buf<vec, 1x256xf16, valid=1x128>)
+    return
+  }
+  func.func @conversion_dynamic(%src: !pto.tile_buf<vec, 1x256xf32, valid=?x?>, %dst: !pto.tile_buf<vec, 1x256xf16, valid=?x?>) {
+    pto.tcvt ins(%src {
+      test.contextual_shapes = array<i64: 0, 1, 128, 1, 1, 128>,
+      test.effects_a3 = array<i64: 0, 0, 1, 1, 1, 1>,
+      test.effects_a5 = array<i64: 0, 0, 1, 1, 1, 1>
+    } : !pto.tile_buf<vec, 1x256xf32, valid=?x?>) outs(%dst : !pto.tile_buf<vec, 1x256xf16, valid=?x?>)
+    return
+  }
+  func.func @move_static(%src: !pto.tile_buf<vec, 1x256xf32, valid=1x32>, %dst: !pto.tile_buf<vec, 1x256xf32, valid=1x32>) {
+    pto.tmov ins(%src : !pto.tile_buf<vec, 1x256xf32, valid=1x32>) outs(%dst : !pto.tile_buf<vec, 1x256xf32, valid=1x32>) {
+      test.contextual_shapes = array<i64: 0, 1, 32, 1, 1, 32>,
+      test.effects_a3 = array<i64: 0, 0, 1, 1, 1, 1>,
+      test.effects_a5 = array<i64: 0, 0, 0, 1, 1, 1>,
+      test.static_equivalent
+    }
+    return
+  }
+  func.func @move_dynamic(%src: !pto.tile_buf<vec, 1x256xf32, valid=?x?>, %dst: !pto.tile_buf<vec, 1x256xf32, valid=?x?>) {
+    pto.tmov ins(%src : !pto.tile_buf<vec, 1x256xf32, valid=?x?>) outs(%dst : !pto.tile_buf<vec, 1x256xf32, valid=?x?>) {
+      test.contextual_shapes = array<i64: 0, 1, 32, 1, 1, 32>,
+      test.effects_a3 = array<i64: 0, 0, 1, 1, 1, 1>,
+      test.effects_a5 = array<i64: 0, 0, 0, 1, 1, 1>
+    }
+    return
+  }
+  func.func @reduction_static(%src: !pto.tile_buf<vec, 1x256xf32, valid=1x64>, %other: !pto.tile_buf<vec, 1x256xf32>, %dst: !pto.tile_buf<vec, 1x256xf32, valid=1x1>) {
+    pto.trowsum ins(%src, %other : !pto.tile_buf<vec, 1x256xf32, valid=1x64>, !pto.tile_buf<vec, 1x256xf32>) outs(%dst : !pto.tile_buf<vec, 1x256xf32, valid=1x1>) {
+      test.contextual_shapes = array<i64: 0, 1, 64, 1, 1, 256, 2, 1, 1>,
+      test.effects_a3 = array<i64: 0, 0, 1, 1, 0, 0, 1, 1, 0, 2, 1, 1>,
+      test.effects_a5 = array<i64: 0, 0, 0, 2, 1, 0>,
+      test.static_equivalent
+    }
+    return
+  }
+  func.func @reduction_dynamic(%src: !pto.tile_buf<vec, 1x256xf32, valid=?x?>, %other: !pto.tile_buf<vec, 1x256xf32>, %dst: !pto.tile_buf<vec, 1x256xf32, valid=?x?>) {
+    pto.trowsum ins(%src, %other : !pto.tile_buf<vec, 1x256xf32, valid=?x?>, !pto.tile_buf<vec, 1x256xf32>) outs(%dst : !pto.tile_buf<vec, 1x256xf32, valid=?x?>) {
+      test.contextual_shapes = array<i64: 0, 1, 64, 1, 1, 256, 2, 1, 1>,
+      test.effects_a3 = array<i64: 0, 0, 1, 1, 0, 0, 1, 1, 0, 2, 1, 1>,
+      test.effects_a5 = array<i64: 0, 0, 0, 2, 1, 0>
+    }
+    return
+  }
+}

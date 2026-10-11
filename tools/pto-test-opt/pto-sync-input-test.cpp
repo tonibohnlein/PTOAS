@@ -80,6 +80,8 @@ int runGuardedPeriodicChecks(llvm::StringRef path);
 int runSyncAliasChecks(func::FuncOp function, const pto::SyncInput &input);
 LogicalResult auditSyncStep0(func::FuncOp function, const pto::SyncInput &input, bool envelopes);
 bool checkProgramContractAuditWork();
+LogicalResult checkDescriptorState(func::FuncOp);
+int runContextualLocalAccessChecks(func::FuncOp);
 namespace {
 bool verifyStageProfile(const pto::frontiersynch::AnalysisLedger& ledger, uint64_t attempts,
     uint64_t originatingRequest)
@@ -1653,6 +1655,8 @@ int main(int argc, char **argv) {
     for (int i = 1; i + 1 < argc; ++i) { argv[i] = argv[i + 1]; }
     --argc;
   }
+  const bool contextualChecks = argc == 3 && StringRef(argv[1]) == "--contextual-local-access-checks";
+  const bool descriptorChecks = argc == 3 && StringRef(argv[1]) == "--descriptor-state-checks";
   const bool stageProfileChecks = argc == 3 && StringRef(argv[1]) == "--stage-profile-checks";
   const bool identitySessionChecks = argc == 3 && StringRef(argv[1]) == "--identity-session-checks";
   const bool allocationSessionChecks = argc == 3 && StringRef(argv[1]) == "--allocation-session-checks";
@@ -1720,7 +1724,8 @@ int main(int argc, char **argv) {
   const bool sequenceAnalysis = argc == 3 && StringRef(argv[1]) == "--sequence-analysis";
   const bool structuredTrace = argc == 3 && StringRef(argv[1]) == "--structured-trace";
   const bool physicalTrace = argc == 3 && StringRef(argv[1]) == "--physical-trace";
-  if (argc != 2 && !stageProfileChecks && !boundedQueries && !identitySessionChecks && !allocationSessionChecks &&
+  if (argc != 2 && !contextualChecks && !descriptorChecks && !stageProfileChecks && !boundedQueries &&
+      !identitySessionChecks && !allocationSessionChecks &&
       !regionalSessionChecks && !retainedChecks &&
       !sessionChecks && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !finiteExpansion && !recognition &&
       !numericAnalysis && !insertLogical && !insertLogicalLibrary && !insertModuleLibrary && !recognitionBoundary &&
@@ -1797,7 +1802,8 @@ int main(int argc, char **argv) {
   }
   context.disableMultithreading();
   const bool hasOption =
-      stageProfileChecks || boundedQueries || identitySessionChecks || allocationSessionChecks ||
+      contextualChecks || descriptorChecks || stageProfileChecks || boundedQueries || identitySessionChecks ||
+      allocationSessionChecks ||
       regionalSessionChecks ||
       retainedChecks || sessionChecks ||
       mixedSymbolicChecks || rotatingAnalysis || explicitAnalysis || expectFailure || capabilities || phaseIndex ||
@@ -1814,6 +1820,18 @@ int main(int argc, char **argv) {
   auto module = parseSourceFile<ModuleOp>(filename, &context);
   if (!module || failed(verify(*module))) {
     return 1;
+  }
+  if (contextualChecks) {
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (!function.isDeclaration() && runContextualLocalAccessChecks(function)) { return 1; }
+    }
+    return 0;
+  }
+  if (descriptorChecks) {
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (!function.isDeclaration() && failed(checkDescriptorState(function))) { return 1; }
+    }
+    return 0;
   }
   if (boundedQueries) {
     const auto before = render(module->getOperation());

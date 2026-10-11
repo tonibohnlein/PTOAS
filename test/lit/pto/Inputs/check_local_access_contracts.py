@@ -100,11 +100,14 @@ def check(tool, path, arch, op, dtype, columns, changed=False, destination_type=
             selected = row_bytes % 32 == 0
         else:
             selected = arch == "a3" or record["mode"] == "write" or row_bytes % 256 == 0
-        # Runtime metadata can prevent export or invalidate a joint guard.
-        # In either case, dependent selections must retain their bounds.
+        # A changed source prevents matching-shape pointwise/move/conversion
+        # contracts. A3's single-row reduction independently masks that source
+        # and writes one result, while scratch keeps its allocation enclosure.
         if changed:
-            selected = op == "tmul"  # Existing aligned contract, guarded at the access.
-        exact = selected and not changed
+            selected = op == "tmul" or (reduction and arch == "a3" and base != 8192)
+            if reduction and base == 0:
+                logical_columns = max(1, columns - 1)
+        exact = selected and (not changed or reduction)
         assert bool(record["declared_selections"]) == selected, (arch, op, record)
         region = record["regions"][0]
         if not exact:

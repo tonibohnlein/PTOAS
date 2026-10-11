@@ -8,6 +8,7 @@
 // Target storage-hazard protection; physical effects remain unchanged.
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/InsertSync/SyncDescriptorState.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
@@ -22,7 +23,7 @@ StorageProtectionPolicy ptoStorageProtection()
     // https://www.hiascend.com/doc_center/source/zh/canncommercial/900/API/ascendcopapi/atlasascendc_api_07_0271.html
     return {static_cast<uint32_t>(PipelineType::PIPE_S)};
 }
-std::optional<MatrixProtectionInfo> matrixProtectionInfo(Operation* operation)
+std::optional<MatrixProtectionInfo> matrixProtectionInfo(Operation* operation, const SyncDescriptorState* descriptors)
 {
     if (!operation || !isTargetArchA3(operation)) {
         return std::nullopt;
@@ -50,9 +51,12 @@ std::optional<MatrixProtectionInfo> matrixProtectionInfo(Operation* operation)
     if (!a || !b || !c) {
         return std::nullopt;
     }
-    auto aShape = resolveConstantTileValidShape(lhs, operation);
-    auto bShape = resolveConstantTileValidShape(rhs, operation);
-    auto cShape = resolveConstantTileValidShape(dst, operation);
+    auto aShape = descriptors ? descriptors->constantShape(lhs, operation) :
+        resolveConstantTileValidShape(lhs, operation);
+    auto bShape = descriptors ? descriptors->constantShape(rhs, operation) :
+        resolveConstantTileValidShape(rhs, operation);
+    auto cShape = descriptors ? descriptors->constantShape(dst, operation) :
+        resolveConstantTileValidShape(dst, operation);
     if (!aShape || !bShape || !cShape) {
         return std::nullopt;
     }
@@ -97,12 +101,12 @@ void HardwareProtectionBuilder::endScope()
     activeAtoms.clear();
 }
 void HardwareProtectionBuilder::observe(Operation* operation, ExplicitEffects& occurrence,
-                                        llvm::ArrayRef<uint32_t> accumulatorAtoms)
+    llvm::ArrayRef<uint32_t> accumulatorAtoms, const SyncDescriptorState* descriptors)
 {
     for (auto& access : occurrence.accesses) {
         access.protectionGroup = 0;
     }
-    auto matrix = matrixProtectionInfo(operation);
+    auto matrix = matrixProtectionInfo(operation, descriptors);
     const auto matrixPipe = static_cast<uint32_t>(PipelineType::PIPE_M);
     if (!matrix || occurrence.pipe != matrixPipe || !allWritten(occurrence, accumulatorAtoms)) {
         for (const auto& access : occurrence.accesses) {

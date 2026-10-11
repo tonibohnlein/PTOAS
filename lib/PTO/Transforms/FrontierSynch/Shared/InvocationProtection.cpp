@@ -135,7 +135,7 @@ private:
         leaf.phase = found->second.front();
         leaf.occurrence.pipe = static_cast<uint32_t>(leaf.phase->kPipeValue);
         summary.valid = accesses(leaf);
-        auto matrix = matrixProtectionInfo(&op);
+        auto matrix = matrixProtectionInfo(&op, storage.descriptorState().get());
         if (matrix && summary.valid && !leaf.atoms.empty() &&
             leaf.occurrence.pipe == static_cast<uint32_t>(PipelineType::PIPE_M)) {
             summary.type = matrix->accumulator;
@@ -201,11 +201,11 @@ private:
         if (!summaries.lookup(&op).valid) { state.endScope(); return; }
         // An unresolved alias to the active resource must also break a chain.
         // Uniform summaries discharge such interference before flattening.
-        if (activeEffect && !matrixProtectionInfo(&op) &&
+        if (activeEffect && !matrixProtectionInfo(&op, storage.descriptorState().get()) &&
             llvm::any_of(storage.effectsFor(leaf.phase), [&](auto id) {
                 return storage.mayOverlap(*activeEffect, id);
             })) { state.endScope(); activeEffect.reset(); }
-        state.observe(&op, leaf.occurrence, leaf.atoms);
+        state.observe(&op, leaf.occurrence, leaf.atoms, storage.descriptorState().get());
         if (auto effect = summaries.lookup(&op).matrixEffect) { activeEffect = effect; }
         else if (!state.currentGroup()) { activeEffect.reset(); }
         if (!leaf.occurrence.accesses.empty() && leaf.occurrence.accesses.front().protectionGroup) {

@@ -174,10 +174,15 @@ void applyAccessCoverage(const SyncInput& input, SyncStorageEffect& effect,
 {
     retainBufferBound(input, effect);
     auto aliases = input.buffers().find(effect.memory->baseBuffer);
-    if (effect.phase->macroOpInstanceId >= 0 ||
-        aliases == input.buffers().end() || aliases->second.size() != 1) {
+    if (effect.phase->macroOpInstanceId >= 0) {
+        effect.fallback = SyncAccessFallback::MacroEnvelope;
         return;
     }
+    if (aliases == input.buffers().end() || aliases->second.size() != 1) {
+        effect.fallback = SyncAccessFallback::AmbiguousBuffer;
+        return;
+    }
+    effect.fallback = SyncAccessFallback::NoDeclaration;
     SmallVector<SyncAccessRegion> regions;
     for (const auto& declared : declarations) {
         const bool read = isa<MemoryEffects::Read>(declared.getEffect());
@@ -188,6 +193,7 @@ void applyAccessCoverage(const SyncInput& input, SyncStorageEffect& effect,
         }
         auto region = declaredRegion(input, effect, declared);
         if (!region) {
+            effect.fallback = SyncAccessFallback::UnresolvedDeclaration;
             return; // An unresolved declaration must not be hidden by an exact one.
         }
         regions.push_back(std::move(*region));
@@ -195,6 +201,8 @@ void applyAccessCoverage(const SyncInput& input, SyncStorageEffect& effect,
     if (regions.empty()) {
         return;
     }
+    effect.description = SyncAccessDescription::DeclaredRegion;
+    effect.fallback = SyncAccessFallback::None;
     effect.regions = std::move(regions);
     effect.region.reset();
     if (effect.regions.size() == 1) {

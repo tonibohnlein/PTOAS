@@ -1,0 +1,793 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --descriptor-state-checks %s | FileCheck %s
+// CHECK: descriptor-state: same_block
+// CHECK: descriptor-state: equal_join
+// CHECK: descriptor-state: unequal_join
+// CHECK: descriptor-state: zero_trip
+// CHECK: descriptor-state: one_trip
+// CHECK: descriptor-state: backedge
+// CHECK: descriptor-state: strong_update
+// CHECK: descriptor-state: recreated
+// CHECK: descriptor-state: iv_update
+// CHECK: descriptor-state: distinct_identity
+!tile = !pto.tile_buf<vec, 8x8xf32, valid=?x?>
+module {
+  func.func @same_block(%cond: i1, %count: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    %a = "pto.tgetval"(%t, %c0) {test.shape = array<i64: 8, 8>} : (!tile, index) -> f32
+    pto.set_validshape %t, %c1, %c8 : !tile
+    %b = "pto.tgetval"(%t, %c0) {test.shape = array<i64: 1, 8>} : (!tile, index) -> f32
+    return
+  }
+  func.func @equal_join(%cond: i1, %count: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.if %cond {
+    pto.set_validshape %t, %c1, %c8 : !tile
+    } else {
+    pto.set_validshape %t, %c1, %c8 : !tile
+    }
+    %a = "pto.tgetval"(%t, %c0) {test.shape = array<i64: 1, 8>} : (!tile, index) -> f32
+    return
+  }
+  func.func @unequal_join(%cond: i1, %count: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.if %cond {
+    pto.set_validshape %t, %c1, %c8 : !tile
+    } else {
+    pto.set_validshape %t, %c2, %c8 : !tile
+    }
+    %a = "pto.tgetval"(%t, %c0) {test.shape = array<i64: -1, -1>} : (!tile, index) -> f32
+    return
+  }
+  func.func @zero_trip(%cond: i1, %count: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i = %c0 to %c0 step %c1 {
+    pto.set_validshape %t, %c1, %c8 : !tile
+    }
+    %a = "pto.tgetval"(%t, %c0) {test.shape = array<i64: 8, 8>} : (!tile, index) -> f32
+    return
+  }
+  func.func @one_trip(%cond: i1, %count: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i = %c0 to %c1 step %c1 {
+    %a = "pto.tgetval"(%t, %c0) {test.shape = array<i64: 8, 8>} : (!tile, index) -> f32
+    pto.set_validshape %t, %c1, %c8 : !tile
+    }
+    %b = "pto.tgetval"(%t, %c0) {test.shape = array<i64: 1, 8>} : (!tile, index) -> f32
+    return
+  }
+  func.func @backedge(%cond: i1, %count: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i = %c0 to %count step %c1 {
+    %a = "pto.tgetval"(%t, %c0) {test.shape = array<i64: -1, -1>} : (!tile, index) -> f32
+    pto.set_validshape %t, %c1, %c8 : !tile
+    }
+    %b = "pto.tgetval"(%t, %c0) {test.shape = array<i64: -1, -1>} : (!tile, index) -> f32
+    return
+  }
+  func.func @strong_update(%cond: i1, %count: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i = %c0 to %count step %c1 {
+    pto.set_validshape %t, %c1, %c8 : !tile
+    %a = "pto.tgetval"(%t, %c0) {test.shape = array<i64: 1, 8>} : (!tile, index) -> f32
+    }
+    %b = "pto.tgetval"(%t, %c0) {test.shape = array<i64: -1, -1>} : (!tile, index) -> f32
+    return
+  }
+  func.func @recreated(%cond: i1, %count: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i = %c0 to %count step %c1 {
+    %fresh = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    %a = "pto.tgetval"(%fresh, %c0) {test.shape = array<i64: 8, 8>} : (!tile, index) -> f32
+    pto.set_validshape %fresh, %c1, %c8 : !tile
+    }
+    %b = "pto.tgetval"(%t, %c0) {test.shape = array<i64: 8, 8>} : (!tile, index) -> f32
+    return
+  }
+  func.func @iv_update(%cond: i1, %count: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i = %c0 to %c4 step %c1 {
+    %a = "pto.tgetval"(%t, %c0) {test.shape = array<i64: -1, -1>} : (!tile, index) -> f32
+    pto.set_validshape %t, %i, %c8 : !tile
+    }
+    %b = "pto.tgetval"(%t, %c0) {test.shape = array<i64: -1, -1>} : (!tile, index) -> f32
+    return
+  }
+  func.func @distinct_identity(%cond: i1, %count: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    %other = pto.alloc_tile addr = %addr valid_row = %c2 valid_col = %c8 : !tile
+    pto.set_validshape %t, %c1, %c8 : !tile
+    %a = "pto.tgetval"(%t, %c0) {test.shape = array<i64: 1, 8>} : (!tile, index) -> f32
+    %b = "pto.tgetval"(%other, %c0) {test.shape = array<i64: 2, 8>} : (!tile, index) -> f32
+    return
+  }
+  func.func private @opaque(!tile)
+  func.func @opaque_call(%cond: i1, %count: index) {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    func.call @opaque(%t) : (!tile) -> ()
+    %a = "pto.tgetval"(%t, %c0) {test.shape = array<i64: -1, -1>} : (!tile, index) -> f32
+    return
+  }
+  func.func @constant_expression() {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %sum = arith.addi %c4, %c4 : index
+    %addr = arith.constant 0 : i64
+    %t = pto.alloc_tile addr = %addr valid_row = %sum valid_col = %sum : !tile
+    %a = "pto.tgetval"(%t, %c0) {test.shape = array<i64: 8, 8>} : (!tile, index) -> f32
+    return
+  }
+  func.func @nested_2(%count: index) attributes {test.max_descriptor_visits = 360 : i64} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t0 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i0 = %c0 to %count step %c1 {
+    %t1 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i1 = %c0 to %count step %c1 {
+    %t2 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    pto.set_validshape %t1, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t0, %c1, %c8 : !tile
+    }
+    %a = "pto.tgetval"(%t0, %c0) {test.shape = array<i64: -1, -1>} : (!tile, index) -> f32
+    return
+  }
+  func.func @nested_4(%count: index) attributes {test.max_descriptor_visits = 1000 : i64} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t0 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i0 = %c0 to %count step %c1 {
+    %t1 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i1 = %c0 to %count step %c1 {
+    %t2 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i2 = %c0 to %count step %c1 {
+    %t3 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i3 = %c0 to %count step %c1 {
+    %t4 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    pto.set_validshape %t3, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t2, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t1, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t0, %c1, %c8 : !tile
+    }
+    %a = "pto.tgetval"(%t0, %c0) {test.shape = array<i64: -1, -1>} : (!tile, index) -> f32
+    return
+  }
+  func.func @nested_8(%count: index) attributes {test.max_descriptor_visits = 3240 : i64} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t0 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i0 = %c0 to %count step %c1 {
+    %t1 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i1 = %c0 to %count step %c1 {
+    %t2 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i2 = %c0 to %count step %c1 {
+    %t3 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i3 = %c0 to %count step %c1 {
+    %t4 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i4 = %c0 to %count step %c1 {
+    %t5 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i5 = %c0 to %count step %c1 {
+    %t6 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i6 = %c0 to %count step %c1 {
+    %t7 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i7 = %c0 to %count step %c1 {
+    %t8 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    pto.set_validshape %t7, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t6, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t5, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t4, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t3, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t2, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t1, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t0, %c1, %c8 : !tile
+    }
+    %a = "pto.tgetval"(%t0, %c0) {test.shape = array<i64: -1, -1>} : (!tile, index) -> f32
+    return
+  }
+  func.func @nested_12(%count: index) attributes {test.max_descriptor_visits = 6760 : i64} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t0 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i0 = %c0 to %count step %c1 {
+    %t1 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i1 = %c0 to %count step %c1 {
+    %t2 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i2 = %c0 to %count step %c1 {
+    %t3 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i3 = %c0 to %count step %c1 {
+    %t4 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i4 = %c0 to %count step %c1 {
+    %t5 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i5 = %c0 to %count step %c1 {
+    %t6 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i6 = %c0 to %count step %c1 {
+    %t7 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i7 = %c0 to %count step %c1 {
+    %t8 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i8 = %c0 to %count step %c1 {
+    %t9 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i9 = %c0 to %count step %c1 {
+    %t10 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i10 = %c0 to %count step %c1 {
+    %t11 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    scf.for %i11 = %c0 to %count step %c1 {
+    %t12 = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    pto.set_validshape %t11, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t10, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t9, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t8, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t7, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t6, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t5, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t4, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t3, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t2, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t1, %c1, %c8 : !tile
+    }
+    pto.set_validshape %t0, %c1, %c8 : !tile
+    }
+    %a = "pto.tgetval"(%t0, %c0) {test.shape = array<i64: -1, -1>} : (!tile, index) -> f32
+    return
+  }
+  func.func @repeated_150() attributes {test.max_descriptor_visits = 160 : i64} {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    %read0 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read1 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read2 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read3 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read4 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read5 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read6 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read7 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read8 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read9 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read10 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read11 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read12 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read13 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read14 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read15 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read16 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read17 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read18 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read19 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read20 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read21 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read22 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read23 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read24 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read25 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read26 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read27 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read28 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read29 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read30 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read31 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read32 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read33 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read34 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read35 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read36 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read37 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read38 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read39 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read40 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read41 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read42 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read43 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read44 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read45 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read46 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read47 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read48 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read49 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read50 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read51 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read52 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read53 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read54 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read55 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read56 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read57 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read58 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read59 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read60 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read61 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read62 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read63 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read64 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read65 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read66 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read67 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read68 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read69 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read70 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read71 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read72 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read73 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read74 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read75 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read76 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read77 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read78 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read79 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read80 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read81 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read82 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read83 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read84 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read85 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read86 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read87 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read88 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read89 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read90 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read91 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read92 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read93 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read94 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read95 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read96 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read97 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read98 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read99 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read100 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read101 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read102 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read103 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read104 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read105 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read106 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read107 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read108 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read109 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read110 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read111 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read112 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read113 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read114 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read115 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read116 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read117 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read118 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read119 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read120 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read121 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read122 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read123 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read124 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read125 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read126 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read127 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read128 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read129 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read130 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read131 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read132 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read133 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read134 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read135 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read136 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read137 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read138 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read139 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read140 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read141 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read142 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read143 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read144 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read145 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read146 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read147 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read148 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read149 = "pto.tgetval"(%t, %c0) {test.shape = array<i64: 8, 8>} : (!tile, index) -> f32
+    return
+  }
+  func.func @repeated_300() attributes {test.max_descriptor_visits = 310 : i64} {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %addr = arith.constant 0 : i64
+    %t = pto.alloc_tile addr = %addr valid_row = %c8 valid_col = %c8 : !tile
+    %read0 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read1 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read2 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read3 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read4 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read5 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read6 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read7 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read8 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read9 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read10 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read11 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read12 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read13 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read14 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read15 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read16 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read17 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read18 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read19 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read20 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read21 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read22 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read23 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read24 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read25 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read26 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read27 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read28 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read29 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read30 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read31 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read32 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read33 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read34 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read35 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read36 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read37 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read38 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read39 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read40 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read41 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read42 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read43 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read44 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read45 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read46 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read47 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read48 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read49 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read50 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read51 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read52 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read53 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read54 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read55 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read56 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read57 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read58 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read59 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read60 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read61 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read62 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read63 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read64 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read65 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read66 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read67 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read68 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read69 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read70 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read71 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read72 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read73 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read74 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read75 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read76 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read77 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read78 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read79 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read80 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read81 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read82 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read83 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read84 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read85 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read86 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read87 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read88 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read89 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read90 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read91 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read92 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read93 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read94 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read95 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read96 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read97 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read98 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read99 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read100 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read101 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read102 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read103 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read104 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read105 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read106 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read107 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read108 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read109 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read110 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read111 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read112 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read113 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read114 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read115 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read116 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read117 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read118 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read119 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read120 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read121 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read122 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read123 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read124 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read125 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read126 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read127 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read128 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read129 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read130 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read131 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read132 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read133 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read134 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read135 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read136 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read137 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read138 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read139 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read140 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read141 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read142 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read143 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read144 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read145 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read146 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read147 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read148 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read149 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read150 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read151 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read152 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read153 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read154 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read155 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read156 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read157 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read158 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read159 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read160 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read161 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read162 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read163 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read164 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read165 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read166 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read167 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read168 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read169 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read170 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read171 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read172 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read173 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read174 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read175 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read176 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read177 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read178 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read179 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read180 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read181 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read182 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read183 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read184 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read185 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read186 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read187 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read188 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read189 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read190 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read191 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read192 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read193 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read194 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read195 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read196 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read197 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read198 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read199 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read200 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read201 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read202 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read203 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read204 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read205 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read206 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read207 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read208 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read209 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read210 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read211 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read212 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read213 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read214 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read215 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read216 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read217 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read218 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read219 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read220 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read221 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read222 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read223 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read224 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read225 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read226 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read227 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read228 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read229 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read230 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read231 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read232 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read233 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read234 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read235 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read236 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read237 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read238 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read239 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read240 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read241 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read242 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read243 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read244 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read245 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read246 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read247 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read248 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read249 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read250 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read251 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read252 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read253 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read254 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read255 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read256 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read257 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read258 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read259 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read260 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read261 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read262 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read263 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read264 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read265 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read266 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read267 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read268 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read269 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read270 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read271 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read272 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read273 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read274 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read275 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read276 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read277 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read278 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read279 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read280 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read281 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read282 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read283 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read284 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read285 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read286 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read287 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read288 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read289 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read290 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read291 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read292 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read293 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read294 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read295 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read296 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read297 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read298 = "pto.tgetval"(%t, %c0) : (!tile, index) -> f32
+    %read299 = "pto.tgetval"(%t, %c0) {test.shape = array<i64: 8, 8>} : (!tile, index) -> f32
+    return
+  }
+}

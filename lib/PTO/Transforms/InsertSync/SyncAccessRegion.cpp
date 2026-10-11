@@ -9,13 +9,12 @@
 // A descriptor is not a claim about an instruction's actual read/write region.
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "PTO/IR/PTOLinearAccess.h"
+#include "PTO/Transforms/InsertSync/SyncDescriptorState.h"
+#include "PTO/Transforms/InsertSync/SyncScalarFacts.h"
 #include "SyncRegionArithmetic.h"
 #include "SyncEffectRanges.h"
-#include "SyncScalarEvolution.h"
-#include "mlir/IR/Matchers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MathExtras.h"
 #include <limits>
@@ -25,12 +24,14 @@ namespace {
 class RegionBuilder {
 public:
     RegionBuilder(const SyncInput& input, Operation* access)
-        : input(input), context(access->getContext()), access(access), scalars(context, access) {}
+        : input(input), context(access->getContext()), access(access) {}
     SyncAccessRegion region;
     AffineExpr number(int64_t value) { return getAffineConstantExpr(value, context); }
     AffineExpr value(Value v)
     {
-        return scalars.value(v, [&](Value symbol) {
+        auto facts = input.scalarFacts();
+        if (!facts) { return {}; }
+        return facts->value(v, access, [&](Value symbol) {
             auto entry = symbolIds.try_emplace(symbol, region.symbols.size());
             if (entry.second) {
                 region.symbols.push_back(symbol);
@@ -51,7 +52,6 @@ private:
     MLIRContext* context;
     Operation* access;
     DenseMap<Value, TileBufType> boxedDescriptors;
-    detail::ScalarEvolution scalars;
     DenseMap<Value, unsigned> symbolIds;
     AffineExpr pointer(Value operand);
     AffineExpr tile(Value operand, TileBufType type, ArrayRef<AffineExpr> coordinates);
@@ -71,90 +71,18 @@ unsigned bytes(Type type)
     return type.getIntOrFloatBitWidth() / 8;
 }
 
-bool currentShape(Value operand, Operation* access, Value& row, Value& col)
-{
-    // Metadata is attached to the descriptor, not to its physical allocation.
-    // Resolve updates in the access's block in execution order. A relevant
-    // update behind structured control requires a reaching-metadata analysis;
-    // it must never be replaced by the allocation's initial shape.
-    bool unresolved = false;
-    for (auto* user : operand.getUsers()) {
-        if (auto update = dyn_cast<SetValidShapeOp>(user);
-            update && update->getBlock() != access->getBlock()) {
-            unresolved = true;
-        }
-    }
-    if (unresolved) {
-        return false;
-    }
-    bool precedingUpdate = false;
-    for (auto& operation : *access->getBlock()) {
-        if (&operation == access) {
-            break;
-        }
-        if (auto update = dyn_cast<SetValidShapeOp>(operation);
-            update && update.getSource() == operand) {
-            precedingUpdate = true;
-            row = update.getValidRow();
-            col = update.getValidCol();
-        }
-    }
-    // A later update can reach the same access on a loop backedge. Initial
-    // metadata is usable only if the descriptor is recreated in this block or
-    // a preceding update establishes its state on every iteration.
-    auto* definition = operand.getDefiningOp();
-    const bool recreated = definition && definition->getBlock() == access->getBlock() &&
-                           definition->isBeforeInBlock(access);
-    if (!precedingUpdate && !recreated) {
-        bool repeated = false;
-        for (auto* parent = access->getParentOp(); parent; parent = parent->getParentOp()) {
-            repeated |= isa<LoopLikeOpInterface>(parent);
-        }
-        if (repeated) {
-            for (auto* user : operand.getUsers()) {
-                if (auto update = dyn_cast<SetValidShapeOp>(user);
-                    update && update->getBlock() == access->getBlock()) {
-                    return false;
-                }
-            }
-        }
-    }
-    return true;
-}
-
-// The same reaching descriptor dimensions serve physical geometry and hardware
-// rules. In particular, allocation capacity is never substituted for unknown
-// valid dimensions, and mutable descriptors use their state at the access.
+// Consume the one shared reaching-state interpretation for this invocation.
 std::optional<SmallVector<AffineExpr, 2>> tileValidShape(
-    Value operand, Operation* access, llvm::function_ref<AffineExpr(Value)> value)
+    const SyncDescriptorState& descriptors, Value operand, Operation* access,
+    llvm::function_ref<AffineExpr(Value)> value)
 {
-    auto type = dyn_cast<TileBufType>(operand.getType());
-    if (!type || type.getValidShape().size() != 2) {
-        return std::nullopt;
-    }
-    Value row, col;
-    if (auto alloc = operand.getDefiningOp<AllocTileOp>()) {
-        row = alloc.getValidRow();
-        col = alloc.getValidCol();
-    } else if (auto view = operand.getDefiningOp<SubViewOp>()) {
-        row = view.getValidRow();
-        col = view.getValidCol();
-    } else if (auto get = operand.getDefiningOp<MultiTileGetOp>()) {
-        if (auto alloc = get.getSource().getDefiningOp<AllocMultiTileOp>()) {
-            row = alloc.getValidRow();
-            col = alloc.getValidCol();
-        }
-    }
-    if (type.hasDynamicValid() && !currentShape(operand, access, row, col)) {
-        return std::nullopt;
-    }
+    auto shape = descriptors.before(operand, access);
+    if (!shape) { return std::nullopt; }
     SmallVector<AffineExpr, 2> result;
-    for (unsigned i = 0; i < 2; ++i) {
-        auto size = type.getValidShape()[i];
-        auto extent = size >= 0 ? getAffineConstantExpr(size, access->getContext()) : value(i == 0 ? row : col);
-        if (!extent) {
-            return std::nullopt;
-        }
+    for (const auto& dim : *shape) {
+        auto extent = dim.constant ? getAffineConstantExpr(*dim.constant, access->getContext()) :
+            (dim.value ? value(dim.value) : AffineExpr{});
+        if (!extent) { return std::nullopt; }
         result.push_back(extent);
     }
     return result;
@@ -163,7 +91,9 @@ std::optional<SmallVector<AffineExpr, 2>> tileValidShape(
 bool RegionBuilder::extents(Value operand)
 {
     if (isa<TileBufType>(operand.getType())) {
-        auto shape = tileValidShape(operand, access, [&](Value v) { return value(v); });
+        auto descriptors = input.descriptorState();
+        if (!descriptors) { return false; }
+        auto shape = tileValidShape(*descriptors, operand, access, [&](Value v) { return value(v); });
         if (!shape) {
             return false;
         }
@@ -667,26 +597,11 @@ std::optional<std::array<int64_t, 2>> resolveConstantTileValidShape(Value operan
     if (!operand || !at) {
         return std::nullopt;
     }
-    detail::ScalarEvolution scalars(at->getContext(), at);
-    DenseMap<Value, unsigned> symbols;
-    auto shape = tileValidShape(operand, at, [&](Value v) {
-        return scalars.value(v, [&](Value symbol) {
-            auto entry = symbols.try_emplace(symbol, symbols.size());
-            return getAffineSymbolExpr(entry.first->second, at->getContext());
-        });
-    });
-    if (!shape) {
-        return std::nullopt;
-    }
-    std::array<int64_t, 2> result;
-    for (unsigned i = 0; i < 2; ++i) {
-        auto constant = dyn_cast<AffineConstantExpr>((*shape)[i]);
-        if (!constant) {
-            return std::nullopt;
-        }
-        result[i] = constant.getValue();
-    }
-    return result;
+    auto function = at->getParentOfType<func::FuncOp>();
+    if (!function) { return std::nullopt; }
+    const SyncDescriptorState::Query query{at, operand};
+    SyncDescriptorState descriptors(function, {query});
+    return descriptors.constantShape(operand, at);
 }
 
 std::optional<SyncAccessRegion> resolveBufferRegion(const SyncInput& input, Value operand, Operation* at)

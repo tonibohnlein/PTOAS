@@ -197,7 +197,7 @@ def ir_checks(tool, source):
         unknown = text.replace('@accumulation()', '@accumulation(%m: index)')
         unknown = unknown.replace('    %m = arith.constant 32 : index\n', '')
         path.write_text(unknown)
-        docs = [json.loads(line) for line in invoke(tool, '--recognize', path).splitlines()
+        docs = [json.loads(line) for line in invoke(tool, '--numeric-analysis', path).splitlines()
                 if line.startswith('{')]
         attempts = [a for d in docs for n in d['nodes'] for a in n['attempts']
                     if a['route'] == 'numeric-template']

@@ -166,6 +166,8 @@ add_llvm_executable(pto-sync-input-test
   RegionExpressionChecks.cpp
   ExpressionRelationChecks.cpp
   MixedSymbolicRegionChecks.cpp
+  ContextualLocalAccessChecks.cpp
+  DescriptorStateChecks.cpp
   ProgramStructureChecks.cpp
   SyncAliasChecks.cpp
   SyncRegionContractChecks.cpp
