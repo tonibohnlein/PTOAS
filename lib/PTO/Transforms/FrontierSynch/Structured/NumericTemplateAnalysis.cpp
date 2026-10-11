@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // A constant local effect word refreshes every written atom within one visit.
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateAnalysis.h"
+#include "NumericTemplateRecurringGlobal.h"
 #include "PTO/Transforms/FrontierSynch/Finite/LifetimeScan.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include <limits>
@@ -21,6 +22,8 @@ PeriodicAnalysis reject(const char* reason)
 }
 bool localEffects(const NumericTemplate& input, std::vector<ExplicitEffects>& word)
 {
+    if (input.recurringGlobal && (!input.recurringGlobal->applies(input) ||
+        input.atoms.size() > UINT32_MAX - input.recurringGlobal->atomCount)) { return false; }
     for (std::size_t i = 0; i < input.payloads.size(); ++i) {
         const auto& payload = input.payloads[i];
         if (!payload.phase || payload.phase->macroOpInstanceId >= 0) {
@@ -29,7 +32,16 @@ bool localEffects(const NumericTemplate& input, std::vector<ExplicitEffects>& wo
         ExplicitEffects occurrence;
         occurrence.payload = static_cast<uint32_t>(i);
         occurrence.pipe = static_cast<uint32_t>(payload.phase->kPipeValue);
-        for (const auto& effect : payload.effects) {
+        for (auto [effectId, effect] : llvm::enumerate(payload.effects)) {
+            if (effect.pendingGlobalGeometry) { return false; }
+            const auto* relative = input.recurringGlobal ? input.recurringGlobal->find(i, effectId) : nullptr;
+            if (relative) {
+                for (auto atom : relative->atoms) {
+                    occurrence.accesses.push_back({static_cast<uint32_t>(input.atoms.size() + atom),
+                        effect.mode == SyncAccessMode::Read, effect.mode == SyncAccessMode::Write});
+                }
+                continue;
+            }
             if (effect.discharge != TemplateDischarge::None) {
                 if (!effect.atoms.empty()) {
                     return false;
@@ -79,7 +91,9 @@ FailureOr<std::vector<ExplicitEffects>> numericTemplateOccurrences(const Numeric
                 group = scopes.emplace(key, scopes.size() + 1).first->second | reset;
             }
             for (auto& access : occurrence.accesses) {
-                if (input.atoms[access.atom].space == AddressSpace::ACC) { access.protectionGroup = group; }
+                if (access.atom < input.atoms.size() && input.atoms[access.atom].space == AddressSpace::ACC) {
+                    access.protectionGroup = group;
+                }
             }
             output.push_back(std::move(occurrence));
         }

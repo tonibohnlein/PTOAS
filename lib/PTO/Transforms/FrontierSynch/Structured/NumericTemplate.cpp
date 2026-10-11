@@ -8,6 +8,7 @@
 // Late, charged expansion into a periodic body; no demands or IR insertion.
 #include "NumericTemplateInternal.h"
 #include "NumericTemplatePlan.h"
+#include "NumericTemplateRecurringGlobal.h"
 #include "../Shared/RecognitionInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include <map>
@@ -59,6 +60,7 @@ bool scope(NumericTemplate& output, const PhaseIndex& index, const SyncInput& in
 }
 void clear(NumericTemplate& output)
 {
+    output.recurringGlobal.reset();
     output.payloads.clear();
     output.atoms.clear();
     output.uniformConflicts.clear();
@@ -68,7 +70,16 @@ void clear(NumericTemplate& output)
     output.period = 0;
     output.refresh = 0;
 }
-} // namespace
+ } // namespace
+bool detail::allowRecurringGlobal(TemplateBuilder& builder)
+{
+    if (builder.wholeInvocation) { return *builder.wholeInvocation; }
+    NumericTemplate scratch;
+    scratch.outer = builder.output.outer;
+    builder.wholeInvocation = !builder.output.specializedBody &&
+        scope(scratch, builder.index, builder.input, false);
+    return *builder.wholeInvocation;
+}
 NumericTemplatePlan preflightNumericTemplate(scf::ForOp outer, const PhaseIndex& index,
                                   const SyncInput& input, NumericTemplateLimits limits, bool regional,
                                   TemplateGeometryConstant geometry, TemplateControlConstant control,
@@ -219,6 +230,10 @@ NumericTemplate materializeNumericTemplate(const NumericTemplatePlan& plan,
         const auto key = std::make_pair(fact.group & ~protectionResetBit, std::move(visits));
         const auto id = localGroups.emplace(key, localGroups.size() + 1).first->second;
         payload.invocationProtection = id | (fact.group & protectionResetBit);
+    }
+    if (!detail::sealRecurringGlobal(output)) {
+        output.result.note(RecognitionIssue::GMDischarge, outer);
+        clear(output);
     }
     return output;
 }

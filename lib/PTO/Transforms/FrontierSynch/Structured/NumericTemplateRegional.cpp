@@ -14,6 +14,9 @@
 namespace mlir::pto::frontiersynch {
 std::shared_ptr<const ExplicitAnalysis> analyzeNumericBody(const NumericTemplate& body, std::string& error)
 {
+    if (body.recurringGlobal) {
+        error = "relative recurring GM storage has no regional body adapter"; return {};
+    }
     if (body.result.state != RecognitionState::Applicable || !body.specializedBody) {
         error = "finite body requires certified specialized effects";
         for (const auto& issue : body.result.diagnostics) { error += " / " + recognitionName(issue.issue).str(); }
@@ -55,6 +58,9 @@ FailureOr<RegionalAnalysis> exportNumericBody(func::FuncOp function,
     std::shared_ptr<RegionExpressions> arena, ArrayRef<scf::ForOp> enclosing, std::string& error)
 {
     const auto& body = mathematics.body;
+    if (body.recurringGlobal) {
+        error = "relative recurring GM storage has no regional selector adapter"; return failure();
+    }
     const auto analysis = mathematics.demands;
     const bool valid = arena && arena->constructionError().empty() && analysis && body.outer && function &&
         body.outer->getParentOfType<func::FuncOp>() == function && body.specializedBody &&

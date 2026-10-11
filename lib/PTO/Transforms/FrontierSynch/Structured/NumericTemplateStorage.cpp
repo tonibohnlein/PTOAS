@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Whole-base GM discharges and a common partition of absolute local storage.
 #include "NumericTemplateInternal.h"
+#include "NumericTemplateRecurringGlobal.h"
 #include "../Shared/DisjointTranslations.h"
 #include "../../InsertSync/SyncEffectRanges.h"
 #include "../../InsertSync/SyncRegionArithmetic.h"
@@ -23,11 +24,12 @@ bool collectGlobal(TemplateBuilder& builder, DenseMap<Value, GlobalBase>& bases)
     for (auto [id, payload] : llvm::enumerate(builder.output.payloads)) {
         for (auto [effectId, effect] : llvm::enumerate(payload.effects)) {
             const auto& original = builder.input.accesses().effects()[effect.sourceEffect];
-            if (original.memory->scope != AddressSpace::GM || effect.regions.empty()) {
+            if (original.memory->scope != AddressSpace::GM || effect.discharge != TemplateDischarge::None ||
+                (effect.regions.empty() && !effect.pendingGlobalGeometry)) {
                 continue;
             }
             Value base;
-            for (const auto& map : effect.regions) {
+            for (const auto& map : original.regions) {
                 auto argument = dyn_cast_or_null<BlockArgument>(map.base);
                 auto function = argument ? dyn_cast<func::FuncOp>(argument.getOwner()->getParentOp()) : func::FuncOp{};
                 auto type = map.base ? dyn_cast<PtrType>(map.base.getType()) : PtrType{};
@@ -39,6 +41,7 @@ bool collectGlobal(TemplateBuilder& builder, DenseMap<Value, GlobalBase>& bases)
                 }
                 base = map.base;
             }
+            if (!base) { return false; }
             auto& summary = bases[base];
             summary.effects.push_back({id, effectId});
             summary.writes |= effect.mode == SyncAccessMode::Write;
@@ -229,7 +232,19 @@ bool prepareTemplateEffects(TemplateBuilder& builder)
         return false;
     }
     for (const auto& item : bases) {
-        if (!discharge(builder, item.second)) {
+        std::vector<TemplateEffect> original;
+        bool pending = false;
+        for (auto [payload, effect] : item.second.effects) {
+            original.push_back(builder.output.payloads[payload].effects[effect]);
+            pending |= original.back().pendingGlobalGeometry;
+        }
+        const auto recognition = builder.output.result;
+        if (!pending && discharge(builder, item.second)) { continue; }
+        for (auto [id, ref] : llvm::enumerate(item.second.effects)) {
+            builder.output.payloads[ref.first].effects[ref.second] = std::move(original[id]);
+        }
+        builder.output.result = recognition;
+        if (!item.second.writes || !prepareRecurringGlobalBase(builder, item.second.effects)) {
             builder.output.result.note(RecognitionIssue::GMDischarge, builder.output.outer);
             return false;
         }

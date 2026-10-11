@@ -60,6 +60,8 @@ LogicalResult checkSpecializedArithmeticSession(func::FuncOp function, pto::GMAl
 LogicalResult checkDynamicUniformCrossings(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkNumericalRequestOrder(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkExactFormFastPath(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkRecurringNumericExports(func::FuncOp, const pto::SyncInput&,
+    const mlir::pto::frontiersynch::ProgramRecognition&);
 LogicalResult checkNumericPreflight(func::FuncOp, const pto::SyncInput&,
     const pto::frontiersynch::ProgramRecognition&);
 LogicalResult dumpProgramRecognition(func::FuncOp, const pto::SyncInput &,
@@ -2288,6 +2290,7 @@ int main(int argc, char **argv) {
         if (!reused) { function.emitError("numerical retry reconstructed its preflight or effects"); return 1; }
         if (failed(checkNumericPreflight(function, *analysis.input(), *analysis.result()))) { return 1; }
         if (failed(analysis.prepareNumericCandidateExports())) { return 1; }
+        if (failed(checkRecurringNumericExports(function, *analysis.input(), *analysis.result()))) { return 1; }
         llvm::errs() << "numeric-session: lazy-preflight cached-effects demand-only foreign-context-rejected\n";
       }
       const auto& input = *analysis.input();

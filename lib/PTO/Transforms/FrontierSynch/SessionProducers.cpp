@@ -11,6 +11,7 @@
 #include "WholeInvocationIdentity.h"
 #include "Shared/FiniteExpansionPlan.h"
 #include "Structured/NumericTemplatePlan.h"
+#include "Structured/NumericTemplateRecurringGlobal.h"
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateRegional.h"
 #include "Shared/SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingAnalysis.h"
@@ -344,6 +345,9 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
         if (result->form.result.state != RecognitionState::Applicable) {
             recordFormFailure(producerFailure, result->form.result);
             error = "regional numerical template form is unavailable"; return {};
+        }
+        if (!detail::retainRecurringGlobalOwners(result->form, storage, structuralIndex)) {
+            error = "recurring global template owner context is unavailable"; return {};
         }
         result->analysis = analyzeNumericTemplate(result->form);
         if (!result->analysis.error.empty()) { error = result->analysis.error; return {}; }

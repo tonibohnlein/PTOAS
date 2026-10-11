@@ -8,6 +8,7 @@
 """Check periodic GM-origin cancellation against independent conflict graphs."""
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -99,7 +100,7 @@ def main():
                                  "      %11 = arith.maxsi %raw, %c0")
         for case in [overlapping, varying]:
             path.write_text(case)
-            result = run(tool, ["--recognize"], path)
+            result = run(tool, ["--numeric-analysis"], path)
             assert result.returncode == 0, result.stderr
             documents = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
             attempts = [attempt for node in documents[0]["nodes"] for attempt in node["attempts"]
@@ -111,9 +112,9 @@ def main():
         assert result.returncode == 0, result.stderr
         assert "pto.logical_" not in result.stdout
         for operation in ["scf.for", "pto.tload", "pto.tstore"]:
-            assert result.stdout.count(operation) == 1
+            assert len(re.findall(r"^\s*" + re.escape(operation) + r"\s", result.stdout, re.MULTILINE)) == 1
         # May-alias mode retains cross-base obligations in the same model.
-        result = run(tool, ["--gm-alias=may-alias", "--recognize"], path)
+        result = run(tool, ["--gm-alias=may-alias", "--numeric-analysis"], path)
         documents = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
         attempts = [attempt for node in documents[0]["nodes"] for attempt in node["attempts"]
                     if attempt["route"] == "numeric-template"]

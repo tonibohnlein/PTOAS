@@ -131,6 +131,10 @@ bool TemplateBuilder::payload(const CompoundInstanceElement* phase)
                 effect.discharge = TemplateDischarge::ReadOnlyBase;
                 break;
             }
+            if (!map && source.memory->scope == AddressSpace::GM && allowRecurringGlobal(*this)) {
+                effect.pendingGlobalGeometry = true;
+                continue;
+            }
             if (!map || !charge(1, output.fragments, output.limits.fragments, phase->elementOp)) {
                 output.result.note(RecognitionIssue::SymbolicGeometry, phase->elementOp);
                 return false;
