@@ -16,6 +16,7 @@ add_mlir_dialect_library(PTOIR
   ENABLE_AGGREGATION
 
   PTO.cpp
+  PTOOperationRegistration.cpp
   PTOLogicalSync.cpp
   PTOSyncCapabilities.cpp
   VPTO.cpp

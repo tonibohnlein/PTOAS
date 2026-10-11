@@ -8,6 +8,8 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+#include "../PTOOperationRegistration.h"
+
 LogicalResult mlir::pto::AddPtrOp::verify()
 {
     Value ptr = getOperation()->getOperand(0);
@@ -254,10 +256,7 @@ void PTODialect::initialize()
 #include "PTO/IR/PTOTypeDefs.cpp.inc"
         >();
 
-    addOperations<
-#define GET_OP_LIST
-#include "PTO/IR/PTOOps.cpp.inc"
-        >();
+    registerPTOOperations(*this);
 
     addAttributes<
 #define GET_ATTRDEF_LIST
