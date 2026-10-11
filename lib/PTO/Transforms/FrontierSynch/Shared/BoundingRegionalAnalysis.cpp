@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Capture one occurrence context; selected graph views inherit only that domain.
+#include "RegionalCapabilitiesInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/BoundingRegionalAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalNumericalInterface.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RequirementProvenance.h"
@@ -13,22 +14,6 @@
 #include "llvm/ADT/DenseSet.h"
 namespace mlir::pto::frontiersynch {
 namespace {
-bool validFrames(const RegionalAnalysis& domain)
-{
-    const auto count = domain.anchors.size();
-    if (domain.occurrenceLoops.size() != count) { return false; }
-    if (domain.outerLoops.empty()) { return domain.outerDivisors.empty(); }
-    if (domain.outerLoops.size() != count ||
-        (!domain.outerDivisors.empty() && domain.outerDivisors.size() != count)) { return false; }
-    for (std::size_t type = 0; type < count; ++type) {
-        if (llvm::any_of(domain.outerLoops[type], [](scf::ForOp loop) { return !loop; })) { return false; }
-        if (domain.outerDivisors.empty()) { continue; }
-        const auto& divisors = domain.outerDivisors[type];
-        if (divisors.size() != domain.outerLoops[type].size() ||
-            llvm::any_of(divisors, [](uint64_t divisor) { return divisor == 0; })) { return false; }
-    }
-    return true;
-}
 bool validDomainRoots(const RegionalAnalysis& domain)
 {
     const auto& arena = *domain.expressions;
@@ -42,9 +27,7 @@ bool validDomainRoots(const RegionalAnalysis& domain)
 void clearSelectedGraph(RegionalAnalysis& domain)
 {
     domain.reachability = {};
-    domain.numerical.reset();
-    domain.arithmeticRelations.reset(); domain.relations.reset();
-    domain.symbolicStorage.reset();
+    invalidateDerivedRegionalCertificates(domain);
     domain.prepare = {};
     domain.prepareWithVisits = {};
     domain.prepareFiltered = {};
@@ -110,7 +93,7 @@ FailureOr<OrderContext> captureRegionalOrderContext(
         error = "order context requires a valid arena and the unchanged shared access model and alias policy";
         return failure();
     }
-    if (!validFrames(domain) || !validDomainRoots(domain)) {
+    if (!validRegionalOccurrenceSchema(domain) || !validDomainRoots(domain)) {
         error = "order context has malformed occurrence coordinates or domain expressions";
         return failure();
     }

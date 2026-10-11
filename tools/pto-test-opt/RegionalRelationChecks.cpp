@@ -16,6 +16,7 @@
 #include "llvm/ADT/ScopeExit.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
+bool runRegionalCapabilityChecks(MLIRContext& context);
 namespace {
 using I = fs::BoundInteger;
 bool contains(const fs::IntegerSystem& system, ArrayRef<int64_t> point)
@@ -962,7 +963,7 @@ bool retainedInputs(MLIRContext& context)
 int runRegionalRelationChecks()
 {
     MLIRContext context;
-    if (!quotientCoordinates(context) || !association(context) ||
+    if (!runRegionalCapabilityChecks(context) || !quotientCoordinates(context) || !association(context) ||
         !retainedResult(context) || !retainedInputs(context) || !balancedComposition(context) ||
         !scalarCrossings(context) || !sequentialAdmission(context) ||
         !fixedPrerequisiteMappings(context) || !nativeScalarClosure() ||

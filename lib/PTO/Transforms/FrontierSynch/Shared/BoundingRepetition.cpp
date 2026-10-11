@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "RegionalCapabilitiesInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/BoundingRepetition.h"
 #include "RepeatedRegionInternal.h"
 #include <map>
@@ -26,8 +27,8 @@ std::optional<RegionalAnalysis> phaseExport(const BoundingSequenceChild& phase, 
         error = "repeated selected query or sign-specific boundary export unavailable"; return {};
     }
     const auto& canonical = view->regional();
-    if (canonical.expressions != supplied->expressions || canonical.accessModel != supplied->accessModel ||
-        canonical.gmAliasPolicy != supplied->gmAliasPolicy || canonical.anchors.size() != supplied->anchors.size() ||
+    if (!matchesRegionalContext(canonical, regionalContext(*supplied)) ||
+        canonical.anchors.size() != supplied->anchors.size() ||
         canonical.occurrenceLoops != supplied->occurrenceLoops || canonical.outerLoops != supplied->outerLoops ||
         canonical.outerDivisors != supplied->outerDivisors) {
         error = "repeated selected sidecar has a different occurrence frame"; return {};
@@ -150,9 +151,7 @@ bool selectCrossings(BoundingRepetitionSign& result, const BoundingRepetitionSpe
         return query->across(a, b, gap);
     };
     auto& out = result.repeated->regional;
-    out.numerical.reset();
-    out.arithmeticRelations.reset(); out.relations.reset();
-    out.symbolicStorage.reset();
+    invalidateDerivedRegionalCertificates(out);
     out.cost.ports += ports.size(); out.cost.implicationChecks += result.constructionCost.deletionTests;
     out.cost.expressionNodes = arena.size();
     if (specification.bridges == BoundingSequenceBridges::SuppliedCrossings) {

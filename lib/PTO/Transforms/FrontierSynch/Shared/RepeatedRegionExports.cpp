@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Common exact regional contract. All expressions belong to the supplied arena.
+#include "RegionalCapabilitiesInternal.h"
 #include "RepeatedRegionInternal.h"
 #include "RepeatedReadOnlyStorage.h"
 namespace mlir::pto::frontiersynch {
@@ -82,9 +83,7 @@ RepeatedRegionAnalysis exportRepeatedRegion(std::shared_ptr<RepeatedRegionState>
     auto trips = state->trips;
     auto& out = result.regional;
     out = state->body;
-    out.numerical.reset();
-    out.arithmeticRelations.reset(); out.relations.reset();
-    out.symbolicStorage.reset();
+    invalidateDerivedRegionalCertificates(out);
     out.prepare = {}; out.prepareFiltered = {}; out.prepareWithVisits = {};
     out.capabilities.endpointRecipes = false;
     out.firstOrdinal.reset();
