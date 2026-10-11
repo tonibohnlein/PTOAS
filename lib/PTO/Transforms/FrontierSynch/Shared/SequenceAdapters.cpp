@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "SequenceAnalysisInternal.h"
+#include "../Structured/OrderCoveredPeriodic.h"
 #include "RecognitionInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "llvm/ADT/MapVector.h"
@@ -366,7 +367,8 @@ void SequenceAnalysisState::bindAdapters()
         out.expressions = arena;
         out.anchors = child.anchors;
         out.occurrenceLoops.assign(child.anchors.size(), child.loop);
-        out.capabilities = {true, true, true, true};
+        out.capabilities = {!child.orderCovered, true, !child.orderCovered, true};
+        out.capabilities.contextualGuards = static_cast<bool>(child.orderCovered);
         out.gmAliasPolicy = input->memory().gmPolicy();
         out.accessModel = &input->accesses();
         for (uint32_t type = 0; type < child.anchors.size(); ++type) {
@@ -379,13 +381,18 @@ void SequenceAnalysisState::bindAdapters()
             out.firstSitePayloads[type].push_back(first);
             RegionalSelector last{{type, expressions.sub(child.trips, c(1)), PeriodicEventKind::Start}, present};
             for (auto effect : input->accesses().effectsFor(child.anchors[type].phase)) {
+                if (child.orderCovered && llvm::is_contained(child.orderCovered->omittedEffects, effect)) {
+                    out.deferredAccessBoundary.push_back({effect, first, last, false});
+                    continue;
+                }
                 if (llvm::is_contained(child.dischargedEffects, effect)) {
                     out.deferredAccessBoundary.push_back({effect, first, last, false});
                     continue;
                 }
                 const auto& access = input->accesses().effects()[effect];
                 out.accessBoundary.push_back({effect, first, last,
-                    child.loop ? !access.regions.empty() : access.rangesMaterialized});
+                    child.orderCovered ? access.rangesMaterialized :
+                        (child.loop ? !access.regions.empty() : access.rangesMaterialized)});
             }
         }
         out.cost = child.costs;
@@ -488,8 +495,10 @@ bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
     std::optional<GMAliasPolicy> gmPolicy;
     for (const auto& child : children) {
         const auto& out = child.regional;
-        if (out.expressions != arena || !out.capabilities.completeStorageModel || !out.capabilities.exactQueries ||
-            !out.capabilities.exactSelectors || !out.presence ||
+        const bool covered = child.orderCovered && completeInvocation && requiredOuterLoops.empty() &&
+            input && program && child.orderCovered->applies(input, &index, child.loop);
+        if (out.expressions != arena || (!out.capabilities.completeStorageModel && !covered) ||
+            !out.capabilities.exactQueries || (!out.capabilities.exactSelectors && !covered) || !out.presence ||
             (requireEndpoints && (!out.capabilities.endpointRecipes || (!out.prepare && !out.prepareWithVisits))) ||
             !out.reachability || out.anchors.size() != out.occurrenceLoops.size() ||
             (!out.outerLoops.empty() && out.outerLoops.size() != out.anchors.size()) ||
@@ -665,7 +674,8 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
     auto owned = std::make_shared<SequenceAnalysis>(analysis);
     auto state = analysis.state;
     out.expressions = state->arena;
-    out.capabilities = {true, true, true, true};
+    const bool partial = state->partialStorage();
+    out.capabilities = {!partial, true, !partial, true};
     out.cost = analysis.cost;
     auto coordinates = std::make_shared<std::vector<std::pair<uint32_t, uint32_t>>>();
     std::vector<uint32_t> starts;
@@ -842,6 +852,13 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
         out.symbolicStorage = state->children.front().regional.symbolicStorage;
         out.arithmeticRelations = state->children.front().regional.arithmeticRelations;
         out.symbolicStorageEffects = state->children.front().regional.symbolicStorageEffects;
+    }
+    if (partial) {
+        out.storageSelectors = [state, starts](RegionalByteAddress address)
+            -> std::optional<RegionalStorageSelectors> {
+            if (address.space == AddressSpace::GM) { return std::nullopt; }
+            return sequenceStorageSelectors(*state, starts, address);
+        };
     }
     return out;
 }

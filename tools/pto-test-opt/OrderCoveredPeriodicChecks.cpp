@@ -8,6 +8,8 @@
 // Independently check physical conflicts and ownership of retained-order proofs.
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Structured/OrderCoveredPeriodic.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionalRelations.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/Support/raw_ostream.h"
@@ -284,5 +286,105 @@ LogicalResult checkOrderCoveredPeriodic(func::FuncOp function, pto::GMAliasPolic
     alias.reset();
     if (!weakInput.expired() || !weakIndex.expired()) { return fail("unexpected retained owner cycle"); }
     llvm::outs() << "order-covered accepted " << function.getSymName() << "\n";
+    return success();
+}
+
+LogicalResult checkOrderCoveredSequence(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    auto fail = [&](StringRef message) -> LogicalResult {
+        function.emitError("order-covered root sequence check: ") << message;
+        return failure();
+    };
+    const auto before = render(function);
+    auto session = std::make_unique<fs::FrontierAnalysis>(function);
+    if (failed(session->initialize(policy))) { return failure(); }
+    scf::ForOp loop;
+    function.walk([&](scf::ForOp value) { loop = value; });
+    std::size_t region = 0;
+    for (const auto& node : session->result()->nodes) {
+        if (node.anchor == loop.getOperation()) { region = &node - session->result()->nodes.data(); break; }
+    }
+    if (policy == pto::GMAliasPolicy::MayAlias || function->hasAttr("test.order_covered_sibling_conflict")) {
+        auto index = std::make_shared<fs::PhaseIndex>();
+        if (failed(index->build(function, *session->input()))) { return failure(); }
+        uint64_t reductions = 0;
+        std::string error;
+        auto proof = fs::analyzeOrderCoveredPeriodic(loop, region, session->sharedInput(), index, reductions, error);
+        if (proof) {
+            return fail("unproved external GM conflict was omitted");
+        }
+        if (render(function) != before) { return fail("negative request mutated source"); }
+        llvm::outs() << "order-covered root sequence rejected unsafe omitted effects\n";
+        return success();
+    }
+    auto child = session->minimumDemands(region, {true});
+    if (!child.mathematical || !child.mathematical->orderCoveredDemands) { return fail("missing child proof"); }
+    fs::AnalysisRequest request;
+    request.needs.queries = true;
+    auto result = session->analyze(request);
+    if (result.status != fs::AnalysisStatus::Ready || !result.mathematical ||
+        !result.mathematical->sequenceDemands) {
+        return fail("exact original root sequence not established");
+    }
+    auto state = result.mathematical->sequenceDemands->state;
+    auto exported = fs::sequenceRegionalResult(*result.mathematical->sequenceDemands);
+    if (!state || !state->partialStorage() || !exported.capabilities.exactQueries ||
+        exported.capabilities.completeStorageModel || exported.capabilities.exactSelectors ||
+        result.available.selectors || !llvm::any_of(state->children, [&](const auto& value) {
+            return value.orderCovered == child.mathematical->orderCoveredDemands;
+        })) { return fail("partial capabilities or canonical child ownership"); }
+    const auto reductions = session->constructionCounts().rotatingReductions;
+    request.needs.selectors = true;
+    auto stronger = session->analyze(request);
+    auto repeated = session->analyze(request);
+    auto weak = session->minimumDemands(0, {true});
+    const bool reused = stronger.mathematical == result.mathematical;
+    if ((reused && (stronger.status == fs::AnalysisStatus::Ready || stronger.available.selectors)) ||
+        repeated.status != stronger.status || repeated.mathematical != stronger.mathematical ||
+        weak.mathematical != result.mathematical || session->constructionCounts().rotatingReductions != reductions ||
+        exported.storageSelectors({pto::AddressSpace::GM, function.getArgument(0),
+                                   exported.expressions->constant(0)})) {
+        return fail("stronger export fabricated geometry or discarded retained math");
+    }
+    {
+        auto generic = fs::composeRegionalSequence(function, exported.expressions, {exported}, false, false);
+        std::string error;
+        auto relation = fs::composeSymbolicRegionalSequence(
+            {exported}, function, *session->input(), state->index, error);
+        if (generic.error.empty() || succeeded(relation) || !exported.expressions->error().empty()) {
+            return fail("partial interface escaped through generic composition");
+        }
+    }
+    const auto expressionCount = exported.expressions->size();
+    SmallVector<scf::ForOp> wrongFrame{loop};
+    if (succeeded(exported.prepareWithVisits(wrongFrame)) || exported.expressions->size() != expressionCount ||
+        !exported.expressions->error().empty() || render(function) != before) {
+        return fail("failed contextual preparation changed its arena or source");
+    }
+    fs::AnalysisRequest logical;
+    logical.needs.synchronization = true;
+    auto ready = session->analyze(logical);
+    if (ready.status != fs::AnalysisStatus::Ready || !ready.available.synchronization ||
+        !ready.available.queries || ready.available.selectors || ready.mathematical != result.mathematical) {
+        return fail("synchronization unnecessarily required outward GM selectors");
+    }
+    auto first = session->prepareLogical(ready), second = session->prepareLogical(ready);
+    if (failed(first) || failed(second) || !freshPlans(**first, **second)) { return fail("fresh detached plans"); }
+    auto text = renderPlan(**second);
+    first->reset();
+    if (renderPlan(**second) != text || failed(session->attachAllocation(ready, **second)) ||
+        !(*second)->allocationCertificate || session->constructionCounts().rotatingReductions != reductions) {
+        return fail("allocation or producer reuse");
+    }
+    std::weak_ptr<const pto::SyncInput> weakInput = result.mathematical->input;
+    first = failure(); second = failure(); child = {}; result = {}; stronger = {}; repeated = {}; ready = {};
+    weak = {}; state.reset(); session.reset();
+    auto surviving = exported.prepareWithVisits({});
+    if (weakInput.expired() || failed(surviving) || !exported.presence({0, exported.expressions->constant(0),
+                                                               fs::PeriodicEventKind::Start}) ||
+        render(function) != before) { return fail("owned root export lifetime"); }
+    surviving = failure(); exported = {};
+    if (!weakInput.expired()) { return fail("unexpected proof owner cycle"); }
+    llvm::outs() << "order-covered root sequence: ownership, partial exports, retry and fresh plans passed\n";
     return success();
 }

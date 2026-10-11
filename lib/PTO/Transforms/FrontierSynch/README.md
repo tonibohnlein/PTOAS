@@ -167,3 +167,13 @@ multiple routes and regional composition in `Shared/`. Keep selection and cache
 policy in the session, rather than duplicating dispatch inside route folders.
 `lib/PTO/Transforms/CMakeLists.txt` lists translation units explicitly in these
 same groups; all continue to link into `PTOTransforms`.
+
+An original complete root sequence can privately consume an order-covered
+periodic child through its materialized local-cell boundaries and retained
+periodic queries. Omitted effects remain owned deferred obligations; every
+actual sibling is checked for conflicts. This does not provide complete GM
+selectors: the root retains partial storage capabilities and refuses generic
+repetition, slicing, or relational conversion that requires complete storage.
+Endpoint preparation uses the shared deterministic scalar replay checks at
+original cuts, including late pure loop-bound definitions. Stronger unavailable
+selector requests retain the same exact mathematics.
