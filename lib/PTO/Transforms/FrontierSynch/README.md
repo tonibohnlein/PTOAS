@@ -179,6 +179,12 @@ extents or unsupported maps retain the existing conservative overlap answer.
 This optional proof refines the shared conflict query; it introduces no analysis
 admission gate and does not change the retained access descriptions.
 
+Scalar normalization refines a certified fixed-coordinate constant to a singleton
+range in that query context, after the existing machine-width and operation
+checks. Dependent min/max and checked arithmetic can then use the specialized
+occurrence without borrowing the original loop-wide range. Unbound contexts,
+wrapping operations and incompatible range facts retain existing behavior.
+
 ## Maintaining the layout
 
 Keep new route-specific recognition, analysis, emission and allocation adapters

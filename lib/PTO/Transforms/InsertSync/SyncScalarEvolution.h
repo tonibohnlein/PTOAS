@@ -7,7 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Normalize scalar address arithmetic without changing the IR. A range proves
 // machine operations do not wrap; a matched modular recurrence supplies the
-// value of its block argument at the start of each loop iteration. Unproved
+// value of its block argument at the start of each loop iteration. Certified
+// fixed-coordinate constants refine ranges within each query context. Unproved
 // values remain original SSA symbols, including loop results and branch merges.
 #ifndef PTO_TRANSFORMS_INSERTSYNC_SYNCSCALAREVOLUTION_H
 #define PTO_TRANSFORMS_INSERTSYNC_SYNCSCALAREVOLUTION_H
@@ -166,6 +167,15 @@ class ScalarEvolution {
                               std::min(result.range->upper, fact->second.second)};
                 if (refined.lower <= refined.upper) { result.range = refined; }
             }
+        }
+        // A caller's constant binding denotes one certified scalar value in
+        // this query context. Keep its range equally precise so dependent
+        // min/max and checked arithmetic use that same fixed occurrence.
+        if (auto fixed = dyn_cast_or_null<AffineConstantExpr>(result.expression)) {
+            const Range singleton{fixed.getValue(), fixed.getValue()};
+            const bool compatible = !result.range ||
+                (singleton.lower >= result.range->lower && singleton.upper <= result.range->upper);
+            if (compatible && fits(singleton, v.getType())) { result.range = singleton; }
         }
         cache[v] = result;
         return result;
