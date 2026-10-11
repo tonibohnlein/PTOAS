@@ -140,13 +140,17 @@ void FrontierAnalysis::writeStageProfile(llvm::raw_ostream& stream, StringRef wo
         {"canonical_arithmetic_generators", arithmeticGeneratorConstructions()},
         {"canonical_arithmetic_regions", arithmeticRegionConstructions()},
         {"canonical_numerical_regions", numericalRegionConstructions()},
+        {"normalization_source_visits", normalizationSourceVisits()},
+        {"regional_normalization_views", normalizationConstructions()},
+        {"form_constructions", recognition ? recognition->formConstructions : 0},
         {"stages", std::move(stages)}}) << "\n";
 }
 namespace {
 uint8_t requestKey(const AnalysisRequest& request)
 {
     return unsigned(request.needs.queries) | (unsigned(request.needs.selectors) << 1) |
-        (unsigned(request.needs.synchronization) << 2) | (unsigned(request.mode == AnalysisMode::Fallback) << 3);
+        (unsigned(request.needs.synchronization) << 2) | (unsigned(request.mode == AnalysisMode::Fallback) << 3) |
+        (unsigned(request.needs.evaluation == AnalysisEvaluation::Stateful) << 4);
 }
 struct GeneratorShape {
     EstimatedCount pieces = 0, native = 0, rows = 0, domains = 0;
@@ -268,14 +272,16 @@ std::vector<AnalysisForm> FrontierAnalysis::exactForms(const AnalysisRequest& re
     expanded.ports = estimatedMultiply(payloads, 2);
     expanded.numericalWindow = estimatedMultiply(payloads, estimatedAdd(effects, 1));
     expanded.circuitNodes = expanded.relationConversion = 0;
-    const auto normalization = estimatedAdd(estimatedMultiply(source.nodes.size(), 2),
-        estimatedAdd(normalized->nodes.size(), normalized->planningVisits));
+    // Keep the existing conservative per-form estimate for stable selection.
+    // Actual shared-tree source visits are recorded separately by the session.
+    const auto normalization = estimatedAdd(estimatedMultiply(source.representedNodes, 2),
+        estimatedAdd(normalized->representedNodes, source.representedNodes));
     expanded.work = estimatedAdd(normalization, estimatedAdd(visits,
         estimatedAdd(joins, estimatedMultiply(expanded.numericalWindow, estimatedAdd(interfaces, 1)))));
-    original.representation = estimatedAdd(source.nodes.size(), source.effects);
-    expanded.representation = numericalEligible ? estimatedAdd(normalized->nodes.size(),
+    original.representation = estimatedAdd(source.representedNodes, source.effects);
+    expanded.representation = numericalEligible ? estimatedAdd(normalized->representedNodes,
         estimatedAdd(effects, estimatedMultiply(interfaces, expanded.ports))) :
-        estimatedAdd(normalized->nodes.size(), normalized->effects);
+        estimatedAdd(normalized->representedNodes, normalized->effects);
     // Only a complete known original form receives a known estimate. An
     // unavailable signature leaves work unknown, never removes that attempt.
     const StructureNode* loop = request.region ? &program->nodes[request.region] : nullptr;
@@ -289,6 +295,9 @@ std::vector<AnalysisForm> FrontierAnalysis::exactForms(const AnalysisRequest& re
             if (complete) { loop = &node; break; }
         }
     }
+    if (loop && loop->kind == StructureKind::Loop) {
+        recognizeForm(static_cast<std::size_t>(loop - program->nodes.data()), ProgramForm::Rotating);
+    }
     const RecognitionResult* rotating = loop && loop->rotatingResult ? &*loop->rotatingResult : nullptr;
     if (rotating && rotating->state == RecognitionState::Applicable) {
         const EstimatedCount fragments = rotating->accesses.size();
@@ -296,7 +305,7 @@ std::vector<AnalysisForm> FrontierAnalysis::exactForms(const AnalysisRequest& re
         original.generatorPieces = estimatedMultiply(fragments, fragments);
         original.ports = estimatedMultiply(sites, 2);
         original.numericalWindow = original.circuitNodes = original.relationConversion = 0;
-        original.work = estimatedAdd(source.nodes.size(), estimatedMultiply(original.generatorPieces,
+        original.work = estimatedAdd(source.representedNodes, estimatedMultiply(original.generatorPieces,
             estimatedAdd(sites, estimatedAdd(interfaces, 1))));
         original.representation = estimatedAdd(original.generatorPieces,
             estimatedMultiply(original.ports, estimatedAdd(interfaces, 1)));
@@ -305,6 +314,7 @@ std::vector<AnalysisForm> FrontierAnalysis::exactForms(const AnalysisRequest& re
     if (estimatedCostLess(expanded, original)) { std::reverse(order.begin(), order.end()); }
     sessionState->ledger->recordEstimate({request.region, identity.second, "form-original", original});
     sessionState->ledger->recordEstimate({request.region, identity.second, "form-expanded", expanded});
+    sessionState->expandedFormEstimates.emplace(identity, expanded);
     sessionState->formOrders.emplace(identity, order);
     return order;
 }

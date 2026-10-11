@@ -89,13 +89,20 @@ std::shared_ptr<const NormalizedControlDescription> normalizedInput(AnalysisSess
     auto found = session.normalizedInputs.find(region);
     if (found != session.normalizedInputs.end()) { profile.cacheHit(); return found->second; }
     profile.constructed();
-    auto description = normalizeSmallCountControl(originalContext(function, program, region), index, input);
+    if (!session.originalControl) { session.originalControl = buildNormalizedControlTree(function, index, input); }
+    auto description = normalizeSmallCountControl(originalContext(function, program, region), index, input,
+        {}, session.originalControl);
     return session.normalizedInputs.emplace(region, std::move(description)).first->second;
 }
 } // namespace
 uint64_t FrontierAnalysis::normalizationConstructions() const
 {
     return sessionState ? sessionState->normalizedInputs.size() : 0;
+}
+uint64_t FrontierAnalysis::normalizationSourceVisits() const
+{
+    return sessionState && sessionState->originalControl ?
+        normalizedControlSourceVisits(*sessionState->originalControl) : 0;
 }
 uint64_t FrontierAnalysis::finiteExpansionPreflights() const
 {
@@ -275,6 +282,14 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceLoopBackend(
 std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend(
     AnalysisBackend backend, std::size_t region, std::string& error)
 {
+    switch (backend) {
+    case AnalysisBackend::Rotating: recognizeForm(region, ProgramForm::Rotating); break;
+    case AnalysisBackend::GuardedRotating: recognizeForm(region, ProgramForm::GuardedRotating); break;
+    case AnalysisBackend::BoundedLifetime: recognizeForm(region, ProgramForm::BoundedLifetime); break;
+    case AnalysisBackend::VaryingBoundary: recognizeForm(region, ProgramForm::Varying); break;
+    case AnalysisBackend::FiniteVisit: recognizeForm(region, ProgramForm::FiniteVisit); break;
+    default: break;
+    }
     const auto* node = &program->nodes[region];
     const auto loop = cast<scf::ForOp>(node->anchor);
     auto& producerFailure = sessionState->loopAttempts[{region, backend}].failure;
@@ -310,7 +325,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
         auto found = finiteVisitAnalyses.find(region);
         if (found == finiteVisitAnalyses.end()) {
             auto analyzed = std::make_shared<FiniteVisitAnalysis>(
-                analyzeFiniteVisitLoop(function, *storage, *program, region, structuralIndex));
+                analyzeFiniteVisitLoop(function, *storage, *program, region, structuralIndex,
+                    [this](std::size_t id, ProgramForm form) { recognizeForm(id, form); }));
             found = finiteVisitAnalyses.emplace(region, std::move(analyzed)).first;
         }
         const auto& result = *found->second;
@@ -780,6 +796,7 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver(
     std::shared_ptr<const MathematicalResult> retainedNumerical)
 {
     SequenceRegionResolver resolver;
+    resolver.form = [this](std::size_t region, ProgramForm form) { recognizeForm(region, form); };
     resolver.region = [this, retainedNumerical](std::size_t region, bool endpoints, std::string& error)
         -> FailureOr<RegionalAnalysis> {
         AnalysisRequest request;
@@ -1014,6 +1031,12 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
     case AnalysisBackend::VaryingBoundary:
         return produceLoopBackend(backend, error);
     case AnalysisBackend::MixedStride: {
+        for (std::size_t id = 0; id < program->nodes.size(); ++id) {
+            const auto& node = program->nodes[id];
+            if (node.kind == StructureKind::Loop && node.anchor->getParentOp() == function) {
+                recognizeForm(id, ProgramForm::Rotating);
+            }
+        }
         auto result = analyzeMixedStrideFunction(function, *storage, *program, *structuralIndex, error);
         if (failed(result)) { return {}; }
         owned->mixedStrideDemands = *result;

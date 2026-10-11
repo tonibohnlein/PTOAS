@@ -97,17 +97,35 @@ LogicalResult FrontierAnalysis::recognizeStructure() {
     if (program) { profile.cacheHit(); return success(); }
     if (!storage) { return failure(); }
     profile.constructed();
-    auto recognized = recognizeProgram(function, *storage, *structuralIndex);
+    auto recognized = recognizeProgram(function, *storage, *structuralIndex, ProgramRecognitionMode::Inventory);
     if (failed(recognized)) { return failure(); }
     program = std::make_shared<ProgramRecognition>(std::move(*recognized));
     program->deferContractAudit = true;
     program->regionalArithmeticProfiles = regionalArithmeticProfiles;
     return success();
 }
+void FrontierAnalysis::recognizeForm(std::size_t region, ProgramForm form)
+{
+    if (!program || region >= program->nodes.size() ||
+        static_cast<unsigned>(form) > static_cast<unsigned>(ProgramForm::FiniteVisit)) { return; }
+    AnalysisProfileScope profile(sessionState ? sessionState->ledger : nullptr, "form-check", region);
+    const auto bit = static_cast<uint8_t>(1U << static_cast<unsigned>(form));
+    if (program->nodes[region].attemptedForms & bit) { profile.cacheHit(); return; }
+    profile.constructed();
+    materializeProgramForm(*program, region, form, *structuralIndex, *storage);
+}
+LogicalResult FrontierAnalysis::recognizeAllForms()
+{
+    if (failed(recognizeStructure())) { return failure(); }
+    AnalysisProfileScope profile(sessionState ? sessionState->ledger : nullptr, "form-audit");
+    materializeAllProgramForms(*program, *structuralIndex, *storage);
+    return success();
+}
 LogicalResult FrontierAnalysis::analyzeNumericCandidates() {
     if (failed(recognizeStructure())) { return failure(); }
     const auto& index = *structuralIndex;
     for (auto [id, node] : llvm::enumerate(program->nodes)) {
+        if (node.kind == StructureKind::Loop) { recognizeForm(id, ProgramForm::Varying); }
         if (!node.unsupportedContext && node.kind == StructureKind::Loop && node.payloadCount) {
             (void)materializeNumericRegion(id);
         }
@@ -175,6 +193,9 @@ SequenceAnalysis* FrontierAnalysis::analyzeSequenceFunction() {
 LogicalResult FrontierAnalysis::analyzeFiniteVisitCandidates()
 {
     if (failed(recognizeStructure())) { return failure(); }
+    for (std::size_t id = 0; id < program->nodes.size(); ++id) {
+        if (program->nodes[id].kind == StructureKind::Loop) { recognizeForm(id, ProgramForm::FiniteVisit); }
+    }
     for (const auto& candidate : program->finiteVisitContracts) {
         if (!candidate.node || finiteVisitAnalyses.count(*candidate.node)) { continue; }
         const auto eligible = llvm::find_if(candidate.obligations, [](const auto& item) {
@@ -182,7 +203,8 @@ LogicalResult FrontierAnalysis::analyzeFiniteVisitCandidates()
         });
         if (eligible == candidate.obligations.end()) { continue; }
         auto result = std::make_shared<FiniteVisitAnalysis>(
-            analyzeFiniteVisitLoop(function, *storage, *program, *candidate.node, structuralIndex));
+            analyzeFiniteVisitLoop(function, *storage, *program, *candidate.node, structuralIndex,
+                [this](std::size_t id, ProgramForm form) { recognizeForm(id, form); }));
         finiteVisitAnalyses.emplace(*candidate.node, std::move(result));
     }
     for (auto& candidate : program->finiteVisitContracts) {
@@ -196,6 +218,9 @@ LogicalResult FrontierAnalysis::analyzeFiniteVisitCandidates()
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareBoundedLifetimeFunction(std::string& error)
 {
     if (failed(recognizeStructure())) { return failure(); }
+    for (std::size_t id = 0; id < program->nodes.size(); ++id) {
+        if (program->nodes[id].kind == StructureKind::Loop) { recognizeForm(id, ProgramForm::BoundedLifetime); }
+    }
     auto prepared = prepareBoundedLifetimeInsertion(function, *storage, *program, error, &boundedAnalysis);
     if (boundedAnalysis) { recordWholeRegion(AnalysisBackend::BoundedLifetime); }
     return prepared;
@@ -614,6 +639,7 @@ public:
                     function.emitError("frontier arithmetic profile context could not be established");
                     continue;
                 }
+                if (failed(analysis.recognizeAllForms())) { continue; }
                 const auto certifications = analysis.certifyRegions();
                 const auto& candidates = analysis.result()->contractAudit;
                 const auto wrapper = delegation.wrappers.find(function);

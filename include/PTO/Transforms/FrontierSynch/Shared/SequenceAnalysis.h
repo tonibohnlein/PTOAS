@@ -76,6 +76,9 @@ struct NumericBodyMathematics;
 struct GuardedRotatingSpecialization;
 struct GuardedRotatingMathematics;
 struct SequenceRegionResolver {
+    // Materialize only the form needed by the next adapter. Legacy supplied
+    // programs already own their forms. This callback never constructs demands.
+    std::function<void(std::size_t, ProgramForm)> form;
     // Cached guarded mathematics stays private; each request imports a fresh
     // view into the supplied speculative arena before exposing any IDs.
     std::function<std::shared_ptr<GuardedRotatingMathematics>(const GuardedRotatingSpecialization&,

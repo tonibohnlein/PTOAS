@@ -18,6 +18,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RegionalRelationsInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/DenseSet.h"
 using namespace mlir;
 LogicalResult checkCrossingCostSelection(func::FuncOp function, pto::GMAliasPolicy)
 {
@@ -377,10 +378,25 @@ LogicalResult checkSequenceEndpointRetry(func::FuncOp function, pto::GMAliasPoli
     left->reset();
     const bool ownerRetained = renderPlan(**right) == independent;
     if (!ownerRetained) { return function.emitError("sequence plan lost its owner"); }
-    FrontierAnalysis cold(function);
-    if (failed(cold.initialize(policy))) { return failure(); }
-    if (cold.analyze(request).status != AnalysisStatus::Ready) {
-        return function.emitError("cold sequence endpoint request failed");
+    FrontierAnalysis cold(function), audited(function);
+    if (failed(cold.initialize(policy)) || failed(audited.initialize(policy)) ||
+        failed(audited.recognizeAllForms())) { return failure(); }
+    auto coldResult = cold.analyze(request), auditedResult = audited.analyze(request);
+    if (coldResult.status != AnalysisStatus::Ready || auditedResult.status != AnalysisStatus::Ready ||
+        !coldResult.mathematical || !auditedResult.mathematical ||
+        coldResult.mathematical->backend != auditedResult.mathematical->backend) {
+        return function.emitError("cold sequence dispatch differs from exhaustive-audit dispatch");
+    }
+    auto coldPlan = cold.prepareLogical(coldResult), auditedPlan = audited.prepareLogical(auditedResult);
+    if (failed(coldPlan) || failed(auditedPlan) || renderPlan(**coldPlan) != renderPlan(**auditedPlan)) {
+        return function.emitError("exhaustive audit changed selected sequence command graph");
+    }
+    const auto coldForms = cold.result()->formConstructions;
+    const auto auditedForms = audited.result()->formConstructions;
+    (void)cold.analyze(request); (void)audited.analyze(request);
+    if (cold.result()->formConstructions != coldForms || audited.result()->formConstructions != auditedForms ||
+        coldForms > auditedForms) {
+        return function.emitError("repeated sequence dispatch reconstructed class forms");
     }
     std::string after;
     llvm::raw_string_ostream current(after); function.print(current); current.flush();
@@ -473,6 +489,97 @@ LogicalResult checkNaturalRotatingExportRetry(func::FuncOp function, pto::GMAlia
                  << "arithmetic-ready cached source-unchanged\n";
     return success();
 }
+namespace {
+LogicalResult checkSharedControlViews(
+    func::FuncOp function, const pto::frontiersynch::PhaseIndex& index, const pto::SyncInput& input)
+{
+    using namespace pto::frontiersynch;
+    auto backing = buildNormalizedControlTree(function, index, input);
+    auto whole = normalizeSmallCountControl({function, function}, index, input, {}, backing);
+    auto compact = whole->original ? whole->original : whole;
+    const auto visits = normalizedControlSourceVisits(*backing);
+    SmallVector<std::shared_ptr<const NormalizedControlDescription>> views;
+    bool valid = visits >= 2 * compact->nodes.size() && visits <= 3 * compact->nodes.size();
+    function.walk([&](Operation* operation) {
+        auto selected = normalizeSmallCountControl({function, operation}, index, input, {}, backing);
+        auto local = selected->original ? selected->original : selected;
+        valid &= local->result.state == RecognitionState::Applicable && local->backing == backing &&
+                 local->nodes.data() == compact->nodes.data() && local->originalNode(operation).has_value();
+        if (operation == function.getOperation()) {
+            views.push_back(std::move(selected));
+            return;
+        }
+        for (auto& sibling : *operation->getBlock()) {
+            if (&sibling != operation && operation != function.getOperation()) {
+                valid &= !local->originalNode(&sibling).has_value();
+            }
+        }
+        views.push_back(std::move(selected));
+    });
+    valid &= normalizedControlSourceVisits(*backing) == visits;
+    // A global operation index must not admit a sibling's regional view.
+    auto loops = function.getOps<scf::ForOp>();
+    if (!loops.empty()) {
+        auto loop = *loops.begin();
+        auto* sibling = loop->getPrevNode();
+        if (sibling) {
+            auto wrong = normalizeSmallCountControl({function, sibling}, index, input, {}, backing);
+            auto rejected = preflightNumericTemplate(loop, index, input, {}, true, {}, {}, wrong);
+            valid &= rejected.form.result.state != RecognitionState::Applicable;
+        }
+    }
+    std::weak_ptr<const NormalizedControlTree> lifetime = backing;
+    backing.reset();
+    whole.reset();
+    compact.reset();
+    valid &= !lifetime.expired() && !views.empty() && !views.front()->nodes.empty();
+    views.clear();
+    valid &= lifetime.expired();
+    if (!valid) {
+        return function.emitError("shared control views lost membership, ownership or bounded source visits");
+    }
+    return success();
+}
+LogicalResult checkLazyProgramForms(
+    func::FuncOp function, const pto::frontiersynch::PhaseIndex& index, const pto::SyncInput& input)
+{
+    using namespace pto::frontiersynch;
+    auto lazy = recognizeProgram(function, input, index, ProgramRecognitionMode::Inventory);
+    if (failed(lazy) || lazy->formConstructions ||
+        llvm::any_of(lazy->nodes, [](const auto& node) { return node.attemptedForms != 0; })) {
+        return function.emitError("structural inventory eagerly constructed class forms");
+    }
+    auto* identities = lazy->nodes.data();
+    auto loop = llvm::find_if(lazy->nodes, [](const auto& node) { return node.kind == StructureKind::Loop; });
+    if (loop != lazy->nodes.end()) {
+        auto id = static_cast<std::size_t>(loop - identities);
+        materializeProgramForm(*lazy, id, ProgramForm::Rotating, index, input);
+        const auto constructions = lazy->formConstructions;
+        materializeProgramForm(*lazy, id, ProgramForm::Rotating, index, input);
+        if (constructions != 1 || lazy->formConstructions != constructions || loop->guardedRotatingResult ||
+            loop->boundedLifetime || loop->varyingRotating) {
+            return function.emitError("lazy form check repeated or constructed unrelated families");
+        }
+    }
+    materializeAllProgramForms(*lazy, index, input);
+    const auto count = lazy->formConstructions;
+    materializeAllProgramForms(*lazy, index, input);
+    auto eager = recognizeProgram(function, input, index);
+    if (failed(eager) || lazy->nodes.data() != identities || lazy->formConstructions != count ||
+        count != eager->formConstructions || lazy->contractAudit.size() != eager->contractAudit.size()) {
+        return function.emitError("exhaustive form audit changed stable inventory or repeated checks");
+    }
+    for (std::size_t id = 0; id < lazy->contractAudit.size(); ++id) {
+        const auto& a = lazy->contractAudit[id];
+        const auto& b = eager->contractAudit[id];
+        if (a.kind != b.kind || a.node != b.node || a.membership != b.membership ||
+            a.diagnostics.size() != b.diagnostics.size()) {
+            return function.emitError("lazy and exhaustive form audit disagree");
+        }
+    }
+    return success();
+}
+} // namespace
 LogicalResult checkNormalizedControlSession(func::FuncOp function, pto::GMAliasPolicy policy)
 {
     using namespace pto::frontiersynch;
@@ -489,6 +596,7 @@ LogicalResult checkNormalizedControlSession(func::FuncOp function, pto::GMAliasP
     function.print(originalStream);
     const auto order = session.exactForms({id});
     const auto records = session.costRecords().size();
+    const auto sourceVisits = session.normalizationSourceVisits();
     const bool repeatRank = session.exactForms({id}) == order && records == session.costRecords().size() &&
         session.normalizationConstructions() == 1 && !session.constructionCounts().mathematicalAttempts &&
         !session.numericalRegionConstructions();
@@ -600,7 +708,8 @@ LogicalResult checkNormalizedControlSession(func::FuncOp function, pto::GMAliasP
     }
 
     const uint64_t expectedNormalizations = external ? 2 : 1;
-    const bool shared = session.normalizationConstructions() == expectedNormalizations &&
+    const bool shared = session.normalizationConstructions() == expectedNormalizations && sourceVisits &&
+        session.normalizationSourceVisits() == sourceVisits &&
         (!numerical.mathematical || numerical.mathematical->normalizedInput == owner) &&
         session.analyzeFiniteExpansion({id}).mathematical == finite.mathematical &&
         session.analyzeNumericalRegion({id}).mathematical == numerical.mathematical &&
@@ -623,6 +732,8 @@ LogicalResult checkNormalizedControlSession(func::FuncOp function, pto::GMAliasP
     if (!mapped) { return function.emitError("normalized visits lost zero/one/non-unit original coordinates"); }
     const auto& index = *owner->index;
     const auto& input = *owner->input;
+    if (failed(checkSharedControlViews(function, index, input)) ||
+        failed(checkLazyProgramForms(function, index, input))) { return failure(); }
     auto malformed = owner->context;
     malformed.roots = {malformed.root, malformed.root};
     auto duplicate = normalizeSmallCountControl(malformed, index, input);
@@ -641,13 +752,22 @@ LogicalResult checkNormalizedControlSession(func::FuncOp function, pto::GMAliasP
         owner->planningVisits == compact->planningVisits;
     if (!linear) { return function.emitError("optional expansion did not retain a linearly planned compact input"); }
     uint64_t compactPayloads = 0, compactEffects = 0;
-    for (const auto& source : compact->nodes) {
+    SmallVector<std::size_t> compactPending(compact->roots);
+    DenseSet<std::size_t> compactVisited;
+    while (!compactPending.empty()) {
+        const auto id = compactPending.pop_back_val();
+        if (id >= compact->nodes.size() || !compactVisited.insert(id).second) {
+            return function.emitError("compact regional view has invalid or repeated node identities");
+        }
+        const auto& source = compact->nodes[id];
+        llvm::append_range(compactPending, source.children);
         for (auto* phase : index.phasesFor(source.original)) {
             ++compactPayloads;
             compactEffects += input.accesses().effectsFor(phase).size();
         }
     }
-    if (compact->payloads != compactPayloads || compact->effects != compactEffects) {
+    if (compact->payloads != compactPayloads || compact->effects != compactEffects ||
+        compact->representedNodes != compactVisited.size()) {
         return function.emitError("compact fallback lost original payload/effect counts");
     }
     const auto direct = preflightFiniteExpansion(owner->context, index, input, {}, compact);
@@ -719,7 +839,8 @@ LogicalResult checkExactFormFastPath(func::FuncOp function, pto::GMAliasPolicy p
     const auto queries = session.minimumDemands(0, needs);
     const bool explicitOnly = demands.status == AnalysisStatus::Ready && demands.mathematical &&
         demands.mathematical->explicitDemands && queries.mathematical == demands.mathematical &&
-        !session.normalizationConstructions() && !session.arithmeticGeneratorConstructions() &&
+        !session.normalizationConstructions() && !session.normalizationSourceVisits() &&
+        !session.result()->formConstructions && !session.arithmeticGeneratorConstructions() &&
         !session.numericTemplatePreflights() && !session.constructionCounts().logicalPreparations;
     if (!explicitOnly) { return function.emitError("straight-line analysis left the explicit fast path"); }
     const auto certifications = session.certifyRegions();

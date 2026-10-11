@@ -19,6 +19,7 @@
 #include <set>
 #include <chrono>
 namespace mlir::pto::frontiersynch {
+struct NormalizedControlTree;
 // LIFO scopes charge child elapsed time out of their parent exclusive time.
 // Disabled profiling neither reads a clock nor retains stage records.
 class AnalysisProfileScope {
@@ -123,8 +124,12 @@ struct AnalysisSessionState {
     std::map<std::pair<std::size_t, uint8_t>, std::vector<AnalysisBackend>> arithmeticOrders;
     std::shared_ptr<AnalysisLedger> ledger = std::make_shared<AnalysisLedger>();
     std::map<std::pair<std::size_t, uint8_t>, std::vector<AnalysisForm>> formOrders;
+    // Request-keyed estimates are execution state, independent of reports.
+    std::map<std::pair<std::size_t, uint8_t>, AnalysisCostEstimate> expandedFormEstimates;
+    std::set<std::pair<std::size_t, uint8_t>> numericalSequenceEstimates;
     std::map<std::pair<std::size_t, AnalysisForm>, uint64_t> formAttempts;
     std::map<std::size_t, std::shared_ptr<const NormalizedControlDescription>> normalizedInputs;
+    std::shared_ptr<const NormalizedControlTree> originalControl;
     std::map<const NormalizedControlDescription*, std::shared_ptr<const FiniteExpansionPlan>> finiteExpansionPlans;
     std::map<const NormalizedControlDescription*, BackendAttempt> expandedAttempts;
     std::map<std::pair<std::size_t, bool>, std::shared_ptr<const NumericTemplatePlan>> numericTemplatePlans;

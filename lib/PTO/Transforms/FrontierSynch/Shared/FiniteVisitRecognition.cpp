@@ -222,7 +222,8 @@ FiniteVisitAnalysis analyzeFiniteVisitLoop(func::FuncOp function, const SyncInpu
     return analyzeFiniteVisitLoop(function, input, program, node, {});
 }
 FiniteVisitAnalysis analyzeFiniteVisitLoop(func::FuncOp function, const SyncInput& input,
-    const ProgramRecognition& program, std::size_t node, std::shared_ptr<PhaseIndex> index)
+    const ProgramRecognition& program, std::size_t node, std::shared_ptr<PhaseIndex> index,
+    std::function<void(std::size_t, ProgramForm)> form)
 {
     FiniteVisitAnalysis out;
     const bool needsIndex = !index;
@@ -244,6 +245,8 @@ FiniteVisitAnalysis analyzeFiniteVisitLoop(func::FuncOp function, const SyncInpu
     // The selected loop advances between the two visits. Only its enclosing
     // invocations are fixed; including it would incorrectly extend scoped
     // hardware protection across the very boundary being reduced.
+    SequenceRegionResolver resolver;
+    resolver.form = std::move(form);
     std::map<std::size_t, RegionalAnalysis> regions;
     auto within = types.enclosing;
     within.push_back(out.recognition.loop);
@@ -252,7 +255,8 @@ FiniteVisitAnalysis analyzeFiniteVisitLoop(func::FuncOp function, const SyncInpu
         for (auto child : alternative.nodes) {
             auto found = out.cachedNodes.find(child);
             if (found == out.cachedNodes.end()) {
-                auto analyzed = analyzeSequenceRegion(function, input, program, child, arena, index, false);
+                auto analyzed = analyzeSequenceRegionWithResolver(
+                    function, input, program, child, arena, index, false, resolver);
                 found = out.cachedNodes.emplace(child, std::move(analyzed)).first;
             }
             if (!found->second.error.empty()) {

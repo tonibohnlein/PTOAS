@@ -18,6 +18,8 @@
 namespace mlir::pto::frontiersynch {
 struct BoundedLifetimeDemandResult;
 enum class StructureKind { Sequence, ExplicitRun, Loop, Conditional, Unsupported, Section };
+enum class ProgramRecognitionMode { Inventory, Exhaustive };
+enum class ProgramForm { Explicit, FiniteGuarded, Rotating, GuardedRotating, BoundedLifetime, Varying, FiniteVisit };
 enum class ContractClass {
     Finite, FiniteGuarded, Periodic, GuardedPeriodic, BoundedLifetime,
     VaryingPeriodic, NumericTemplate, Differences, Octagons, BoundedCoefficients,
@@ -67,6 +69,9 @@ struct StructureNode {
     SmallVector<scf::ForOp> loops; // Enclosing coordinates, outer to inner.
     std::optional<std::size_t> guard;
     bool unsupportedContext = false;
+    // An absent result is unrequested until its bit is set. Failed checks are
+    // cached too; publishing forms never moves the frozen inventory nodes.
+    uint8_t attemptedForms = 0;
     SyncPhysicalCore executionCore() const { return recoverSyncPhysicalCore(anchor); }
     std::optional<RecognitionResult> explicitResult;
     std::optional<RecognitionResult> rotatingResult;
@@ -126,7 +131,12 @@ struct ProgramRecognition {
     SmallVector<ProgramContractCandidate, 0> contractAudit;
     ProgramContractAuditWork contractAuditWork;
     bool deferContractAudit = false, contractAuditDirty = false;
+    uint64_t formConstructions = 0;
+    bool allFormsMaterialized = false;
 };
+void materializeProgramForm(ProgramRecognition& program, std::size_t node, ProgramForm form,
+    const PhaseIndex& index, const SyncInput& input);
+void materializeAllProgramForms(ProgramRecognition& program, const PhaseIndex& index, const SyncInput& input);
 // Rebuild only from existing recognition/backend observations; no extraction,
 // demands, regional preparation, emission or allocation is invoked here.
 // Direct recognition remains eager; session refreshes only invalidate the snapshot.
@@ -145,14 +155,15 @@ StringRef contractName(ContractClass kind);
 StringRef contractName(ContractStatus status);
 StringRef contractName(ContractImplementation status);
 StringRef contractName(ContractDiagnosticKind kind);
-// Visits all regions without unrolling, fuses adjacent leaves, and runs the
-// structural checks independently. Arithmetic extraction is requested separately.
+// Visits all regions without unrolling and fuses adjacent leaves. Inventory
+// mode defers class checks until requested; compatibility clients default to
+// exhaustive checks. Arithmetic extraction is requested separately.
 // Applicable certifies the input contract only. Backend fields remain absent
 // until an explicit FrontierAnalysis::analyzeNumericCandidates request.
 FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input);
 // Reuses the session index; the compatibility overload constructs its own.
 FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input,
-                                               const PhaseIndex& index);
+    const PhaseIndex& index, ProgramRecognitionMode mode = ProgramRecognitionMode::Exhaustive);
 StringRef structureName(StructureKind kind);
 } // namespace mlir::pto::frontiersynch
 #endif
