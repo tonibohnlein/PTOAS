@@ -9,9 +9,139 @@
 #include "Shared/NormalizedControl.h"
 #include "Structured/NumericTemplatePlan.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticPeriodicConversion.h"
+#include "llvm/Support/JSON.h"
 #include <algorithm>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
+AnalysisProfileScope::AnalysisProfileScope(std::shared_ptr<AnalysisLedger> owner, StringRef stage,
+    std::size_t region, StringRef method, bool newRequest, uint64_t originatingRequest)
+{
+    if (!owner) { return; }
+    ledger = std::move(owner);
+    previousRequest = ledger->currentRequest;
+    ownsRequest = newRequest || !previousRequest;
+    if (ownsRequest && ledger->nextRequest != UINT64_MAX) { request = ++ledger->nextRequest; }
+    else if (!ownsRequest) { request = previousRequest; }
+    if (ownsRequest) { ledger->currentRequest = request; }
+    if (!ledger->profiling) { return; }
+    timed = true;
+    AnalysisStageRecord record;
+    record.id = ledger->stages.size() + 1;
+    record.region = region;
+    record.stage = stage.str();
+    record.method = method.str();
+    record.request = request;
+    record.parentRequest = originatingRequest;
+    if (!ledger->activeStages.empty()) {
+        const auto& parent = ledger->stages[ledger->activeStages.back()];
+        record.parent = parent.id;
+        record.parentRequest = parent.request;
+    }
+    index = ledger->stages.size();
+    ledger->stages.push_back(std::move(record));
+    ledger->activeStages.push_back(index);
+    started = std::chrono::steady_clock::now();
+}
+AnalysisProfileScope::~AnalysisProfileScope()
+{
+    if (!ledger) { return; }
+    if (ownsRequest) { ledger->currentRequest = previousRequest; }
+    if (!timed) { return; }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - started).count();
+    auto& record = ledger->stages[index];
+    record.elapsedNanoseconds = static_cast<uint64_t>(elapsed);
+    // While active, exclusiveNanoseconds accumulates immediate child durations.
+    record.exclusiveNanoseconds = record.elapsedNanoseconds - record.exclusiveNanoseconds;
+    ledger->activeStages.pop_back();
+    if (!ledger->activeStages.empty()) {
+        accumulateCost(ledger->stages[ledger->activeStages.back()].exclusiveNanoseconds,
+            record.elapsedNanoseconds);
+    }
+}
+uint64_t AnalysisProfileScope::requestId() const
+{
+    return request;
+}
+void AnalysisProfileScope::constructed()
+{
+    if (timed) {
+        auto& count = ledger->stages[index].constructions;
+        count = estimatedAdd(count.value_or(0), 1);
+    }
+}
+void AnalysisProfileScope::dispatched()
+{
+    if (timed) { accumulateCost(ledger->stages[index].firstDispatches, 1); }
+}
+void AnalysisProfileScope::cacheHit()
+{
+    if (timed) { accumulateCost(ledger->stages[index].cacheHits, 1); }
+}
+StringRef analysisBackendName(AnalysisBackend backend)
+{
+    switch (backend) {
+    case AnalysisBackend::Explicit: return "explicit";
+    case AnalysisBackend::NumericalPeriodic: return "numerical-periodic";
+    case AnalysisBackend::Rotating: return "rotating";
+    case AnalysisBackend::MixedStride: return "mixed-stride";
+    case AnalysisBackend::GuardedRotating: return "guarded-rotating";
+    case AnalysisBackend::BoundedLifetime: return "bounded-lifetime";
+    case AnalysisBackend::Sequence: return "sequence";
+    case AnalysisBackend::SequenceEndpoints: return "sequence-endpoints";
+    case AnalysisBackend::NumericalSequence: return "numerical-sequence";
+    case AnalysisBackend::VaryingBoundary: return "varying-boundary";
+    case AnalysisBackend::FiniteVisit: return "finite-visit";
+    case AnalysisBackend::ExpandedFinite: return "expanded-finite";
+    case AnalysisBackend::ArithmeticPeriodic: return "arithmetic-periodic";
+    case AnalysisBackend::Arithmetic: return "arithmetic";
+    case AnalysisBackend::FiniteGuarded: return "finite-guarded";
+    case AnalysisBackend::CompactBounding: return "compact-bounding";
+    }
+    llvm_unreachable("invalid analysis backend");
+}
+void FrontierAnalysis::enableStageProfiling(bool enabled)
+{
+    profileStages = enabled;
+    if (sessionState) { sessionState->ledger->profiling = enabled; }
+}
+std::shared_ptr<const AnalysisLedger> FrontierAnalysis::diagnosticLedger() const
+{
+    return sessionState ? sessionState->ledger : nullptr;
+}
+void FrontierAnalysis::writeStageProfile(llvm::raw_ostream& stream, StringRef workload) const
+{
+    if (!sessionState || !sessionState->ledger->profiling) { return; }
+    llvm::json::Array stages;
+    for (const auto& record : sessionState->ledger->stages) {
+        llvm::json::Object entry{{"id", record.id}, {"request", record.request},
+            {"parent", record.parent}, {"parent_request", record.parentRequest},
+            {"region", record.region}, {"stage", record.stage}, {"method", record.method},
+            {"elapsed_ns", record.elapsedNanoseconds}, {"exclusive_ns", record.exclusiveNanoseconds},
+            {"cache_hits", record.cacheHits}, {"first_dispatches", record.firstDispatches}};
+        entry["constructions"] = record.constructions ? llvm::json::Value(*record.constructions) :
+            llvm::json::Value(nullptr);
+        stages.push_back(std::move(entry));
+    }
+    const auto* recognition = result();
+    llvm::json::Object audit;
+    if (recognition) {
+        const auto& work = recognition->contractAuditWork;
+        audit["refresh_requests"] = work.refreshRequests;
+        audit["materializations"] = work.materializations;
+        audit["node_visits"] = work.nodeVisits;
+        audit["candidates_published"] = work.candidatesPublished;
+    }
+    auto profiledFunction = function;
+    stream << "frontier-profile " << llvm::json::Value(llvm::json::Object{
+        {"function", profiledFunction.getSymName()}, {"workload", workload},
+        {"cost_snapshot_records_copied", sessionState->ledger->snapshotRecordsCopied},
+        {"contract_audit", std::move(audit)},
+        {"canonical_arithmetic_generators", arithmeticGeneratorConstructions()},
+        {"canonical_arithmetic_regions", arithmeticRegionConstructions()},
+        {"canonical_numerical_regions", numericalRegionConstructions()},
+        {"stages", std::move(stages)}}) << "\n";
+}
 namespace {
 uint8_t requestKey(const AnalysisRequest& request)
 {
@@ -106,9 +236,11 @@ std::vector<AnalysisForm> FrontierAnalysis::exactForms(const AnalysisRequest& re
     const bool valid = storage && succeeded(recognizeStructure()) && request.region < program->nodes.size();
     if (!valid) { return {}; }
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    sessionState->requestsStarted = true;
+    AnalysisProfileScope profile(sessionState->ledger, "selection", request.region, "exactForms");
     const auto identity = std::make_pair(request.region, requestKey(request));
     auto cached = sessionState->formOrders.find(identity);
-    if (cached != sessionState->formOrders.end()) { return cached->second; }
+    if (cached != sessionState->formOrders.end()) { profile.cacheHit(); return cached->second; }
     auto normalized = normalizedRegion(request.region);
     std::vector<AnalysisForm> order{AnalysisForm::Original};
     if (!normalized->original) {
@@ -171,8 +303,8 @@ std::vector<AnalysisForm> FrontierAnalysis::exactForms(const AnalysisRequest& re
     }
     order.push_back(AnalysisForm::SmallCountExpanded);
     if (estimatedCostLess(expanded, original)) { std::reverse(order.begin(), order.end()); }
-    sessionState->costs.push_back({request.region, identity.second, "form-original", original});
-    sessionState->costs.push_back({request.region, identity.second, "form-expanded", expanded});
+    sessionState->ledger->recordEstimate({request.region, identity.second, "form-original", original});
+    sessionState->ledger->recordEstimate({request.region, identity.second, "form-expanded", expanded});
     sessionState->formOrders.emplace(identity, order);
     return order;
 }
@@ -181,6 +313,8 @@ std::vector<AnalysisBackend> FrontierAnalysis::arithmeticMethods(const AnalysisR
     const bool valid = storage && succeeded(recognizeStructure()) && request.region < program->nodes.size();
     if (!valid) { return {}; }
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    sessionState->requestsStarted = true;
+    AnalysisProfileScope profile(sessionState->ledger, "selection", request.region, "arithmeticMethods");
     const auto key = requestKey(request);
     const auto identity = std::make_pair(request.region, key);
     if (auto found = sessionState->arithmeticOrders.find(identity); found != sessionState->arithmeticOrders.end()) {
@@ -206,7 +340,8 @@ std::vector<AnalysisBackend> FrontierAnalysis::arithmeticMethods(const AnalysisR
     if (!request.region && estimatedCostLess(arithmetic, periodic)) { std::reverse(order.begin(), order.end()); }
     for (auto method : order) {
         const bool periodicMethod = method == AnalysisBackend::ArithmeticPeriodic;
-        sessionState->costs.push_back({request.region, key, periodicMethod ? "arithmetic-periodic" : "arithmetic",
+        sessionState->ledger->recordEstimate({request.region, key,
+                                      periodicMethod ? "arithmetic-periodic" : "arithmetic",
                                       periodicMethod ? periodic : arithmetic});
     }
     sessionState->arithmeticOrders.emplace(identity, order);
@@ -215,7 +350,8 @@ std::vector<AnalysisBackend> FrontierAnalysis::arithmeticMethods(const AnalysisR
 std::vector<AnalysisCostRecord> FrontierAnalysis::costRecords() const
 {
     if (!sessionState) { return {}; }
-    auto records = sessionState->costs;
+    auto records = sessionState->ledger->estimates;
+    accumulateCost(sessionState->ledger->snapshotRecordsCopied, records.size());
     for (auto& record : records) {
         if (StringRef(record.method).starts_with("sequence-crossings-")) { continue; }
         if (record.method == "form-original" || record.method == "form-expanded") {

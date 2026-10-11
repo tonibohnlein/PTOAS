@@ -55,10 +55,23 @@ def check_common(document):
     assert audit["endpoint_or_id_failure_is_not_class_exclusion"]
     candidates = audit["candidates"]
     profiles = [candidate for candidate in candidates if "profile" in candidate]
-    assert len(profiles) == 6
-    assert {candidate["profile"]["period"] for candidate in profiles} == {1, 2}
-    assert {candidate["class"] for candidate in profiles} == {
-        "arithmetic-differences", "arithmetic-octagons", "arithmetic-bounded-coefficients"}
+    # Profile attempts stop after the first exact arithmetic form. Check the
+    # complete class observations within each attempted profile, and require
+    # the second profile exactly when the first did not establish a form.
+    by_profile = {}
+    for candidate in profiles:
+        key = tuple(candidate["profile"][field] for field in
+                    ("pipes", "dimensions", "period", "coefficient"))
+        by_profile.setdefault(key, []).append(candidate)
+    assert list(key[2] for key in by_profile) in ([1], [1, 2])
+    for candidates_in_profile in by_profile.values():
+        assert len(candidates_in_profile) == 3
+        assert {candidate["class"] for candidate in candidates_in_profile} == {
+            "arithmetic-differences", "arithmetic-octagons", "arithmetic-bounded-coefficients"}
+    first = next(iter(by_profile.values()))
+    established = next(candidate for candidate in first
+                       if candidate["class"] == "arithmetic-bounded-coefficients")["membership"] == "established"
+    assert (len(by_profile) == 1) == established
     for candidate in candidates:
         assert candidate["demands"] == "not-requested"
         assert candidate["endpoint_recipes"] == "not-requested"
@@ -106,6 +119,9 @@ def main():
         assert doc["arithmetic"]["state"] == "applicable"
         assert doc["arithmetic"]["class"] == "differences"
         assert not documents["empty"]["payloads"]
+        for name, periods in [("structure", {1, 2}), ("fixed_storage_loop", {1}), ("empty", {1})]:
+            assert {candidate["profile"]["period"] for candidate in
+                    documents[name]["contract_audit"]["candidates"] if "profile" in candidate} == periods
         assert any(a["state"] == "applicable" for a in routes(documents["fixed_storage_loop"], "rotating"))
     elif mode == "guarded":
         for name in ("nested_arms", "invariant_loop", "varying_loop"):

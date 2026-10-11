@@ -64,31 +64,43 @@ LogicalResult FrontierAnalysis::initialize(GMAliasPolicy requestedPolicy, bool r
     }
     invalidate();
     construction = {};
+    sessionState = std::make_shared<AnalysisSessionState>();
+    sessionState->ledger->profiling = profileStages;
+    AnalysisProfileScope profile(sessionState->ledger, "initialize", 0, {}, true);
     initialized = true;
     policy = requestedPolicy;
     if (!function) {
         return failure();
     }
     auto pending = std::make_shared<SyncInput>(policy);
-    if (failed(pending->build(function, SyncInstructionView::PipeEnvelopes))) {
-        return failure();
+    {
+        AnalysisProfileScope inputProfile(sessionState->ledger, "shared-input");
+        inputProfile.constructed();
+        if (failed(pending->build(function, SyncInstructionView::PipeEnvelopes))) { return failure(); }
     }
     structuralIndex = std::make_shared<PhaseIndex>();
     ++construction.structuralIndices;
-    if (failed(structuralIndex->build(function, *pending))) {
-        structuralIndex.reset();
-        return failure();
+    {
+        AnalysisProfileScope indexProfile(sessionState->ledger, "structural-index");
+        indexProfile.constructed();
+        if (failed(structuralIndex->build(function, *pending))) {
+            structuralIndex.reset();
+            return failure();
+        }
     }
     nativeScalarOnly = nativeScalarRequirements(function, *pending, *structuralIndex);
     storage = std::move(pending);
     return nativeScalarOnly && !requireStructure ? success() : recognizeStructure();
 }
 LogicalResult FrontierAnalysis::recognizeStructure() {
-    if (program) { return success(); }
+    AnalysisProfileScope profile(sessionState ? sessionState->ledger : nullptr, "structural-forms");
+    if (program) { profile.cacheHit(); return success(); }
     if (!storage) { return failure(); }
+    profile.constructed();
     auto recognized = recognizeProgram(function, *storage, *structuralIndex);
     if (failed(recognized)) { return failure(); }
     program = std::make_shared<ProgramRecognition>(std::move(*recognized));
+    program->deferContractAudit = true;
     program->regionalArithmeticProfiles = regionalArithmeticProfiles;
     return success();
 }
@@ -148,6 +160,7 @@ SequenceAnalysis* FrontierAnalysis::analyzeSequenceFunction() {
     if (failed(recognizeStructure())) { return nullptr; }
     if (!sequenceAnalysis) {
         if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+        sessionState->requestsStarted = true;
         sequenceAnalysis = std::make_shared<SequenceAnalysis>(analyzeSequenceRegionWithResolver(
             function, *storage, *program, 0, sessionState->expressions, structuralIndex, false, regionalResolver()));
         recordSequenceContractAttempt(*program, *storage, *sequenceAnalysis);
@@ -200,6 +213,7 @@ LogicalResult FrontierAnalysis::ensureArithmeticGenerators()
     const bool recognized = succeeded(recognizeArithmetic()) && program->arithmetic.has_value();
     if (!recognized) { return failure(); }
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    sessionState->requestsStarted = true;
     const auto& arithmetic = *program->arithmetic;
     if (arithmetic.recognition.arithmeticClass == ArithmeticClass::Differences) {
         if (!sessionState->differenceGenerators) {
@@ -242,6 +256,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareArithme
 {
     if (failed(recognizeStructure())) { return failure(); }
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    sessionState->requestsStarted = true;
     auto result = requestBackend(AnalysisBackend::ArithmeticPeriodic, {});
     if (result.status != AnalysisStatus::Ready) { return failure(); }
     periodicExports = {};
@@ -284,7 +299,9 @@ void FrontierAnalysis::noteSequenceEndpointOutcome(StringRef error) {
 }
 LogicalResult FrontierAnalysis::recognizeArithmetic() {
     if (failed(recognizeStructure())) { return failure(); }
+    AnalysisProfileScope profile(sessionState ? sessionState->ledger : nullptr, "arithmetic-form");
     if (program->arithmetic || function.isDeclaration()) {
+        profile.cacheHit();
         return success();
     }
     const auto& index = *structuralIndex;
@@ -292,6 +309,7 @@ LogicalResult FrontierAnalysis::recognizeArithmetic() {
     // Later profiles remain unevaluated once an exact form is available.
     std::optional<ArithmeticProgram> selected;
     for (const auto& limits : wholeArithmeticProfiles) {
+        profile.constructed();
         auto candidate = recognizeArithmeticProgram(function, index, *storage, storage->accesses(), limits);
         recordArithmeticContractAttempt(*program, limits, candidate);
         selected = std::move(candidate);
@@ -306,7 +324,7 @@ LogicalResult FrontierAnalysis::configureArithmeticProfiles(ArrayRef<ArithmeticL
                                                            ArrayRef<ArithmeticLimits> regional)
 {
     const bool requested = (program && program->arithmetic) || !arithmeticForms.empty() ||
-        static_cast<bool>(sessionState) || sequenceAnalysis || !finiteVisitAnalyses.empty();
+        (sessionState && sessionState->requestsStarted) || sequenceAnalysis || !finiteVisitAnalyses.empty();
     const auto valid = [](const ArithmeticLimits& limits) {
         return limits.pipes && limits.dimensions && limits.period && limits.coefficient &&
             limits.period <= static_cast<uint64_t>(INT64_MAX);
@@ -322,13 +340,15 @@ LogicalResult FrontierAnalysis::configureArithmeticProfiles(ArrayRef<ArithmeticL
 const ArithmeticProgram* FrontierAnalysis::recognizeArithmeticRegion(std::size_t region)
 {
     if (!program || region >= program->nodes.size()) { return nullptr; }
+    AnalysisProfileScope profile(sessionState ? sessionState->ledger : nullptr, "arithmetic-form", region);
     auto found = arithmeticForms.find(region);
-    if (found != arithmeticForms.end()) { return found->second.get(); }
+    if (found != arithmeticForms.end()) { profile.cacheHit(); return found->second.get(); }
     const auto& node = program->nodes[region];
     const bool supported = node.kind == StructureKind::Loop || node.kind == StructureKind::Conditional;
     if (!supported || !node.anchor) { return nullptr; }
     std::shared_ptr<const ArithmeticProgram> selected;
     for (const auto& limits : regionalArithmeticProfiles) {
+        profile.constructed();
         auto candidate = std::make_shared<ArithmeticProgram>(recognizeArithmeticProgram(
             {function, node.anchor}, *structuralIndex, *storage, storage->accesses(), limits));
         recordArithmeticContractAttempt(*program, limits, *candidate, region);
@@ -449,11 +469,19 @@ DictionaryAttr contractReport(const frontiersynch::ProgramRecognition& program, 
     report.set("physical_allocation", b.getStringAttr("not-requested"));
     return report.getDictionary(context);
 }
+// Reports on every exit, including a failed preparation. It never attaches IR.
+struct StageProfileReport {
+    frontiersynch::FrontierAnalysis& analysis;
+    StringRef workload;
+    ~StageProfileReport() { analysis.writeStageProfile(llvm::errs(), workload); }
+};
 FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     func::FuncOp function, GMAliasPolicy policy,
-    const std::optional<frontiersynch::ArithmeticLimits>& profile = std::nullopt)
+    const std::optional<frontiersynch::ArithmeticLimits>& profile = std::nullopt, bool profileStages = false)
 {
     frontiersynch::FrontierAnalysis analysis(function);
+    analysis.enableStageProfiling(profileStages);
+    StageProfileReport profileReport{analysis, "production-root"};
     if (failed(analysis.initialize(policy))) { return failure(); }
     if (profile && failed(analysis.configureArithmeticProfiles(
             ArrayRef<frontiersynch::ArithmeticLimits>(&*profile, 1),
@@ -555,7 +583,7 @@ public:
         if (!analysisOnly) {
             if (failed(frontiersynch::insertModuleSynchronization(getOperation(), policy,
                     [&](func::FuncOp function, GMAliasPolicy contextPolicy) {
-                        return prepareFunction(function, contextPolicy, profile);
+                        return prepareFunction(function, contextPolicy, profile, profileStages);
                     }))) {
                 signalPassFailure();
             }
@@ -571,6 +599,8 @@ public:
                 if (skip) { continue; }
                 unfinished = true;
                 frontiersynch::FrontierAnalysis analysis(function);
+                analysis.enableStageProfiling(profileStages);
+                StageProfileReport profileReport{analysis, "exhaustive-certification"};
                 const auto contextPolicy = delegation.calledFunctions.contains(function) ?
                     GMAliasPolicy::MayAlias : policy;
                 if (failed(analysis.initialize(contextPolicy, true))) {

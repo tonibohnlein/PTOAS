@@ -68,6 +68,7 @@ struct AnalysisCostRecord {
     std::string method;
     AnalysisCostEstimate estimate;
     uint64_t attemptConstructions = 0;
+    uint64_t id = 0, requestId = 0;
 };
 } // namespace mlir::pto::frontiersynch
 #endif

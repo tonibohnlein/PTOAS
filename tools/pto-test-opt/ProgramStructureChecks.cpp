@@ -11,6 +11,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include <algorithm>
+#include <tuple>
 
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
@@ -54,6 +55,79 @@ fs::StructureKind controlKind(Operation* operation)
         return fs::StructureKind::Section;
     }
     return fs::StructureKind::Unsupported;
+}
+
+template <typename Left, typename Right, typename Key>
+bool sameAuditItems(const Left& left, const Right& right, Key key)
+{
+    return left.size() == right.size() && llvm::all_of(llvm::zip(left, right), [&](const auto& pair) {
+        return key(std::get<0>(pair)) == key(std::get<1>(pair));
+    });
+}
+bool sameAuditCandidate(const fs::ProgramContractCandidate& a, const fs::ProgramContractCandidate& b)
+{
+    auto core = [](const auto& c) {
+        return std::tie(c.kind, c.node, c.membership, c.demands, c.endpointRecipes, c.allocation,
+            c.implementationError);
+    };
+    auto profile = [](const auto& p) { return std::tie(p.pipes, p.dimensions, p.period, p.coefficient); };
+    if (core(a) != core(b) || a.arithmeticProfile.has_value() != b.arithmeticProfile.has_value() ||
+        (a.arithmeticProfile && profile(*a.arithmeticProfile) != profile(*b.arithmeticProfile))) { return false; }
+    return sameAuditItems(a.diagnostics, b.diagnostics, [](const auto& d) {
+        return std::tie(d.issue, d.outsideClass, d.anchor);
+    }) && sameAuditItems(a.arithmeticDiagnostics, b.arithmeticDiagnostics, [](const auto& d) {
+        return std::tie(d.issue, d.outsideClass, d.relation, d.piece, d.count);
+    }) && sameAuditItems(a.obligations, b.obligations, [](const auto& o) { return std::tie(o.name, o.status); });
+}
+bool sameAudit(const fs::ProgramRecognition& a, const fs::ProgramRecognition& b)
+{
+    return a.contractAudit.size() == b.contractAudit.size() &&
+        llvm::all_of(llvm::zip(a.contractAudit, b.contractAudit), [](const auto& pair) {
+            return sameAuditCandidate(std::get<0>(pair), std::get<1>(pair));
+        });
+}
+void changeAuditObservation(fs::ProgramRecognition& program, unsigned update)
+{
+    auto& node = program.nodes[update % program.nodes.size()];
+    node.periodicAnalysis.emplace();
+    node.periodicAnalysis->error = update % 2 ? "retained endpoint obligation" : "";
+    fs::ProgramContractCandidate candidate;
+    candidate.kind = fs::ContractClass::BoundedCoefficients;
+    candidate.node = update % program.nodes.size();
+    candidate.arithmeticProfile = fs::ArithmeticLimits{8, 8, 1 + update % 2, 4096};
+    candidate.arithmeticDiagnostics.push_back({fs::ArithmeticIssue::CoefficientLimit, false, update, 3, 2});
+    candidate.diagnostics.push_back({fs::RecognitionIssue::UnsupportedView, false, nullptr});
+    candidate.obligations.push_back({"original-fixed-profile", fs::ContractStatus::Unproved});
+    program.arithmeticContracts.push_back(std::move(candidate));
+    fs::refreshProgramContractAudit(program);
+}
+bool deferredAuditWork()
+{
+    fs::ProgramRecognition eager;
+    eager.nodes.resize(32);
+    for (auto& node : eager.nodes) { node.kind = fs::StructureKind::Loop; node.numericTemplate.emplace(); }
+    fs::refreshProgramContractAudit(eager);
+    auto deferred = eager;
+    deferred.deferContractAudit = true;
+    const auto initial = deferred.contractAuditWork;
+    for (unsigned update = 0; update < 128; ++update) {
+        changeAuditObservation(eager, update); changeAuditObservation(deferred, update);
+    }
+    if (!deferred.contractAuditDirty || deferred.contractAuditWork.materializations != initial.materializations ||
+        deferred.contractAuditWork.nodeVisits != initial.nodeVisits ||
+        deferred.contractAuditWork.refreshRequests != initial.refreshRequests + 128) { return false; }
+    fs::materializeProgramContractAudit(deferred);
+    if (!sameAudit(eager, deferred) || deferred.contractAuditDirty ||
+        deferred.contractAuditWork.materializations != initial.materializations + 1 ||
+        deferred.contractAuditWork.nodeVisits != initial.nodeVisits + deferred.nodes.size()) { return false; }
+    const auto published = deferred.contractAuditWork.candidatesPublished;
+    for (unsigned repeat = 0; repeat < 128; ++repeat) { fs::materializeProgramContractAudit(deferred); }
+    if (deferred.contractAuditWork.materializations != initial.materializations + 1 ||
+        deferred.contractAuditWork.candidatesPublished != published) { return false; }
+    auto copied = deferred;
+    changeAuditObservation(copied, 128);
+    fs::materializeProgramContractAudit(copied);
+    return sameAudit(eager, deferred) && copied.contractAudit.size() == deferred.contractAudit.size() + 1;
 }
 
 bool auditContracts()
@@ -393,6 +467,14 @@ private:
 LogicalResult verifyProgramStructure(func::FuncOp function, const pto::SyncInput& input,
                                      const fs::ProgramRecognition& program)
 {
-    if (!auditContracts()) { return function.emitError("independent contract audit checks failed"); }
+    if (!auditContracts() || !deferredAuditWork()) {
+        return function.emitError("independent contract audit checks failed");
+    }
     return StructureVerifier(function, input, program).run();
+}
+
+// Standalone entry for the session profiling regression driver.
+bool checkProgramContractAuditWork()
+{
+    return deferredAuditWork();
 }

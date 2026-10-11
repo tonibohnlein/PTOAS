@@ -84,6 +84,10 @@ public:
     // Rank descriptions once per request without producing demands or exports.
     std::vector<AnalysisForm> exactForms(const AnalysisRequest& request);
     std::vector<AnalysisCostRecord> costRecords() const;
+    // Enable before initialize. Profiling reports are separate from generated IR.
+    void enableStageProfiling(bool enabled = true);
+    std::shared_ptr<const AnalysisLedger> diagnosticLedger() const;
+    void writeStageProfile(llvm::raw_ostream& stream, StringRef workload) const;
     // Call before reusing this object after original IR mutation. Previously
     // returned handles must no longer be queried against that IR.
     void invalidate();
@@ -136,7 +140,12 @@ public:
     const ExplicitAnalysis* explicitResult() const { return explicitAnalysis ? &*explicitAnalysis : nullptr; }
     const SyncInput* input() const { return storage.get(); }
     std::shared_ptr<const SyncInput> sharedInput() const { return storage; }
-    const ProgramRecognition* result() const { return program ? &*program : nullptr; }
+    // Diagnostic snapshots are current at this boundary. Reacquire after a
+    // mutating session request; retained pointers are not live audit views.
+    const ProgramRecognition* result() const {
+        if (program) { materializeProgramContractAudit(*program); }
+        return program ? &*program : nullptr;
+    }
 private:
     LogicalResult recognizeStructure();
     std::shared_ptr<const NormalizedControlDescription> normalizedRegion(std::size_t region);
@@ -182,6 +191,7 @@ private:
     SmallVector<ArithmeticLimits> regionalArithmeticProfiles{{8, 8, 1, 4096}, {8, 8, 2, 4096}};
     std::map<std::size_t, std::shared_ptr<const ArithmeticProgram>> arithmeticForms;
     bool initialized = false;
+    bool profileStages = false;
     bool nativeScalarOnly = false;
     GMAliasPolicy policy = GMAliasPolicy::MayNotAlias;
     std::shared_ptr<SyncInput> storage;

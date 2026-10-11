@@ -43,6 +43,8 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
   }];
   let constructor = "mlir::pto::createPTOFrontierAnalysisPass()";
   let options = [
+    Option<"profileStages", "profile-stages", "bool", "false",
+      "Write session stage timings and construction/cache counters to stderr as JSON">,
     Option<"analysisOnly", "analysis-only", "bool", "false",
       "Stop after mathematical certification without inserting synchronization">,
     Option<"gmAlias", "gm-alias", "std::string", "\"may-not-alias\"",

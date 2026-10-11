@@ -17,7 +17,29 @@
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingAnalysis.h"
 #include <set>
+#include <chrono>
 namespace mlir::pto::frontiersynch {
+// LIFO scopes charge child elapsed time out of their parent exclusive time.
+// Disabled profiling neither reads a clock nor retains stage records.
+class AnalysisProfileScope {
+public:
+    AnalysisProfileScope(std::shared_ptr<AnalysisLedger> ledger, StringRef stage,
+        std::size_t region = 0, StringRef method = {}, bool newRequest = false, uint64_t originatingRequest = 0);
+    ~AnalysisProfileScope();
+    AnalysisProfileScope(const AnalysisProfileScope&) = delete;
+    AnalysisProfileScope& operator=(const AnalysisProfileScope&) = delete;
+    uint64_t requestId() const;
+    void constructed();
+    void dispatched();
+    void cacheHit();
+private:
+    std::shared_ptr<AnalysisLedger> ledger;
+    std::size_t index = 0;
+    uint64_t request = 0, previousRequest = 0;
+    bool ownsRequest = false, timed = false;
+    std::chrono::steady_clock::time_point started;
+};
+StringRef analysisBackendName(AnalysisBackend backend);
 struct VaryingRegionalExports;
 struct FiniteExpansionPlan;
 struct NumericTemplatePlan;
@@ -83,6 +105,9 @@ struct SpecializedGuardedAttempt {
     std::string error;
 };
 struct AnalysisSessionState {
+    // The diagnostic owner exists during initialization. Only an actual analysis
+    // request freezes configurable profiles, matching the prior lazy session.
+    bool requestsStarted = false;
     // Never passed to speculative exporters; canonical imported key IDs stay
     // in the committed prefix even when a producer attempt rolls back.
     std::shared_ptr<RegionExpressions> guardedExpressions = std::make_shared<RegionExpressions>();
@@ -96,7 +121,7 @@ struct AnalysisSessionState {
     std::optional<DifferenceArithmeticGeneratorStage> differenceGenerators;
     uint64_t arithmeticGeneratorBuilds = 0;
     std::map<std::pair<std::size_t, uint8_t>, std::vector<AnalysisBackend>> arithmeticOrders;
-    std::vector<AnalysisCostRecord> costs;
+    std::shared_ptr<AnalysisLedger> ledger = std::make_shared<AnalysisLedger>();
     std::map<std::pair<std::size_t, uint8_t>, std::vector<AnalysisForm>> formOrders;
     std::map<std::pair<std::size_t, AnalysisForm>, uint64_t> formAttempts;
     std::map<std::size_t, std::shared_ptr<const NormalizedControlDescription>> normalizedInputs;

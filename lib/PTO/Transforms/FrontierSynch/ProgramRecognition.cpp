@@ -333,8 +333,23 @@ void recordSequenceEndpointAttempt(ProgramRecognition& program, StringRef error)
     candidate.implementationError = error.str();
     refreshProgramContractAudit(program);
 }
+namespace {
+void addAuditWork(uint64_t& count, uint64_t amount = 1)
+{
+    count = count > UINT64_MAX - amount ? UINT64_MAX : count + amount;
+}
+} // namespace
 void refreshProgramContractAudit(ProgramRecognition& program)
 {
+    addAuditWork(program.contractAuditWork.refreshRequests);
+    program.contractAuditDirty = true;
+    if (!program.deferContractAudit) { materializeProgramContractAudit(program); }
+}
+void materializeProgramContractAudit(ProgramRecognition& program)
+{
+    if (!program.contractAuditDirty) { return; }
+    addAuditWork(program.contractAuditWork.materializations);
+    addAuditWork(program.contractAuditWork.nodeVisits, program.nodes.size());
     program.contractAudit.clear();
     for (auto [id, node] : llvm::enumerate(program.nodes)) {
         if (node.kind == StructureKind::ExplicitRun) {
@@ -377,6 +392,8 @@ void refreshProgramContractAudit(ProgramRecognition& program)
             program.contractAudit.push_back(std::move(candidate));
         }
     }
+    addAuditWork(program.contractAuditWork.candidatesPublished, program.contractAudit.size());
+    program.contractAuditDirty = false;
 }
 
 FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input) {

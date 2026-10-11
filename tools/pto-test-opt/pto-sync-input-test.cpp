@@ -79,7 +79,101 @@ int runPeriodicDemandChecks(llvm::StringRef path);
 int runGuardedPeriodicChecks(llvm::StringRef path);
 int runSyncAliasChecks(func::FuncOp function, const pto::SyncInput &input);
 LogicalResult auditSyncStep0(func::FuncOp function, const pto::SyncInput &input, bool envelopes);
+bool checkProgramContractAuditWork();
 namespace {
+bool verifyStageProfile(const pto::frontiersynch::AnalysisLedger& ledger, uint64_t attempts,
+    uint64_t originatingRequest)
+{
+    using namespace pto::frontiersynch;
+    uint64_t dispatches = 0, hits = 0, originatingPreparations = 0;
+    std::vector<uint64_t> children(ledger.stages.size(), 0);
+    for (const auto& stage : ledger.stages) {
+        if (!stage.id || stage.id > children.size() || stage.parent >= stage.id || !stage.request ||
+            stage.exclusiveNanoseconds > stage.elapsedNanoseconds) {
+            return false;
+        }
+        if (stage.parent) {
+            const auto& parent = ledger.stages[stage.parent - 1];
+            if (stage.parentRequest != parent.request) { return false; }
+            accumulateCost(children[stage.parent - 1], stage.elapsedNanoseconds);
+        }
+        if (!stage.parent && (stage.stage == "logical-preparation" || stage.stage == "allocation-support")) {
+            if (stage.parentRequest != originatingRequest) {
+                return false;
+            }
+            ++originatingPreparations;
+        }
+        dispatches += stage.firstDispatches;
+        hits += stage.cacheHits;
+    }
+    for (const auto& stage : ledger.stages) {
+        if (children[stage.id - 1] + stage.exclusiveNanoseconds != stage.elapsedNanoseconds) {
+            return false;
+        }
+    }
+    return dispatches == attempts && hits >= 64 && originatingPreparations == 2 && ledger.activeStages.empty();
+}
+LogicalResult checkStageProfileSession(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    using namespace pto::frontiersynch;
+    FrontierAnalysis profiled(function), plain(function);
+    profiled.enableStageProfiling();
+    if (failed(profiled.initialize(policy)) || failed(plain.initialize(policy))) { return failure(); }
+    const ArithmeticLimits whole[] = {{8, 8, 1, 8}, {8, 8, 2, 8}};
+    const ArithmeticLimits regional[] = {{8, 8, 1, 4096}, {8, 8, 2, 4096}};
+    if (failed(profiled.configureArithmeticProfiles(whole, regional)) ||
+        failed(plain.configureArithmeticProfiles(whole, regional))) {
+        return function.emitError("diagnostic initialization froze arithmetic profiles");
+    }
+    AnalysisRequest invalid;
+    invalid.region = profiled.result()->nodes.size();
+    if (profiled.analyze(invalid).mathematical ||
+        failed(profiled.configureArithmeticProfiles(whole, regional))) {
+        return function.emitError("invalid region request froze arithmetic profiles");
+    }
+    const auto first = profiled.minimumDemands();
+    const auto unprofiled = plain.minimumDemands();
+    if (!first.mathematical || !unprofiled.mathematical || first.status != unprofiled.status ||
+        first.mathematical->backend != unprofiled.mathematical->backend || !first.ledger || !first.requestId) {
+        return function.emitError("profiling changed the selected mathematical result");
+    }
+    if (succeeded(profiled.configureArithmeticProfiles(whole, regional))) {
+        return function.emitError("valid analysis request did not freeze arithmetic profiles");
+    }
+    (void)profiled.exactForms({});
+    const auto estimateCount = first.ledger->estimates.size();
+    const auto attempts = profiled.constructionCounts().mathematicalAttempts;
+    uint64_t previousRequest = first.requestId;
+    for (unsigned repeat = 0; repeat < 64; ++repeat) {
+        const auto next = profiled.minimumDemands(0, {true, true});
+        if (next.mathematical != first.mathematical || next.ledger != first.ledger ||
+            next.requestId <= previousRequest || next.ledger->estimates.size() != estimateCount ||
+            next.ledger->snapshotRecordsCopied || profiled.constructionCounts().mathematicalAttempts != attempts) {
+            return function.emitError("repeated requests copied history or rebuilt retained mathematics");
+        }
+        previousRequest = next.requestId;
+    }
+    AnalysisRequest executable;
+    executable.needs.synchronization = true;
+    const auto logical = profiled.analyze(executable);
+    if (logical.status != AnalysisStatus::Ready || logical.mathematical != first.mathematical) { return failure(); }
+    auto prepared = profiled.prepareLogical(logical);
+    if (failed(prepared)) { return failure(); }
+    (void)profiled.attachAllocation(logical, **prepared);
+    const auto ledger = first.ledger;
+    const auto plainLedger = plain.diagnosticLedger();
+    if (!verifyStageProfile(*ledger, attempts, logical.requestId) || !plainLedger || !unprofiled.requestId ||
+        !plainLedger->stages.empty() || !checkProgramContractAuditWork()) { return failure(); }
+    const auto snapshot = profiled.costRecords();
+    if (snapshot.size() != estimateCount || ledger->snapshotRecordsCopied != estimateCount) { return failure(); }
+    profiled.writeStageProfile(llvm::errs(), "profile-regression");
+    profiled.invalidate();
+    if (profiled.diagnosticLedger() || first.ledger != ledger || ledger->estimates.size() != estimateCount) {
+        return function.emitError("outcome did not retain its diagnostic owner across invalidation");
+    }
+    llvm::outs() << "stage-profile: shared ledger cached requests exclusive timing unchanged route audit reuse\n";
+    return success();
+}
 LogicalResult checkVaryingBoundarySession(func::FuncOp function, pto::GMAliasPolicy policy) {
   using namespace pto::frontiersynch;
   FrontierAnalysis session(function);
@@ -1529,6 +1623,11 @@ int main(int argc, char **argv) {
   if (argc == 3 && StringRef(argv[1]) == "--periodic-checks") {
     return runPeriodicDemandChecks(argv[2]);
   }
+  const bool profileStages = argc > 1 && StringRef(argv[1]) == "--profile-stages";
+  if (profileStages) {
+    for (int i = 1; i + 1 < argc; ++i) { argv[i] = argv[i + 1]; }
+    --argc;
+  }
   auto policy = pto::GMAliasPolicy::MayNotAlias;
   if (argc > 1 && StringRef(argv[1]).starts_with("--gm-alias=")) {
     auto name = StringRef(argv[1]).drop_front(StringRef("--gm-alias=").size());
@@ -1554,6 +1653,7 @@ int main(int argc, char **argv) {
     for (int i = 1; i + 1 < argc; ++i) { argv[i] = argv[i + 1]; }
     --argc;
   }
+  const bool stageProfileChecks = argc == 3 && StringRef(argv[1]) == "--stage-profile-checks";
   const bool identitySessionChecks = argc == 3 && StringRef(argv[1]) == "--identity-session-checks";
   const bool allocationSessionChecks = argc == 3 && StringRef(argv[1]) == "--allocation-session-checks";
   const bool regionalSessionChecks = argc == 3 && StringRef(argv[1]) == "--regional-session-checks";
@@ -1620,7 +1720,7 @@ int main(int argc, char **argv) {
   const bool sequenceAnalysis = argc == 3 && StringRef(argv[1]) == "--sequence-analysis";
   const bool structuredTrace = argc == 3 && StringRef(argv[1]) == "--structured-trace";
   const bool physicalTrace = argc == 3 && StringRef(argv[1]) == "--physical-trace";
-  if (argc != 2 && !boundedQueries && !identitySessionChecks && !allocationSessionChecks &&
+  if (argc != 2 && !stageProfileChecks && !boundedQueries && !identitySessionChecks && !allocationSessionChecks &&
       !regionalSessionChecks && !retainedChecks &&
       !sessionChecks && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !finiteExpansion && !recognition &&
       !numericAnalysis && !insertLogical && !insertLogicalLibrary && !insertModuleLibrary && !recognitionBoundary &&
@@ -1635,7 +1735,7 @@ int main(int argc, char **argv) {
       !step0 && !existing) {
       llvm::errs()
           << "usage: pto-sync-input-test "
-          << "[--gm-alias=may-alias|may-not-alias] "
+          << "[--profile-stages] [--gm-alias=may-alias|may-not-alias] "
           << "[--alias-contract|--expect-failure|--capabilities|--phase-index|--storage-effects|"
              "--identity-session-checks|--allocation-session-checks|"
              "--retained-demand-checks|--analysis-session-checks|"
@@ -1690,9 +1790,15 @@ int main(int argc, char **argv) {
     context.disableMultithreading();
     return runRepeatedReadOnlyStorageChecks(&context) ? 0 : 1;
   }
+  if (profileStages && !certification && !insertLogical && !recognitionBoundary && !stageProfileChecks) {
+    llvm::errs() << "--profile-stages requires --certify-regions, --insert-logical "
+                 << "or --recognition-boundary\n";
+    return 1;
+  }
   context.disableMultithreading();
   const bool hasOption =
-      boundedQueries || identitySessionChecks || allocationSessionChecks || regionalSessionChecks ||
+      stageProfileChecks || boundedQueries || identitySessionChecks || allocationSessionChecks ||
+      regionalSessionChecks ||
       retainedChecks || sessionChecks ||
       mixedSymbolicChecks || rotatingAnalysis || explicitAnalysis || expectFailure || capabilities || phaseIndex ||
       storageEffects || recognition || numericAnalysis || insertLogical || insertLogicalLibrary ||
@@ -1932,6 +2038,7 @@ int main(int argc, char **argv) {
     pto::PTOFrontierAnalysisOptions options;
     options.gmAlias = policy == pto::GMAliasPolicy::MayAlias ? "may-alias" : "may-not-alias";
     options.analysisOnly = recognitionBoundary;
+    options.profileStages = profileStages;
     manager.addPass(pto::createPTOFrontierAnalysisPass(options));
     const bool rejected = failed(manager.run(*module));
     if (recognitionBoundary) {
@@ -1943,6 +2050,12 @@ int main(int argc, char **argv) {
     if (rejected) { return 1; }
     module->print(llvm::outs());
     llvm::outs() << "\n";
+    return 0;
+  }
+  if (stageProfileChecks) {
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (!function.isDeclaration() && failed(checkStageProfileSession(function, policy))) { return 1; }
+    }
     return 0;
   }
   if (recognition || numericAnalysis) {
@@ -2009,6 +2122,7 @@ int main(int argc, char **argv) {
             {"callees", std::move(callees)}, {"closure_established", false}}) << "\n";
       }
       pto::frontiersynch::FrontierAnalysis analysis(function);
+      analysis.enableStageProfiling(profileStages);
       if (failed(analysis.initialize(policy))) {
         return 1;
       }
@@ -2273,6 +2387,7 @@ int main(int argc, char **argv) {
             {"specialized_numeric_constructions", analysis.specializedNumericConstructions()},
             {"specialized_guarded_constructions", analysis.specializedGuardedConstructions()},
             {"guarded_expression_import_work", analysis.guardedExpressionImportWork()}}) << "\n";
+        analysis.writeStageProfile(llvm::errs(), "exhaustive-certification");
       }
       if (numericAnalysis) {
         const bool lazy = analysis.numericTemplatePreflights() == 0 &&
