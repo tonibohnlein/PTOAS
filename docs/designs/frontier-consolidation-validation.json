@@ -1556,5 +1556,38 @@
     "reviews": "architecture and correctness accepted",
     "scope": "Attempt-local repeated-lane proof reuse; allocation policy unchanged; no general normalization complexity claim; remaining milestones stay open",
     "compliance": "Three brace-rule prefilter false positives; reported bodies are braced; diff check passed"
+  },
+  "numerical_parent_projection": {
+    "baseline_commit": "7c5365e6b",
+    "receipt_directory": ".local/three-paths/consolidation/m5-projection",
+    "focused": {
+      "command": [
+        "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+        "-j1",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_region_expression.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_analysis.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_retained_demands.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_numerical_region_session.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_frontier_public_pipeline.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_prefix.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 15.821527685038745,
+      "maximum_rss_kib": 141248,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 420.0
+    },
+    "focused_lit_passed": 6,
+    "scaling_children": [
+      8,
+      16,
+      32,
+      64
+    ],
+    "root_port_bound": 12,
+    "all_parent_port_bound_per_child": 32,
+    "reviews": "architecture and correctness accepted",
+    "scope": "Parent projection with hierarchical interior queries and requested-event adapter; shared PhaseIndex facts remain open"
   }
 }

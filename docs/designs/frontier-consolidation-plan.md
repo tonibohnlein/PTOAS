@@ -32,7 +32,7 @@ separate commit. Infrastructure alone does not complete a production milestone.
 | 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; logical-only allocation request complete; repeated-lane proof reuse complete; lane scheduling pending |
 | 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Sequence preparation failure isolation complete; broader capability consolidation pending |
 | 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; borrowed regional adapter complete; global compact memberships and shared fact views pending |
-| 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection and shared source facts pending |
+| 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection complete; shared source facts pending |
 | 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Pending |
 | 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Regional prefix ownership, singleton forwarding and crossing presence complete; executable selectors and public Delta emission pending |
 | 8. Proof reuse and validation | Share lazy inactive-proof and premise contexts, replay mappings and safe Boolean conversion work. Close known guard-equivalence/oracle gaps and run pinned paired campaigns. | No unexplained acceptance loss or changed output; report eleven kernels and 783-input corpus by stage, wall time, memory and inner work. | Lazy inactive-proof setup shared; broader proof reuse and campaign pending |
@@ -570,3 +570,29 @@ This is a kernel-specific compiler measurement, not a corpus or device-speed cla
 Receipts and sampling data are under
 `.local/three-paths/consolidation/m2-summary-profile/`. The original source mirror
 has been restored to the candidate and rebuilt; no profiling-only source remains.
+
+
+## Project numerical composition onto parent boundary ports
+
+Each numerical merge now retains only its requested parent ports. Children also
+retain the endpoints needed by crossings at that merge. Interior queries descend
+through the immutable hierarchy instead of flattening every child event into the
+root index. Original sequence event IDs are mapped explicitly to projected dense
+IDs. The one boundary-summary snapshot is reused when publishing the result.
+
+A parent can request a new prerequisite to an interior event absent from a
+child's projected index. The adapter builds an index over just those requested
+events using the child's exact queries and reference order. Unknown presence or
+order refuses the adapter. A fallible stable merge sort uses O(P log P) reference
+comparisons; this does not bound the cost of each child query or claim compact
+interfaces for arbitrary symbolic nesting.
+
+Six focused lit tests pass. The independent hierarchy oracle checks all event
+pairs after introducing a crossing between previously omitted interior events.
+The 8/16/32/64-child family checks bounded root ports and linear total retained
+parent ports. Existing tests cover empty children, overlays, guarded fallback,
+retained mathematics, prefix emission and the public pipeline. The numerical
+hierarchy check is now discoverable through the .pto expression fixture.
+Architecture and correctness reviews accepted the component. The compliance
+prefilter's eleven brace findings are false positives on already braced bodies.
+Receipts are under `.local/three-paths/consolidation/m5-projection/`.

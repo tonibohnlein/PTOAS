@@ -293,8 +293,7 @@ std::optional<Expr> SequenceAnalysisState::eventReachability(std::size_t source,
 {
     if (source / 2 >= ports.size() || target / 2 >= ports.size()) { return std::nullopt; }
     if (numerical) {
-        ++numericalQueryCost.indexOperations;
-        return expressions.boolean(numerical->index.reaches(source, target));
+        return numericalReachability(event(source), event(target), numericalQueryCost);
     }
     return eventReachability(event(source), event(target));
 }
@@ -518,6 +517,7 @@ bool SequenceAnalysisState::closure()
         incoming = allLinks;
         reachabilityCache.clear();
         numericalTree.reset(); numerical.reset(); numericalChainKeys.clear();
+        numericalEvents.clear(); numericalProjectedPorts = 0; numericalBoundary.reset();
         error.clear();
     }
     std::string diagnostic = "neither implemented crossing reducer supplied its required interfaces";
