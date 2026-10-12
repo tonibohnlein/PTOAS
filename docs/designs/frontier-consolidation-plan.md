@@ -489,3 +489,45 @@ their emission fallback were removed from the build mirror; no production guard
 is replaced by a sampled or assumed value. Public Delta logical recovery remains
 open. Receipts are under `.local/three-paths/consolidation/m8-partial-constants/`;
 earlier diagnostic probes are under `m7-evaluation-provenance/`.
+
+
+## Exhaustive threshold proofs for inactive endpoint recipes
+
+The shared expression owner has a sufficient uniform inactivity proof for roots
+containing direct constant comparisons of an integer Input. For each candidate
+Input independently, it partitions all uint64 bit patterns at zero, comparison
+literals, safe successor literals and the sign boundary for signed comparisons.
+Each comparison has a constant truth value throughout each resulting cell.
+Signed comparisons use the existing exact APInt64 folding semantics.
+
+Each cell fixes only those comparison atoms. The integer Input is replaced by a
+constant only in singleton cells; nonsingleton cells retain its symbolic identity
+and exact unsigned bounds. Existing typed substitution rebuilds selected ranks,
+then the constant proof must establish false under those bounds. Every cell must
+succeed. Other Inputs, including opaque predicate evaluations, remain independent
+and unconstrained. Trying several Inputs does not take their Cartesian product.
+Transactions discard each cell's temporary nodes and substitution memo.
+
+This establishes uniform falsity rather than a fact valid only at one source cut.
+Sequence prefix emission requests it lazily after ordinary expression emission
+fails. A proved-inactive Boolean recipe discards failed scratch emission and
+emits false; same-pipe barriers and unused incoming-rank choices are omitted.
+Retained demands, occurrence identities, source publications and terminal cleanup
+remain owned by the existing invocation coordinator. Inconclusive proofs retain
+the ordinary endpoint failure. No sampled guard value, new backend, input
+assumption or internal admission budget is introduced.
+
+The optional counters record root-DAG discovery visits, input families and cells.
+They do not count every substitution or implication traversal. Construction still
+pays for rebuilding and proving each attempted cell; this is not a new fast-path
+complexity guarantee and does not complete general historical-predicate emission.
+
+Eight focused lit tests pass, including 32 new independent inactive/live prefix
+executions and the expression, bounded-prefix, allocation and public-pipeline
+checks. Both architecture and correctness reviews accepted this component. The
+initial build reached its external 900-second watchdog; the resumed build
+completed in 79.39 seconds. A serial public Delta MayNotAlias logical-only replay
+still refuses with `guarded expression input belongs to another invocation`
+(11.62 seconds, 284,984 KiB peak RSS). This component does not establish public
+Delta recovery. Receipts are under
+`.local/three-paths/consolidation/m7-threshold-inactivity/`.

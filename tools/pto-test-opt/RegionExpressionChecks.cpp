@@ -172,6 +172,56 @@ bool checkPartialConstants(Value index, Value predicate)
     const auto other = e.input(inputs.addArgument(index.getType(), index.getLoc()));
     return !e.constantUnder(p, e.eq(x, other)) && e.error().empty();
 }
+bool checkThresholdInactivity(Value index, Value predicate)
+{
+    fs::RegionExpressions e;
+    const auto x = e.input(index), p = e.input(predicate), zero = e.constant(0);
+    const auto positive = e.slt(zero, x), pastFour = e.slt(e.constant(4), x);
+    const auto clipped = e.select(positive, x, zero);
+    const auto selected = e.select(pastFour, clipped, zero);
+    const auto impossible = e.land(p, e.land(pastFour, e.lt(selected, e.constant(5))));
+    const auto negative = e.slt(x, zero), sign = e.constant(uint64_t(1) << 63);
+    const auto negativeBelowSign = e.land(negative, e.lt(e.select(negative, x, zero), sign));
+    const auto maximum = e.eq(x, e.constant(UINT64_MAX));
+    const auto maximumIsZero = e.land(maximum, e.eq(e.select(maximum, x, zero), zero));
+    // Substituting a representative into this nonsingleton cell would falsely
+    // declare it inactive at x=5; the interval includes every x from 6 onward.
+    const auto liveInterval = e.land(pastFour, e.lt(e.constant(5), selected));
+    Block inputs;
+    const auto y = e.input(inputs.addArgument(index.getType(), index.getLoc()));
+    const auto distinct = e.land(pastFour, e.lt(y, e.constant(5)));
+    const auto before = e.size();
+    fs::RegionExpressions::ThresholdProofCost cost;
+    if (!e.inactiveByThresholds(impossible, &cost) || !cost.dagVisits || cost.families != 1 || !cost.cells ||
+        !e.inactiveByThresholds(negativeBelowSign) || !e.inactiveByThresholds(maximumIsZero) ||
+        e.inactiveByThresholds(liveInterval) || e.inactiveByThresholds(maximum) ||
+        e.inactiveByThresholds(distinct) || e.inactiveByThresholds(p) ||
+        e.inactiveByThresholds(x) || e.inactiveByThresholds(fs::RegionExpressions::invalid) ||
+        e.size() != before) { return false; }
+    const uint64_t values[] = {0, 1, 4, 5, 6, uint64_t(INT64_MAX), uint64_t(1) << 63, UINT64_MAX};
+    for (uint64_t value : values) {
+        for (unsigned flag = 0; flag < 2; ++flag) {
+            fs::RegionExpressions::Substitution facts({{x, e.constant(value)}, {p, e.boolean(flag)}});
+            if (e.constantValue(e.substitute(impossible, facts)) != 0 ||
+                e.constantValue(e.substitute(negativeBelowSign, facts)) != 0 ||
+                e.constantValue(e.substitute(maximumIsZero, facts)) != 0 ||
+                e.constantValue(e.substitute(liveInterval, facts)) != uint64_t(value > 5 && value <= INT64_MAX)) {
+                return false;
+            }
+        }
+    }
+    for (uint64_t bound : values) {
+        const auto c = e.constant(bound), different = e.constant(bound + uint64_t(1));
+        const fs::RegionExpressions::Id atoms[] = {e.eq(x, c), e.lt(x, c), e.lt(c, x), e.le(x, c), e.le(c, x),
+            e.slt(x, c), e.slt(c, x), e.sle(x, c), e.sle(c, x)};
+        for (auto atom : atoms) {
+            const auto contradiction = e.land(atom, e.eq(e.select(atom, c, different), different));
+            const auto original = e.size();
+            if (!e.inactiveByThresholds(contradiction) || e.size() != original) { return false; }
+        }
+    }
+    return e.error().empty();
+}
 bool checkDistanceAlgebra(Value index, Value predicate)
 {
     fs::RegionExpressions e;
@@ -1305,6 +1355,8 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
         !checked("checkRegionalNativeOrder", checkRegionalNativeOrder(function)) ||
         !checked("checkCrossChildNative", checkCrossChildNative(function)) ||
         !checked("checkConsolidatedCandidateExclusion", checkConsolidatedCandidateExclusion(function)) ||
+        !checked("checkThresholdInactivity",
+                 checkThresholdInactivity(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkPartialConstants", checkPartialConstants(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkDistanceAlgebra", checkDistanceAlgebra(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkGuardedMinimum", checkGuardedMinimum(function.getArgument(0), function.getArgument(1))) ||

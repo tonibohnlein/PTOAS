@@ -15,6 +15,7 @@
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
+#include <optional>
 #include <set>
 #include <tuple>
 using namespace mlir;
@@ -243,7 +244,8 @@ Graph reference(ArrayRef<unsigned> roles) {
 }
 // A WAIT gates the next payload start on its destination; earlier WAITs also
 // gate later starts through native start order. Tail waits have no payload sink.
-bool verifyTrace(ArrayRef<Event> events, ArrayRef<unsigned> roles, const Graph* expected = nullptr) {
+bool verifyTrace(ArrayRef<Event> events, ArrayRef<unsigned> roles, const Graph* expected = nullptr,
+                 std::optional<unsigned> expectedPublications = {}) {
     const bool invalid229 = roles.size() > 31;
     if (invalid229) { return false; }
     auto graph = native(roles);
@@ -284,7 +286,7 @@ bool verifyTrace(ArrayRef<Event> events, ArrayRef<unsigned> roles, const Graph* 
         if (!recordIds.insert(record).second) { return false; }
     }
     const bool invalid264 = next != roles.size() || publications.size() != consumed.size() ||
-        publications.size() != (expected ? counts[P] : 2*counts[P]+counts[R]);
+        publications.size() != expectedPublications.value_or(expected ? counts[P] : 2*counts[P]+counts[R]);
     if (invalid264) { return false; }
     close(graph);
     for (unsigned i = 0; i < graph.size(); ++i) { if ((graph[i] >> i) & 1) { return false; } }
@@ -355,7 +357,7 @@ bool runCases(MLIRContext& context, bool loops, unsigned& cases) {
 // A loop result chooses an earlier source only after all sources have run.
 // Supplied child interfaces have native order and no internal demands; the
 // independent graph below supplies the one selected crossing prerequisite.
-bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false)
+bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, unsigned inactive = 0)
 {
     OpBuilder b(&context); auto loc = b.getUnknownLoc();
     OwningOpRef<ModuleOp> module(ModuleOp::create(loc));
@@ -381,7 +383,7 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false)
     auto source = b.create<func::CallOp>(loc, "payload", TypeRange{}, ValueRange{zero});
     b.create<scf::YieldOp>(loc, loop.getRegionIterArgs());
     b.setInsertionPointAfter(loop);
-    auto target = b.create<func::CallOp>(loc, "payload", TypeRange{}, ValueRange{two});
+    auto target = b.create<func::CallOp>(loc, "payload", TypeRange{}, ValueRange{inactive == 3 ? zero : two});
     if (outer) { b.setInsertionPointAfter(outer); }
     b.create<func::ReturnOp>(loc);
     if (failed(verify(*module))) { return false; }
@@ -390,7 +392,7 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false)
     auto state = std::make_shared<fs::SequenceAnalysisState>(function, arena);
     if (outer) { state->requiredOuterLoops.push_back(outer); }
     std::vector<pto::CompoundInstanceElement> phases; phases.reserve(2);
-    for (auto [op, pipe] : std::vector<std::pair<Operation*, unsigned>>{{source, P}, {target, Q}}) {
+    for (auto [op, pipe] : std::vector<std::pair<Operation*, unsigned>>{{source, P}, {target, inactive == 3 ? P : Q}}) {
         phases.emplace_back(phases.size(), SmallVector<const pto::BaseMemInfo*>{},
             SmallVector<const pto::BaseMemInfo*>{}, static_cast<pto::PipelineType>(pipe), op->getName());
         phases.back().elementOp = op;
@@ -424,33 +426,49 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false)
         phased ? std::vector<fs::Expr>{arena->constant(0)} : std::vector<fs::Expr>{});
     const auto second = state->port(0, 0, arena->constant(phased ? 0 : 1),
         phased ? std::vector<fs::Expr>{arena->constant(1)} : std::vector<fs::Expr>{});
-    const auto selected = state->selectPort(arena->input(loop.getResult(0)), first, second);
+    auto choose = arena->input(loop.getResult(0));
+    if (inactive) {
+        auto opaque = std::make_shared<Block>();
+        choose = arena->input(opaque->addArgument(b.getI1Type(), loc));
+        arena->retainInputOwner(opaque);
+    }
+    const auto selected = state->selectPort(choose, first, second);
     const auto consumer = state->port(1, 0, arena->constant(0));
     auto selectedVisit = state->ports[selected].ordinal;
     if (phased) {
         selectedVisit = arena->add(state->ports[selected].visits.front(), state->ports[selected].visits.front());
     }
-    state->crossings.push_back({selected, consumer, arena->lt(selectedVisit, arena->input(count))});
+    auto guard = arena->lt(selectedVisit, arena->input(count));
+    if (inactive) {
+        const auto x = arena->input(count), limit = arena->constant(5);
+        const auto large = arena->slt(arena->constant(4), x);
+        const auto rank = arena->select(large, x, arena->constant(0));
+        const auto comparison = inactive == 2 ? arena->lt(limit, rank) : arena->lt(rank, limit);
+        guard = arena->land(guard, arena->land(choose, arena->land(large, comparison)));
+    }
+    state->crossings.push_back({selected, consumer, guard});
     fs::InvocationPrefixCollection collection(function, input);
     std::string diagnostic;
     if (failed(state->collectPrefix(collection, diagnostic))) { llvm::errs() << diagnostic << "\n"; return false; }
     auto& spec = collection.recipe();
-    spec.privateScalarControl = true; spec.planId = 19; spec.sourceBounds = {{P, nested ? 4U : 3U}};
+    spec.privateScalarControl = true; spec.planId = 19; spec.sourceBounds = {{P, inactive ? 8U : nested ? 4U : 3U}};
     fs::PrivateStateError error;
     const auto before = render(module->getOperation());
     auto prepared = fs::materializeInvocationPrefix(function, spec, error);
+    if (inactive == 2) { return failed(prepared) && before == render(module->getOperation()); }
     if (failed(prepared)) { llvm::errs() << error.message << "\n"; return false; }
-    for (unsigned trips = 0; trips <= 3; ++trips) {
+    for (unsigned trips = 0; trips <= (inactive ? 7U : 3U); ++trips) {
         for (unsigned chooseFirst = 0; chooseFirst < 2; ++chooseFirst) {
             Execution actual; actual.run((*prepared)->function, trips, chooseFirst);
-            std::vector<unsigned> roles(trips, 0); roles.push_back(2);
+            std::vector<unsigned> roles(trips, 0); roles.push_back(inactive == 3 ? 0 : 2);
             if (nested) { roles.push_back(0); roles.push_back(2); }
             auto expected = native(roles);
             const auto selectedVisit = chooseFirst ? 0U : phased ? 2U : 1U;
-            if (selectedVisit < trips) { edge(expected, 2 * selectedVisit + 1, 2 * trips); }
+            if (!inactive && selectedVisit < trips) { edge(expected, 2 * selectedVisit + 1, 2 * trips); }
             if (nested && chooseFirst) { edge(expected, 2 * (trips + 1) + 1, 2 * (trips + 2)); }
             close(expected);
-            if (!actual.valid || !verifyTrace(actual.events, roles, &expected)) {
+            if (!actual.valid || !verifyTrace(actual.events, roles, &expected,
+                    inactive == 3 ? std::optional<unsigned>(0) : std::nullopt)) {
                 llvm::errs() << "late source choice mismatch: trips=" << trips << " first=" << chooseFirst
                              << " nested=" << nested << " phased=" << phased << " interpreted=" << actual.valid << "\n";
                 return false;
@@ -466,8 +484,9 @@ bool runInvocationPrefixChecks() {
     unsigned cases = 0;
     const bool invalid332 = !runCases(context, false, cases) || !runCases(context, true, cases) ||
         !lateSourceChoice(context, false) || !lateSourceChoice(context, true) ||
-        !lateSourceChoice(context, false, true);
+        !lateSourceChoice(context, false, true) || !lateSourceChoice(context, false, false, 1) ||
+        !lateSourceChoice(context, false, false, 2) || !lateSourceChoice(context, false, false, 3);
     if (invalid332) { return false; }
-    llvm::outs() << "invocation prefix checks passed executions=" << cases << " late-choice=24\n";
+    llvm::outs() << "invocation prefix checks passed executions=" << cases << " late-choice=24 inactive=32\n";
     return true;
 }
