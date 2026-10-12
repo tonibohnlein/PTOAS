@@ -92,6 +92,7 @@ add_llvm_executable(pto-sync-input-test
   SharedHandoffAllocationChecks.cpp
   FiniteAllocationQueryChecks.cpp
   NumericalHierarchyChecks.cpp
+  SyncStorageMembershipChecks.cpp
   BoundingRegionalChecks.cpp
   RequirementProvenanceChecks.cpp
   CertifiedPartialReductionChecks.cpp

@@ -31,7 +31,7 @@ separate commit. Infrastructure alone does not complete a production milestone.
 | 1. Measured baseline | Aggregate allocation summary/query/proof/lane timing and inner-loop counts; precise retained-prefix refusal; pinned baseline replay. | Profiling preserves commands and certificates; bounded diagnostic storage; classify the Persistent GEMM hot stage and Delta blocker. | Complete; evidence below |
 | 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; logical-only allocation request complete; repeated-lane proof reuse complete; lane scheduling pending |
 | 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Sequence preparation failure isolation complete; broader capability consolidation pending |
-| 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; borrowed regional adapter complete; global compact memberships and shared fact views pending |
+| 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; borrowed regional adapter complete; global compact memberships complete; shared fact views and delayed atomization pending |
 | 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection complete; shared source facts pending |
 | 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Pending |
 | 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Regional prefix ownership, singleton forwarding and crossing presence complete; executable selectors and public Delta emission pending |
@@ -596,3 +596,30 @@ hierarchy check is now discoverable through the .pto expression fixture.
 Architecture and correctness reviews accepted the component. The compliance
 prefilter's eleven brace findings are false positives on already braced bodies.
 Receipts are under `.local/three-paths/consolidation/m5-projection/`.
+
+
+## Compact global physical-cell memberships
+
+The physical partition retains its existing byte geometry and cell identities.
+Each effect now stores sorted half-open runs of cell IDs. The endpoint sweep
+opens and closes these runs instead of appending each new cell to every active
+effect. Consumers iterate the same memberships lazily; overlap compares runs.
+This removes incidence-sized backing storage and sweep appends. It does not
+remove the explicit scan's incidence term or defer fine partition construction.
+
+Eleven focused lit tests pass, including the independent byte-intersection and
+range-union oracle, carried/reused storage, blocked layouts, sequence composition,
+regional exports, allocation and the public pipeline. The 512-wide-access fixture
+represents 262,656 incidences with 1,024 stored runs. The oracle also covers
+overlapping/duplicate ranges, adjacency, gaps, separate memory spaces, empty and
+reversed ranges, maximum addresses, overlap and rebuilding the partition.
+
+Three additional storage fixtures have stale descriptor/recognition expectations.
+A control build using the original per-cell sweep produces byte-identical output
+for all three, establishing that this change does not cause those failures.
+The GM-alias fixture's native checks pass; its final CLI check cannot load the
+existing Python extension. These failures remain visible and are not counted as
+passing tests. Both source reviews accepted the representation. The compliance
+prefilter's brace/assertion matches were inspected as braced bodies and internal
+partition invariants. Receipts are under
+`.local/three-paths/consolidation/m4-compact-memberships/`.

@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/generate_compact_memberships.py > %t.pto
+// RUN: pto-sync-input-test --storage-effects %t.pto | FileCheck %s
+// CHECK: memberships split8: cells=8 effects=16 runs=16 incidences=72
+// CHECK: memberships split32: cells=32 effects=64 runs=64 incidences=1056
+// CHECK: memberships split128: cells=128 effects=256 runs=256 incidences=16512
+// CHECK: memberships split512: cells=512 effects=1024 runs=1024 incidences=262656

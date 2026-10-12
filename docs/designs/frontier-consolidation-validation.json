@@ -1589,5 +1589,17 @@
     "all_parent_port_bound_per_child": 32,
     "reviews": "architecture and correctness accepted",
     "scope": "Parent projection with hierarchical interior queries and requested-event adapter; shared PhaseIndex facts remain open"
+  },
+  "compact_global_memberships": {
+    "status": "component complete; fine atomization still eager",
+    "focused_tests": 11,
+    "scaling": {
+      "cells": 512,
+      "effects": 1024,
+      "stored_runs": 1024,
+      "incidences": 262656
+    },
+    "controls": "Original per-cell sweep produces identical output on three failing descriptor/recognition fixtures. Native GM alias checks pass; CLI extension unavailable.",
+    "receipts": ".local/three-paths/consolidation/m4-compact-memberships/"
   }
 }

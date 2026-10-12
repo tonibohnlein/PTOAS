@@ -10,6 +10,7 @@
 #define PTO_TRANSFORMS_INSERTSYNC_SYNCSTORAGEEFFECTS_H
 
 #include "PTO/Transforms/InsertSync/SyncInput.h"
+#include "PTO/Transforms/InsertSync/SyncCellMembership.h"
 #include "PTO/Transforms/InsertSync/SyncAccessRegion.h"
 #include "llvm/ADT/DenseMap.h"
 
@@ -65,7 +66,7 @@ struct SyncStorageEffect {
     // Whether ranges completely materialize the modeled set, including empty sets.
     bool rangesMaterialized = false;
     SmallVector<SyncStorageCell> ranges;
-    SmallVector<std::size_t> cells;
+    SyncCellMembership cells;
 };
 
 struct SyncUniformConflictWork {
@@ -81,6 +82,10 @@ public:
     // enumerate conflicting pairs, insert commands, or establish completeness of
     // the upstream operation-effect registry. Failure publishes no partial state.
     LogicalResult build(const SyncInput& input);
+    // Canonicalize supplied range unions into one shared partition. Memberships
+    // are replaced by compact ID runs; other effect fields remain unchanged.
+    // Empty/reversed ranges contribute no cells, as in the access importer.
+    static SmallVector<SyncStorageCell> partitionRanges(MutableArrayRef<SyncStorageEffect> effects);
     std::shared_ptr<const SyncDescriptorState> descriptorState() const { return descriptors; }
     ArrayRef<SyncStorageEffect> effects() const { return records; }
     ArrayRef<SyncStorageCell> cells() const { return partition; }
@@ -133,7 +138,6 @@ private:
     mutable DenseMap<std::pair<std::size_t, std::size_t>, bool> uniformEffects;
     mutable SyncUniformConflictWork uniformWork;
     bool computeUniformConflict(std::size_t first, std::size_t second) const;
-    void partitionRanges();
 };
 } // namespace mlir::pto
 #endif

@@ -75,13 +75,15 @@ LogicalResult SyncStorageEffects::build(const SyncInput& input)
             }
         }
     }
-    pending.partitionRanges();
+    pending.partition = partitionRanges(pending.records);
     *this = std::move(pending);
     return success();
 }
 
-void SyncStorageEffects::partitionRanges()
+SmallVector<SyncStorageCell> SyncStorageEffects::partitionRanges(MutableArrayRef<SyncStorageEffect> records)
 {
+    SmallVector<SyncStorageCell> partition;
+    for (auto& effect : records) { effect.cells.clear(); }
     struct Event { std::size_t effect; bool start; };
     using Points = std::map<uint64_t, SmallVector<Event>>;
     // Preserve first-seen base order, rather than ordering SSA pointer addresses.
@@ -97,14 +99,19 @@ void SyncStorageEffects::partitionRanges()
     }
     for (const auto& [space, bases] : spaces) {
         for (const auto& [base, points] : bases) {
-            std::map<std::size_t, unsigned> active;
+            struct Active { std::size_t depth = 0, begin = 0; };
+            std::map<std::size_t, Active> active;
             for (auto point = points.begin(); point != points.end(); ++point) {
                 for (const auto& event : point->second) {
                     if (event.start) {
-                        ++active[event.effect];
+                        auto& entry = active[event.effect];
+                        if (entry.depth++ == 0) { entry.begin = partition.size(); }
                     } else {
-                        if (--active[event.effect] == 0) {
-                            active.erase(event.effect);
+                        auto entry = active.find(event.effect);
+                        assert(entry != active.end() && entry->second.depth);
+                        if (--entry->second.depth == 0) {
+                            records[event.effect].cells.append(entry->second.begin, partition.size());
+                            active.erase(entry);
                         }
                     }
                 }
@@ -112,14 +119,11 @@ void SyncStorageEffects::partitionRanges()
                 if (next == points.end() || active.empty()) {
                     continue;
                 }
-                const auto cell = partition.size();
                 partition.push_back({space, point->first, next->first, base});
-                for (auto effect : active) {
-                    records[effect.first].cells.push_back(cell);
-                }
             }
         }
     }
+    return partition;
 }
 
 ArrayRef<std::size_t> SyncStorageEffects::effectsFor(const CompoundInstanceElement* phase) const
@@ -257,18 +261,7 @@ bool SyncStorageEffects::mayOverlap(std::size_t first, std::size_t second) const
     if (!a.rangesMaterialized || !b.rangesMaterialized) {
         return true;
     }
-    std::size_t i = 0, j = 0;
-    while (i < a.cells.size() && j < b.cells.size()) {
-        if (a.cells[i] == b.cells[j]) {
-            return true;
-        }
-        if (a.cells[i] < b.cells[j]) {
-            ++i;
-        } else {
-            ++j;
-        }
-    }
-    return false;
+    return a.cells.overlaps(b.cells);
 }
 bool SyncStorageEffects::mayConflict(std::size_t first, std::size_t second) const
 {
