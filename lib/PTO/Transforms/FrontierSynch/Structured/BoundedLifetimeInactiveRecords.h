@@ -10,6 +10,7 @@
 #define PTO_FRONTIERSYNCH_BOUNDEDLIFETIMEINACTIVERECORDS_H
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetime.h"
 #include <map>
+#include <optional>
 #include <vector>
 namespace mlir::pto::frontiersynch::detail {
 // The caller validates the window schema, presence IDs, and unconditional extent.
@@ -63,5 +64,34 @@ private:
     std::vector<RegionExpressions::Id> patterns;
     std::map<RegionExpressions::Id, bool> proofs;
 };
+// Emission proofs are uniform over the original window. They do not borrow
+// domain-conditioned allocation flags or retain temporary arena expressions.
+inline std::optional<std::vector<uint8_t>> boundedInactiveEmissionRecipes(
+    RegionExpressions& e, const LifetimeWindowInput& window,
+    llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> records)
+{
+    const bool dimensions = window.sites && window.span < UINT32_MAX &&
+        window.sites <= UINT32_MAX / (window.span + 1) &&
+        window.payloads.size() == window.sites * (window.span + 1) &&
+        unconditional.size() == window.sites;
+    if (!dimensions) { return std::nullopt; }
+    for (auto value : unconditional) { if (value > 1) { return std::nullopt; } }
+    for (auto payload : window.payloads) {
+        const bool valid = payload.present < e.size() && e.isBoolean(payload.present);
+        if (!valid) { return std::nullopt; }
+    }
+    for (auto edge : records) {
+        const bool valid = edge.source < window.sites && edge.source < edge.target &&
+            edge.target < window.payloads.size() && edge.guard < e.size() && e.isBoolean(edge.guard);
+        if (!valid) { return std::nullopt; }
+    }
+    std::vector<uint8_t> inactive;
+    {
+        RegionExpressions::Transaction transaction(e);
+        BoundedInactiveRecordProof proof(e, window, unconditional);
+        for (auto edge : records) { inactive.push_back(proof.proves(edge.guard)); }
+    }
+    return inactive;
+}
 } // namespace mlir::pto::frontiersynch::detail
 #endif

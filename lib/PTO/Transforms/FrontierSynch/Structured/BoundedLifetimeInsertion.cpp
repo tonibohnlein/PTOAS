@@ -13,6 +13,7 @@
 #include "../Shared/CountedLoop.h"
 #include "../Shared/IterationPredicates.h"
 #include "PhysicalRefreshLimits.h"
+#include "BoundedLifetimeInactiveRecords.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "../Shared/CircuitEndpoints.h"
 #include "../../InsertSync/SyncScalarReplay.h"
@@ -339,16 +340,28 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
     auto& e = demands->expressions;
     const auto m = demands->anchors.size();
     const auto ordinal = demands->ordinal;
+    auto schema = detail::boundedInactiveEmissionRecipes(e, demands->window, demands->unconditional, {});
+    if (!schema || demands->window.sites != m) {
+        error = "bounded endpoint recipes require a valid original window"; return failure();
+    }
     CircuitEndpoints emitter(demands->function, e, demands->anchors);
     emitter.prepareExpression = [&](Id root, OpBuilder& builder, Operation* cut,
             RegionExpressions::CutEmission& context) {
         return demands->predicates->prepare(root, builder, cut, context);
     };
-    for (const auto& edge : demands->analysis.sourceDemands) {
+    for (auto edge : demands->analysis.sourceDemands) {
+        // Prove only reached records. A cheap live endpoint refusal must not
+        // first evaluate every later circuit in this retained window.
+        auto proof = detail::boundedInactiveEmissionRecipes(e, demands->window,
+            demands->unconditional, llvm::ArrayRef<GuardedRankEdge>(&edge, 1));
+        if (!proof) { error = "bounded endpoint record has invalid original provenance"; return failure(); }
+        const bool inactive = proof->front();
         auto distance = edge.target / m;
         auto target = e.sub(ordinal, e.constant(distance));
-        auto sourceGuard = bindBoundedExpression(*demands, edge.guard, distance, false);
-        auto targetGuard = bindBoundedExpression(*demands, edge.guard, distance, true);
+        auto sourceGuard = inactive ? e.boolean(false) :
+            bindBoundedExpression(*demands, edge.guard, distance, false);
+        auto targetGuard = inactive ? e.boolean(false) :
+            bindBoundedExpression(*demands, edge.guard, distance, true);
         targetGuard = e.land(e.le(e.constant(distance), ordinal), targetGuard);
         demands->predicates->error.clear();
         if (!emitter.add(edge.source, edge.target % m, sourceGuard, targetGuard, {ordinal}, {target})) {
@@ -378,6 +391,9 @@ std::size_t auditBoundedLifetimeEndpoints(std::shared_ptr<BoundedLifetimeDemandR
     auto& e = demands->expressions;
     const auto m = demands->anchors.size();
     std::size_t failures = 0;
+    auto inactive = detail::boundedInactiveEmissionRecipes(e, demands->window,
+        demands->unconditional, demands->analysis.sourceDemands);
+    if (!inactive || demands->window.sites != m) { out << "endpoint-audit invalid original window\n"; return 1; }
     for (auto [site, anchor] : llvm::enumerate(demands->anchors)) {
         out << "endpoint-anchor site=" << site << " pipe=" << static_cast<unsigned>(anchor.phase->kPipeValue)
             << " operation=" << anchor.phase->elementOp->getName() << " location="
@@ -390,8 +406,16 @@ std::size_t auditBoundedLifetimeEndpoints(std::shared_ptr<BoundedLifetimeDemandR
             return demands->predicates->prepare(root, builder, cut, context);
         };
         const auto distance = edge.target / m;
-        auto sourceGuard = bindBoundedExpression(*demands, edge.guard, distance, false);
-        auto targetGuard = bindBoundedExpression(*demands, edge.guard, distance, true);
+        if (!(*inactive)[record]) {
+            auto lookback = demands->predicates->boundedLookback(edge.guard, demands->base, distance);
+            out << "endpoint-lookback record=" << record << " bound=";
+            if (lookback) { out << *lookback; } else { out << "unknown"; }
+            out << "\n";
+        }
+        auto sourceGuard = (*inactive)[record] ? e.boolean(false) :
+            bindBoundedExpression(*demands, edge.guard, distance, false);
+        auto targetGuard = (*inactive)[record] ? e.boolean(false) :
+            bindBoundedExpression(*demands, edge.guard, distance, true);
         targetGuard = e.land(e.le(e.constant(distance), demands->ordinal), targetGuard);
         auto source = e.sub(demands->ordinal, e.constant(distance));
         demands->predicates->error.clear();
