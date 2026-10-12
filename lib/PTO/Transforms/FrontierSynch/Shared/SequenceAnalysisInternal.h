@@ -100,6 +100,11 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
     std::vector<std::string> crossingObligations;
     std::shared_ptr<NumericalChainMerge> numerical;
     std::shared_ptr<SequenceNumericalNode> numericalTree;
+    // Root index IDs map to original event IDs; interior events stay queryable
+    // through the hierarchy instead of being copied into every ancestor index.
+    std::vector<uint32_t> numericalEvents;
+    uint64_t numericalProjectedPorts = 0;
+    std::shared_ptr<const SequenceAnalysis> numericalBoundary;
     std::vector<std::pair<uint32_t, PeriodicEventKind>> numericalChainKeys;
     NumericalChainQueryCost numericalQueryCost;
     // Mathematical construction failures only; endpoint attempts own their diagnostics.

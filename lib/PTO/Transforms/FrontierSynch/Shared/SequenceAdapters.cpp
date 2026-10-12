@@ -792,10 +792,10 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
         auto numerical = std::make_shared<RegionalNumericalInterface>();
         numerical->index = std::shared_ptr<const NumericalChainInterface>(state->numerical, &state->numerical->index);
         numerical->chainKeys = state->numericalChainKeys;
-        for (const auto& port : state->ports) {
-            for (auto kind : {PeriodicEventKind::Start, PeriodicEventKind::Completion}) {
-                numerical->events.push_back({starts[port.child] + port.type, port.ordinal, kind, port.visits});
-            }
+        for (auto id : state->numericalEvents) {
+            const auto& port = state->ports[id / 2];
+            const auto kind = id % 2 ? PeriodicEventKind::Completion : PeriodicEventKind::Start;
+            numerical->events.push_back({starts[port.child] + port.type, port.ordinal, kind, port.visits});
         }
         numerical->query = [state, coordinates](RegionalEvent a, RegionalEvent b, NumericalChainQueryCost& cost)
             -> std::optional<bool> {

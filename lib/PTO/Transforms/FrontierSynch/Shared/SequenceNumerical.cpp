@@ -13,29 +13,66 @@ namespace mlir::pto::frontiersynch {
 namespace {
 using EventIdentity = std::tuple<uint32_t, uint64_t, PeriodicEventKind, std::vector<uint64_t>>;
 using ChainKey = std::pair<uint32_t, PeriodicEventKind>;
+bool orderRequestedEvents(const RegionalAnalysis& region, const std::vector<RegionalEvent>& events,
+                          std::vector<uint32_t>& list, uint64_t& queries)
+{
+    if (region.referenceBefore) {
+        // A parent may request an interior prerequisite absent from a
+        // projected child index. Recover only the requested native chain,
+        // using its original reference-order contract. Unknown order is
+        // an adapter refusal, never a fabricated lexical order.
+        std::vector<uint32_t> scratch(list.size());
+        for (std::size_t width = 1; width < list.size();) {
+            for (std::size_t begin = 0; begin < list.size();) {
+                const auto middle = begin + std::min(width, list.size() - begin);
+                const auto end = middle + std::min(width, list.size() - middle);
+                auto left = begin, right = middle;
+                for (auto output = begin; output < end; ++output) {
+                    if (left == middle) { scratch[output] = list[right++]; continue; }
+                    if (right == end) { scratch[output] = list[left++]; continue; }
+                    auto order = region.referenceBefore(events[list[right]], events[list[left]]);
+                    auto value = order ? region.expressions->constantValue(*order) : std::nullopt;
+                    accumulateCost(queries, 1);
+                    if (!value) { return false; }
+                    scratch[output] = *value ? list[right++] : list[left++];
+                }
+                begin = end;
+            }
+            list.swap(scratch);
+            if (width >= list.size() - width) { break; }
+            width *= 2;
+        }
+    } else {
+        if (llvm::any_of(list, [&](uint32_t id) { return !events[id].visits.empty(); })) { return false; }
+        std::stable_sort(list.begin(), list.end(), [&](uint32_t a, uint32_t b) {
+            const auto& x = events[a]; const auto& y = events[b];
+            return std::make_pair(*region.expressions->constantValue(x.ordinal), x.type) <
+                   std::make_pair(*region.expressions->constantValue(y.ordinal), y.type);
+        });
+    }
+    return true;
+}
 std::shared_ptr<const RegionalNumericalInterface> leafInterface(const RegionalAnalysis& region,
     const std::vector<RegionalEvent>& events, uint64_t& queries, uint64_t& operations)
 {
-    if (region.referenceBefore) { return {}; }
     auto result = std::make_shared<RegionalNumericalInterface>();
     result->events = events;
     std::map<ChainKey, std::vector<uint32_t>> lists;
     for (uint32_t id = 0; id < events.size(); ++id) {
         const auto& event = events[id];
+        if (!validRegionalEvent(region, event)) { return {}; }
+        auto present = regionalPresence(region, event);
+        if (!present || region.expressions->constantValue(*present) != 1) { return {}; }
         auto* phase = region.anchors[event.type].phase;
         if (!phase) { return {}; }
         lists[{static_cast<uint32_t>(phase->kPipeValue), event.kind}].push_back(id);
     }
     std::vector<std::vector<uint32_t>> chains;
     for (auto& [key, list] : lists) {
-        std::stable_sort(list.begin(), list.end(), [&](uint32_t a, uint32_t b) {
-            const auto& x = events[a]; const auto& y = events[b];
-            return std::make_pair(*region.expressions->constantValue(x.ordinal), x.type) <
-                   std::make_pair(*region.expressions->constantValue(y.ordinal), y.type);
-        });
+        if (!orderRequestedEvents(region, events, list, queries)) { return {}; }
         for (std::size_t i = 1; i < list.size(); ++i) {
             const auto& a = events[list[i - 1]]; const auto& b = events[list[i]];
-            if (a.type == b.type && a.ordinal == b.ordinal) { return {}; }
+            if (a.type == b.type && a.ordinal == b.ordinal && a.visits == b.visits) { return {}; }
         }
         result->chainKeys.push_back(key); chains.push_back(std::move(list));
     }
@@ -233,10 +270,14 @@ bool SequenceAnalysisState::numericalCrossingReduction()
         auto node = std::make_shared<SequenceNumericalNode>();
         node->begin = child; node->end = child + 1;
         node->leaf = children[child].regional.numerical;
-        if (node->leaf) { accumulateCost(reused, 1); }
-        else { node->leaf = leafInterface(children[child].regional, events[child], leafQueries, operations); }
         std::vector<uint32_t> selection;
-        if (!node->leaf || !childSelection(*node->leaf, events[child], selection, expressions)) { return false; }
+        if (node->leaf && childSelection(*node->leaf, events[child], selection, expressions)) {
+            accumulateCost(reused, 1);
+        } else {
+            selection.clear();
+            node->leaf = leafInterface(children[child].regional, events[child], leafQueries, operations);
+            if (!node->leaf || !childSelection(*node->leaf, events[child], selection, expressions)) { return false; }
+        }
         // Distinct syntactic port IDs must not duplicate one semantic child
         // index entry. General guarded identity handling remains the fallback.
         if (std::set<uint32_t>(selection.begin(), selection.end()).size() != selection.size()) { return false; }
@@ -244,8 +285,30 @@ bool SequenceAnalysisState::numericalCrossingReduction()
         for (std::size_t i = 0; i < selection.size(); ++i) { node->events.emplace(originals[child][i], selection[i]); }
         leaves.push_back(std::move(node));
     }
-    std::function<std::shared_ptr<SequenceNumericalNode>(uint32_t, uint32_t, const std::vector<Pair>&)> build =
-        [&](uint32_t begin, uint32_t end, const std::vector<Pair>& candidates)
+    // Only externally visible storage/native selectors belong in the root
+    // index. Prerequisite endpoints needed at a split are added to its children;
+    // arbitrary later interior queries descend through retained merge nodes.
+    auto boundaryView = std::make_shared<SequenceAnalysis>();
+    summarizeBoundaries(*boundaryView);
+    std::set<uint32_t> external;
+    auto retain = [&](const auto& values) {
+        for (const auto& value : values) {
+            if (expressions.constantValue(value.present) == 0) { continue; }
+            external.insert(2 * value.port);
+            external.insert(2 * value.port + 1);
+        }
+    };
+    for (const auto& cell : boundaryView->storageBoundary) {
+        retain(cell.firstWriters); retain(cell.lastWriters);
+        for (const auto& entry : cell.firstReaders) { retain(entry.second); }
+        for (const auto& entry : cell.lastReaders) { retain(entry.second); }
+    }
+    for (const auto& entry : boundaryView->firstPayloads) { retain(entry.second); }
+    for (const auto& entry : boundaryView->lastPayloads) { retain(entry.second); }
+    uint64_t projectedPorts = 0;
+    std::function<std::shared_ptr<SequenceNumericalNode>(
+        uint32_t, uint32_t, const std::vector<Pair>&, const std::set<uint32_t>&)> build =
+        [&](uint32_t begin, uint32_t end, const std::vector<Pair>& candidates, const std::set<uint32_t>& needed)
             -> std::shared_ptr<SequenceNumericalNode> {
         if (end - begin == 1) { return leaves[begin]; }
         const auto middle = begin + (end - begin) / 2;
@@ -259,7 +322,13 @@ bool SequenceAnalysisState::numericalCrossingReduction()
             else if (ports[pair.first / 2].child >= middle) { interior[1].push_back(pair); }
             else { boundary.push_back(pair); }
         }
-        auto left = build(begin, middle, interior[0]), right = build(middle, end, interior[1]);
+        std::array<std::set<uint32_t>, 2> childNeeds;
+        for (auto event : needed) { childNeeds[ports[event / 2].child < middle ? 0 : 1].insert(event); }
+        for (auto pair : boundary) {
+            childNeeds[0].insert(pair.first); childNeeds[1].insert(pair.second);
+        }
+        auto left = build(begin, middle, interior[0], childNeeds[0]);
+        auto right = build(middle, end, interior[1], childNeeds[1]);
         if (!left || !right) { return {}; }
         auto node = std::make_shared<SequenceNumericalNode>();
         node->begin = begin; node->end = end; node->children = {left, right};
@@ -275,9 +344,11 @@ bool SequenceAnalysisState::numericalCrossingReduction()
         std::map<uint32_t, NumericalChainSelection> selected;
         for (unsigned side = 0; side < 2; ++side) {
             for (auto [original, local] : node->children[side]->events) {
-                selected.emplace(original, NumericalChainSelection{side, local});
+                if (needed.count(original)) { selected.emplace(original, NumericalChainSelection{side, local}); }
             }
         }
+        if (selected.size() != needed.size()) { return {}; }
+        accumulateCost(projectedPorts, selected.size());
         std::vector<NumericalChainSelection> selection;
         for (const auto& [original, local] : selected) {
             node->events.emplace(original, selection.size()); selection.push_back(local);
@@ -303,8 +374,8 @@ bool SequenceAnalysisState::numericalCrossingReduction()
 
         return node;
     };
-    auto tree = build(0, children.size(), std::vector<Pair>(links.begin(), links.end()));
-    if (!tree || tree->events.size() != 2 * ports.size()) { return false; }
+    auto tree = build(0, children.size(), std::vector<Pair>(links.begin(), links.end()), external);
+    if (!tree || tree->events.size() != external.size()) { return false; }
     std::set<Pair> nativePairs;
     for (const auto& edge : nativeValueCrossings) {
         if (expressions.constantValue(edge.guard) == 1) { nativePairs.emplace(2 * edge.source + 1, 2 * edge.target); }
@@ -320,6 +391,10 @@ bool SequenceAnalysisState::numericalCrossingReduction()
     // reducer, original incoming records, and original endpoint ownership.
     numericalTree = std::move(tree); numerical = numericalTree->merge;
     numericalChainKeys = numericalTree->keys;
+    numericalEvents.clear();
+    for (const auto& entry : numericalTree->events) { numericalEvents.push_back(entry.first); }
+    numericalProjectedPorts = projectedPorts;
+    numericalBoundary = std::move(boundaryView);
     for (auto& [target, entries] : incoming) {
         std::set<Pair> seen;
         llvm::erase_if(entries, [&](const auto& link) {
@@ -338,8 +413,11 @@ std::optional<std::vector<uint32_t>> SequenceAnalysisState::numericalThresholds(
     auto port = portIds.find({event.child, event.type, event.ordinal, event.visits});
     if (port != portIds.end()) {
         auto id = 2 * port->second + (event.kind == PeriodicEventKind::Completion);
-        ++cost.indexOperations;
-        return reverse ? numerical->index.reverse[id] : numerical->index.forward[id];
+        auto selected = numericalTree->events.find(id);
+        if (selected != numericalTree->events.end()) {
+            ++cost.indexOperations;
+            return reverse ? numerical->index.reverse[selected->second] : numerical->index.forward[selected->second];
+        }
     }
     return numericalTree->thresholds(event, reverse, cost);
 }
@@ -353,10 +431,12 @@ std::optional<Expr> SequenceAnalysisState::numericalReachability(
     auto aPort = portIds.find({source.child, source.type, source.ordinal, source.visits});
     auto bPort = portIds.find({target.child, target.type, target.ordinal, target.visits});
     if (aPort != portIds.end() && bPort != portIds.end()) {
-        ++cost.indexOperations;
-        return expressions.boolean(numerical->index.reaches(
-            2 * aPort->second + (source.kind == PeriodicEventKind::Completion),
-            2 * bPort->second + (target.kind == PeriodicEventKind::Completion)));
+        auto a = numericalTree->events.find(2 * aPort->second + (source.kind == PeriodicEventKind::Completion));
+        auto b = numericalTree->events.find(2 * bPort->second + (target.kind == PeriodicEventKind::Completion));
+        if (a != numericalTree->events.end() && b != numericalTree->events.end()) {
+            ++cost.indexOperations;
+            return expressions.boolean(numerical->index.reaches(a->second, b->second));
+        }
     }
     auto answer = numericalTree->query(source, target, cost);
     return answer ? std::optional<Expr>(expressions.boolean(*answer)) : std::nullopt;

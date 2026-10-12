@@ -211,6 +211,50 @@ bool hierarchy(func::FuncOp function, uint64_t& checked)
             ++checked;
         }
     }
+    // The parent can request a new crossing at an interior event omitted from
+    // both children's root indices. Build that exact requested-event view and
+    // compare all queries against the graph with the new storage edge.
+    const auto one = arena->constant(1);
+    auto hasInterior = [&](const auto& region) {
+        return llvm::any_of(region.numerical->events, [&](const auto& event) {
+            return event.type == 0 && event.ordinal == one;
+        });
+    };
+    if (hasInterior(first) || hasInterior(second)) { return false; }
+    auto producer = first, consumer = second;
+    fs::RegionalStorageBoundary write, read;
+    write.cell = read.cell = {pto::AddressSpace::VEC, 16, 20};
+    fs::RegionalSelector interior{{0, one, fs::PeriodicEventKind::Start}, arena->boolean(true)};
+    write.firstWriters = write.lastWriters = {interior};
+    const auto pipe = static_cast<uint32_t>(pto::PipelineType::PIPE_MTE1);
+    read.firstReaders[pipe] = read.lastReaders[pipe] = {interior};
+    producer.storageBoundary.push_back(write); consumer.storageBoundary.push_back(read);
+    auto requested = composeNumerically(function, arena, {producer, consumer});
+    auto requestedView = fs::sequenceRegionalResult(requested);
+    if (!requested.error.empty() || !requestedView.numerical) { return false; }
+    auto requestedGraph = graph;
+    requestedGraph[2 * types + 1][2 * (2 * trips * types + types)] = true;
+    close(requestedGraph);
+    for (uint32_t x = 0; x < graph.size(); ++x) {
+        for (uint32_t y = 0; y < graph.size(); ++y) {
+            auto actual = requestedView.reachability(event(x), event(y));
+            if (!actual || arena->constantValue(*actual) != uint64_t(requestedGraph[x][y])) { return false; }
+            ++checked;
+        }
+    }
+    // Repeated small children have a bounded external interface. Charge all
+    // internal parent indices, not merely the root, to expose prefix copying.
+    for (unsigned count : {8U, 16U, 32U, 64U}) {
+        auto scaled = composeNumerically(function, arena, std::vector<fs::RegionalAnalysis>(count, regions[0]));
+        auto view = fs::sequenceRegionalResult(scaled);
+        if (!scaled.error.empty() || !view.numerical || view.numerical->events.size() > 12 ||
+            scaled.state->numericalProjectedPorts > 32 * count) { return false; }
+        fs::RegionalEvent begin{0, arena->constant(0), fs::PeriodicEventKind::Start};
+        fs::RegionalEvent end{types * (count - 1), arena->constant(trips - 1), fs::PeriodicEventKind::Start};
+        auto forward = view.reachability(begin, end), reverse = view.reachability(end, begin);
+        if (!forward || !reverse || arena->constantValue(*forward) != 1 ||
+            arena->constantValue(*reverse) != 0) { return false; }
+    }
     for (unsigned variant = 0; variant < 3; ++variant) {
         auto flat = regions;
         unsigned instances = leaves;

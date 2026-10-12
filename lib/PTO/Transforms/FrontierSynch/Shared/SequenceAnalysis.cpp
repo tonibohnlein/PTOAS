@@ -89,7 +89,11 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
         result.occurrences.push_back({port.child, port.type, child.anchors[port.type],
                                       child.regional.occurrenceLoops[port.type], port.ordinal, port.visits});
     }
-    composer.summarizeBoundaries(result);
+    if (composer.numericalBoundary) {
+        result.storageBoundary = composer.numericalBoundary->storageBoundary;
+        result.firstPayloads = composer.numericalBoundary->firstPayloads;
+        result.lastPayloads = composer.numericalBoundary->lastPayloads;
+    } else { composer.summarizeBoundaries(result); }
     result.cost = composer.costs;
     result.cost.children = composer.children.size(); result.cost.cells = composer.cells.size();
     result.cost.ports = composer.ports.size(); result.cost.crossings = composer.crossings.size();
