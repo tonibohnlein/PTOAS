@@ -453,6 +453,7 @@ bool SequenceAnalysisState::valueBridges()
 }
 bool SequenceAnalysisState::closure()
 {
+    crossingPresence.reset();
     if (!error.empty()) { return false; }
     if (nativeFirst.size() != children.size() || nativeLast.size() != children.size()) {
         return fail("sequence native boundary selectors were not imported");
@@ -505,7 +506,10 @@ bool SequenceAnalysisState::closure()
         const auto savedNative = nativeValueCrossings;
         incoming = numeric ? allLinks : nativeLinks;
         const bool accepted = numeric ? numericalCrossingReduction() : symbolicCrossingReduction();
-        if (accepted && error.empty() && expressions.constructionError().empty()) { return true; }
+        if (accepted && error.empty() && expressions.constructionError().empty()) {
+            sealCrossingPresence();
+            return true;
+        }
         crossingObligations.push_back(method.method + ": " +
             (error.empty() ? "required representation or query unavailable" : error));
         if (!expressions.constructionError().empty()) { return false; }
