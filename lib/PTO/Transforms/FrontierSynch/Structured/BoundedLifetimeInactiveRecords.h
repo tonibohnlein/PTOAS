@@ -64,32 +64,58 @@ private:
     std::vector<RegionExpressions::Id> patterns;
     std::map<RegionExpressions::Id, bool> proofs;
 };
-// Emission proofs are uniform over the original window. They do not borrow
-// domain-conditioned allocation flags or retain temporary arena expressions.
+// One context per endpoint attempt. Patterns belong to the shared arena, so
+// later emission may safely retain their IDs. Each individual proof rolls back
+// only its own temporary expressions, never expressions emitted between calls.
+class BoundedInactiveEmissionContext {
+public:
+    BoundedInactiveEmissionContext(RegionExpressions& expressions, const LifetimeWindowInput& window,
+        llvm::ArrayRef<uint8_t> unconditional) : e(expressions), sites(window.sites), payloads(window.payloads.size()),
+        originalExpressions(expressions.size())
+    {
+        const bool dimensions = sites && window.span < UINT32_MAX &&
+            sites <= UINT32_MAX / (window.span + 1) && payloads == sites * (window.span + 1) &&
+            unconditional.size() == sites;
+        if (!dimensions) { return; }
+        for (auto value : unconditional) { if (value > 1) { return; } }
+        for (const auto& payload : window.payloads) {
+            ++schemaVisits;
+            if (payload.present >= e.size() || !e.isBoolean(payload.present)) { return; }
+        }
+        proof.emplace(e, window, unconditional);
+    }
+    bool valid() const { return proof.has_value(); }
+    std::size_t schemaPayloadVisits() const { return schemaVisits; }
+    std::optional<bool> proves(const GuardedRankEdge& edge)
+    {
+        const bool record = proof && edge.source < sites && edge.source < edge.target &&
+            edge.target < payloads && edge.guard < originalExpressions && edge.guard < e.size() &&
+            e.isBoolean(edge.guard);
+        if (!record) { return std::nullopt; }
+        RegionExpressions::Transaction transaction(e);
+        return proof->proves(edge.guard);
+    }
+private:
+    RegionExpressions& e;
+    uint32_t sites;
+    std::size_t payloads, originalExpressions, schemaVisits = 0;
+    std::optional<BoundedInactiveRecordProof> proof;
+};
+// Bulk callers receive only flags, retaining no temporary arena expressions.
+// Production endpoint preparation instead keeps one context and visits records
+// lazily, so an early refusal does not prove all remaining demand predicates.
 inline std::optional<std::vector<uint8_t>> boundedInactiveEmissionRecipes(
     RegionExpressions& e, const LifetimeWindowInput& window,
     llvm::ArrayRef<uint8_t> unconditional, llvm::ArrayRef<GuardedRankEdge> records)
 {
-    const bool dimensions = window.sites && window.span < UINT32_MAX &&
-        window.sites <= UINT32_MAX / (window.span + 1) &&
-        window.payloads.size() == window.sites * (window.span + 1) &&
-        unconditional.size() == window.sites;
-    if (!dimensions) { return std::nullopt; }
-    for (auto value : unconditional) { if (value > 1) { return std::nullopt; } }
-    for (auto payload : window.payloads) {
-        const bool valid = payload.present < e.size() && e.isBoolean(payload.present);
-        if (!valid) { return std::nullopt; }
-    }
-    for (auto edge : records) {
-        const bool valid = edge.source < window.sites && edge.source < edge.target &&
-            edge.target < window.payloads.size() && edge.guard < e.size() && e.isBoolean(edge.guard);
-        if (!valid) { return std::nullopt; }
-    }
+    RegionExpressions::Transaction transaction(e);
+    BoundedInactiveEmissionContext context(e, window, unconditional);
+    if (!context.valid()) { return std::nullopt; }
     std::vector<uint8_t> inactive;
-    {
-        RegionExpressions::Transaction transaction(e);
-        BoundedInactiveRecordProof proof(e, window, unconditional);
-        for (auto edge : records) { inactive.push_back(proof.proves(edge.guard)); }
+    for (auto edge : records) {
+        auto flag = context.proves(edge);
+        if (!flag) { return std::nullopt; }
+        inactive.push_back(*flag);
     }
     return inactive;
 }

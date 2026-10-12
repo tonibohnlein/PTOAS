@@ -340,8 +340,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
     auto& e = demands->expressions;
     const auto m = demands->anchors.size();
     const auto ordinal = demands->ordinal;
-    auto schema = detail::boundedInactiveEmissionRecipes(e, demands->window, demands->unconditional, {});
-    if (!schema || demands->window.sites != m) {
+    detail::BoundedInactiveEmissionContext inactiveProof(e, demands->window, demands->unconditional);
+    if (!inactiveProof.valid() || demands->window.sites != m) {
         error = "bounded endpoint recipes require a valid original window"; return failure();
     }
     CircuitEndpoints emitter(demands->function, e, demands->anchors);
@@ -352,10 +352,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
     for (auto edge : demands->analysis.sourceDemands) {
         // Prove only reached records. A cheap live endpoint refusal must not
         // first evaluate every later circuit in this retained window.
-        auto proof = detail::boundedInactiveEmissionRecipes(e, demands->window,
-            demands->unconditional, llvm::ArrayRef<GuardedRankEdge>(&edge, 1));
+        auto proof = inactiveProof.proves(edge);
         if (!proof) { error = "bounded endpoint record has invalid original provenance"; return failure(); }
-        const bool inactive = proof->front();
+        const bool inactive = *proof;
         auto distance = edge.target / m;
         auto target = e.sub(ordinal, e.constant(distance));
         auto sourceGuard = inactive ? e.boolean(false) :
