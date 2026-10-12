@@ -171,6 +171,11 @@ struct RegionalAnalysis {
     // endpoint. Both sides query the same actual completion/start pair, using
     // the inverse endpoint map at WAIT. Failure leaves original IR unchanged.
     std::function<FailureOr<std::unique_ptr<PreparedLogicalPlan>>(const RegionalDemandFilter&)> prepareFiltered;
+    // Identity of the exact retained producer for this unmodified export. The
+    // session keeps exported copies alive until the child locks its own owner.
+    // Event/frame/guard transformations must clear this unless they supply an
+    // explicit proof-preserving adapter. Weak ownership avoids export cycles.
+    std::weak_ptr<const MathematicalResult> retainedMathematics;
 };
 // Validate coordinate shape before forwarding to a backend that might only
 // understand flat events. Query-only flat producers may omit anchors and validate

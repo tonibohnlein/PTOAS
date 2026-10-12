@@ -1475,6 +1475,8 @@ bool runIterationPredicateChecks(MLIRContext* context);
 bool runBoundedEmissionRecipeChecks();
 bool runStructuredPrivateStateChecks();
 bool runInvocationPrefixChecks();
+bool runPrivateStatePlanChecks();
+bool runBoundedPrefixRealizationChecks();
 bool runInvocationSourceBoundsChecks();
 bool runBoundedPredicateHistoryChecks();
 LogicalResult runRotatingAnalysisChecks(func::FuncOp function, const pto::SyncInput& input);
@@ -1543,6 +1545,14 @@ int runRegionalRelationChecks();
 int runMixedSymbolicRegionChecks(func::FuncOp);
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
 int main(int argc, char **argv) {
+  const bool boundedPrefix = argc == 2 && StringRef(argv[1]) == "--bounded-prefix-realization-checks";
+  if (boundedPrefix) {
+    return runBoundedPrefixRealizationChecks() ? 0 : 1;
+  }
+  const bool privatePlan = argc == 2 && StringRef(argv[1]) == "--private-state-plan-checks";
+  if (privatePlan) {
+    return runPrivateStatePlanChecks() ? 0 : 1;
+  }
   const bool sourceBounds = argc == 2 && StringRef(argv[1]) == "--invocation-source-bounds-checks";
   if (sourceBounds) {
     return runInvocationSourceBoundsChecks() ? 0 : 1;

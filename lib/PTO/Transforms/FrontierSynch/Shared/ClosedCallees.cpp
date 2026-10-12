@@ -8,6 +8,7 @@
 // Closed-callee composition owns module-level dependency decisions. Recognition
 // is linear in the call graph and IR size and never invokes a demand backend.
 #include "PTO/Transforms/FrontierSynch/Shared/ClosedCallees.h"
+#include "PrivateStatePlan.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
@@ -212,10 +213,19 @@ LogicalResult insertModuleSynchronization(ModuleOp module, GMAliasPolicy policy,
         // A successful whole-function producer accounts for every payload.
         // Closed calls additionally require its fixed completion interface.
         if (called) { (*plan)->completeInvocation = true; }
-        if (llvm::any_of((*plan)->endpoints, [](const auto& endpoint) {
+        if ((*plan)->privateState || llvm::any_of((*plan)->endpoints, [](const auto& endpoint) {
                 return endpoint.kind != LogicalCommandKind::Barrier;
             })) { newEvents.insert(function); }
         pending.push_back({function, std::move(*plan)});
+    }
+    // Authorize sibling synchronization only after every complete private plan
+    // has checked the untouched module. All edits below remain on this module
+    // transaction and preserve original payload/callee semantics.
+    for (auto& item : pending) {
+        if (item.plan->privateState &&
+            failed(item.plan->privateState->preflightSiblingSynchronization(item.function, *item.plan))) {
+            return failure();
+        }
     }
     // Prepare every ordinary function before editing any body: scalar helper
     // inference must see the original callee effects, not inserted commands.

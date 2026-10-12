@@ -541,6 +541,8 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
             analysis.specializedArithmeticConstructions(),
             analysis.costRecords(), analysis.constructionCounts());
         NamedAttrList allocationReport((*prepared)->recognitionReport);
+        allocationReport.set("logical_realization", StringAttr::get(function.getContext(),
+            (*prepared)->privateState ? "invocation-prefix" : "direct-endpoints"));
         allocationReport.set("allocation_support", StringAttr::get(function.getContext(),
             (*prepared)->allocationCertificate ? "available" : "unavailable"));
         (*prepared)->recognitionReport = allocationReport.getDictionary(function.getContext());

@@ -36,6 +36,7 @@ bool SequenceAnalysisState::resolvedChild(std::size_t node)
     auto regional = originalRegion(node, diagnostic);
     if (failed(regional)) { return fail(diagnostic); }
     Child child;
+    child.prefixMathematics = regional->retainedMathematics.lock();
     child.regional = std::move(*regional);
     child.originalNode = node;
     child.anchors = child.regional.anchors;
@@ -280,6 +281,7 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
             auto regional = guardedRotatingRegionalResult(function, *input, *analysis, exportError);
             if (failed(regional)) { obligation(exportError); }
             else {
+                child.prefixMathematics = regional->retainedMathematics.lock();
                 child.regional = std::move(*regional);
                 child.anchors = child.regional.anchors;
                 children.push_back(std::move(child));
@@ -310,6 +312,7 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
                 }
                 node.boundedExportError = diagnostic;
                 if (succeeded(regional) && (!requireEndpoints || regional->capabilities.endpointRecipes)) {
+                    child.prefixMathematics = regional->retainedMathematics.lock();
                     child.regional = std::move(*regional); child.anchors = child.regional.anchors;
                     children.push_back(std::move(child)); return true;
                 }
@@ -389,6 +392,7 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
                     diagnostic, node.varyingDemands ? &*node.varyingDemands : nullptr);
             }
             if (succeeded(regional)) {
+                child.prefixMathematics = regional->retainedMathematics.lock();
                 child.regional = std::move(*regional); child.anchors = child.regional.anchors;
                 children.push_back(std::move(child)); return true;
             }
@@ -440,6 +444,7 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
                     regional->prepare = [prepare = regional->prepareWithVisits]() { return prepare({}); };
                     node.boundedExportError.clear();
                 }
+                child.prefixMathematics = regional->retainedMathematics.lock();
                 child.regional = std::move(*regional);
                 child.anchors = child.regional.anchors;
                 children.push_back(std::move(child));

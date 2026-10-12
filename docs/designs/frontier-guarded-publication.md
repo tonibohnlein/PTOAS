@@ -130,3 +130,8 @@ or uniform allocation export is required and the adapter is not implemented.
 This establishes logical preparation, not event scarcity, physical allocation
 success or C++ emission for prefill. The logical plans remain available for
 subsequent allocation work.
+
+The [prefill manual event-reuse investigation](frontier-prefill-event-reuse.md)
+records its two-bank feedback and barriers for future allocation work. It
+distinguishes explicit pipeline throttling from additional ordering that still
+needs to be established by comparison with the exact event graph.

@@ -20,6 +20,7 @@ namespace mlir::pto::frontiersynch {
 struct RegionalAllocationSummary;
 struct CompactBoundingOwner;
 struct MathematicalResult;
+class PrivateStatePlan;
 enum class LogicalCommandKind { Set, Barrier, Wait };
 struct PreparedLogicalEndpoint {
     Operation* before = nullptr;
@@ -40,7 +41,7 @@ struct LogicalPreparation {
     std::unique_ptr<Block> code;
 };
 struct PreparedLogicalPlan {
-    explicit PreparedLogicalPlan(int64_t planId) : planId(planId) {}
+    explicit PreparedLogicalPlan(int64_t planId);
     ~PreparedLogicalPlan();
     PreparedLogicalPlan(const PreparedLogicalPlan&) = delete;
     PreparedLogicalPlan& operator=(const PreparedLogicalPlan&) = delete;
@@ -64,12 +65,15 @@ struct PreparedLogicalPlan {
     // Owns the unchanged shared input and selected bounding mathematics.
     std::shared_ptr<const CompactBoundingOwner> compactBoundingOwner;
     std::shared_ptr<const MathematicalResult> mathematicalOwner;
+    // Whole-invocation private state is an exclusive alternative to endpoint pieces.
+    std::unique_ptr<PrivateStatePlan> privateState;
     std::vector<LogicalPreparation> preparation;
     std::vector<PreparedLogicalEndpoint> endpoints;
     std::vector<EndpointFamily> families; // Exact source/target coordinate provenance.
 };
 void prepareAllocationSupport(PreparedLogicalPlan& plan);
 // Preserve a child's allocation namespace before composition rewrites it.
+// Returns null for a root-only private-state plan, which cannot be composed.
 // The view borrows endpoint Values from the enclosing detached plan, which must
 // outlive it. Allocation exports on regional views must not emit additional IR.
 std::shared_ptr<PreparedLogicalPlan> takeRegionalAllocationView(PreparedLogicalPlan& plan);

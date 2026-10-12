@@ -39,7 +39,9 @@ struct Pattern {
     bool write = false;
 };
 struct OrderCoveredPeriodicResult;
+class InvocationPrefixCollection;
 struct Child {
+    std::shared_ptr<const MathematicalResult> prefixMathematics;
     // Owned proof for this original root sequence only; never a disjoint-effect certificate.
     std::shared_ptr<const OrderCoveredPeriodicResult> orderCovered;
     RegionalAnalysis regional;
@@ -73,6 +75,7 @@ struct CellBoundary {
 struct Crossing { uint32_t source = 0, target = 0; Expr guard = 0; };
 struct SequenceNumericalNode;
 struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisState> {
+    LogicalResult collectPrefix(InvocationPrefixCollection& collection, std::string& error);
     func::FuncOp function;
     const SyncInput* input = nullptr;
     const ProgramRecognition* program = nullptr;
