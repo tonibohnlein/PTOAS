@@ -461,3 +461,31 @@ choice do not yet materialize historical predicate evaluations at the consumer.
 That replay overlapped one serial focused-test process, so its timing is coverage
 evidence only. Physical allocation, C++ emission and device execution were not
 attempted. Receipts share the `m7-evaluation-provenance` directory above.
+
+
+## Partial Boolean constants and expression-oracle discovery
+
+Shared constant specialization now propagates false through AND and true through
+OR even when the other operand remains unknown. Numeric operations retain their
+existing requirements. Literal roots return immediately. A proposed self-premise
+shortcut was rejected during review because allocation uses that query to find
+contradictory active guards; the final implementation preserves those proofs.
+
+Six focused lit tests pass, including a new discoverable wrapper for the broad
+region-expression oracle. The existing `.mlir` fixture is not discovered by the
+suite's `.pto` suffix rule. The wrapper runs its region-expression check, not all
+other RUN lines in that input. The oracle's repeated-region numerical fixture now
+explicitly requests the existing numerical adapter and retains its eligibility
+checks and independent unfolded-graph comparison. The new checks cover absorbing
+values, nearby live expressions, distinct SSA operands and contradictory
+self-premises. Architecture and correctness reviews accepted the component.
+
+Diagnostic-only Delta probes identify the first unavailable prefix expression as
+a same-pipe barrier guard before the load at input line 148. Its 8,717-node DAG
+references the original comparison at line 156 at visits zero through three.
+Uniform implication and constant-specialization probes did not prove inactivity.
+Finite valuations suggesting inactivity are not a certificate. The probes and
+their emission fallback were removed from the build mirror; no production guard
+is replaced by a sampled or assumed value. Public Delta logical recovery remains
+open. Receipts are under `.local/three-paths/consolidation/m8-partial-constants/`;
+earlier diagnostic probes are under `m7-evaluation-provenance/`.

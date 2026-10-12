@@ -1228,5 +1228,77 @@
     },
     "reviews": "architecture and correctness accepted",
     "scope": "preserves all primitive phase/coordinate guards and defers folded choices; historical guard snapshots remain open"
+  },
+  "m8_partial_constants": {
+    "build": {
+      "command": [
+        "ninja",
+        "-C",
+        ".local/section8-refactor/source-pinned/candidate-build",
+        "-j2",
+        "pto-sync-input-test"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 8.012395665980875,
+      "maximum_rss_kib": 989476,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "focused_tests": {
+      "command": [
+        "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+        "-j1",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_region_expression.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_bounded_inactive_emission.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_invocation_prefix.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_frontier_public_pipeline.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_allocation_session.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_physical_allocation.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 13.717008705018088,
+      "maximum_rss_kib": 140332,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "focused_lit_passed": 6,
+    "direct_expression_check": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--region-expression-checks",
+        "test/lit/pto/region_expression.mlir"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 1.7052383089903742,
+      "maximum_rss_kib": 68800,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "source_sha256": {
+      "lib/PTO/Transforms/FrontierSynch/Shared/RegionExpressions.cpp": "89f91c0b35df6a113927d15cfa628cdf035155d3dfc89fbb25c2a260f5cb0035",
+      "tools/pto-test-opt/RegionExpressionChecks.cpp": "a8580f7944b93f634e994bd78da707963897a7c2fad171504be0ba0c42f6226d",
+      "tools/pto-test-opt/RepeatedRegionChecks.cpp": "d07ffa9c21f03d16dde90e37321509fb376aa42266fcb586b92c0d1dc2b38854",
+      "test/lit/pto/sync_region_expression.pto": "cac9d5ed146ccb7e5473636ac88e669b139c15a1fccba3336abea9c1dc30069f"
+    },
+    "reviews": "architecture and correctness accepted",
+    "scope": "partial Boolean constant propagation; preserves contradictory self-premise proofs; activates one broad region-expression oracle in lit",
+    "diagnostics": "first Delta refusal is same-pipe barrier before load at line 148; uniform inactive proofs inconclusive; all mirror-only diagnostics and fallbacks removed",
+    "delta_logical_only": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "--mlir-disable-threading",
+        "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false",
+        "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+      ],
+      "returncode": 1,
+      "status": "finished",
+      "seconds": 11.415214766049758,
+      "maximum_rss_kib": 284276,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    }
   }
 }

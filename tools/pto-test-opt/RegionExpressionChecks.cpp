@@ -142,6 +142,36 @@ bool checkAlgebra(Value index, Value predicate)
     valid &= typed.add(typed.input(index), typed.input(predicate)) == fs::RegionExpressions::invalid;
     return valid && expressions.error().empty();
 }
+bool checkPartialConstants(Value index, Value predicate)
+{
+    fs::RegionExpressions e;
+    const auto p = e.input(predicate), x = e.input(index), q = e.lt(x, e.constant(5));
+    const auto choice = e.select(p, e.constant(7), e.constant(9));
+    const auto yes = e.eq(choice, e.constant(7)), no = e.eq(choice, e.constant(9));
+    const auto inactive = e.land(no, q), active = e.lor(yes, q);
+    const auto reversed = e.land(q, no), shared = e.select(q, inactive, reversed);
+    if (e.constantUnder(p, inactive) != 0 || e.constantUnder(p, active) != 1 ||
+        e.constantUnder(p, shared) != 0 || e.constantUnder(e.lnot(p), inactive) ||
+        e.constantUnder(e.lnot(p), active) || e.constantUnder(e.boolean(true), inactive) ||
+        e.constantUnder(p, e.add(x, e.constant(0)))) { return false; }
+    // Independent valuations check both absorbing results and nearby live cases.
+    for (unsigned flag = 0; flag < 2; ++flag) {
+        for (uint64_t value = 0; value < 10; ++value) {
+            fs::RegionExpressions::Substitution values({{p, e.boolean(flag)}, {x, e.constant(value)}});
+            if (e.constantValue(e.substitute(inactive, values)) != uint64_t(!flag && value < 5) ||
+                e.constantValue(e.substitute(active, values)) != uint64_t(flag || value < 5)) { return false; }
+        }
+    }
+    // Allocation uses self-premises to detect impossible active pairs. Do not
+    // replace a self query by true before specializing its numeric selects.
+    const auto impossible = e.land(yes, e.lnot(p));
+    if (e.constantUnder(impossible, impossible) != 0 ||
+        e.constantUnder(e.boolean(false), e.boolean(false)) != 0 ||
+        e.constantUnder(e.boolean(true), e.boolean(true)) != 1) { return false; }
+    Block inputs;
+    const auto other = e.input(inputs.addArgument(index.getType(), index.getLoc()));
+    return !e.constantUnder(p, e.eq(x, other)) && e.error().empty();
+}
 bool checkDistanceAlgebra(Value index, Value predicate)
 {
     fs::RegionExpressions e;
@@ -1275,6 +1305,7 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
         !checked("checkRegionalNativeOrder", checkRegionalNativeOrder(function)) ||
         !checked("checkCrossChildNative", checkCrossChildNative(function)) ||
         !checked("checkConsolidatedCandidateExclusion", checkConsolidatedCandidateExclusion(function)) ||
+        !checked("checkPartialConstants", checkPartialConstants(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkDistanceAlgebra", checkDistanceAlgebra(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkGuardedMinimum", checkGuardedMinimum(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkBoundedZeroEdges", checkBoundedZeroEdges(function.getArgument(0), function.getArgument(1))) ||

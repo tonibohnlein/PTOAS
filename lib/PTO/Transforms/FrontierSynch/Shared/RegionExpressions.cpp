@@ -149,6 +149,7 @@ std::optional<uint64_t> RegionExpressions::constantValue(Id expression) const
 std::optional<uint64_t> RegionExpressions::constantUnder(Id premise, Id expression)
 {
     if (!isBoolean(premise) || !valid(expression)) { return std::nullopt; }
+    if (auto value = constantValue(expression)) { return value; }
     // Other regional queries share this arena. Specialize only the requested
     // root's operand DAG; scanning its entire numeric-ID prefix makes later
     // proofs revisit every unrelated query and manufacture their negations.
@@ -175,6 +176,8 @@ std::optional<uint64_t> RegionExpressions::constantUnder(Id premise, Id expressi
             if (left) { value = *left ? right : other; }
             else if (right && right == other) { value = right; }
         } else if (node.kind == Kind::Not && left) { value = !*left; }
+        else if (node.kind == Kind::And && (left == 0 || right == 0)) { value = 0; }
+        else if (node.kind == Kind::Or && (left == 1 || right == 1)) { value = 1; }
         else if (node.a != invalid && node.b != invalid && left && right) {
             value = fold(node.kind, *left, *right);
         }
