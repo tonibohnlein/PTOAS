@@ -860,6 +860,30 @@ bool checkImportReplay(Operation* cut)
     auto allowed = unrestricted.emitContextual(control, builder, cut, allowedContext);
     return succeeded(allowed) && !allowedCode.empty();
 }
+bool checkSparseReplayBindings(Operation* cut)
+{
+    fs::RegionExpressions arena;
+    fs::RegionExpressions::CutEmission context;
+    fs::PreparedLogicalPlan plan(0);
+    auto& code = plan.addPreparation(cut);
+    OpBuilder builder(cut->getContext()); builder.setInsertionPointToEnd(&code);
+    Block placeholders;
+    auto source = cut->getOperand(0);
+    for (unsigned i = 0; i < 128; ++i) {
+        auto placeholder = placeholders.addArgument(source.getType(), cut->getLoc());
+        context.inputs[placeholder] = source;
+        auto root = arena.add(arena.input(placeholder), arena.constant(1));
+        auto emitted = arena.emitContextual(root, builder, cut, context);
+        if (failed(emitted)) { return false; }
+        auto addition = emitted->getDefiningOp<arith::AddIOp>();
+        if (!addition || (addition.getLhs() != source && addition.getRhs() != source) ||
+            context.replayBindings != i + 1) { return false; }
+        const auto before = context.replayBindings;
+        auto again = arena.emitContextual(root, builder, cut, context);
+        if (failed(again) || *again != *emitted || context.replayBindings != before) { return false; }
+    }
+    return true;
+}
 bool checkIntegerAdapters(Value index, Value predicate)
 {
     fs::RegionExpressions expressions;
@@ -1375,6 +1399,7 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
         !checked("checkImport", checkImport(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkImportOwners", checkImportOwners(function.getArgument(0))) ||
         !checked("checkImportReplay", checkImportReplay(cuts[0])) ||
+        !checked("checkSparseReplayBindings", checkSparseReplayBindings(cuts[0])) ||
         !checked("runNestedRegionalChecks", runNestedRegionalChecks(function)) ||
         !checked("runRepeatedRegionChecks", runRepeatedRegionChecks(function)) ||
         !checked("runRepeatedStorageChecks", runRepeatedStorageChecks(function.getContext())) ||

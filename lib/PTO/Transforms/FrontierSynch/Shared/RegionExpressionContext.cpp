@@ -79,9 +79,18 @@ FailureOr<Value> RegionExpressions::emitContextual(Id expression, OpBuilder& bui
     llvm::DenseSet<Value> complete;
     llvm::DenseSet<Operation*> scheduled;
     SmallVector<Operation*> recipe;
+    IRMapping mapping;
+    auto bind = [&](Value original, Value replacement) {
+        mapping.map(original, replacement);
+        if (context.replayBindings != UINT64_MAX) { ++context.replayBindings; }
+    };
     while (!work.empty()) {
         auto [value, finish] = work.pop_back_val();
-        if (complete.contains(value) || context.inputs.count(value)) { continue; }
+        if (complete.contains(value)) { continue; }
+        auto cached = context.inputs.find(value);
+        if (cached != context.inputs.end()) {
+            bind(value, cached->second); complete.insert(value); continue;
+        }
         auto* region = value.getParentRegion();
         auto* owner = region ? region->getParentOp() : nullptr;
         if (!owner || (owner != function && !function->isProperAncestor(owner))) {
@@ -89,7 +98,7 @@ FailureOr<Value> RegionExpressions::emitContextual(Id expression, OpBuilder& bui
             return failure();
         }
         if (dominance->properlyDominates(value, cut)) {
-            complete.insert(value); continue;
+            bind(value, value); complete.insert(value); continue;
         }
         Operation* op = value.getDefiningOp();
         // Pure/speculatable is not a determinism contract (e.g. LLVM freeze).
@@ -107,11 +116,6 @@ FailureOr<Value> RegionExpressions::emitContextual(Id expression, OpBuilder& bui
             complete.insert(value);
             if (scheduled.insert(op).second) { recipe.push_back(op); }
         }
-    }
-    IRMapping mapping;
-    for (const auto& item : context.inputs) { mapping.map(item.first,item.second); }
-    for (Value value : complete) {
-        if (dominance->properlyDominates(value,cut)) { mapping.map(value,value); }
     }
     for (Operation* op : recipe) {
         Operation* clone = builder.clone(*op,mapping);
