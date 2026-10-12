@@ -623,3 +623,22 @@ passing tests. Both source reviews accepted the representation. The compliance
 prefilter's brace/assertion matches were inspected as braced bodies and internal
 partition invariants. Receipts are under
 `.local/three-paths/consolidation/m4-compact-memberships/`.
+
+
+## Bind only reached replay inputs
+
+Endpoint expression emission creates its temporary IR mapping from reached
+inputs and replay dependencies. It no longer copies every input accumulated
+at the cut on each emission. Existing result caching, dominance checks and
+deterministic scalar replay remain unchanged. A saturating diagnostic counter
+records bindings actually copied; it imposes no admission limit.
+
+The independent 128-expression fixture adds unrelated cached inputs between
+emissions and checks exactly one new binding per expression, the correct
+original operand, and no new bindings for a repeated cached result. Its initial
+assertion incorrectly required a fixed operand order for commutative addition;
+the corrected check permits canonical operand ordering. Eleven focused tests
+pass with this change, including expression, sequence-prefix, allocation and
+public-pipeline checks. Both source reviews accepted the component. This closes
+the growing replay-mapping copy issue, not general historical-value availability.
+Receipts share `.local/three-paths/consolidation/m4-compact-memberships/`.

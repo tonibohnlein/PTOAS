@@ -203,6 +203,9 @@ public:
                          llvm::DenseMap<Id, Value>& memo);
 
     struct CutEmission {
+        // Cumulative mappings actually needed by emitted scalar replay DAGs.
+        // Saturates on overflow; instrumentation does not govern admission.
+        uint64_t replayBindings = 0;
         llvm::DenseMap<Id, Value> values;
         llvm::DenseMap<Value, Value> inputs;
         llvm::DenseMap<Id, Id> cofactors;

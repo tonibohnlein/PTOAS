@@ -1601,5 +1601,12 @@
     },
     "controls": "Original per-cell sweep produces identical output on three failing descriptor/recognition fixtures. Native GM alias checks pass; CLI extension unavailable.",
     "receipts": ".local/three-paths/consolidation/m4-compact-memberships/"
+  },
+  "sparse_replay_bindings": {
+    "status": "component complete",
+    "expressions": 128,
+    "expected_bindings": 128,
+    "focused_tests": 11,
+    "receipts": ".local/three-paths/consolidation/m4-compact-memberships"
   }
 }
