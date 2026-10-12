@@ -502,7 +502,8 @@ struct StageProfileReport {
 };
 FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     func::FuncOp function, GMAliasPolicy policy,
-    const std::optional<frontiersynch::ArithmeticLimits>& profile = std::nullopt, bool profileStages = false)
+    const std::optional<frontiersynch::ArithmeticLimits>& profile = std::nullopt, bool profileStages = false,
+    bool prepareAllocation = true)
 {
     frontiersynch::FrontierAnalysis analysis(function);
     analysis.enableStageProfiling(profileStages);
@@ -525,7 +526,7 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
         if (succeeded(prepared)) {
             logicalBackend = result.mathematical->backend;
             // Missing allocation support leaves the selected logical graph available.
-            (void)analysis.attachAllocation(result, **prepared);
+            if (prepareAllocation) { (void)analysis.attachAllocation(result, **prepared); }
         }
     }
     std::string routeError;
@@ -544,7 +545,8 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
         allocationReport.set("logical_realization", StringAttr::get(function.getContext(),
             (*prepared)->privateState ? "invocation-prefix" : "direct-endpoints"));
         allocationReport.set("allocation_support", StringAttr::get(function.getContext(),
-            (*prepared)->allocationCertificate ? "available" : "unavailable"));
+            !prepareAllocation ? "not-requested" :
+                ((*prepared)->allocationCertificate ? "available" : "unavailable")));
         (*prepared)->recognitionReport = allocationReport.getDictionary(function.getContext());
         if (result.mathematical->arithmeticPeriodicDemands) {
             const auto& conversion = result.mathematical->arithmeticPeriodicDemands->conversion;
@@ -610,7 +612,7 @@ public:
         if (!analysisOnly) {
             if (failed(frontiersynch::insertModuleSynchronization(getOperation(), policy,
                     [&](func::FuncOp function, GMAliasPolicy contextPolicy) {
-                        return prepareFunction(function, contextPolicy, profile, profileStages);
+                        return prepareFunction(function, contextPolicy, profile, profileStages, prepareAllocation);
                     }))) {
                 signalPassFailure();
             }

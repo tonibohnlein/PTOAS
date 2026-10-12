@@ -6,7 +6,9 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 """Exercise public synchronization passes, route selection, and transactional failure."""
+import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -36,6 +38,76 @@ def unchanged_failure(optimizer, program, flags):
     return result
 
 
+def without_evidence(program):
+    """Remove only pass reports and certificates, preserving all command metadata."""
+    for name in ("pto.frontier_recognition", "pto.finite_allocation", "pto.cyclic_allocation"):
+        marker = name + " = {"
+        while marker in program:
+            start = program.index(marker)
+            position = start + len(marker)
+            depth, quoted, escaped = 1, False, False
+            while depth and position < len(program):
+                char = program[position]
+                if escaped:
+                    escaped = False
+                elif quoted and char == "\\":
+                    escaped = True
+                elif char == '"':
+                    quoted = not quoted
+                elif not quoted:
+                    depth += int(char == "{") - int(char == "}")
+                position += 1
+            require(depth == 0, "unterminated evidence attribute")
+            if program[position:position + 2] == ", ":
+                position += 2
+            elif program[start - 2:start] == ", ":
+                start -= 2
+            program = program[:start] + program[position:]
+    return program
+
+
+def without_lane_coordinates(program, reference, bounded_storage):
+    """Bounded allocation appends lane selectors after the original member tuple."""
+    pattern = r"members\(([^)]*)\)"
+    original = re.findall(pattern, reference)
+    selected = re.findall(pattern, program)
+    require(len(original) == len(selected), "allocation changed logical endpoint count")
+    widths = iter(len(values.split(",")) if values else 0 for values in original)
+
+    def truncate(match):
+        width = next(widths)
+        values = match.group(1).split(",") if match.group(1) else []
+        require(width <= len(values) <= width + int(bounded_storage),
+                "allocation changed original member coordinates or added unexpected lanes")
+        return "members(" + ",".join(values[:width]) + ")"
+
+    return re.sub(pattern, truncate, program)
+
+
+def check_logical_only(optimizer, program, logical, allocate, bounded_storage):
+    result = run(optimizer, program,
+                 ["--pto-frontier-analysis=prepare-allocation=false profile-stages=true"])
+    require('allocation_support = "not-requested"' in result.stdout, "allocation request mislabeled")
+    require("pto.finite_allocation" not in result.stdout and "pto.cyclic_allocation" not in result.stdout,
+            "unrequested certificate attached")
+    reports = [json.loads(line.removeprefix("frontier-profile "))
+               for line in result.stderr.splitlines() if line.startswith("frontier-profile ")]
+    require(bool(reports), "missing logical-only profile")
+    require(not any(stage["stage"].startswith("allocation")
+                    for report in reports for stage in report["stages"]),
+            "logical-only request performed allocation construction")
+    # Remove allocation-only operands, then let standard DCE drop their now
+    # unused arithmetic. Original member tuples, endpoint guards and payloads
+    # must agree after the same canonicalization on both sides.
+    expected_ir = without_lane_coordinates(without_evidence(logical), result.stdout, bounded_storage)
+    expected = run(optimizer, expected_ir, ["--canonicalize", "--cse"]).stdout
+    actual = run(optimizer, without_evidence(result.stdout), ["--canonicalize", "--cse"]).stdout
+    require(actual == expected, "allocation capability changed logical commands or payloads")
+    failure = unchanged_failure(optimizer, result.stdout, [allocate])
+    require("requires a supported finite or uniform allocation export" in failure.stderr,
+            "logical-only output did not report missing allocation evidence")
+
+
 def main():
     optimizer = shutil.which(sys.argv[1])
     require(optimizer is not None, "optimizer executable is unavailable")
@@ -55,6 +127,7 @@ def main():
         if filename == "sync_general_arithmetic_insertion.pto":
             require("arithmetic_region_constructions = 1 : i64" in logical, logical)
         require("pto.logical_set" in logical and "pto.logical_wait" in logical, logical)
+        check_logical_only(optimizer, program, logical, allocate, filename == "sync_bounded_allocation_session.pto")
         physical = run(optimizer, logical, [allocate]).stdout
         require("pto.logical_" not in physical, physical)
         require("pto.set_flag" in physical and "pto.wait_flag" in physical, physical)

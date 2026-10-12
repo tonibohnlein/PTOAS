@@ -29,12 +29,12 @@ separate commit. Infrastructure alone does not complete a production milestone.
 | Milestone | Implementation | Acceptance | Status |
 |---|---|---|---|
 | 1. Measured baseline | Aggregate allocation summary/query/proof/lane timing and inner-loop counts; precise retained-prefix refusal; pinned baseline replay. | Profiling preserves commands and certificates; bounded diagnostic storage; classify the Persistent GEMM hot stage and Delta blocker. | Complete; evidence below |
-| 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; capability scheduling pending |
+| 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; logical-only allocation request complete; lane scheduling pending |
 | 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Sequence preparation failure isolation complete; broader capability consolidation pending |
 | 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; persistent memberships and shared fact views pending |
 | 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction complete; numerical port projection and shared source facts pending |
 | 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Pending |
-| 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Regional prefix ownership and singleton forwarding complete; crossing presence/selectors and public Delta emission pending |
+| 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Regional prefix ownership, singleton forwarding and crossing presence complete; executable selectors and public Delta emission pending |
 | 8. Proof reuse and validation | Share lazy inactive-proof and premise contexts, replay mappings and safe Boolean conversion work. Close known guard-equivalence/oracle gaps and run pinned paired campaigns. | No unexplained acceptance loss or changed output; report eleven kernels and 783-input corpus by stage, wall time, memory and inner work. | Lazy inactive-proof setup shared; broader proof reuse and campaign pending |
 
 ## Algorithm boundaries
@@ -319,3 +319,39 @@ later endpoint ownership/availability obligation, not a successful logical plan
 or a performance improvement. Exact-retention policy is unchanged. Physical
 allocation and C++/device execution were not attempted. Receipts are under
 `.local/three-paths/consolidation/m7-crossing-presence/`.
+
+
+## Optional allocation evidence for logical-only emission
+
+The public pass accepts `prepare-allocation=false` to omit the allocation-support
+and certificate request after logical preparation. The default remains `true`,
+including the library preparation entry point, so existing full compilation
+continues to obtain evidence for `pto-frontier-allocate`. The report distinguishes
+`not-requested` from `unavailable`. The logical plan may still carry inexpensive
+allocation metadata assembled with its endpoints; the option avoids the deferred
+proof construction, rather than promising zero allocation-related bookkeeping.
+
+A retained library session can request allocation evidence before original IR
+mutation. A public logical-only emission does not serialize that retained session:
+its handoffs cannot later be allocated by the physical pass without the missing
+evidence. Empty or barrier-only plans may not need such evidence. This option
+changes the requested capability; it does not optimize the allocation proofs
+required by a full compilation, add event IDs, or weaken synchronization order.
+
+Five focused lit tests pass, including the five public backend fixtures, absent
+allocation stages/certificates for logical-only requests, retained-session tests
+and transactional refusal when evidence is missing. Comparing the bounded path
+removes only its appended allocation lane coordinate and dead helper arithmetic;
+other fixtures require unchanged member tuple arity. Original logical coordinates,
+guards, payloads and commands agree after symmetric canonicalization. Source
+architecture and correctness reviews accepted this change.
+
+An isolated pair on Persistent GEMM with profiling enabled takes 29.748 seconds
+with allocation evidence and 0.404 seconds without it (185,524 and 144,584 KiB RSS).
+The latter records no allocation construction stages. This kernel's commands and
+payloads match after removing only reports and certificates; no lane-coordinate
+normalization is needed. The default output still allocates six IDs successfully
+in 0.304 seconds. These are serial single runs of one binary under MayNotAlias,
+not a full-compilation speedup or broad corpus result. Deferred allocation-proof
+optimization and demand-driven lane strengthening remain open. Receipts are in
+`.local/three-paths/consolidation/m2-optional-allocation/`.
