@@ -971,5 +971,80 @@
       "test/lit/pto/Inputs/check_frontier_public_pipeline.py": "52ed90d48522e50d57dda578e048271df807a9b6250f7749db69c770a8b3ccc1"
     },
     "reviews": "architecture and correctness source reviews accepted; five focused tests pass"
+  },
+  "m5_single_crossing_reduction": {
+    "build": {
+      "command": [
+        "ninja",
+        "-C",
+        ".local/section8-refactor/source-pinned/candidate-build",
+        "-j2",
+        "pto-test-opt",
+        "pto-sync-input-test"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 376.94187198299915,
+      "maximum_rss_kib": 1122752,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 900.0
+    },
+    "oracle_rebuild": {
+      "command": [
+        "ninja",
+        "-C",
+        ".local/section8-refactor/source-pinned/candidate-build",
+        "-j2",
+        "pto-sync-input-test"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 7.710640085861087,
+      "maximum_rss_kib": 977072,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 180.0
+    },
+    "focused_tests": {
+      "command": [
+        "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+        "-j1",
+        "-v",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_analysis.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_analysis_gm.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_prefix.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_endpoint_retry.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_numerical_region_session.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_frontier_public_pipeline.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 14.820965461200103,
+      "maximum_rss_kib": 140968,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 180.0
+    },
+    "oracle": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--numerical-hierarchy-checks",
+        "test/lit/pto/region_expression.mlir"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 0.101788145955652,
+      "maximum_rss_kib": 59504,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 180.0
+    },
+    "focused_lit_passed": 6,
+    "independent_event_pairs": 109584,
+    "fixture_correction": "Pinned baseline also failed route-selection assumption; explicitly request existing numerical adapter with unchanged eligibility checks. Ordinary symbolic case unchanged.",
+    "source_sha256": {
+      "include/PTO/Transforms/FrontierSynch/Shared/ChainInterface.h": "aa6773b2daae397214a879537977a269f0a43ee40f10ffc10d23efc1b73b20f6",
+      "lib/PTO/Transforms/FrontierSynch/Shared/ChainComposition.cpp": "577090923eaaac330b78e5215f5396f98e83045679aff34eddbbb84c5290fe14",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceNumerical.cpp": "8402e762a21e233f26c0879fdda3f127fd79a132c8a72e7a12d6f42f42dc8695",
+      "tools/pto-test-opt/NumericalHierarchyChecks.cpp": "eac1d1620507686a959432ae20fbc09bedcbe919a12fb3e32d73788c8ed6c7e5"
+    },
+    "reviews": "architecture and correctness accepted"
   }
 }

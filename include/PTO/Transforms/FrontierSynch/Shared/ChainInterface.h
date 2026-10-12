@@ -60,11 +60,15 @@ struct NumericalChainMerge {
 // all right events. Supply native links among the deduplicated crossings too.
 // Construction uses O(kP+k^2*r) numerical work, no semantic callbacks. It
 // retains only reduced links and O(kP) indices; selected IDs need not be sorted.
+// Optional cover bits refer to the supplied crossing order. They are cleared
+// on entry and published only after a successful merge, for callers retaining
+// original crossing identities. No second reduction is needed.
 NumericalChainMerge buildNumericalChainMerge(
     std::shared_ptr<const NumericalChainInterface> left, std::shared_ptr<const NumericalChainInterface> right,
     const std::vector<NumericalCrossing>& crossings,
     const std::vector<NumericalChainSelection>& selection,
-    const std::vector<uint32_t>& leftChains, const std::vector<uint32_t>& rightChains);
+    const std::vector<uint32_t>& leftChains, const std::vector<uint32_t>& rightChains,
+    std::vector<bool>* retainedCrossings = nullptr);
 // Binary-search leaf thresholds. Query receives a port ID and reverse flag:
 // false asks event->port; true asks port->event. Null means unavailable.
 std::optional<std::vector<uint32_t>> numericalLeafThresholds(const NumericalChainInterface& index,

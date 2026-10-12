@@ -12,6 +12,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/FiniteOverlay.h"
 #include "llvm/Support/raw_ostream.h"
 #include <array>
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 namespace {
@@ -55,8 +56,26 @@ bool numerical(unsigned mask, unsigned selectedMask, uint64_t& checked)
     for (unsigned a = 8; a; --a) {
         if (selectedMask & (1U << (a - 1))) { selection.push_back({(a - 1) / 4, (a - 1) % 4}); }
     }
-    auto merge = fs::buildNumericalChainMerge(left, right, links, selection, {0, 1}, {0, 1});
+    std::vector<bool> retained{true};
+    auto merge = fs::buildNumericalChainMerge(left, right, links, selection, {0, 1}, {0, 1}, &retained);
     if (!merge.index.error.empty() || merge.index.queries) { return false; }
+    if (retained.size() != links.size()) { return false; }
+    for (std::size_t i = 0; i < links.size(); ++i) {
+        // A forward path crosses the split once. Independently test whether
+        // another supplied crossing covers this edge through the child DAGs.
+        bool redundant = false;
+        for (std::size_t j = 0; j < links.size(); ++j) {
+            if (i == j) { continue; }
+            redundant |= graph[links[i].source][links[j].source] &&
+                         graph[4 + links[j].target][4 + links[i].target];
+        }
+        if (retained[i] == redundant) { return false; }
+    }
+    auto invalid = fs::buildNumericalChainMerge({}, right, links, selection, {0, 1}, {0, 1}, &retained);
+    if (invalid.index.error.empty() || !retained.empty()) { return false; }
+    retained = {true};
+    invalid = fs::buildNumericalChainMerge(left, right, {{4, 0}}, selection, {0, 1}, {0, 1}, &retained);
+    if (invalid.index.error.empty() || !retained.empty()) { return false; }
     auto original = [&](unsigned id) { return 4 * selection[id].child + selection[id].event; };
     for (unsigned a = 0; a < selection.size(); ++a) {
         for (unsigned b = 0; b < selection.size(); ++b) {
@@ -90,6 +109,24 @@ bool numerical(unsigned mask, unsigned selectedMask, uint64_t& checked)
         }
     }
     return true;
+}
+// Exercise the numerical adapter independently of the dispatch cost heuristic.
+// Preserve its eligibility checks; this fixture does not prepare prefix code.
+fs::SequenceAnalysis composeNumerically(func::FuncOp function,
+    const std::shared_ptr<fs::RegionExpressions>& arena, std::vector<fs::RegionalAnalysis> children)
+{
+    auto result = fs::composeRegionalSequence(function, arena, std::move(children), false, false);
+    if (!result.error.empty() || !result.state) { return result; }
+    if (!result.state->numerical && !result.state->numericalCrossingReduction()) {
+        result.error = "numerical fixture is ineligible";
+        return result;
+    }
+    if (!arena->error().empty()) { result.error = arena->error(); return result; }
+    result.cost.numericalLeafQueries = result.state->costs.numericalLeafQueries;
+    result.cost.numericalIndexOperations = result.state->costs.numericalIndexOperations;
+    result.cost.numericalReusedChildren = result.state->costs.numericalReusedChildren;
+    result.cost.numericalMerges = result.state->costs.numericalMerges;
+    return result;
 }
 bool hierarchy(func::FuncOp function, uint64_t& checked)
 {
@@ -152,13 +189,13 @@ bool hierarchy(func::FuncOp function, uint64_t& checked)
         }
         regions.push_back(std::move(region));
     }
-    auto a = fs::composeRegionalSequence(function, arena, {regions[0], regions[1]}, false, false);
-    auto b = fs::composeRegionalSequence(function, arena, {regions[2], regions[3]}, false, false);
+    auto a = composeNumerically(function, arena, {regions[0], regions[1]});
+    auto b = composeNumerically(function, arena, {regions[2], regions[3]});
     if (!a.error.empty() || !b.error.empty()) { return false; }
     auto first = fs::sequenceRegionalResult(a), second = fs::sequenceRegionalResult(b);
     if (!first.numerical || !second.numerical) { return false; }
     const auto before = queries;
-    auto root = fs::composeRegionalSequence(function, arena, {first, second}, false, false);
+    auto root = composeNumerically(function, arena, {first, second});
     auto exported = fs::sequenceRegionalResult(root);
     if (!root.error.empty() || !exported.numerical || queries != before || root.cost.numericalMerges != 3 ||
         root.cost.numericalReusedChildren != 2) { return false; }
@@ -187,7 +224,7 @@ bool hierarchy(func::FuncOp function, uint64_t& checked)
             };
             flat.insert(flat.begin() + 2, std::move(empty));
         }
-        auto joined = fs::composeRegionalSequence(function, arena, flat, false, false);
+        auto joined = composeNumerically(function, arena, flat);
         auto view = fs::sequenceRegionalResult(joined);
         if (!joined.error.empty() || !view.numerical || joined.cost.numericalMerges != flat.size() - 1) {
             return false;

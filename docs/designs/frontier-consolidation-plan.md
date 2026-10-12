@@ -355,3 +355,23 @@ in 0.304 seconds. These are serial single runs of one binary under MayNotAlias,
 not a full-compilation speedup or broad corpus result. Deferred allocation-proof
 optimization and demand-driven lane strengthening remain open. Receipts are in
 `.local/three-paths/consolidation/m2-optional-allocation/`.
+
+
+## Reuse the numerical merge's crossing reduction
+
+The sequence wrapper now receives the retained-crossing mask from the numerical
+merge it already constructs, instead of reducing the same crossings twice.
+The optional mask follows the supplied edge order, is cleared before construction,
+and is published only after a successful merge. The mathematical reducer,
+selection policy and retained graph are unchanged. Operation accounting charges
+one reduction. Parent-port projection and shared phase facts remain open.
+
+Six focused sequence/session/public-pipeline lit tests pass. The numerical oracle
+checks 109,584 independent event pairs, including 1,280 graph/projection cases,
+retained crossings, failed-construction output clearing, nested child-index reuse,
+interior queries, overlays and a symbolic case. Its old hierarchy fixture also
+failed on the pinned baseline because it assumed cost selection always chose the
+numerical adapter. The revised fixture explicitly requests that existing adapter
+without changing eligibility checks or production dispatch. Architecture and
+correctness reviews accepted the change and fixture repair. Receipts are under
+`.local/three-paths/consolidation/m5-single-reduction/`.
