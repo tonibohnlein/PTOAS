@@ -137,3 +137,33 @@ and the other three paper hashes are unchanged. This is the first patch within
 milestone 3, not completion of consumer selectors or the emission plan. Finite
 predicate history, the two recurring publication obligations, shared scalar
 state materialization and final integration remain outstanding.
+
+## Milestone 3, second patch: detached structured private state
+
+An internal materializer now rebuilds a function on an owned module clone,
+threading typed private scalar slots through existing `scf.for` and `scf.if`
+control. Original iterated values and results retain their positions. Missing
+else arms forward state, zero trips preserve initial values, and actions bind
+to original before/after cuts through an explicit IR mapping. The result is
+verified before being returned. Unsupported region operations, foreign cuts,
+invalid state types and non-dominating state values return explicit failures.
+Neither successful preparation nor failure attaches anything to original IR.
+
+This is shared preparation infrastructure, not an enabled private-state target
+capability or an attached emission plan. Callbacks are trusted realization
+code; the verifier establishes typed, dominating SSA, not mathematical demand
+equivalence. Cloning the containing module preserves symbol resolution but has
+a module-size cost; it is not claimed to be constant or region-local work.
+
+The independent interpreter checks original payload traces and iterated
+results across zero/one/three trips, both branch outcomes, nested resets and
+nonunit induction coordinates. Negative checks cover partial callback failure,
+foreign cuts, unsupported regions, wrong types and a same-type non-dominating
+value; a clean retry succeeds after each rejected clone. The focused state,
+inactive-emission and guarded-publication lit checks pass (3/3). Optimized
+build and runtime receipts are under
+`.local/three-paths/repeated-guard/m3-state/`; failed intermediate build/test
+receipts are superseded by `build-range`, `fixture-range` and `focused-final`.
+Section 8 was reread; all four paper pins remain unchanged. Predicate-history
+and prefix realizations, their integration, and Delta public logical recovery
+remain outstanding.
