@@ -76,10 +76,92 @@ bool attempt(fs::IterationPredicates& predicates, fs::RegionExpressions& e,
     for (auto& op : detached) { if (isa<memref::LoadOp>(op)) { return false; } }
     return true;
 }
+bool provenance(Fixture& f)
+{
+    fs::RegionExpressions source;
+    fs::RegionExpressions::Id p, r, past, ordinal;
+    {
+        fs::IterationPredicates local(f.loop, source, {});
+        ordinal = fs::CountedLoop::get(f.loop)->ordinal(source);
+        p = local.at(f.p, ordinal);
+        r = local.at(f.r, ordinal);
+        past = local.at(f.p, source.sub(ordinal, source.constant(1)));
+    }
+    // The arena keeps symbols and provenance after the producer is destroyed.
+    const auto recipe = source.evaluation(p);
+    const auto earlier = source.evaluation(past);
+    if (!recipe || !earlier || recipe->original != f.p || recipe->loop != f.loop ||
+        recipe->ordinal != ordinal || earlier->ordinal == ordinal || p == past) { return false; }
+    fs::RegionExpressions::Substitution shift({{ordinal, source.constant(0)}});
+    if (source.substitute(p, shift) != p || source.evaluation(p)->ordinal != ordinal) { return false; }
+    auto placeholder = source.referencedInputs(p).front().second;
+    fs::RegionExpressions destination;
+    // Pre-intern the Input: import must not assume ordinal IDs precede it.
+    auto targetInput = destination.input(placeholder);
+    for (unsigned i = 0; i < 13; ++i) { destination.constant(100 + i); }
+    auto imported = destination.import(source, {p, past});
+    if (failed(imported) || (*imported)[0] != targetInput) { return false; }
+    auto mapped = destination.evaluation(targetInput);
+    auto importedOrdinal = destination.import(source, {ordinal});
+    if (!mapped || failed(importedOrdinal) || mapped->ordinal != (*importedOrdinal)[0] ||
+        mapped->ordinal == ordinal || mapped->original != f.p || mapped->loop != f.loop) { return false; }
+    if (destination.evaluatedInput(placeholder, f.p, f.loop, mapped->ordinal) != targetInput) { return false; }
+    {
+        Block detached;
+        OpBuilder builder(f.function.getContext()); builder.setInsertionPointToEnd(&detached);
+        auto folded = builder.create<arith::ConstantIntOp>(f.loop.getLoc(), 1, 1);
+        fs::RegionExpressions::Transaction rejectedConstant(destination);
+        if (destination.evaluatedInput(folded, f.p, f.loop, mapped->ordinal) != destination.invalid) { return false; }
+    }
+    const auto count = destination.size();
+    {
+        fs::RegionExpressions::Transaction outer(destination);
+        auto symbols = std::make_shared<Block>(); destination.retainInputOwner(symbols);
+        auto value = symbols->addArgument(f.p.getType(), f.loop.getLoc());
+        auto fresh = destination.evaluatedInput(value, f.r, f.loop, destination.constant(42));
+        if (!destination.evaluation(fresh)) { return false; }
+        {
+            fs::RegionExpressions::Transaction inner(destination);
+            if (destination.evaluatedInput(placeholder, f.r, f.loop, mapped->ordinal) != destination.invalid) {
+                return false;
+            }
+        }
+        if (!destination.constructionError().empty() || !destination.evaluation(fresh)) { return false; }
+    }
+    if (destination.size() != count || destination.evaluation(count)) { return false; }
+    // A failed import may have registered an existing Input before discovering
+    // another conflicting record. Both metadata and expression IDs roll back.
+    fs::RegionExpressions rejected;
+    auto existing = rejected.input(placeholder);
+    auto zero = rejected.constant(0);
+    auto other = source.referencedInputs(r).front().second;
+    rejected.evaluatedInput(other, f.p, f.loop, zero);
+    const auto before = rejected.size();
+    auto failedImport = rejected.import(source, {source.land(p, r)});
+    if (succeeded(failedImport) || rejected.size() != before || rejected.evaluation(existing) ||
+        !rejected.constructionError().empty()) { return false; }
+    // Individually acyclic registries can become cyclic when the same Input
+    // has provenance only in the other arena. Reject the combined cycle.
+    auto symbols = std::make_shared<Block>();
+    auto x = symbols->addArgument(f.p.getType(), f.loop.getLoc());
+    auto y = symbols->addArgument(f.p.getType(), f.loop.getLoc());
+    fs::RegionExpressions left, right;
+    left.retainInputOwner(symbols); right.retainInputOwner(symbols);
+    auto xp = left.input(x);
+    auto yo = left.select(xp, left.constant(0), left.constant(1));
+    auto yp = left.evaluatedInput(y, f.r, f.loop, yo);
+    auto yq = right.input(y);
+    auto xo = right.select(yq, right.constant(0), right.constant(1));
+    auto xq = right.evaluatedInput(x, f.p, f.loop, xo);
+    const auto rightSize = right.size();
+    return failed(right.import(left, {yp})) && right.size() == rightSize &&
+        !right.evaluation(yq) && right.evaluation(xq) && right.constructionError().empty();
+}
 bool check(MLIRContext* context, unsigned trips)
 {
     Fixture f(context, trips);
     if (failed(verify(*f.module))) { return false; }
+    if (!provenance(f)) { return false; }
     const auto before = render(f.module->getOperation());
     fs::RegionExpressions e;
     fs::IterationPredicates predicates(f.loop, e, {});

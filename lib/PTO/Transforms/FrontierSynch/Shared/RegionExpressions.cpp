@@ -11,6 +11,7 @@
 #include "RegionIntegerExpressionsInternal.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Hashing.h"
@@ -18,11 +19,15 @@
 #include <algorithm>
 namespace mlir::pto::frontiersynch {
 RegionExpressions::Transaction::Transaction(RegionExpressions& arena)
-    : arena(arena), count(arena.nodes.size()), constructionMessage(arena.constructionMessage),
-      emissionMessage(arena.emissionMessage) {}
+    : arena(arena), count(arena.nodes.size()), evaluationCount(arena.evaluationInsertions.size()),
+      constructionMessage(arena.constructionMessage), emissionMessage(arena.emissionMessage) {}
 RegionExpressions::Transaction::~Transaction()
 {
     if (committed) { return; }
+    while (arena.evaluationInsertions.size() > evaluationCount) {
+        arena.evaluations.erase(arena.evaluationInsertions.back());
+        arena.evaluationInsertions.pop_back();
+    }
     while (arena.nodes.size() > count) {
         arena.interned.erase(arena.nodes.back());
         arena.nodes.pop_back();
@@ -31,6 +36,45 @@ RegionExpressions::Transaction::~Transaction()
     arena.emissionMessage = std::move(emissionMessage);
     // Forbidden recomputation is monotone source safety information. Keep it,
     // together with dominance of the unchanged original IR, across attempts.
+}
+bool RegionExpressions::registerEvaluation(Id id, Evaluation value)
+{
+    auto found = evaluations.find(id);
+    if (found != evaluations.end()) {
+        const auto& previous = found->second;
+        if (previous.original == value.original && previous.loop == value.loop && previous.ordinal == value.ordinal) {
+            return true;
+        }
+        reject("opaque evaluation input has conflicting provenance");
+        return false;
+    }
+    evaluations.try_emplace(id, value);
+    evaluationInsertions.push_back(id);
+    return true;
+}
+RegionExpressions::Id RegionExpressions::evaluatedInput(Value placeholder, Value original,
+                                                        Operation* loop, Id ordinal)
+{
+    auto* parent = original && original.getParentRegion() ? original.getParentRegion()->getParentOp() : nullptr;
+    const bool validContext = placeholder && isa<BlockArgument>(placeholder) &&
+        placeholder.getType().isInteger(1) && !placeholder.getParentRegion() &&
+        original && original.getType().isInteger(1) && loop && isa<scf::ForOp>(loop) && parent &&
+        (parent == loop || loop->isProperAncestor(parent)) && valid(ordinal) && !isBoolean(ordinal);
+    if (!validContext) { return reject("opaque evaluation requires an original loop value and ordinal"); }
+    const auto previousSize = nodes.size();
+    auto id = input(placeholder);
+    if (id == invalid) { return invalid; }
+    // Fresh provenance dependencies precede the placeholder. Imports preserve
+    // this acyclic source graph even when destination IDs have another order.
+    if (!evaluations.count(id) && (id != previousSize || ordinal >= id)) {
+        return reject("opaque evaluation requires a fresh placeholder after its ordinal");
+    }
+    return registerEvaluation(id, {original, loop, ordinal}) ? id : invalid;
+}
+std::optional<RegionExpressions::Evaluation> RegionExpressions::evaluation(Id id) const
+{
+    auto found = evaluations.find(id);
+    return found == evaluations.end() ? std::nullopt : std::optional<Evaluation>(found->second);
 }
 bool RegionExpressions::Node::operator==(const Node& other) const
 {

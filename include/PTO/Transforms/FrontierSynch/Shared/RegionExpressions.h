@@ -39,13 +39,28 @@ public:
         void commit() { committed = true; }
     private:
         RegionExpressions& arena;
-        std::size_t count;
+        std::size_t count, evaluationCount;
         std::string constructionMessage, emissionMessage;
         bool committed = false;
     };
     Id constant(uint64_t value);
     Id boolean(bool value);
     Id input(Value value);
+    // An opaque input denotes one original Boolean evaluation in a counted
+    // loop invocation. Provenance establishes identity, not cut availability.
+    // Original IR remains borrowed and immutable. Definition presence is the
+    // original structured path to the definition; consumers must prove it.
+    struct Evaluation {
+        Value original;
+        Operation* loop = nullptr;
+        Id ordinal = invalid;
+    };
+    // The placeholder must be a fresh detached BlockArgument, or an identical
+    // previously registered evaluation. Intervening loop visits are not encoded;
+    // consumers must prove a unique evaluation or reject that frame.
+    Id evaluatedInput(Value placeholder, Value original, Operation* loop, Id ordinal);
+    std::optional<Evaluation> evaluation(Id input) const;
+
     // Symbolic query adapters can cache expressions containing fresh SSA
     // variables even when export later fails. Keep those variable owners alive
     // for the whole arena lifetime; source IR itself remains caller-owned.
@@ -66,6 +81,8 @@ public:
     // Simultaneous, typed DAG substitution. Bindings are immutable; the memo
     // belongs to this context and one arena. Replacement expressions are not
     // themselves substituted, so coordinate shifts never recursively expand.
+    // Opaque evaluation Inputs remain atomic: shifting an ordinal elsewhere
+    // does not retag their provenance. Rebind with a distinct evaluatedInput.
     class Substitution {
     public:
         explicit Substitution(llvm::ArrayRef<std::pair<Id, Id>> bindings)
@@ -80,7 +97,8 @@ public:
     // Import only the roots' reachable typed DAG from another arena. No memo
     // escapes the call, so rollback cannot leave stale cross-arena bindings.
     // Successful roots belong to this arena; failure publishes no new IDs.
-    // work counts distinct source nodes visited, including interned reuse.
+    // work counts distinct source nodes visited, including interned reuse,
+    // plus reachable destination nodes checked for evaluation-provenance cycles.
     FailureOr<SmallVector<Id>> import(const RegionExpressions& source, ArrayRef<Id> roots,
                                      uint64_t* work = nullptr);
     Id add(Id a, Id b);
@@ -210,6 +228,7 @@ private:
     bool refutesNegation(Id premise, Id consequence) const;
     bool contradictoryConstantBounds(const llvm::DenseMap<Id, Truth>& bindings) const;
     Id intern(Node node);
+    bool registerEvaluation(Id input, Evaluation evaluation);
     void appendOperands(const Node& node, SmallVectorImpl<Id>& operands) const;
     static bool equalInteger(const Node& a, const Node& b);
     static std::size_t hashInteger(const Node& node);
@@ -230,6 +249,8 @@ private:
     Id cofactorAtCut(Id expression, Operation* cut, llvm::DenseMap<Id, Id>& memo);
     std::vector<std::shared_ptr<void>> inputOwners;
     llvm::DenseSet<Operation*> forbiddenRecomputation;
+    llvm::DenseMap<Id, Evaluation> evaluations;
+    std::vector<Id> evaluationInsertions;
     std::vector<Node> nodes;
     std::unordered_map<Node, Id, Hash> interned;
     std::string constructionMessage;
