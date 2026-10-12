@@ -1164,5 +1164,69 @@
     "reviews": "architecture and correctness accepted",
     "scope": "evaluation identity/import/rollback only; executable snapshot adapter remains open",
     "validation_note": "broad rebuild resumed after external watchdog; final test-only const accessor fix; final focused tests overlapped one serial Delta coverage replay, not performance evidence"
+  },
+  "m7_consumer_source_choice": {
+    "build": {
+      "command": [
+        "ninja",
+        "-C",
+        ".local/section8-refactor/source-pinned/candidate-build",
+        "-j2",
+        "pto-test-opt",
+        "pto-sync-input-test"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 8.71160350786522,
+      "maximum_rss_kib": 1022144,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "focused_tests": {
+      "command": [
+        "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+        "-j1",
+        "-v",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_iteration_predicate_context.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_invocation_prefix.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_bounded_predicate_history.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_bounded_prefix_realization.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_structured_private_state.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_prefix.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_endpoint_retry.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_frontier_public_pipeline.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 10.112351932097226,
+      "maximum_rss_kib": 140720,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 240.0
+    },
+    "focused_lit_passed": 8,
+    "new_independent_executions": 24,
+    "delta_logical_only": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "--mlir-disable-threading",
+        "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false",
+        "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+      ],
+      "returncode": 1,
+      "status": "finished",
+      "seconds": 18.023684679996222,
+      "maximum_rss_kib": 283816,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "delta_outcome": "logical refusal: guarded expression input belongs to another invocation",
+    "timing_scope": "coverage only; Delta and serial focused tests overlapped",
+    "source_sha256": {
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequencePrefix.cpp": "d122f2a6bec9b726a0afbf53256d747edf89124ce093df1ae0af1abc145595d6",
+      "tools/pto-test-opt/InvocationPrefixChecks.cpp": "8174fe1cdc10f884d5c90ce5ceb6d70e3571e795ee1a8787571fbbd422b98dbe",
+      "test/lit/pto/sync_invocation_prefix.pto": "88757fffce0421ea768b3bc54bcd8f7426d7714eb7acd210da40546e503df2a5"
+    },
+    "reviews": "architecture and correctness accepted",
+    "scope": "preserves all primitive phase/coordinate guards and defers folded choices; historical guard snapshots remain open"
   }
 }

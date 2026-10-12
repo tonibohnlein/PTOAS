@@ -185,6 +185,108 @@ bool originalPrefixAnchor(const TemplateEndpointAnchor& anchor)
     return op && anchor.before.block == op->getBlock() && anchor.before.before == op &&
            anchor.after.block == op->getBlock() && anchor.after.before == op->getNextNode();
 }
+// Save each primitive occurrence before evaluating any folded boundary choice.
+// Actual execution establishes presence, but phase-view guards still identify
+// which occurrence shares this original anchor. Preserve those guards and the
+// primitive coordinates; defer only the folded choices to the consumer.
+struct PrefixCapturedRank {
+    std::optional<std::size_t> slot;
+    Expr choose = RegionExpressions::invalid;
+    uint32_t yes = 0, no = 0;
+};
+LogicalResult capturePrimitivePrefixSource(
+    const std::shared_ptr<SequenceAnalysisState>& owner, uint32_t port, Operation* targetCut,
+    InvocationPrefixCollection& collection, std::map<uint32_t, PrefixCapturedRank>& captured,
+    std::string& error)
+{
+    if (port >= owner->ports.size()) { error = "prefix source has an invalid primitive port"; return failure(); }
+    const auto& point = owner->ports[port];
+    if (point.child >= owner->children.size() || point.type >= owner->children[point.child].anchors.size()) {
+        error = "prefix source has an invalid primitive phase"; return failure();
+    }
+    const auto& anchor = owner->children[point.child].anchors[point.type];
+    if (!originalPrefixAnchor(anchor)) { error = "prefix source lacks its original cut"; return failure(); }
+    auto guard = prefixPortGuard(*owner, point, owner->expressions.boolean(true));
+    if (failed(guard)) { error = "prefix source has unavailable primitive coordinates"; return failure(); }
+    auto* sourceCut = anchor.phase->elementOp;
+    auto& recipe = collection.recipe();
+    const auto slot = recipe.slots.size();
+    auto type = IndexType::get(collection.function().getContext());
+    recipe.slots.push_back({type, IntegerAttr::get(type, 0)});
+    scf::ForOp common;
+    for (auto* parent = sourceCut->getParentOp(); parent; parent = parent->getParentOp()) {
+        auto loop = dyn_cast<scf::ForOp>(parent);
+        if (loop && loop->isProperAncestor(targetCut)) { common = loop; break; }
+    }
+    if (common) {
+        if (!llvm::is_contained(owner->requiredOuterLoops, common)) {
+            error = "prefix crossing needs a certified enclosing-visit rank adapter"; return failure();
+        }
+        recipe.actions.push_back({&common.getBody()->front(), PrivateStateCut::Before,
+            [slot](OpBuilder& b, const IRMapping&, MutableArrayRef<Value> state, std::string&) {
+                state[slot] = b.create<arith::ConstantIndexOp>(b.getUnknownLoc(), 0);
+                return success();
+            }});
+    }
+    if (failed(collection.source(anchor.phase,
+        [owner, root = *guard, sourceCut, slot](OpBuilder& b, const IRMapping& mapping,
+            MutableArrayRef<Value> state, Value ordinal, std::string& diagnostic) {
+            auto selected = emitPrefixCrossing(owner->expressions, root, sourceCut, b, mapping, diagnostic);
+            if (failed(selected)) { return failure(); }
+            state[slot] = b.create<arith::SelectOp>(sourceCut->getLoc(), *selected, ordinal, state[slot]);
+            return success();
+        }, error))) { return failure(); }
+    captured.emplace(port, PrefixCapturedRank{slot});
+    return success();
+}
+LogicalResult capturePrefixSource(
+    const std::shared_ptr<SequenceAnalysisState>& owner, uint32_t root, Operation* targetCut,
+    InvocationPrefixCollection& collection, std::map<uint32_t, PrefixCapturedRank>& captured,
+    std::string& error)
+{
+    std::set<uint32_t> pending;
+    SmallVector<uint32_t> work{root};
+    while (!work.empty()) {
+        const auto port = work.pop_back_val();
+        if (captured.count(port) || !pending.insert(port).second) { continue; }
+        if (port >= owner->ports.size()) { error = "prefix source has an invalid port"; return failure(); }
+        auto choice = owner->portChoices.find(port);
+        if (choice == owner->portChoices.end()) { continue; }
+        const auto& selected = choice->second;
+        // selectPort constructs children before their combined port. Validate
+        // that premise before building state; visit shared nodes only once.
+        if (selected.yes >= port || selected.no >= port) {
+            error = "prefix source choice is not an original acyclic port recipe"; return failure();
+        }
+        work.push_back(selected.yes); work.push_back(selected.no);
+    }
+    for (auto port : pending) {
+        auto choice = owner->portChoices.find(port);
+        if (choice != owner->portChoices.end()) {
+            const auto& selected = choice->second;
+            captured.emplace(port, PrefixCapturedRank{{}, selected.choose, selected.yes, selected.no});
+        } else if (failed(capturePrimitivePrefixSource(owner, port, targetCut, collection, captured, error))) {
+            return failure();
+        }
+    }
+    return success();
+}
+FailureOr<Value> selectedPrefixRank(const std::shared_ptr<SequenceAnalysisState>& owner, uint32_t root,
+    const std::map<uint32_t, PrefixCapturedRank>& captured, Operation* cut, OpBuilder& b,
+    const IRMapping& mapping, ArrayRef<Value> state, std::string& error)
+{
+    // Port choices are topologically ordered by construction. Shared primitive
+    // and choice nodes are evaluated once per consumer, without copying a tree.
+    std::map<uint32_t, Value> values;
+    for (const auto& [port, rank] : captured) {
+        if (rank.slot) { values.emplace(port, state[*rank.slot]); continue; }
+        auto condition = emitPrefixCrossing(owner->expressions, rank.choose, cut, b, mapping, error);
+        if (failed(condition)) { return failure(); }
+        values.emplace(port, b.create<arith::SelectOp>(cut->getLoc(), *condition,
+            values.at(rank.yes), values.at(rank.no)).getResult());
+    }
+    return values.at(root);
+}
 LogicalResult appendPrefixCrossing(
     const std::shared_ptr<SequenceAnalysisState>& owner, const Crossing& edge, InvocationPrefixCollection& collection,
     std::string& error, bool certifiedPresence)
@@ -218,12 +320,10 @@ LogicalResult appendPrefixCrossing(
     }
     auto p = static_cast<uint32_t>(aa.phase->kPipeValue), q = static_cast<uint32_t>(ab.phase->kPipeValue);
     auto target = prefixPortGuard(*owner, b, edge.guard);
-    auto source = prefixPortGuard(*owner, a, e.boolean(true));
-    if (failed(target) || failed(source)) {
+    if (failed(target)) {
         error = "prefix crossing has unavailable original coordinates";
         return failure();
     }
-    auto* sourceCut = aa.phase->elementOp;
     auto* targetCut = ab.phase->elementOp;
     if (p == q) {
         if (p == static_cast<uint32_t>(PIPE::PIPE_S)) {
@@ -246,57 +346,20 @@ LogicalResult appendPrefixCrossing(
              }});
         return success();
     }
-    auto& recipe = collection.recipe();
-    const auto slot = recipe.slots.size();
-    auto type = IndexType::get(collection.function().getContext());
-    recipe.slots.push_back({type, IntegerAttr::get(type, 0)});
-    // A shared enclosing visit is a fresh sequence context. Adapters spanning
-    // different visits require their own rank transport and are not inferred.
-    scf::ForOp common;
-    for (auto* parent = sourceCut->getParentOp(); parent; parent = parent->getParentOp()) {
-        auto loop = dyn_cast<scf::ForOp>(parent);
-        if (loop && loop->isProperAncestor(targetCut)) {
-            common = loop;
-            break;
-        }
-    }
-    if (common) {
-        if (!llvm::is_contained(owner->requiredOuterLoops, common)) {
-            error = "prefix crossing needs a certified enclosing-visit rank adapter";
-            return failure();
-        }
-        recipe.actions.push_back(
-            {&common.getBody()->front(), PrivateStateCut::Before,
-             [slot](OpBuilder& b, const IRMapping&, MutableArrayRef<Value> state, std::string&) {
-                 state[slot] = b.create<arith::ConstantIndexOp>(b.getUnknownLoc(), 0);
-                 return success();
-             }});
-    }
-    if (failed(collection.source(
-            aa.phase,
-            [owner, root = *source, sourceCut, slot](
-                OpBuilder& b, const IRMapping& mapping, MutableArrayRef<Value> state, Value ordinal,
-                std::string& error) {
-                auto selected = emitPrefixCrossing(owner->expressions, root, sourceCut, b, mapping, error);
-                if (failed(selected)) {
-                    return failure();
-                }
-                state[slot] = b.create<arith::SelectOp>(sourceCut->getLoc(), *selected, ordinal, state[slot]);
-                return success();
-            },
-            error))) {
-        return failure();
-    }
+    std::map<uint32_t, PrefixCapturedRank> captured;
+    if (failed(capturePrefixSource(owner, edge.source, targetCut, collection, captured, error))) { return failure(); }
     return collection.consumer(
         targetCut, {p, q},
-        [owner, root = *target, targetCut, slot](
+        [owner, root = *target, targetCut, source = edge.source, captured = std::move(captured)](
             OpBuilder& b, const IRMapping& mapping, ArrayRef<Value> state, std::string& error) -> FailureOr<Value> {
             auto selected = emitPrefixCrossing(owner->expressions, root, targetCut, b, mapping, error);
             if (failed(selected)) {
                 return failure();
             }
+            auto rank = selectedPrefixRank(owner, source, captured, targetCut, b, mapping, state, error);
+            if (failed(rank)) { return failure(); }
             auto zero = b.create<arith::ConstantIndexOp>(targetCut->getLoc(), 0);
-            return b.create<arith::SelectOp>(targetCut->getLoc(), *selected, state[slot], zero).getResult();
+            return b.create<arith::SelectOp>(targetCut->getLoc(), *selected, *rank, zero).getResult();
         },
         error);
 }
