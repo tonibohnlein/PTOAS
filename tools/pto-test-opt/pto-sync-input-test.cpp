@@ -1473,6 +1473,7 @@ std::string render(Operation *op) {
 LogicalResult runRegionExpressionChecks(func::FuncOp function);
 bool runIterationPredicateChecks(MLIRContext* context);
 bool runBoundedEmissionRecipeChecks();
+bool runStructuredPrivateStateChecks();
 LogicalResult runRotatingAnalysisChecks(func::FuncOp function, const pto::SyncInput& input);
 LogicalResult dumpExplicitAnalysis(func::FuncOp function, const pto::SyncInput& input);
 int runArithmeticSelectorChecks();
@@ -1539,6 +1540,10 @@ int runRegionalRelationChecks();
 int runMixedSymbolicRegionChecks(func::FuncOp);
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
 int main(int argc, char **argv) {
+  const bool privateState = argc == 2 && StringRef(argv[1]) == "--structured-private-state-checks";
+  if (privateState) {
+    return runStructuredPrivateStateChecks() ? 0 : 1;
+  }
   const bool emissionRecipes = argc == 2 && StringRef(argv[1]) == "--bounded-emission-recipe-checks";
   if (emissionRecipes) {
     return runBoundedEmissionRecipeChecks() ? 0 : 1;
