@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "SequenceAnalysisInternal.h"
+#include "InvocationPrefixCollection.h"
 #include "../Structured/OrderCoveredPeriodic.h"
 #include "RecognitionInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
@@ -860,6 +861,7 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
             return sequenceStorageSelectors(*state, starts, address);
         };
     }
+    out.invocationPrefix = sequencePrefixContribution(out, state);
     return out;
 }
 } // namespace mlir::pto::frontiersynch

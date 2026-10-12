@@ -529,6 +529,12 @@ std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
         BoundarySlice slice{{cuts[i], cuts[i + 1]}, inherited};
         // Every cut lies in [0,T]. Hence end-begin <= end and <= T-begin.
         slice.maximumLength = minimumBound(orderedBounds[i + 1].fromZero, orderedBounds[i].toEnd);
+        // Literal cuts also bound their distance directly. The independent
+        // bounds from zero/from T can be weaker for an interior singleton.
+        auto begin = arena.constantValue(slice.interval.begin), end = arena.constantValue(slice.interval.end);
+        if (begin && end && *begin <= *end) {
+            slice.maximumLength = minimumBound(slice.maximumLength, *end - *begin);
+        }
         auto nonempty = arena.lt(slice.interval.begin, slice.interval.end);
         if (arena.constantValue(nonempty) == 0) { continue; }
         for (const auto& [value, split] : predicates) {
