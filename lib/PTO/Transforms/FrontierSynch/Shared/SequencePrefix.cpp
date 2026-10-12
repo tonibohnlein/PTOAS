@@ -9,6 +9,7 @@
 #include "InvocationPrefixCollection.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/IR/Matchers.h"
 namespace mlir::pto::frontiersynch {
 // Construction evidence, not a general implication result. Imported selectors
 // certify endpoint existence; bridges intersect their guards. Folding chooses
@@ -124,8 +125,17 @@ FailureOr<Value> emitPrefixCrossing(
     detached.setInsertionPointToEnd(&scratch);
     auto result = e.emitContextual(root, detached, cut, context);
     if (failed(result)) {
-        error = e.lastEmissionError();
-        return failure();
+        if (!e.inactiveByThresholds(root)) {
+            error = e.lastEmissionError();
+            return failure();
+        }
+        // Uniformly false over all inputs: no historical value is required.
+        // Retain the demand record and emit only its inactive logical recipe.
+        scratch.clear();
+        detached.setInsertionPointToEnd(&scratch);
+        RegionExpressions::CutEmission inactiveContext;
+        result = e.emitContextual(e.boolean(false), detached, cut, inactiveContext);
+        if (failed(result)) { error = e.lastEmissionError(); return failure(); }
     }
     builder.getInsertionBlock()->getOperations().splice(builder.getInsertionPoint(), scratch.getOperations());
     return *result;
@@ -338,6 +348,7 @@ LogicalResult appendPrefixCrossing(
                  if (failed(active)) {
                      return failure();
                  }
+                 if (matchPattern(*active, m_Zero())) { return success(); }
                  auto branch = b.create<scf::IfOp>(targetCut->getLoc(), *active, false);
                  OpBuilder::InsertionGuard restore(b);
                  b.setInsertionPointToStart(branch.thenBlock());
@@ -355,6 +366,9 @@ LogicalResult appendPrefixCrossing(
             auto selected = emitPrefixCrossing(owner->expressions, root, targetCut, b, mapping, error);
             if (failed(selected)) {
                 return failure();
+            }
+            if (matchPattern(*selected, m_Zero())) {
+                return b.create<arith::ConstantIndexOp>(targetCut->getLoc(), 0).getResult();
             }
             auto rank = selectedPrefixRank(owner, source, captured, targetCut, b, mapping, state, error);
             if (failed(rank)) { return failure(); }

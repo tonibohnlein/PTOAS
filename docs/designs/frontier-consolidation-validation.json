@@ -1300,5 +1300,86 @@
       "address_space_limit_bytes": 4294967296,
       "timeout_seconds": 120.0
     }
+  },
+  "m7_threshold_inactivity": {
+    "build_initial": {
+      "command": [
+        "ninja",
+        "-C",
+        ".local/section8-refactor/source-pinned/candidate-build",
+        "-j2",
+        "pto-test-opt",
+        "pto-sync-input-test"
+      ],
+      "returncode": 0,
+      "status": "measurement_timeout",
+      "seconds": 900.0962685660925,
+      "maximum_rss_kib": 1174720,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 900.0
+    },
+    "build_finish": {
+      "command": [
+        "ninja",
+        "-C",
+        ".local/section8-refactor/source-pinned/candidate-build",
+        "-j2",
+        "pto-test-opt",
+        "pto-sync-input-test"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 79.3926904660184,
+      "maximum_rss_kib": 1035176,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 300.0
+    },
+    "focused_tests": {
+      "command": [
+        "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+        "-j1",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_region_expression.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_invocation_prefix.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_prefix.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_bounded_prefix_realization.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_bounded_inactive_emission.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_frontier_public_pipeline.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_allocation_session.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_physical_allocation.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 14.019748377148062,
+      "maximum_rss_kib": 140936,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "delta_logical_only": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "--mlir-disable-threading",
+        "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false",
+        "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+      ],
+      "returncode": 1,
+      "status": "finished",
+      "seconds": 11.615727724973112,
+      "maximum_rss_kib": 284984,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "focused_lit_passed": 8,
+    "source_sha256": {
+      "include/PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h": "6f2da43b5aa92d52cc41c4ae37449500e47a6c09a2b700b8058ac4cc52f25ebb",
+      "lib/PTO/Transforms/CMakeLists.txt": "2fafd9e149d58bb226d348d0649983c7cc6a6068b718fdc9b639785588d7d601",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RegionThresholdProof.cpp": "f5995b803a7f549bd48210b9356f67dcc7cb068043c762bb8dbc004e9555cbbd",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequencePrefix.cpp": "481f0c71ed096c3a109bfec0e709db0a3ce486404f71b67712b481dea9f9fe00",
+      "tools/pto-test-opt/RegionExpressionChecks.cpp": "dec6594f58ca6a2e5cc6271377a699f85a0e49e692a6a48e52acc1ad7de5659c",
+      "tools/pto-test-opt/InvocationPrefixChecks.cpp": "51a7061551a118c4576caec7c19c70d2190ec52d5ec22f86e5650afbe4444181",
+      "test/lit/pto/sync_invocation_prefix.pto": "75b6c9123266c680b486318755e5b51d077ecc8b7f2c89809cfc668c637cf642"
+    },
+    "reviews": "architecture and correctness accepted",
+    "delta_outcome": "logical refusal: guarded expression input belongs to another invocation",
+    "scope": "Uniform threshold inactivity proof and lazy sequence-prefix integration. General historical predicate emission and public Delta recovery remain open. Initial build reached external watchdog; resumed build succeeded."
   }
 }
