@@ -42,6 +42,7 @@
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
+LogicalResult checkSyncStorageMemberships(func::FuncOp, const pto::SyncInput&);
 bool checkBoundedRegionalQueries(const pto::frontiersynch::BoundedLifetimeDemandResult&,
     const pto::frontiersynch::BoundedLifetimeRecognition&, const pto::frontiersynch::PhaseIndex&,
     pto::frontiersynch::RegionalAnalysis&);
@@ -1228,6 +1229,8 @@ LogicalResult checkAnalysisSession(func::FuncOp function, pto::GMAliasPolicy pol
   return success();
 }
 LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &input) {
+  if (failed(checkSyncStorageMemberships(function, input))) { return failure(); }
+  if (function->hasAttr("test.membership_expect")) { return success(); }
   const auto& storage = input.accesses();
   llvm::outs() << "storage " << function.getSymName() << ": cells=" << storage.cells().size()
                << " all-materialized=" << storage.allAccessesMaterialized() << "\n";
