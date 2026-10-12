@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Interpret emitted control independently; compare payload closure and exact token matching.
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/InvocationPrefix.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/InvocationPrefixCollection.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -141,6 +143,14 @@ struct Execution {
             values[c] = n.getValue().getSExtValue();
         } else if (auto add = dyn_cast<arith::AddIOp>(op)) {
             values[add] = get(add.getLhs()) + get(add.getRhs());
+        } else if (auto divide = dyn_cast<arith::DivUIOp>(op)) {
+            auto divisor = uint64_t(get(divide.getRhs()));
+            if (!divisor) { return false; }
+            values[divide] = uint64_t(get(divide.getLhs())) / divisor;
+        } else if (auto remainder = dyn_cast<arith::RemUIOp>(op)) {
+            auto divisor = uint64_t(get(remainder.getRhs()));
+            if (!divisor) { return false; }
+            values[remainder] = uint64_t(get(remainder.getLhs())) % divisor;
         } else if (auto select = dyn_cast<arith::SelectOp>(op)) {
             values[select] = get(get(select.getCondition()) ? select.getTrueValue() : select.getFalseValue());
         } else if (auto compare = dyn_cast<arith::CmpIOp>(op)) {
@@ -149,6 +159,8 @@ struct Execution {
             if (invalid147) { values[compare] = a < b; }
             else if (compare.getPredicate() == arith::CmpIPredicate::ugt) {
                 values[compare] = uint64_t(a) > uint64_t(b);
+            } else if (compare.getPredicate() == arith::CmpIPredicate::ult) {
+                values[compare] = uint64_t(a) < uint64_t(b);
             } else if (compare.getPredicate() == arith::CmpIPredicate::eq) { values[compare] = a == b; }
             else { return false; }
         } else { return false; }
@@ -231,7 +243,7 @@ Graph reference(ArrayRef<unsigned> roles) {
 }
 // A WAIT gates the next payload start on its destination; earlier WAITs also
 // gate later starts through native start order. Tail waits have no payload sink.
-bool verifyTrace(ArrayRef<Event> events, ArrayRef<unsigned> roles) {
+bool verifyTrace(ArrayRef<Event> events, ArrayRef<unsigned> roles, const Graph* expected = nullptr) {
     const bool invalid229 = roles.size() > 31;
     if (invalid229) { return false; }
     auto graph = native(roles);
@@ -272,11 +284,11 @@ bool verifyTrace(ArrayRef<Event> events, ArrayRef<unsigned> roles) {
         if (!recordIds.insert(record).second) { return false; }
     }
     const bool invalid264 = next != roles.size() || publications.size() != consumed.size() ||
-        publications.size() != 2*counts[P]+counts[R];
+        publications.size() != (expected ? counts[P] : 2*counts[P]+counts[R]);
     if (invalid264) { return false; }
     close(graph);
     for (unsigned i = 0; i < graph.size(); ++i) { if ((graph[i] >> i) & 1) { return false; } }
-    return graph == reference(roles);
+    return graph == (expected ? *expected : reference(roles));
 }
 bool mutationChecks(ArrayRef<Event> original, ArrayRef<unsigned> roles) {
     std::vector<Event> events(original.begin(), original.end());
@@ -340,13 +352,122 @@ bool runCases(MLIRContext& context, bool loops, unsigned& cases) {
                                           std::string&) -> FailureOr<Value> { return Value{}; };
     return reject(invalid) && original == render(f.module->getOperation());
 }
+// A loop result chooses an earlier source only after all sources have run.
+// Supplied child interfaces have native order and no internal demands; the
+// independent graph below supplies the one selected crossing prerequisite.
+bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false)
+{
+    OpBuilder b(&context); auto loc = b.getUnknownLoc();
+    OwningOpRef<ModuleOp> module(ModuleOp::create(loc));
+    b.setInsertionPointToEnd(module->getBody());
+    auto payload = b.create<func::FuncOp>(loc, "payload", b.getFunctionType({b.getIndexType()}, {}));
+    payload.setPrivate();
+    SmallVector<Type> types(13, b.getI1Type()); types[0] = b.getIndexType();
+    auto function = b.create<func::FuncOp>(loc, "late_choice", b.getFunctionType(types, {}));
+    b.setInsertionPointToStart(function.addEntryBlock());
+    auto zero = b.create<arith::ConstantIndexOp>(loc, 0);
+    auto one = b.create<arith::ConstantIndexOp>(loc, 1);
+    auto two = b.create<arith::ConstantIndexOp>(loc, 2);
+    scf::ForOp outer;
+    Value count = function.getArgument(0);
+    if (nested) {
+        outer = b.create<scf::ForOp>(loc, zero, two, one);
+        b.setInsertionPointToStart(outer.getBody());
+        auto first = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, outer.getInductionVar(), zero);
+        count = b.create<arith::SelectOp>(loc, first, count, one);
+    }
+    auto loop = b.create<scf::ForOp>(loc, zero, count, one, ValueRange{function.getArgument(1)});
+    b.setInsertionPointToStart(loop.getBody());
+    auto source = b.create<func::CallOp>(loc, "payload", TypeRange{}, ValueRange{zero});
+    b.create<scf::YieldOp>(loc, loop.getRegionIterArgs());
+    b.setInsertionPointAfter(loop);
+    auto target = b.create<func::CallOp>(loc, "payload", TypeRange{}, ValueRange{two});
+    if (outer) { b.setInsertionPointAfter(outer); }
+    b.create<func::ReturnOp>(loc);
+    if (failed(verify(*module))) { return false; }
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto input = std::make_shared<pto::SyncInput>();
+    auto state = std::make_shared<fs::SequenceAnalysisState>(function, arena);
+    if (outer) { state->requiredOuterLoops.push_back(outer); }
+    std::vector<pto::CompoundInstanceElement> phases; phases.reserve(2);
+    for (auto [op, pipe] : std::vector<std::pair<Operation*, unsigned>>{{source, P}, {target, Q}}) {
+        phases.emplace_back(phases.size(), SmallVector<const pto::BaseMemInfo*>{},
+            SmallVector<const pto::BaseMemInfo*>{}, static_cast<pto::PipelineType>(pipe), op->getName());
+        phases.back().elementOp = op;
+        fs::Child child;
+        child.anchors.push_back({&phases.back(), {}, {op->getBlock(), op}, {op->getBlock(), op->getNextNode()}});
+        child.regional.anchors = child.anchors;
+        child.regional.expressions = arena;
+        const bool isSource = op == source.getOperation();
+        child.regional.occurrenceLoops.push_back(isSource && !phased ? loop : scf::ForOp{});
+        if (isSource && phased) {
+            child.regional.outerLoops = {{loop}};
+            child.regional.outerDivisors = {{2}};
+            child.regional.endpointEventGuard = [arena, induction = loop.getInductionVar()](fs::RegionalEvent) {
+                return arena->eq(arena->rem(arena->input(induction), arena->constant(2)),
+                                 arena->constant(0));
+            };
+        }
+        child.regional.presence = [arena, count, isSource, phased](fs::RegionalEvent event) {
+            auto visit = phased && isSource ? arena->add(event.visits.front(), event.visits.front()) : event.ordinal;
+            return isSource ? arena->lt(visit, arena->input(count)) : arena->boolean(true);
+        };
+        auto contribution = std::make_shared<fs::RegionalPrefixContribution>();
+        contribution->input = input; contribution->expressions = arena; contribution->function = function;
+        contribution->accessModel = child.regional.accessModel;
+        contribution->aliasPolicy = child.regional.gmAliasPolicy;
+        contribution->collect = [](fs::InvocationPrefixCollection&, std::string&) { return success(); };
+        child.regional.invocationPrefix = std::move(contribution);
+        state->children.push_back(std::move(child));
+    }
+    const auto first = state->port(0, 0, arena->constant(0),
+        phased ? std::vector<fs::Expr>{arena->constant(0)} : std::vector<fs::Expr>{});
+    const auto second = state->port(0, 0, arena->constant(phased ? 0 : 1),
+        phased ? std::vector<fs::Expr>{arena->constant(1)} : std::vector<fs::Expr>{});
+    const auto selected = state->selectPort(arena->input(loop.getResult(0)), first, second);
+    const auto consumer = state->port(1, 0, arena->constant(0));
+    auto selectedVisit = state->ports[selected].ordinal;
+    if (phased) {
+        selectedVisit = arena->add(state->ports[selected].visits.front(), state->ports[selected].visits.front());
+    }
+    state->crossings.push_back({selected, consumer, arena->lt(selectedVisit, arena->input(count))});
+    fs::InvocationPrefixCollection collection(function, input);
+    std::string diagnostic;
+    if (failed(state->collectPrefix(collection, diagnostic))) { llvm::errs() << diagnostic << "\n"; return false; }
+    auto& spec = collection.recipe();
+    spec.privateScalarControl = true; spec.planId = 19; spec.sourceBounds = {{P, nested ? 4U : 3U}};
+    fs::PrivateStateError error;
+    const auto before = render(module->getOperation());
+    auto prepared = fs::materializeInvocationPrefix(function, spec, error);
+    if (failed(prepared)) { llvm::errs() << error.message << "\n"; return false; }
+    for (unsigned trips = 0; trips <= 3; ++trips) {
+        for (unsigned chooseFirst = 0; chooseFirst < 2; ++chooseFirst) {
+            Execution actual; actual.run((*prepared)->function, trips, chooseFirst);
+            std::vector<unsigned> roles(trips, 0); roles.push_back(2);
+            if (nested) { roles.push_back(0); roles.push_back(2); }
+            auto expected = native(roles);
+            const auto selectedVisit = chooseFirst ? 0U : phased ? 2U : 1U;
+            if (selectedVisit < trips) { edge(expected, 2 * selectedVisit + 1, 2 * trips); }
+            if (nested && chooseFirst) { edge(expected, 2 * (trips + 1) + 1, 2 * (trips + 2)); }
+            close(expected);
+            if (!actual.valid || !verifyTrace(actual.events, roles, &expected)) {
+                llvm::errs() << "late source choice mismatch: trips=" << trips << " first=" << chooseFirst
+                             << " nested=" << nested << " phased=" << phased << " interpreted=" << actual.valid << "\n";
+                return false;
+            }
+        }
+    }
+    return before == render(module->getOperation());
+}
 } // namespace
 bool runInvocationPrefixChecks() {
     MLIRContext context; context.disableMultithreading();
     context.loadDialect<func::FuncDialect, scf::SCFDialect, arith::ArithDialect, pto::PTODialect>();
     unsigned cases = 0;
-    const bool invalid332 = !runCases(context, false, cases) || !runCases(context, true, cases);
+    const bool invalid332 = !runCases(context, false, cases) || !runCases(context, true, cases) ||
+        !lateSourceChoice(context, false) || !lateSourceChoice(context, true) ||
+        !lateSourceChoice(context, false, true);
     if (invalid332) { return false; }
-    llvm::outs() << "invocation prefix checks passed executions=" << cases << "\n";
+    llvm::outs() << "invocation prefix checks passed executions=" << cases << " late-choice=24\n";
     return true;
 }

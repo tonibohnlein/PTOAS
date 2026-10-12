@@ -432,3 +432,32 @@ tests. The compliance prefilter's brace findings were inspected as parser false
 positives; every reported body is braced. This component supplies provenance for
 the consumer adapter; it does not itself make Gated Delta logically executable.
 Receipts are under `.local/three-paths/consolidation/m7-evaluation-provenance/`.
+
+
+## Capture primitive source ranks before selecting a boundary
+
+Sequence prefix realization now decomposes a folded source boundary into its
+original primitive ports. Each primitive saves its executed-source ordinal at
+its source cut. The consumer evaluates the retained choice DAG and selects the
+saved rank. Port discovery is iterative, validates topological child identities,
+and visits shared nodes once. It preserves occurrence coordinates and all phase
+site/invocation/event guards; executing an original operation alone does not
+identify which phase view it represents. One invocation coordinator still owns
+publication, watermark advancement and terminal cleanup.
+
+Eight focused lit tests pass. The new independent graph fixture checks 24
+executions with a source selected by a later loop result, zero/short loops,
+repeated enclosing invocations and two phase views sharing one original anchor.
+It checks exact payload closure, matching, cleanup and unchanged source IR using
+supplied regional interfaces and the ordinary presence check. The phase case
+would detect dropping phase identity guards. The nested case covers repeated
+execution, but is not independently a proof that removing rank resets is unsafe:
+its absent selected source also makes the consumer guard false. Architecture and
+correctness reviews accepted the component.
+
+The public Gated Delta MayNotAlias logical-only replay still refuses with
+`guarded expression input belongs to another invocation`. Provenance and delayed
+choice do not yet materialize historical predicate evaluations at the consumer.
+That replay overlapped one serial focused-test process, so its timing is coverage
+evidence only. Physical allocation, C++ emission and device execution were not
+attempted. Receipts share the `m7-evaluation-provenance` directory above.
