@@ -71,6 +71,7 @@ struct BackendAttempt {
     bool expandedSelectorsAttempted = false;
     std::string expandedSelectorError;
     std::optional<bool> endpoints;
+    std::string prefixEmissionError;
     // The first successful synchronization request owns its detached fragment
     // until PrepareLogical consumes it. Later preparations instantiate afresh.
     std::unique_ptr<PreparedLogicalPlan> pendingLogical;
@@ -137,6 +138,9 @@ struct AnalysisSessionState {
     std::map<std::size_t, std::map<AnalysisBackend, BackendAttempt>> attempts;
     // Canonical original-loop construction is independent of root/regional exports.
     std::map<std::pair<std::size_t, AnalysisBackend>, BackendAttempt> loopAttempts;
+    // Some regional producers return fresh exact mathematical views. Keep each
+    // tagged view alive until consumers lock their weak identity; no rebuilding.
+    std::map<const MathematicalResult*, std::shared_ptr<const MathematicalResult>> regionalMathematics;
     // Nonrecursive arithmetic leaf construction is shared by a sequence's
     // local adapter and subsequent standalone requests for the same region.
     std::map<std::size_t, BackendAttempt> arithmeticRegionAttempts;

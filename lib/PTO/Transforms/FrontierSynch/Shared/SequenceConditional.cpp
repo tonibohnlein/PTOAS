@@ -136,6 +136,7 @@ bool SequenceAnalysisState::conditionalChild(const StructureNode& node)
         auto guard = thenArm ? condition : negate(condition);
         Child child;
         if (resolveOriginal) {
+            child.prefixMathematics = body.retainedMathematics.lock();
             child.originalNode = id;
             child.originalArmGuard = guard;
         }

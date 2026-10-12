@@ -8,6 +8,9 @@
 // Detached preparation consumes retained mathematics. Producer and reducer
 // work is never repeated after a missing synchronization export.
 #include "AnalysisSessionInternal.h"
+#include "Shared/InvocationPrefixCollection.h"
+#include "Shared/InvocationSourceBounds.h"
+#include "Shared/PrivateStatePlan.h"
 #include "WholeInvocationIdentity.h"
 #include "Structured/OrderCoveredPeriodic.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
@@ -55,6 +58,33 @@ bool sameOriginalCoordinates(const RegionalAnalysis& a, const RegionalAnalysis& 
     return true;
 }
 } // namespace
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetainedPrefix(
+    std::shared_ptr<const MathematicalResult> demands, std::string& error)
+{
+    error.clear();
+    const bool root = demands && demands->region == 0 && demands->input == storage && program &&
+        function && isa<ModuleOp>(function->getParentOp());
+    if (!root) { error = "invocation prefix requires this session's complete original root"; return failure(); }
+    const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
+    // This is the PTO logical target: existing arith scalar operations and SCF
+    // control, not a claim of physical-prefix allocation or final codegen. The
+    // driver may set its default EmitC backend attribute after this pass.
+    const bool target = !bits.isScalable() && bits.getFixedValue() == 64;
+    if (!target) { error = "invocation prefix requires 64-bit scalar control"; return failure(); }
+    AnalysisProfileScope profile(sessionState->ledger, "prefix-preparation", demands->region, demands->backend);
+    profile.constructed();
+    InvocationPrefixCollection collection(function);
+    if (failed(collectInvocationPrefix(demands, collection, error))) { return failure(); }
+    auto bounds = inferInvocationSourceBounds(function, collection.recipe().sources, error);
+    if (failed(bounds)) { return failure(); }
+    collection.recipe().sourceBounds = std::move(*bounds);
+    collection.recipe().privateScalarControl = true;
+    PrivateStateError diagnostic;
+    auto prepared = preparePrivateStatePlan(function, collection.recipe(), demands,
+                                            PrivateStateTarget::ScalarControl64, diagnostic);
+    if (failed(prepared)) { error = diagnostic.message; }
+    return prepared;
+}
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetained(const MathematicalResult& demands)
 {
     std::string error;

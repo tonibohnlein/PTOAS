@@ -796,8 +796,19 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver(
     std::shared_ptr<const MathematicalResult> retainedNumerical)
 {
     SequenceRegionResolver resolver;
+    auto tagged = [this](const RegionalAnalysis& source, std::shared_ptr<const MathematicalResult> owner) {
+        RegionalAnalysis exported = source;
+        const std::weak_ptr<const MathematicalResult> empty;
+        const bool alreadyTagged = exported.retainedMathematics.owner_before(empty) ||
+            empty.owner_before(exported.retainedMathematics);
+        if (!alreadyTagged && owner) {
+            sessionState->regionalMathematics.try_emplace(owner.get(), owner);
+            exported.retainedMathematics = owner;
+        }
+        return exported;
+    };
     resolver.form = [this](std::size_t region, ProgramForm form) { recognizeForm(region, form); };
-    resolver.region = [this, retainedNumerical](std::size_t region, bool endpoints, std::string& error)
+    resolver.region = [this, retainedNumerical, tagged](std::size_t region, bool endpoints, std::string& error)
         -> FailureOr<RegionalAnalysis> {
         AnalysisRequest request;
         request.region = region;
@@ -808,7 +819,7 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver(
         auto exports = result.regionalExports ? result.regionalExports :
             (result.mathematical ? result.mathematical->regionalDemands : nullptr);
         if (result.status == AnalysisStatus::Ready && exports) {
-            return *exports;
+            return tagged(*exports, result.mathematical);
         }
         for (const auto& obligation : result.obligations) {
             if (!error.empty()) { error += "; "; }
@@ -836,7 +847,7 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver(
         return backend == AnalysisBackend::Arithmetic ? produceArithmeticRegion(region, error) :
                                                         produceLoopBackend(backend, error, region);
     };
-    resolver.exports = [this](std::size_t region, AnalysisBackend backend, std::string& error)
+    resolver.exports = [this, tagged](std::size_t region, AnalysisBackend backend, std::string& error)
         -> FailureOr<RegionalAnalysis> {
         auto demands = backend == AnalysisBackend::Arithmetic ? produceArithmeticRegion(region, error) :
             produceLoopBackend(backend, error, region);
@@ -845,7 +856,7 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver(
             backend == AnalysisBackend::BoundedLifetime ? boundedExports(*demands, true, error) :
             varyingExports(*demands, true, error);
         if (!result) { return failure(); }
-        return *result;
+        return tagged(*result, demands);
     };
     resolver.finiteArithmetic = [this](std::size_t region, std::string& error) {
         return finiteArithmeticRegion(region, error);

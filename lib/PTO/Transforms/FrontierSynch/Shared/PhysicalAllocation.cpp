@@ -846,6 +846,9 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
     if (!function) {
         return failure();
     }
+    if (function->hasAttr("pto.prefix_protocol")) {
+        return function.emitError("invocation prefix physical allocation requires a missing lifetime export");
+    }
     auto cyclic = function->getAttrOfType<DictionaryAttr>(CyclicAllocationAttr);
     auto strategy = cyclic ? cyclic.getAs<StringAttr>("strategy") : StringAttr{};
     if (strategy && strategy.getValue() == "executed-family-counters") {

@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: ptoas --pto-arch=a3 %s -o - | FileCheck %s
+// Scalar/control lowering only: physical prefix events require a separate allocation export.
+module {
+  func.func private @private_acquire(index)
+  func.func @private_state_control(%n: index, %take: i1) -> i64 {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %false = arith.constant false
+    %state:3 = scf.for %i = %zero to %n step %one
+        iter_args(%count = %zero, %watermark = %zero, %history = %false) -> (index, index, i1) {
+      %next = arith.addi %count, %one : index
+      %selected = scf.if %history -> index {
+        scf.yield %next : index
+      } else {
+        scf.yield %watermark : index
+      }
+      scf.for %j = %watermark to %selected step %one {
+        func.call @private_acquire(%j) : (index) -> ()
+      }
+      %later = arith.cmpi ugt, %selected, %watermark : index
+      %advanced = arith.select %later, %selected, %watermark : index
+      scf.yield %next, %advanced, %take : index, index, i1
+    }
+    %result = arith.index_cast %state#0 : index to i64
+    return %result : i64
+  }
+}
+// CHECK-LABEL: AICORE int64_t private_state_control(
+// CHECK: for (
+// CHECK: for (
+// CHECK: private_acquire(
+// CHECK: return

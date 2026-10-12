@@ -134,3 +134,8 @@ Future work should distinguish two changes:
 The manual plan is a useful comparison for that second task. It is not a reason
 to add a GroupNorm-specific recognizer or silently change the current
 allocation-only policy.
+
+The [decode investigation and Section 7 comparison](frontier-decode-event-scarcity.md)
+relates this protocol, prefill and decode to the current draft's merges,
+return handshakes and allocation certificates. These are future resource
+mechanisms, separate from changes to Section 5.4 demand algorithms.

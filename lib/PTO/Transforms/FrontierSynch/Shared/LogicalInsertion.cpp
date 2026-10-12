@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Validate prepared endpoints, then insert logical commands at actual cuts.
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
+#include "PrivateStatePlan.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PTO/IR/PTO.h"
@@ -21,14 +22,17 @@
 #include <set>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
+PreparedLogicalPlan::PreparedLogicalPlan(int64_t planId) : planId(planId) {}
 void prepareAllocationSupport(PreparedLogicalPlan& plan)
 {
+    if (plan.privateState) { return; }
     auto prepare = std::move(plan.allocationPreparation);
     plan.allocationPreparation = {};
     if (prepare) { prepare(plan); }
 }
 std::shared_ptr<PreparedLogicalPlan> takeRegionalAllocationView(PreparedLogicalPlan& plan)
 {
+    if (plan.privateState) { return {}; }
     auto view = std::make_shared<PreparedLogicalPlan>(plan.planId);
     view->completeInvocation = plan.completeInvocation;
     view->nestedIdentities = plan.nestedIdentities;
@@ -502,6 +506,7 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
     if (!function) {
         return failure();
     }
+    if (plan.privateState) { return plan.privateState->insert(function, plan); }
     function.getContext()->getOrLoadDialect<PTODialect>();
     function.getContext()->getOrLoadDialect<arith::ArithDialect>();
     function.getContext()->getOrLoadDialect<scf::SCFDialect>();

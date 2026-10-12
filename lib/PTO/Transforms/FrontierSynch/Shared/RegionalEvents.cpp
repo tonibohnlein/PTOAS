@@ -19,6 +19,7 @@ bool matchesRegionalContext(const RegionalAnalysis& region, RegionalContextView 
 }
 void invalidateDerivedRegionalCertificates(RegionalAnalysis& region)
 {
+    region.retainedMathematics.reset();
     region.numerical.reset();
     region.arithmeticRelations.reset();
     region.relations.reset();

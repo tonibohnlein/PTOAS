@@ -117,6 +117,9 @@ AnalysisOutcome FrontierAnalysis::requestIdentity(const AnalysisRequest& request
         if (!*attempt.endpoints) {
             result.status = AnalysisStatus::UnmetObligation;
             result.stage = AnalysisStage::Synchronization;
+            if (!attempt.prefixEmissionError.empty()) {
+                result.obligations.push_back({result.stage, attempt.prefixEmissionError});
+            }
             result.obligations.push_back({result.stage, "retained identity child endpoint export is unavailable"});
         }
     }

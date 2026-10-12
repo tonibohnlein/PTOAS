@@ -168,7 +168,9 @@ add_llvm_executable(pto-sync-input-test
   IterationPredicateChecks.cpp
   BoundedEmissionRecipeChecks.cpp
   BoundedPredicateHistoryChecks.cpp
+  BoundedPrefixRealizationChecks.cpp
   InvocationSourceBoundsChecks.cpp
+  PrivateStatePlanChecks.cpp
   InvocationPrefixChecks.cpp
   StructuredPrivateStateChecks.cpp
   ExpressionRelationChecks.cpp

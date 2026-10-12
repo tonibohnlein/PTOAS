@@ -190,6 +190,8 @@ private:
     std::shared_ptr<const MathematicalResult> constructLoopBackend(
         AnalysisBackend backend, std::size_t region, std::string& error);
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareRetained(const MathematicalResult& demands);
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareRetainedPrefix(
+        std::shared_ptr<const MathematicalResult> demands, std::string& error);
     std::shared_ptr<AnalysisSessionState> sessionState;
     func::FuncOp function;
     SmallVector<ArithmeticLimits> wholeArithmeticProfiles{{8, 8, 1, 8}, {8, 8, 2, 8}};

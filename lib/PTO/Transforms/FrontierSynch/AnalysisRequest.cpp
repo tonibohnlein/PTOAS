@@ -357,6 +357,9 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
         result.available.synchronization = *attempt.endpoints;
         if (!*attempt.endpoints) {
             result.stage = AnalysisStage::Synchronization;
+            if (!attempt.prefixEmissionError.empty()) {
+                result.obligations.push_back({result.stage, attempt.prefixEmissionError});
+            }
             // Report the retained endpoint obligation, including terminal
             // cleanup/history failures, without rerunning preparation.
             if (demands.sequenceDemands && !demands.sequenceDemands->insertionError.empty()) {
@@ -507,6 +510,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical
     profile.constructed();
     if (construction.logicalPreparations != UINT64_MAX) { ++construction.logicalPreparations; }
     auto prepared = prepareRetained(*result.mathematical);
+    const bool rootFallback = failed(prepared) && result.mathematical->region == 0;
+    if (rootFallback) {
+        prepared = prepareRetainedPrefix(result.mathematical, retained->second.prefixEmissionError);
+    }
     if (succeeded(prepared)) { (*prepared)->mathematicalOwner = result.mathematical; }
     refreshProgramContractAudit(*program);
     return prepared;
@@ -595,6 +602,9 @@ DictionaryAttr FrontierAnalysis::allocateIdentity(const MathematicalResult& dema
 }
 LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan)
 {
+    // Private invocation prefixes require their own lifetime export. Never reuse
+    // a direct-endpoint certificate cached for the same mathematical graph.
+    if (plan.privateState) { return failure(); }
     // Allocation is a separate request on this prepared graph. Its readiness is
     // returned here and stored in plan.allocationCertificate, not in the earlier
     // Analyze outcome's available exports or logical Ready status.
