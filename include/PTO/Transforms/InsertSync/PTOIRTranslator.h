@@ -28,6 +28,12 @@ namespace pto {
  
 class PTOIRTranslator {
 public:
+  struct AliasConstructionStats {
+    uint64_t candidates = 0, indexedRecords = 0, hashCalls = 0;
+    uint64_t hashedAddresses = 0, equalityChecks = 0, retainedClones = 0;
+  };
+  const AliasConstructionStats &aliasConstructionStats() const { return aliasStats_; }
+
   PTOIRTranslator(SyncIRs &syncIR,
                   Buffer2MemInfoMap &buffer2MemInfoMap,
                   OpAccessMemInfos &opAccessMemInfos,
@@ -55,6 +61,7 @@ public:
   void print();
  
 private:
+  AliasConstructionStats aliasStats_;
   func::FuncOp func_;
   unsigned index; // 当前 SyncIR 节点的索引计数器
   

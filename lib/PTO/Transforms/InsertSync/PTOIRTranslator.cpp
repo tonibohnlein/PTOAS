@@ -15,6 +15,7 @@
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOAccessRegion.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/Hashing.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
@@ -30,6 +31,7 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <unordered_set>
 
 #define DEBUG_TYPE "pto-ir-translator"
 
@@ -112,19 +114,27 @@ static pto::AddressSpace getTileAddressSpace(pto::TileBufType type) {
   return pto::AddressSpace::MAT;
 }
 
-static void
-appendUniqueMemInfo(SmallVectorImpl<std::unique_ptr<BaseMemInfo>> &infos,
-                    std::unique_ptr<BaseMemInfo> candidate) {
-  if (!candidate) {
-    return;
+// Keys borrow immutable records only for one alias-union call. Other translator
+// operations may mutate geometry, so this index must not survive that call.
+struct MemInfoHash {
+  PTOIRTranslator::AliasConstructionStats *stats;
+  std::size_t operator()(const BaseMemInfo *info) const {
+    ++stats->hashCalls;
+    stats->hashedAddresses += info->baseAddresses.size();
+    return static_cast<std::size_t>(llvm::hash_combine(
+        info->baseBuffer.getAsOpaquePointer(), info->rootBuffer.getAsOpaquePointer(),
+        static_cast<unsigned>(info->scope), info->allocateSize,
+        info->hasKnownPhysicalAddresses, info->aliasesUnknownRange,
+        llvm::hash_combine_range(info->baseAddresses.begin(), info->baseAddresses.end())));
   }
-  if (llvm::any_of(infos, [&](const std::unique_ptr<BaseMemInfo> &info) {
-        return info && *info == *candidate;
-      })) {
-    return;
+};
+struct MemInfoEqual {
+  PTOIRTranslator::AliasConstructionStats *stats;
+  bool operator()(const BaseMemInfo *left, const BaseMemInfo *right) const {
+    ++stats->equalityChecks;
+    return *left == *right;
   }
-  infos.emplace_back(std::move(candidate));
-}
+};
 
 } // namespace
 
@@ -581,6 +591,7 @@ static pto::TCoreType getSyncPhysicalCoreType(Operation *anchor) {
 // 1. 构建入口
 // ============================================================================
 LogicalResult PTOIRTranslator::Build() {
+  aliasStats_ = {};
   Region &funcRegion = func_.getBody();
   UpdateKernelArgMemInfo();
   if (failed(RecursionIR(&funcRegion))) {
@@ -1355,16 +1366,26 @@ void PTOIRTranslator::UpdateYieldOpInfo(scf::YieldOp yieldOp) {
 // 8. 辅助函数
 // ============================================================================
 void PTOIRTranslator::UpdateAliasBufferInfo(Value result, Value source) {
-  if (!result || !source) {
+  if (!result || !source || result == source || !buffer2MemInfoMap_.contains(source)) {
     return;
   }
-  if (!buffer2MemInfoMap_.contains(source)) {
-    return;
-  }
-
   auto &resultMemInfoVec = buffer2MemInfoMap_[result];
-  for (auto &parentInfo : buffer2MemInfoMap_[source]) {
-    appendUniqueMemInfo(resultMemInfoVec, parentInfo->clone(result));
+  std::unordered_set<const BaseMemInfo *, MemInfoHash, MemInfoEqual> membership(
+      0, MemInfoHash{&aliasStats_}, MemInfoEqual{&aliasStats_});
+  for (const auto &info : resultMemInfoVec) {
+    if (info) {
+      ++aliasStats_.indexedRecords;
+      membership.insert(info.get());
+    }
+  }
+  for (const auto &parentInfo : buffer2MemInfoMap_[source]) {
+    ++aliasStats_.candidates;
+    // clone substitutes the destination baseBuffer, part of exact equality.
+    auto candidate = parentInfo->clone(result);
+    if (membership.insert(candidate.get()).second) {
+      ++aliasStats_.retainedClones;
+      resultMemInfoVec.emplace_back(std::move(candidate));
+    }
   }
 }
 
