@@ -31,8 +31,8 @@ separate commit. Infrastructure alone does not complete a production milestone.
 | 1. Measured baseline | Aggregate allocation summary/query/proof/lane timing and inner-loop counts; precise retained-prefix refusal; pinned baseline replay. | Profiling preserves commands and certificates; bounded diagnostic storage; classify the Persistent GEMM hot stage and Delta blocker. | Complete; evidence below |
 | 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; logical-only allocation request complete; lane scheduling pending |
 | 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Sequence preparation failure isolation complete; broader capability consolidation pending |
-| 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; persistent memberships and shared fact views pending |
-| 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction complete; numerical port projection and shared source facts pending |
+| 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; borrowed regional adapter complete; global compact memberships and shared fact views pending |
+| 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection and shared source facts pending |
 | 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Pending |
 | 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Regional prefix ownership, singleton forwarding and crossing presence complete; executable selectors and public Delta emission pending |
 | 8. Proof reuse and validation | Share lazy inactive-proof and premise contexts, replay mappings and safe Boolean conversion work. Close known guard-equivalence/oracle gaps and run pinned paired campaigns. | No unexplained acceptance loss or changed output; report eleven kernels and 783-input corpus by stage, wall time, memory and inner work. | Lazy inactive-proof setup shared; broader proof reuse and campaign pending |
@@ -375,3 +375,33 @@ numerical adapter. The revised fixture explicitly requests that existing adapter
 without changing eligibility checks or production dispatch. Architecture and
 correctness reviews accepted the change and fixture repair. Receipts are under
 `.local/three-paths/consolidation/m5-single-reduction/`.
+
+
+## Borrow memberships through the regional numerical-body adapter
+
+The finite numerical-body adapter now scans borrowed atom memberships and retains
+rank rows and compact per-cell writer/reader extrema. It no longer retains an
+expanded occurrence/access word or unrequested per-atom scan witnesses. The
+metadata-only reducer input has one entry per payload. Query exports use the
+retained reduction directly. Original occurrence coordinates, input/frame checks,
+physical protection and recurring-GM/macro refusals are preserved.
+
+This saves incidence-sized copies and retained intermediates; it does not reduce
+the mathematical incidence term. The scan visits the incidences once and a second
+borrowed pass constructs extrema with per-occurrence mode consolidation. Ordered
+containers add logarithmic work. `scanWork` counts the scanner, not that second
+boundary pass. Global fine partition expansion remains a separate open task.
+
+Seven focused lit tests pass. The atom/effect scaling oracle compares borrowed
+and materialized generators/rank rows, verifies shared memberships remain shared,
+and checks absence of retained witnesses. Independent boundary expectations cover
+read-only cells, multiple pipes, prefix/suffix readers, duplicate accesses and
+read-modify-write occurrences. Invalid atoms and macro envelopes are rejected.
+Session tests cover contexts, ownership and coordinates. Both source reviews
+accepted the component.
+
+An initial validation build preserved mirror timestamps and left a stale test
+object across the result-type change. Rebuilding all affected header consumers
+resolved that infrastructure failure; the final seven-test receipt is the
+acceptance evidence. Future mirror updates must refresh timestamps. Receipts are
+under `.local/three-paths/consolidation/m4-borrowed-regional/`.

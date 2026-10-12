@@ -10,15 +10,25 @@
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplate.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Finite/ExplicitAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Finite/LifetimeScanInput.h"
 namespace mlir::pto::frontiersynch {
+// Finite body order and extrema, without retained effect-to-atom incidences.
+// The accompanying NumericTemplate owns the compact source memberships.
+struct NumericBodyAnalysis {
+    SmallVector<const CompoundInstanceElement*> phases;
+    StorageScanResult scan;
+    StorageScanWork scanWork;
+    ExplicitReduction reduction;
+    std::vector<ExplicitCellBoundary> storageBoundary;
+};
 struct NumericBodyMathematics {
     NumericTemplate body;
-    std::shared_ptr<const ExplicitAnalysis> demands;
+    std::shared_ptr<const NumericBodyAnalysis> demands;
     std::shared_ptr<const SyncInput> inputOwner;
     std::shared_ptr<const PhaseIndex> indexOwner;
     std::shared_ptr<const NormalizedControlDescription> normalized;
 };
-std::shared_ptr<const ExplicitAnalysis> analyzeNumericBody(const NumericTemplate& body, std::string& error);
+std::shared_ptr<const NumericBodyAnalysis> analyzeNumericBody(const NumericTemplate& body, std::string& error);
 FailureOr<RegionalAnalysis> exportNumericBody(func::FuncOp function,
     const SyncInput& input, const NumericBodyMathematics& mathematics,
     std::shared_ptr<RegionExpressions> expressions, ArrayRef<scf::ForOp> enclosing, std::string& error);

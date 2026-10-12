@@ -12,7 +12,35 @@
 #include "../Shared/RecognitionInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 namespace mlir::pto::frontiersynch {
-std::shared_ptr<const ExplicitAnalysis> analyzeNumericBody(const NumericTemplate& body, std::string& error)
+namespace {
+bool collectBodyBoundaries(const StorageScanInput& input, std::vector<ExplicitCellBoundary>& output)
+{
+    std::map<uint32_t, ExplicitCellBoundary> cells;
+    for (std::size_t id = 0; id < input.size; ++id) {
+        const auto occurrence = input.occurrence(id);
+        std::map<uint32_t, CellAccess> modes;
+        if (!input.accesses(id, [&](const CellAccess& access) {
+                auto& mode = modes[access.atom];
+                mode.read |= access.read; mode.write |= access.write;
+                return true;
+            })) { return false; }
+        for (const auto& [atom, mode] : modes) {
+            auto& cell = cells[atom]; cell.atom = atom;
+            if (mode.write) {
+                if (!cell.firstWriter) { cell.firstWriter = occurrence.payload; }
+                cell.lastWriter = occurrence.payload;
+                cell.lastReaders.clear();
+            } else if (mode.read) {
+                if (!cell.firstWriter) { cell.firstReaders.try_emplace(occurrence.pipe, occurrence.payload); }
+                cell.lastReaders[occurrence.pipe] = occurrence.payload;
+            }
+        }
+    }
+    for (auto& [atom, cell] : cells) { output.push_back(std::move(cell)); }
+    return true;
+}
+} // namespace
+std::shared_ptr<const NumericBodyAnalysis> analyzeNumericBody(const NumericTemplate& body, std::string& error)
 {
     if (body.recurringGlobal) {
         error = "relative recurring GM storage has no regional body adapter"; return {};
@@ -31,25 +59,36 @@ std::shared_ptr<const ExplicitAnalysis> analyzeNumericBody(const NumericTemplate
         error = "single-body normalization cannot expand the selected enclosing loop; adapter not implemented yet";
         return {};
     }
-    auto word = numericTemplateOccurrences(body, 1);
-    if (failed(word)) { error = "finite body contains invalid physical atoms"; return {}; }
-    auto analysis = std::make_shared<ExplicitAnalysis>();
-    analysis->occurrences = std::move(*word);
-    std::vector<StorageGenerator> supplied, native;
-    for (auto [a, b] : body.uniformConflicts) {
-        if (a >= analysis->occurrences.size() || b >= analysis->occurrences.size()) {
-            error = "finite body conflict has invalid payload reference"; return {};
+    auto analysis = std::make_shared<NumericBodyAnalysis>();
+    const bool complete = withNumericTemplateStorage(body, 1, [&](const StorageScanInput& source) {
+        // The reducer consumes only payload identities and pipe labels. Keep
+        // this O(P) scratch separate from the borrowed physical memberships.
+        std::vector<ExplicitEffects> metadata;
+        metadata.reserve(source.size);
+        for (std::size_t id = 0; id < source.size; ++id) {
+            const auto occurrence = source.occurrence(id);
+            metadata.push_back({occurrence.payload, occurrence.pipe, {}});
         }
-        if (ptoStorageProtection().protectsScalar(analysis->occurrences[a].pipe,
-                                                  analysis->occurrences[b].pipe)) { continue; }
-        if (a != b) { supplied.push_back({std::min(a, b), std::max(a, b)}); }
+        std::vector<StorageGenerator> supplied, native;
+        for (auto [a, b] : body.uniformConflicts) {
+            if (a >= metadata.size() || b >= metadata.size()) {
+                error = "finite body conflict has invalid payload reference"; return false;
+            }
+            if (ptoStorageProtection().protectsScalar(metadata[a].pipe, metadata[b].pipe)) { continue; }
+            if (a != b) { supplied.push_back({std::min(a, b), std::max(a, b)}); }
+        }
+        for (auto [a, b] : body.valueDemands) { supplied.push_back({a, b}); }
+        for (auto [a, b] : body.nativePrerequisites) { native.push_back({a, b}); }
+        analysis->scan = scanStorageLifetimes(source, supplied, ptoStorageProtection(), false, &analysis->scanWork);
+        if (!analysis->scan.error.empty()) { error = analysis->scan.error; return false; }
+        analysis->reduction = reduceExplicitDemands(metadata, analysis->scan.generators, native);
+        if (!analysis->reduction.error.empty()) { error = analysis->reduction.error; return false; }
+        return collectBodyBoundaries(source, analysis->storageBoundary);
+    });
+    if (!complete) {
+        if (error.empty()) { error = "finite body contains invalid physical atoms"; }
+        return {};
     }
-    for (auto [a, b] : body.valueDemands) { supplied.push_back({a, b}); }
-    for (auto [a, b] : body.nativePrerequisites) { native.push_back({a, b}); }
-    analysis->scan = scanStorageLifetimes(analysis->occurrences, supplied, ptoStorageProtection());
-    if (!analysis->scan.error.empty()) { error = analysis->scan.error; return {}; }
-    analysis->reduction = reduceExplicitDemands(analysis->occurrences, analysis->scan.generators, native);
-    if (!analysis->reduction.error.empty()) { error = analysis->reduction.error; return {}; }
     for (const auto& payload : body.payloads) { analysis->phases.push_back(payload.phase); }
     return analysis;
 }
@@ -103,27 +142,18 @@ FailureOr<RegionalAnalysis> exportNumericBody(func::FuncOp function,
                                     effect.discharge == TemplateDischarge::None});
         }
     }
-    std::map<uint32_t, RegionalStorageBoundary> cells;
-    for (const auto& occurrence : analysis->occurrences) {
-        std::map<uint32_t, CellAccess> modes;
-        for (const auto& access : occurrence.accesses) {
-            auto& mode = modes[access.atom]; mode.read |= access.read; mode.write |= access.write;
+    for (const auto& boundary : analysis->storageBoundary) {
+        if (boundary.atom >= body.atoms.size()) {
+            error = "finite body boundary has an invalid physical atom"; return failure();
         }
-        for (const auto& [atom, mode] : modes) {
-            auto& cell = cells[atom]; cell.cell = body.atoms[atom];
-            if (mode.write) {
-                if (cell.firstWriters.empty()) { cell.firstWriters.push_back(selector(occurrence.payload)); }
-                cell.lastWriters = {selector(occurrence.payload)};
-                cell.lastReaders.clear();
-            } else if (mode.read) {
-                if (cell.firstWriters.empty() && cell.firstReaders[occurrence.pipe].empty()) {
-                    cell.firstReaders[occurrence.pipe].push_back(selector(occurrence.payload));
-                }
-                cell.lastReaders[occurrence.pipe] = {selector(occurrence.payload)};
-            }
-        }
+        RegionalStorageBoundary cell;
+        cell.cell = body.atoms[boundary.atom];
+        if (boundary.firstWriter) { cell.firstWriters.push_back(selector(*boundary.firstWriter)); }
+        if (boundary.lastWriter) { cell.lastWriters.push_back(selector(*boundary.lastWriter)); }
+        for (auto [pipe, type] : boundary.firstReaders) { cell.firstReaders[pipe].push_back(selector(type)); }
+        for (auto [pipe, type] : boundary.lastReaders) { cell.lastReaders[pipe].push_back(selector(type)); }
+        out.storageBoundary.push_back(std::move(cell));
     }
-    for (auto& [atom, cell] : cells) { out.storageBoundary.push_back(std::move(cell)); }
     const auto owners = std::make_pair(mathematics.inputOwner, mathematics.indexOwner);
     out.presence = [analysis, arena, zero, owners](RegionalEvent event) -> std::optional<Expr> {
         (void)owners; // Keep borrowed phases and shared access records alive after session reset.
@@ -135,7 +165,7 @@ FailureOr<RegionalAnalysis> exportNumericBody(func::FuncOp function,
     out.reachability = [analysis, arena, presence](RegionalEvent a, RegionalEvent b) -> std::optional<Expr> {
         auto pa = presence(a), pb = presence(b);
         if (!pa || !pb) { return std::nullopt; }
-        auto reaches = explicitEventPrecedes(*analysis, {a.type, a.kind}, {b.type, b.kind});
+        auto reaches = explicitEventPrecedes(analysis->reduction, {a.type, a.kind}, {b.type, b.kind});
         if (!reaches) { return std::nullopt; }
         return *reaches ? arena->land(*pa, *pb) : arena->boolean(false);
     };

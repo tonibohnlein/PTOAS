@@ -207,11 +207,16 @@ ExplicitAnalysis analyzeExplicit(ArrayRef<const CompoundInstanceElement*> phases
 std::optional<bool> explicitEventPrecedes(const ExplicitAnalysis& analysis,
                                         PeriodicEvent source, PeriodicEvent target)
 {
-    const auto& reduction = analysis.reduction;
+    if (!analysis.error.empty()) { return std::nullopt; }
+    return explicitEventPrecedes(analysis.reduction, source, target);
+}
+std::optional<bool> explicitEventPrecedes(const ExplicitReduction& reduction,
+                                        PeriodicEvent source, PeriodicEvent target)
+{
     auto validKind = [](PeriodicEventKind kind) {
         return kind == PeriodicEventKind::Start || kind == PeriodicEventKind::Completion;
     };
-    if (!analysis.error.empty() || !reduction.error.empty() || source.type >= reduction.payloads.size() ||
+    if (!reduction.error.empty() || source.type >= reduction.payloads.size() ||
         target.type >= reduction.payloads.size() || !validKind(source.kind) || !validKind(target.kind)) {
         return std::nullopt;
     }

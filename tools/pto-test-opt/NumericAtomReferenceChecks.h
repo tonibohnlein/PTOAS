@@ -331,6 +331,24 @@ bool sharedScanFamilies(MLIRContext* context)
                 full.counterOverflow || compact.counterOverflow) {
                 return false;
             }
+            form.specializedBody = true;
+            form.result.state = fs::RecognitionState::Applicable;
+            std::string error;
+            auto regional = fs::analyzeNumericBody(form, error);
+            const auto firstVisit = llvm::ArrayRef<fs::ExplicitEffects>(*explicitWord).take_front(effects);
+            const auto expected = fs::scanStorageLifetimes(firstVisit, {}, fs::ptoStorageProtection());
+            const auto reduced = fs::reduceExplicitDemands(firstVisit, expected.generators);
+            if (!regional || !error.empty() || !sameScan(expected, regional->scan, false) ||
+                !regional->scan.witnesses.empty() || regional->scanWork.incidenceVisits != c / 2 ||
+                regional->scanWork.retainedWitnesses || regional->storageBoundary.size() != atoms ||
+                regional->reduction.startRanks != reduced.startRanks ||
+                regional->reduction.completionRanks != reduced.completionRanks) {
+                return false;
+            }
+            for (const auto& cell : regional->storageBoundary) {
+                if (cell.firstWriter != 0 || cell.lastWriter != effects - 1 ||
+                    !cell.firstReaders.empty() || !cell.lastReaders.empty()) { return false; }
+            }
             for (const auto& payload : form.payloads) {
                 for (const auto& effect : payload.effects) {
                     if (effect.sharedAtoms != backing || !effect.atoms.empty()) {
@@ -342,12 +360,61 @@ bool sharedScanFamilies(MLIRContext* context)
     }
     return true;
 }
+bool regionalBodyBoundaries(MLIRContext* context)
+{
+    fs::NumericTemplate form;
+    form.specializedBody = true;
+    form.result.state = fs::RecognitionState::Applicable;
+    std::vector<pto::CompoundInstanceElement> phases;
+    phases.reserve(5);
+    for (unsigned atom = 0; atom < 3; ++atom) {
+        form.atoms.push_back({pto::AddressSpace::VEC, atom * 4, atom * 4 + 4});
+    }
+    for (unsigned id = 0; id < 5; ++id) {
+        const auto pipe = id == 1 || id == 4 ? pto::PipelineType::PIPE_MTE1 : pto::PipelineType::PIPE_V;
+        phases.emplace_back(id, SmallVector<const pto::BaseMemInfo*>{}, SmallVector<const pto::BaseMemInfo*>{},
+                            pipe, OperationName("func.call", context));
+        fs::TemplatePayload payload;
+        payload.phase = &phases.back();
+        auto effect = [&](pto::SyncAccessMode mode, std::vector<std::size_t> atoms) {
+            fs::TemplateEffect access;
+            access.mode = mode; access.sharedAtoms = std::make_shared<const std::vector<std::size_t>>(std::move(atoms));
+            payload.effects.push_back(std::move(access));
+        };
+        effect(pto::SyncAccessMode::Read, {1, 2});
+        effect(pto::SyncAccessMode::Read, {2}); // Duplicate/RMW consolidation.
+        effect(id == 2 ? pto::SyncAccessMode::Write : pto::SyncAccessMode::Read, {0});
+        if (id == 2 || id == 4) { effect(pto::SyncAccessMode::Write, {2}); }
+        form.payloads.push_back(std::move(payload));
+    }
+    std::string error;
+    auto body = fs::analyzeNumericBody(form, error);
+    if (!body || !error.empty() || body->storageBoundary.size() != 3 || !body->scan.witnesses.empty()) { return false; }
+    const uint32_t v = static_cast<uint32_t>(pto::PipelineType::PIPE_V);
+    const uint32_t m = static_cast<uint32_t>(pto::PipelineType::PIPE_MTE1);
+    const std::unordered_map<uint32_t, uint32_t> first{{v, 0}, {m, 1}}, last{{v, 3}, {m, 4}};
+    const auto& a = body->storageBoundary[0];
+    const auto& b = body->storageBoundary[1];
+    const auto& c = body->storageBoundary[2];
+    if (a.atom != 0 || a.firstWriter != 2 || a.lastWriter != 2 || a.firstReaders != first || a.lastReaders != last ||
+        b.atom != 1 || b.firstWriter || b.lastWriter || b.firstReaders != first || b.lastReaders != last ||
+        c.atom != 2 || c.firstWriter != 2 || c.lastWriter != 4 || c.firstReaders != first || !c.lastReaders.empty()) {
+        return false;
+    }
+    phases[0].macroOpInstanceId = 0;
+    if (fs::analyzeNumericBody(form, error)) { return false; }
+    phases[0].macroOpInstanceId = -1;
+    form.payloads.back().effects.back().sharedAtoms =
+        std::make_shared<const std::vector<std::size_t>>(std::vector<std::size_t>{3});
+    error.clear();
+    return !fs::analyzeNumericBody(form, error) && !error.empty();
+}
 } // namespace atomchecks
 bool numericAtomReferenceChecks(mlir::MLIRContext* context)
 {
     return atomchecks::cacheReuse(context) && atomchecks::cacheContextsAndFailure() &&
            atomchecks::borrowedScanBoundaries() && atomchecks::ownedProtection(context) &&
-           atomchecks::sharedScanFamilies(context);
+           atomchecks::sharedScanFamilies(context) && atomchecks::regionalBodyBoundaries(context);
 }
 } // namespace
 #endif
