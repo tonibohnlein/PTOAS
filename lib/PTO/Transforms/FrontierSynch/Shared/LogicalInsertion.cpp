@@ -169,6 +169,10 @@ LogicalResult validatePieces(func::FuncOp function, const PreparedLogicalPlan& p
                 return function.emitError("matching endpoint pieces have different coordinate arities");
             }
             const auto& family = *found->second;
+            if (publish && family.targetChoices && !family.targetChoices->loop() &&
+                !qualifyTerminalCleanupCuts({family.sourceCut, family.targetChoices->cuts().back()}, endpoint.guard)) {
+                return function.emitError("terminal cleanup requires one selected publication per invocation");
+            }
             const auto key = Namespace{family.sourcePipe, family.targetPipe, family.displacement};
             const auto& choices = publish ? family.sourceChoices : family.targetChoices;
             const auto primary = publish ? family.sourceCut.before : family.targetCut.before;
@@ -287,7 +291,7 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
                     choices->cuts().size() < 2 ||
                     choices->cuts().front().before != primary.before ||
                     !(choices->loop() ? qualifyEndpointCutChoices(choices->loop(), choices->cuts()) :
-                      qualifyTerminalCleanupCuts(choices->cuts()))) {
+                      qualifyTerminalCleanupCuts(choices->cuts(), choices->consumerPredicate()))) {
                     return function.emitError("invalid structural endpoint alternatives");
                 }
                 for (const auto& cut : choices->cuts()) {

@@ -40,6 +40,10 @@ struct RegionalAllocationGroup {
     // empty means unavailable. Members/record IDs are never duplicated to
     // obtain a lane view. An empty selector pair denotes an unused lane.
     std::vector<RegionalAllocationLane> lanes;
+    // Early publications may survive until the invocation's terminal epilogue.
+    // lastTarget bounds only the consumer alternative; no internal successor
+    // may reuse this palette after that bound. Activity includes every SET.
+    bool terminalCleanup = false;
 };
 struct RegionalAllocationSummary { std::vector<RegionalAllocationGroup> groups; };
 // Preserve certified child rules while combining compatible palette formulas.

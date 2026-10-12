@@ -144,9 +144,9 @@ def main():
             path.write_text(recomposed.replace("array<i64: 5>", f"array<i64: {n}>"))
             validate(json.loads(invoke(tool, "--structured-trace", path)), [n])
             checked += 1
-        # The whole dispatcher can replay a pure scalar upper bound through an
-        # endpoint-capable route. The direct sequence adapter still exports its
-        # queries if that value is unavailable at its earlier SET cut.
+        # A future upper bound need not be replayed at the earlier SET cut.
+        # The shared publication construction also prepares the direct sequence
+        # adapter, with complementary consumption at the function epilogue.
         unavailable = source.replace("    scf.for %i = %zero to %n",
             "    %late = arith.addi %n, %one : index\n    scf.for %i = %zero to %late")
         unavailable = unavailable.replace(
@@ -156,8 +156,12 @@ def main():
         replayed = json.loads(invoke(tool, "--structured-trace", path))
         assert replayed["accepted"] and not replayed["trace"]["error"], replayed
         report = json.loads(invoke(tool, "--sequence-analysis", path))
-        assert not report["error"] and not report["prepared"], report
+        assert not report["error"] and report["prepared"], report
         assert report["queries_available"] and report["unchanged"], report
+        for n in (-2, -1, 0, 1, 4):
+            path.write_text(unavailable.replace("array<i64: 5>", f"array<i64: {n}>"))
+            validate(json.loads(invoke(tool, "--structured-trace", path)), [n + 1], reader_only=True)
+            checked += 1
         # Recognition/insertion size must not depend on runtime trip count.
         path.write_text(source.replace("array<i64: 5>", "array<i64: 1000000000>"))
         large = invoke(tool, "--insert-logical-library", path)

@@ -355,7 +355,17 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
             if (succeeded(prepared)) { attempt.pendingLogical = std::move(*prepared); }
         }
         result.available.synchronization = *attempt.endpoints;
-        if (!*attempt.endpoints) { result.stage = AnalysisStage::Synchronization; }
+        if (!*attempt.endpoints) {
+            result.stage = AnalysisStage::Synchronization;
+            // Report the retained endpoint obligation, including terminal
+            // cleanup/history failures, without rerunning preparation.
+            if (demands.sequenceDemands && !demands.sequenceDemands->insertionError.empty()) {
+                result.obligations.push_back({result.stage, demands.sequenceDemands->insertionError});
+            }
+            if (demands.finiteGuardedDemands && !demands.finiteGuardedDemands->insertionError.empty()) {
+                result.obligations.push_back({result.stage, demands.finiteGuardedDemands->insertionError});
+            }
+        }
     }
     if (result.stage != AnalysisStage::None) {
         result.status = AnalysisStatus::UnmetObligation;

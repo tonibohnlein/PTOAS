@@ -8,6 +8,7 @@
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
+#include "PTO/Transforms/FrontierSynch/Shared/GuardedPublication.h"
 #include "mlir/IR/Dominance.h"
 namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(ArrayRef<scf::ForOp> enclosing,
@@ -336,26 +337,41 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         // Each crossing selects one source and one consumer occurrence in
         // this region invocation. Guarded port choices change that pair, never
         // its multiplicity; enclosing repetition must drop this certificate.
+        auto sourcePresence = regionalPresence(ca.regional, a.event());
+        if (!sourcePresence) { return fail("sequence publication requires exact source presence"); }
+        auto publication = prepareGuardedPublication(function, expressions, aa.after, ab.before,
+            endpointGuard(a, retained), retained, emit, error, *targetGuard,
+            SelectedPublication{*sourcePresence, endpointGuard(a, *sourcePresence)});
+        if (failed(publication)) {
+            llvm::raw_string_ostream diagnostic(error);
+            diagnostic << "; crossing record " << record << " from " << aa.phase->elementOp->getLoc()
+                       << " to " << ab.phase->elementOp->getLoc();
+            return false;
+        }
+        result->families.back().targetChoices = publication->targetChoices;
         allocationCrossings.push_back({p, q, 1, {{record, 0, 0,
             {typeOffsets[a.child] + a.type, a.ordinal, PeriodicEventKind::Start, a.visits},
             {typeOffsets[b.child] + b.type, b.ordinal, PeriodicEventKind::Completion, b.visits},
-            allocationActive, {}, true}}});
-        auto sourceGuard = emit(endpointGuard(a, retained), aa.after.before);
+            publication->cleanupCut ? publication->publicationGuard : allocationActive, {}, true}}, {},
+            bool(publication->cleanupCut)});
         auto sourceIdentity = emit(c(0), aa.after.before);
         auto targetIdentity = emit(c(0), ab.before.before);
         auto sourceMember = emit(c(record), aa.after.before);
         auto targetMember = emit(c(record), ab.before.before);
-        if (failed(sourceGuard) || failed(sourceIdentity) || failed(targetIdentity) ||
+        if (failed(sourceIdentity) || failed(targetIdentity) ||
             failed(sourceMember) || failed(targetMember)) {
             return fail("sequence SET predicate or matching identity unavailable at its cut");
         }
         PreparedLogicalEndpoint set{aa.after.before, LogicalCommandKind::Set, p, q, record,
-                                     *sourceGuard, *sourceIdentity};
+                                     publication->sourceGuard, *sourceIdentity};
         set.memberCoordinates.push_back(*sourceMember); set.records.push_back(record); set.piece = nextPiece++;
         PreparedLogicalEndpoint wait{ab.before.before, LogicalCommandKind::Wait, p, q, record,
                                       *targetGuard, *targetIdentity};
         wait.memberCoordinates.push_back(*targetMember); wait.records.push_back(record); wait.piece = nextPiece++;
         result->endpoints.push_back(std::move(set)); result->endpoints.push_back(std::move(wait));
+        if (failed(appendPublicationCleanup(*publication, record, p, q, {c(0)},
+            expressions, emit, *result, error))) { return false; }
+        nextPiece = result->endpoints.size();
         return true;
     };
     for (const auto& edge : crossings) {
