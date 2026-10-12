@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalNumericalInterface.h"
 #include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RepeatedRegionInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RepeatedAllocation.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RepeatedLaneAllocation.h"
 #include <map>
@@ -152,6 +153,10 @@ bool check(func::FuncOp function, Operation* anchor, scf::ForOp outer, scf::ForO
         child.cost.boundaryBytes = UINT64_MAX;
         child.cost.retainedExpressionNodes = UINT64_MAX;
         auto joined = fs::composeRegionalSequence(function, arena, {child, child}, false, false);
+        // This oracle targets the numerical adapter independently of dispatch
+        // cost preferences; preserve its ordinary eligibility checks.
+        if (joined.error.empty() && joined.state && !joined.state->numerical &&
+            !joined.state->numericalCrossingReduction()) { return false; }
         if (joined.cost.arithmeticRegions != UINT64_MAX || joined.cost.boundaryBytes != UINT64_MAX ||
             joined.cost.retainedExpressionNodes != UINT64_MAX) { return false; }
         auto region = fs::sequenceRegionalResult(joined);
