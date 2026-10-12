@@ -249,4 +249,59 @@ SharedHandoffAllocation allocateDirectedHandoffsByQuery(
     }
     return result;
 }
+SharedHandoffAllocation allocateOrderedDirectedHandoffs(
+    llvm::ArrayRef<SharedHandoff> handoffs, llvm::ArrayRef<uint32_t> waitOrder,
+    const std::function<bool(uint32_t, uint32_t)>& precedes)
+{
+    SharedHandoffAllocation result;
+    if (handoffs.size() >= UINT32_MAX || waitOrder.size() != handoffs.size() || !precedes) {
+        result.error = "ordered handoff dimensions or reuse query are invalid";
+        return result;
+    }
+    std::vector<uint8_t> seen(handoffs.size(), 0);
+    Directions waits;
+    for (auto index : waitOrder) {
+        if (index >= handoffs.size() || seen[index]) {
+            result.error = "ordered handoff WAIT order is not a permutation";
+            return result;
+        }
+        seen[index] = 1;
+        waits[{handoffs[index].sourcePipe, handoffs[index].targetPipe}].push_back(index);
+    }
+    const auto sets = directionGroups(handoffs);
+    std::vector<uint32_t> local(handoffs.size());
+    result.lanes.resize(handoffs.size());
+    result.exactMinimum = true;
+    for (const auto& group : sets) {
+        const auto& sources = group.second;
+        const auto count = static_cast<uint32_t>(sources.size());
+        for (uint32_t i = 0; i < count; ++i) { local[sources[i]] = i; }
+        std::vector<uint32_t> thresholds(count);
+        uint32_t next = 0;
+        for (auto previous : waits.at(group.first)) {
+            // Each failed query advances next; each WAIT contributes at most
+            // one successful query. Matching need not preserve list order.
+            while (next < count && !precedes(previous, sources[next])) { ++next; }
+            if (next <= local[previous]) {
+                result.error = "ordered handoff reuse violates acyclic matching";
+                result.lanes.clear();
+                return result;
+            }
+            thresholds[local[previous]] = next;
+        }
+        std::vector<std::vector<uint32_t>> released(count + 1);
+        std::vector<uint32_t> available;
+        uint32_t lanes = 0;
+        for (uint32_t i = 0; i < count; ++i) {
+            available.insert(available.end(), released[i].begin(), released[i].end());
+            uint32_t lane;
+            if (available.empty()) { lane = lanes++; }
+            else { lane = available.back(); available.pop_back(); }
+            result.lanes[sources[i]] = lane;
+            released[thresholds[i]].push_back(lane);
+        }
+        result.budget = std::max(result.budget, uint64_t(lanes));
+    }
+    return result;
+}
 } // namespace mlir::pto::frontiersynch

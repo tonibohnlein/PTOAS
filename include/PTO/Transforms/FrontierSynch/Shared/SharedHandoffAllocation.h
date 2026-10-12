@@ -54,5 +54,17 @@ SharedHandoffAllocation allocateDirectedHandoffs(
 SharedHandoffAllocation allocateDirectedHandoffsByQuery(
     llvm::ArrayRef<SharedHandoff> handoffs,
     const std::function<bool(uint32_t, uint32_t)>& precedes, uint64_t capacity);
+// Stronger certified contract: handoffs are in SET command order and waitOrder
+// is a permutation in WAIT command order, independently within each direction.
+// Both lists are command chains in one fixed, acyclic plan with closed matching.
+// precedes(i,j) answers exact WAIT(i)->SET(j) reachability. These semantic
+// premises are supplied by the caller, not discovered by this routine.
+// Find monotone suffix thresholds in WAIT order and bucket-color their lifetime
+// intervals. Return the exact directional minimum even above physical capacity;
+// this path never constructs the dense reuse relation. O(h) queries and storage
+// and O(h log d) grouping work for d directions (fixed by the pipe set).
+SharedHandoffAllocation allocateOrderedDirectedHandoffs(
+    llvm::ArrayRef<SharedHandoff> handoffs, llvm::ArrayRef<uint32_t> waitOrder,
+    const std::function<bool(uint32_t, uint32_t)>& precedes);
 } // namespace mlir::pto::frontiersynch
 #endif

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <functional>
 #include <set>
+#include <numeric>
 namespace fs = mlir::pto::frontiersynch;
 namespace {
 using Matrix = std::vector<std::vector<uint8_t>>;
@@ -166,6 +167,77 @@ bool directedNamespaces()
         scarce.error.empty() && scarce.budget == 2 &&
         queried.error.empty() && queried.budget == 1 && queries == 1;
 }
+bool orderedCommandGraphs()
+{
+    constexpr uint32_t count = 3, nodes = 2 * count;
+    std::vector<uint32_t> waits{0, 1, 2};
+    const std::vector<fs::SharedHandoff> handoffs(count, {0, 1});
+    do {
+        for (unsigned mask = 0; mask < (1U << (count * count)); ++mask) {
+            // Independent command graph: SET and WAIT chains, matching edges,
+            // and arbitrary returns. Reject cycles after ordinary closure.
+            Matrix graph(nodes, std::vector<uint8_t>(nodes));
+            for (uint32_t i = 1; i < count; ++i) {
+                graph[i - 1][i] = graph[count + i - 1][count + i] = 1;
+            }
+            for (uint32_t i = 0; i < count; ++i) {
+                graph[waits[i]][count + i] = 1;
+                for (uint32_t j = 0; j < count; ++j) {
+                    graph[count + i][j] = (mask >> (i * count + j)) & 1U;
+                }
+            }
+            for (uint32_t k = 0; k < nodes; ++k) {
+                for (uint32_t i = 0; i < nodes; ++i) {
+                    for (uint32_t j = 0; j < nodes; ++j) { graph[i][j] |= graph[i][k] && graph[k][j]; }
+                }
+            }
+            bool cyclic = false;
+            for (uint32_t i = 0; i < nodes; ++i) { cyclic |= graph[i][i]; }
+            if (cyclic) { continue; }
+            Matrix order(count, std::vector<uint8_t>(count));
+            for (uint32_t i = 0; i < count; ++i) {
+                for (uint32_t j = 0; j < count; ++j) { order[waits[i]][j] = graph[count + i][j]; }
+            }
+            unsigned queries = 0;
+            auto allocated = fs::allocateOrderedDirectedHandoffs(handoffs, waits,
+                [&](uint32_t i, uint32_t j) { ++queries; return order[i][j] != 0; });
+            if (!valid(allocated, order) || !allocated.exactMinimum ||
+                allocated.budget != bruteMinimum(order) || queries > 2 * count) { return false; }
+        }
+    } while (std::next_permutation(waits.begin(), waits.end()));
+    return true;
+}
+bool orderedScalingAndValidation()
+{
+    constexpr unsigned count = 4096;
+    std::vector<fs::SharedHandoff> handoffs(count, {0, 1});
+    std::vector<uint32_t> waits(count);
+    std::iota(waits.begin(), waits.end(), 0);
+    uint64_t queries = 0;
+    auto allocated = fs::allocateOrderedDirectedHandoffs(handoffs, waits, [&](uint32_t i, uint32_t j) {
+        ++queries; return j >= i + 7;
+    });
+    if (!allocated.error.empty() || !allocated.exactMinimum || allocated.budget != 7 ||
+        queries > 2 * count || allocated.lanes.size() != count) { return false; }
+    std::vector<uint32_t> last(7, UINT32_MAX);
+    for (uint32_t i = 0; i < count; ++i) {
+        auto lane = allocated.lanes[i];
+        if (lane >= last.size() || (last[lane] != UINT32_MAX && i < last[lane] + 7)) { return false; }
+        last[lane] = i;
+    }
+    auto never = [](uint32_t, uint32_t) { return false; };
+    auto empty = fs::allocateOrderedDirectedHandoffs({}, {}, never);
+    if (!empty.error.empty() || !empty.exactMinimum || empty.budget) { return false; }
+    for (const auto& invalidOrder : std::vector<std::vector<uint32_t>>{{}, {0, 0}, {0, 2}}) {
+        auto bad = fs::allocateOrderedDirectedHandoffs({{0, 1}, {0, 1}}, invalidOrder, never);
+        if (bad.error.empty() || !bad.lanes.empty()) { return false; }
+    }
+    auto self = fs::allocateOrderedDirectedHandoffs({{0, 1}}, {0}, [](uint32_t, uint32_t) { return true; });
+    auto missing = fs::allocateOrderedDirectedHandoffs({{0, 1}}, {0}, {});
+    auto directions = fs::allocateOrderedDirectedHandoffs({{0, 1}, {1, 0}, {0, 1}}, {1, 2, 0}, never);
+    return !self.error.empty() && !missing.error.empty() && directions.error.empty() &&
+        directions.exactMinimum && directions.budget == 2;
+}
 bool invalid()
 {
     std::vector<fs::SharedHandoff> handoffs(3, {0, 1});
@@ -180,10 +252,12 @@ bool invalid()
 } // namespace
 int runSharedHandoffAllocationChecks()
 {
-    if (!examples() || !queryExamples() || !invalid() || !exhaustive() || !directedNamespaces()) {
+    if (!examples() || !queryExamples() || !invalid() || !exhaustive() || !directedNamespaces() ||
+        !orderedCommandGraphs() || !orderedScalingAndValidation()) {
         llvm::errs() << "shared handoff allocation check failed\n";
         return 1;
     }
     llvm::outs() << "shared handoff allocation: greedy fallback and 2048 orders match brute chain partitions\n";
+    llvm::outs() << "ordered allocation: command closure oracle and 4096-handoff seven-ID failure stay linear\n";
     return 0;
 }

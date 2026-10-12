@@ -89,11 +89,57 @@ FailureOr<PhysicalAllocationPlan> decodeFiniteAllocation(
     }
     SharedHandoffAllocation allocation;
     if (ranked) {
-        allocation = allocateDirectedHandoffsByQuery(handoffs, [&](uint32_t from, uint32_t to) {
+        auto precedes = [&](uint32_t from, uint32_t to) {
             const auto& a = ranks[from]; const auto& b = ranks[to];
             return handoffs[from].targetPipe == handoffs[to].sourcePipe ? a.target <= b.source :
                 evidence[to][a.targetColumn] >= a.targetRank;
-        }, eligibleIds.size());
+        };
+        if (certificate.get("wait_order")) {
+            auto order = certificate.getAs<DenseI64ArrayAttr>("wait_order");
+            if (!order || order.size() != static_cast<int64_t>(handoffs.size())) {
+                return function.emitError("invalid finite WAIT command order"), failure();
+            }
+            std::vector<uint32_t> waits;
+            std::vector<uint8_t> present(handoffs.size(), 0);
+            using Direction = std::pair<uint32_t, uint32_t>;
+            std::map<Direction, uint32_t> priorSets, priorWaits;
+            for (uint32_t i = 0; i < handoffs.size(); ++i) {
+                const auto& current = ranks[i];
+                const auto prefix = evidence[i][current.targetColumn];
+                const Direction direction{handoffs[i].sourcePipe, handoffs[i].targetPipe};
+                auto previous = priorSets.find(direction);
+                if (prefix >= current.targetRank || (previous != priorSets.end() &&
+                    (prefix < evidence[previous->second][current.targetColumn] ||
+                     (current.source == ranks[previous->second].source &&
+                      prefix != evidence[previous->second][current.targetColumn])))) {
+                    return function.emitError("finite SET ranks do not form an ordered command chain"), failure();
+                }
+                priorSets[direction] = i;
+            }
+            for (auto raw : order.asArrayRef()) {
+                if (raw < 0 || uint64_t(raw) >= handoffs.size() || present[raw]) {
+                    return function.emitError("finite WAIT order is not a permutation"), failure();
+                }
+                const auto i = static_cast<uint32_t>(raw);
+                present[i] = 1;
+                const Direction direction{handoffs[i].sourcePipe, handoffs[i].targetPipe};
+                auto previous = priorWaits.find(direction);
+                if (previous != priorWaits.end()) {
+                    const auto& a = ranks[previous->second];
+                    const auto& b = ranks[i];
+                    if (a.target > b.target || a.targetRank > b.targetRank ||
+                        ((a.target == b.target) != (a.targetRank == b.targetRank))) {
+                        return function.emitError("finite WAIT ranks do not form an ordered command chain"), failure();
+                    }
+                }
+                priorWaits[direction] = i;
+                waits.push_back(i);
+            }
+            allocation = allocateOrderedDirectedHandoffs(handoffs, waits, precedes);
+        } else {
+            // Older certificates lack the stronger ordered-WAIT contract.
+            allocation = allocateDirectedHandoffsByQuery(handoffs, precedes, eligibleIds.size());
+        }
         if (!allocation.error.empty()) { return function.emitError(allocation.error), failure(); }
     } else if (exact) {
         allocation = allocateDirectedHandoffs(handoffs, evidence, eligibleIds.size());
