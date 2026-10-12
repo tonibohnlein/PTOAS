@@ -66,6 +66,7 @@ FailureOr<SmallVector<RegionExpressions::Id>> RegionExpressions::import(
         const Id id = pending.pop_back_val();
         if (!seen.insert(id).second) { continue; }
         order.push_back(id); source.appendOperands(source.nodes[id], pending);
+        if (auto evaluation = source.evaluation(id)) { pending.push_back(evaluation->ordinal); }
     }
     llvm::sort(order);
     if (work) {
@@ -87,6 +88,39 @@ FailureOr<SmallVector<RegionExpressions::Id>> RegionExpressions::import(
         else { result = binary(node.kind, memo.lookup(node.a), memo.lookup(node.b)); }
         if (result == invalid) { return failure(); }
         memo[id] = result;
+    }
+    SmallVector<Id> evaluationRoots;
+    // Metadata dependencies are imported as ordinary expression roots first.
+    // Register afterwards: destination inputs may have been interned before
+    // their imported ordinals. The source registry certifies acyclic identity.
+    for (Id id : order) {
+        if (auto evaluation = source.evaluation(id)) {
+            evaluation->ordinal = memo.lookup(evaluation->ordinal);
+            if (!registerEvaluation(memo.lookup(id), *evaluation)) { return failure(); }
+            evaluationRoots.push_back(memo.lookup(id));
+        }
+    }
+    // Separately acyclic arenas can form a metadata cycle when merged through
+    // previously unannotated Inputs. Check the reachable destination graph,
+    // including existing provenance, before publishing any imported record.
+    llvm::DenseMap<Id, uint8_t> colors;
+    SmallVector<std::pair<Id, bool>> stack;
+    for (auto root : evaluationRoots) {
+        stack.push_back({root, false});
+        while (!stack.empty()) {
+            auto [id, done] = stack.pop_back_val();
+            if (done) { colors[id] = 2; continue; }
+            auto color = colors.lookup(id);
+            if (color == 1) { return failure(); }
+            if (color == 2) { continue; }
+            colors[id] = 1;
+            if (work && *work != UINT64_MAX) { ++*work; }
+            stack.push_back({id, true});
+            SmallVector<Id> dependencies;
+            appendOperands(nodes[id], dependencies);
+            if (auto evaluation = this->evaluation(id)) { dependencies.push_back(evaluation->ordinal); }
+            for (auto dependency : dependencies) { stack.push_back({dependency, false}); }
+        }
     }
     SmallVector<Id> imported;
     for (Id id : roots) { imported.push_back(memo.lookup(id)); }

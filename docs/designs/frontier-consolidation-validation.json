@@ -1098,5 +1098,71 @@
     "scope": "removes retained expanded body accesses and unrequested witnesses; still traverses incidences for scan and boundary construction",
     "validation_note": "Initial timestamp-preserving mirror update left stale ABI consumer; rebuilt all affected headers before final tests",
     "reviews": "architecture and correctness source reviews accepted"
+  },
+  "m7_evaluation_provenance": {
+    "build": {
+      "command": [
+        "ninja",
+        "-C",
+        ".local/section8-refactor/source-pinned/candidate-build",
+        "-j2",
+        "pto-test-opt",
+        "pto-sync-input-test"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 16.018438939005136,
+      "maximum_rss_kib": 1022344,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 300.0
+    },
+    "final_incremental_build": {
+      "command": [
+        "ninja",
+        "-C",
+        ".local/section8-refactor/source-pinned/candidate-build",
+        "-j2",
+        "pto-test-opt",
+        "pto-sync-input-test"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 8.71160350786522,
+      "maximum_rss_kib": 1022144,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "focused_tests": {
+      "command": [
+        "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+        "-j1",
+        "-v",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_iteration_predicate_context.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_invocation_prefix.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_bounded_predicate_history.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_bounded_prefix_realization.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_structured_private_state.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_prefix.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_endpoint_retry.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_frontier_public_pipeline.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 10.112351932097226,
+      "maximum_rss_kib": 140720,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 240.0
+    },
+    "focused_lit_passed": 8,
+    "source_sha256": {
+      "include/PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h": "2d990e6a1b3698850d84d3172070e6afc890a2d1ff276be489fe0821e8ad92f3",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RegionExpressions.cpp": "d617cd0b27123ada42886a04f8bc889594ba38f1a2e282e282db4aa42f4f08e6",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RegionSubstitution.cpp": "925375df9248c1b84189af97727809091d70e95640b23e22e7636eb99de22777",
+      "lib/PTO/Transforms/FrontierSynch/Shared/IterationPredicates.h": "c983c1ffbac8a880c2f31013a1fc92e8956c35630a398cf4147b8f7171fa9e68",
+      "tools/pto-test-opt/IterationPredicateChecks.cpp": "21660519195f467fdcd352c5f38fd671fbfff800e2622ab1f767f776ab137557"
+    },
+    "reviews": "architecture and correctness accepted",
+    "scope": "evaluation identity/import/rollback only; executable snapshot adapter remains open",
+    "validation_note": "broad rebuild resumed after external watchdog; final test-only const accessor fix; final focused tests overlapped one serial Delta coverage replay, not performance evidence"
   }
 }

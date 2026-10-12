@@ -405,3 +405,30 @@ object across the result-type change. Rebuilding all affected header consumers
 resolved that infrastructure failure; the final seven-test receipt is the
 acceptance evidence. Future mirror updates must refresh timestamps. Receipts are
 under `.local/three-paths/consolidation/m4-borrowed-regional/`.
+
+
+## Preserve opaque evaluation identity across regional exports
+
+The shared expression arena now records an opaque Boolean input's original SSA
+value, tracked loop, and exact visit ordinal. The arena retains the placeholder
+owner after its producer is destroyed. This records evaluation identity only;
+it does not certify availability at an endpoint, definition presence, or unique
+execution through an intervening loop. Consumers must establish those conditions.
+
+Imports translate ordinal dependencies and preserve the original source identity.
+They reject conflicting annotations and cycles created by merging two arenas.
+Failed imports and nested speculative construction roll back both DAG nodes and
+new provenance records, including records attached to preexisting inputs.
+Ordinary substitution leaves opaque inputs atomic; coordinate rebinding requires
+a distinct evaluated input. This prevents an unrelated arithmetic substitution
+from silently changing which original predicate evaluation an input denotes.
+
+Eight focused lit tests pass, including producer lifetime, ordinal remapping,
+conflicting metadata, nested rollback, and cross-arena cycle rejection. Source
+architecture and correctness reviews accepted the component. The initial broad
+header rebuild reached its external watchdog; the resumed build found a test-only
+const MLIR accessor error, which was corrected before the final passing build and
+tests. The compliance prefilter's brace findings were inspected as parser false
+positives; every reported body is braced. This component supplies provenance for
+the consumer adapter; it does not itself make Gated Delta logically executable.
+Receipts are under `.local/three-paths/consolidation/m7-evaluation-provenance/`.

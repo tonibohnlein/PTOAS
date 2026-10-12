@@ -62,7 +62,7 @@ public:
             }
         }
         auto argument = symbols.addArgument(value.getType(), loop.getLoc());
-        auto id = e.input(argument);
+        auto id = e.evaluatedInput(argument, value, loop, ordinal);
         identities.try_emplace(key, id);
         recipes.try_emplace(argument, std::make_pair(value, ordinal));
         return id;
