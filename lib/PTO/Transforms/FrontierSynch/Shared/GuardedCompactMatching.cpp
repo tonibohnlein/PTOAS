@@ -192,8 +192,9 @@ GuardedCompactPreparation prepareGuardedCompactMatching(func::FuncOp function, s
         return out;
     }
     CircuitEndpoints emitter(function, arena, anchors);
-    emitter.recover = [state](Id root, OpBuilder& builder, Operation* cut, RegionExpressions::CutEmission& context) {
-        return state->predicates.recover(root, builder, cut, context);
+    emitter.prepareExpression = [state](Id root, OpBuilder& builder, Operation* cut,
+        RegionExpressions::CutEmission& context) {
+        return state->predicates.prepare(root, builder, cut, context);
     };
     for (const auto& recipe : out.matching.records) {
         if (!emitter.add(recipe.original.source, recipe.original.target, recipe.publication, recipe.acquisition,

@@ -1471,6 +1471,7 @@ std::string render(Operation *op) {
 }
 }
 LogicalResult runRegionExpressionChecks(func::FuncOp function);
+bool runIterationPredicateChecks(MLIRContext* context);
 LogicalResult runRotatingAnalysisChecks(func::FuncOp function, const pto::SyncInput& input);
 LogicalResult dumpExplicitAnalysis(func::FuncOp function, const pto::SyncInput& input);
 int runArithmeticSelectorChecks();
@@ -1537,6 +1538,12 @@ int runRegionalRelationChecks();
 int runMixedSymbolicRegionChecks(func::FuncOp);
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
 int main(int argc, char **argv) {
+  const bool iterationChecks = argc == 2 && StringRef(argv[1]) == "--iteration-predicate-checks";
+  if (iterationChecks) {
+    MLIRContext context;
+    context.disableMultithreading();
+    return runIterationPredicateChecks(&context) ? 0 : 1;
+  }
   if (argc == 2 && StringRef(argv[1]) == "--repeated-excess-checks") {
     return runRepeatedExcessChecks();
   }

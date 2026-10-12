@@ -8,6 +8,7 @@
 // Intern expressions independently of source cuts; emit shared arithmetic only
 // after checking original-IR availability at each detached preparation cut.
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
+#include "OriginalCutFacts.h"
 #include "../../InsertSync/SyncScalarReplay.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -19,12 +20,7 @@ namespace mlir::pto::frontiersynch {
 RegionExpressions::Id RegionExpressions::cofactorAtCut(Id expression, Operation* cut,
                                                        llvm::DenseMap<Id, Id>& memo)
 {
-    llvm::DenseMap<Value, bool> assumptions;
-    for (Operation* nested = cut; nested && nested->getParentOp(); nested = nested->getParentOp()) {
-        if (auto branch = dyn_cast<scf::IfOp>(nested->getParentOp())) {
-            assumptions[branch.getCondition()] = nested->getParentRegion() == &branch.getThenRegion();
-        }
-    }
+    const auto assumptions = detail::originalCutFacts(cut);
     SmallVector<Id> pending{expression}, order;
     llvm::DenseSet<Id> seen;
     while (!pending.empty()) {

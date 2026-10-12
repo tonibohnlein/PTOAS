@@ -72,3 +72,30 @@ preparation contracts. The other three paper pins remain unchanged. Section 8
 still requires available guards and retained exact mathematics after emission
 failure. This milestone makes those obligations observable without implementing
 stateful evaluation.
+
+## Milestone 2: contextual evaluation preparation
+
+`IterationPredicates::prepare` rewrites exact current-visit placeholders to
+original SSA values or enclosing branch constants before collecting live inputs.
+Past/future evaluations stay distinct. Both this path and the ordinary
+contextual emitter use the shared internal `OriginalCutFacts` collector. No
+public expression API, producer or reducer changes are needed. Preparation
+returns the selected root explicitly; detached value/cofactor caches do not
+stand in for an expression rewrite. Foreign invocation cuts are rejected.
+
+The discovered `sync_iteration_predicate_context.pto` test drives an independent
+fixture with opaque memory-derived predicates, lower bound 11, step three and
+zero/one/three trips. It checks branch-masked future/past inputs, late current
+inputs, genuinely live past/future failures, opposite arms, foreign cuts, fresh
+retries and failure-to-success reuse of the same cut-local context. No load is
+replayed and original IR remains byte-identical. Focused bounded preparation,
+regional ownership and guarded publication checks also pass.
+
+Gated Delta still has 1,071 blocked endpoint records: this change removes an
+unnecessary recovery ordering in general, but does not recover past outcomes or
+make a future-dependent SET guard available. Certification and retained-demand
+checks remain byte-identical to the starting revision. Local optimized build,
+test, audit and source pins are under `.local/three-paths/repeated-guard/m2/`.
+Section 8 was reread; its current pin remains `c9a6a9ad...` above, and the other
+paper pins are unchanged. Private state and recurring publication remain later
+milestones; this change does not authorize their use implicitly.

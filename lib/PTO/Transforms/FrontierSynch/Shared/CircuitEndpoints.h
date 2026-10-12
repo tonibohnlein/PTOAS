@@ -28,7 +28,7 @@ public:
             arena.forbidRecomputation(anchor.phase->elementOp);
         }
     }
-    std::function<LogicalResult(Id, OpBuilder&, Operation*, RegionExpressions::CutEmission&)> recover;
+    std::function<FailureOr<Id>(Id, OpBuilder&, Operation*, RegionExpressions::CutEmission&)> prepareExpression;
     std::string error;
     EndpointEmissionFailure failureInfo;
     bool add(
@@ -154,11 +154,13 @@ private:
         }
         OpBuilder builder(function.getContext());
         builder.setInsertionPointToEnd(it->second);
-        if (recover && failed(recover(expression, builder, cut, contexts[cut]))) {
-            emissionError = "predicate recovery failed before expression emission";
+        auto selected = prepareExpression ? prepareExpression(expression, builder, cut, contexts[cut]) :
+                                            FailureOr<Id>(expression);
+        if (failed(selected)) {
+            emissionError = "predicate preparation failed before expression emission";
             return failure();
         }
-        auto value = arena.emitContextual(expression, builder, cut, contexts[cut]);
+        auto value = arena.emitContextual(*selected, builder, cut, contexts[cut]);
         if (failed(value)) { emissionError = arena.lastEmissionError(); }
         return value;
     }
