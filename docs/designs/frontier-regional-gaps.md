@@ -323,3 +323,8 @@ remain allocation obligations. No fallback synchronization or scarcity repair
 is introduced. The regression fixture checks the session recipe explicitly,
 and independent command traces check matching and causal reuse across zero,
 one, partial, nonzero-origin and nonunit-step loop domains.
+
+The [GroupNorm event-scarcity investigation](frontier-group-norm-event-scarcity.md)
+records a later allocation failure and compares it with the manual barrier and
+bank-return protocol. It separates improving reuse proofs from future scarcity
+repair that intentionally adds ordering.
