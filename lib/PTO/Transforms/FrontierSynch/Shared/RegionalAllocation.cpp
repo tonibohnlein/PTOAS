@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Compose certified cyclic palettes using required-order lifetime envelopes.
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneCertificate.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
@@ -71,8 +72,10 @@ std::shared_ptr<RegionalAllocationSummary> finiteRegionalAllocation(
     }
     return result;
 }
-DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, const PreparedLogicalPlan& plan)
+DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, const PreparedLogicalPlan& plan,
+    AllocationProfile* profile)
 {
+    AllocationProfile::Scope groupsWork(profile, AllocationProfile::Groups);
     // A supplied summary certifies its own internal reuse. Nested coordinates
     // are supported for its selected span endpoints, without inferring an
     // allocation for arbitrary repeated handoff families.
@@ -86,9 +89,11 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
     SmallVector<Attribute> groups;
     std::map<std::pair<RegionExpressions::Id, RegionExpressions::Id>, bool> implications;
     auto implies = [&](RegionExpressions::Id premise, RegionExpressions::Id consequence) {
+        AllocationProfile::Scope proofWork(profile, AllocationProfile::Proofs);
         auto key = std::make_pair(premise, consequence);
         auto found = implications.find(key);
-        if (found != implications.end()) { return found->second; }
+        if (found != implications.end()) { proofWork.cacheHit(); return found->second; }
+        proofWork.constructed();
         // Rank predicates contain integer selects. Fold them under forced
         // guard facts before treating the remaining comparisons as atoms.
         bool proved = a.implies(premise, consequence) ||
@@ -102,6 +107,7 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
     std::map<Query, RegionExpressions::Id> queries;
     auto reaches = [&](RegionalEvent source, RegionalEvent target, bool handoff = false)
         -> std::optional<RegionExpressions::Id> {
+        AllocationProfile::Scope queryWork(profile, AllocationProfile::Queries);
         if (handoff && source.type < region.anchors.size() && target.type < region.anchors.size() &&
             region.anchors[source.type].phase && region.anchors[target.type].phase &&
             region.anchors[source.type].phase->kPipeValue == region.anchors[target.type].phase->kPipeValue) {
@@ -110,7 +116,8 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
         auto key = Query{{source.type, source.ordinal, source.kind, source.visits},
                          {target.type, target.ordinal, target.kind, target.visits}};
         auto found = queries.find(key);
-        if (found != queries.end()) { return found->second; }
+        if (found != queries.end()) { queryWork.cacheHit(); return found->second; }
+        queryWork.constructed();
         auto answer = regionalReachability(region, source, target);
         if (answer) { queries.emplace(key, *answer); }
         return answer;
@@ -190,6 +197,7 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
             bool compatible = true;
             for (const auto& xm : x.members) {
                 for (const auto& ym : y.members) {
+                    if (profile) { profile->visited(AllocationProfile::GroupPairs); }
                     if (regionalAllocationDirection(x, xm) != regionalAllocationDirection(y, ym)) { continue; }
                     auto active = a.land(xm.active, ym.active);
                     if (a.constantValue(active) == 0) { continue; }
@@ -220,6 +228,7 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
             }
             if (!disjoint) { forbidden.insert(hidden.ids.begin(), hidden.ids.end()); }
         }
+        AllocationProfile::Scope serialization(profile, AllocationProfile::Serialization);
         SmallVector<int64_t> forbiddenIds(forbidden.begin(), forbidden.end());
         groups.push_back(b.getDictionaryAttr({
             b.getNamedAttr("source", b.getI64IntegerAttr(x.sourcePipe)),
@@ -241,9 +250,10 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
         b.getNamedAttr("strategy", b.getStringAttr("regional-palettes")),
         b.getNamedAttr("macro_reservations", b.getUnitAttr()),
         b.getNamedAttr("groups", serializedGroups)});
-    if (auto lanes = regionalLaneEvidence(region, *plan.regionalAllocation, serializedGroups)) {
+    if (auto lanes = regionalLaneEvidence(region, *plan.regionalAllocation, serializedGroups, profile)) {
         certificate.set("lane_evidence", lanes);
     }
+    AllocationProfile::Scope serialization(profile, AllocationProfile::Serialization);
     return certificate.getDictionary(b.getContext());
 }
 namespace {

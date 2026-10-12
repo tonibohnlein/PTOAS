@@ -20,6 +20,8 @@ struct AnalysisStageRecord {
     uint64_t elapsedNanoseconds = 0, exclusiveNanoseconds = 0;
     EstimatedCount constructions;
     uint64_t cacheHits = 0, firstDispatches = 0;
+    // Aggregate substage counters never contribute to backend dispatch totals.
+    uint64_t aggregateCalls = 0, aggregateCacheHits = 0, aggregateCacheMisses = 0;
 };
 struct AnalysisLedger {
     std::vector<AnalysisCostRecord> estimates;

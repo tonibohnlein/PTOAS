@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Keep record formulas unchanged while matching their certified child lanes.
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneCertificate.h"
+#include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "PTO/Transforms/FrontierSynch/Shared/SharedHandoffAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
 #include <functional>
@@ -19,8 +20,10 @@ struct Lane {
     uint32_t group = 0, local = 0;
     RegionalAllocationLane boundary;
 };
-bool proves(RegionExpressions& e, Id premise, Id consequence)
+bool proves(RegionExpressions& e, Id premise, Id consequence, AllocationProfile* profile)
 {
+    AllocationProfile::Scope proofWork(profile, AllocationProfile::Proofs);
+    proofWork.constructed();
     return e.implies(premise, consequence) || e.constantUnder(premise, premise) == 0 ||
         e.constantUnder(premise, consequence) == 1;
 }
@@ -32,8 +35,9 @@ std::optional<int64_t> integer(DictionaryAttr d, StringRef key)
 }
 }
 DictionaryAttr regionalLaneEvidence(const RegionalAnalysis& region,
-    const RegionalAllocationSummary& summary, ArrayAttr groups)
+    const RegionalAllocationSummary& summary, ArrayAttr groups, AllocationProfile* profile)
 {
+    AllocationProfile::Scope laneWork(profile, AllocationProfile::Lanes);
     if (!region.expressions || groups.size() != summary.groups.size()) { return {}; }
     auto& e = *region.expressions;
     std::vector<Lane> lanes;
@@ -75,15 +79,21 @@ DictionaryAttr regionalLaneEvidence(const RegionalAnalysis& region,
         if (summary.groups[a.group].terminalCleanup) { return false; }
         for (const auto& x : a.boundary.lastTargets) {
             for (const auto& y : b.boundary.firstSources) {
+                if (profile) { profile->visited(AllocationProfile::BoundaryPairs); }
                 auto active = e.land(x.present, y.present);
-                if (proves(e, active, e.boolean(false))) { continue; }
+                if (proves(e, active, e.boolean(false), profile)) { continue; }
                 Key key{x.event.type, x.event.ordinal, x.event.visits,
                         y.event.type, y.event.ordinal, y.event.visits};
-                auto found = queries.find(key);
-                if (found == queries.end()) {
-                    found = queries.emplace(std::move(key), regionalHandoffReuse(region, x.event, y.event)).first;
+                auto found = queries.end();
+                {
+                    AllocationProfile::Scope queryWork(profile, AllocationProfile::Queries);
+                    found = queries.find(key);
+                    if (found == queries.end()) {
+                        queryWork.constructed();
+                        found = queries.emplace(std::move(key), regionalHandoffReuse(region, x.event, y.event)).first;
+                    } else { queryWork.cacheHit(); }
                 }
-                if (!found->second || !proves(e, active, *found->second)) { return false; }
+                if (!found->second || !proves(e, active, *found->second, profile)) { return false; }
             }
         }
         return true;
@@ -91,12 +101,14 @@ DictionaryAttr regionalLaneEvidence(const RegionalAnalysis& region,
     std::vector<std::vector<bool>> order(lanes.size(), std::vector<bool>(lanes.size()));
     for (std::size_t i = 0; i < lanes.size(); ++i) {
         for (std::size_t j = 0; j < lanes.size(); ++j) {
+            if (profile) { profile->visited(AllocationProfile::LanePairs); }
             const auto& a = summary.groups[lanes[i].group];
             const auto& b = summary.groups[lanes[j].group];
             if (a.sourcePipe != b.sourcePipe || a.targetPipe != b.targetPipe) { continue; }
             if (i != j) { order[i][j] = before(lanes[i], lanes[j]); }
         }
     }
+    AllocationProfile::Scope serialization(profile, AllocationProfile::Serialization);
     Builder b(groups.getContext());
     SmallVector<Attribute> rows;
     for (uint32_t i = 0; i < lanes.size(); ++i) {

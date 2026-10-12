@@ -48,6 +48,15 @@ def check_stages(report):
             parent = stages[stage["parent"] - 1]
             require(stage["parent_request"] == parent["request"], "inconsistent parent request")
             children[stage["parent"] - 1] += stage["elapsed_ns"]
+    aggregate_counts = {}
+    for stage in stages:
+        if "aggregate_calls" not in stage:
+            continue
+        require(stage["parent"] > 0 and stage["aggregate_calls"] > 0, "unowned aggregate")
+        require(stage["first_dispatches"] == 0 and stage["cache_hits"] == 0,
+                "allocation operations counted as backend dispatches")
+        aggregate_counts[stage["parent"]] = aggregate_counts.get(stage["parent"], 0) + 1
+    require(all(count <= 9 for count in aggregate_counts.values()), "per-query ledger growth")
     for stage, elapsed in zip(stages, children):
         require(stage["exclusive_ns"] + elapsed == stage["elapsed_ns"], "nested time counted twice")
     require(report["contract_audit"]["materializations"] <= report["contract_audit"]["refresh_requests"],
@@ -55,7 +64,7 @@ def check_stages(report):
 
 
 def main():
-    require(len(sys.argv) == 3, "expected optimizer and fixture")
+    require(len(sys.argv) in (3, 4), "expected optimizer, fixture, and optional regional marker")
     optimizer = shutil.which(sys.argv[1])
     require(optimizer is not None, "optimizer unavailable")
     source = Path(sys.argv[2]).read_text(encoding="utf-8")
@@ -71,6 +80,11 @@ def main():
         require(reports[0]["workload"] == ("exhaustive-certification" if checkpoint else "production-root"),
                 "workload mislabeled")
         check_stages(reports[0])
+        if not checkpoint and len(sys.argv) == 4:
+            names = {stage["stage"] for stage in reports[0]["stages"]}
+            expected = {"allocation-groups-aggregate", "allocation-lanes-aggregate", "allocation-summary-aggregate"}
+            require(expected <= names,
+                    "regional allocation was not profiled")
     print("stage-profile public equivalence: emitted IR and checkpoint diagnostics unchanged")
 
 
