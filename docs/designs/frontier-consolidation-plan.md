@@ -29,7 +29,7 @@ separate commit. Infrastructure alone does not complete a production milestone.
 | Milestone | Implementation | Acceptance | Status |
 |---|---|---|---|
 | 1. Measured baseline | Aggregate allocation summary/query/proof/lane timing and inner-loop counts; precise retained-prefix refusal; pinned baseline replay. | Profiling preserves commands and certificates; bounded diagnostic storage; classify the Persistent GEMM hot stage and Delta blocker. | Complete; evidence below |
-| 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; logical-only allocation request complete; lane scheduling pending |
+| 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; logical-only allocation request complete; repeated-lane proof reuse complete; lane scheduling pending |
 | 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Sequence preparation failure isolation complete; broader capability consolidation pending |
 | 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; borrowed regional adapter complete; global compact memberships and shared fact views pending |
 | 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection and shared source facts pending |
@@ -531,3 +531,42 @@ still refuses with `guarded expression input belongs to another invocation`
 (11.62 seconds, 284,984 KiB peak RSS). This component does not establish public
 Delta recovery. Receipts are under
 `.local/three-paths/consolidation/m7-threshold-inactivity/`.
+
+
+## Allocation-summary proof reuse
+
+A user-space CPU sample of Persistent GEMM identifies repeated implication proofs
+inside `periodicLaneAllocation`, called during repeated-region summary creation,
+as the dominant work. `refutesNegation` accounts for 44.83% of samples in its own
+body; additional samples are in its graph traversal and map operations. This is
+inside the previously measured summary stage, not the later top-level lane
+certificate stage. The 49 Hz sample collected 1,287 samples with no reported loss.
+
+One periodic allocation call now owns separate caches for implication and
+constant-specialization requests in its expression arena. Both positive and
+negative/unknown results are retained. Existing IDs keep their meaning as the
+arena grows; the caches die before any enclosing attempt rollback. Proof order,
+reuse matrices, allocation policy and selected synchronization remain unchanged.
+Optional counters measure requests and actual computations; they impose no
+admission limit and do not claim that distinct proof requests are inexpensive.
+
+The independent repeated-allocation oracle checks 1,583 member envelopes and
+reuse chains. Its instrumented cases issue 1,904 implication requests and compute
+196 distinct answers. A new invariant, unknown return-edge fixture refuses reuse
+across every candidate gap, caches its unknown specialization, and repeats in the
+same arena after rollback with fresh computations. Four focused lit tests pass,
+including the expression, allocation-session, physical-allocation and public
+pipeline checks. Architecture and correctness source reviews accepted the change.
+
+The comparison pins baseline `5a3f01401` and changes only this component. Two
+serial unprofiled Persistent GEMM MayNotAlias runs take 30.139 and 30.042 seconds
+before the change, and 9.018 and 9.116 seconds afterward: means 30.090 and 9.067
+seconds, a 3.32x improvement for logical preparation including allocation support.
+Full emitted IR, including allocation evidence, is byte-identical in all runs.
+Peak RSS ranges from 185,636 to 185,812 KiB in the baseline and 187,816 to
+188,396 KiB in the candidate.
+The candidate also passes physical allocation with six eligible IDs (0.202 s).
+This is a kernel-specific compiler measurement, not a corpus or device-speed claim.
+Receipts and sampling data are under
+`.local/three-paths/consolidation/m2-summary-profile/`. The original source mirror
+has been restored to the candidate and rebuilt; no profiling-only source remains.

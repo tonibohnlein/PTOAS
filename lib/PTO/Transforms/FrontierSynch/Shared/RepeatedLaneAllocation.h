@@ -9,11 +9,15 @@
 #define PTO_FRONTIERSYNCH_REPEATEDLANEALLOCATION_H
 #include "RepeatedAllocation.h"
 namespace mlir::pto::frontiersynch {
+struct RepeatedLaneProofCost {
+    uint64_t implicationRequests = 0, implicationComputations = 0;
+    uint64_t constantRequests = 0, constantComputations = 0;
+};
 // Allocate certified unit child lanes and boundary handoffs as a periodic word.
 // Only proved uniform reuse edges are admitted. Failure is an unavailable
 // certificate, never a proof that the physical ID capacity is insufficient.
 std::shared_ptr<RegionalAllocationSummary> periodicLaneAllocation(
     RepeatedRegionState& state, const RegionalAllocationSummary& coalesced,
-    ArrayRef<std::pair<uint32_t, std::size_t>> crossings);
+    ArrayRef<std::pair<uint32_t, std::size_t>> crossings, RepeatedLaneProofCost* cost = nullptr);
 } // namespace mlir::pto::frontiersynch
 #endif
