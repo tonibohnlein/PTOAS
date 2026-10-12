@@ -187,3 +187,36 @@ unchanged. The optimized build and both focused lit checks pass; receipts are
 in `.local/three-paths/repeated-guard/m3-history/`. Section 8's pin remains
 `c9a6a9ad...`; the other paper pins are unchanged. This patch does not yet wire
 history to retained matching selectors or change public Delta emission.
+
+## Milestone 4, first patch: invocation prefix primitive and count bounds
+
+A separate cross-pipe realization primitive consumes caller-certified exact
+incoming executed-source ordinals. It increments one source-pipe counter per
+executed source, publishes once per selected destination, and acquires only
+the as-yet-unconsumed prefix at each consumer. Whole-invocation cleanup
+consumes the remainder. No iteration-end or branch-join drain is added.
+Contribution callbacks cannot modify coordinator counters or watermarks.
+Same-pipe barriers and the fixed exit interface remain caller responsibilities.
+The constructor stages a verified clone, requires explicit scalar-control64
+capability and fresh protocol identities, and emits distinct prefix metadata.
+It does not prove the supplied selector or allocate physical IDs.
+
+A shared source-count utility derives sufficient bounds by sibling sums,
+per-pipe maxima across branches and wide-arithmetic products across loops.
+Unknown source-bearing loop bounds and unrepresentable counts are explicit
+export obligations. The exclusive acquisition-loop sentinel is included in
+representability. Independent signed-i32 endpoints permit a widened difference
+bound of 2^32-1 without assuming ordered sequence endpoints.
+
+The command interpreter checks 8,738 exhaustive executions with independently
+skipped sources and consumers, two source pipes, two destinations, repeated
+consumers requesting older prefixes, sibling regions and nested visits. An
+independent native/event graph checks exact payload closure, acyclicity, unique
+matching and empty terminal tokens; missing, duplicate and wrong-ordinal WAIT
+mutations fail. Counter-bound checks cover constant domains, empty loops,
+nonunit steps, branch maxima, sibling sums, nested products and overflow.
+All four focused lit checks pass on the optimized build. Receipts are under
+`.local/three-paths/repeated-guard/m4-prefix/`. Section 8 and all four paper
+pins remain unchanged. This primitive is not yet a selected production route:
+retained-selector collection, clone attachment and public Delta recovery remain
+separate integration work.
