@@ -99,6 +99,8 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
     // Mathematical construction failures only; endpoint attempts own their diagnostics.
     std::string error;
     std::string repeatedAttempt;
+    uint64_t boundarySummaryVisits = 0;
+    void summarizeBoundaries(SequenceAnalysis& result);
     std::vector<Child> children;
     // A symbolic crossing relation cannot be represented as a sampled finite
     // port graph. Retain its exact regional adapter as a separate result.

@@ -89,66 +89,7 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
         result.occurrences.push_back({port.child, port.type, child.anchors[port.type],
                                       child.regional.occurrenceLoops[port.type], port.ordinal, port.visits});
     }
-    // Parent selectors are guarded folds. They preserve original occurrence
-    // identities and remain reusable independently of incoming storage state.
-    auto append = [](auto& destination, const auto& source) {
-        for (auto value : source) { destination.push_back({value.port, value.present}); }
-    };
-    auto mask = [&](auto& selected, Expr predicate) {
-        for (auto& value : selected) { value.present = composer.both(value.present, predicate); }
-    };
-    for (uint32_t cell = 0; cell < composer.cells.size(); ++cell) {
-        SequenceStorageBoundary out;
-        out.cell = composer.cells[cell];
-        auto seenWriter = composer.no();
-        for (uint32_t child = 0; child < composer.children.size(); ++child) {
-            const auto& local = composer.boundaries[child][cell];
-            auto written = composer.no();
-            for (auto writer : local.firstWriters) {
-                written = composer.either(written, writer.present);
-                out.firstWriters.push_back({writer.port, composer.both(writer.present, composer.negate(seenWriter))});
-            }
-            for (const auto& [pipe, reads] : local.firstReaders) {
-                auto previouslyRead = composer.no();
-                for (auto prior : out.firstReaders[pipe]) {
-                    previouslyRead = composer.either(previouslyRead, prior.present);
-                }
-                for (auto read : reads) {
-                    out.firstReaders[pipe].push_back({read.port, composer.both(read.present,
-                        composer.negate(composer.either(seenWriter, previouslyRead)))});
-                }
-            }
-            mask(out.lastWriters, composer.negate(written));
-            append(out.lastWriters, local.lastWriters);
-            for (auto& [pipe, reads] : out.lastReaders) {
-                auto replaced = written;
-                auto found = local.lastReaders.find(pipe);
-                if (found != local.lastReaders.end()) {
-                    for (auto read : found->second) { replaced = composer.either(replaced, read.present); }
-                }
-                mask(reads, composer.negate(replaced));
-            }
-            for (const auto& [pipe, reads] : local.lastReaders) { append(out.lastReaders[pipe], reads); }
-            seenWriter = composer.either(seenWriter, written);
-        }
-        result.storageBoundary.push_back(std::move(out));
-    }
-    for (uint32_t childId = 0; childId < composer.children.size(); ++childId) {
-        for (const auto& [pipe, values] : composer.nativeFirst[childId]) {
-            auto seen = composer.no(), nonempty = composer.no();
-            for (auto previous : result.firstPayloads[pipe]) { seen = composer.either(seen, previous.present); }
-            for (auto selected : values) {
-                nonempty = composer.either(nonempty, selected.present);
-                result.firstPayloads[pipe].push_back({selected.port,
-                    composer.both(selected.present, composer.negate(seen))});
-            }
-            mask(result.lastPayloads[pipe], composer.negate(nonempty));
-            auto found = composer.nativeLast[childId].find(pipe);
-            if (found != composer.nativeLast[childId].end()) {
-                append(result.lastPayloads[pipe], found->second);
-            }
-        }
-    }
+    composer.summarizeBoundaries(result);
     result.cost = composer.costs;
     result.cost.children = composer.children.size(); result.cost.cells = composer.cells.size();
     result.cost.ports = composer.ports.size(); result.cost.crossings = composer.crossings.size();
@@ -160,6 +101,85 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
     return result;
 }
 } // namespace
+void SequenceAnalysisState::summarizeBoundaries(SequenceAnalysis& result)
+{
+    auto& composer = *this;
+    // First and last boundaries are independent prefix/suffix selections.
+    // Visit each child alternative a bounded number of times; do not remask
+    // accumulated output or assume an order among simultaneous envelopes.
+    composer.boundarySummaryVisits = 0;
+    auto lookup = [&](const auto& seen, uint32_t pipe) {
+        auto found = seen.find(pipe);
+        return found == seen.end() ? composer.no() : found->second;
+    };
+    auto append = [&](auto& destination, const auto& source, Expr masked, bool reverse) {
+        auto one = [&](const auto& value) {
+            ++composer.boundarySummaryVisits;
+            auto present = composer.both(value.present, composer.negate(masked));
+            if (composer.expressions.constantValue(present) != 0) { destination.push_back({value.port, present}); }
+        };
+        if (reverse) { for (const auto& value : llvm::reverse(source)) { one(value); } }
+        else { for (const auto& value : source) { one(value); } }
+    };
+    auto any = [&](const auto& values) {
+        auto result = composer.no();
+        for (const auto& value : values) {
+            ++composer.boundarySummaryVisits;
+            result = composer.either(result, value.present);
+        }
+        return result;
+    };
+    for (uint32_t cell = 0; cell < composer.cells.size(); ++cell) {
+        SequenceStorageBoundary out;
+        out.cell = composer.cells[cell];
+        auto seenWriter = composer.no();
+        std::map<uint32_t, Expr> seenReaders;
+        for (uint32_t child = 0; child < composer.children.size(); ++child) {
+            const auto& local = composer.boundaries[child][cell];
+            append(out.firstWriters, local.firstWriters, seenWriter, false);
+            for (const auto& [pipe, reads] : local.firstReaders) {
+                auto seen = lookup(seenReaders, pipe);
+                append(out.firstReaders[pipe], reads, composer.either(seenWriter, seen), false);
+                seenReaders[pipe] = composer.either(seen, any(reads));
+            }
+            seenWriter = composer.either(seenWriter, any(local.firstWriters));
+        }
+        seenWriter = composer.no(); seenReaders.clear();
+        for (std::size_t child = composer.children.size(); child > 0; --child) {
+            const auto& local = composer.boundaries[child - 1][cell];
+            append(out.lastWriters, local.lastWriters, seenWriter, true);
+            for (const auto& [pipe, reads] : local.lastReaders) {
+                auto seen = lookup(seenReaders, pipe);
+                append(out.lastReaders[pipe], reads, composer.either(seenWriter, seen), true);
+                seenReaders[pipe] = composer.either(seen, any(reads));
+            }
+            seenWriter = composer.either(seenWriter, any(local.firstWriters));
+        }
+        std::reverse(out.lastWriters.begin(), out.lastWriters.end());
+        for (auto& [pipe, reads] : out.lastReaders) { std::reverse(reads.begin(), reads.end()); }
+        result.storageBoundary.push_back(std::move(out));
+    }
+    std::map<uint32_t, Expr> seenPipes;
+    for (uint32_t child = 0; child < composer.children.size(); ++child) {
+        for (const auto& [pipe, values] : composer.nativeFirst[child]) {
+            auto seen = lookup(seenPipes, pipe);
+            append(result.firstPayloads[pipe], values, seen, false);
+            seenPipes[pipe] = composer.either(seen, any(values));
+        }
+    }
+    seenPipes.clear();
+    for (std::size_t child = composer.children.size(); child > 0; --child) {
+        for (const auto& [pipe, values] : composer.nativeFirst[child - 1]) {
+            auto seen = lookup(seenPipes, pipe);
+            auto found = composer.nativeLast[child - 1].find(pipe);
+            if (found != composer.nativeLast[child - 1].end()) {
+                append(result.lastPayloads[pipe], found->second, seen, true);
+            }
+            seenPipes[pipe] = composer.either(seen, any(values));
+        }
+    }
+    for (auto& [pipe, values] : result.lastPayloads) { std::reverse(values.begin(), values.end()); }
+}
 SequenceAnalysis analyzeSequence(func::FuncOp function, const SyncInput& input, const ProgramRecognition& program)
 {
     return analyzeSequenceRegion(function, input, program, 0, std::make_shared<RegionExpressions>());
@@ -284,6 +304,10 @@ SequenceAnalysis composeRegionalSequenceWithin(func::FuncOp function,
 NumericalChainQueryCost sequenceNumericalQueryCounts(const SequenceAnalysis& analysis)
 {
     return analysis.state ? analysis.state->numericalQueryCost : NumericalChainQueryCost{};
+}
+uint64_t sequenceBoundarySummaryVisits(const SequenceAnalysis& analysis)
+{
+    return analysis.state ? analysis.state->boundarySummaryVisits : 0;
 }
 RegionExpressions* sequenceExpressions(SequenceAnalysis& analysis)
 {

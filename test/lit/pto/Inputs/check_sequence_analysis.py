@@ -178,6 +178,21 @@ def main():
         # Diagnostic attributes can name scf.for without adding an operation.
         assert operation_count(large, "scf.for") == operation_count(source, "scf.for")
         assert "pto.logical_set" in large and "pto.set_flag" not in large
+        # Separate runtime-loop children must not rescan a growing summary.
+        # This counter measures visited alternatives, independent of wall time
+        # and of the cost of constructing each child's mathematical result.
+        summary_visits = []
+        for count in (8, 16, 32):
+            siblings = source[:start] + source[start:end] * count + source[end:]
+            path.write_text(siblings.replace('attributes {test.trace_arguments',
+                'attributes {test.boundary_summary_only, test.trace_arguments'))
+            report = json.loads(invoke(tool, "--sequence-analysis", path))
+            assert not report["error"], report
+            assert report["children"] >= count and report["boundary_summary_visits"] > 0, report
+            summary_visits.append(report["boundary_summary_visits"])
+        assert summary_visits[1] <= 2 * summary_visits[0], summary_visits
+        assert summary_visits[2] <= 2 * summary_visits[1], summary_visits
+        print("sequence summary alternative visits (8/16/32 children):", summary_visits)
         # Constant trip counts change analysis input, unlike trace arguments.
         constant_sizes = []
         constant_analysis = []

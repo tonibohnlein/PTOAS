@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 from check_logical_insertion import closure_with_commands
+from check_sequence_analysis import operation_count
 from check_periodic_demands import closure, native
 
 
@@ -86,7 +87,7 @@ def main():
         path.write_text(source.replace("array<i64: 2, 3>", "array<i64: 1000000000, 1000000001>"))
         large = run(tool, "--insert-logical", path)
         assert small == large.replace("1000000000, 1000000001", "2, 3")
-        assert small.count("scf.for") == 2 and "version = 4" in small
+        assert operation_count(small, "scf.for") == 2 and "version = 4" in small
         # Keep the old allocatable regional numerical path with surrounding work.
         path.write_text(source.replace("%i = %zero to %m", "%i = %zero to %two"))
         fixed = json.loads(run(tool, "--sequence-analysis", path))

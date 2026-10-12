@@ -103,6 +103,8 @@ SequenceAnalysis analyzeSequenceRegionWithResolver(func::FuncOp function, const 
     const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions,
     std::shared_ptr<PhaseIndex> index, bool requireEndpoints, SequenceRegionResolver resolver);
 RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis);
+// Actual boundary-alternative visits during this result's prefix/suffix summary.
+uint64_t sequenceBoundarySummaryVisits(const SequenceAnalysis& analysis);
 RegionExpressions* sequenceExpressions(SequenceAnalysis& analysis);
 NumericalChainQueryCost sequenceNumericalQueryCounts(const SequenceAnalysis& analysis);
 // Counts from the latest preparation, before shared emission CSE: imported
