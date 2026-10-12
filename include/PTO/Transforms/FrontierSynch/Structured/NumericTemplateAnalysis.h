@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplate.h"
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Finite/LifetimeScan.h"
+#include "PTO/Transforms/FrontierSynch/Finite/LifetimeScanInput.h"
 namespace mlir::pto::frontiersynch {
 // Owned regional mathematics, independent of whole-function eligibility and
 // optional endpoint/storage exports. Original IR and modeled input are borrowed.
@@ -27,6 +28,11 @@ struct NumericalRegionDemands {
 FailureOr<std::vector<ExplicitEffects>> numericTemplateOccurrences(const NumericTemplate& input,
                                                                   unsigned visits = 1);
 struct StorageScanWork;
+// Invoke the visitor synchronously with owned occurrence metadata and borrowed
+// memberships. Neither the input nor its callbacks may escape the visitor.
+// Access callbacks validate effects lazily; visitors must propagate rejection.
+bool withNumericTemplateStorage(const NumericTemplate& input, unsigned visits,
+                               llvm::function_ref<bool(const StorageScanInput&)> visitor);
 // Synchronous borrowed scan for generator-only consumers. It traverses the
 // incidences without materializing or copying a complete explicit access word.
 StorageScanResult scanNumericTemplateStorage(const NumericTemplate& input, unsigned visits = 1,

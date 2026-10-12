@@ -1771,7 +1771,7 @@ LogicalResult checkSpecializedNumericSession(func::FuncOp function, pto::GMAlias
     auto absent = session.specializedNumericDemands(outer, geometry(0), control(false), error);
     auto unknown = session.specializedNumericDemands(outer, geometry(0), control({}), error);
     const bool isolated = changed && changed != first && absent && absent != first &&
-        absent->body.payloads.empty() && absent->demands->occurrences.empty() && !unknown &&
+        absent->body.payloads.empty() && absent->demands->reduction.payloads.empty() && !unknown &&
         session.specializedNumericConstructions() == 5;
     if (!isolated) { return function.emitError("specialized numeric bindings reused incompatible mathematics"); }
     const bool shifted = first->body.atoms.size() == 1 && changed->body.atoms.size() == 1 &&
@@ -1804,7 +1804,7 @@ LogicalResult checkSpecializedNumericSession(func::FuncOp function, pto::GMAlias
             for (uint32_t b = 0; b < first->body.payloads.size(); ++b) {
                 for (auto ak : {PeriodicEventKind::Start, PeriodicEventKind::Completion}) {
                     for (auto bk : {PeriodicEventKind::Start, PeriodicEventKind::Completion}) {
-                        auto expected = explicitEventPrecedes(*first->demands, {a, ak}, {b, bk});
+                        auto expected = explicitEventPrecedes(first->demands->reduction, {a, ak}, {b, bk});
                         auto actual = exported->reachability({a, zero, ak}, {b, zero, bk});
                         const bool equal = expected && actual && arena->constantValue(*actual) == (*expected ? 1 : 0);
                         if (!equal) { return function.emitError("specialized numeric exported a different closure"); }

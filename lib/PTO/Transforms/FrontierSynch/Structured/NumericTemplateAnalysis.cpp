@@ -127,24 +127,25 @@ FailureOr<std::vector<ExplicitEffects>> numericTemplateOccurrences(const Numeric
     }
     return output;
 }
+bool withNumericTemplateStorage(const NumericTemplate& input, unsigned copies,
+                               llvm::function_ref<bool(const StorageScanInput&)> visitor)
+{
+    NumericOccurrences source(input, copies);
+    if (!source.valid) { return false; }
+    auto occurrence = [&](std::size_t id) { return source.metadata[id]; };
+    auto accesses = [&](std::size_t id, StorageAccessConsumer consume) { return source.accesses(id, consume); };
+    return visitor(StorageScanInput{source.metadata.size(), occurrence, accesses});
+}
 StorageScanResult scanNumericTemplateStorage(
     const NumericTemplate& input, unsigned copies, bool retainWitnesses, StorageScanWork* work)
 {
-    if (work) {
-        *work = {};
-    }
-    NumericOccurrences source(input, copies);
-    if (!source.valid) {
-        StorageScanResult failed;
-        failed.error = "numeric template has invalid physical atom references";
-        return failed;
-    }
-    auto occurrence = [&](std::size_t id) { return source.metadata[id]; };
-    auto accesses = [&](std::size_t id, StorageAccessConsumer consume) { return source.accesses(id, consume); };
-    auto result = scanStorageLifetimes(
-        StorageScanInput{source.metadata.size(), occurrence, accesses}, {}, ptoStorageProtection(), retainWitnesses,
-        work);
-    if (result.error == "invalid access input") {
+    if (work) { *work = {}; }
+    StorageScanResult result;
+    const bool valid = withNumericTemplateStorage(input, copies, [&](const StorageScanInput& source) {
+        result = scanStorageLifetimes(source, {}, ptoStorageProtection(), retainWitnesses, work);
+        return result.error.empty();
+    });
+    if (!valid && (result.error.empty() || result.error == "invalid access input")) {
         result.error = "numeric template has invalid physical atom references";
     }
     return result;

@@ -1046,5 +1046,57 @@
       "tools/pto-test-opt/NumericalHierarchyChecks.cpp": "eac1d1620507686a959432ae20fbc09bedcbe919a12fb3e32d73788c8ed6c7e5"
     },
     "reviews": "architecture and correctness accepted"
+  },
+  "m4_borrowed_regional_storage": {
+    "build": {
+      "command": [
+        "ninja",
+        "-C",
+        ".local/section8-refactor/source-pinned/candidate-build",
+        "-j2",
+        "pto-test-opt",
+        "pto-sync-input-test"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 436.9096245218534,
+      "maximum_rss_kib": 1174400,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 900.0
+    },
+    "focused_tests": {
+      "command": [
+        "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+        "-j1",
+        "-v",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_numeric_template.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_normalized_control_session.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_numerical_region_session.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_guarded_specialization_session.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_evolving_numeric_body.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_analysis.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_frontier_public_pipeline.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 16.92250531190075,
+      "maximum_rss_kib": 139732,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 240.0
+    },
+    "focused_lit_passed": 7,
+    "source_sha256": {
+      "include/PTO/Transforms/FrontierSynch/Finite/ExplicitAnalysis.h": "35e4d54c277a4d4819c5f0fae9103c1686aedaf337af81ff0b56fafd0b1fdcbd",
+      "lib/PTO/Transforms/FrontierSynch/Finite/ExplicitAnalysis.cpp": "8870446bd7b54b97be0dc9b1bd0681d5112447e601044bf48f099dc7c951188b",
+      "include/PTO/Transforms/FrontierSynch/Structured/NumericTemplateAnalysis.h": "99dadfa87c9ec995cf4dc17ea2cc9c2c7ed16c28e5e119838f597f9c5f71bf55",
+      "lib/PTO/Transforms/FrontierSynch/Structured/NumericTemplateAnalysis.cpp": "04607266186de732055e0ba4be25131278d534930b7b37f7b89e7cfd2f8b4c87",
+      "include/PTO/Transforms/FrontierSynch/Structured/NumericTemplateRegional.h": "c8b3c73ecba5f9babb06f9d699e592d6e4550d269743980b3984d1971d467d24",
+      "lib/PTO/Transforms/FrontierSynch/Structured/NumericTemplateRegional.cpp": "461356f79b2cefef933f116ab5005c543eea4f5330a52cc88f95c19051e8f262",
+      "tools/pto-test-opt/NumericAtomReferenceChecks.h": "6691e2266f9880b67de29d04e0c9769bb6d4eb9ca63adf06298ac2f54d7b9ef6",
+      "tools/pto-test-opt/NormalizedControlChecks.cpp": "c9233659efa01720ac20a57f624247fef072cd57d09062fa1cbe6c814cbd9e8b"
+    },
+    "scope": "removes retained expanded body accesses and unrequested witnesses; still traverses incidences for scan and boundary construction",
+    "validation_note": "Initial timestamp-preserving mirror update left stale ABI consumer; rebuilt all affected headers before final tests",
+    "reviews": "architecture and correctness source reviews accepted"
   }
 }
