@@ -30,6 +30,7 @@ public:
     }
     std::function<LogicalResult(Id, OpBuilder&, Operation*, RegionExpressions::CutEmission&)> recover;
     std::string error;
+    EndpointEmissionFailure failureInfo;
     bool add(
         uint32_t source, uint32_t target, Id sourceGuard, Id targetGuard, ArrayRef<Id> sourceIdentity,
         ArrayRef<Id> targetIdentity)
@@ -50,12 +51,15 @@ public:
         family.members.push_back({record, source, target, {}, {}});
         plan->families.push_back(std::move(family));
         std::optional<GuardedPublication> publication;
-        EndpointExpressionEmitter emitter = [this](Id expression, Operation* cut) { return emit(expression, cut); };
-        auto consumer = emit(targetGuard, anchors[target].before.before);
+        EndpointExpressionEmitter emitter = [this](Id expression, Operation* cut) {
+            return attempt(expression, cut, EndpointFailureStage::SourceGuard);
+        };
+        failureInfo = {};
+        auto consumer = attempt(targetGuard, anchors[target].before.before, EndpointFailureStage::ConsumerGuard);
         if (failed(consumer)) { return false; }
         if (p != q) {
             auto prepared = prepareGuardedPublication(function, arena, anchors[source].after,
-                anchors[target].before, sourceGuard, targetGuard, emitter, error, *consumer);
+                anchors[target].before, sourceGuard, targetGuard, emitter, error, *consumer, {}, &failureInfo);
             if (failed(prepared)) { return false; }
             publication = std::move(*prepared);
             plan->families.back().targetChoices = publication->targetChoices;
@@ -84,14 +88,15 @@ public:
                 if (identity.empty()) {
                     return false;
                 }
-                auto last = emit(identity.back(), cut), member = emit(arena.constant(record), cut);
+                auto last = attempt(identity.back(), cut, EndpointFailureStage::MatchingIdentity);
+                auto member = attempt(arena.constant(record), cut, EndpointFailureStage::MatchingIdentity);
                 if (failed(last) || failed(member)) {
                     return false;
                 }
                 endpoint.identity = *last;
                 endpoint.memberCoordinates.push_back(*member);
                 for (auto coordinate : identity.drop_back()) {
-                    auto value = emit(coordinate, cut);
+                    auto value = attempt(coordinate, cut, EndpointFailureStage::MatchingIdentity);
                     if (failed(value)) {
                         return false;
                     }
@@ -100,8 +105,14 @@ public:
             }
             plan->endpoints.push_back(std::move(endpoint));
         }
+        EndpointExpressionEmitter cleanupEmitter = [this](Id expression, Operation* cut) {
+            return attempt(expression, cut, EndpointFailureStage::CleanupIdentity);
+        };
         if (publication && failed(appendPublicationCleanup(*publication, record, p, q,
-            sourceIdentity, arena, emitter, *plan, error))) { return false; }
+            sourceIdentity, arena, cleanupEmitter, *plan, error))) {
+            return false;
+        }
+        failureInfo = {};
         return true;
     }
     std::unique_ptr<PreparedLogicalPlan> take()
@@ -123,9 +134,18 @@ private:
     std::unique_ptr<PreparedLogicalPlan> plan;
     std::map<Operation*, Block*> blocks;
     std::map<Operation*, RegionExpressions::CutEmission> contexts;
+    std::string emissionError;
+    FailureOr<Value> attempt(Id expression, Operation* cut, EndpointFailureStage stage)
+    {
+        auto value = emit(expression, cut);
+        if (failed(value)) { failureInfo = {stage, expression, cut, emissionError}; }
+        return value;
+    }
     FailureOr<Value> emit(Id expression, Operation* cut)
     {
+        emissionError.clear();
         if (!cut) {
+            emissionError = "expression has no original insertion cut";
             return failure();
         }
         auto [it, added] = blocks.try_emplace(cut);
@@ -135,9 +155,12 @@ private:
         OpBuilder builder(function.getContext());
         builder.setInsertionPointToEnd(it->second);
         if (recover && failed(recover(expression, builder, cut, contexts[cut]))) {
+            emissionError = "predicate recovery failed before expression emission";
             return failure();
         }
-        return arena.emitContextual(expression, builder, cut, contexts[cut]);
+        auto value = arena.emitContextual(expression, builder, cut, contexts[cut]);
+        if (failed(value)) { emissionError = arena.lastEmissionError(); }
+        return value;
     }
 };
 } // namespace mlir::pto::frontiersynch

@@ -19,6 +19,7 @@
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalRelations.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInactiveRecords.h"
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FiniteVisitRecognition.h"
@@ -1683,8 +1684,9 @@ int main(int argc, char **argv) {
   const bool arithmeticPeriodicInput = argc == 3 && StringRef(argv[1]) == "--arithmetic-periodic-input-checks";
   const bool arithmetic = argc == 3 && StringRef(argv[1]) == "--arithmetic";
   const bool finiteExpansion = argc == 3 && StringRef(argv[1]) == "--finite-expansion";
+  const bool boundedAudit = argc == 3 && StringRef(argv[1]) == "--bounded-endpoint-audit";
   const bool boundedEndpoint = argc == 3 && StringRef(argv[1]) == "--bounded-endpoint-exports";
-  const bool boundedQueries = boundedEndpoint ||
+  const bool boundedQueries = boundedAudit || boundedEndpoint ||
       (argc == 3 && StringRef(argv[1]) == "--bounded-regional-queries");
   const bool certification = argc == 3 && StringRef(argv[1]) == "--certify-regions";
   const bool regionalRecognition = argc == 3 && StringRef(argv[1]) == "--recognize-regions";
@@ -1850,6 +1852,31 @@ int main(int argc, char **argv) {
                      << " span=" << node.boundedLifetime->refresh.span << "\n";
         auto demands = pto::frontiersynch::cachedBoundedLifetimeRegion(function, node, index, input, error);
         if (failed(demands)) { llvm::errs() << error << "\n"; return 1; }
+        if (boundedAudit) {
+          {
+            pto::frontiersynch::RegionExpressions::Transaction transaction((*demands)->expressions);
+            pto::frontiersynch::detail::BoundedInactiveRecordProof proof(
+                (*demands)->expressions, (*demands)->window, (*demands)->unconditional);
+            std::size_t inactive = 0;
+            for (auto [record, edge] : llvm::enumerate((*demands)->analysis.sourceDemands)) {
+              if (proof.proves(edge.guard)) {
+                ++inactive;
+                llvm::outs() << "endpoint-inactive record=" << record << "\n";
+              }
+            }
+            llvm::outs() << "endpoint-audit uniform-inactive=" << inactive << "\n";
+          }
+          auto failures = pto::frontiersynch::auditBoundedLifetimeEndpoints(*demands, llvm::outs());
+          llvm::raw_null_ostream discard;
+          if (failures != pto::frontiersynch::auditBoundedLifetimeEndpoints(*demands, discard)) { return 1; }
+          auto prepared = pto::frontiersynch::prepareBoundedLifetimeLogicalResult(*demands, error, false);
+          const bool expectedSuccess = failures == 0;
+          if (expectedSuccess != succeeded(prepared)) { return 1; }
+          llvm::outs() << "endpoint-audit repeat-failure-count=stable normal-preparation="
+                       << (succeeded(prepared) ? "ready" : "unmet") << "\n";
+          ++checked;
+          continue;
+        }
         auto arena = std::make_shared<pto::frontiersynch::RegionExpressions>();
         llvm::errs() << "bounded original ready\n";
         auto queries = pto::frontiersynch::boundedLifetimeRegionalQueries(*demands,

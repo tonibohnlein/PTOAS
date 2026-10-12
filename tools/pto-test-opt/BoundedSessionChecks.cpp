@@ -176,7 +176,8 @@ bool checkBoundedSession(func::FuncOp function, pto::GMAliasPolicy policy, std::
             demands.mathematical->boundedDemands, diagnostic, false);
         if (succeeded(unavailable) ||
             diagnostic.find("bounded endpoint unavailable") == std::string::npos ||
-            diagnostic.find("unavailable value outside deterministic scalar replay") == std::string::npos) {
+            diagnostic.find("stage=publication-contract") == std::string::npos ||
+            diagnostic.find("single-publication cuts and a terminal cleanup interface") == std::string::npos) {
             return false;
         }
         llvm::outs() << "bounded-session endpoint obligation: " << diagnostic << "\n";

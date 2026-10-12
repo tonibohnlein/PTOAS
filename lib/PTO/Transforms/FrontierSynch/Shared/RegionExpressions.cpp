@@ -8,6 +8,7 @@
 // Intern expressions independently of source cuts; emit shared arithmetic only
 // after checking original-IR availability at each detached preparation cut.
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
+#include "RegionIntegerExpressionsInternal.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Matchers.h"
@@ -694,6 +695,39 @@ FailureOr<Value> RegionExpressions::emit(Id expression, OpBuilder& builder, Oper
         memo[id] = emitNode(nodes[id], builder, cut->getLoc(), memo);
     }
     return memo.lookup(expression);
+}
+void RegionExpressions::printExpression(Id root, llvm::raw_ostream& out) const
+{
+    if (!valid(root)) { out << "invalid-expression\n"; return; }
+    SmallVector<Id> pending{root}, order;
+    llvm::DenseSet<Id> seen;
+    while (!pending.empty()) {
+        auto id = pending.pop_back_val();
+        if (!seen.insert(id).second) { continue; }
+        order.push_back(id);
+        appendOperands(nodes[id], pending);
+    }
+    llvm::sort(order);
+    static constexpr const char* names[] = {
+        "constant", "input", "add", "sub", "div", "rem", "lt", "le", "eq", "slt", "sle",
+        "and", "or", "not", "select", "integer"};
+    out << "expression-root=" << root << " gates=" << order.size() << "\n";
+    for (auto id : order) {
+        const auto& node = nodes[id];
+        out << "  " << id << " " << names[static_cast<unsigned>(node.kind)];
+        out << " type=" << (node.boolean ? "bool" : "u64");
+        if (node.kind == Kind::Constant) { out << " " << node.literal; }
+        if (node.kind == Kind::Input) { out << " " << node.value; }
+        if (node.kind == Kind::Integer) {
+            out << " recipe={" << node.integer->signature << "} coordinate-order={";
+            for (auto coordinate : node.integer->coordinateOrder) { out << coordinate << ';'; }
+            out << "}";
+        }
+        SmallVector<Id> operands;
+        appendOperands(node, operands);
+        for (auto operand : operands) { out << " " << operand; }
+        out << "\n";
+    }
 }
 SmallVector<std::pair<RegionExpressions::Id, Value>> RegionExpressions::referencedInputs(Id root) const
 {

@@ -59,6 +59,8 @@ public:
         }
         inputOwners.push_back(std::move(owner));
     }
+    // Diagnostic DAG serialization preserves sharing and never evaluates inputs.
+    void printExpression(Id expression, llvm::raw_ostream& out) const;
     // Inputs reachable from one circuit root, in DAG order.
     SmallVector<std::pair<Id, Value>> referencedInputs(Id expression) const;
     // Simultaneous, typed DAG substitution. Bindings are immutable; the memo

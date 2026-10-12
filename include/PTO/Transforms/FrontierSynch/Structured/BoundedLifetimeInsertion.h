@@ -52,6 +52,10 @@ FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> analyzeBoundedLifetimeRe
 FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> cachedBoundedLifetimeRegion(
     func::FuncOp function, const StructureNode& node, const PhaseIndex& index,
     const SyncInput& input, std::string& error);
+// Explicit diagnostic workload: each retained pair is prepared in an isolated
+// detached fragment. It never changes original IR or reruns demand analysis.
+std::size_t auditBoundedLifetimeEndpoints(std::shared_ptr<BoundedLifetimeDemandResult> demands,
+                                        llvm::raw_ostream& out);
 // Reuse an owned successful analysis. The loop remains in its original IR;
 // command preparation does not repeat recognition or the window reduction.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeLogicalResult(
