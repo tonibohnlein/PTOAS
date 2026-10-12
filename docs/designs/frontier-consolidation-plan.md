@@ -35,7 +35,7 @@ separate commit. Infrastructure alone does not complete a production milestone.
 | 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Pending |
 | 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Pending |
 | 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Pending |
-| 8. Proof reuse and validation | Share lazy inactive-proof and premise contexts, replay mappings and safe Boolean conversion work. Close known guard-equivalence/oracle gaps and run pinned paired campaigns. | No unexplained acceptance loss or changed output; report eleven kernels and 783-input corpus by stage, wall time, memory and inner work. | Pending |
+| 8. Proof reuse and validation | Share lazy inactive-proof and premise contexts, replay mappings and safe Boolean conversion work. Close known guard-equivalence/oracle gaps and run pinned paired campaigns. | No unexplained acceptance loss or changed output; report eleven kernels and 783-input corpus by stage, wall time, memory and inner work. | Lazy inactive-proof setup shared; broader proof reuse and campaign pending |
 
 ## Algorithm boundaries
 
@@ -171,3 +171,26 @@ The previous `sequence prefix collection retains an analysis failure` blocker
 is gone. This is progress in ownership and retry behavior, not completion of
 Delta emission or the broader capability milestone. The next prefix task is to
 preserve the exact child owner through the relevant regional adapter.
+
+## Milestone 8: lazy inactive-proof setup
+
+Bounded endpoint preparation now validates its original window and constructs
+monotone-presence patterns once per preparation attempt. Reached records share
+that proof context and its cache; an early endpoint refusal still avoids proving
+later records. Per-record proof transactions roll back only temporary proof
+expressions. Pattern IDs and endpoint expressions appended between calls remain
+valid. Original record IDs are checked against the arena size before context
+construction, so newly created patterns cannot legitimize an invalid input ID.
+
+Four focused lit tests pass: inactive emission, bounded prefix realization,
+bounded allocation sessions and sequence analysis. The inactive-proof oracle
+checks repeated lazy calls with interleaved expression creation, stable results,
+malformed-record refusal and recovery. The prefix oracle still checks 4,745
+executions. Both architectural and correctness reviews accepted the change after
+the original-ID validation regression was found and corrected. Receipts are under
+`.local/three-paths/consolidation/m8-inactive/`.
+
+Delta's isolated MayNotAlias replay remains an explicit logical refusal with the
+same missing retained prefix-owner obligation (0.804 seconds, 259,608 KiB RSS).
+This single probe is not evidence of a general speedup. No demand predicate,
+Section 5.4 algorithm or allocation policy changed.

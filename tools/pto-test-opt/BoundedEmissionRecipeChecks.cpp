@@ -31,6 +31,40 @@ bool proofChecks(MLIRContext& context)
     auto flags = fs::detail::boundedInactiveEmissionRecipes(e, w, {1, 1}, records);
     const bool correct = flags && *flags == std::vector<uint8_t>({0, 1, 0}) && e.size() == size;
     if (!correct) { return false; }
+    {
+        fs::RegionExpressions fresh;
+        const auto first = fresh.input(p);
+        const auto second = fresh.land(first, fresh.input(q));
+        auto schema = w;
+        schema.payloads = {{0, first}, {1, first}, {0, second}, {1, second}};
+        const auto originalSize = fresh.size();
+        const fs::GuardedRankEdge invalid{0, 1, static_cast<fs::RegionExpressions::Id>(originalSize)};
+        if (fs::detail::boundedInactiveEmissionRecipes(fresh, schema, {1, 1}, {invalid})) { return false; }
+        fs::detail::BoundedInactiveEmissionContext proof(fresh, schema, {1, 1});
+        // Pattern construction makes this ID Boolean, but it was never an
+        // original demand predicate and must not acquire valid provenance.
+        if (!proof.valid() || fresh.size() <= originalSize || !fresh.isBoolean(invalid.guard) ||
+            proof.proves(invalid)) { return false; }
+    }
+    {
+        fs::detail::BoundedInactiveEmissionContext proof(e, w, {1, 1});
+        if (!proof.valid() || proof.schemaPayloadVisits() != w.payloads.size()) { return false; }
+        for (unsigned repeat = 0; repeat < 64; ++repeat) {
+            // Model expressions appended by endpoint emission between lazy
+            // proofs. Neither their IDs nor their meaning may be rolled back.
+            const auto emitted = e.add(e.input(n), e.constant(100 + repeat));
+            const auto retainedSize = e.size();
+            for (unsigned record = 0; record < records.size(); ++record) {
+                auto flag = proof.proves(records[record]);
+                if (!flag || *flag != bool((*flags)[record]) || e.size() != retainedSize) { return false; }
+            }
+            fs::RegionExpressions::Substitution bind({{e.input(n), e.constant(7)}});
+            if (e.constantValue(e.substitute(emitted, bind)) != 107 + repeat) { return false; }
+        }
+        if (proof.schemaPayloadVisits() != w.payloads.size()) { return false; }
+        auto malformed = records.front(); malformed.guard = e.input(n);
+        if (proof.proves(malformed) || proof.proves(records[1]) != true) { return false; }
+    }
     for (uint64_t trips : {uint64_t(0), uint64_t(1), uint64_t(2), uint64_t(3), UINT64_MAX - 1, UINT64_MAX}) {
         for (unsigned bits = 0; bits < 4; ++bits) {
             fs::RegionExpressions::Substitution values({{e.input(n), e.constant(trips)},
