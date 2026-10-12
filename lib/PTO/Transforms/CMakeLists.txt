@@ -317,6 +317,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Shared/PhaseIndex.cpp
   FrontierSynch/Shared/PhaseNormalization.cpp
   FrontierSynch/Shared/PhasedRecognition.cpp
+  FrontierSynch/Shared/SingletonBoundary.cpp
   FrontierSynch/Shared/PhysicalAllocation.cpp
   FrontierSynch/Shared/PhysicalExecutedCounters.cpp
   FrontierSynch/Shared/Recognition.cpp

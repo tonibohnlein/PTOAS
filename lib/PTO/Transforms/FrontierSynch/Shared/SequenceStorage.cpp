@@ -207,6 +207,7 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
     child.trips = domain->trips(expressions);
     // A proved empty domain needs no body interface.
     if (expressions.constantValue(child.trips) == 0) { return true; }
+    if (singletonBoundaryChild(node, child.trips)) { return true; }
     // Each export attempt owns its candidate. Failed storage or endpoint
     // adapters cannot leave partial patterns in the child selected later.
     auto obligation = [&](const std::string& reason) {
