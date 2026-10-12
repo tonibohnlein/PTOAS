@@ -553,5 +553,58 @@
     "correctness_review": "accepted",
     "cpp_emission": "not run in this checkpoint",
     "device_execution": "not run"
+  },
+  "sequence_preparation_isolation": {
+    "base_revision": "f90a07b0fa047b4677e18252d5a27cc5b03c0da0",
+    "source_sha256": {
+      "lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.cpp": "0a4778e71aa7ba9027f3c6eb92eb074bf05a666c0c0562ed156b68ebd3374f43",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceAdapters.cpp": "385b28282fc62cc573ecb7908e30a184772776e156b25ce4ce0f6b1350e267f1",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.cpp": "2cecfe820ab99dbad47b1f3c2a2d21193953a70615469155c7216498b09ef604",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h": "9dcbc05725417816b05494f7931ee65c62dc3a59e3343849a7c15db0d06efe89",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceInsertion.cpp": "d09c4941547464f0588ba218addc8652746c93e24395cfcb759f02b8cd860258",
+      "lib/PTO/Transforms/FrontierSynch/Structured/NumericTemplateRegional.cpp": "e04acc4b19a27a843689b499698ac5c346c12a13ac009bf38086e50814e3174a",
+      "test/lit/pto/Inputs/check_sequence_analysis.py": "3f8d9af354c24843b94e8e767f078ce6d3ca5ef36f07b680b1265cbdef8a2f2f",
+      "tools/pto-test-opt/SyncLogicalInsertionChecks.cpp": "fa5cec1e9e36d2f27147c9e6754c24195b220f88a9de3655d0f8db7cb604aacb"
+    },
+    "binaries": {
+      "pto-test-opt": "c257a1a9a547232a255ab307c32a24add6328da993b118af40a38dd7ed3ac99c",
+      "pto-sync-input-test": "7068eebbc03c510a1a26ea21aa8e8d71194e6effa9df86aeb20c12f8a093cd30"
+    },
+    "focused_tests": {
+      "command": [
+        "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+        "-j2",
+        "-v",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_analysis.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_endpoint_retry.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_retained_demands.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_guarded_publication.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_retained_demand_requests.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_frontier_public_pipeline.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_bounded_prefix_realization.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 37.746680962853134,
+      "maximum_rss_kib": 140560,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 300.0
+    },
+    "delta_probe": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "--mlir-disable-threading",
+        "--pto-frontier-analysis=gm-alias=may-not-alias profile-stages=true",
+        "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+      ],
+      "returncode": 1,
+      "status": "finished",
+      "seconds": 0.904345576884225,
+      "maximum_rss_kib": 261440,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "delta_obligation": "sequence child lacks its exact retained prefix owner",
+    "reviews": "architectural and correctness source reviews accepted; seven focused lit tests pass"
   }
 }

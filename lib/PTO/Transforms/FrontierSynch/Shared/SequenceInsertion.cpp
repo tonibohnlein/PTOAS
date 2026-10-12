@@ -11,14 +11,29 @@
 #include "PTO/Transforms/FrontierSynch/Shared/GuardedPublication.h"
 #include "mlir/IR/Dominance.h"
 namespace mlir::pto::frontiersynch {
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(ArrayRef<scf::ForOp> enclosing,
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(
+    std::string& diagnostic, ArrayRef<scf::ForOp> enclosing,
     const SequenceEndpointResolver& resolver)
 {
-    return prepareWithTypeBases(enclosing, {}, resolver);
+    return prepareWithTypeBases(diagnostic, enclosing, {}, resolver);
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWithTypeBases(
-    ArrayRef<scf::ForOp> enclosing, ArrayRef<uint32_t> typeBases, const SequenceEndpointResolver& resolver)
+    std::string& diagnostic, ArrayRef<scf::ForOp> enclosing, ArrayRef<uint32_t> typeBases,
+    const SequenceEndpointResolver& resolver)
 {
+    diagnostic.clear();
+    // A failed executable recipe must not poison retained mathematics or a
+    // later realization. Do not roll back the shared expression arena: child
+    // query caches can retain IDs appended during an unsuccessful attempt.
+    auto fail = [&](StringRef message) {
+        if (!diagnostic.empty()) { diagnostic += ": "; }
+        diagnostic += message.str();
+        return false;
+    };
+    if (!error.empty() || !expressions.constructionError().empty()) {
+        fail(!error.empty() ? error : expressions.constructionError());
+        return failure();
+    }
     const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
     const bool unsupportedWidth = bits.isScalable() || bits.getFixedValue() != 64;
     if (unsupportedWidth) {
@@ -38,6 +53,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         else if (enclosing.empty() && relationalResult->prepare) { result = relationalResult->prepare(); }
         if (failed(result)) { fail("symbolic sequence endpoint adapter unavailable at the requested cuts"); }
         else { (*result)->completeInvocation = completeInvocation; }
+        if (!expressions.constructionError().empty()) {
+            fail(expressions.constructionError()); return failure();
+        }
         return result;
     }
     for (const auto& child : children) {
@@ -90,7 +108,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         }
         if (failed(supplied)) {
             fail("regional child endpoint preparation failed");
-            if (!expressions.error().empty()) { error += ": " + expressions.error(); }
+            if (!expressions.constructionError().empty()) { fail(expressions.constructionError()); }
             return failure();
         }
         auto prepared = std::move(*supplied);
@@ -179,6 +197,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         if (!memo) { memo = std::make_unique<DenseMap<Expr, Value>>(); stages[cut] = &result->addPreparation(cut); }
         OpBuilder builder(function.getContext());
         builder.setInsertionPointToEnd(stages[cut]);
+        // Publication may first try a selective SET and then a valid early
+        // publication. Its caller decides which failed probe is terminal.
         return contextual ? expressions.emitContextual(expression,builder,cut,contexts[cut]) :
                             expressions.emit(expression,builder,cut,*memo);
     };
@@ -340,11 +360,11 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         auto sourcePresence = regionalPresence(ca.regional, a.event());
         if (!sourcePresence) { return fail("sequence publication requires exact source presence"); }
         auto publication = prepareGuardedPublication(function, expressions, aa.after, ab.before,
-            endpointGuard(a, retained), retained, emit, error, *targetGuard,
+            endpointGuard(a, retained), retained, emit, diagnostic, *targetGuard,
             SelectedPublication{*sourcePresence, endpointGuard(a, *sourcePresence)});
         if (failed(publication)) {
-            llvm::raw_string_ostream diagnostic(error);
-            diagnostic << "; crossing record " << record << " from " << aa.phase->elementOp->getLoc()
+            llvm::raw_string_ostream detail(diagnostic);
+            detail << "; crossing record " << record << " from " << aa.phase->elementOp->getLoc()
                        << " to " << ab.phase->elementOp->getLoc();
             return false;
         }
@@ -370,7 +390,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         wait.memberCoordinates.push_back(*targetMember); wait.records.push_back(record); wait.piece = nextPiece++;
         result->endpoints.push_back(std::move(set)); result->endpoints.push_back(std::move(wait));
         if (failed(appendPublicationCleanup(*publication, record, p, q, {c(0)},
-            expressions, emit, *result, error))) { return false; }
+            expressions, emit, *result, diagnostic))) { return false; }
         nextPiece = result->endpoints.size();
         return true;
     };
@@ -391,7 +411,11 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
     for (auto& endpoint : result->endpoints) {
         endpoint.record = namespaces.at(recordNamespace.at(endpoint.records.front()));
     }
-    if (!expressions.error().empty()) { fail(expressions.error()); return failure(); }
+    if (!expressions.constructionError().empty()) { fail(expressions.constructionError()); }
+    // Optional ancestor-cut probes may leave a stale emission diagnostic.
+    // Only failures of this required recipe govern acceptance. In particular,
+    // emitting a false placeholder cannot hide an endpointGuard failure.
+    if (!diagnostic.empty()) { return failure(); }
     result->allocationPreparation = [owner = shared_from_this(),
         allocationChildren = std::move(allocationChildren),
         allocationCrossings = std::move(allocationCrossings)](PreparedLogicalPlan& plan) {

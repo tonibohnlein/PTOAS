@@ -30,7 +30,7 @@ separate commit. Infrastructure alone does not complete a production milestone.
 |---|---|---|---|
 | 1. Measured baseline | Aggregate allocation summary/query/proof/lane timing and inner-loop counts; precise retained-prefix refusal; pinned baseline replay. | Profiling preserves commands and certificates; bounded diagnostic storage; classify the Persistent GEMM hot stage and Delta blocker. | Complete; evidence below |
 | 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; capability scheduling pending |
-| 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Pending |
+| 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Sequence preparation failure isolation complete; broader capability consolidation pending |
 | 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Pending |
 | 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Pending |
 | 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Pending |
@@ -146,3 +146,28 @@ allocation, physical allocation and sequence composition checks. Malformed WAIT
 permutations/ranks and legacy certificates are covered. Both source reviews
 accepted the sweep. This is the completed finite-allocation component of
 milestone 2; allocation-capability scheduling remains open.
+
+## Milestone 3: sequence preparation failure isolation
+
+Sequence endpoint preparation now owns its attempt diagnostic separately from
+mathematical construction errors. Direct preparation, regional callbacks and
+numerical/arithmetic adapters use this boundary. Failed emission does not erase
+exact class membership, invalidate queries or block a later recipe on the same
+retained owner. Genuine expression-construction errors remain failures; shared
+expression IDs are not rolled back beneath child caches.
+
+Seven focused lit tests pass. The new regression injects child preparation
+failure, retries through direct and exported callbacks, verifies retained
+mathematical membership and queries, and checks that an unavailable endpoint
+predicate cannot be hidden by a successfully emitted false placeholder. Existing
+guarded-publication checks validate the selective-SET failure followed by early
+publication and terminal cleanup. Both independent source reviews accepted this
+component. The compliance prefilter reports three nested-condition brace-rule
+false positives; each reported body has braces.
+
+The isolated Delta MayNotAlias replay still refuses logical insertion in 0.904
+seconds, now with `sequence child lacks its exact retained prefix owner`.
+The previous `sequence prefix collection retains an analysis failure` blocker
+is gone. This is progress in ownership and retry behavior, not completion of
+Delta emission or the broader capability milestone. The next prefix task is to
+preserve the exact child owner through the relevant regional adapter.

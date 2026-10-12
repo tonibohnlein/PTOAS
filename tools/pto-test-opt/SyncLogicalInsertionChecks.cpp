@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/MixedStrideAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRegional.h"
 #include "SyncLogicalInsertionChecks.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateInsertion.h"
@@ -920,6 +921,52 @@ bool checkSlicePrerequisite(func::FuncOp function, const pto::SyncInput& input)
     second->firstOrdinal = fs::RegionExpressions::invalid;
     return !compose(*second).error.empty();
 }
+bool checkSequencePreparationRetry(fs::SequenceAnalysis& analysis, fs::ProgramRecognition& program,
+    const pto::SyncInput& input)
+{
+    const auto owner = analysis.state;
+    if (!owner || owner->relationalResult || owner->children.empty() || owner->crossings.empty()) { return false; }
+    auto& child = owner->children.front().regional;
+    auto prepare = child.prepare;
+    auto prepareWithVisits = child.prepareWithVisits;
+    auto refuse = [](ArrayRef<scf::ForOp>) -> FailureOr<std::unique_ptr<fs::PreparedLogicalPlan>> {
+        return failure();
+    };
+    child.prepare = [refuse]() { return refuse({}); };
+    child.prepareWithVisits = refuse;
+    auto rejected = fs::prepareSequenceLogicalInsertion(analysis);
+    fs::recordSequenceContractAttempt(program, input, analysis);
+    bool valid = failed(rejected) && !analysis.insertionError.empty() && analysis.error.empty() &&
+        owner->error.empty() && owner->expressions.constructionError().empty() &&
+        program.sequenceContract && program.sequenceContract->membership == fs::ContractStatus::Established &&
+        program.sequenceContract->endpointRecipes == fs::ContractImplementation::Unavailable;
+    auto regional = fs::sequenceRegionalResult(analysis);
+    valid &= bool(regional.prepareWithVisits) && bool(regional.reachability);
+    if (regional.prepareWithVisits) { valid &= failed(regional.prepareWithVisits({})) && owner->error.empty(); }
+    child.prepare = std::move(prepare);
+    child.prepareWithVisits = std::move(prepareWithVisits);
+    auto retried = fs::prepareSequenceLogicalInsertion(analysis);
+    valid &= succeeded(retried) && analysis.insertionError.empty() && analysis.state == owner;
+    if (regional.prepareWithVisits) { valid &= succeeded(regional.prepareWithVisits({})); }
+    // A missing endpoint predicate produces a false placeholder internally.
+    // Emitting that placeholder must never turn the failed recipe into success.
+    const auto target = owner->ports[owner->crossings.front().target].child;
+    auto& targetRegion = owner->children[target].regional;
+    auto predicate = targetRegion.endpointEventGuard;
+    targetRegion.endpointEventGuard = [](fs::RegionalEvent) -> std::optional<fs::RegionExpressions::Id> {
+        return std::nullopt;
+    };
+    auto missingPredicate = fs::prepareSequenceLogicalInsertion(analysis);
+    valid &= failed(missingPredicate) && !analysis.insertionError.empty() && owner->error.empty();
+    targetRegion.endpointEventGuard = std::move(predicate);
+    valid &= succeeded(fs::prepareSequenceLogicalInsertion(analysis)) && analysis.insertionError.empty();
+    if (regional.reachability && !regional.anchors.empty()) {
+        const auto zero = owner->expressions.constant(0);
+        valid &= regional.reachability({0, zero, fs::PeriodicEventKind::Start},
+            {0, zero, fs::PeriodicEventKind::Completion}).has_value();
+    }
+    return valid;
+}
 } // namespace
 LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolicy policy)
 {
@@ -952,6 +999,8 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         else if (succeeded(childPlan)) { regionScope &= !(**childPlan).completeInvocation; }
     }
     auto analysis = fs::analyzeSequence(function, input, *program);
+    const bool preparationRetry = !function->hasAttr("test.preparation_retry") ||
+        checkSequencePreparationRetry(analysis, *program, input);
     uint64_t boundedRegions = 0, boundedRecords = 0;
     bool boundedCacheStable = true;
     for (const auto& node : program->nodes) {
@@ -1014,6 +1063,7 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         {"bounded_cached_regions", boundedRegions}, {"bounded_cached_demands", boundedRecords},
         {"bounded_cache_stable", boundedCacheStable},
         {"insertion_error", analysis.insertionError},
+        {"preparation_retry", preparationRetry},
         {"prepared", succeeded(prepared)},
         {"nested_matching", succeeded(prepared) && (**prepared).nestedIdentities},
         {"symbolic_storage_effects", regional.symbolicStorageEffects.size()},
@@ -1036,7 +1086,7 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         {"crossing_candidates", analysis.cost.crossingCandidates},
         {"implication_checks", analysis.cost.implicationChecks},
         {"expressions", expressions ? expressions->size() : 0}, {"emitted", emitted}}) << "\n";
-    return success(before == after && regionScope && contractAudit && boundedCacheStable);
+    return success(before == after && regionScope && contractAudit && boundedCacheStable && preparationRetry);
 }
 
 LogicalResult runFiniteGuardedAnalysisChecks(func::FuncOp function, pto::GMAliasPolicy policy)

@@ -182,7 +182,7 @@ void recordSequenceContractAttempt(ProgramRecognition& program, const SyncInput&
     const bool retainedRelations = state && state->relationalResult && state->relationalResult->relations &&
         state->relationalResult->relations->data.completeRequiredOrder;
     const bool established = original && analysis.error.empty() && (retainedRelations ||
-        (analysis.insertionError.empty() && state->error.empty() && state->expressions.constructionError().empty()));
+        (state->error.empty() && state->expressions.constructionError().empty()));
     // A failed endpoint/export attempt cannot erase an already owned exact
     // relational result. Keep its diagnostic separate from class membership.
     if (established && !analysis.insertionError.empty()) {
@@ -332,9 +332,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceLogicalInsertion(
     ArrayRef<scf::ForOp> enclosing, const SequenceEndpointResolver& resolver)
 {
     if (!analysis.state || !analysis.error.empty()) { return failure(); }
-    analysis.insertionError.clear();
-    auto result = analysis.state->prepare(enclosing, resolver);
-    if (failed(result)) { analysis.insertionError = analysis.state->error; }
+    std::string diagnostic;
+    auto result = analysis.state->prepare(diagnostic, enclosing, resolver);
+    analysis.insertionError = failed(result) ? std::move(diagnostic) : std::string{};
     return result;
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceInsertion(SequenceAnalysis& analysis)

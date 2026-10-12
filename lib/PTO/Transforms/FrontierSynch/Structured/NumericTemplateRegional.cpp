@@ -156,7 +156,10 @@ FailureOr<RegionalAnalysis> exportNumericBody(func::FuncOp function,
         state->crossings.push_back({source, target, yes});
     }
     out.prepare = {};
-    out.prepareWithVisits = [state](ArrayRef<scf::ForOp> visits) { return state->prepare(visits); };
+    out.prepareWithVisits = [state](ArrayRef<scf::ForOp> visits) {
+        std::string diagnostic;
+        return state->prepare(diagnostic, visits);
+    };
     if (!arena->constructionError().empty()) { error = arena->constructionError(); return failure(); }
     transaction.commit();
     return out;

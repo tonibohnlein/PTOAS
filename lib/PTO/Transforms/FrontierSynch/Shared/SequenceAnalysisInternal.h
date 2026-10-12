@@ -96,6 +96,7 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
     std::shared_ptr<SequenceNumericalNode> numericalTree;
     std::vector<std::pair<uint32_t, PeriodicEventKind>> numericalChainKeys;
     NumericalChainQueryCost numericalQueryCost;
+    // Mathematical construction failures only; endpoint attempts own their diagnostics.
     std::string error;
     std::string repeatedAttempt;
     std::vector<Child> children;
@@ -230,10 +231,11 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
         SequenceEvent event, bool reverse, NumericalChainQueryCost& cost);
     std::optional<Expr> numericalReachability(
         SequenceEvent source, SequenceEvent target, NumericalChainQueryCost& cost);
-    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare(ArrayRef<scf::ForOp> enclosing = {},
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare(
+        std::string& diagnostic, ArrayRef<scf::ForOp> enclosing = {},
         const SequenceEndpointResolver& resolver = {});
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareWithTypeBases(
-        ArrayRef<scf::ForOp> enclosing, ArrayRef<uint32_t> typeBases,
+        std::string& diagnostic, ArrayRef<scf::ForOp> enclosing, ArrayRef<uint32_t> typeBases,
         const SequenceEndpointResolver& resolver = {});
 };
 std::optional<int64_t> sequenceInteger(Value value);

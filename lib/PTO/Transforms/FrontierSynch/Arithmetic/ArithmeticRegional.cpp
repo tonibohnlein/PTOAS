@@ -1172,7 +1172,14 @@ FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalR
             merge->children.push_back(std::move(crossing));
             typeBases.push_back(0); // Crossings already name the parent's original site table.
         }
-        return merge->prepareWithTypeBases(enclosing, typeBases);
+        crossingState->emissionError.clear();
+        std::string diagnostic;
+        auto prepared = merge->prepareWithTypeBases(diagnostic, enclosing, typeBases);
+        if (failed(prepared)) {
+            if (!crossingState->emissionError.empty()) { diagnostic += ": " + crossingState->emissionError; }
+            crossingState->emissionError = std::move(diagnostic);
+        } else { crossingState->emissionError.clear(); }
+        return prepared;
     };
     result->prepare = [prepare = result->prepareWithVisits]() { return prepare({}); };
     result->capabilities.endpointRecipes = llvm::all_of(relation->children, [](const auto& child) {
