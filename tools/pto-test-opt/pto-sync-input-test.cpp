@@ -1474,6 +1474,7 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function);
 bool runIterationPredicateChecks(MLIRContext* context);
 bool runBoundedEmissionRecipeChecks();
 bool runStructuredPrivateStateChecks();
+bool runBoundedPredicateHistoryChecks();
 LogicalResult runRotatingAnalysisChecks(func::FuncOp function, const pto::SyncInput& input);
 LogicalResult dumpExplicitAnalysis(func::FuncOp function, const pto::SyncInput& input);
 int runArithmeticSelectorChecks();
@@ -1540,6 +1541,10 @@ int runRegionalRelationChecks();
 int runMixedSymbolicRegionChecks(func::FuncOp);
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
 int main(int argc, char **argv) {
+  const bool predicateHistory = argc == 2 && StringRef(argv[1]) == "--bounded-predicate-history-checks";
+  if (predicateHistory) {
+    return runBoundedPredicateHistoryChecks() ? 0 : 1;
+  }
   const bool privateState = argc == 2 && StringRef(argv[1]) == "--structured-private-state-checks";
   if (privateState) {
     return runStructuredPrivateStateChecks() ? 0 : 1;

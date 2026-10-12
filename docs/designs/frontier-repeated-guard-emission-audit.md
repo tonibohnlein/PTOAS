@@ -167,3 +167,23 @@ receipts are superseded by `build-range`, `fixture-range` and `focused-final`.
 Section 8 was reread; all four paper pins remain unchanged. Predicate-history
 and prefix realizations, their integration, and Delta public logical recovery
 remain outstanding.
+
+## Milestone 3, third patch: bounded predicate snapshots
+
+An owned history layout retains original Boolean evaluations and their
+validity across a declared finite number of visits. It resets at each tracked
+loop invocation, shifts at visit entry, and snapshots the mapped original
+evaluation after its definition. Skipped definitions remain invalid and false.
+No payload or memory read is replayed. Reads require the same original loop
+frame and mapped clone. Another intervening nested loop is explicitly
+unsupported. The caller still proves coordinate mapping and masks invalid
+evaluations; this primitive does not certify a guard or incoming selector.
+
+An independent interpreter exhaustively checks 8,908 definition/value patterns
+with zero through three trips, nonzero negative lower bounds, step three,
+lookbacks zero and two, and repeated enclosing invocations. Original predicate
+producer call counts agree, and rejected requirements leave supplied layouts
+unchanged. The optimized build and both focused lit checks pass; receipts are
+in `.local/three-paths/repeated-guard/m3-history/`. Section 8's pin remains
+`c9a6a9ad...`; the other paper pins are unchanged. This patch does not yet wire
+history to retained matching selectors or change public Delta emission.
