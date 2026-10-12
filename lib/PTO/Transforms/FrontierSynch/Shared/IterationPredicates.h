@@ -159,6 +159,40 @@ public:
         }
         return success();
     }
+    void describe(Id root, Operation* cut, llvm::raw_ostream& out)
+    {
+        auto domain = CountedLoop::get(loop);
+        if (!domain || !cut) { return; }
+        auto current = e.div(e.sub(e.input(loop.getInductionVar()), e.input(loop.getLowerBound())),
+                             e.constant(domain->step));
+        for (auto [id, value] : e.referencedInputs(root)) {
+            auto found = recipes.find(value);
+            if (found == recipes.end()) { continue; }
+            auto [original, ordinal] = found->second;
+            auto delta = e.constantValue(e.sub(ordinal, current));
+            out << "predicate-input=" << id << " original=" << original
+                << " evaluation=" << ordinal << " current=" << current << " displacement=";
+            if (ordinal == current) { out << "0"; }
+            else if (delta) { out << *delta; }
+            else { out << "symbolic"; }
+            out << " dominates-cut=" << dominance.properlyDominates(original, cut) << "\n";
+            if (ordinal != current) { e.printExpression(ordinal, out); }
+            SmallVector<Value> pending{original};
+            DenseSet<Value> seen;
+            while (!pending.empty()) {
+                auto leaf = pending.pop_back_val();
+                if (!seen.insert(leaf).second) { continue; }
+                auto* op = leaf.getDefiningOp();
+                const bool opaque = !mlir::pto::detail::canReplayScalar(op) || forbidden.contains(op);
+                if (opaque) {
+                    out << "  original-leaf=" << leaf << " dominates-cut="
+                        << dominance.properlyDominates(leaf, cut) << "\n";
+                } else {
+                    pending.append(op->operand_begin(), op->operand_end());
+                }
+            }
+        }
+    }
     std::string error;
 
 private:

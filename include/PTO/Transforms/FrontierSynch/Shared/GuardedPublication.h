@@ -15,6 +15,16 @@
 namespace mlir::pto::frontiersynch {
 using EndpointExpressionEmitter =
     std::function<FailureOr<Value>(RegionExpressions::Id, Operation*)>;
+enum class EndpointFailureStage {
+    None, ConsumerGuard, SourceGuard, PublicationContract, CleanupGuard, MatchingIdentity, CleanupIdentity
+};
+struct EndpointEmissionFailure {
+    EndpointFailureStage stage = EndpointFailureStage::None;
+    RegionExpressions::Id expression = RegionExpressions::invalid;
+    Operation* cut = nullptr;
+    std::string diagnostic;
+};
+const char* endpointFailureStageName(EndpointFailureStage stage);
 struct GuardedPublication {
     Value sourceGuard;
     RegionExpressions::Id publicationGuard = RegionExpressions::invalid;
@@ -41,7 +51,7 @@ FailureOr<GuardedPublication> prepareGuardedPublication(func::FuncOp function,
     RegionExpressions& arena, TemplateEndpointCut source, TemplateEndpointCut consumer,
     RegionExpressions::Id sourceGuard, RegionExpressions::Id activity,
     const EndpointExpressionEmitter& emit, std::string& error, Value consumerPredicate,
-    std::optional<SelectedPublication> selectedSource = {});
+    std::optional<SelectedPublication> selectedSource = {}, EndpointEmissionFailure* failure = nullptr);
 // Append the alternative WAIT using the same record and matching tuple as the
 // ordinary pair. The final tuple component is the logical occurrence identity;
 // preceding components follow the normal memberCoordinates convention.

@@ -348,11 +348,14 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
         auto sourceGuard = bindBoundedExpression(*demands, edge.guard, distance, false);
         auto targetGuard = bindBoundedExpression(*demands, edge.guard, distance, true);
         targetGuard = e.land(e.le(e.constant(distance), ordinal), targetGuard);
+        demands->predicates->error.clear();
         if (!emitter.add(edge.source, edge.target % m, sourceGuard, targetGuard, {ordinal}, {target})) {
-            const auto reason = demands->predicates->error.empty() ? e.lastEmissionError() : demands->predicates->error;
+            const auto reason = !emitter.error.empty() ? emitter.error :
+                demands->predicates->error.empty() ? e.lastEmissionError() : demands->predicates->error;
             error = "bounded endpoint unavailable from site " + std::to_string(edge.source) +
                 " to site " + std::to_string(edge.target % m) + " at visit displacement " +
-                std::to_string(distance) + ": " + reason;
+                std::to_string(distance) + " stage=" + endpointFailureStageName(emitter.failureInfo.stage) +
+                ": " + reason;
             return failure();
         }
     }
@@ -366,6 +369,48 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
     return result;
 }
 } // namespace
+std::size_t auditBoundedLifetimeEndpoints(std::shared_ptr<BoundedLifetimeDemandResult> demands,
+                                        llvm::raw_ostream& out)
+{
+    if (!demands || !demands->predicates || demands->anchors.empty()) { return 0; }
+    auto& e = demands->expressions;
+    const auto m = demands->anchors.size();
+    std::size_t failures = 0;
+    for (auto [site, anchor] : llvm::enumerate(demands->anchors)) {
+        out << "endpoint-anchor site=" << site << " pipe=" << static_cast<unsigned>(anchor.phase->kPipeValue)
+            << " operation=" << anchor.phase->elementOp->getName() << " location="
+            << anchor.phase->elementOp->getLoc() << "\n";
+    }
+    for (auto [record, edge] : llvm::enumerate(demands->analysis.sourceDemands)) {
+        CircuitEndpoints emitter(demands->function, e, demands->anchors);
+        emitter.recover = [&](Id root, OpBuilder& builder, Operation* cut, RegionExpressions::CutEmission& context) {
+            return demands->predicates->recover(root, builder, cut, context);
+        };
+        const auto distance = edge.target / m;
+        auto sourceGuard = bindBoundedExpression(*demands, edge.guard, distance, false);
+        auto targetGuard = bindBoundedExpression(*demands, edge.guard, distance, true);
+        targetGuard = e.land(e.le(e.constant(distance), demands->ordinal), targetGuard);
+        auto source = e.sub(demands->ordinal, e.constant(distance));
+        demands->predicates->error.clear();
+        if (emitter.add(edge.source, edge.target % m, sourceGuard, targetGuard, {demands->ordinal}, {source})) {
+            continue;
+        }
+        ++failures;
+        const auto& failureInfo = emitter.failureInfo;
+        out << "endpoint-obligation record=" << record << " source=" << edge.source
+            << " target=" << edge.target % m << " displacement=" << distance
+            << " stage=" << endpointFailureStageName(failureInfo.stage) << " guard=" << failureInfo.expression;
+        if (failureInfo.cut) {
+            out << " cut=" << failureInfo.cut->getName() << " location=" << failureInfo.cut->getLoc();
+        }
+        out << " reason=" << (!emitter.error.empty() ? emitter.error :
+            demands->predicates->error.empty() ? e.lastEmissionError() : demands->predicates->error) << "\n";
+        demands->predicates->describe(failureInfo.expression, failureInfo.cut, out);
+        e.printExpression(failureInfo.expression, out);
+    }
+    out << "endpoint-audit records=" << demands->analysis.sourceDemands.size() << " failures=" << failures << "\n";
+    return failures;
+}
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeLogicalResult(
     std::shared_ptr<BoundedLifetimeDemandResult> demands, std::string& error, bool completeInvocation)
 {

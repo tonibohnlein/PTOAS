@@ -7,6 +7,19 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Shared/GuardedPublication.h"
 namespace mlir::pto::frontiersynch {
+const char* endpointFailureStageName(EndpointFailureStage stage)
+{
+    switch (stage) {
+    case EndpointFailureStage::None: return "none";
+    case EndpointFailureStage::ConsumerGuard: return "consumer-guard";
+    case EndpointFailureStage::SourceGuard: return "source-guard";
+    case EndpointFailureStage::PublicationContract: return "publication-contract";
+    case EndpointFailureStage::CleanupGuard: return "cleanup-guard";
+    case EndpointFailureStage::MatchingIdentity: return "matching-identity";
+    case EndpointFailureStage::CleanupIdentity: return "cleanup-identity";
+    }
+    return "invalid-stage";
+}
 namespace {
 RegionExpressions::Id structuralPresence(func::FuncOp function, Operation* cut, RegionExpressions& arena)
 {
@@ -36,8 +49,18 @@ FailureOr<GuardedPublication> prepareGuardedPublication(func::FuncOp function,
     RegionExpressions& arena, TemplateEndpointCut source, TemplateEndpointCut consumer,
     RegionExpressions::Id sourceGuard, RegionExpressions::Id activity,
     const EndpointExpressionEmitter& emit, std::string& error, Value consumerPredicate,
-    std::optional<SelectedPublication> selectedSource)
+    std::optional<SelectedPublication> selectedSource, EndpointEmissionFailure* failureInfo)
 {
+    auto attempt = [&](RegionExpressions::Id expression, Operation* cut, EndpointFailureStage stage) {
+        auto value = emit(expression, cut);
+        const bool failedAttempt = failed(value) && failureInfo;
+        if (failedAttempt) {
+            auto diagnostic = failureInfo->expression == expression && failureInfo->cut == cut ?
+                failureInfo->diagnostic : arena.lastEmissionError();
+            *failureInfo = {stage, expression, cut, std::move(diagnostic)};
+        }
+        return value;
+    };
     if (!function || !source.before || !consumer.before || !emit ||
         sourceGuard >= arena.size() || activity >= arena.size() ||
         !arena.isBoolean(sourceGuard) || !arena.isBoolean(activity)) {
@@ -47,13 +70,16 @@ FailureOr<GuardedPublication> prepareGuardedPublication(func::FuncOp function,
         !arena.isBoolean(selectedSource->existence) || !arena.isBoolean(selectedSource->atCut))) {
         error = "selected publication requires Boolean existence and visit predicates"; return failure();
     }
-    auto ordinary = emit(sourceGuard, source.before);
+    auto ordinary = attempt(sourceGuard, source.before, EndpointFailureStage::SourceGuard);
     if (succeeded(ordinary)) { return GuardedPublication{*ordinary, activity}; }
     if (!function.getBody().hasOneBlock()) {
         error = "terminal cleanup requires a single-exit invocation"; return failure();
     }
     auto* terminal = function.front().getTerminator();
     TemplateEndpointCut final{terminal->getBlock(), terminal};
+    if (failureInfo) {
+        *failureInfo = {EndpointFailureStage::PublicationContract, sourceGuard, source.before, {}};
+    }
     auto choices = qualifyTerminalCleanupCuts({consumer, final}, consumerPredicate);
     if (!choices || (!selectedSource && !qualifyTerminalCleanupCuts({source, final}))) {
         error = "late SET guard requires single-publication cuts and a terminal cleanup interface";
@@ -61,13 +87,16 @@ FailureOr<GuardedPublication> prepareGuardedPublication(func::FuncOp function,
     }
     auto present = selectedSource ? selectedSource->existence : structuralPresence(function, source.before, arena);
     auto atCut = selectedSource ? selectedSource->atCut : present;
-    auto publish = emit(atCut, source.before);
+    auto publish = attempt(atCut, source.before, EndpointFailureStage::SourceGuard);
     if (failed(publish)) {
-        error = "early publication predicate unavailable: " + arena.lastEmissionError(); return failure();
+        error = "early publication predicate unavailable: " +
+            (failureInfo ? failureInfo->diagnostic : arena.lastEmissionError()); return failure();
     }
-    auto cleanup = emit(arena.select(present, arena.lnot(activity), arena.boolean(false)), terminal);
+    auto cleanup = attempt(arena.select(present, arena.lnot(activity), arena.boolean(false)), terminal,
+        EndpointFailureStage::CleanupGuard);
     if (failed(cleanup)) {
-        error = "terminal cleanup predicate unavailable: " + arena.lastEmissionError();
+        error = "terminal cleanup predicate unavailable: " +
+            (failureInfo ? failureInfo->diagnostic : arena.lastEmissionError());
         return failure();
     }
     if (!qualifyTerminalCleanupCuts({source, final}, *publish)) {
