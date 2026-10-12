@@ -1472,6 +1472,7 @@ std::string render(Operation *op) {
 }
 LogicalResult runRegionExpressionChecks(func::FuncOp function);
 bool runIterationPredicateChecks(MLIRContext* context);
+bool runBoundedEmissionRecipeChecks();
 LogicalResult runRotatingAnalysisChecks(func::FuncOp function, const pto::SyncInput& input);
 LogicalResult dumpExplicitAnalysis(func::FuncOp function, const pto::SyncInput& input);
 int runArithmeticSelectorChecks();
@@ -1538,6 +1539,10 @@ int runRegionalRelationChecks();
 int runMixedSymbolicRegionChecks(func::FuncOp);
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
 int main(int argc, char **argv) {
+  const bool emissionRecipes = argc == 2 && StringRef(argv[1]) == "--bounded-emission-recipe-checks";
+  if (emissionRecipes) {
+    return runBoundedEmissionRecipeChecks() ? 0 : 1;
+  }
   const bool iterationChecks = argc == 2 && StringRef(argv[1]) == "--iteration-predicate-checks";
   if (iterationChecks) {
     MLIRContext context;

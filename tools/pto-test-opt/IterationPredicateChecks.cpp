@@ -87,6 +87,9 @@ bool check(MLIRContext* context, unsigned trips)
     auto p = predicates.at(f.p, ordinal), r = predicates.at(f.r, ordinal);
     auto past = predicates.at(f.p, e.sub(ordinal, e.constant(1)));
     auto future = predicates.at(f.r, e.add(ordinal, e.constant(1)));
+    const bool bounded = predicates.boundedLookback(e.land(p, future), ordinal, 1) == 1 &&
+        !predicates.boundedLookback(future, ordinal, 0);
+    if (!bounded) { return false; }
     auto thenRoot = e.select(p, e.boolean(true), future);
     auto elseRoot = e.select(p, past, e.boolean(false));
     Fixture foreign(context, trips);

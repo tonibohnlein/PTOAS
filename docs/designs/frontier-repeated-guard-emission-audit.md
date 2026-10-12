@@ -99,3 +99,41 @@ test, audit and source pins are under `.local/three-paths/repeated-guard/m2/`.
 Section 8 was reread; its current pin remains `c9a6a9ad...` above, and the other
 paper pins are unchanged. Private state and recurring publication remain later
 milestones; this change does not authorize their use implicitly.
+
+## Milestone 3, first patch: uniform inactive endpoint recipes
+
+Endpoint preparation now reuses the existing monotone-presence proof to select
+false emission guards for uniformly inactive records. This proof is scoped to
+the original window and rolls back temporary expressions; it does not borrow
+allocation-domain facts. Every original record, family and matching coordinate
+remains present. Producers and reducers are unchanged. Unknown proofs retain
+the original emission obligation. Normal preparation proves each record only
+when reached; it does not precompute every proof before a possible early live
+failure. This keeps Delta retained-demand checks at 0.90 seconds instead of the
+61.10 seconds observed with eager proof construction. The exhaustive audit is
+a deliberately larger diagnostic workload.
+
+The optimized Delta audit now reports 192 blocked records out of 1,172: two
+publication-contract failures and 190 consumer failures. The 900 inactive
+records include 879 formerly blocked records. All 272 remaining potentially
+active records have registered predicate offsets no later than their consumer:
+82 have lookback zero, 62 one, 64 two and 64 three. This offset audit concerns
+registered evaluation placeholders; it does not establish arbitrary SSA
+availability, global-query locality or executable history storage.
+
+Seven focused lit checks pass, including inactive emission, contextual
+predicates, endpoint audit, bounded provenance, first/tail allocation, regional
+interfaces and guarded publication. Synthetic guards include a masked opaque
+future predicate, independent presence alternatives, original record IDs,
+fresh detached retries, both local and cross-pipe endpoints, and an unsigned
+wrap counterexample at `UINT64_MAX` which must remain live. Uniform proof
+checking is deliberately sufficient: an unknown proof never drops a record.
+Delta certification under both alias policies and retained-demand output are
+byte-identical to the pinned baseline. Local receipts are in
+`.local/three-paths/repeated-guard/m3/`.
+
+Section 8 was reread before this patch; its hash remains `c9a6a9ad...` above,
+and the other three paper hashes are unchanged. This is the first patch within
+milestone 3, not completion of consumer selectors or the emission plan. Finite
+predicate history, the two recurring publication obligations, shared scalar
+state materialization and final integration remain outstanding.

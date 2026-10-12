@@ -196,6 +196,25 @@ public:
         }
         return success();
     }
+    // Certify the visit offsets of opaque evaluations in an original retained
+    // root. This does not establish within-visit availability or global queries.
+    std::optional<uint64_t> boundedLookback(Id root, Id base, uint64_t targetVisit)
+    {
+        const bool valid = root < e.size() && base < e.size() && targetVisit < UINT32_MAX;
+        if (!valid) { return std::nullopt; }
+        uint64_t lookback = 0;
+        for (auto [id, value] : e.referencedInputs(root)) {
+            auto found = recipes.find(value);
+            if (found == recipes.end()) { continue; }
+            std::optional<uint64_t> offset;
+            for (uint64_t d = 0; d <= targetVisit; ++d) {
+                if (found->second.second == e.add(base, e.constant(d))) { offset = d; break; }
+            }
+            if (!offset) { return std::nullopt; }
+            lookback = std::max(lookback, targetVisit - *offset);
+        }
+        return lookback;
+    }
     void describe(Id root, Operation* cut, llvm::raw_ostream& out)
     {
         auto domain = CountedLoop::get(loop);
