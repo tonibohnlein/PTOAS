@@ -443,7 +443,7 @@ std::optional<Expr> boundaryGuard(Value value, PhaseNormalization& normalizer,
 }
 std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
     const PhaseIndex& index, RegionExpressions& arena, Expr trips,
-    const DenseMap<Value, Expr>& inherited, std::string& error)
+    const DenseMap<Value, Expr>& inherited, std::string& error, BoundaryControlPolicy policy)
 {
     if (!CountedLoop::get(loop) || index.hasUnprovedCarriedState(loop)) {
         error = "boundary slicing requires a representable counted loop with proved carried state";
@@ -474,7 +474,7 @@ std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
             return collect(op->getOperand(0)) && collect(op->getOperand(1));
         }
         auto split = splitCondition(value, loop, index, arena, trips, order);
-        if (!split) { return false; }
+        if (!split) { return policy == BoundaryControlPolicy::RetainChildControl; }
         predicates.emplace_back(value, *split);
         addCut(split->ordinal, split->ordinalBounds);
         if (split->equalityEnd) { addCut(*split->equalityEnd, split->endBounds); }
@@ -484,7 +484,17 @@ std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
         return true;
     };
     bool supported = true;
-    loop.getBody()->walk([&](scf::IfOp branch) { supported &= collect(branch.getCondition()); });
+    loop.getBody()->walk<WalkOrder::PreOrder>([&](Operation* operation) {
+        // A singleton wrapper retains nested predicates with their original
+        // child provider. Recurrent routes still require their full partition.
+        if (policy == BoundaryControlPolicy::RetainChildControl && isa<scf::ForOp>(operation)) {
+            return WalkResult::skip();
+        }
+        if (auto branch = dyn_cast<scf::IfOp>(operation)) {
+            supported &= collect(branch.getCondition());
+        }
+        return WalkResult::advance();
+    });
     if (!supported) { error = "outer control has no finite affine boundary partition"; return std::nullopt; }
     // Endpoints are already present in every partition. Clipped thresholds
     // equal to either endpoint contribute no additional interval.

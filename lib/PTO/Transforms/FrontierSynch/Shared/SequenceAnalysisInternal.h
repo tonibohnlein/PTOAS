@@ -200,6 +200,7 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
     bool conditionalChild(const StructureNode& node);
     bool loopChild(const StructureNode& node);
     bool repeatedChild(const StructureNode& node, Expr trips);
+    bool singletonBoundaryChild(const StructureNode& node, Expr trips);
     bool phasedChild(const StructureNode& node, Expr trips);
     bool boundaryLoop(scf::ForOp loop);
     bool rotatingPatterns(Child& child, const RotatingAnalysis& analysis, const RecognitionResult& recognized);

@@ -10,18 +10,22 @@
 #include "PhaseNormalization.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingRegional.h"
 namespace mlir::pto::frontiersynch {
+enum class BoundaryControlPolicy { RequirePartition, RetainChildControl };
 struct BoundarySlice {
     PeriodicSlice interval;
     DenseMap<Value, RegionExpressions::Id> bindings;
     // Certified bound on max(end-begin,0), independent of runtime parameters.
     std::optional<uint64_t> maximumLength;
 };
-// Partition only this loop's changing Boolean atoms. Child-local predicates
-// remain child obligations; outer AND/OR expressions need not themselves be
-// comparisons. All cuts and bindings use original absolute loop ordinals.
+// Partition Boolean atoms using original absolute loop ordinals, including
+// outer AND/OR expressions. RetainChildControl stops at proper nested loops
+// and leaves unpartitioned predicates with their original child provider.
+// Callers must prove that the resulting skeleton is used at most once before
+// dispensing with control invariance.
 std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
     const PhaseIndex& index, RegionExpressions& arena, RegionExpressions::Id trips,
-    const DenseMap<Value, RegionExpressions::Id>& inherited, std::string& error);
+    const DenseMap<Value, RegionExpressions::Id>& inherited, std::string& error,
+    BoundaryControlPolicy policy = BoundaryControlPolicy::RequirePartition);
 // Evaluate a Boolean formula under certified atom bindings. nullopt means an
 // unbound operand still depends on the repeated loop, not an unknown truth value.
 std::optional<RegionExpressions::Id> boundaryGuard(Value value, PhaseNormalization& normalizer,
