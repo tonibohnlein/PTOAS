@@ -31,12 +31,14 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
     forms, retains exact mathematical demands, and prepares logical handoffs.
     Incomplete proofs are reported as unresolved, never absence of a class.
     Synchronization is attached transactionally only after preparation succeeds.
-    Allocation certificates are attached when supported; physical event IDs
+    Allocation certificates are attached when requested and supported; physical event IDs
     are assigned by the following pto-frontier-allocate pass. Missing allocation
     support leaves the selected logical graph available. Analysis-only mode
     retains the original-region certification checkpoint and stops with a
     checkpoint diagnostic before emission, leaving the IR unchanged.
     Regional certification alone does not establish whole-function support.
+    Set prepare-allocation=false for logical-only emission. This omits allocation
+    evidence; handoffs requiring that evidence cannot be allocated from this output.
     Functions with manual on-core SET/WAIT or record/wait events are left
     unchanged, including dynamic event IDs. Cross-core commands and barriers
     alone do not trigger this skip, matching the shared InsertSync policy.
@@ -47,6 +49,8 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
       "Write session stage timings and construction/cache counters to stderr as JSON">,
     Option<"analysisOnly", "analysis-only", "bool", "false",
       "Stop after mathematical certification without inserting synchronization">,
+    Option<"prepareAllocation", "prepare-allocation", "bool", "true",
+      "Construct allocation evidence for the following physical allocation pass">,
     Option<"gmAlias", "gm-alias", "std::string", "\"may-not-alias\"",
       "Distinct GM root assumption: may-not-alias or may-alias">,
     Option<"arithmeticProfile", "arithmetic-profile", "std::string", "\"\"",
