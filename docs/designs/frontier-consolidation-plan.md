@@ -32,7 +32,7 @@ separate commit. Infrastructure alone does not complete a production milestone.
 | 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; capability scheduling pending |
 | 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Sequence preparation failure isolation complete; broader capability consolidation pending |
 | 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Pending |
-| 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Pending |
+| 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction complete; numerical port projection and shared source facts pending |
 | 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Pending |
 | 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Pending |
 | 8. Proof reuse and validation | Share lazy inactive-proof and premise contexts, replay mappings and safe Boolean conversion work. Close known guard-equivalence/oracle gaps and run pinned paired campaigns. | No unexplained acceptance loss or changed output; report eleven kernels and 783-input corpus by stage, wall time, memory and inner work. | Lazy inactive-proof setup shared; broader proof reuse and campaign pending |
@@ -194,3 +194,35 @@ Delta's isolated MayNotAlias replay remains an explicit logical refusal with the
 same missing retained prefix-owner obligation (0.804 seconds, 259,608 KiB RSS).
 This single probe is not evidence of a general speedup. No demand predicate,
 Section 5.4 algorithm or allocation policy changed.
+
+## Ordinary sequence boundary construction
+
+The ordinary composer now constructs first accesses in a forward pass and last
+accesses in a backward pass. Each child contributes all simultaneous envelope
+alternatives before its presence updates the accumulated mask. Constant-false
+alternatives are discarded; surviving alternatives keep their original order.
+This removes repeated remasking and rescanning of accumulated boundary vectors.
+It does not change crossing reduction, requested exports, or event allocation.
+
+`boundary_summary_visits` counts visits to supplied boundary alternatives only.
+The composer still traverses child-by-cell combinations; expression construction,
+port retention, prerequisite recovery and crossings are separate costs. This
+change therefore does not establish a linear bound for complete composition.
+
+A concrete occurrence-group oracle compares exported first/last writers,
+prefix/suffix readers and native boundaries over all 32 valuations of five
+independent guards. The fixture includes simultaneous writers on two pipes,
+reader-only groups, an optional overwrite and entirely empty executions.
+The scaling fixture uses 8, 16 and 32 separate runtime-loop children, which
+cannot be fused into one adjacent explicit run.
+
+Validation: eight focused sequence/public/macro/singleton lit tests pass. The
+separate repeated-region script passes 14 independent nested command closures;
+its loop-count assertion now counts operations instead of diagnostic substrings.
+The fixture's subsequent phased-repeat script still exceeds its 90-second
+watchdog, reproduced with the pinned baseline binary. This remains unresolved.
+The 8/16/32-loop summary-only probes visit 280/536/1048 alternatives. Their
+initial full-preparation version exceeded 90 seconds in downstream preparation
+work; this is not a claim of improved complete-request latency. Architecture
+and correctness reviews accepted the component, including the boundary oracle.
+Receipts are under `.local/three-paths/consolidation/m5-summary/`.

@@ -921,6 +921,102 @@ bool checkSlicePrerequisite(func::FuncOp function, const pto::SyncInput& input)
     second->firstOrdinal = fs::RegionExpressions::invalid;
     return !compose(*second).error.empty();
 }
+// Compare exported extrema against a concrete occurrence-group oracle. Ports
+// in one group are simultaneous; vector order must not suppress an envelope.
+bool checkSequenceBoundarySets(func::FuncOp function)
+{
+    Block inputs;
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    fs::SequenceAnalysisState state(function, arena);
+    struct Access { unsigned group, pipe; bool write; };
+    const std::vector<Access> accesses = {
+        {0, 0, false}, {1, 0, true}, {1, 1, true},
+        {2, 0, false}, {2, 1, false}, {3, 1, true}, {4, 0, false}};
+    constexpr unsigned groups = 5;
+    std::vector<fs::RegionExpressions::Id> guards;
+    for (unsigned group = 0; group < groups; ++group) {
+        guards.push_back(arena->input(inputs.addArgument(IntegerType::get(function.getContext(), 1),
+                                                         function.getLoc())));
+    }
+    state.children.resize(groups); state.cells.resize(1);
+    state.boundaries.resize(groups, std::vector<fs::CellBoundary>(1));
+    state.nativeFirst.resize(groups); state.nativeLast.resize(groups);
+    for (unsigned port = 0; port < accesses.size(); ++port) {
+        const auto& access = accesses[port];
+        const auto selected = fs::Selected{port, guards[access.group]};
+        auto& boundary = state.boundaries[access.group][0];
+        if (access.write) {
+            boundary.firstWriters.push_back(selected); boundary.lastWriters.push_back(selected);
+        } else {
+            boundary.firstReaders[access.pipe].push_back(selected);
+            boundary.lastReaders[access.pipe].push_back(selected);
+        }
+        state.nativeFirst[access.group][access.pipe].push_back(selected);
+        state.nativeLast[access.group][access.pipe].push_back(selected);
+    }
+    fs::SequenceAnalysis summary;
+    state.summarizeBoundaries(summary);
+    if (summary.storageBoundary.size() != 1) { return false; }
+    const auto& boundary = summary.storageBoundary.front();
+    for (unsigned bits = 0; bits < (1U << groups); ++bits) {
+        SmallVector<std::pair<fs::RegionExpressions::Id, fs::RegionExpressions::Id>> values;
+        for (unsigned group = 0; group < groups; ++group) {
+            values.emplace_back(guards[group], arena->boolean(bits & (1U << group)));
+        }
+        fs::RegionExpressions::Substitution binding(values);
+        auto selected = [&](const auto& candidates) {
+            std::set<unsigned> result;
+            for (const auto& candidate : candidates) {
+                auto present = arena->constantValue(arena->substitute(candidate.present, binding));
+                if (!present) { result.insert(accesses.size()); }
+                else if (*present) { result.insert(candidate.port); }
+            }
+            return result;
+        };
+        auto perPipe = [&](const auto& candidates, unsigned pipe) {
+            auto found = candidates.find(pipe);
+            return found == candidates.end() ? std::set<unsigned>{} : selected(found->second);
+        };
+        std::vector<unsigned> active;
+        int firstWriter = groups, lastWriter = -1;
+        for (unsigned port = 0; port < accesses.size(); ++port) {
+            const auto& access = accesses[port];
+            if (!(bits & (1U << access.group))) { continue; }
+            active.push_back(port);
+            if (access.write) {
+                firstWriter = std::min(firstWriter, static_cast<int>(access.group));
+                lastWriter = std::max(lastWriter, static_cast<int>(access.group));
+            }
+        }
+        std::set<unsigned> firstWriters, lastWriters;
+        for (auto port : active) {
+            const auto& access = accesses[port];
+            if (access.write && static_cast<int>(access.group) == firstWriter) { firstWriters.insert(port); }
+            if (access.write && static_cast<int>(access.group) == lastWriter) { lastWriters.insert(port); }
+        }
+        if (selected(boundary.firstWriters) != firstWriters || selected(boundary.lastWriters) != lastWriters) {
+            return false;
+        }
+        for (unsigned pipe = 0; pipe < 2; ++pipe) {
+            std::set<unsigned> firstReader, lastReader, firstPayload, lastPayload;
+            for (auto port : active) {
+                const auto& access = accesses[port];
+                if (access.pipe != pipe) { continue; }
+                if (firstPayload.empty()) { firstPayload.insert(port); }
+                lastPayload = {port};
+                if (!access.write && static_cast<int>(access.group) < firstWriter && firstReader.empty()) {
+                    firstReader.insert(port);
+                }
+                if (!access.write && static_cast<int>(access.group) > lastWriter) { lastReader = {port}; }
+            }
+            if (perPipe(boundary.firstReaders, pipe) != firstReader ||
+                perPipe(boundary.lastReaders, pipe) != lastReader ||
+                perPipe(summary.firstPayloads, pipe) != firstPayload ||
+                perPipe(summary.lastPayloads, pipe) != lastPayload) { return false; }
+        }
+    }
+    return arena->constructionError().empty();
+}
 bool checkSequencePreparationRetry(fs::SequenceAnalysis& analysis, fs::ProgramRecognition& program,
     const pto::SyncInput& input)
 {
@@ -970,6 +1066,7 @@ bool checkSequencePreparationRetry(fs::SequenceAnalysis& analysis, fs::ProgramRe
 } // namespace
 LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolicy policy)
 {
+    if (!checkSequenceBoundarySets(function)) { return failure(); }
     pto::SyncInput input(policy);
     if (failed(input.build(function))) { return failure(); }
     if (function->hasAttr("test.finite_arithmetic_fill")) {
@@ -999,6 +1096,12 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         else if (succeeded(childPlan)) { regionScope &= !(**childPlan).completeInvocation; }
     }
     auto analysis = fs::analyzeSequence(function, input, *program);
+    if (function->hasAttr("test.boundary_summary_only")) {
+        llvm::outs() << llvm::json::Value(llvm::json::Object{
+            {"error", analysis.error}, {"children", analysis.cost.children},
+            {"boundary_summary_visits", fs::sequenceBoundarySummaryVisits(analysis)}}) << "\n";
+        return success(analysis.error.empty());
+    }
     const bool preparationRetry = !function->hasAttr("test.preparation_retry") ||
         checkSequencePreparationRetry(analysis, *program, input);
     uint64_t boundedRegions = 0, boundedRecords = 0;
@@ -1084,6 +1187,7 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         {"repeated_regions", analysis.cost.repeatedRegions}, {"phase_descriptions", analysis.cost.phaseDescriptions},
         {"selector_comparisons", analysis.cost.selectorComparisons},
         {"crossing_candidates", analysis.cost.crossingCandidates},
+        {"boundary_summary_visits", fs::sequenceBoundarySummaryVisits(analysis)},
         {"implication_checks", analysis.cost.implicationChecks},
         {"expressions", expressions ? expressions->size() : 0}, {"emitted", emitted}}) << "\n";
     return success(before == after && regionScope && contractAudit && boundedCacheStable && preparationRetry);
