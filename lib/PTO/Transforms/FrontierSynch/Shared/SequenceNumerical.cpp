@@ -272,11 +272,6 @@ bool SequenceAnalysisState::numericalCrossingReduction()
             if (a == left->events.end() || b == right->events.end()) { return {}; }
             crossings.push_back({a->second, b->second}); identities.push_back(pair);
         }
-        uint64_t reductionOperations = 0;
-        auto covers = chain::reduce(*left->index, *right->index, crossings, reductionOperations);
-        accumulateCost(operations, reductionOperations);
-        if (!covers) { return {}; }
-        for (std::size_t i = 0; i < covers->size(); ++i) { if ((*covers)[i]) { retained.insert(identities[i]); } }
         std::map<uint32_t, NumericalChainSelection> selected;
         for (unsigned side = 0; side < 2; ++side) {
             for (auto [original, local] : node->children[side]->events) {
@@ -296,10 +291,13 @@ bool SequenceAnalysisState::numericalCrossingReduction()
         for (unsigned side = 0; side < 2; ++side) {
             for (const auto& key : node->children[side]->keys) { maps[side].push_back(directory.at(key)); }
         }
-        auto merge = buildNumericalChainMerge(left->index, right->index, crossings, selection, maps[0], maps[1]);
+        std::vector<bool> covers;
+        auto merge = buildNumericalChainMerge(left->index, right->index, crossings, selection, maps[0], maps[1],
+                                              &covers);
         accumulateCost(operations, merge.index.operations);
         accumulateCost(merges, 1);
         if (!merge.index.error.empty()) { return {}; }
+        for (std::size_t i = 0; i < covers.size(); ++i) { if (covers[i]) { retained.insert(identities[i]); } }
         node->merge = std::make_shared<NumericalChainMerge>(std::move(merge));
         node->index = std::shared_ptr<const NumericalChainInterface>(node->merge, &node->merge->index);
 

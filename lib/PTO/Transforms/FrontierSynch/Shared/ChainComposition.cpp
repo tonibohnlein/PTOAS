@@ -183,8 +183,10 @@ void indexCrossings(NumericalChainMerge& out, const std::vector<NumericalCrossin
 NumericalChainMerge buildNumericalChainMerge(
     std::shared_ptr<const NumericalChainInterface> left, std::shared_ptr<const NumericalChainInterface> right,
     const std::vector<NumericalCrossing>& edges, const std::vector<NumericalChainSelection>& selection,
-    const std::vector<uint32_t>& leftChains, const std::vector<uint32_t>& rightChains)
+    const std::vector<uint32_t>& leftChains, const std::vector<uint32_t>& rightChains,
+    std::vector<bool>* retainedCrossings)
 {
+    if (retainedCrossings) { retainedCrossings->clear(); }
     NumericalChainMerge out;
     out.children = {std::move(left), std::move(right)}; out.parentChains = {leftChains, rightChains};
     Projection projection;
@@ -197,6 +199,7 @@ NumericalChainMerge buildNumericalChainMerge(
     std::vector<NumericalCrossing> reduced;
     for (std::size_t i = 0; i < edges.size(); ++i) { if ((*retained)[i]) { reduced.push_back(edges[i]); } }
     indexCrossings(out, reduced);
+    if (retainedCrossings) { *retainedCrossings = std::move(*retained); }
     return out;
 }
 } // namespace mlir::pto::frontiersynch
