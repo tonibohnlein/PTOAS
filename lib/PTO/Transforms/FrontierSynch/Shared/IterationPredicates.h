@@ -9,6 +9,7 @@
 #ifndef PTO_FRONTIERSYNCH_ITERATIONPREDICATES_H
 #define PTO_FRONTIERSYNCH_ITERATIONPREDICATES_H
 #include "CountedLoop.h"
+#include "OriginalCutFacts.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ModularScalar.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "../../InsertSync/SyncScalarReplay.h"
@@ -65,6 +66,42 @@ public:
         identities.try_emplace(key, id);
         recipes.try_emplace(argument, std::make_pair(value, ordinal));
         return id;
+    }
+    FailureOr<Id> prepare(Id root, OpBuilder& builder, Operation* cut, RegionExpressions::CutEmission& context)
+    {
+        error.clear();
+        const bool originalCut = cut && root < e.size() &&
+            cut->getParentOfType<func::FuncOp>() == loop->getParentOfType<func::FuncOp>();
+        if (!originalCut) {
+            error = "predicate preparation requires a valid expression and original cut";
+            return failure();
+        }
+        std::vector<std::pair<Id, Id>> bindings;
+        // Equality identifies the actual evaluation, not merely the static SSA
+        // definition. A current value is still checked for cut availability.
+        const auto facts = detail::originalCutFacts(cut);
+        auto domain = CountedLoop::get(loop);
+        const auto current = domain && loop->isProperAncestor(cut) ? domain->ordinal(e) : e.invalid;
+        for (auto [id, value] : e.referencedInputs(root)) {
+            auto original = value;
+            auto found = recipes.find(value);
+            if (found != recipes.end()) {
+                if (found->second.second != current) { continue; }
+                original = found->second.first;
+            }
+            if (auto fact = facts.find(original); fact != facts.end()) {
+                bindings.push_back({id, e.boolean(fact->second)});
+            } else if (found != recipes.end()) {
+                bindings.push_back({id, e.input(original)});
+            }
+        }
+        RegionExpressions::Substitution substitution(bindings);
+        const auto selected = e.substitute(root, substitution);
+        if (selected == e.invalid || failed(recover(selected, builder, cut, context))) {
+            if (error.empty()) { error = e.lastEmissionError(); }
+            return failure();
+        }
+        return selected;
     }
     LogicalResult recover(Id root, OpBuilder& builder, Operation* cut, RegionExpressions::CutEmission& context)
     {

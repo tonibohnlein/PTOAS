@@ -305,8 +305,9 @@ bool attachStorageCoordinates(BoundedLifetimeDemandResult& demands, const Storag
         OpBuilder builder(demands.function.getContext());
         builder.setInsertionPointToEnd(&block);
         auto& context = contexts[endpoint.before];
-        if (failed(demands.predicates->recover(lane, builder, endpoint.before, context))) { return false; }
-        auto value = demands.expressions.emitContextual(lane, builder, endpoint.before, context);
+        auto selected = demands.predicates->prepare(lane, builder, endpoint.before, context);
+        if (failed(selected)) { return false; }
+        auto value = demands.expressions.emitContextual(*selected, builder, endpoint.before, context);
         if (failed(value)) { return false; }
         coordinates.emplace_back(index, *value);
     }
@@ -339,8 +340,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareEndpoints(
     const auto m = demands->anchors.size();
     const auto ordinal = demands->ordinal;
     CircuitEndpoints emitter(demands->function, e, demands->anchors);
-    emitter.recover = [&](Id root, OpBuilder& builder, Operation* cut, RegionExpressions::CutEmission& context) {
-        return demands->predicates->recover(root, builder, cut, context);
+    emitter.prepareExpression = [&](Id root, OpBuilder& builder, Operation* cut,
+            RegionExpressions::CutEmission& context) {
+        return demands->predicates->prepare(root, builder, cut, context);
     };
     for (const auto& edge : demands->analysis.sourceDemands) {
         auto distance = edge.target / m;
@@ -383,8 +385,9 @@ std::size_t auditBoundedLifetimeEndpoints(std::shared_ptr<BoundedLifetimeDemandR
     }
     for (auto [record, edge] : llvm::enumerate(demands->analysis.sourceDemands)) {
         CircuitEndpoints emitter(demands->function, e, demands->anchors);
-        emitter.recover = [&](Id root, OpBuilder& builder, Operation* cut, RegionExpressions::CutEmission& context) {
-            return demands->predicates->recover(root, builder, cut, context);
+        emitter.prepareExpression = [&](Id root, OpBuilder& builder, Operation* cut,
+            RegionExpressions::CutEmission& context) {
+            return demands->predicates->prepare(root, builder, cut, context);
         };
         const auto distance = edge.target / m;
         auto sourceGuard = bindBoundedExpression(*demands, edge.guard, distance, false);
