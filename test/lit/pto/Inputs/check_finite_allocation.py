@@ -8,6 +8,7 @@
 """Check finite allocation against executed logical identities and causal reuse."""
 import itertools
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -120,6 +121,24 @@ def main():
             path.write_text(logical.stdout.replace(old, new, 1))
             result = run(opt, ['--mlir-disable-threading', '--pto-frontier-allocate=eligible-ids=0,1'], path)
             assert result.returncode != 0, result.stdout
+        wait_order = re.search(r"wait_order = array<i64:[^>]*>", logical.stdout)
+        assert wait_order, logical.stdout
+        for replacement in ("wait_order = 0 : i64", "wait_order = array<i64: 0>",
+                            "wait_order = array<i64: 0, 0>", "wait_order = array<i64: 0, 2>",
+                            "wait_order = array<i64: 1, 0>"):
+            path.write_text(logical.stdout.replace(wait_order.group(), replacement, 1))
+            result = run(opt, ['--mlir-disable-threading', '--pto-frontier-allocate=eligible-ids=0,1'], path)
+            assert result.returncode != 0, result.stdout
+        # Equal ranks cannot describe distinct consumers on one WAIT chain.
+        path.write_text(logical.stdout.replace('target_rank = 1 : i64', 'target_rank = 2 : i64', 1))
+        result = run(opt, ['--mlir-disable-threading', '--pto-frontier-allocate=eligible-ids=0,1'], path)
+        assert result.returncode != 0, result.stdout
+        # Existing serialized certificates without the ordered-WAIT extension
+        # retain the general allocation path.
+        legacy = re.sub(r",? wait_order = array<i64:[^>]*>", "", logical.stdout)
+        path.write_text(legacy)
+        result = run(opt, ['--mlir-disable-threading', '--pto-frontier-allocate=eligible-ids=0,1'], path)
+        assert result.returncode == 0, result.stderr
         path.write_text(logical.stdout)
         for ids in ['0,0', '6', '7', '-1']:
             result = run(opt, ['--mlir-disable-threading', '--pto-frontier-allocate=eligible-ids='+ids], path)

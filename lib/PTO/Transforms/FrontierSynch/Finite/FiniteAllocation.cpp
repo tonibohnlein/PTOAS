@@ -68,6 +68,7 @@ DictionaryAttr explicitAllocationCertificate(const ExplicitAnalysis& analysis, i
     if (!actual.error.empty()) { return {}; }
     const auto& order = strengthened ? actual : r;
     SmallVector<Attribute> handoffs;
+    std::vector<std::vector<int64_t>> byTarget(n);
     // Source buckets supply a topological handoff order in O(n+h) work. Keep
     // original record IDs while serializing only O(k) rank data per handoff.
     for (const auto& bucket : bySource) {
@@ -79,12 +80,18 @@ DictionaryAttr explicitAllocationCertificate(const ExplicitAnalysis& analysis, i
             attributes.set("source_position", b.getI64IntegerAttr(edge.source));
             attributes.set("target_position", b.getI64IntegerAttr(edge.target));
             attributes.set("target_rank", b.getI64IntegerAttr(order.localRanks[edge.target]));
+            byTarget[edge.target].push_back(handoffs.size());
             handoffs.push_back(attributes.getDictionary(context));
         }
     }
     SmallVector<int64_t> labels(order.pipeLabels.begin(), order.pipeLabels.end());
     NamedAttrList attributes(certificate(b, plan, "rank-query", handoffs));
     attributes.set("pipe_labels", b.getDenseI64ArrayAttr(labels));
+    SmallVector<int64_t> waits;
+    for (const auto& bucket : byTarget) { waits.append(bucket.begin(), bucket.end()); }
+    // Equal-consumer handoffs have identical reuse thresholds; their tie order
+    // does not affect allocation. Preserve source-serialized order within each bucket.
+    attributes.set("wait_order", b.getDenseI64ArrayAttr(waits));
     return attributes.getDictionary(context);
 }
 

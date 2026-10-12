@@ -29,7 +29,7 @@ separate commit. Infrastructure alone does not complete a production milestone.
 | Milestone | Implementation | Acceptance | Status |
 |---|---|---|---|
 | 1. Measured baseline | Aggregate allocation summary/query/proof/lane timing and inner-loop counts; precise retained-prefix refusal; pinned baseline replay. | Profiling preserves commands and certificates; bounded diagnostic storage; classify the Persistent GEMM hot stage and Delta blocker. | Complete; evidence below |
-| 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Pending |
+| 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; capability scheduling pending |
 | 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Pending |
 | 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Pending |
 | 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Pending |
@@ -118,3 +118,31 @@ No Delta recovery is claimed by this instrumentation checkpoint.
 
 Pinned input hashes, binary hashes, source hashes, counters and receipts are in
 [frontier-consolidation-validation.json](frontier-consolidation-validation.json).
+
+## Milestone 2: finite directional sweep
+
+The ordered finite allocator now implements Proposition `sparse-shared-allocation`:
+visit WAITs in command order, advance one pointer through the SET chain, and
+bucket-color the resulting integer lifetime intervals. It returns the exact
+per-direction requirement even when more than six IDs are needed. Insufficient
+capacity on this path never constructs the dense reuse relation or invokes
+matching. It does not add ordering or change the logical plan.
+
+Canonical explicit certificates carry a target-bucketed WAIT permutation.
+The decoder validates its type, completeness and uniqueness, nondecreasing
+SET-prefix and WAIT ranks within each direction, equal-cut rank consistency,
+and exclusion of reflexive reuse. Certificates without this extension retain
+the generic allocator. Rank evidence still derives its semantic authority from
+the fixed logical plan; structural checks do not establish arbitrary supplied
+facts about a different command graph.
+
+The compiled independent oracle constructs SET and WAIT chains with all
+three-handoff matching permutations and arbitrary return edges, computes their
+closure, rejects cycles and compares allocation with brute chain partitions.
+A 4,096-handoff seven-ID case checks at most 8,192 reuse queries and valid lane
+reuse. Existing generic allocation checks cover 2,048 causal orders. Five
+focused lit tests pass, including public pipeline, allocation-session, finite
+allocation, physical allocation and sequence composition checks. Malformed WAIT
+permutations/ranks and legacy certificates are covered. Both source reviews
+accepted the sweep. This is the completed finite-allocation component of
+milestone 2; allocation-capability scheduling remains open.
