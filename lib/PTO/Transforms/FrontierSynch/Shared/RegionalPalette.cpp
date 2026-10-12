@@ -31,6 +31,11 @@ std::shared_ptr<RegionalAllocationSummary> coalesceRegionalAllocation(
                 (member.tupleRule && !validPhysicalTupleRule(*member.tupleRule, group.budget))) { return {}; }
         }
     }
+    // Terminal alternatives cannot be flattened into ordinary consumer bounds.
+    // Preserve their independently certified palettes and lifetime markers.
+    if (llvm::any_of(groups, [](const auto& group) { return group.terminalCleanup; })) {
+        return std::make_shared<RegionalAllocationSummary>(input);
+    }
     // Preserve dynamic lane mappings. Split mixed constant groups by direction;
     // only same-direction lifetimes need a proof for numeric-ID sharing.
     if (llvm::any_of(groups, [&](const auto& group) {

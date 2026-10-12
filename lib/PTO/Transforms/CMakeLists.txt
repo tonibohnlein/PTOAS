@@ -286,6 +286,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Shared/ConditionalCompactInput.cpp
   FrontierSynch/Shared/ControlOriginDistances.cpp
   FrontierSynch/Shared/EndpointCutChoices.cpp
+  FrontierSynch/Shared/GuardedPublication.cpp
   FrontierSynch/Shared/EndpointFamilies.cpp
   FrontierSynch/Shared/EndpointPieces.cpp
   FrontierSynch/Shared/ExecutionContexts.cpp

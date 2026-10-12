@@ -7,7 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Analyze whole physical executions, then insert at their original lexical cuts.
 // All edits are transactional on a working copy; projection size is at most twice
-// the static function size and never depends on loop trip counts.
+// the static function size and never depends on loop trip counts. Endpoint
+// alternative proofs are requalified against the transferred cuts and guards.
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
@@ -159,6 +160,25 @@ public:
             if (endpoint.identity) { endpoint.identity = inverse.lookupOrDefault(endpoint.identity); }
             for (auto& coordinate : endpoint.memberCoordinates) { coordinate = inverse.lookupOrDefault(coordinate); }
         }
+        auto remapChoices = [&](std::shared_ptr<const EndpointCutChoices>& choices) -> LogicalResult {
+            if (!choices) { return success(); }
+            SmallVector<TemplateEndpointCut> transferred;
+            for (const auto& cut : choices->cuts()) {
+                auto* before = anchor(cut.before);
+                if (!before) { return failure(); }
+                transferred.push_back({before->getBlock(), before});
+            }
+            if (choices->loop()) {
+                auto loop = dyn_cast_or_null<scf::ForOp>(inverse.lookupOrNull(choices->loop()));
+                if (!loop) { return failure(); }
+                choices = qualifyEndpointCutChoices(loop, transferred);
+            } else {
+                auto predicate = choices->consumerPredicate();
+                if (predicate) { predicate = inverse.lookupOrDefault(predicate); }
+                choices = qualifyTerminalCleanupCuts(transferred, predicate);
+            }
+            return success(bool(choices));
+        };
         for (auto& family : plan.families) {
             family.sourceCut.before = anchor(family.sourceCut.before);
             if (!family.sourceCut.before) { return failure(); }
@@ -166,6 +186,9 @@ public:
             family.targetCut.before = anchor(family.targetCut.before);
             if (!family.targetCut.before) { return failure(); }
             family.targetCut.block = family.targetCut.before->getBlock();
+            if (failed(remapChoices(family.sourceChoices)) || failed(remapChoices(family.targetChoices))) {
+                return failure();
+            }
             for (auto& member : family.members) {
                 for (auto* tuple : {&member.sourceCoordinates, &member.targetCoordinates}) {
                     for (auto& coordinate : *tuple) {

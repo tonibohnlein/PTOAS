@@ -509,6 +509,18 @@ FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const Ph
             auto loop = found == coordinates->loops.end() ? scf::ForOp{} : found->second;
             for (auto record : family.originalRecords) {
                 const auto& commands = actualChoices[{record, kind}];
+                if (choices.front() == -1) {
+                    const auto& publications = actualChoices[{record, 0}];
+                    auto publication = publications.size() == 1 ?
+                        dyn_cast_or_null<scf::IfOp>(publications.front()->getParentOp()) : scf::IfOp{};
+                    auto* terminal = function.front().getTerminator();
+                    if (!publication || !qualifyTerminalCleanupCuts(
+                        {{publication->getBlock(), publication}, {terminal->getBlock(), terminal}},
+                        publication.getCondition())) {
+                        return function.emitError("terminal cleanup requires one selected publication per invocation"),
+                            failure();
+                    }
+                }
                 if (!(choices.front() == -1 ? validateTerminalCleanupCommands(function, commands) :
                       validateEndpointCommandChoices(loop, commands))) {
                     return function.emitError("endpoint alternatives do not partition original branch execution"),

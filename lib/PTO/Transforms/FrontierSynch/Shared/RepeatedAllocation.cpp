@@ -233,6 +233,9 @@ std::shared_ptr<RegionalAllocationSummary> repeatedRegionalAllocation(
     RepeatedRegionState& state, const RegionalAllocationSummary& child,
     ArrayRef<std::pair<uint32_t, std::size_t>> crossings)
 {
+    // A terminal acquisition cannot be lifted to the end of each visit.
+    // Repeated surplus publications need their own history/matching contract.
+    if (llvm::any_of(child.groups, [](const auto& group) { return group.terminalCleanup; })) { return {}; }
     auto coalesced = coalesceRegionalAllocation(state.body, child);
     if (!coalesced) { return {}; }
     if (auto periodic = periodicLaneAllocation(state, *coalesced, crossings)) { return periodic; }

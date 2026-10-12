@@ -36,9 +36,6 @@ std::shared_ptr<RegionalAllocationSummary> finiteRegionalAllocation(
     if (llvm::all_of(plan.families, [](const EndpointFamily& family) { return family.local; })) {
         return std::make_shared<RegionalAllocationSummary>();
     }
-    if (llvm::any_of(plan.families, [](const EndpointFamily& family) {
-            return family.targetChoices && !family.targetChoices->loop();
-        })) { return {}; }
     if (hasNestedFrame(region) || !region.expressions || !region.presence ||
         region.anchors.size() != region.occurrenceLoops.size()) {
         return {};
@@ -67,8 +64,10 @@ std::shared_ptr<RegionalAllocationSummary> finiteRegionalAllocation(
         RegionalEvent last{target->second, a.constant(0), PeriodicEventKind::Completion};
         auto sp = region.presence(first), tp = region.presence(last);
         if (!sp || !tp) { return {}; }
+        const bool cleanup = family.targetChoices && !family.targetChoices->loop();
         result->groups.push_back({family.sourcePipe, family.targetPipe, 1,
-            {{family.members.front().record, 0, 0, first, last, a.land(*sp, *tp), {}, true}}});
+            {{family.members.front().record, 0, 0, first, last, cleanup ? *sp : a.land(*sp, *tp), {}, true}},
+            {}, cleanup});
     }
     return result;
 }
@@ -194,8 +193,10 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
                     if (regionalAllocationDirection(x, xm) != regionalAllocationDirection(y, ym)) { continue; }
                     auto active = a.land(xm.active, ym.active);
                     if (a.constantValue(active) == 0) { continue; }
-                    auto xy = reaches(xm.lastTarget, ym.firstSource, true);
-                    auto yx = reaches(ym.lastTarget, xm.firstSource, true);
+                    auto xy = x.terminalCleanup ? std::optional<RegionExpressions::Id>(a.boolean(false)) :
+                        reaches(xm.lastTarget, ym.firstSource, true);
+                    auto yx = y.terminalCleanup ? std::optional<RegionExpressions::Id>(a.boolean(false)) :
+                        reaches(ym.lastTarget, xm.firstSource, true);
                     if (!xy || !yx) { return {}; }
                     if (!implies(active, a.lor(*xy, *yx))) { compatible = false; break; }
                 }
@@ -211,7 +212,8 @@ DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, con
                 }
                 auto active = a.land(member.active, hidden.active);
                 if (a.constantValue(active) == 0) { continue; }
-                auto before = reaches(member.lastTarget, hidden.first);
+                auto before = x.terminalCleanup ? std::optional<RegionExpressions::Id>(a.boolean(false)) :
+                    reaches(member.lastTarget, hidden.first);
                 auto after = reaches(hidden.last, member.firstSource);
                 if (!before || !after) { return {}; }
                 if (!implies(active, a.lor(*before, *after))) { disjoint = false; break; }

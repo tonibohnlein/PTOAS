@@ -9,6 +9,7 @@
 #ifndef PTO_FRONTIERSYNCH_CIRCUITENDPOINTS_H
 #define PTO_FRONTIERSYNCH_CIRCUITENDPOINTS_H
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Shared/GuardedPublication.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
 // Shared detached emitter for paired arithmetic recipes. Producers supply the
@@ -28,6 +29,7 @@ public:
         }
     }
     std::function<LogicalResult(Id, OpBuilder&, Operation*, RegionExpressions::CutEmission&)> recover;
+    std::string error;
     bool add(
         uint32_t source, uint32_t target, Id sourceGuard, Id targetGuard, ArrayRef<Id> sourceIdentity,
         ArrayRef<Id> targetIdentity)
@@ -47,12 +49,23 @@ public:
         family.targetCut = anchors[target].before;
         family.members.push_back({record, source, target, {}, {}});
         plan->families.push_back(std::move(family));
+        std::optional<GuardedPublication> publication;
+        EndpointExpressionEmitter emitter = [this](Id expression, Operation* cut) { return emit(expression, cut); };
+        auto consumer = emit(targetGuard, anchors[target].before.before);
+        if (failed(consumer)) { return false; }
+        if (p != q) {
+            auto prepared = prepareGuardedPublication(function, arena, anchors[source].after,
+                anchors[target].before, sourceGuard, targetGuard, emitter, error, *consumer);
+            if (failed(prepared)) { return false; }
+            publication = std::move(*prepared);
+            plan->families.back().targetChoices = publication->targetChoices;
+        }
         for (bool publish : {true, false}) {
             if (p == q && publish) {
                 continue;
             }
             auto cut = publish ? anchors[source].after.before : anchors[target].before.before;
-            auto guard = emit(publish ? sourceGuard : targetGuard, cut);
+            auto guard = publish ? FailureOr<Value>(publication->sourceGuard) : consumer;
             if (failed(guard)) {
                 return false;
             }
@@ -87,6 +100,8 @@ public:
             }
             plan->endpoints.push_back(std::move(endpoint));
         }
+        if (publication && failed(appendPublicationCleanup(*publication, record, p, q,
+            sourceIdentity, arena, emitter, *plan, error))) { return false; }
         return true;
     }
     std::unique_ptr<PreparedLogicalPlan> take()

@@ -70,6 +70,9 @@ DictionaryAttr regionalLaneEvidence(const RegionalAnalysis& region,
     using Key = std::tuple<uint32_t, Id, std::vector<Id>, uint32_t, Id, std::vector<Id>>;
     std::map<Key, std::optional<Id>> queries;
     auto before = [&](const Lane& a, const Lane& b) {
+        // Consumer completion is not an upper bound for a notification that
+        // may instead be acquired by terminal cleanup.
+        if (summary.groups[a.group].terminalCleanup) { return false; }
         for (const auto& x : a.boundary.lastTargets) {
             for (const auto& y : b.boundary.firstSources) {
                 auto active = e.land(x.present, y.present);

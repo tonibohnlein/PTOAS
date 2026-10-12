@@ -15,13 +15,15 @@ class EndpointCutChoices {
 public:
     scf::ForOp loop() const { return invocation; }
     ArrayRef<TemplateEndpointCut> cuts() const { return alternatives; }
+    Value consumerPredicate() const { return terminalPredicate; }
 private:
-    EndpointCutChoices(scf::ForOp loop, ArrayRef<TemplateEndpointCut> cuts)
-        : invocation(loop), alternatives(cuts.begin(), cuts.end()) {}
+    EndpointCutChoices(scf::ForOp loop, ArrayRef<TemplateEndpointCut> cuts, Value predicate = {})
+        : invocation(loop), alternatives(cuts.begin(), cuts.end()), terminalPredicate(predicate) {}
     scf::ForOp invocation;
     std::vector<TemplateEndpointCut> alternatives;
+    Value terminalPredicate;
     friend std::shared_ptr<const EndpointCutChoices> qualifyTerminalCleanupCuts(
-        ArrayRef<TemplateEndpointCut>);
+        ArrayRef<TemplateEndpointCut>, Value);
     friend std::shared_ptr<const EndpointCutChoices> qualifyEndpointCutChoices(
         scf::ForOp, ArrayRef<TemplateEndpointCut>);
 };
@@ -33,8 +35,12 @@ std::shared_ptr<const EndpointCutChoices> qualifyEndpointCutChoices(
     scf::ForOp loop, ArrayRef<TemplateEndpointCut> cuts);
 // Finite source publication: consumer WAIT or terminal cleanup WAIT. A null
 // loop identifies this kind. The producer certifies complementary activity;
-// this qualifier verifies original cuts and excludes repeated occurrences.
-std::shared_ptr<const EndpointCutChoices> qualifyTerminalCleanupCuts(ArrayRef<TemplateEndpointCut> cuts);
+// this qualifier verifies original cuts. A loop-contained consumer requires a
+// predicate selecting at most one original coordinate in every enclosing loop.
+// Selected coordinates must be invariant across all those loops; the physical
+// allocator rechecks the same property on the actual command guard.
+std::shared_ptr<const EndpointCutChoices> qualifyTerminalCleanupCuts(
+    ArrayRef<TemplateEndpointCut> cuts, Value consumerPredicate = {});
 bool validateTerminalCleanupCommands(func::FuncOp function, ArrayRef<Operation*> commands);
 // Revalidate serialized alternatives against actual command ancestors. Only
 // each command's immediate generated endpoint guard wrapper is omitted; every
