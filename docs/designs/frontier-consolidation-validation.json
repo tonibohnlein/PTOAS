@@ -1381,5 +1381,180 @@
     "reviews": "architecture and correctness accepted",
     "delta_outcome": "logical refusal: guarded expression input belongs to another invocation",
     "scope": "Uniform threshold inactivity proof and lazy sequence-prefix integration. General historical predicate emission and public Delta recovery remain open. Initial build reached external watchdog; resumed build succeeded."
+  },
+  "m2_repeated_lane_proof_reuse": {
+    "manifest": {
+      "baseline_revision": "5a3f014015062b00d320b06fb065726b8843d809",
+      "candidate_source_sha256": {
+        "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedLaneAllocation.cpp": "89dd6e09e4bd4ee6d0d4793cb54c094988e05abfe1fd52f8b62e30429cb5f619",
+        "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedLaneAllocation.h": "331a6a850b1386bc5d96e4bfb5c362aa27c924207610f78cafa8697a776291cb",
+        "tools/pto-test-opt/RepeatedRegionChecks.cpp": "a561a75d68adf9f763971bb26b6468cdf3c599898f8c3d0333f1e066592394f2"
+      },
+      "build": "existing source-pinned -O2 -UNDEBUG C++17; -j2 build, serial replay",
+      "input_sha256": "cc890b426ae89da77223b93a5ba4ad0b6f03d418f22f9bde65aea05fcde6324e",
+      "baseline_binary_sha256": "aab8fbc04e7f5cb3ff101f2bc56a345bcc0225395dcf0c459d2ff5b20540ba7a",
+      "candidate_binary_sha256": "b8b1040d9da1fbf87de1d8337c3c467a5704e608cf456cad30161574efc9192e"
+    },
+    "comparison": {
+      "baseline_mean_seconds": 30.090320953633636,
+      "candidate_mean_seconds": 9.066840323037468,
+      "speedup_ratio": 3.3187218349019214,
+      "logical_output_sha256": {
+        "baseline-1": "f5d89d3c3fc3849a14edd5f1be4f81e0b0120408fcbd02213fa03301b8998e67",
+        "baseline-2": "f5d89d3c3fc3849a14edd5f1be4f81e0b0120408fcbd02213fa03301b8998e67",
+        "candidate": "f5d89d3c3fc3849a14edd5f1be4f81e0b0120408fcbd02213fa03301b8998e67",
+        "candidate-1": "f5d89d3c3fc3849a14edd5f1be4f81e0b0120408fcbd02213fa03301b8998e67",
+        "candidate-2": "f5d89d3c3fc3849a14edd5f1be4f81e0b0120408fcbd02213fa03301b8998e67"
+      },
+      "full_output_equal": true,
+      "scope": "MayNotAlias logical preparation including allocation support; two serial unprofiled runs per revision; no broader corpus or device speedup claim"
+    },
+    "build": {
+      "command": [
+        "ninja",
+        "-C",
+        ".local/section8-refactor/source-pinned/candidate-build",
+        "-j2",
+        "pto-test-opt",
+        "pto-sync-input-test"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 14.718170246109366,
+      "maximum_rss_kib": 994132,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "focused_tests": {
+      "command": [
+        "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+        "-j1",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_region_expression.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_allocation_session.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_physical_allocation.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_frontier_public_pipeline.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 13.32111622299999,
+      "maximum_rss_kib": 140156,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "expression_oracle": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--region-expression-checks",
+        "test/lit/pto/region_expression.mlir"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 1.704099802998826,
+      "maximum_rss_kib": 69108,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "physical_allocation": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "--mlir-disable-threading",
+        "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+        ".local/three-paths/consolidation/m2-summary-profile/candidate-2.out"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 0.2015541980508715,
+      "maximum_rss_kib": 115496,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "baseline_1": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "--mlir-disable-threading",
+        "--pto-frontier-analysis=gm-alias=may-not-alias",
+        "test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 30.138508456060663,
+      "maximum_rss_kib": 185636,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 90.0
+    },
+    "baseline_2": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "--mlir-disable-threading",
+        "--pto-frontier-analysis=gm-alias=may-not-alias",
+        "test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 30.04213345120661,
+      "maximum_rss_kib": 185812,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 90.0
+    },
+    "candidate_1": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "--mlir-disable-threading",
+        "--pto-frontier-analysis=gm-alias=may-not-alias",
+        "test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 9.01780150597915,
+      "maximum_rss_kib": 188396,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 90.0
+    },
+    "candidate_2": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "--mlir-disable-threading",
+        "--pto-frontier-analysis=gm-alias=may-not-alias",
+        "test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 9.115879140095785,
+      "maximum_rss_kib": 187816,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 90.0
+    },
+    "sampling": {
+      "command": [
+        "perf",
+        "record",
+        "-e",
+        "cpu-clock:u",
+        "-F",
+        "49",
+        "--call-graph",
+        "dwarf,4096",
+        "-o",
+        ".local/three-paths/consolidation/m2-summary-profile/perf.data",
+        "--",
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "--mlir-disable-threading",
+        "--pto-frontier-analysis=gm-alias=may-not-alias",
+        "test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 30.55708013079129,
+      "maximum_rss_kib": 185828,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 90.0
+    },
+    "focused_lit_passed": 4,
+    "implication_requests": 1904,
+    "implication_computations": 196,
+    "checked_member_envelopes": 1583,
+    "reviews": "architecture and correctness accepted",
+    "scope": "Attempt-local repeated-lane proof reuse; allocation policy unchanged; no general normalization complexity claim; remaining milestones stay open",
+    "compliance": "Three brace-rule prefilter false positives; reported bodies are braced; diff check passed"
   }
 }

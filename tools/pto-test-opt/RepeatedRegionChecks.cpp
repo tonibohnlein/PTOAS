@@ -200,7 +200,8 @@ bool check(func::FuncOp function, Operation* anchor, scf::ForOp outer, scf::ForO
 // the storage case. Without storage, only each local A->B readiness remains.
 bool allocationCheck(func::FuncOp function, Operation* anchor, scf::ForOp loop,
                      unsigned q, unsigned begin, unsigned end, bool storage,
-                     bool omitMember, uint64_t& checked, bool cyclePolicy = false, unsigned guardMode = 0)
+                     bool omitMember, uint64_t& checked, bool cyclePolicy = false, unsigned guardMode = 0,
+                     fs::RepeatedLaneProofCost* totalCost = nullptr)
 {
     auto arena = std::make_shared<fs::RegionExpressions>();
     auto& e = *arena;
@@ -311,12 +312,19 @@ bool allocationCheck(func::FuncOp function, Operation* anchor, scf::ForOp loop,
     }
     auto coalesced = fs::coalesceRegionalAllocation(body, child);
     if (!coalesced) { return false; }
-    auto summary = cyclePolicy ? fs::periodicLaneAllocation(state, *coalesced, crossings) :
+    fs::RepeatedLaneProofCost proofCost;
+    auto summary = cyclePolicy ? fs::periodicLaneAllocation(state, *coalesced, crossings, &proofCost) :
                                  fs::repeatedRegionalAllocation(state, child, crossings);
     if (!summary) {
         llvm::errs() << "allocation producer rejected " << q << ":" << begin << ":" << end
                      << " storage=" << storage << " omit=" << omitMember << " cycle_policy=" << cyclePolicy << "\n";
         return false;
+    }
+    if (totalCost) {
+        totalCost->implicationRequests += proofCost.implicationRequests;
+        totalCost->implicationComputations += proofCost.implicationComputations;
+        totalCost->constantRequests += proofCost.constantRequests;
+        totalCost->constantComputations += proofCost.constantComputations;
     }
     // The concrete graph uses only actual occurrences in the retained interval.
     const unsigned occurrences = 2*(end-begin);
@@ -431,6 +439,61 @@ bool allocationCheck(func::FuncOp function, Operation* anchor, scf::ForOp loop,
     }
     return recordsSeen.size() == specs.size() && e.error().empty();
 }
+// An invariant unknown return edge cannot certify reuse within any of six
+// gaps. Its repeated unknown/false proof requests must share work within one
+// call, while a second attempt after rollback must perform its own proofs.
+bool checkReuseProofIsolation(func::FuncOp function, Operation* anchor, scf::ForOp loop)
+{
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto& e = *arena;
+    for (unsigned attempt = 0; attempt < 2; ++attempt) {
+        const auto initialSize = e.size();
+        {
+            fs::RegionExpressions::Transaction transaction(e);
+            fs::RepeatedRegionState state;
+            state.function = function; state.loop = loop; state.body.expressions = arena;
+            state.body.capabilities = {true, true, true, false};
+            state.trips = e.constant(8);
+            const auto zero = e.constant(0), yes = e.boolean(true), gate = e.input(function.getArgument(1));
+            std::vector<pto::CompoundInstanceElement> phases;
+            phases.reserve(2);
+            for (auto pipe : {pto::PipelineType::PIPE_MTE1, pto::PipelineType::PIPE_M}) {
+                phases.emplace_back(phases.size(), SmallVector<const pto::BaseMemInfo*>{},
+                                    SmallVector<const pto::BaseMemInfo*>{}, pipe, anchor->getName());
+                phases.back().elementOp = anchor;
+                state.body.anchors.push_back({&phases.back(), {}, {anchor->getBlock(), anchor},
+                                              {anchor->getBlock(), anchor->getNextNode()}});
+                state.body.occurrenceLoops.push_back({});
+            }
+            state.body.presence = [yes](fs::RegionalEvent) { return std::optional(yes); };
+            state.body.reachability = [&e](fs::RegionalEvent a, fs::RegionalEvent b) {
+                // A completes before B starts; B does not precede A locally.
+                return std::optional(e.boolean(a.type < b.type || (a.type == b.type && a.kind <= b.kind)));
+            };
+            state.weightedAcross = [gate, yes](const fs::RegionalEvent& a, const fs::RegionalEvent& b,
+                                              fs::RegionExpressions::Id) {
+                const bool native = a.type == b.type &&
+                    !(a.kind == fs::PeriodicEventKind::Completion && b.kind == fs::PeriodicEventKind::Start);
+                return std::optional(a.type < b.type || native ? yes : gate);
+            };
+            fs::RegionalAllocationMember member{0, 0, 0,
+                {0, zero, fs::PeriodicEventKind::Start}, {1, zero, fs::PeriodicEventKind::Completion}, yes};
+            member.tupleRule = fs::PhysicalTupleRule{1, 0, {}};
+            member.singletonHandoff = true;
+            fs::RegionalAllocationSummary input;
+            input.groups.push_back({static_cast<uint32_t>(phases[0].kPipeValue),
+                                    static_cast<uint32_t>(phases[1].kPipeValue), 1, {member}});
+            fs::RepeatedLaneProofCost cost;
+            if (fs::periodicLaneAllocation(state, input, {}, &cost) ||
+                !cost.implicationComputations || cost.implicationComputations >= cost.implicationRequests ||
+                cost.constantComputations != 3 || cost.constantComputations >= cost.constantRequests) { return false; }
+            // Exactly the true, false, and unknown-gate consequences are
+            // specialized under true. Repeated unknown results are cached too.
+        }
+        if (e.size() != initialSize) { return false; }
+    }
+    return true;
+}
 } // namespace
 bool runRepeatedRegionChecks(func::FuncOp function)
 {
@@ -449,7 +512,9 @@ bool runRepeatedRegionChecks(func::FuncOp function)
     if (function.getNumArguments() < 2 || !function.getArgument(1).getType().isInteger(1) ||
         !check(function, anchor, outer, inner, 2, 3, 7, checked, true) ||
         !check(function, anchor, outer, inner, 2, 3, 3, checked, true)) { return false; }
+    if (!checkReuseProofIsolation(function, anchor, inner)) { return false; }
     uint64_t allocations = 0;
+    fs::RepeatedLaneProofCost proofCost;
     for (unsigned q = 1; q <= 3; ++q) {
         for (unsigned end = 0; end <= 3*q; ++end) {
             for (unsigned begin = 0; begin <= end; ++begin) {
@@ -458,7 +523,8 @@ bool runRepeatedRegionChecks(func::FuncOp function)
                         return false;
                     }
                     if (storage && !omit &&
-                        !allocationCheck(function, anchor, inner, q, begin, end, true, false, allocations, true)) {
+                        !allocationCheck(function, anchor, inner, q, begin, end, true, false,
+                                         allocations, true, 0, &proofCost)) {
                         return false;
                     }
                 } }
@@ -469,7 +535,7 @@ bool runRepeatedRegionChecks(func::FuncOp function)
     // an implicit successor. Both valuations check the exact same typed scheme.
     for (unsigned guardMode : {1U, 2U}) {
         if (!allocationCheck(function, anchor, inner, 2, 1, 6, true, false,
-                             allocations, true, guardMode)) { return false; }
+                             allocations, true, guardMode, &proofCost)) { return false; }
     }
     // Exercise a positive wrap even if a sufficient assignment uses all six
     // labels. Short/partial intervals above separately check missing phases;
@@ -478,10 +544,15 @@ bool runRepeatedRegionChecks(func::FuncOp function)
         for (unsigned begin : {0U, 1U}) {
             for (unsigned guardMode : {1U, 2U}) {
                 if (!allocationCheck(function, anchor, inner, q, begin, 8*q, true, false,
-                                     allocations, true, guardMode)) { return false; }
+                                     allocations, true, guardMode, &proofCost)) { return false; }
             }
         }
     }
+    if (!proofCost.implicationComputations ||
+        proofCost.implicationComputations >= proofCost.implicationRequests ||
+        proofCost.constantComputations > proofCost.constantRequests) { return false; }
+    llvm::outs() << "repeated allocation proof requests=" << proofCost.implicationRequests
+                 << " computations=" << proofCost.implicationComputations << "\n";
     llvm::outs() << "repeated allocation checked " << allocations << " member envelopes and reuse chains\n";
     llvm::outs() << "repeated region checked " << checked << " event pairs\n";
     return true;

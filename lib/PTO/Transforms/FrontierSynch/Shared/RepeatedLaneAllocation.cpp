@@ -15,6 +15,42 @@ namespace mlir::pto::frontiersynch {
 namespace {
 using Id = RegionExpressions::Id;
 constexpr uint64_t maximumPaletteWidth = 6;
+// One call owns caches for one append-only arena; existing expression IDs
+// retain their meaning. Caches do not survive the call or cross arenas.
+// Keep implication and specialization separate to preserve the existing lazy
+// proof sequence and its sufficient (rather than complete) answers.
+class ReuseProof {
+public:
+    ReuseProof(RegionExpressions& expressions, RepeatedLaneProofCost* cost) : e(expressions), cost(cost) {}
+    bool implies(Id premise, Id consequence)
+    {
+        if (cost) { increment(cost->implicationRequests); }
+        const auto key = std::make_pair(premise, consequence);
+        auto found = implications.find(key);
+        if (found != implications.end()) { return found->second; }
+        if (cost) { increment(cost->implicationComputations); }
+        const auto answer = e.implies(premise, consequence);
+        implications.emplace(key, answer);
+        return answer;
+    }
+    std::optional<uint64_t> constantUnder(Id premise, Id expression)
+    {
+        if (cost) { increment(cost->constantRequests); }
+        const auto key = std::make_pair(premise, expression);
+        auto found = constants.find(key);
+        if (found != constants.end()) { return found->second; }
+        if (cost) { increment(cost->constantComputations); }
+        const auto answer = e.constantUnder(premise, expression);
+        constants.emplace(key, answer);
+        return answer;
+    }
+private:
+    static void increment(uint64_t& value) { if (value != UINT64_MAX) { ++value; } }
+    RegionExpressions& e;
+    RepeatedLaneProofCost* cost;
+    std::map<std::pair<Id, Id>, bool> implications;
+    std::map<std::pair<Id, Id>, std::optional<uint64_t>> constants;
+};
 struct Lane {
     RegionalAllocationGroup group;
     RepeatedAllocationExtrema bounds;
@@ -66,7 +102,7 @@ bool addCrossings(RepeatedRegionState& state, std::vector<Lane>& lanes,
     return true;
 }
 
-std::optional<uint64_t> reuseCost(RepeatedRegionState& state, const Lane& from, const Lane& to)
+std::optional<uint64_t> reuseCost(RepeatedRegionState& state, const Lane& from, const Lane& to, ReuseProof& proof)
 {
     auto& e = state.e();
     // Costs propose an assignment only. A separate all-pair check below
@@ -78,7 +114,7 @@ std::optional<uint64_t> reuseCost(RepeatedRegionState& state, const Lane& from, 
         for (const auto& end : from.bounds.second) {
             for (const auto& begin : to.bounds.first) {
                 auto active = e.land(end.present, begin.present);
-                if (e.implies(active, e.boolean(false))) { continue; }
+                if (proof.implies(active, e.boolean(false))) { continue; }
                 auto consumer = end.event, producer = begin.event;
                 const auto& anchors = state.body.anchors;
                 if (consumer.type >= anchors.size() || producer.type >= anchors.size() ||
@@ -94,8 +130,8 @@ std::optional<uint64_t> reuseCost(RepeatedRegionState& state, const Lane& from, 
                 // The WAIT endpoint of an outer handoff is already one period
                 // later than its SET. Subtract that consumer delay exactly once.
                 auto query = state.relativeQuery(consumer, producer, gap - from.delay);
-                if (!query || !(e.implies(active, *query) || e.constantUnder(active, active) == 0 ||
-                                e.constantUnder(active, *query) == 1)) { proven = false; break; }
+                if (!query || !(proof.implies(active, *query) || proof.constantUnder(active, active) == 0 ||
+                                proof.constantUnder(active, *query) == 1)) { proven = false; break; }
             }
             if (!proven) { break; }
         }
@@ -279,7 +315,8 @@ std::optional<PeriodicSharedAllocation> partitionAssignment(const PeriodicReuseM
     return result;
 }
 
-std::optional<RegionalAllocationGroup> allocateLanes(RepeatedRegionState& state, ArrayRef<Lane> lanes)
+std::optional<RegionalAllocationGroup> allocateLanes(
+    RepeatedRegionState& state, ArrayRef<Lane> lanes, ReuseProof& proof)
 {
     std::vector<std::size_t> live;
     for (std::size_t i = 0; i < lanes.size(); ++i) {
@@ -292,7 +329,7 @@ std::optional<RegionalAllocationGroup> allocateLanes(RepeatedRegionState& state,
     PeriodicReuseMatrix costs(n, std::vector<std::optional<uint64_t>>(n));
     for (std::size_t i = 0; i < n; ++i) {
         for (std::size_t j = 0; j < n; ++j) {
-            costs[i][j] = reuseCost(state, lanes[live[i]], lanes[live[j]]);
+            costs[i][j] = reuseCost(state, lanes[live[i]], lanes[live[j]], proof);
         }
     }
     auto assignment = allocatePeriodicShared(costs);
@@ -322,8 +359,9 @@ std::optional<RegionalAllocationGroup> allocateLanes(RepeatedRegionState& state,
 
 std::shared_ptr<RegionalAllocationSummary> periodicLaneAllocation(
     RepeatedRegionState& state, const RegionalAllocationSummary& coalesced,
-    ArrayRef<std::pair<uint32_t, std::size_t>> crossings)
+    ArrayRef<std::pair<uint32_t, std::size_t>> crossings, RepeatedLaneProofCost* cost)
 {
+    ReuseProof proof(state.e(), cost);
     std::vector<Lane> lanes;
     for (const auto& group : coalesced.groups) {
         for (auto lane : constantAllocationLanes(group)) {
@@ -342,7 +380,7 @@ std::shared_ptr<RegionalAllocationSummary> periodicLaneAllocation(
         directions[direction].push_back(std::move(lane));
     }
     for (auto& direction : directions) {
-        auto allocated = allocateLanes(state, direction.second);
+        auto allocated = allocateLanes(state, direction.second, proof);
         if (!allocated) { return {}; }
         result->groups.push_back(std::move(*allocated));
     }
