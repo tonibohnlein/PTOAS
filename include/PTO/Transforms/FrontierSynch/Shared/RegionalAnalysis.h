@@ -19,6 +19,7 @@ namespace mlir::pto::frontiersynch {
 // The periodic quotient itself does not require slot enumeration.
 inline constexpr uint64_t maxRegionalSlotVisits = 256;
 struct RegionalNumericalInterface;
+struct RegionalPrefixContribution;
 struct RegionalCost {
     uint64_t repeatedRegions = 0, phaseDescriptions = 0;
     uint64_t children = 0;
@@ -176,6 +177,9 @@ struct RegionalAnalysis {
     // Event/frame/guard transformations must clear this unless they supply an
     // explicit proof-preserving adapter. Weak ownership avoids export cycles.
     std::weak_ptr<const MathematicalResult> retainedMathematics;
+    // Original-execution recipe evidence, independent of ordinary endpoint
+    // availability. Event/domain transforms must clear or explicitly rebuild it.
+    std::shared_ptr<const RegionalPrefixContribution> invocationPrefix;
 };
 // Validate coordinate shape before forwarding to a backend that might only
 // understand flat events. Query-only flat producers may omit anchors and validate

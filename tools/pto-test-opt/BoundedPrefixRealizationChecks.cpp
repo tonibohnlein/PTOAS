@@ -8,6 +8,8 @@
 // Unfold original opaque evaluations independently from retained-window history emission.
 #include "../../lib/PTO/Transforms/FrontierSynch/Structured/BoundedPrefixRealization.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/IterationPredicates.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/RegionalCapabilitiesInternal.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Verifier.h"
@@ -455,10 +457,53 @@ bool runCase(MLIRContext& context, unsigned trips, unsigned invocations, unsigne
     auto owner = f.demands(true);
     auto before = render(f.module->getOperation());
     auto records = owner->analysis.sourceDemands;
-    fs::InvocationPrefixCollection collection(f.function);
+    // Exercise a detached regional capability rather than directly calling the
+    // bounded primitive. The source model identity survives wrapper destruction.
+    auto input = std::make_shared<pto::SyncInput>(pto::GMAliasPolicy::MayNotAlias);
+    auto retained = std::make_shared<fs::MathematicalResult>();
+    retained->input = input; retained->boundedDemands = owner;
+    auto state = std::make_shared<fs::SequenceAnalysisState>(f.function, owner->arena);
+    fs::Child child;
+    child.prefixMathematics = retained;
+    child.anchors = owner->anchors;
+    state->children.push_back(std::move(child));
+    fs::RegionalAnalysis regional;
+    regional.expressions = owner->arena;
+    auto mismatched = regional;
+    mismatched.expressions = std::make_shared<fs::RegionExpressions>();
+    if (fs::sequencePrefixContribution(mismatched, state)) { return false; }
+    // A sibling without retained provenance cannot borrow another child's
+    // owner, even when its original operations belong to the same function.
+    fs::Child unowned;
+    unowned.anchors = owner->anchors;
+    state->children.push_back(std::move(unowned));
+    if (fs::sequencePrefixContribution(regional, state)) { return false; }
+    auto foreignOwner = std::make_shared<fs::MathematicalResult>();
+    foreignOwner->input = std::make_shared<pto::SyncInput>();
+    state->children.back().prefixMathematics = foreignOwner;
+    if (fs::sequencePrefixContribution(regional, state)) { return false; }
+    state->children.pop_back();
+    foreignOwner.reset();
+    regional.invocationPrefix = fs::sequencePrefixContribution(regional, state);
+    if (!regional.invocationPrefix) { return false; }
+    std::weak_ptr<const pto::SyncInput> lifetime = input;
+    state.reset(); retained.reset(); input.reset();
+    if (lifetime.expired()) { return false; }
     std::string error;
-    if (failed(fs::appendBoundedPrefixRealization(owner, collection, error))) {
-        llvm::errs() << "bounded contribution: " << error << "\n";
+    fs::InvocationPrefixCollection foreign(f.function, std::make_shared<pto::SyncInput>());
+    if (succeeded(fs::collectRegionalInvocationPrefix(regional, foreign, error)) ||
+        !foreign.recipe().sources.empty()) { return false; }
+    auto changed = regional;
+    changed.expressions = std::make_shared<fs::RegionExpressions>();
+    fs::InvocationPrefixCollection wrongArena(f.function);
+    if (succeeded(fs::collectRegionalInvocationPrefix(changed, wrongArena, error))) { return false; }
+    auto guarded = fs::guardRegionalArm(regional, owner->expressions.boolean(true));
+    if (guarded.invocationPrefix) { return false; }
+    fs::invalidateDerivedRegionalCertificates(changed);
+    if (changed.invocationPrefix) { return false; }
+    fs::InvocationPrefixCollection collection(f.function);
+    if (failed(fs::collectRegionalInvocationPrefix(regional, collection, error))) {
+        llvm::errs() << "bounded regional contribution: " << error << "\n";
         return false;
     }
     auto& recipe = collection.recipe();

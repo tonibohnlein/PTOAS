@@ -296,7 +296,9 @@ SequenceAnalysis composeRegionalSequenceWithin(func::FuncOp function,
         return result;
     }
     for (auto& regional : children) {
-        Child child; child.regional = std::move(regional);
+        Child child;
+        child.prefixMathematics = regional.retainedMathematics.lock();
+        child.regional = std::move(regional);
         state->children.push_back(std::move(child));
     }
     return finishSequence(std::move(state));

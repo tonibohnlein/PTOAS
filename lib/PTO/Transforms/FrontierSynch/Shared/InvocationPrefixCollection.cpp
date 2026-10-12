@@ -14,6 +14,62 @@
 #include "../Structured/BoundedPrefixRealization.h"
 #include "PTO/IR/PTO.h"
 namespace mlir::pto::frontiersynch {
+LogicalResult InvocationPrefixCollection::bindInput(std::shared_ptr<const SyncInput> owner, std::string& error)
+{
+    if (!owner || (input && input != owner)) {
+        error = "prefix contribution belongs to a different semantic input";
+        return failure();
+    }
+    input = std::move(owner);
+    return success();
+}
+std::shared_ptr<const RegionalPrefixContribution> sequencePrefixContribution(
+    const RegionalAnalysis& region, std::shared_ptr<SequenceAnalysisState> state)
+{
+    if (!state || !state->error.empty() || state->relationalResult ||
+        !region.expressions || region.expressions != state->arena) { return {}; }
+    std::shared_ptr<const SyncInput> input;
+    for (const auto& child : state->children) {
+        auto owner = child.regional.invocationPrefix ? child.regional.invocationPrefix->input :
+            (child.prefixMathematics ? child.prefixMathematics->input : nullptr);
+        if (!owner) {
+            const bool empty = child.anchors.empty() && child.regional.anchors.empty() &&
+                child.explicitAnalysis.phases.empty();
+            if (!empty) { return {}; }
+            continue;
+        }
+        if (input && input != owner) { return {}; }
+        input = std::move(owner);
+    }
+    // Legacy borrowed analyses can still prepare ordinary endpoints. Do not
+    // publish a detached prefix capability without a retained semantic owner.
+    if (!input || (state->input && state->input != input.get()) ||
+        (region.accessModel && region.accessModel != &input->accesses())) { return {}; }
+    auto result = std::make_shared<RegionalPrefixContribution>();
+    result->input = std::move(input);
+    result->expressions = region.expressions;
+    result->function = state->function;
+    result->accessModel = region.accessModel;
+    result->aliasPolicy = region.gmAliasPolicy;
+    result->collect = [state = std::move(state)](InvocationPrefixCollection& collection, std::string& error) {
+        return state->collectPrefix(collection, error);
+    };
+    return result;
+}
+LogicalResult collectRegionalInvocationPrefix(const RegionalAnalysis& region,
+    InvocationPrefixCollection& collection, std::string& error)
+{
+    const auto& contribution = region.invocationPrefix;
+    const bool valid = contribution && contribution->collect && contribution->function == collection.function() &&
+        contribution->expressions == region.expressions && contribution->accessModel == region.accessModel &&
+        contribution->aliasPolicy == region.gmAliasPolicy;
+    if (!valid) {
+        error = "regional prefix contribution has stale invocation or semantic context";
+        return failure();
+    }
+    if (failed(collection.bindInput(contribution->input, error))) { return failure(); }
+    return contribution->collect(collection, error);
+}
 LogicalResult InvocationPrefixCollection::source(
     const CompoundInstanceElement* phase,
     std::function<LogicalResult(OpBuilder&, const IRMapping&, llvm::MutableArrayRef<Value>, Value, std::string&)>
@@ -166,6 +222,7 @@ LogicalResult collectInvocationPrefix(
         error = "prefix collection requires its retained input owner";
         return failure();
     }
+    if (failed(collection.bindInput(retained->input, error))) { return failure(); }
     if (retained->identityComposition) {
         const auto& owner = *retained->identityComposition;
         const bool valid =

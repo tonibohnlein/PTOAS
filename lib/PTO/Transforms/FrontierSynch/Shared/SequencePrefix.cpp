@@ -223,7 +223,9 @@ LogicalResult SequenceAnalysisState::collectPrefix(InvocationPrefixCollection& c
         return failure();
     }
     for (const auto& child : children) {
-        if (child.prefixMathematics) {
+        if (child.regional.invocationPrefix) {
+            if (failed(collectRegionalInvocationPrefix(child.regional, collection, diagnostic))) { return failure(); }
+        } else if (child.prefixMathematics) {
             if (failed(collectInvocationPrefix(child.prefixMathematics, collection, diagnostic))) {
                 return failure();
             }

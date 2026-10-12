@@ -97,9 +97,14 @@ bool SequenceAnalysisState::singletonBoundaryChild(const StructureNode& node, Ex
     composed.state->completeInvocation = false;
     composed.state->requiredOuterLoops = context;
     auto body = sequenceRegionalResult(composed);
+    const auto prefix = body.invocationPrefix;
     auto lifted = repeatPhasedRegions(function, loop, {std::move(body)}, active->interval.end,
         node.loops, active->interval.begin, uint64_t{1});
     if (!lifted.error.empty()) { return unavailable(lifted.error); }
+    // This proof covers every payload-bearing execution of the original loop,
+    // unlike an arbitrary clipped one-visit regional view. Original cuts retain
+    // branch control and nested-loop resets; there are no intervisit demands.
+    lifted.regional.invocationPrefix = prefix;
     Child child;
     child.regional = std::move(lifted.regional);
     child.anchors = child.regional.anchors;

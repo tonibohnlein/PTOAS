@@ -10,6 +10,9 @@
 #include "PTO/Transforms/FrontierSynch/Structured/MixedStrideAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRegional.h"
 #include "SyncLogicalInsertionChecks.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/InvocationPrefixCollection.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/CountedLoop.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/InvocationSourceBounds.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
@@ -416,8 +419,74 @@ LogicalResult runLogicalInsertionChecks(func::FuncOp function, pto::GMAliasPolic
     return success(valid);
 }
 
+// Exercise the actual singleton proof and detached prefix contribution, without
+// relying on the dispatcher to prefer it over ordinary endpoint emission.
+static LogicalResult singletonPrefixTrace(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    auto input = std::make_shared<pto::SyncInput>(policy);
+    if (failed(input->build(function))) { return failure(); }
+    auto program = fs::recognizeProgram(function, *input);
+    if (failed(program)) { return failure(); }
+    auto state = std::make_shared<fs::SequenceAnalysisState>(function, *input, *program);
+    if (failed(state->index.build(function, *input))) { return failure(); }
+    state->indexReady = true;
+    state->requireEndpoints = false;
+    std::vector<std::shared_ptr<fs::MathematicalResult>> owners;
+    state->resolveOriginal.region = [&](std::size_t id, bool, std::string& error)
+        -> FailureOr<fs::RegionalAnalysis> {
+        auto child = std::make_shared<fs::SequenceAnalysis>(fs::analyzeSequenceRegionWithResolver(
+            function, *input, *program, id, state->arena, state->indexOwner, false, state->resolveOriginal));
+        if (!child->error.empty()) { error = child->error; return failure(); }
+        auto owner = std::make_shared<fs::MathematicalResult>();
+        owner->input = input; owner->sequenceDemands = child; owner->region = id;
+        owners.push_back(owner);
+        auto regional = fs::sequenceRegionalResult(*child);
+        regional.retainedMathematics = owner;
+        return regional;
+    };
+    const fs::StructureNode* selected = nullptr;
+    for (const auto& node : program->nodes) {
+        if (node.kind == fs::StructureKind::Loop && node.loops.empty()) { selected = &node; break; }
+    }
+    if (!selected) { return failure(); }
+    auto loop = cast<scf::ForOp>(selected->anchor);
+    auto counted = fs::CountedLoop::get(loop);
+    if (!counted || !state->singletonBoundaryChild(*selected, counted->trips(state->expressions)) ||
+        state->children.size() != 1 || !state->children.front().regional.invocationPrefix) {
+        llvm::errs() << "singleton prefix unavailable: " << state->repeatedAttempt << "\n";
+        return failure();
+    }
+    auto regional = state->children.front().regional;
+    state->resolveOriginal = {};
+    state.reset(); owners.clear();
+    fs::InvocationPrefixCollection collection(function, input);
+    std::string error;
+    if (failed(fs::collectRegionalInvocationPrefix(regional, collection, error))) {
+        llvm::errs() << error << "\n"; return failure();
+    }
+    auto& recipe = collection.recipe();
+    recipe.privateScalarControl = true;
+    auto bounds = fs::inferInvocationSourceBounds(function, recipe.sources, error);
+    if (failed(bounds)) { llvm::errs() << error << "\n"; return failure(); }
+    recipe.sourceBounds = std::move(*bounds);
+    fs::PrivateStateError diagnostic;
+    auto prepared = fs::materializeInvocationPrefix(function, recipe, diagnostic);
+    if (failed(prepared)) { llvm::errs() << diagnostic.message << "\n"; return failure(); }
+    std::vector<pto::CompoundInstanceElement> phases;
+    SmallVector<const pto::CompoundInstanceElement*> mapped;
+    phases.reserve(input->instructions().size());
+    for (auto* phase : input->instructions()) {
+        phases.push_back(*phase);
+        phases.back().elementOp = (*prepared)->mapping.lookup(phase->elementOp);
+        mapped.push_back(&phases.back());
+    }
+    auto trace = Interpreter(mapped).run((*prepared)->function);
+    llvm::outs() << llvm::json::Value(llvm::json::Object{{"accepted", true}, {"trace", std::move(trace)}}) << "\n";
+    return verify(*(*prepared)->module);
+}
 LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPolicy policy)
 {
+    if (function->hasAttr("test.singleton_prefix")) { return singletonPrefixTrace(function, policy); }
     pto::SyncInput input(policy);
     if (failed(input.build(function))) {
         return failure();

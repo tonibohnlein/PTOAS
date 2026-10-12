@@ -11,13 +11,18 @@
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include <set>
 namespace mlir::pto::frontiersynch {
+class RegionExpressions;
 struct MathematicalResult;
 struct ExplicitAnalysis;
+struct RegionalAnalysis;
+struct SequenceAnalysisState;
 // One collector owns the complete original invocation. A regional contributor
 // cannot materialize it or silently mix direct commands in selected directions.
 class InvocationPrefixCollection {
 public:
-    explicit InvocationPrefixCollection(func::FuncOp original) : original(original) {}
+    explicit InvocationPrefixCollection(func::FuncOp original, std::shared_ptr<const SyncInput> input = {})
+        : original(original), input(std::move(input)) {}
+    LogicalResult bindInput(std::shared_ptr<const SyncInput> owner, std::string& error);
     func::FuncOp function() const { return original; }
     InvocationPrefixRecipe& recipe() { return pending; }
     LogicalResult source(const CompoundInstanceElement* phase,
@@ -29,12 +34,27 @@ public:
     // selected child and crossing records have contributed successfully.
 private:
     func::FuncOp original;
+    std::shared_ptr<const SyncInput> input;
     InvocationPrefixRecipe pending;
     std::map<const CompoundInstanceElement*, std::size_t> sources;
     std::map<std::pair<Operation*, uint32_t>, const CompoundInstanceElement*> sourceCuts;
     std::map<std::pair<Operation*, PrefixDirection>, std::size_t> consumers;
     std::set<PrefixDirection> directions;
 };
+// The callback owns producer-local evidence and proper child owners, never its
+// own MathematicalResult. The source owner keeps borrowed phase records alive.
+struct RegionalPrefixContribution {
+    std::shared_ptr<const SyncInput> input;
+    std::shared_ptr<RegionExpressions> expressions;
+    func::FuncOp function;
+    const SyncStorageEffects* accessModel = nullptr;
+    GMAliasPolicy aliasPolicy = GMAliasPolicy::MayAlias;
+    std::function<LogicalResult(InvocationPrefixCollection&, std::string&)> collect;
+};
+std::shared_ptr<const RegionalPrefixContribution> sequencePrefixContribution(
+    const RegionalAnalysis& region, std::shared_ptr<SequenceAnalysisState> state);
+LogicalResult collectRegionalInvocationPrefix(const RegionalAnalysis& region,
+    InvocationPrefixCollection& collection, std::string& error);
 LogicalResult appendExplicitPrefixRealization(const ExplicitAnalysis& retained,
                                              InvocationPrefixCollection& collection, std::string& error);
 LogicalResult collectInvocationPrefix(std::shared_ptr<const MathematicalResult> retained,

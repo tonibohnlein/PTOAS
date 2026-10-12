@@ -34,7 +34,7 @@ separate commit. Infrastructure alone does not complete a production milestone.
 | 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; persistent memberships and shared fact views pending |
 | 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction complete; numerical port projection and shared source facts pending |
 | 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Pending |
-| 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Pending |
+| 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Regional prefix ownership and singleton forwarding complete; crossing presence/selectors and public Delta emission pending |
 | 8. Proof reuse and validation | Share lazy inactive-proof and premise contexts, replay mappings and safe Boolean conversion work. Close known guard-equivalence/oracle gaps and run pinned paired campaigns. | No unexplained acceptance loss or changed output; report eleven kernels and 783-input corpus by stage, wall time, memory and inner work. | Lazy inactive-proof setup shared; broader proof reuse and campaign pending |
 
 ## Algorithm boundaries
@@ -250,3 +250,35 @@ sequence/public tests also pass with this implementation. Two additional CLI
 fixtures cannot finish because this build lacks `ptoas._core`; their native
 storage/alias portions passed. Receipts are under
 `.local/three-paths/consolidation/m4-alias/`.
+
+## Retained prefix capabilities through singleton composition
+
+Regional prefix contributions now retain the source input, expression arena and
+producer state independently of ordinary endpoint availability. Composition
+retains proper child mathematics. The factory rejects mixed input owners,
+nonempty children without provenance, and mismatched arenas. Generic event or
+domain transformations clear the contribution. Only the proven whole-original
+singleton normalization restores it: original branch cuts and nested invocation
+resets remain in force, with no intervisit demands to reconstruct. Constant
+slice endpoints now also supply their exact distance as an upper bound, allowing
+interior singleton intervals without weakening the existing proof.
+
+Eight focused lit tests pass. The direct singleton test invokes the actual
+normalizer and collector after destroying intermediate wrappers, materializes
+one clone, and checks eight executions against independent payload-coordinate
+and command-closure oracles. Cases include first/interior/last visits, skipped
+opaque branches, and lower bound seven with step two. The bounded prefix oracle
+still passes 4,745 executions; ownership, foreign input, stale arena and generic
+transformation rejection are checked separately. Architectural and correctness
+source reviews accepted the changes. The compliance prefilter reported six
+brace false positives (all bodies are braced) and mistook weak_ptr::lock for a
+mutex operation; no new warning suppression was added.
+
+The final isolated Delta MayNotAlias replay retains exact whole-function demands
+but still refuses logical emission: `prefix crossing lacks current-context
+source presence`. It has passed the former missing-prefix-owner barrier. The
+probe took 17.623 seconds and 283,220 KiB RSS; reaching more preparation work
+increased refusal latency relative to the earlier 0.804-second probe. This is
+functional adapter progress, not a complete Delta recovery or a runtime win.
+Physical allocation and source/device execution were not attempted for it.
+Receipts are under `.local/three-paths/consolidation/m7-prefix-capability/`.

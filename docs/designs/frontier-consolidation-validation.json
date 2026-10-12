@@ -606,5 +606,67 @@
     },
     "delta_obligation": "sequence child lacks its exact retained prefix owner",
     "reviews": "architectural and correctness source reviews accepted; seven focused lit tests pass"
+  },
+  "regional_prefix_capability": {
+    "base_revision": "8aa550a5aa92fd6d92b1360030779327ebaa08e1",
+    "source_sha256": {
+      "include/PTO/Transforms/FrontierSynch/Shared/RegionalAnalysis.h": "08767caf0f62d8b70534ea882c8953de885a3a885ca176dd2362d8e56c32faca",
+      "lib/PTO/Transforms/FrontierSynch/SessionPreparation.cpp": "6f035443cb419953779fe9708c02d3acfb24c2a36b44884df54c7badff5205e1",
+      "lib/PTO/Transforms/FrontierSynch/Shared/InvocationPrefixCollection.cpp": "95f82f6c088278a55b8c0e793ebd82c5008fa2919d7e0bd429ec47c64516b869",
+      "lib/PTO/Transforms/FrontierSynch/Shared/InvocationPrefixCollection.h": "789b914e52d8803ce47a65d98a9807fa2feec42da59b98290bc1d389f18dee10",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RegionalEvents.cpp": "2b92cfc46706251e72f71f6eda0fa24175699f15ed5f5c4fe219b409a378a01b",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceAdapters.cpp": "40ef5c3c205aea4cd5697a8e17f82b6ff6bed8bf693f44eeb02b48abf2531537",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.cpp": "59b01801ebfe97322d3cebc22ed0ecf82f2710869db00e181b77cc96bfaf4939",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceBoundary.cpp": "52b1d079f1cdb43cf2e13d743ba0ab39362aa0d40e209b45b7d1a33c78e1efeb",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequencePrefix.cpp": "df1b794a5a65677b3a5c215f96d92ad11931e6b7faf16cb6236b84757c715056",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SingletonBoundary.cpp": "74995494a1644c92291a7a36c46a015e3d77ab9335f5df90fac55a87c5de5494",
+      "tools/pto-test-opt/BoundedPrefixRealizationChecks.cpp": "d4520af5262f14f2051a88e625d3a0dd13cc76107c3f4b39e7653fb1b7aa65d6",
+      "tools/pto-test-opt/SyncLogicalInsertionChecks.cpp": "c17b20fdccaf788fcdb8116a184c66ff3aac0b1b4b9565cb902c2f57cb97c09f",
+      "test/lit/pto/sync_singleton_prefix.pto": "34950ddf0e667bc3001c604c22e520df9c638c9303b962460e1dd4fc4c7e6ade",
+      "test/lit/pto/Inputs/check_singleton_prefix.py": "d69d6851a38c88859762a650cd222b38b5f50dc2770008c2c0cf7042cff3282a"
+    },
+    "focused_tests": {
+      "command": [
+        "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+        "-j1",
+        "-v",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_singleton_prefix.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_singleton_boundary.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_bounded_prefix_realization.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_private_state_plan.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_invocation_prefix.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_bounded_inactive_emission.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_bounded_predicate_history.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_structured_private_state.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 8.513792640995234,
+      "maximum_rss_kib": 114000,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 180.0
+    },
+    "focused_lit_passed": 8,
+    "singleton_execution_cases": 8,
+    "bounded_execution_cases": 4745,
+    "delta_probe": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "--mlir-disable-threading",
+        "--pto-frontier-analysis=gm-alias=may-not-alias",
+        "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+      ],
+      "returncode": 1,
+      "status": "finished",
+      "seconds": 17.622910214820877,
+      "maximum_rss_kib": 283220,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "delta_obligation": "prefix crossing lacks current-context source presence",
+    "delta_exact_mathematics": "retained",
+    "logical_success": false,
+    "reviews": "architectural and correctness source reviews accepted",
+    "timing_scope": "isolated exploratory probe, not a controlled paired performance comparison"
   }
 }

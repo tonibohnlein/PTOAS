@@ -73,7 +73,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
     if (!target) { error = "invocation prefix requires 64-bit scalar control"; return failure(); }
     AnalysisProfileScope profile(sessionState->ledger, "prefix-preparation", demands->region, demands->backend);
     profile.constructed();
-    InvocationPrefixCollection collection(function);
+    InvocationPrefixCollection collection(function, demands->input);
     if (failed(collectInvocationPrefix(demands, collection, error))) { return failure(); }
     auto bounds = inferInvocationSourceBounds(function, collection.recipe().sources, error);
     if (failed(bounds)) { return failure(); }
