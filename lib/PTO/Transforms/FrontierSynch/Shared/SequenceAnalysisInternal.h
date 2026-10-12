@@ -74,7 +74,13 @@ struct CellBoundary {
 };
 struct Crossing { uint32_t source = 0, target = 0; Expr guard = 0; };
 struct SequenceNumericalNode;
+struct SequenceCrossingPresence;
 struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisState> {
+    // Closure seals the endpoint-existence invariant of its retained crossings.
+    // Source semantics are immutable after closure; only query caches and
+    // prepare/prepareWithVisits/prepareFiltered may change. Semantic callbacks
+    // (including endpointEventGuard) stay frozen. Adapters construct a new state.
+    bool hasCertifiedCrossingPresence() const;
     LogicalResult collectPrefix(InvocationPrefixCollection& collection, std::string& error);
     func::FuncOp function;
     const SyncInput* input = nullptr;
@@ -239,6 +245,9 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareWithTypeBases(
         std::string& diagnostic, ArrayRef<scf::ForOp> enclosing, ArrayRef<uint32_t> typeBases,
         const SequenceEndpointResolver& resolver = {});
+private:
+    std::shared_ptr<const SequenceCrossingPresence> crossingPresence;
+    void sealCrossingPresence();
 };
 std::optional<int64_t> sequenceInteger(Value value);
 } // namespace mlir::pto::frontiersynch

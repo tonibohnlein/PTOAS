@@ -668,5 +668,62 @@
     "logical_success": false,
     "reviews": "architectural and correctness source reviews accepted",
     "timing_scope": "isolated exploratory probe, not a controlled paired performance comparison"
+  },
+  "sequence_crossing_presence": {
+    "base_revision": "bdad65914715aee3075f9cb7d254042b2a268cdc",
+    "source_sha256": {
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h": "eb33048ab929113d5f9a3a677566d79102bcb064d7a91880987fb1ca9bea366b",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequencePrefix.cpp": "d45dd93907796bf48954b1c5e99574a41cdb0adb504ed64e663aebb229516a8d",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceQueries.cpp": "bab1a000d1100f4258a6d3256bae6288d815d5cb0e4ee42f78d83651261d8da6",
+      "tools/pto-test-opt/SyncLogicalInsertionChecks.cpp": "2e4910567142a2210a8530e9422da6bc1e7a1bd64ef80263647c7819246d646d",
+      "test/lit/pto/sync_sequence_prefix.pto": "ac8224c4e765d9fc6a3a1dd18cd31d1d932ffebf9af8f9801ae6bedee0d42047",
+      "test/lit/pto/Inputs/check_sequence_prefix.py": "79325fb1f5c532b8211c4067ddcc88ce748dcea19a10c469c832ae56c2854625"
+    },
+    "focused_tests": {
+      "command": [
+        "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+        "-j1",
+        "-v",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_prefix.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_analysis.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_singleton_prefix.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_singleton_boundary.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_bounded_prefix_realization.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_invocation_prefix.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_bounded_inactive_emission.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_bounded_predicate_history.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_structured_private_state.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_private_state_plan.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 13.921127987094223,
+      "maximum_rss_kib": 114008,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 180.0
+    },
+    "focused_lit_passed": 10,
+    "guarded_selector_valuations": 4,
+    "actual_sequence_executions": 8,
+    "singleton_execution_cases": 8,
+    "bounded_execution_cases": 4745,
+    "delta_probe": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "--mlir-disable-threading",
+        "--pto-frontier-analysis=gm-alias=may-not-alias",
+        "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+      ],
+      "returncode": 1,
+      "status": "finished",
+      "seconds": 17.62798124202527,
+      "maximum_rss_kib": 283624,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "delta_obligation": "guarded expression input belongs to another invocation",
+    "logical_success": false,
+    "reviews": "architectural and correctness source reviews accepted; focused tests pass",
+    "timing_scope": "isolated exploratory probe, not a controlled paired performance comparison"
   }
 }

@@ -282,3 +282,40 @@ increased refusal latency relative to the earlier 0.804-second probe. This is
 functional adapter progress, not a complete Delta recovery or a runtime win.
 Physical allocation and source/device execution were not attempted for it.
 Receipts are under `.local/three-paths/consolidation/m7-prefix-capability/`.
+
+## Reusing certified crossing presence
+
+Successful sequence closure now seals the construction invariant that each
+retained crossing guard implies existence of its exact selected source and
+target. Storage/value bridges establish this invariant, selected-coordinate
+folding preserves active alternatives, and numerical/symbolic reduction only
+retains or narrows those guarded records. Prefix collection checks this evidence
+once instead of asking a child to reprove presence at a newly folded coordinate.
+The certificate binds the owning state, arena, input/function/enclosing context,
+edge tuples, port coordinates, choice identities, and original endpoint metadata.
+A closure retry clears it; changed snapshots cannot use it. Regional semantic
+callbacks remain immutable after closure. Original-cut, executable-guard,
+coordinate and executed-source-rank checks remain separate and unchanged.
+
+Snapshot construction and validation cost is proportional to retained edges,
+choices, and port coordinate metadata. This introduces no new mathematical
+route, admission limit, conservative fallback, or event-allocation repair.
+
+Ten focused lit tests pass. The crossing oracle independently enumerates source
+presence/latest selection under four valuations, exercises both reducers, and
+rejects changed graph/context snapshots and failed reconstruction. Eight actual
+sequence-prefix executions check independently guarded writers and a guarded
+consumer, payload preservation, token matching, exact command closure and
+surplus epilogue cleanup. This test explicitly composes supplied child interfaces;
+it does not claim that the dispatcher selects that representation. Existing
+singleton and bounded-prefix execution oracles also pass. Architecture and
+correctness reviews accepted the component. The compliance prefilter reported
+12 brace-parser false positives; all reported control bodies are braced.
+
+The isolated Delta MayNotAlias replay still refuses logical emission, now with
+`guarded expression input belongs to another invocation`, after passing the
+crossing-presence barrier. It took 17.628 seconds and 283,624 KiB RSS. This is a
+later endpoint ownership/availability obligation, not a successful logical plan
+or a performance improvement. Exact-retention policy is unchanged. Physical
+allocation and C++/device execution were not attempted. Receipts are under
+`.local/three-paths/consolidation/m7-crossing-presence/`.

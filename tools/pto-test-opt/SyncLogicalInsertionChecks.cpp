@@ -419,9 +419,9 @@ LogicalResult runLogicalInsertionChecks(func::FuncOp function, pto::GMAliasPolic
     return success(valid);
 }
 
-// Exercise the actual singleton proof and detached prefix contribution, without
+// Exercise actual sequence/singleton proofs and detached prefix contributions, without
 // relying on the dispatcher to prefer it over ordinary endpoint emission.
-static LogicalResult singletonPrefixTrace(func::FuncOp function, pto::GMAliasPolicy policy)
+static LogicalResult retainedPrefixTrace(func::FuncOp function, pto::GMAliasPolicy policy)
 {
     auto input = std::make_shared<pto::SyncInput>(policy);
     if (failed(input->build(function))) { return failure(); }
@@ -444,26 +444,48 @@ static LogicalResult singletonPrefixTrace(func::FuncOp function, pto::GMAliasPol
         regional.retainedMathematics = owner;
         return regional;
     };
-    const fs::StructureNode* selected = nullptr;
-    for (const auto& node : program->nodes) {
-        if (node.kind == fs::StructureKind::Loop && node.loops.empty()) { selected = &node; break; }
+    fs::RegionalAnalysis regional;
+    std::shared_ptr<fs::MathematicalResult> root;
+    if (function->hasAttr("test.sequence_prefix")) {
+        // Request actual child interfaces explicitly: the root dispatcher's
+        // adjacent finite fusion is a different producer with its own adapter.
+        std::vector<fs::RegionalAnalysis> children;
+        for (auto id : program->nodes.front().children) {
+            if (!program->nodes[id].payloadCount) { continue; }
+            std::string error;
+            auto child = state->resolveOriginal.region(id, false, error);
+            if (failed(child)) { llvm::errs() << error << "\n"; return failure(); }
+            children.push_back(std::move(*child));
+        }
+        auto analyzed = fs::composeRegionalSequence(function, state->arena, std::move(children), false, false);
+        if (!analyzed.error.empty() || !analyzed.state || !analyzed.state->hasCertifiedCrossingPresence()) {
+            llvm::errs() << "sequence prefix unavailable: " << analyzed.error << "\n"; return failure();
+        }
+        root = std::make_shared<fs::MathematicalResult>();
+        root->input = input;
+        root->sequenceDemands = std::make_shared<fs::SequenceAnalysis>(std::move(analyzed));
+    } else {
+        const fs::StructureNode* selected = nullptr;
+        for (const auto& node : program->nodes) {
+            if (node.kind == fs::StructureKind::Loop && node.loops.empty()) { selected = &node; break; }
+        }
+        if (!selected) { return failure(); }
+        auto loop = cast<scf::ForOp>(selected->anchor);
+        auto counted = fs::CountedLoop::get(loop);
+        if (!counted || !state->singletonBoundaryChild(*selected, counted->trips(state->expressions)) ||
+            state->children.size() != 1 || !state->children.front().regional.invocationPrefix) {
+            llvm::errs() << "singleton prefix unavailable: " << state->repeatedAttempt << "\n";
+            return failure();
+        }
+        regional = state->children.front().regional;
     }
-    if (!selected) { return failure(); }
-    auto loop = cast<scf::ForOp>(selected->anchor);
-    auto counted = fs::CountedLoop::get(loop);
-    if (!counted || !state->singletonBoundaryChild(*selected, counted->trips(state->expressions)) ||
-        state->children.size() != 1 || !state->children.front().regional.invocationPrefix) {
-        llvm::errs() << "singleton prefix unavailable: " << state->repeatedAttempt << "\n";
-        return failure();
-    }
-    auto regional = state->children.front().regional;
     state->resolveOriginal = {};
     state.reset(); owners.clear();
     fs::InvocationPrefixCollection collection(function, input);
     std::string error;
-    if (failed(fs::collectRegionalInvocationPrefix(regional, collection, error))) {
-        llvm::errs() << error << "\n"; return failure();
-    }
+    auto collected = root ? fs::collectInvocationPrefix(root, collection, error) :
+                            fs::collectRegionalInvocationPrefix(regional, collection, error);
+    if (failed(collected)) { llvm::errs() << error << "\n"; return failure(); }
     auto& recipe = collection.recipe();
     recipe.privateScalarControl = true;
     auto bounds = fs::inferInvocationSourceBounds(function, recipe.sources, error);
@@ -486,7 +508,9 @@ static LogicalResult singletonPrefixTrace(func::FuncOp function, pto::GMAliasPol
 }
 LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPolicy policy)
 {
-    if (function->hasAttr("test.singleton_prefix")) { return singletonPrefixTrace(function, policy); }
+    if (function->hasAttr("test.singleton_prefix") || function->hasAttr("test.sequence_prefix")) {
+        return retainedPrefixTrace(function, policy);
+    }
     pto::SyncInput input(policy);
     if (failed(input.build(function))) {
         return failure();
@@ -1086,6 +1110,107 @@ bool checkSequenceBoundarySets(func::FuncOp function)
     }
     return arena->constructionError().empty();
 }
+// Independently enumerate original source occurrences, rather than reproducing
+// the folded-coordinate presence expression used by regional query adapters.
+bool checkCrossingPresence(func::FuncOp function, const pto::SyncInput& input)
+{
+    if (input.instructions().empty()) { return false; }
+    for (bool guarded : {false, true}) {
+        Block inputs;
+        auto arena = std::make_shared<fs::RegionExpressions>();
+        fs::SequenceAnalysisState state(function, arena);
+        const auto zero = arena->constant(0), one = arena->constant(1);
+        const auto yes = arena->boolean(true), no = arena->boolean(false);
+        auto guard = [&]() {
+            return guarded ? arena->input(inputs.addArgument(IntegerType::get(function.getContext(), 1),
+                                                              function.getLoc())) : yes;
+        };
+        const auto p = guard(), q = guard();
+        std::array<pto::CompoundInstanceElement, 2> phases = {*input.instructions().front(),
+                                                            *input.instructions().front()};
+        phases[0].kPipeValue = static_cast<pto::PipelineType>(pto::PIPE::PIPE_MTE1);
+        phases[1].kPipeValue = static_cast<pto::PipelineType>(pto::PIPE::PIPE_M);
+        state.children.resize(2); state.nativeFirst.resize(2); state.nativeLast.resize(2);
+        for (unsigned child = 0; child < 2; ++child) {
+            auto& region = state.children[child].regional;
+            region.expressions = arena; region.occurrenceLoops.resize(1);
+            fs::TemplateEndpointAnchor anchor;
+            anchor.phase = &phases[child];
+            state.children[child].anchors = {anchor}; region.anchors = {anchor};
+            region.capabilities.exactQueries = true;
+            region.presence = [=](fs::RegionalEvent event) -> std::optional<fs::Expr> {
+                if (child) { return arena->eq(event.ordinal, zero); }
+                return arena->lor(arena->land(arena->eq(event.ordinal, zero), p),
+                                  arena->land(arena->eq(event.ordinal, one), q));
+            };
+            auto presence = region.presence;
+            region.reachability = [=](fs::RegionalEvent a, fs::RegionalEvent b) -> std::optional<fs::Expr> {
+                auto order = arena->lor(arena->lt(a.ordinal, b.ordinal), arena->eq(a.ordinal, b.ordinal));
+                if (a.kind == fs::PeriodicEventKind::Completion && b.kind == fs::PeriodicEventKind::Start) {
+                    order = no;
+                }
+                return arena->land(order, arena->land(*presence(a), *presence(b)));
+            };
+        }
+        auto first = state.port(0, 0, zero), last = state.port(0, 0, one), consumer = state.port(1, 0, zero);
+        state.crossing({first, p}, {consumer, yes}); state.crossing({last, q}, {consumer, yes});
+        if (state.hasCertifiedCrossingPresence() || !state.closure() || !state.hasCertifiedCrossingPresence()) {
+            return false;
+        }
+        if (guarded == bool(state.numerical)) { return false; }
+        if (guarded && state.portChoices.empty()) { return false; }
+        for (unsigned bits = guarded ? 0 : 3; bits < 4; ++bits) {
+            fs::RegionExpressions::Substitution binding({{p, arena->boolean(bits & 1)},
+                                                        {q, arena->boolean(bits & 2)}});
+            auto value = [&](fs::Expr expression) {
+                return arena->constantValue(guarded ? arena->substitute(expression, binding) : expression);
+            };
+            int selected = -1;
+            for (const auto& edge : state.crossings) {
+                auto active = value(edge.guard);
+                if (!active) { return false; }
+                if (!*active) { continue; }
+                const auto& source = state.ports[edge.source];
+                const auto& target = state.ports[edge.target];
+                auto ordinal = value(source.ordinal), targetOrdinal = value(target.ordinal);
+                if (!ordinal || *ordinal > 1 || !(bits & (1U << *ordinal)) ||
+                    target.child != 1 || !targetOrdinal || *targetOrdinal != 0) { return false; }
+                selected = std::max(selected, static_cast<int>(*ordinal));
+            }
+            const int expected = (bits & 2) ? 1 : ((bits & 1) ? 0 : -1);
+            if (selected != expected) { return false; }
+        }
+        // Appended circuit nodes do not change the sealed mathematical graph.
+        arena->constant(999);
+        if (!state.hasCertifiedCrossingPresence() || state.crossings.empty()) { return false; }
+        const auto edge = state.crossings.front();
+        state.crossings.front().guard = arena->lnot(edge.guard);
+        if (state.hasCertifiedCrossingPresence()) { return false; }
+        state.crossings.front() = edge;
+        std::swap(state.crossings.front().source, state.crossings.front().target);
+        if (state.hasCertifiedCrossingPresence()) { return false; }
+        state.crossings.front() = edge;
+        state.ports[edge.source].visits.push_back(one);
+        if (state.hasCertifiedCrossingPresence()) { return false; }
+        state.ports[edge.source].visits.clear();
+        state.input = &input;
+        if (state.hasCertifiedCrossingPresence()) { return false; }
+        state.input = nullptr;
+        auto originalFunction = state.function;
+        state.function = {};
+        if (state.hasCertifiedCrossingPresence()) { return false; }
+        state.function = originalFunction;
+        state.children.front().regional.endpointSiteGuard = no;
+        if (state.hasCertifiedCrossingPresence()) { return false; }
+        state.children.front().regional.endpointSiteGuard.reset();
+        if (!state.hasCertifiedCrossingPresence()) { return false; }
+        state.error = "synthetic reconstruction failure";
+        if (state.closure()) { return false; }
+        state.error.clear();
+        if (state.hasCertifiedCrossingPresence()) { return false; }
+    }
+    return true;
+}
 bool checkSequencePreparationRetry(fs::SequenceAnalysis& analysis, fs::ProgramRecognition& program,
     const pto::SyncInput& input)
 {
@@ -1138,6 +1263,7 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
     if (!checkSequenceBoundarySets(function)) { return failure(); }
     pto::SyncInput input(policy);
     if (failed(input.build(function))) { return failure(); }
+    if (!checkCrossingPresence(function, input)) { return failure(); }
     if (function->hasAttr("test.finite_arithmetic_fill")) {
         return success(checkFiniteArithmeticFill(function, input));
     }

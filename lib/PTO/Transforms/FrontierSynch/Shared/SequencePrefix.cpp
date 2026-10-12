@@ -10,6 +10,97 @@
 #include "PTO/IR/PTO.h"
 #include "mlir/IR/Dominance.h"
 namespace mlir::pto::frontiersynch {
+// Construction evidence, not a general implication result. Imported selectors
+// certify endpoint existence; bridges intersect their guards. Folding chooses
+// only an active alternative, and both reducers only narrow the resulting
+// guards. Thus every retained guard implies the selected endpoints exist.
+// Keep this evidence with the finalized producer instead of reconstructing a
+// child presence predicate at a folded coordinate and attempting a fresh proof.
+struct SequenceCrossingPresence {
+    using Edge = std::tuple<uint32_t, uint32_t, Expr>;
+    using Point = std::tuple<uint32_t, uint32_t, Expr, std::vector<Expr>>;
+    using Choice = std::tuple<uint32_t, Expr, uint32_t, uint32_t>;
+    using Origin = std::tuple<const CompoundInstanceElement*, Operation*, uint32_t,
+        Block*, Operation*, Block*, Operation*, std::vector<std::pair<scf::ForOp, int64_t>>,
+        const RegionExpressions*, const SyncStorageEffects*, GMAliasPolicy, scf::ForOp,
+        std::vector<scf::ForOp>, std::vector<uint64_t>, std::optional<Expr>, std::optional<Expr>>;
+    static std::optional<Origin> origin(const SequenceAnalysisState& state, const Port& point)
+    {
+        if (point.child >= state.children.size()) { return std::nullopt; }
+        const auto& child = state.children[point.child];
+        const auto& region = child.regional;
+        if (point.type >= child.anchors.size() ||
+            (!region.occurrenceLoops.empty() && point.type >= region.occurrenceLoops.size()) ||
+            (!region.outerLoops.empty() && point.type >= region.outerLoops.size()) ||
+            (!region.outerDivisors.empty() && point.type >= region.outerDivisors.size())) { return std::nullopt; }
+        const auto& anchor = child.anchors[point.type];
+        if (!anchor.phase) { return std::nullopt; }
+        std::vector<std::pair<scf::ForOp, int64_t>> fixed;
+        for (const auto& coordinate : anchor.coordinates) { fixed.emplace_back(coordinate.loop, coordinate.induction); }
+        return Origin(anchor.phase, anchor.phase->elementOp, static_cast<uint32_t>(anchor.phase->kPipeValue),
+            anchor.before.block, anchor.before.before, anchor.after.block, anchor.after.before, std::move(fixed),
+            region.expressions.get(), region.accessModel, region.gmAliasPolicy,
+            region.occurrenceLoops.empty() ? scf::ForOp{} : region.occurrenceLoops[point.type],
+            region.outerLoops.empty() ? std::vector<scf::ForOp>{} : region.outerLoops[point.type],
+            region.outerDivisors.empty() ? std::vector<uint64_t>{} : region.outerDivisors[point.type],
+            region.endpointSiteGuard, region.endpointInvocationGuard);
+    }
+    const SequenceAnalysisState* owner = nullptr;
+    const RegionExpressions* arena = nullptr;
+    const SyncInput* input = nullptr;
+    func::FuncOp function;
+    SmallVector<scf::ForOp> enclosing;
+    std::vector<Edge> edges;
+    std::vector<Point> points;
+    std::vector<Origin> origins;
+    std::vector<Choice> choices;
+};
+void SequenceAnalysisState::sealCrossingPresence()
+{
+    auto evidence = std::make_shared<SequenceCrossingPresence>();
+    evidence->owner = this; evidence->arena = arena.get(); evidence->input = input;
+    evidence->function = function; evidence->enclosing = requiredOuterLoops;
+    for (const auto& edge : crossings) {
+        if (edge.source >= ports.size() || edge.target >= ports.size()) { return; }
+        evidence->edges.emplace_back(edge.source, edge.target, edge.guard);
+    }
+    for (const auto& point : ports) {
+        auto origin = SequenceCrossingPresence::origin(*this, point);
+        if (!origin) { return; }
+        evidence->origins.push_back(std::move(*origin));
+        evidence->points.emplace_back(point.child, point.type, point.ordinal, point.visits);
+    }
+    for (const auto& [id, choice] : portChoices) {
+        evidence->choices.emplace_back(id, choice.choose, choice.yes, choice.no);
+    }
+    crossingPresence = std::move(evidence);
+}
+bool SequenceAnalysisState::hasCertifiedCrossingPresence() const
+{
+    const auto* proof = crossingPresence.get();
+    if (!proof || proof->owner != this || proof->arena != arena.get() || proof->input != input ||
+        proof->function != function || proof->enclosing != requiredOuterLoops || !error.empty() ||
+        relationalResult || !expressions.constructionError().empty() || proof->edges.size() != crossings.size() ||
+        proof->points.size() != ports.size() || proof->choices.size() != portChoices.size()) { return false; }
+    for (std::size_t i = 0; i < crossings.size(); ++i) {
+        const auto& edge = crossings[i];
+        if (proof->edges[i] != SequenceCrossingPresence::Edge(edge.source, edge.target, edge.guard)) { return false; }
+    }
+    for (std::size_t i = 0; i < ports.size(); ++i) {
+        const auto& point = ports[i];
+        auto origin = SequenceCrossingPresence::origin(*this, point);
+        if (!origin || *origin != proof->origins[i]) { return false; }
+        if (proof->points[i] != SequenceCrossingPresence::Point(
+                point.child, point.type, point.ordinal, point.visits)) { return false; }
+    }
+    std::size_t i = 0;
+    for (const auto& [id, choice] : portChoices) {
+        if (proof->choices[i++] != SequenceCrossingPresence::Choice(id, choice.choose, choice.yes, choice.no)) {
+            return false;
+        }
+    }
+    return true;
+}
 namespace {
 FailureOr<Value> emitPrefixCrossing(
     RegionExpressions& e, Expr root, Operation* cut, OpBuilder& builder, const IRMapping& mapping, std::string& error)
@@ -96,7 +187,7 @@ bool originalPrefixAnchor(const TemplateEndpointAnchor& anchor)
 }
 LogicalResult appendPrefixCrossing(
     const std::shared_ptr<SequenceAnalysisState>& owner, const Crossing& edge, InvocationPrefixCollection& collection,
-    std::string& error)
+    std::string& error, bool certifiedPresence)
 {
     auto& e = owner->expressions;
     if (edge.source >= owner->ports.size() || edge.target >= owner->ports.size()) {
@@ -118,10 +209,12 @@ LogicalResult appendPrefixCrossing(
         error = "prefix crossing requires its original phase cut adapter";
         return failure();
     }
-    auto presence = regionalPresence(owner->children[a.child].regional, a.event(PeriodicEventKind::Completion));
-    if (!presence || !e.implies(edge.guard, *presence)) {
-        error = "prefix crossing lacks current-context source presence";
-        return failure();
+    if (!certifiedPresence) {
+        auto presence = regionalPresence(owner->children[a.child].regional, a.event(PeriodicEventKind::Completion));
+        if (!presence || !e.implies(edge.guard, *presence)) {
+            error = "prefix crossing lacks current-context source presence";
+            return failure();
+        }
     }
     auto p = static_cast<uint32_t>(aa.phase->kPipeValue), q = static_cast<uint32_t>(ab.phase->kPipeValue);
     auto target = prefixPortGuard(*owner, b, edge.guard);
@@ -238,8 +331,12 @@ LogicalResult SequenceAnalysisState::collectPrefix(InvocationPrefixCollection& c
             return failure();
         }
     }
+    // Check the sealed context once. Uncertified or changed graphs retain the
+    // ordinary checked path. This evidence does not certify executable guards,
+    // source ordinals, original cuts, or rank transport across invocations.
+    const bool certifiedPresence = hasCertifiedCrossingPresence();
     for (const auto& edge : crossings) {
-        if (failed(appendPrefixCrossing(shared_from_this(), edge, collection, diagnostic))) {
+        if (failed(appendPrefixCrossing(shared_from_this(), edge, collection, diagnostic, certifiedPresence))) {
             return failure();
         }
     }
