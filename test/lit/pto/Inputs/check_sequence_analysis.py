@@ -162,6 +162,13 @@ def main():
             path.write_text(unavailable.replace("array<i64: 5>", f"array<i64: {n}>"))
             validate(json.loads(invoke(tool, "--structured-trace", path)), [n + 1], reader_only=True)
             checked += 1
+        # Endpoint failure does not invalidate mathematics, cached queries or
+        # regional callbacks; retry the same retained owner after a refusal.
+        path.write_text(source.replace('attributes {test.trace_arguments',
+            'attributes {test.preparation_retry, test.trace_arguments'))
+        retried = json.loads(invoke(tool, "--sequence-analysis", path))
+        assert retried["preparation_retry"] and retried["prepared"], retried
+        assert retried["contract_audit"] and retried["queries_available"] and retried["unchanged"], retried
         # Recognition/insertion size must not depend on runtime trip count.
         path.write_text(source.replace("array<i64: 5>", "array<i64: 1000000000>"))
         large = invoke(tool, "--insert-logical-library", path)

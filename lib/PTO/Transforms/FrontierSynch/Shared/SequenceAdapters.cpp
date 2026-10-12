@@ -761,7 +761,7 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
             return result;
         };
         out.prepareWithVisits = [owned](ArrayRef<scf::ForOp> enclosing) {
-            return owned->state->prepare(enclosing);
+            return prepareSequenceLogicalInsertion(*owned, enclosing);
         };
     }
     auto convert = [&](SequenceSelectedEvent selected) {
