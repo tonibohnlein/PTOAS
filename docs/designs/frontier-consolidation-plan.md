@@ -31,7 +31,7 @@ separate commit. Infrastructure alone does not complete a production milestone.
 | 1. Measured baseline | Aggregate allocation summary/query/proof/lane timing and inner-loop counts; precise retained-prefix refusal; pinned baseline replay. | Profiling preserves commands and certificates; bounded diagnostic storage; classify the Persistent GEMM hot stage and Delta blocker. | Complete; evidence below |
 | 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; capability scheduling pending |
 | 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Sequence preparation failure isolation complete; broader capability consolidation pending |
-| 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Pending |
+| 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; persistent memberships and shared fact views pending |
 | 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction complete; numerical port projection and shared source facts pending |
 | 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Pending |
 | 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Pending |
@@ -226,3 +226,27 @@ initial full-preparation version exceeded 90 seconds in downstream preparation
 work; this is not a claim of improved complete-request latency. Architecture
 and correctness reviews accepted the component, including the boundary oracle.
 Receipts are under `.local/three-paths/consolidation/m5-summary/`.
+
+## Alias-union duplicate search
+
+Each translator alias union now builds one call-local hash membership index,
+using every field of the existing exact record equality. Clones substitute the
+destination SSA identity before lookup. Existing destination records seed the
+index, accepted records retain first-seen order, and borrowed keys expire before
+other translator operations can mutate geometry. Self-source unions are no-ops.
+
+This removes the expected cubic duplicate-comparison path on select chains.
+Explicit prefix vectors still retain quadratic storage; no compressed alias-set
+or linear source-size bound is claimed. Translator counters separately record
+candidates, seeded records, hashes, hashed address entries, equality checks and
+retained clones, and reset at each Build invocation.
+
+Four focused lit tests pass, including both alias policies, selected views and
+A3/A5 selections. The independent chain fixture checks every ordered root set
+and duplicate-arm union at 32/64/128/256 roots. At 256 roots it records 65,790
+retained records and 32,895 equality checks; all four sizes satisfy the quadratic
+work checks. Both source reviews accepted the change. Eight previously passing
+sequence/public tests also pass with this implementation. Two additional CLI
+fixtures cannot finish because this build lacks `ptoas._core`; their native
+storage/alias portions passed. Receipts are under
+`.local/three-paths/consolidation/m4-alias/`.

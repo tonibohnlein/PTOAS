@@ -7,16 +7,69 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Check the shared alias contract against finite byte intersections.
 #include "PTO/Transforms/InsertSync/SyncInput.h"
+#include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Builders.h"
 #include "llvm/Support/raw_ostream.h"
 #include <array>
 #include <limits>
 using namespace mlir;
 using namespace mlir::pto;
 
+namespace {
+bool checkAliasSelectChains(func::FuncOp original) {
+  original.getContext()->getOrLoadDialect<arith::ArithDialect>();
+  for (unsigned roots : {32U, 64U, 128U, 256U}) {
+    OpBuilder builder(original.getContext());
+    SmallVector<Type> arguments(roots, original.getArgument(0).getType());
+    arguments.push_back(builder.getI1Type());
+    OwningOpRef<func::FuncOp> function(func::FuncOp::create(original.getLoc(),
+        "alias_select_chain", builder.getFunctionType(arguments, {})));
+    auto *body = function->addEntryBlock();
+    builder.setInsertionPointToStart(body);
+    Value current = body->getArgument(0);
+    SmallVector<Value> results;
+    for (unsigned i = 1; i < roots; ++i) {
+      current = builder.create<arith::SelectOp>(original.getLoc(), body->getArgument(roots),
+                                               current, body->getArgument(i)).getResult();
+      results.push_back(current);
+      // Both arms carry identical root sets. They must deduplicate without
+      // changing first-seen order, even after a growing-prefix union.
+      current = builder.create<arith::SelectOp>(original.getLoc(), body->getArgument(roots),
+                                               current, current).getResult();
+      results.push_back(current);
+    }
+    builder.create<func::ReturnOp>(original.getLoc());
+    SyncIRs ir;
+    Buffer2MemInfoMap memories;
+    PTOIRTranslator translator(ir, memories, *function, SyncAnalysisMode::NORMALSYNC);
+    if (failed(translator.Build())) { return false; }
+    for (unsigned index = 0; index < results.size(); ++index) {
+      auto found = memories.find(results[index]);
+      const unsigned count = index / 2 + 2;
+      if (found == memories.end() || found->second.size() != count) { return false; }
+      for (unsigned root = 0; root < count; ++root) {
+        const auto& info = found->second[root];
+        if (info->rootBuffer != body->getArgument(root) || info->baseBuffer != results[index]) { return false; }
+      }
+    }
+    const auto& stats = translator.aliasConstructionStats();
+    const uint64_t prefixes = static_cast<uint64_t>(roots) * (roots + 1) - 2;
+    if (stats.retainedClones != prefixes || stats.candidates != 3 * prefixes / 2 ||
+        stats.indexedRecords != static_cast<uint64_t>(roots) * roots - 1 ||
+        stats.equalityChecks > 16 * prefixes || stats.hashCalls > 24 * prefixes) { return false; }
+    llvm::outs() << "alias-select-chain: roots=" << roots << " retained=" << stats.retainedClones
+                 << " equality-checks=" << stats.equalityChecks << " hash-calls=" << stats.hashCalls << "\n";
+  }
+  return true;
+}
+} // namespace
+
 int runSyncAliasChecks(func::FuncOp function, const SyncInput &input) {
   if (function.getNumArguments() < 2) {
     return 1;
   }
+  if (!checkAliasSelectChains(function)) { return 1; }
   Value first = function.getArgument(0), second = function.getArgument(1);
   const auto &analyzer = input.memory();
   const bool mayAlias = analyzer.gmPolicy() == GMAliasPolicy::MayAlias;
