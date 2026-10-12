@@ -16,6 +16,7 @@
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgram.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalRelations.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedInternal.h"
@@ -84,6 +85,56 @@ bool checkProgramContractAuditWork();
 LogicalResult checkDescriptorState(func::FuncOp);
 int runContextualLocalAccessChecks(func::FuncOp);
 namespace {
+bool checkAllocationProfileAggregates()
+{
+    using namespace pto::frontiersynch;
+    // Independent enabled/disabled attempts, including an early return inside
+    // a scope. Query count must not become either ledger size or dispatch count.
+    for (bool enabled : {false, true, true}) {
+        auto ledger = std::make_shared<AnalysisLedger>();
+        ledger->profiling = enabled;
+        AnalysisStageRecord parent;
+        parent.id = parent.request = 1;
+        ledger->stages.push_back(parent);
+        ledger->activeStages.push_back(0);
+        {
+            AllocationProfile profile(ledger);
+            AllocationProfile::Scope groups(&profile, AllocationProfile::Groups);
+            for (unsigned i = 0; i < 64; ++i) {
+                profile.visited(AllocationProfile::GroupPairs);
+                auto query = [&]() {
+                    AllocationProfile::Scope scope(&profile, AllocationProfile::Queries);
+                    if (i % 2) { scope.cacheHit(); return; }
+                    scope.constructed();
+                };
+                query();
+            }
+        }
+        if (!enabled) {
+            if (ledger->stages.size() != 1 || ledger->stages[0].exclusiveNanoseconds) { return false; }
+            continue;
+        }
+        if (ledger->stages.size() != 4) { return false; }
+        uint64_t elapsed = 0;
+        for (std::size_t i = 1; i < ledger->stages.size(); ++i) {
+            const auto& record = ledger->stages[i];
+            if (record.parent != 1 || record.request != 1 || record.firstDispatches ||
+                record.cacheHits || record.constructions || record.elapsedNanoseconds != record.exclusiveNanoseconds) {
+                return false;
+            }
+            elapsed += record.elapsedNanoseconds;
+            if (record.stage == "allocation-queries-aggregate" &&
+                (record.aggregateCalls != 64 || record.aggregateCacheHits != 32 || record.aggregateCacheMisses != 32)) {
+                return false;
+            }
+            if (record.stage == "allocation-group-member-pairs-aggregate" && record.aggregateCalls != 64) {
+                return false;
+            }
+        }
+        if (ledger->stages[0].exclusiveNanoseconds != elapsed) { return false; }
+    }
+    return true;
+}
 bool verifyStageProfile(const pto::frontiersynch::AnalysisLedger& ledger, uint64_t attempts,
     uint64_t originatingRequest)
 {
@@ -166,7 +217,9 @@ LogicalResult checkStageProfileSession(func::FuncOp function, pto::GMAliasPolicy
     const auto ledger = first.ledger;
     const auto plainLedger = plain.diagnosticLedger();
     if (!verifyStageProfile(*ledger, attempts, logical.requestId) || !plainLedger || !unprofiled.requestId ||
-        !plainLedger->stages.empty() || !checkProgramContractAuditWork()) { return failure(); }
+        !plainLedger->stages.empty() || !checkProgramContractAuditWork() || !checkAllocationProfileAggregates()) {
+        return failure();
+    }
     const auto snapshot = profiled.costRecords();
     if (snapshot.size() != estimateCount || ledger->snapshotRecordsCopied != estimateCount) { return failure(); }
     profiled.writeStageProfile(llvm::errs(), "profile-regression");

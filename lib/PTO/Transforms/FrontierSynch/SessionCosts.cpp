@@ -121,6 +121,11 @@ void FrontierAnalysis::writeStageProfile(llvm::raw_ostream& stream, StringRef wo
             {"cache_hits", record.cacheHits}, {"first_dispatches", record.firstDispatches}};
         entry["constructions"] = record.constructions ? llvm::json::Value(*record.constructions) :
             llvm::json::Value(nullptr);
+        if (record.aggregateCalls) {
+            entry["aggregate_calls"] = record.aggregateCalls;
+            entry["aggregate_cache_hits"] = record.aggregateCacheHits;
+            entry["aggregate_cache_misses"] = record.aggregateCacheMisses;
+        }
         stages.push_back(std::move(entry));
     }
     const auto* recognition = result();

@@ -8,6 +8,7 @@
 // Request protocol adapters. Cache mathematical construction independently of
 // export checks; detached command fragments always have fresh ownership.
 #include "AnalysisSessionInternal.h"
+#include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "Shared/SequenceAnalysisInternal.h"
 #include "WholeInvocationIdentity.h"
 #include "Structured/OrderCoveredPeriodic.h"
@@ -520,7 +521,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical
 }
 namespace {
 DictionaryAttr allocateRetained(const MathematicalResult& demands, const ProgramRecognition& program,
-    const BackendAttempt& attempt, PreparedLogicalPlan& prepared, MLIRContext* context, uint64_t& guardedImportWork)
+    const BackendAttempt& attempt, PreparedLogicalPlan& prepared, MLIRContext* context,
+    uint64_t& guardedImportWork, AllocationProfile* allocationProfile)
 {
     const auto plan = prepared.planId;
     if (demands.explicitDemands) { return explicitAllocationCertificate(*demands.explicitDemands, plan, context); }
@@ -557,7 +559,7 @@ DictionaryAttr allocateRetained(const MathematicalResult& demands, const Program
     if (demands.sequenceDemands || demands.finiteGuardedDemands) {
         auto region = demands.sequenceDemands ? sequenceRegionalResult(*demands.sequenceDemands) :
             finiteGuardedRegionalResult(*demands.finiteGuardedDemands);
-        auto certificate = regionalAllocationCertificate(region, prepared);
+        auto certificate = regionalAllocationCertificate(region, prepared, allocationProfile);
         return certificate ? certificate : finiteRegionalAllocationCertificate(region, prepared);
     }
     if (!demands.arithmeticDemands && !demands.generalArithmeticDemands) { return {}; }
@@ -576,7 +578,8 @@ DictionaryAttr allocateRetained(const MathematicalResult& demands, const Program
     return encodeGeneralArithmeticAllocationCertificate(proof, pipes, attempt.arithmeticRecords, plan, context);
 }
 } // namespace
-DictionaryAttr FrontierAnalysis::allocateIdentity(const MathematicalResult& demands, PreparedLogicalPlan& plan)
+DictionaryAttr FrontierAnalysis::allocateIdentity(const MathematicalResult& demands, PreparedLogicalPlan& plan,
+    AllocationProfile* allocationProfile)
 {
     const MathematicalResult* retained = &demands;
     AnalysisBackend backend = AnalysisBackend::Explicit;
@@ -590,7 +593,7 @@ DictionaryAttr FrontierAnalysis::allocateIdentity(const MathematicalResult& dema
     auto& attempt = sessionState->attempts[retained->region][backend];
     if (attempt.mathematical.get() != retained) { return {}; }
     auto certificate = allocateRetained(*retained, *program, attempt, plan, function.getContext(),
-        sessionState->guardedImportWork);
+        sessionState->guardedImportWork, allocationProfile);
     if (certificate || !plan.regionalAllocation) { return certificate; }
     AnalysisRequest request;
     request.region = retained->region;
@@ -598,7 +601,7 @@ DictionaryAttr FrontierAnalysis::allocateIdentity(const MathematicalResult& dema
     auto exported = requestBackend(backend, request);
     if (exported.mathematical.get() != retained || !exported.available.queries) { return {}; }
     auto region = exported.regionalExports ? exported.regionalExports : retained->regionalDemands;
-    return region ? regionalAllocationCertificate(*region, plan) : DictionaryAttr{};
+    return region ? regionalAllocationCertificate(*region, plan, allocationProfile) : DictionaryAttr{};
 }
 LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan)
 {
@@ -621,16 +624,21 @@ LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, 
     auto& attempt = selected->second;
     auto cached = attempt.allocation.find(plan.planId);
     if (cached != attempt.allocation.end()) { profile.cacheHit(); }
-    prepareAllocationSupport(plan);
+    AllocationProfile allocationWork(sessionState->ledger);
+    auto* allocationProfile = &allocationWork;
+    {
+        AllocationProfile::Scope summary(allocationProfile, AllocationProfile::Summary);
+        prepareAllocationSupport(plan);
+    }
     if (cached == attempt.allocation.end()) {
         profile.constructed();
         if (construction.allocationExports != UINT64_MAX) { ++construction.allocationExports; }
         auto certificate = plan.allocationCertificate;
         if (!certificate) {
             certificate = result.mathematical->identityComposition ?
-                allocateIdentity(*result.mathematical, plan) :
+                allocateIdentity(*result.mathematical, plan, allocationProfile) :
                 allocateRetained(*result.mathematical, *program, attempt, plan, function.getContext(),
-                    sessionState->guardedImportWork);
+                    sessionState->guardedImportWork, allocationProfile);
         }
         cached = attempt.allocation.emplace(plan.planId, certificate).first;
     }

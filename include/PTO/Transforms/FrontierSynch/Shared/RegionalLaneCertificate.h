@@ -11,7 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 namespace mlir::pto::frontiersynch {
 DictionaryAttr regionalLaneEvidence(const RegionalAnalysis& region,
-    const RegionalAllocationSummary& summary, ArrayAttr groups);
+    const RegionalAllocationSummary& summary, ArrayAttr groups, AllocationProfile* profile = nullptr);
 // Returns one physical palette per group, indexed by the original local lane.
 FailureOr<SmallVector<SmallVector<int64_t>>> allocateRegionalLanes(func::FuncOp function,
     DictionaryAttr evidence, ArrayAttr groups, ArrayRef<int64_t> eligibleIds);

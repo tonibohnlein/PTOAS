@@ -180,7 +180,8 @@ private:
     std::shared_ptr<const MathematicalResult> produceIdentitySequence(
         std::size_t region, bool endpoints, std::string& error);
     AnalysisOutcome requestIdentity(const AnalysisRequest& request, BackendAttempt& attempt);
-    DictionaryAttr allocateIdentity(const MathematicalResult& demands, PreparedLogicalPlan& plan);
+    DictionaryAttr allocateIdentity(const MathematicalResult& demands, PreparedLogicalPlan& plan,
+        class AllocationProfile* profile = nullptr);
     std::shared_ptr<const MathematicalResult> produceBackend(AnalysisBackend backend, std::string& error);
     std::shared_ptr<const MathematicalResult> produceRegionBackend(
         AnalysisBackend backend, std::size_t region, std::string& error);

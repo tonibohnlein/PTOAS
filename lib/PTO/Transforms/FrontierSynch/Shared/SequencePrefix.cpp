@@ -210,8 +210,16 @@ LogicalResult appendPrefixCrossing(
 } // namespace
 LogicalResult SequenceAnalysisState::collectPrefix(InvocationPrefixCollection& collection, std::string& diagnostic)
 {
-    if (function != collection.function() || relationalResult || !error.empty()) {
-        diagnostic = "sequence prefix collection requires unchanged retained port mathematics";
+    if (function != collection.function()) {
+        diagnostic = "sequence prefix collection belongs to a different invocation";
+        return failure();
+    }
+    if (!error.empty()) {
+        diagnostic = "sequence prefix collection retains an analysis failure: " + error;
+        return failure();
+    }
+    if (relationalResult) {
+        diagnostic = "sequence prefix collection requires a retained relational crossing adapter";
         return failure();
     }
     for (const auto& child : children) {

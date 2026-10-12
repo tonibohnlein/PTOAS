@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 namespace mlir::pto::frontiersynch {
+class AllocationProfile;
 struct RegionalAllocationMember {
     uint32_t record = 0;
     uint64_t stride = 0, phase = 0;
@@ -57,7 +58,8 @@ std::shared_ptr<RegionalAllocationSummary> periodicRegionalAllocation(
     const RegionalAnalysis& region, const PeriodicAnalysis& periodic, RegionExpressions::Id trips);
 std::shared_ptr<RegionalAllocationSummary> finiteRegionalAllocation(
     const RegionalAnalysis& region, const PreparedLogicalPlan& plan);
-DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, const PreparedLogicalPlan& plan);
+DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, const PreparedLogicalPlan& plan,
+    AllocationProfile* profile = nullptr);
 FailureOr<PhysicalAllocationPlan> decodeRegionalAllocation(func::FuncOp function,
     DictionaryAttr certificate, ArrayRef<int64_t> eligibleIds);
 } // namespace mlir::pto::frontiersynch
