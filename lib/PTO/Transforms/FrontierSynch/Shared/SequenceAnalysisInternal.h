@@ -111,6 +111,7 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
     std::string error;
     std::string repeatedAttempt;
     uint64_t boundarySummaryVisits = 0;
+    SequenceBridgeWork bridgeWork;
     void summarizeBoundaries(SequenceAnalysis& result);
     std::vector<Child> children;
     // A symbolic crossing relation cannot be represented as a sampled finite

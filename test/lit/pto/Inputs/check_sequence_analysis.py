@@ -182,6 +182,7 @@ def main():
         # This counter measures visited alternatives, independent of wall time
         # and of the cost of constructing each child's mathematical result.
         summary_visits = []
+        bridge_visits = []
         for count in (8, 16, 32):
             siblings = source[:start] + source[start:end] * count + source[end:]
             path.write_text(siblings.replace('attributes {test.trace_arguments',
@@ -190,9 +191,17 @@ def main():
             assert not report["error"], report
             assert report["children"] >= count and report["boundary_summary_visits"] > 0, report
             summary_visits.append(report["boundary_summary_visits"])
+            bridge_visits.append(tuple(report[key] for key in ("bridge_candidates", "bridge_remasked")))
         assert summary_visits[1] <= 2 * summary_visits[0], summary_visits
         assert summary_visits[2] <= 2 * summary_visits[1], summary_visits
         print("sequence summary alternative visits (8/16/32 children):", summary_visits)
+        # Measure the earlier bridge construction separately from summaries.
+        # These siblings have the same conditional presence; dead alternatives
+        # must not accumulate even though they remain separate compact regions.
+        for index in range(2):
+            values = [row[index] for row in bridge_visits]
+            assert values[2] - values[1] <= 2 * (values[1] - values[0]), values
+        print("sequence bridge candidate/remasking visits (8/16/32 children):", bridge_visits)
         # Constant trip counts change analysis input, unlike trace arguments.
         constant_sizes = []
         constant_analysis = []

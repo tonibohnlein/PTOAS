@@ -107,6 +107,17 @@ SequenceAnalysis analyzeSequenceRegionWithResolver(func::FuncOp function, const 
 RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis);
 // Actual boundary-alternative visits during this result's prefix/suffix summary.
 uint64_t sequenceBoundarySummaryVisits(const SequenceAnalysis& analysis);
+// Per-composition storage bridge work, before crossing reduction. These counts
+// exclude child construction and residual alias pair enumeration.
+struct SequenceBridgeWork {
+    // Examined pairs, including guards found false or hardware protected.
+    uint64_t candidates = 0;
+    // Individual masks evaluated; excludes whole-frontier clear/no-op paths.
+    uint64_t remasked = 0;
+    // Newly appended live endpoint pairs; excludes guard merges into a pair.
+    uint64_t retained = 0;
+};
+SequenceBridgeWork sequenceBridgeWork(const SequenceAnalysis& analysis);
 RegionExpressions* sequenceExpressions(SequenceAnalysis& analysis);
 NumericalChainQueryCost sequenceNumericalQueryCounts(const SequenceAnalysis& analysis);
 // Counts from the latest preparation, before shared emission CSE: imported
