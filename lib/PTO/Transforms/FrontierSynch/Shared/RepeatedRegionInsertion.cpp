@@ -9,6 +9,7 @@
 #include "RepeatedRegionInternal.h"
 #include "OccurrenceBinding.h"
 #include "RepeatedAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
 namespace mlir::pto::frontiersynch
@@ -40,7 +41,11 @@ class RepeatedPreparation
         plan->completeInvocation = false;
         plan->nestedIdentities = true;
         plan->allocationCertificate = {};
-        auto childView = takeRegionalAllocationView(*plan);
+        auto childView = takeRegionalAllocationView(*plan, true);
+        if (!childView) {
+            state.error = "repeated child allocation view is unavailable";
+            return failure();
+        }
         current = ordinal(loop);
         if (!current)
         {
@@ -134,6 +139,11 @@ class RepeatedPreparation
             {
                 nextRecord = std::max(nextRecord, uint64_t(member.record) + 1);
             }
+        }
+        if (plan->familyRecipe) {
+            auto prefixed = prefixFamilyInvocation(plan->familyRecipe, body.expressions, *current);
+            if (failed(prefixed)) { return fail("repeat visit is unavailable at a child family cut"); }
+            plan->familyRecipe = std::move(*prefixed);
         }
         for (auto &endpoint : plan->endpoints)
         {
@@ -288,22 +298,10 @@ class RepeatedPreparation
     }
     void renameFamilies()
     {
-        using Key = std::tuple<uint32_t, uint32_t, uint64_t>;
-        std::map<Key, uint32_t> names;
-        std::map<uint32_t, Key> keys;
-        for (const auto &family : plan->families)
-        {
-            const Key key{family.sourcePipe, family.targetPipe, family.displacement};
-            for (const auto &member : family.members)
-            {
-                auto [entry, added] = names.emplace(key, member.record);
-                entry->second = std::min(entry->second, member.record);
-                keys.emplace(member.record, key);
-            }
-        }
+        const auto names = familyRecordNamespaces(plan->families);
         for (auto &endpoint : plan->endpoints)
         {
-            endpoint.record = names.at(keys.at(endpoint.records.front()));
+            endpoint.record = names.at(endpoint.records.front());
         }
     }
 };

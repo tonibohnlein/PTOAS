@@ -83,7 +83,8 @@ def check_stages(report):
 
 
 def main():
-    require(len(sys.argv) in (3, 4), "expected optimizer, fixture, and optional regional marker")
+    require(len(sys.argv) in (3, 4), "expected optimizer, fixture, and optional regional/recipe marker")
+    require(len(sys.argv) == 3 or sys.argv[3] in ("regional", "recipe"), "unknown profile contract")
     optimizer = shutil.which(sys.argv[1])
     require(optimizer is not None, "optimizer unavailable")
     source = Path(sys.argv[2]).read_text(encoding="utf-8")
@@ -107,6 +108,7 @@ def main():
         if not checkpoint and len(sys.argv) == 4:
             require(control[0]["recipe_sites"] > 0,
                     "sequence materialized every numerical child before allocation")
+        if not checkpoint and len(sys.argv) == 4 and sys.argv[3] == "regional":
             names = {stage["stage"] for stage in reports[0]["stages"]}
             expected = {"allocation-groups-aggregate", "allocation-lanes-aggregate", "allocation-summary-aggregate"}
             require(expected <= names,

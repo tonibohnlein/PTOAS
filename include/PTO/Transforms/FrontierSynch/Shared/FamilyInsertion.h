@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_FAMILYINSERTION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_FAMILYINSERTION_H
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
 class FamilyEndpointRecipe;
@@ -24,6 +25,11 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFamilyEndpointRecipe
 FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> appendFamilyEndpointRecipe(
     std::shared_ptr<const FamilyEndpointRecipe> previous,
     std::shared_ptr<const FamilyEndpointRecipe> child, uint32_t recordBase, std::size_t endpointIndex);
+// Prefix one enclosing invocation coordinate onto every nonlocal matching
+// tuple. Availability is planned once per original cut, without generated SSA.
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> prefixFamilyInvocation(
+    std::shared_ptr<const FamilyEndpointRecipe> child, std::shared_ptr<RegionExpressions> arena,
+    RegionExpressions::Id visit);
 // One namespace per direction/displacement, shared by concrete and delayed
 // sequence endpoints. Record provenance and member coordinates stay distinct.
 std::map<uint32_t, uint32_t> familyRecordNamespaces(ArrayRef<EndpointFamily> families);

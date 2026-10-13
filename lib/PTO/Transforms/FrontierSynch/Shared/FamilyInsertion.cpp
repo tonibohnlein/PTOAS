@@ -15,11 +15,16 @@
 #include <map>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
+struct FamilyInvocationRecipe {
+    std::shared_ptr<RegionExpressions> arena;
+    std::map<Operation*, std::shared_ptr<const CutExpressionRecipe>> cuts;
+};
 class FamilyEndpointRecipe {
 public:
     // A leaf owns a numerical endpoint plan. A composition references earlier
     // recipes and records namespace/placement transforms; append is constant work.
     std::shared_ptr<const FamilyEndpointRecipe> previous, child;
+    std::shared_ptr<const FamilyInvocationRecipe> invocation;
     uint32_t recordBase = 0, maximumRecord = 0;
     std::size_t endpointIndex = 0, maximumEndpointIndex = 0, pieceCount = 0;
     scf::ForOp outer;
@@ -223,6 +228,74 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> appendFamilyEndpointRecip
     recipe->child = std::move(child);
     return std::shared_ptr<const FamilyEndpointRecipe>(std::move(recipe));
 }
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> prefixFamilyInvocation(
+    std::shared_ptr<const FamilyEndpointRecipe> child, std::shared_ptr<RegionExpressions> arena,
+    RegionExpressions::Id visit)
+{
+    if (!child || !arena || visit >= arena->size() || arena->isBoolean(visit)) { return failure(); }
+    auto invocation = std::make_shared<FamilyInvocationRecipe>();
+    invocation->arena = std::move(arena);
+    SmallVector<const FamilyEndpointRecipe*> pending{child.get()};
+    while (!pending.empty()) {
+        const auto* current = pending.pop_back_val();
+        if (current->child) { pending.push_back(current->child.get()); }
+        if (current->previous) { pending.push_back(current->previous.get()); }
+        for (const auto& piece : current->pieces) {
+            if (piece.sourcePipe == piece.targetPipe || invocation->cuts.count(piece.cut.before)) { continue; }
+            RegionExpressions::CutEmission context;
+            auto prepared = invocation->arena->prepareContextual(visit, piece.cut.before, context);
+            if (failed(prepared)) { return failure(); }
+            invocation->cuts.emplace(piece.cut.before, std::move(*prepared));
+        }
+    }
+    auto recipe = std::make_shared<FamilyEndpointRecipe>();
+    recipe->maximumRecord = child->maximumRecord;
+    recipe->maximumEndpointIndex = child->maximumEndpointIndex;
+    recipe->pieceCount = child->pieceCount;
+    recipe->child = std::move(child);
+    recipe->invocation = std::move(invocation);
+    return std::shared_ptr<const FamilyEndpointRecipe>(std::move(recipe));
+}
+namespace {
+struct InvocationPath {
+    const FamilyInvocationRecipe* recipe;
+    std::size_t parent;
+};
+class InvocationLowering {
+public:
+    explicit InvocationLowering(PreparedLogicalPlan& plan) : plan(plan) {}
+    LogicalResult prefix(PreparedLogicalEndpoint& endpoint, std::size_t path, ArrayRef<InvocationPath> paths)
+    {
+        if (endpoint.kind == LogicalCommandKind::Barrier) { return success(); }
+        if (endpoint.memberCoordinates.empty()) { return failure(); }
+        // The innermost binding is visited first. Inserting at member one then
+        // leaves enclosing invocation coordinates before their descendants.
+        while (path != SIZE_MAX) {
+            const auto& item = paths[path];
+            auto value = lower(*item.recipe, endpoint.before);
+            if (failed(value)) { return failure(); }
+            endpoint.memberCoordinates.insert(endpoint.memberCoordinates.begin() + 1, *value);
+            path = item.parent;
+        }
+        return success();
+    }
+private:
+    PreparedLogicalPlan& plan;
+    std::map<Operation*, Block*> blocks;
+    std::map<std::pair<RegionExpressions*, Operation*>, RegionExpressions::CutEmission> contexts;
+    FailureOr<Value> lower(const FamilyInvocationRecipe& recipe, Operation* cut)
+    {
+        auto found = recipe.cuts.find(cut);
+        if (found == recipe.cuts.end()) { return failure(); }
+        auto& block = blocks[cut];
+        if (!block) { block = &plan.addPreparation(cut); }
+        OpBuilder builder(cut->getContext());
+        builder.setInsertionPointToEnd(block);
+        return recipe.arena->emitPreparedContextual(*found->second, builder, cut,
+                                                   contexts[{recipe.arena.get(), cut}]);
+    }
+};
+} // namespace
 std::size_t familyEndpointPieceCount(const FamilyEndpointRecipe& recipe) { return recipe.pieceCount; }
 LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared)
 {
@@ -230,17 +303,27 @@ LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, 
     if (prepared.endpoints.size() > static_cast<uint64_t>(INT64_MAX) ||
         recipe.maximumEndpointIndex > prepared.endpoints.size() ||
         recipe.pieceCount > static_cast<uint64_t>(INT64_MAX) - prepared.endpoints.size()) { return failure(); }
-    struct Part { const FamilyEndpointRecipe* recipe; uint32_t recordBase; std::size_t endpointIndex; };
-    SmallVector<Part> pending{{&recipe, 0, 0}}, leaves;
+    struct Part {
+        const FamilyEndpointRecipe* recipe;
+        uint32_t recordBase;
+        std::size_t endpointIndex, invocation;
+    };
+    SmallVector<Part> pending{{&recipe, 0, 0, SIZE_MAX}}, leaves;
+    SmallVector<InvocationPath> invocations;
     // Preserve the original endpoint inventory order, including concrete
     // crossings between recipe contributions. No recursive host call stack.
     while (!pending.empty()) {
         auto part = pending.pop_back_val();
         if (part.recipe->child) {
+            auto path = part.invocation;
+            if (part.recipe->invocation) {
+                path = invocations.size();
+                invocations.push_back({part.recipe->invocation.get(), part.invocation});
+            }
             pending.push_back({part.recipe->child.get(), part.recordBase + part.recipe->recordBase,
-                               part.endpointIndex + part.recipe->endpointIndex});
+                               part.endpointIndex + part.recipe->endpointIndex, path});
             if (part.recipe->previous) {
-                pending.push_back({part.recipe->previous.get(), part.recordBase, part.endpointIndex});
+                pending.push_back({part.recipe->previous.get(), part.recordBase, part.endpointIndex, part.invocation});
             }
         } else {
             if (!leaves.empty() && leaves.back().endpointIndex > part.endpointIndex) { return failure(); }
@@ -263,19 +346,29 @@ LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, 
             }
         }
     }
-    auto concrete = std::move(prepared.endpoints);
-    prepared.endpoints.clear();
+    // Stage all lowering independently: unavailable invocation bindings must
+    // not consume the incumbent concrete inventory or partially lower a recipe.
+    PreparedLogicalPlan lowered(prepared.planId);
+    InvocationLowering invocationLowering(lowered);
     std::size_t next = 0;
     for (const auto& part : leaves) {
-        while (next < part.endpointIndex) { prepared.endpoints.push_back(std::move(concrete[next++])); }
+        while (next < part.endpointIndex) { lowered.endpoints.push_back(prepared.endpoints[next++]); }
+        const auto begin = lowered.endpoints.size();
         if (!part.recipe->pieces.empty()) {
-            FamilyPreparer(*part.recipe, prepared, part.recordBase, namespaces).run();
+            FamilyPreparer(*part.recipe, lowered, part.recordBase, namespaces).run();
+        }
+        for (std::size_t i = begin; i < lowered.endpoints.size(); ++i) {
+            if (failed(invocationLowering.prefix(lowered.endpoints[i], part.invocation, invocations))) {
+                return failure();
+            }
         }
     }
-    while (next < concrete.size()) { prepared.endpoints.push_back(std::move(concrete[next++])); }
-    for (std::size_t i = 0; i < prepared.endpoints.size(); ++i) {
-        prepared.endpoints[i].piece = static_cast<int64_t>(i);
+    while (next < prepared.endpoints.size()) { lowered.endpoints.push_back(prepared.endpoints[next++]); }
+    for (std::size_t i = 0; i < lowered.endpoints.size(); ++i) {
+        lowered.endpoints[i].piece = static_cast<int64_t>(i);
     }
+    prepared.endpoints = std::move(lowered.endpoints);
+    for (auto& stage : lowered.preparation) { prepared.preparation.push_back(std::move(stage)); }
     prepared.groupedFamilies = true;
     prepared.independentPieces = true;
     return success();

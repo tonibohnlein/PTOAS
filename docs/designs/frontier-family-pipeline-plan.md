@@ -25,7 +25,7 @@ exclusion evidence; they do not replace exact guards or matching identities.
 | M0: preparation ownership | Reproduce prefill failure; remap every affected non-SSA preparation reference before deletion; validate complementary cleanup and failure atomicity; replay prefill separately from the failing baseline. | Complete: `32b38b426` |
 | M1: measurement | Extend stage inventories with per-repeat lanes/extrema, candidate pairs/gaps, query construction, proof/cache work and actual traversal counts. Keep static records/sites distinct from dynamic commands and evaluated control. | Stage inventories and repeated-allocation work/traversal counters implemented; dynamic-control and complete ID-map inventories remain open |
 | M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans and attempt-owned relative queries implemented; economical candidate policy with parent retry remains open |
-| M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is planned before scalar lowering in `8a0a94536`; ordinary numerical sequence children retain recipes through composition; guarded/repeated family composition remains open |
+| M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is planned before scalar lowering in `8a0a94536`; ordinary numerical sequence and repeated children retain recipes through composition; guarded/crossing family composition remains open |
 | M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; common nonconstant tuple terms compose before dispatch in `15f2007ea`; differing terms and early graph allocation remain open |
 | M5: session and capabilities | Retain facts, mathematics, recipes and allocation in one session; deterministic capability upgrades; common unified/split stage functions; self-contained versioned saved artifacts; delete redundant orchestration. | Pending |
 | M6: carryover and closure | Finish shared-fact and coarse-input integration, closed-child completion imports, guarded/relational rank transport and outstanding semantic oracles; run pinned eleven-kernel/corpus validation and report device results separately. | Eleven-kernel replay complete at `15f2007ea`; corpus, device, and interface closure remain open |
@@ -609,3 +609,40 @@ Local receipts and manual self-review: `.local/family-pipeline-sequence/`.
 Ten compliance matches are manually reviewed braced-control regex false positives.
 Final formatting-only line wraps have the same token content as the tested
 sources; the recorded comparison identifies those two files explicitly.
+
+
+## Invocation coordinates retained in numerical family recipes
+
+Repeated composition now keeps numerical child recipes when adding the enclosing
+visit to matching tuples. The wrapper owns the original expression arena and
+plans availability through the existing cut-expression service once per original
+cut. It creates no generated SSA. Nested wrappers retain outer-to-inner tuple
+order; local barriers receive no communication identity. The same shared
+namespace calculation now serves concrete sequence and repeated endpoints.
+
+Final lowering stages the complete recipe in a temporary prepared plan. Failure
+of a retained binding preserves both the incumbent concrete inventory and the
+unmaterialized recipe. Cut-local expression contexts share matching arithmetic
+within the same arena and original cut. The lowered plan is adopted only after
+all required coordinates have been emitted successfully.
+
+This changes the internal repeated-child boundary, not the repeated crossing
+algorithm. Crossings, guarded masks, projection and non-numerical singleton
+producers still have concrete preparation paths. It adds no publication, cleanup,
+ordering edge or private runtime state, and makes no new physical-capacity claim.
+
+Six focused suites pass, as do 14 independent repeated-region command closures,
+including zero trips and compact-size checks. The new profile fixture initially
+requested allocation aggregates its root does not export; it now checks recipe
+retention separately. Existing regional allocation-profile requirements remain
+unchanged and pass. The repeated fixture changes from 17 concrete endpoints and
+276 prepared arithmetic operations to 12 concrete endpoints, 5 recipe sites and
+236 operations; final sites and normalized arithmetic remain 17 and 249.
+
+Persistent and prefill diagnostic replays succeed (1.905 s and 74.413 s), agree
+with saved complete canonical outputs under the existing checked comparison, and
+reject all comparison negative controls. Persistent still allocates with six IDs;
+its 3,088-endpoint prepared inventory remains unchanged. No compiler-speedup or
+device claim is made. Six compliance matches are manually reviewed braced-control
+false positives. Receipts and manual self-review are in
+`.local/family-pipeline-repeat-recipe/`.
