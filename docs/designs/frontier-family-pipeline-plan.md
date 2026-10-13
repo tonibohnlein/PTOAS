@@ -489,3 +489,46 @@ compact-size checks. The combined repetition suite fails after 91 s, consistent 
 recorded phased-loop timeout; it is not counted as passing. A separate nested
 allocation run was interrupted while stalled and is also not counted as passing. Local receipts and manual
 self-review are in `.local/family-pipeline-activity/`. Device latency is unmeasured.
+
+## Certified envelopes before constant-palette pair queries
+
+The remaining measured Persistent coalescing cost was query construction, not
+implication proofs. A temporary local probe of the incumbent constant-palette
+path counted 235,294 member pairs, 237,863 distinct reuse queries, and only two
+distinct proof requests; the queries occupied about 3.17 s. The probe is retained
+in `.local/family-pipeline-coalescing/` and is not production instrumentation.
+
+Constant palettes now retain an optional unconditional envelope alongside their
+member provenance. Every member must be active and present; original source and
+consumer pipes must match the shared cross-pipe direction. Native reachability
+certifies an earliest source start and latest consumer completion. The summary
+is extended as palettes merge. If the two envelopes are provably separated,
+their separation covers all member pairs by transitivity. Each accepted merge has an envelope or all-pair reuse proof. Numeric palette
+assignments may change; record inventory and original command graph do not.
+
+Envelope failure does not imply incompatibility. Conditional members, unavailable
+bounds, and interleaved lifetimes retain the original all-pair proof. In particular,
+individually disjoint lifetimes can share a palette even when their enclosing
+intervals overlap. The optimization adds no handoff, drain, ordering edge, or
+capacity assumption; buffer banking does not serve as its certificate.
+
+An independent finite-lifetime oracle covers 32/128/512 disjoint groups in both
+orders with permuted record labels and a linear bound on full child-reachability
+queries. It also checks overlapping, coincident, interleaved, and complementary
+conditional lifetimes; retained records and active interval reuse are checked
+under both condition valuations. Four focused suites pass, and the final
+cross-pipe qualification was rechecked with the complete region-expression oracle.
+Seven compliance matches are braced-control regex false positives, manually reviewed.
+
+Three alternating serial Persistent pairs measure baseline 4.020/3.707/3.606 s
+and candidate 1.905/1.905/1.906 s: medians 3.707 versus 1.905 s, a 1.95x
+improvement for logical compilation including allocation support. All three
+complete outputs agree under scoped Boolean-AND operand normalization, including
+allocation evidence; the candidate still allocates with six eligible IDs.
+This is one-kernel compiler evidence, not a device or broad-corpus speed claim.
+Receipts and manual self-review: `.local/family-pipeline-coalescing/`.
+
+The optimization is a sufficient coalescing proof on qualified groups. It does
+not replace general guarded allocation, establish minimum capacity, or complete
+the planned candidate policy with parent retry. Early regional family planning
+and owned capability upgrades remain open.

@@ -14,6 +14,7 @@
 #include "mlir/IR/Matchers.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
+#include "CoalescingEnvelopeChecks.h"
 namespace {
 std::optional<uint64_t> guardValue(Value value, Value outer, Value inner, uint64_t i, uint64_t j)
 {
@@ -50,7 +51,7 @@ bool runNestedRegionalChecks(func::FuncOp function)
     if (!anchor) { return false; }
     auto inner = anchor->getParentOfType<scf::ForOp>();
     auto outer = inner ? inner->getParentOfType<scf::ForOp>() : scf::ForOp();
-    if (!outer) { return false; }
+    if (!outer || !coalescingEnvelopeChecks(anchor, outer.getInductionVar())) { return false; }
     pto::CompoundInstanceElement phase(0, {}, {}, pto::PipelineType::PIPE_V, anchor->getName());
     phase.elementOp = anchor;
     auto arena = std::make_shared<fs::RegionExpressions>();
