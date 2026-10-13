@@ -1,0 +1,2118 @@
+{
+  "revision": "e0e17e5db8bd22019b89c8d627b0aca4eb84fc48",
+  "scope": "Current planner and allocator; fixed retained C++ backend; no device execution",
+  "alias": "may-not-alias",
+  "eligible_ids": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "tools": {
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt": "f6f60675a3413cedaf17bd18b24aac5ed9df61fa986ff56bc8b2f5f7f38deaa3",
+    ".local/shared-alias/ptoas": "a345d25bb3251bcc887079c311f56a81f774748b9114c7872d5be795f94d185a"
+  },
+  "worker_count": 1,
+  "watchdog_seconds": 240,
+  "paired_timing": false,
+  "device_execution": false,
+  "cases": [
+    {
+      "id": "tilelang_gemm",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/tilelang/input.pto",
+      "input_sha256": "33e218f48e65a05c0b115771393e6c28bdf62c22ee361fd2ca7d895d42cb9a41",
+      "stages": {
+        "logical": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.2030274118296802,
+          "maximum_rss_kib": 110032
+        },
+        "allocation": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20286001171916723,
+          "maximum_rss_kib": 107724
+        },
+        "cpp": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.2022978779859841,
+          "maximum_rss_kib": 110264
+        }
+      },
+      "input_metrics": {
+        "bytes": 6995,
+        "lines": 91,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 2,
+        "arithmetic": 40,
+        "selects": 0,
+        "div_rem": 3,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 8865,
+        "lines": 136,
+        "sets": 12,
+        "waits": 12,
+        "barriers": 1,
+        "ifs": 4,
+        "arithmetic": 48,
+        "selects": 0,
+        "div_rem": 3,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 159759,
+        "lines": 1530,
+        "sets": 14,
+        "waits": 14,
+        "barriers": 1,
+        "ifs": 30,
+        "arithmetic": 1401,
+        "selects": 306,
+        "div_rem": 23,
+        "retained_record_labels": 194,
+        "recognition": {
+          "selected_logical_backend": "numerical-periodic",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 108018,
+        "lines": 1692,
+        "sets": 14,
+        "waits": 14,
+        "barriers": 1,
+        "ifs": 30,
+        "arithmetic": 1563,
+        "selects": 306,
+        "div_rem": 71,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "numerical-periodic",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 18672,
+        "lines": 527,
+        "ifs": 25,
+        "ternaries": 0
+      },
+      "control_profiles": [
+        {
+          "endpoint_sites": 0,
+          "families": 17,
+          "function": "tilelang_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 40,
+            "barriers": 0,
+            "div_rem": 3,
+            "ifs": 2,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 0,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_sites": 28,
+          "record_members": 194,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 28,
+          "families": 17,
+          "function": "tilelang_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 40,
+            "barriers": 0,
+            "div_rem": 3,
+            "ifs": 2,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 1534,
+            "blocks": 17,
+            "endpoint_reachable_arithmetic": 1534,
+            "required_arithmetic": 1534
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 194,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 28,
+          "families": 17,
+          "function": "tilelang_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 40,
+            "barriers": 0,
+            "div_rem": 3,
+            "ifs": 2,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 1361,
+            "blocks": 17,
+            "endpoint_reachable_arithmetic": 1361,
+            "required_arithmetic": 1361
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 194,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 28,
+          "families": 17,
+          "function": "tilelang_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 1401,
+            "barriers": 1,
+            "div_rem": 23,
+            "ifs": 30,
+            "selects": 306,
+            "sets": 14,
+            "waits": 14
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 17,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 194,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": []
+    },
+    {
+      "id": "pypto_gemm",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/pypto/input.pto",
+      "input_sha256": "b89e787a23c72ba96a0669e96653faea7a4601c07b11d297f0114cc23689a33b",
+      "stages": {
+        "logical": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.2028179159387946,
+          "maximum_rss_kib": 110220
+        },
+        "allocation": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20247512916103005,
+          "maximum_rss_kib": 108080
+        },
+        "cpp": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.2030225209891796,
+          "maximum_rss_kib": 110120
+        }
+      },
+      "input_metrics": {
+        "bytes": 5661,
+        "lines": 76,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 1,
+        "arithmetic": 33,
+        "selects": 0,
+        "div_rem": 2,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 7165,
+        "lines": 109,
+        "sets": 11,
+        "waits": 11,
+        "barriers": 1,
+        "ifs": 1,
+        "arithmetic": 36,
+        "selects": 0,
+        "div_rem": 2,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 142951,
+        "lines": 1305,
+        "sets": 12,
+        "waits": 12,
+        "barriers": 1,
+        "ifs": 25,
+        "arithmetic": 1196,
+        "selects": 248,
+        "div_rem": 22,
+        "retained_record_labels": 194,
+        "recognition": {
+          "selected_logical_backend": "numerical-periodic",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 93926,
+        "lines": 1481,
+        "sets": 12,
+        "waits": 12,
+        "barriers": 1,
+        "ifs": 25,
+        "arithmetic": 1372,
+        "selects": 248,
+        "div_rem": 76,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "numerical-periodic",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 16131,
+        "lines": 456,
+        "ifs": 22,
+        "ternaries": 0
+      },
+      "control_profiles": [
+        {
+          "endpoint_sites": 0,
+          "families": 13,
+          "function": "pypto_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 33,
+            "barriers": 0,
+            "div_rem": 2,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 0,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_sites": 24,
+          "record_members": 194,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 24,
+          "families": 13,
+          "function": "pypto_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 33,
+            "barriers": 0,
+            "div_rem": 2,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 1330,
+            "blocks": 14,
+            "endpoint_reachable_arithmetic": 1330,
+            "required_arithmetic": 1330
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 194,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 24,
+          "families": 13,
+          "function": "pypto_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 33,
+            "barriers": 0,
+            "div_rem": 2,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 1163,
+            "blocks": 14,
+            "endpoint_reachable_arithmetic": 1163,
+            "required_arithmetic": 1163
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 194,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 24,
+          "families": 13,
+          "function": "pypto_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 1196,
+            "barriers": 1,
+            "div_rem": 22,
+            "ifs": 25,
+            "selects": 248,
+            "sets": 12,
+            "waits": 12
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 14,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 194,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": []
+    },
+    {
+      "id": "persistent_gemm",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto",
+      "input_sha256": "cc890b426ae89da77223b93a5ba4ad0b6f03d418f22f9bde65aea05fcde6324e",
+      "stages": {
+        "logical": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 1.7038472308777273,
+          "maximum_rss_kib": 180484
+        },
+        "allocation": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20233534136787057,
+          "maximum_rss_kib": 110528
+        },
+        "cpp": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20218605501577258,
+          "maximum_rss_kib": 112880
+        }
+      },
+      "input_metrics": {
+        "bytes": 7515,
+        "lines": 124,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 5,
+        "arithmetic": 59,
+        "selects": 0,
+        "div_rem": 5,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 9309,
+        "lines": 149,
+        "sets": 12,
+        "waits": 12,
+        "barriers": 1,
+        "ifs": 5,
+        "arithmetic": 59,
+        "selects": 0,
+        "div_rem": 5,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 1044044,
+        "lines": 4313,
+        "sets": 56,
+        "waits": 56,
+        "barriers": 1,
+        "ifs": 117,
+        "arithmetic": 3924,
+        "selects": 768,
+        "div_rem": 127,
+        "retained_record_labels": 1544,
+        "recognition": {
+          "selected_logical_backend": "identity-sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 295646,
+        "lines": 4989,
+        "sets": 56,
+        "waits": 56,
+        "barriers": 1,
+        "ifs": 117,
+        "arithmetic": 4600,
+        "selects": 808,
+        "div_rem": 319,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "identity-sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 45850,
+        "lines": 1309,
+        "ifs": 115,
+        "ternaries": 95
+      },
+      "control_profiles": [
+        {
+          "endpoint_sites": 56,
+          "families": 1544,
+          "function": "persistent_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 59,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 5,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 796,
+            "blocks": 21,
+            "endpoint_reachable_arithmetic": 796,
+            "required_arithmetic": 796
+          },
+          "producer": "identity-sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 72,
+          "record_members": 1544,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 128,
+          "families": 1544,
+          "function": "persistent_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 59,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 5,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 11808,
+            "blocks": 158,
+            "endpoint_reachable_arithmetic": 11808,
+            "required_arithmetic": 11808
+          },
+          "producer": "identity-sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 1544,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 112,
+          "families": 1544,
+          "function": "persistent_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 59,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 5,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 3865,
+            "blocks": 174,
+            "endpoint_reachable_arithmetic": 3865,
+            "required_arithmetic": 3865
+          },
+          "producer": "identity-sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 1544,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 112,
+          "families": 1544,
+          "function": "persistent_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 3924,
+            "barriers": 1,
+            "div_rem": 127,
+            "ifs": 117,
+            "selects": 768,
+            "sets": 56,
+            "waits": 56
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 174,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "identity-sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 1544,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": []
+    },
+    {
+      "id": "group_norm",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/group_norm/input.pto",
+      "input_sha256": "11f09d6fbbc109851266cd73a77ec321a445bff98311fee33acfb6bfb71ddfbb",
+      "stages": {
+        "logical": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20205472223460674,
+          "maximum_rss_kib": 112788
+        },
+        "allocation": {
+          "success": false,
+          "returncode": 1,
+          "status": "finished",
+          "seconds": 0.20211758790537715,
+          "maximum_rss_kib": 107548,
+          "diagnostics": [
+            ".local/generated-control-e0e17e5db/group_norm/logical.out:6:3: error: regional lane assignment not certified within directed capacity; no minimum-capacity claim; scarcity repair not implemented yet"
+          ]
+        }
+      },
+      "input_metrics": {
+        "bytes": 24670,
+        "lines": 190,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 3,
+        "arithmetic": 77,
+        "selects": 0,
+        "div_rem": 5,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 25521,
+        "lines": 207,
+        "sets": 6,
+        "waits": 6,
+        "barriers": 5,
+        "ifs": 3,
+        "arithmetic": 77,
+        "selects": 0,
+        "div_rem": 5,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 95979,
+        "lines": 647,
+        "sets": 17,
+        "waits": 17,
+        "barriers": 24,
+        "ifs": 60,
+        "arithmetic": 365,
+        "selects": 0,
+        "div_rem": 5,
+        "retained_record_labels": 52,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "control_profiles": [
+        {
+          "endpoint_sites": 69,
+          "families": 52,
+          "function": "group_norm",
+          "function_control": {
+            "arithmetic_including_payload": 77,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 3,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 327,
+            "blocks": 102,
+            "endpoint_reachable_arithmetic": 321,
+            "required_arithmetic": 321
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 52,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 69,
+          "families": 52,
+          "function": "group_norm",
+          "function_control": {
+            "arithmetic_including_payload": 77,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 3,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 327,
+            "blocks": 102,
+            "endpoint_reachable_arithmetic": 321,
+            "required_arithmetic": 321
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 52,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 69,
+          "families": 52,
+          "function": "group_norm",
+          "function_control": {
+            "arithmetic_including_payload": 77,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 3,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 276,
+            "blocks": 102,
+            "endpoint_reachable_arithmetic": 276,
+            "required_arithmetic": 276
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 52,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 69,
+          "families": 52,
+          "function": "group_norm",
+          "function_control": {
+            "arithmetic_including_payload": 365,
+            "barriers": 24,
+            "div_rem": 5,
+            "ifs": 60,
+            "selects": 0,
+            "sets": 17,
+            "waits": 17
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 102,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 52,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": []
+    },
+    {
+      "id": "causal_conv1d_prefill",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/causal_conv1d_prefill/input.pto",
+      "input_sha256": "4a2da46ad42fbded8d15dd4b64cdabc93ae0df9570ea6d5d165712361ce16831",
+      "stages": {
+        "logical": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 73.00163256004453,
+          "maximum_rss_kib": 1036148
+        },
+        "allocation": {
+          "success": false,
+          "returncode": 1,
+          "status": "finished",
+          "seconds": 0.4041957529261708,
+          "maximum_rss_kib": 155364,
+          "diagnostics": [
+            ".local/generated-control-e0e17e5db/causal_conv1d_prefill/logical.out:12:3: error: physical allocation requires a supported finite or uniform allocation export; allocation adapter not implemented yet"
+          ]
+        }
+      },
+      "input_metrics": {
+        "bytes": 54281,
+        "lines": 414,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 9,
+        "arithmetic": 200,
+        "selects": 0,
+        "div_rem": 3,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 55940,
+        "lines": 454,
+        "sets": 6,
+        "waits": 6,
+        "barriers": 28,
+        "ifs": 9,
+        "arithmetic": 200,
+        "selects": 0,
+        "div_rem": 3,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 4675412,
+        "lines": 93478,
+        "sets": 59,
+        "waits": 84,
+        "barriers": 62,
+        "ifs": 213,
+        "arithmetic": 92648,
+        "selects": 3330,
+        "div_rem": 3,
+        "retained_record_labels": 131,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "unavailable"
+        }
+      },
+      "control_profiles": [
+        {
+          "endpoint_sites": 215,
+          "families": 131,
+          "function": "causal_conv1d_prefill",
+          "function_control": {
+            "arithmetic_including_payload": 200,
+            "barriers": 0,
+            "div_rem": 3,
+            "ifs": 9,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 99058,
+            "blocks": 196,
+            "endpoint_reachable_arithmetic": 98914,
+            "required_arithmetic": 98914
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 131,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 215,
+          "families": 131,
+          "function": "causal_conv1d_prefill",
+          "function_control": {
+            "arithmetic_including_payload": 200,
+            "barriers": 0,
+            "div_rem": 3,
+            "ifs": 9,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 99058,
+            "blocks": 196,
+            "endpoint_reachable_arithmetic": 98914,
+            "required_arithmetic": 98914
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 131,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 215,
+          "families": 131,
+          "function": "causal_conv1d_prefill",
+          "function_control": {
+            "arithmetic_including_payload": 200,
+            "barriers": 0,
+            "div_rem": 3,
+            "ifs": 9,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 92437,
+            "blocks": 196,
+            "endpoint_reachable_arithmetic": 92437,
+            "required_arithmetic": 92437
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 131,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 215,
+          "families": 131,
+          "function": "causal_conv1d_prefill",
+          "function_control": {
+            "arithmetic_including_payload": 92648,
+            "barriers": 62,
+            "div_rem": 3,
+            "ifs": 213,
+            "selects": 3330,
+            "sets": 59,
+            "waits": 84
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 196,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 131,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": []
+    },
+    {
+      "id": "causal_conv1d_decode",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/causal_conv1d_decode/input.pto",
+      "input_sha256": "62eb4645ba3457dea9770c16f0aad959afe0db28325dcde353351f1ee95fa48e",
+      "stages": {
+        "logical": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.2034258795902133,
+          "maximum_rss_kib": 111116
+        },
+        "allocation": {
+          "success": false,
+          "returncode": 1,
+          "status": "finished",
+          "seconds": 0.2033334062434733,
+          "maximum_rss_kib": 108076,
+          "diagnostics": [
+            ".local/generated-control-e0e17e5db/causal_conv1d_decode/logical.out:2:3: error: regional lane assignment not certified within directed capacity; no minimum-capacity claim; scarcity repair not implemented yet"
+          ]
+        }
+      },
+      "input_metrics": {
+        "bytes": 23808,
+        "lines": 164,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 1,
+        "arithmetic": 57,
+        "selects": 0,
+        "div_rem": 0,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 24763,
+        "lines": 185,
+        "sets": 7,
+        "waits": 7,
+        "barriers": 7,
+        "ifs": 1,
+        "arithmetic": 57,
+        "selects": 0,
+        "div_rem": 0,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 197185,
+        "lines": 3057,
+        "sets": 22,
+        "waits": 22,
+        "barriers": 22,
+        "ifs": 66,
+        "arithmetic": 2761,
+        "selects": 881,
+        "div_rem": 0,
+        "retained_record_labels": 62,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "control_profiles": [
+        {
+          "endpoint_sites": 84,
+          "families": 62,
+          "function": "causal_conv1d_decode",
+          "function_control": {
+            "arithmetic_including_payload": 57,
+            "barriers": 0,
+            "div_rem": 0,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 2685,
+            "blocks": 37,
+            "endpoint_reachable_arithmetic": 2685,
+            "required_arithmetic": 2685
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 62,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 84,
+          "families": 62,
+          "function": "causal_conv1d_decode",
+          "function_control": {
+            "arithmetic_including_payload": 57,
+            "barriers": 0,
+            "div_rem": 0,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 2685,
+            "blocks": 37,
+            "endpoint_reachable_arithmetic": 2685,
+            "required_arithmetic": 2685
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 62,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 84,
+          "families": 62,
+          "function": "causal_conv1d_decode",
+          "function_control": {
+            "arithmetic_including_payload": 57,
+            "barriers": 0,
+            "div_rem": 0,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 2685,
+            "blocks": 37,
+            "endpoint_reachable_arithmetic": 2685,
+            "required_arithmetic": 2685
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 62,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 84,
+          "families": 62,
+          "function": "causal_conv1d_decode",
+          "function_control": {
+            "arithmetic_including_payload": 2761,
+            "barriers": 22,
+            "div_rem": 0,
+            "ifs": 66,
+            "selects": 881,
+            "sets": 22,
+            "waits": 22
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 37,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 62,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": []
+    },
+    {
+      "id": "gdn_chunk_cumsum",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/gdn_chunk_cumsum/input.pto",
+      "input_sha256": "8080a5290a21244f734ad8c40497e04e382632a8b52ce4e7cf90cca63dd6082f",
+      "stages": {
+        "logical": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.3023377452045679,
+          "maximum_rss_kib": 130984
+        },
+        "allocation": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.2022097259759903,
+          "maximum_rss_kib": 106400
+        },
+        "cpp": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20291118742898107,
+          "maximum_rss_kib": 109928
+        }
+      },
+      "input_metrics": {
+        "bytes": 4357,
+        "lines": 56,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 0,
+        "arithmetic": 23,
+        "selects": 0,
+        "div_rem": 2,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 4688,
+        "lines": 63,
+        "sets": 3,
+        "waits": 3,
+        "barriers": 1,
+        "ifs": 0,
+        "arithmetic": 23,
+        "selects": 0,
+        "div_rem": 2,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 23743,
+        "lines": 89,
+        "sets": 3,
+        "waits": 3,
+        "barriers": 1,
+        "ifs": 6,
+        "arithmetic": 41,
+        "selects": 1,
+        "div_rem": 2,
+        "retained_record_labels": 3,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 20021,
+        "lines": 89,
+        "sets": 3,
+        "waits": 3,
+        "barriers": 1,
+        "ifs": 6,
+        "arithmetic": 41,
+        "selects": 1,
+        "div_rem": 2,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 6186,
+        "lines": 189,
+        "ifs": 3,
+        "ternaries": 1
+      },
+      "control_profiles": [
+        {
+          "endpoint_sites": 6,
+          "families": 3,
+          "function": "gdn_chunk_cumsum",
+          "function_control": {
+            "arithmetic_including_payload": 23,
+            "barriers": 0,
+            "div_rem": 2,
+            "ifs": 0,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 18,
+            "blocks": 8,
+            "endpoint_reachable_arithmetic": 18,
+            "required_arithmetic": 18
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 3,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 6,
+          "families": 3,
+          "function": "gdn_chunk_cumsum",
+          "function_control": {
+            "arithmetic_including_payload": 23,
+            "barriers": 0,
+            "div_rem": 2,
+            "ifs": 0,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 18,
+            "blocks": 8,
+            "endpoint_reachable_arithmetic": 18,
+            "required_arithmetic": 18
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 3,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 6,
+          "families": 3,
+          "function": "gdn_chunk_cumsum",
+          "function_control": {
+            "arithmetic_including_payload": 23,
+            "barriers": 0,
+            "div_rem": 2,
+            "ifs": 0,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 18,
+            "blocks": 8,
+            "endpoint_reachable_arithmetic": 18,
+            "required_arithmetic": 18
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 3,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 6,
+          "families": 3,
+          "function": "gdn_chunk_cumsum",
+          "function_control": {
+            "arithmetic_including_payload": 41,
+            "barriers": 1,
+            "div_rem": 2,
+            "ifs": 6,
+            "selects": 1,
+            "sets": 3,
+            "waits": 3
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 8,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 3,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": []
+    },
+    {
+      "id": "mhc_head_mix",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/mhc_head_mix/input.pto",
+      "input_sha256": "86bc2900da82f40a7842b63b75ca47fa5b2bcee9cbcadebfda6b189a35409f8c",
+      "stages": {
+        "logical": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.2038118769414723,
+          "maximum_rss_kib": 118280
+        },
+        "allocation": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.2024783007800579,
+          "maximum_rss_kib": 107520
+        },
+        "cpp": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20298190601170063,
+          "maximum_rss_kib": 109980
+        }
+      },
+      "input_metrics": {
+        "bytes": 7459,
+        "lines": 69,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 0,
+        "arithmetic": 22,
+        "selects": 0,
+        "div_rem": 0,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 8013,
+        "lines": 81,
+        "sets": 4,
+        "waits": 4,
+        "barriers": 4,
+        "ifs": 0,
+        "arithmetic": 22,
+        "selects": 0,
+        "div_rem": 0,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 26907,
+        "lines": 123,
+        "sets": 3,
+        "waits": 3,
+        "barriers": 7,
+        "ifs": 12,
+        "arithmetic": 45,
+        "selects": 2,
+        "div_rem": 0,
+        "retained_record_labels": 9,
+        "recognition": {
+          "selected_logical_backend": "sequence-endpoints",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 20196,
+        "lines": 123,
+        "sets": 3,
+        "waits": 3,
+        "barriers": 7,
+        "ifs": 12,
+        "arithmetic": 45,
+        "selects": 2,
+        "div_rem": 0,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "sequence-endpoints",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 9242,
+        "lines": 260,
+        "ifs": 2,
+        "ternaries": 2
+      },
+      "control_profiles": [
+        {
+          "endpoint_sites": 12,
+          "families": 9,
+          "function": "mhc_head_mix",
+          "function_control": {
+            "arithmetic_including_payload": 22,
+            "barriers": 0,
+            "div_rem": 0,
+            "ifs": 0,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 23,
+            "blocks": 8,
+            "endpoint_reachable_arithmetic": 23,
+            "required_arithmetic": 23
+          },
+          "producer": "sequence-endpoints",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 9,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 12,
+          "families": 9,
+          "function": "mhc_head_mix",
+          "function_control": {
+            "arithmetic_including_payload": 22,
+            "barriers": 0,
+            "div_rem": 0,
+            "ifs": 0,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 23,
+            "blocks": 8,
+            "endpoint_reachable_arithmetic": 23,
+            "required_arithmetic": 23
+          },
+          "producer": "sequence-endpoints",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 9,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 12,
+          "families": 9,
+          "function": "mhc_head_mix",
+          "function_control": {
+            "arithmetic_including_payload": 22,
+            "barriers": 0,
+            "div_rem": 0,
+            "ifs": 0,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 23,
+            "blocks": 8,
+            "endpoint_reachable_arithmetic": 23,
+            "required_arithmetic": 23
+          },
+          "producer": "sequence-endpoints",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 9,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 12,
+          "families": 9,
+          "function": "mhc_head_mix",
+          "function_control": {
+            "arithmetic_including_payload": 45,
+            "barriers": 7,
+            "div_rem": 0,
+            "ifs": 12,
+            "selects": 2,
+            "sets": 3,
+            "waits": 3
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 8,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence-endpoints",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 9,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": []
+    },
+    {
+      "id": "elementwise_pipeline",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/elementwise_pipeline/input.pto",
+      "input_sha256": "b51ac3ff4fb604eb133285347b7abc6c9866581a946e24e8250d4a2e3e57dfeb",
+      "stages": {
+        "logical": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20278363395482302,
+          "maximum_rss_kib": 109944
+        },
+        "allocation": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20305463625118136,
+          "maximum_rss_kib": 106200
+        },
+        "cpp": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20218860218301415,
+          "maximum_rss_kib": 110112
+        }
+      },
+      "input_metrics": {
+        "bytes": 6955,
+        "lines": 90,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 1,
+        "arithmetic": 50,
+        "selects": 0,
+        "div_rem": 4,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 7628,
+        "lines": 103,
+        "sets": 6,
+        "waits": 6,
+        "barriers": 1,
+        "ifs": 1,
+        "arithmetic": 50,
+        "selects": 0,
+        "div_rem": 4,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 34741,
+        "lines": 261,
+        "sets": 9,
+        "waits": 9,
+        "barriers": 1,
+        "ifs": 19,
+        "arithmetic": 171,
+        "selects": 0,
+        "div_rem": 4,
+        "retained_record_labels": 9,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 24584,
+        "lines": 286,
+        "sets": 9,
+        "waits": 9,
+        "barriers": 1,
+        "ifs": 19,
+        "arithmetic": 196,
+        "selects": 2,
+        "div_rem": 14,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 14319,
+        "lines": 413,
+        "ifs": 17,
+        "ternaries": 0
+      },
+      "control_profiles": [
+        {
+          "endpoint_sites": 18,
+          "families": 9,
+          "function": "elementwise_pipeline",
+          "function_control": {
+            "arithmetic_including_payload": 50,
+            "barriers": 0,
+            "div_rem": 4,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 142,
+            "blocks": 35,
+            "endpoint_reachable_arithmetic": 139,
+            "required_arithmetic": 139
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 9,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 18,
+          "families": 9,
+          "function": "elementwise_pipeline",
+          "function_control": {
+            "arithmetic_including_payload": 50,
+            "barriers": 0,
+            "div_rem": 4,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 142,
+            "blocks": 35,
+            "endpoint_reachable_arithmetic": 139,
+            "required_arithmetic": 139
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 9,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 18,
+          "families": 9,
+          "function": "elementwise_pipeline",
+          "function_control": {
+            "arithmetic_including_payload": 50,
+            "barriers": 0,
+            "div_rem": 4,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 121,
+            "blocks": 35,
+            "endpoint_reachable_arithmetic": 121,
+            "required_arithmetic": 121
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 9,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 18,
+          "families": 9,
+          "function": "elementwise_pipeline",
+          "function_control": {
+            "arithmetic_including_payload": 171,
+            "barriers": 1,
+            "div_rem": 4,
+            "ifs": 19,
+            "selects": 0,
+            "sets": 9,
+            "waits": 9
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 35,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 9,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": []
+    },
+    {
+      "id": "gated_delta_rule",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto",
+      "input_sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+      "stages": {
+        "logical": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 81.30490056285635,
+          "maximum_rss_kib": 1352836
+        },
+        "allocation": {
+          "success": false,
+          "returncode": 1,
+          "status": "finished",
+          "seconds": 9.617161053232849,
+          "maximum_rss_kib": 1916948,
+          "diagnostics": [
+            ".local/generated-control-e0e17e5db/gated_delta_rule/logical.out:13:3: error: invocation prefix physical allocation requires a missing lifetime export"
+          ]
+        }
+      },
+      "input_metrics": {
+        "bytes": 37326,
+        "lines": 270,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 4,
+        "arithmetic": 102,
+        "selects": 0,
+        "div_rem": 2,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 38384,
+        "lines": 290,
+        "sets": 9,
+        "waits": 8,
+        "barriers": 3,
+        "ifs": 4,
+        "arithmetic": 102,
+        "selects": 0,
+        "div_rem": 2,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 152833726,
+        "lines": 2474347,
+        "sets": 172,
+        "waits": 47,
+        "barriers": 194,
+        "ifs": 195,
+        "arithmetic": 2473273,
+        "selects": 853003,
+        "div_rem": 617,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "identity-sequence",
+          "logical_realization": "invocation-prefix",
+          "allocation_support": "unavailable"
+        }
+      },
+      "control_profiles": [
+        {
+          "endpoint_sites": 0,
+          "families": 0,
+          "function": "fused_gating_delta",
+          "function_control": {
+            "arithmetic_including_payload": 2473273,
+            "barriers": 194,
+            "div_rem": 617,
+            "ifs": 195,
+            "selects": 853003,
+            "sets": 172,
+            "state_slots": 294,
+            "waits": 47
+          },
+          "function_scope": "staged-invocation",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 0,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "identity-sequence",
+          "realization": "invocation-prefix",
+          "recipe_sites": 0,
+          "record_members": 0,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 0,
+          "families": 0,
+          "function": "fused_gating_delta",
+          "function_control": {
+            "arithmetic_including_payload": 2473273,
+            "barriers": 194,
+            "div_rem": 617,
+            "ifs": 195,
+            "selects": 853003,
+            "sets": 172,
+            "state_slots": 294,
+            "waits": 47
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 0,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "identity-sequence",
+          "realization": "invocation-prefix",
+          "recipe_sites": 0,
+          "record_members": 0,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": []
+    },
+    {
+      "id": "lossless_block_cast",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/lossless_block_cast/input.pto",
+      "input_sha256": "e24109f640f04054da0c493eb5e994e4fb6fbc263cf0da13924f08cadb824c13",
+      "stages": {
+        "logical": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 3.506685607135296,
+          "maximum_rss_kib": 248772
+        },
+        "allocation": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.2025977997109294,
+          "maximum_rss_kib": 107040
+        },
+        "cpp": {
+          "success": true,
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20227481378242373,
+          "maximum_rss_kib": 110256
+        }
+      },
+      "input_metrics": {
+        "bytes": 12098,
+        "lines": 133,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 1,
+        "arithmetic": 55,
+        "selects": 0,
+        "div_rem": 5,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 12356,
+        "lines": 140,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 7,
+        "ifs": 1,
+        "arithmetic": 55,
+        "selects": 0,
+        "div_rem": 5,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 79273,
+        "lines": 203,
+        "sets": 5,
+        "waits": 5,
+        "barriers": 4,
+        "ifs": 14,
+        "arithmetic": 83,
+        "selects": 2,
+        "div_rem": 5,
+        "retained_record_labels": 8,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 71757,
+        "lines": 203,
+        "sets": 5,
+        "waits": 5,
+        "barriers": 4,
+        "ifs": 14,
+        "arithmetic": 83,
+        "selects": 2,
+        "div_rem": 5,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 13924,
+        "lines": 425,
+        "ifs": 3,
+        "ternaries": 4
+      },
+      "control_profiles": [
+        {
+          "endpoint_sites": 13,
+          "families": 8,
+          "function": "lossless_block_cast",
+          "function_control": {
+            "arithmetic_including_payload": 55,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 34,
+            "blocks": 17,
+            "endpoint_reachable_arithmetic": 34,
+            "required_arithmetic": 34
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 8,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 13,
+          "families": 8,
+          "function": "lossless_block_cast",
+          "function_control": {
+            "arithmetic_including_payload": 55,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 34,
+            "blocks": 17,
+            "endpoint_reachable_arithmetic": 34,
+            "required_arithmetic": 34
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 8,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 13,
+          "families": 8,
+          "function": "lossless_block_cast",
+          "function_control": {
+            "arithmetic_including_payload": 55,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 28,
+            "blocks": 17,
+            "endpoint_reachable_arithmetic": 28,
+            "required_arithmetic": 28
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 8,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 13,
+          "families": 8,
+          "function": "lossless_block_cast",
+          "function_control": {
+            "arithmetic_including_payload": 83,
+            "barriers": 4,
+            "div_rem": 5,
+            "ifs": 14,
+            "selects": 2,
+            "sets": 5,
+            "waits": 5
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 17,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_sites": 0,
+          "record_members": 8,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": []
+    }
+  ]
+}

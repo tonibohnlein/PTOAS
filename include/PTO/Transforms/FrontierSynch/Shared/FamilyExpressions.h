@@ -21,12 +21,14 @@ struct FamilyExpressions {
 // Immutable, validated coordinate domain and selected-label mapping. It owns
 // no generated SSA values and borrows only original induction variables.
 class FamilyExpressionRecipe;
+enum class FamilyExpressionOutputs { PresenceAndMember, Member };
 struct FamilyExpressionPlan {
     std::string error;
     std::shared_ptr<const FamilyExpressionRecipe> recipe;
 };
 FamilyExpressionPlan buildFamilyExpressions(ArrayRef<SmallVector<TemplateCoordinate>> members,
-    ArrayRef<int64_t> labels = {}, uint64_t modulus = 0);
+    ArrayRef<int64_t> labels = {}, uint64_t modulus = 0,
+    FamilyExpressionOutputs outputs = FamilyExpressionOutputs::PresenceAndMember);
 FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location, const FamilyExpressionRecipe& recipe);
 // The caller establishes a 64-bit index layout and availability of every loop
 // induction value at the insertion point. Each tuple uses the same ordered loop
@@ -39,7 +41,11 @@ FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location, c
 // endpoints to have the same piece partition. An empty label list means ordinals.
 // A nonzero modulus (at most six) selects labels modulo that modulus and permits
 // verified modular affine expressions; zero retains the exact-label mapping.
+// Member-only requests require the caller to establish the exact member domain.
+// They return no presence Value and build no unused domain guard. Coordinate
+// validation and exact label fitting still cover every supplied member.
 FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location,
-    ArrayRef<SmallVector<TemplateCoordinate>> members, ArrayRef<int64_t> labels = {}, uint64_t modulus = 0);
+    ArrayRef<SmallVector<TemplateCoordinate>> members, ArrayRef<int64_t> labels = {}, uint64_t modulus = 0,
+    FamilyExpressionOutputs outputs = FamilyExpressionOutputs::PresenceAndMember);
 } // namespace mlir::pto::frontiersynch
 #endif

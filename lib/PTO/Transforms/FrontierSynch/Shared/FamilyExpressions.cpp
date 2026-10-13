@@ -226,7 +226,8 @@ bool fitModular(const Domain& domain, uint64_t modulus, Tuple& coefficients, int
 }
 class Emitter {
 public:
-    Emitter(OpBuilder& builder, Location location) : builder(builder), location(location) {}
+    Emitter(OpBuilder& builder, Location location, ArrayRef<Axis> axes)
+        : builder(builder), location(location), axes(axes), indices(axes.size()) {}
     Value number(int64_t value)
     {
         auto found = numbers.find(value);
@@ -236,21 +237,20 @@ public:
         return numbers.emplace(value, builder.create<arith::ConstantIndexOp>(location, value)).first->second;
     }
     Value boolean(bool value) { return builder.create<arith::ConstantIntOp>(location, value, 1); }
-    void normalize(ArrayRef<Axis> axes)
+    Value coordinate(std::size_t index)
     {
-        for (const auto& axis : axes) {
-            unsignedAxes.push_back(axis.normalized);
-            Value induction = axis.induction;
-            if (!induction.getType().isIndex()) {
-                induction = builder.create<arith::IndexCastOp>(location, builder.getIndexType(), induction);
-            }
-            if (axis.normalized) {
-                Value value = builder.create<arith::SubIOp>(location, induction, number(axis.lower));
-                indices.push_back(builder.create<arith::DivUIOp>(location, value, number(axis.step)));
-            } else {
-                indices.push_back(induction);
-            }
+        if (indices[index]) { return indices[index]; }
+        const auto& axis = axes[index];
+        Value induction = axis.induction;
+        if (!induction.getType().isIndex()) {
+            induction = builder.create<arith::IndexCastOp>(location, builder.getIndexType(), induction);
         }
+        if (axis.normalized) {
+            Value value = builder.create<arith::SubIOp>(location, induction, number(axis.lower));
+            induction = builder.create<arith::DivUIOp>(location, value, number(axis.step));
+        }
+        indices[index] = induction;
+        return induction;
     }
     Value test(std::size_t axis, arith::CmpIPredicate predicate, int64_t bound)
     {
@@ -259,7 +259,7 @@ public:
         if (found != comparisons.end()) {
             return found->second;
         }
-        Value result = builder.create<arith::CmpIOp>(location, predicate, indices[axis], number(bound));
+        Value result = builder.create<arith::CmpIOp>(location, predicate, coordinate(axis), number(bound));
         comparisons.emplace(key, result);
         return result;
     }
@@ -295,7 +295,7 @@ public:
         Value result = number(intercept);
         for (std::size_t axis = 0; axis < indices.size(); ++axis) {
             if (coefficients[axis]) {
-                Value term = builder.create<arith::MulIOp>(location, indices[axis], number(coefficients[axis]));
+                Value term = builder.create<arith::MulIOp>(location, coordinate(axis), number(coefficients[axis]));
                 result = builder.create<arith::AddIOp>(location, result, term);
             }
         }
@@ -303,17 +303,18 @@ public:
     }
     Value modular(ArrayRef<int64_t> coefficients, int64_t intercept, uint64_t modulus)
     {
-        Value divisor = number(static_cast<int64_t>(modulus));
+        Value divisor;
         Value result = number(intercept);
         for (std::size_t axis = 0; axis < indices.size(); ++axis) {
             if (!coefficients[axis]) {
                 continue;
             }
+            if (!divisor) { divisor = number(static_cast<int64_t>(modulus)); }
             Value reduced;
-            if (unsignedAxes[axis]) {
-                reduced = builder.create<arith::RemUIOp>(location, indices[axis], divisor);
+            if (axes[axis].normalized) {
+                reduced = builder.create<arith::RemUIOp>(location, coordinate(axis), divisor);
             } else {
-                Value remainder = builder.create<arith::RemSIOp>(location, indices[axis], divisor);
+                Value remainder = builder.create<arith::RemSIOp>(location, coordinate(axis), divisor);
                 Value negative = builder.create<arith::CmpIOp>(location,
                     arith::CmpIPredicate::slt, remainder, number(0));
                 Value positive = builder.create<arith::AddIOp>(location, remainder, divisor);
@@ -352,8 +353,8 @@ public:
 private:
     OpBuilder& builder;
     Location location;
+    ArrayRef<Axis> axes;
     SmallVector<Value> indices;
-    SmallVector<bool> unsignedAxes;
     std::map<int64_t, Value> numbers;
     std::map<std::pair<Tuple, Tuple>, Value> guards;
     std::map<std::tuple<std::size_t, arith::CmpIPredicate, int64_t>, Value> comparisons;
@@ -368,10 +369,11 @@ public:
     int64_t intercept = 0;
     uint64_t modulus = 0;
     bool affine = false;
+    bool includePresence = true;
     std::map<int64_t, SmallVector<Box>> alternatives;
 };
 FamilyExpressionPlan buildFamilyExpressions(ArrayRef<SmallVector<TemplateCoordinate>> members,
-    ArrayRef<int64_t> labels, uint64_t modulus)
+    ArrayRef<int64_t> labels, uint64_t modulus, FamilyExpressionOutputs outputs)
 {
     constexpr uint64_t maximumModulus = 6;
     if (modulus > maximumModulus) {
@@ -391,7 +393,8 @@ FamilyExpressionPlan buildFamilyExpressions(ArrayRef<SmallVector<TemplateCoordin
     recipe->affine = !domain.points.empty() &&
         (modulus ? fitModular(domain, modulus, recipe->coefficients, recipe->intercept) :
                    fit(domain, recipe->coefficients, recipe->intercept));
-    recipe->regions = boxes(domain);
+    recipe->includePresence = outputs == FamilyExpressionOutputs::PresenceAndMember;
+    if (recipe->includePresence) { recipe->regions = boxes(domain); }
     if (!recipe->affine) {
         std::map<int64_t, Domain> alternatives;
         const auto fallback = domain.labels.empty() ? 0 : domain.labels.front();
@@ -414,9 +417,8 @@ FamilyExpressionPlan buildFamilyExpressions(ArrayRef<SmallVector<TemplateCoordin
 }
 FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location, const FamilyExpressionRecipe& recipe)
 {
-    Emitter emitter(builder, location);
-    emitter.normalize(recipe.axes);
-    Value present = emitter.presence(recipe.regions);
+    Emitter emitter(builder, location, recipe.axes);
+    Value present = recipe.includePresence ? emitter.presence(recipe.regions) : Value{};
     Value member = recipe.affine ?
         (recipe.modulus ? emitter.modular(recipe.coefficients, recipe.intercept, recipe.modulus) :
                          emitter.affine(recipe.coefficients, recipe.intercept)) :
@@ -424,9 +426,10 @@ FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location, c
     return {{}, present, member};
 }
 FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location,
-    ArrayRef<SmallVector<TemplateCoordinate>> members, ArrayRef<int64_t> labels, uint64_t modulus)
+    ArrayRef<SmallVector<TemplateCoordinate>> members, ArrayRef<int64_t> labels, uint64_t modulus,
+    FamilyExpressionOutputs outputs)
 {
-    auto plan = buildFamilyExpressions(members, labels, modulus);
+    auto plan = buildFamilyExpressions(members, labels, modulus, outputs);
     if (!plan.error.empty()) { return {std::move(plan.error), {}, {}}; }
     return emitFamilyExpressions(builder, location, *plan.recipe);
 }

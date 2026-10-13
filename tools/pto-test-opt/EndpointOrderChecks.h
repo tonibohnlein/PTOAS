@@ -11,7 +11,38 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/EndpointOrder.h"
 #include "PTO/Transforms/FrontierSynch/Shared/EndpointPieces.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyExpressions.h"
 namespace {
+bool familyRequestedOutputChecks(mlir::scf::ForOp loop)
+{
+    using namespace mlir;
+    namespace fs = mlir::pto::frontiersynch;
+    SmallVector<SmallVector<fs::TemplateCoordinate>> points{{{loop, 0}}, {{loop, 2}}, {{loop, 4}}};
+    SmallVector<int64_t> labels{7, 7, 7};
+    auto plan = fs::buildFamilyExpressions(points, labels, 0, fs::FamilyExpressionOutputs::Member);
+    if (!plan.error.empty() || !plan.recipe) { return false; }
+    Block code;
+    OpBuilder builder(loop.getContext());
+    builder.setInsertionPointToEnd(&code);
+    auto output = fs::emitFamilyExpressions(builder, loop.getLoc(), *plan.recipe);
+    // A constant selected value needs neither coordinate arithmetic nor the
+    // sparse-domain guard. Check construction, before any canonicalizer/DCE.
+    if (!output.error.empty() || output.present || code.getOperations().size() != 1) { return false; }
+    auto constant = output.member.getDefiningOp<arith::ConstantIndexOp>();
+    if (!constant || constant.value() != 7) { return false; }
+    auto modular = fs::emitFamilyExpressions(builder, loop.getLoc(), points, labels, 2,
+                                             fs::FamilyExpressionOutputs::Member);
+    auto residue = modular.member.getDefiningOp<arith::ConstantIndexOp>();
+    if (!modular.error.empty() || modular.present || !residue || residue.value() != 1 ||
+        code.getOperations().size() != 2) { return false; }
+    points.push_back(points.front()); labels.push_back(7);
+    auto invalid = fs::emitFamilyExpressions(builder, loop.getLoc(), points, labels, 0,
+                                             fs::FamilyExpressionOutputs::Member);
+    if (invalid.error.empty() || code.getOperations().size() != 2) { return false; }
+    points.pop_back(); labels.pop_back();
+    auto command = fs::emitFamilyExpressions(builder, loop.getLoc(), points, labels);
+    return command.error.empty() && command.present && command.member && code.getOperations().size() > 1;
+}
 bool endpointOrderGraphChecks()
 {
     namespace fs = mlir::pto::frontiersynch;
@@ -311,6 +342,7 @@ bool endpointOrderFamilyChecks(mlir::MLIRContext* context)
     auto end = builder.create<arith::ConstantIndexOp>(loc, 16);
     auto loop = builder.create<scf::ForOp>(loc, zero, end, one);
     builder.create<func::ReturnOp>(loc);
+    if (!familyRequestedOutputChecks(loop)) { return false; }
     builder.setInsertionPoint(loop.getBody()->getTerminator());
     auto cut = builder.create<arith::AddIOp>(loc, zero, one).getOperation();
     pto::CompoundInstanceElement source(0, {}, {}, pto::PipelineType::PIPE_MTE2, cut->getName());
