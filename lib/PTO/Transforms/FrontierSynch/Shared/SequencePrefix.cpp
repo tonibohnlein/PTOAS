@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
 #include "InvocationPrefixCollection.h"
+#include "PrefixExpression.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/Matchers.h"
@@ -103,43 +104,6 @@ bool SequenceAnalysisState::hasCertifiedCrossingPresence() const
     return true;
 }
 namespace {
-FailureOr<Value> emitPrefixCrossing(
-    RegionExpressions& e, Expr root, Operation* cut, OpBuilder& builder, const IRMapping& mapping, std::string& error)
-{
-    RegionExpressions::CutEmission context;
-    DominanceInfo dominance(cut->getParentOfType<func::FuncOp>());
-    for (const auto& item : mapping.getValueMap()) {
-        if (dominance.properlyDominates(item.first, cut)) {
-            context.inputs[item.first] = item.second;
-        }
-    }
-    for (auto [id, original] : e.referencedInputs(root)) {
-        auto value = mapping.lookupOrNull(original);
-        if (value && dominance.properlyDominates(original, cut)) {
-            context.values[id] = value;
-            context.cofactors[id] = id;
-        }
-    }
-    Block scratch;
-    OpBuilder detached(builder.getContext());
-    detached.setInsertionPointToEnd(&scratch);
-    auto result = e.emitContextual(root, detached, cut, context);
-    if (failed(result)) {
-        if (!e.inactiveByThresholds(root)) {
-            error = e.lastEmissionError();
-            return failure();
-        }
-        // Uniformly false over all inputs: no historical value is required.
-        // Retain the demand record and emit only its inactive logical recipe.
-        scratch.clear();
-        detached.setInsertionPointToEnd(&scratch);
-        RegionExpressions::CutEmission inactiveContext;
-        result = e.emitContextual(e.boolean(false), detached, cut, inactiveContext);
-        if (failed(result)) { error = e.lastEmissionError(); return failure(); }
-    }
-    builder.getInsertionBlock()->getOperations().splice(builder.getInsertionPoint(), scratch.getOperations());
-    return *result;
-}
 FailureOr<Expr> prefixPortGuard(SequenceAnalysisState& state, const Port& point, Expr guard)
 {
     auto& e = state.expressions;
@@ -201,7 +165,7 @@ bool originalPrefixAnchor(const TemplateEndpointAnchor& anchor)
 // primitive coordinates; defer only the folded choices to the consumer.
 struct PrefixCapturedRank {
     std::optional<std::size_t> slot;
-    Expr choose = RegionExpressions::invalid;
+    PrefixIncomingSelector choose;
     uint32_t yes = 0, no = 0;
 };
 LogicalResult capturePrimitivePrefixSource(
@@ -238,10 +202,11 @@ LogicalResult capturePrimitivePrefixSource(
                 return success();
             }});
     }
+    auto expression = preparePrefixExpression(owner->arena, *guard, sourceCut, collection);
     if (failed(collection.source(anchor.phase,
-        [owner, root = *guard, sourceCut, slot](OpBuilder& b, const IRMapping& mapping,
+        [expression, sourceCut, slot](OpBuilder& b, const IRMapping& mapping,
             MutableArrayRef<Value> state, Value ordinal, std::string& diagnostic) {
-            auto selected = emitPrefixCrossing(owner->expressions, root, sourceCut, b, mapping, diagnostic);
+            auto selected = expression(b, mapping, state, diagnostic);
             if (failed(selected)) { return failure(); }
             state[slot] = b.create<arith::SelectOp>(sourceCut->getLoc(), *selected, ordinal, state[slot]);
             return success();
@@ -274,14 +239,15 @@ LogicalResult capturePrefixSource(
         auto choice = owner->portChoices.find(port);
         if (choice != owner->portChoices.end()) {
             const auto& selected = choice->second;
-            captured.emplace(port, PrefixCapturedRank{{}, selected.choose, selected.yes, selected.no});
+            auto expression = preparePrefixExpression(owner->arena, selected.choose, targetCut, collection);
+            captured.emplace(port, PrefixCapturedRank{{}, std::move(expression), selected.yes, selected.no});
         } else if (failed(capturePrimitivePrefixSource(owner, port, targetCut, collection, captured, error))) {
             return failure();
         }
     }
     return success();
 }
-FailureOr<Value> selectedPrefixRank(const std::shared_ptr<SequenceAnalysisState>& owner, uint32_t root,
+FailureOr<Value> selectedPrefixRank(uint32_t root,
     const std::map<uint32_t, PrefixCapturedRank>& captured, Operation* cut, OpBuilder& b,
     const IRMapping& mapping, ArrayRef<Value> state, std::string& error)
 {
@@ -290,7 +256,7 @@ FailureOr<Value> selectedPrefixRank(const std::shared_ptr<SequenceAnalysisState>
     std::map<uint32_t, Value> values;
     for (const auto& [port, rank] : captured) {
         if (rank.slot) { values.emplace(port, state[*rank.slot]); continue; }
-        auto condition = emitPrefixCrossing(owner->expressions, rank.choose, cut, b, mapping, error);
+        auto condition = rank.choose(b, mapping, state, error);
         if (failed(condition)) { return failure(); }
         values.emplace(port, b.create<arith::SelectOp>(cut->getLoc(), *condition,
             values.at(rank.yes), values.at(rank.no)).getResult());
@@ -335,6 +301,7 @@ LogicalResult appendPrefixCrossing(
         return failure();
     }
     auto* targetCut = ab.phase->elementOp;
+    auto expression = preparePrefixExpression(owner->arena, *target, targetCut, collection);
     if (p == q) {
         if (p == static_cast<uint32_t>(PIPE::PIPE_S)) {
             error = "scalar crossing requires its native prerequisite contract";
@@ -342,9 +309,9 @@ LogicalResult appendPrefixCrossing(
         }
         collection.recipe().actions.push_back(
             {targetCut, PrivateStateCut::Before,
-             [owner, root = *target, targetCut, p](
-                 OpBuilder& b, const IRMapping& mapping, MutableArrayRef<Value>, std::string& error) {
-                 auto active = emitPrefixCrossing(owner->expressions, root, targetCut, b, mapping, error);
+             [expression, targetCut, p](
+                 OpBuilder& b, const IRMapping& mapping, MutableArrayRef<Value> state, std::string& error) {
+                 auto active = expression(b, mapping, state, error);
                  if (failed(active)) {
                      return failure();
                  }
@@ -361,16 +328,16 @@ LogicalResult appendPrefixCrossing(
     if (failed(capturePrefixSource(owner, edge.source, targetCut, collection, captured, error))) { return failure(); }
     return collection.consumer(
         targetCut, {p, q},
-        [owner, root = *target, targetCut, source = edge.source, captured = std::move(captured)](
+        [expression, targetCut, source = edge.source, captured = std::move(captured)](
             OpBuilder& b, const IRMapping& mapping, ArrayRef<Value> state, std::string& error) -> FailureOr<Value> {
-            auto selected = emitPrefixCrossing(owner->expressions, root, targetCut, b, mapping, error);
+            auto selected = expression(b, mapping, state, error);
             if (failed(selected)) {
                 return failure();
             }
             if (matchPattern(*selected, m_Zero())) {
                 return b.create<arith::ConstantIndexOp>(targetCut->getLoc(), 0).getResult();
             }
-            auto rank = selectedPrefixRank(owner, source, captured, targetCut, b, mapping, state, error);
+            auto rank = selectedPrefixRank(source, captured, targetCut, b, mapping, state, error);
             if (failed(rank)) { return failure(); }
             auto zero = b.create<arith::ConstantIndexOp>(targetCut->getLoc(), 0);
             return b.create<arith::SelectOp>(targetCut->getLoc(), *selected, *rank, zero).getResult();

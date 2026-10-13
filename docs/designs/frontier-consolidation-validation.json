@@ -1619,5 +1619,51 @@
     "strict_retained_exact_refusal": "passed",
     "device_execution": "not run",
     "receipts": ".local/three-paths/consolidation/m6-completion/"
+  },
+  "prefix_predicate_snapshots": {
+    "status": "qualified snapshots complete; public Delta logical emission remains unresolved",
+    "baseline_commit": "71e9df9df",
+    "snapshot_modes": 9,
+    "focused_tests": 8,
+    "combined_descriptor_run_tests": 10,
+    "focused": {
+      "command": [
+        "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+        "-j1",
+        "-v",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_invocation_prefix.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_region_expression.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_prefix.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_analysis.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_retained_demands.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_frontier_public_pipeline.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_retained_demand_requests.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_completion_public.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_descriptor_dependencies.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_descriptor_state.pto"
+      ],
+      "returncode": 0,
+      "status": "finished",
+      "seconds": 20.330063922330737,
+      "maximum_rss_kib": 140200,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 300.0
+    },
+    "delta_logical": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "--mlir-disable-threading",
+        "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false",
+        "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+      ],
+      "returncode": 1,
+      "status": "finished",
+      "seconds": 15.726707492023706,
+      "maximum_rss_kib": 285448,
+      "address_space_limit_bytes": 4294967296,
+      "timeout_seconds": 120.0
+    },
+    "reviews": "source-qualified acceptance; final tests passed",
+    "receipts": ".local/three-paths/consolidation/m7-snapshots"
   }
 }
