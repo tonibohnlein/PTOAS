@@ -32,6 +32,52 @@ bool rejectedUnchanged(func::FuncOp function, fs::PreparedLogicalPlan& plan)
     ScopedDiagnosticHandler silence(function.getContext(), [](Diagnostic&) { return success(); });
     return failed(fs::insertLogicalSynchronization(function, plan)) && render(function) == before;
 }
+bool cleanupPredicateChecks(MLIRContext* context)
+{
+    OpBuilder builder(context);
+    auto location = builder.getUnknownLoc();
+    OwningOpRef<ModuleOp> module = ModuleOp::create(location);
+    builder.setInsertionPointToStart(module->getBody());
+    auto type = builder.getFunctionType({builder.getI1Type()}, {});
+    auto function = builder.create<func::FuncOp>(location, "cleanup_predicate", type);
+    builder.setInsertionPointToStart(function.addEntryBlock());
+    auto zero = builder.create<arith::ConstantIndexOp>(location, 0);
+    auto source = builder.create<arith::AddIOp>(location, zero, zero).getOperation();
+    auto target = builder.create<arith::AddIOp>(location, zero, zero).getOperation();
+    auto terminal = builder.create<func::ReturnOp>(location).getOperation();
+    fs::PreparedLogicalPlan plan(0);
+    plan.independentPieces = true;
+    plan.groupedFamilies = true;
+    builder.setInsertionPointToEnd(&plan.addPreparation(source));
+    auto yes = builder.create<arith::ConstantIntOp>(location, 1, 1);
+    Value first = builder.create<arith::AndIOp>(location, function.getArgument(0), yes);
+    Value duplicate = builder.create<arith::AndIOp>(location, function.getArgument(0), yes);
+    auto unused = builder.create<arith::XOrIOp>(location, duplicate, yes);
+    fs::EndpointFamily family;
+    family.sourcePipe = 4; family.targetPipe = 1;
+    family.sourceCut = {source->getBlock(), source};
+    family.targetCut = {target->getBlock(), target};
+    family.members.push_back({0, 0, 1, {}, {}});
+    family.targetChoices = fs::qualifyTerminalCleanupCuts(
+        {family.targetCut, {terminal->getBlock(), terminal}}, duplicate);
+    if (!family.targetChoices) { return false; }
+    plan.families.push_back(std::move(family));
+    using Kind = fs::LogicalCommandKind;
+    plan.endpoints = {{source, Kind::Set, 4, 1, 0, yes, zero, {zero}, {0}, 0},
+                      {target, Kind::Wait, 4, 1, 0, duplicate, zero, {zero}, {0}, 1},
+                      {terminal, Kind::Wait, 4, 1, 0, unused, zero, {zero}, {0}, 2}};
+    if (failed(fs::insertLogicalSynchronization(function, plan)) || failed(verify(*module)) ||
+        plan.families.front().targetChoices->consumerPredicate() != first) { return false; }
+    for (int64_t active : {0, 1}) {
+        function->setAttr("test.trace_arguments", builder.getDenseI64ArrayAttr({active}));
+        auto trace = traceStructuredLogicalInsertion(function, {});
+        auto* events = trace.getArray("events");
+        if (trace.getString("error") != "" || !events || events->size() != 2 ||
+            (*events)[0].getAsObject()->getString("kind") != "set" ||
+            (*events)[1].getAsObject()->getString("kind") != "wait") { return false; }
+    }
+    return true;
+}
 bool coalescingChecks(MLIRContext* context)
 {
     context->getOrLoadDialect<scf::SCFDialect>();
@@ -188,6 +234,9 @@ LogicalResult sectionContextChecks(func::FuncOp function)
 } // namespace
 LogicalResult runPreparedInsertionChecks(func::FuncOp function)
 {
+    if (!cleanupPredicateChecks(function.getContext())) {
+        return function.emitError("preparation deduplication lost terminal cleanup predicate");
+    }
     if (!coalescingChecks(function.getContext())) { return function.emitError("endpoint coalescing changed coverage"); }
     if (fs::hasPhysicalSections(function)) { return sectionContextChecks(function); }
     SmallVector<Operation*> cuts;
