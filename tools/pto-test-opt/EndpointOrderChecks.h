@@ -51,6 +51,53 @@ bool endpointOrderGraphChecks()
     auto result = fs::orderEndpointGroups(chain);
     return result.cyclic == std::set<std::size_t>{0, 1};
 }
+bool endpointInvocationRecipeChecks(const mlir::pto::frontiersynch::NumericTemplateEndpoints& input,
+                                    std::shared_ptr<const mlir::pto::frontiersynch::FamilyEndpointRecipe> leaf,
+                                    const std::vector<mlir::pto::frontiersynch::EndpointFamily>& families)
+{
+    using namespace mlir;
+    namespace fs = mlir::pto::frontiersynch;
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto inner = fs::prefixFamilyInvocation(leaf, arena, arena->constant(13));
+    if (failed(inner)) { return false; }
+    auto outer = fs::prefixFamilyInvocation(*inner, arena, arena->constant(29));
+    if (failed(outer)) { return false; }
+    fs::PreparedLogicalPlan plan(0);
+    plan.familyRecipe = *outer;
+    plan.families = families;
+    auto view = fs::takeRegionalAllocationView(plan, true);
+    if (!view || !plan.preparation.empty() || !plan.endpoints.empty() ||
+        failed(fs::materializeLogicalFamilies(plan))) { return false; }
+    for (const auto& endpoint : plan.endpoints) {
+        if (endpoint.kind == fs::LogicalCommandKind::Barrier) {
+            if (!endpoint.memberCoordinates.empty()) { return false; }
+            continue;
+        }
+        if (endpoint.memberCoordinates.size() != 3) { return false; }
+        for (auto [index, expected] : {std::pair<unsigned, int64_t>{1, 29}, {2, 13}}) {
+            auto constant = endpoint.memberCoordinates[index].getDefiningOp<arith::ConstantIndexOp>();
+            if (!constant || constant.value() != expected) { return false; }
+        }
+    }
+    auto* cut = input.groups.front().cut.before;
+    auto unavailable = std::make_shared<fs::RegionExpressions>();
+    unavailable->forbidRecomputation(cut);
+    auto future = unavailable->input(cut->getResult(0));
+    if (succeeded(fs::prefixFamilyInvocation(leaf, unavailable, future)) ||
+        succeeded(fs::prefixFamilyInvocation(leaf, arena, arena->boolean(true)))) { return false; }
+    // Invalidate an originally replayable input after planning. Lowering must
+    // discard its temporary arithmetic and preserve the incumbent plan.
+    auto late = std::make_shared<fs::RegionExpressions>();
+    auto replay = fs::prefixFamilyInvocation(leaf, late, late->input(cut->getResult(0)));
+    if (failed(replay)) { return false; }
+    late->forbidRecomputation(cut);
+    fs::PreparedLogicalPlan rejected(0);
+    rejected.familyRecipe = *replay;
+    rejected.families = families;
+    if (succeeded(fs::materializeLogicalFamilies(rejected)) || !rejected.preparation.empty() ||
+        !rejected.endpoints.empty() || !rejected.familyRecipe) { return false; }
+    return true;
+}
 // Compare delayed sequence assembly with an independently materialized leaf.
 // Concrete commands between children must keep their exact inventory position.
 bool endpointRecipeCompositionChecks(const mlir::pto::frontiersynch::NumericTemplateEndpoints& input,
@@ -176,7 +223,8 @@ bool endpointOrderFamilyChecks(mlir::MLIRContext* context)
             if (!families.error.empty() || !pieces.error.empty() || failed(recipe) ||
                 families.families.size() != 5 || pieces.pieces.size() != 10 ||
                 fs::familyEndpointPieceCount(**recipe) != 10 ||
-                !endpointRecipeCompositionChecks(input, *recipe, families.families)) { return false; }
+                !endpointRecipeCompositionChecks(input, *recipe, families.families) ||
+                !endpointInvocationRecipeChecks(input, *recipe, families.families)) { return false; }
             auto downstream = llvm::find_if(families.families, [](const auto& f) { return f.displacement == 2; });
             if (downstream == families.families.end() || downstream->members.size() != count) { return false; }
             llvm::sort(pieces.pieces, [](const auto& a, const auto& b) { return a.order < b.order; });
