@@ -140,7 +140,18 @@ bool SequenceAnalysisState::conditionalChild(const StructureNode& node)
             child.originalNode = id;
             child.originalArmGuard = guard;
         }
+        // These are the original arm's cuts, so execution already applies the
+        // arm guard to payload publications and acquisitions. Bookkeeping may
+        // still execute at enclosing cuts. Preserve
+        // occurrence recipes only under this structural certificate; a generic
+        // predicate overlay still invalidates them in guardedArm above.
+        const auto prefix = body.invocationPrefix;
+        const bool originalArmCuts = llvm::all_of(body.anchors, [&](const auto& anchor) {
+            auto* op = anchor.phase ? anchor.phase->elementOp : nullptr;
+            return op && arm.region && arm.region->isAncestor(op->getParentRegion());
+        });
         child.regional = guardedArm(std::move(body), guard);
+        if (originalArmCuts) { child.regional.invocationPrefix = prefix; }
         child.anchors = child.regional.anchors;
         children.push_back(std::move(child));
     }

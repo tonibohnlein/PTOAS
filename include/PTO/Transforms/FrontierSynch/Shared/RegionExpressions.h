@@ -170,7 +170,10 @@ public:
     // DAG; Boolean proofs also inspect the premise. Uses O(G^2) proof work in
     // their combined reachable size; no valuation search or arithmetic solver.
     std::optional<uint64_t> constantUnder(Id premise, Id expression);
-    struct ThresholdProofCost { uint64_t dagVisits = 0, families = 0, cells = 0; };
+    struct ThresholdProofCost {
+        uint64_t dagVisits = 0, families = 0, cells = 0;
+        uint64_t substitutionVisits = 0, proofRequests = 0;
+    };
     // Sufficient uniform inactivity proof. Partition one integer Input at its
     // direct constant-comparison thresholds, rebuild under each exact cell,
     // and require false throughout the entire uint64 domain. Other inputs stay
@@ -253,6 +256,8 @@ private:
     Id absorbBoolean(Kind kind, Id a, Id b);
     std::optional<uint64_t> fold(Kind kind, uint64_t a, uint64_t b) const;
     bool inactiveOverThresholds(Id expression, Id input, ArrayRef<Id> atoms, ThresholdProofCost* cost);
+    Id specializeThresholdCell(Id expression, Id input, uint64_t lower, uint64_t upper,
+                               SmallVectorImpl<uint64_t>& refinements, ThresholdProofCost* cost);
     bool prepareEmission(Id expression, OpBuilder& builder, Operation* cut,
                          const llvm::DenseMap<Id, Value>& memo, SmallVectorImpl<Id>& order);
     Value emitNode(const Node& node, OpBuilder& builder, Location location,

@@ -1141,6 +1141,7 @@ FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalR
         if (!relation->newCrossings.empty()) {
             Child crossing;
             crossing.regional = parent; crossing.regional.relations.reset();
+            crossing.regional.invocationPrefix.reset();
             crossing.regional.endpointSiteGuard.reset(); crossing.regional.endpointInvocationGuard.reset();
             crossing.regional.endpointEventGuard = {};
             crossing.anchors = parent.anchors;

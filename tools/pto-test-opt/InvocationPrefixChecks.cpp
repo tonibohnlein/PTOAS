@@ -145,6 +145,9 @@ struct Execution {
             values[c] = n.getValue().getSExtValue();
         } else if (auto add = dyn_cast<arith::AddIOp>(op)) {
             values[add] = get(add.getLhs()) + get(add.getRhs());
+        } else if (auto sub = dyn_cast<arith::SubIOp>(op)) {
+            values[sub] = (APInt(64, uint64_t(get(sub.getLhs()))) -
+                           APInt(64, uint64_t(get(sub.getRhs())))).getSExtValue();
         } else if (auto both = dyn_cast<arith::AndIOp>(op)) {
             values[both] = get(both.getLhs()) & get(both.getRhs());
         } else if (auto either = dyn_cast<arith::OrIOp>(op)) {
@@ -367,7 +370,8 @@ bool runCases(MLIRContext& context, bool loops, unsigned& cases) {
 // A loop result chooses an earlier source only after all sources have run.
 // Supplied child interfaces have native order and no internal demands; the
 // independent graph below supplies the one selected crossing prerequisite.
-bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, unsigned inactive = 0)
+bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, unsigned inactive = 0,
+                      bool exported = false)
 {
     OpBuilder b(&context); auto loc = b.getUnknownLoc();
     OwningOpRef<ModuleOp> module(ModuleOp::create(loc));
@@ -429,6 +433,26 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
         contribution->accessModel = child.regional.accessModel;
         contribution->aliasPolicy = child.regional.gmAliasPolicy;
         contribution->collect = [](fs::InvocationPrefixCollection&, std::string&) { return success(); };
+        const auto anchor = child.anchors.front();
+        contribution->matchesOccurrenceFrame = [arena, anchor](const fs::RegionalAnalysis& region) {
+            return region.expressions == arena && region.anchors.size() == 1 &&
+                   region.anchors.front().phase == anchor.phase;
+        };
+        contribution->occurrence = [arena, anchor, induction = loop.getInductionVar(), isSource, phased](
+            fs::RegionalEvent event, std::string& error) -> fs::PrefixOccurrencePtr {
+            if (event.type != 0 || event.visits.size() != (isSource && phased ? 1U : 0U)) {
+                error = "fixture occurrence has invalid coordinates"; return {};
+            }
+            auto recipe = std::make_shared<fs::PrefixOccurrence>();
+            recipe->anchor = anchor; recipe->match = arena->boolean(true);
+            if (isSource) {
+                const auto actual = arena->input(induction);
+                auto selected = event.ordinal;
+                if (phased) { selected = arena->add(event.visits.front(), event.visits.front()); }
+                recipe->match = arena->eq(actual, selected);
+            }
+            return recipe;
+        };
         child.regional.invocationPrefix = std::move(contribution);
         state->children.push_back(std::move(child));
     }
@@ -443,6 +467,28 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
         arena->retainInputOwner(opaque);
     }
     const auto selected = state->selectPort(choose, first, second);
+    if (exported) {
+        // The outer sequence sees only a folded ordinal. Its producer retains
+        // the choice DAG, so recovering the recipe must traverse the export.
+        auto inner = std::make_shared<fs::SequenceAnalysisState>(function, arena);
+        inner->requiredOuterLoops = state->requiredOuterLoops;
+        inner->children.push_back(state->children.front());
+        const auto a = inner->port(0, 0, state->ports[first].ordinal, state->ports[first].visits);
+        const auto c = inner->port(0, 0, state->ports[second].ordinal, state->ports[second].visits);
+        inner->selectPort(choose, a, c);
+        auto region = state->children.front().regional;
+        region.invocationPrefix = fs::sequencePrefixContribution(region, inner);
+        if (!region.invocationPrefix) { return false; }
+        auto stale = region;
+        stale.endpointSiteGuard = arena->boolean(false);
+        fs::InvocationPrefixCollection rejected(function, input);
+        std::string reason;
+        if (succeeded(fs::collectRegionalInvocationPrefix(stale, rejected, reason)) || reason.empty()) {
+            return false;
+        }
+        state->children.front().regional = std::move(region);
+        state->portChoices.clear();
+    }
     const auto consumer = state->port(1, 0, arena->constant(0));
     auto selectedVisit = state->ports[selected].ordinal;
     if (phased) {
@@ -459,7 +505,9 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
     state->crossings.push_back({selected, consumer, guard});
     fs::InvocationPrefixCollection collection(function, input);
     std::string diagnostic;
+    const auto originalPorts = state->ports.size(), originalChoices = state->portChoices.size();
     if (failed(state->collectPrefix(collection, diagnostic))) { llvm::errs() << diagnostic << "\n"; return false; }
+    if (state->ports.size() != originalPorts || state->portChoices.size() != originalChoices) { return false; }
     auto& spec = collection.recipe();
     spec.privateScalarControl = true; spec.planId = 19; spec.sourceBounds = {{P, inactive ? 8U : nested ? 4U : 3U}};
     fs::PrivateStateError error;
@@ -503,10 +551,16 @@ bool historicalExpression(MLIRContext& context, unsigned mode)
     b.setInsertionPointToStart(outer.getBody());
     auto count = b.create<arith::SelectOp>(loc, function.getArgument(1), function.getArgument(0), zero);
     Value lower = zero, upper = count;
-    if (mode == 6) {
+    if (mode == 6 || mode == 12) {
         lower = b.create<arith::ConstantIndexOp>(loc, -2);
-        upper = b.create<arith::AddIOp>(loc, count, lower);
-    } else if (mode == 7) {
+        Value visits = count;
+        if (mode == 12) {
+            auto firstInvocation = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
+                                                           outer.getInductionVar(), zero);
+            visits = b.create<arith::SelectOp>(loc, firstInvocation, count, zero);
+        }
+        upper = b.create<arith::AddIOp>(loc, visits, lower);
+    } else if (mode == 7 || mode == 10) {
         auto firstInvocation = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
                                                        outer.getInductionVar(), zero);
         upper = b.create<arith::SelectOp>(loc, firstInvocation, count, zero);
@@ -525,12 +579,16 @@ bool historicalExpression(MLIRContext& context, unsigned mode)
     b.create<func::ReturnOp>(loc);
     auto arena = std::make_shared<fs::RegionExpressions>();
     auto placeholders = std::make_shared<Block>(); arena->retainInputOwner(placeholders);
-    auto first = arena->evaluatedInput(placeholders->addArgument(b.getI1Type(), loc), predicate, loop,
-                                       arena->constant(mode == 8 ? UINT64_MAX : 0));
+    auto ordinal = arena->constant(mode == 8 ? UINT64_MAX : 0);
+    if (mode == 9 || mode == 10) { ordinal = arena->sub(arena->input(upper), arena->constant(1)); }
+    if (mode == 12) { ordinal = arena->sub(arena->sub(arena->input(upper), arena->constant(uint64_t(-2))),
+                                         arena->constant(1)); }
+    if (mode == 11) { ordinal = arena->input(loop.getInductionVar()); }
+    auto first = arena->evaluatedInput(placeholders->addArgument(b.getI1Type(), loc), predicate, loop, ordinal);
     auto second = arena->evaluatedInput(placeholders->addArgument(b.getI1Type(), loc), predicate, loop,
                                         arena->constant(1));
     fs::InvocationPrefixCollection collection(function);
-    Operation* cut = mode == 1 ? before.getOperation() : (mode == 3 || mode == 7) ? post.getOperation() :
+    Operation* cut = mode == 1 ? before.getOperation() : (mode == 3 || mode == 7 || mode >= 9) ? post.getOperation() :
                      mode == 4 ? escaped.getOperation() : after.getOperation();
     auto root = first;
     if (mode == 0 || mode == 6) {
@@ -539,14 +597,14 @@ bool historicalExpression(MLIRContext& context, unsigned mode)
     } else if (mode == 2) {
         root = arena->land(arena->slt(arena->constant(1), arena->input(loop.getInductionVar())),
                            arena->lor(first, second));
-    } else if (mode == 3 || mode == 7) {
-        root = arena->land(arena->slt(arena->constant(0), arena->input(upper)), first);
+    } else if (mode == 3 || mode == 7 || mode >= 9) {
+        root = arena->land(arena->slt(arena->constant(mode == 12 ? uint64_t(-2) : 0), arena->input(upper)), first);
     }
     auto emit = fs::preparePrefixExpression(arena, root, cut, collection);
     std::optional<std::size_t> validity;
     if (mode == 7) {
         std::string message;
-        auto slots = collection.snapshotPredicate(predicate, loop, 0, message);
+        auto slots = collection.snapshotPredicate(predicate, loop, arena, arena->constant(0), message);
         if (failed(slots)) { return false; }
         validity = slots->second;
     }
@@ -569,7 +627,7 @@ bool historicalExpression(MLIRContext& context, unsigned mode)
     fs::PrivateStateError error;
     auto staged = fs::materializeStructuredPrivateState(function, collection.recipe().slots,
                                                         collection.recipe().actions, error);
-    if (mode == 1 || mode == 4 || mode == 5 || mode == 8) {
+    if (mode == 1 || mode == 4 || mode == 5 || mode == 8 || mode == 11) {
         return failed(staged) && beforeText == render(module->getOperation());
     }
     if (failed(staged)) { llvm::errs() << "snapshot preparation: " << error.message << "\n"; return false; }
@@ -579,9 +637,12 @@ bool historicalExpression(MLIRContext& context, unsigned mode)
             Execution execution; execution.run((*staged)->function, trips, active);
             std::vector<unsigned> expected;
             for (unsigned invocation = 0; invocation < 2; ++invocation) {
-                const auto n = active && (mode != 7 || invocation == 0) ? trips : 0;
+                const auto n = active && ((mode != 7 && mode != 10 && mode != 12) || invocation == 0) ? trips : 0;
                 if (mode == 7) { expected.push_back(n ? 3 : 0); }
                 else if (mode == 3) { expected.push_back(n && invocation == 0); }
+                else if (mode == 9 || mode == 10 || mode == 12) {
+                    expected.push_back(n && (n - 1 + invocation) % 2 == 0);
+                }
                 else {
                     for (unsigned i = 0; i < n; ++i) {
                         expected.push_back(mode == 2 ? i > 1 : i > 0 && invocation == 0);
@@ -600,7 +661,7 @@ bool historicalExpression(MLIRContext& context, unsigned mode)
 bool runInvocationPrefixChecks() {
     MLIRContext context; context.disableMultithreading();
     context.loadDialect<func::FuncDialect, scf::SCFDialect, arith::ArithDialect, pto::PTODialect>();
-    for (unsigned mode = 0; mode < 9; ++mode) {
+    for (unsigned mode = 0; mode < 13; ++mode) {
         if (!historicalExpression(context, mode)) {
             llvm::errs() << "historical expression mode " << mode << " failed\n"; return false;
         }
@@ -609,8 +670,10 @@ bool runInvocationPrefixChecks() {
     const bool invalid332 = !runCases(context, false, cases) || !runCases(context, true, cases) ||
         !lateSourceChoice(context, false) || !lateSourceChoice(context, true) ||
         !lateSourceChoice(context, false, true) || !lateSourceChoice(context, false, false, 1) ||
-        !lateSourceChoice(context, false, false, 2) || !lateSourceChoice(context, false, false, 3);
+        !lateSourceChoice(context, false, false, 2) || !lateSourceChoice(context, false, false, 3) ||
+        !lateSourceChoice(context, false, false, 0, true) || !lateSourceChoice(context, true, false, 0, true) ||
+        !lateSourceChoice(context, false, true, 0, true);
     if (invalid332) { return false; }
-    llvm::outs() << "invocation prefix checks passed executions=" << cases << " late-choice=24 inactive=32\n";
+    llvm::outs() << "invocation prefix checks passed executions=" << cases << " late-choice=48 inactive=32\n";
     return true;
 }

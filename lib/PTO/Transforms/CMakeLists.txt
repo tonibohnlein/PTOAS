@@ -344,6 +344,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Shared/InvocationSourceBounds.cpp
   FrontierSynch/Shared/InvocationPrefixCollection.cpp
   FrontierSynch/Shared/PrefixExpression.cpp
+  FrontierSynch/Shared/PrefixOccurrence.cpp
   FrontierSynch/Shared/PrefixPredicateSnapshots.cpp
   FrontierSynch/Shared/SequencePrefix.cpp
   FrontierSynch/Structured/BoundedPrefixRealization.cpp

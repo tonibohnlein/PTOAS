@@ -104,55 +104,6 @@ bool SequenceAnalysisState::hasCertifiedCrossingPresence() const
     return true;
 }
 namespace {
-FailureOr<Expr> prefixPortGuard(SequenceAnalysisState& state, const Port& point, Expr guard)
-{
-    auto& e = state.expressions;
-    const auto& child = state.children[point.child];
-    const auto no = e.boolean(false);
-    if (child.regional.endpointSiteGuard) {
-        guard = e.select(guard, *child.regional.endpointSiteGuard, no);
-    }
-    if (child.regional.endpointInvocationGuard) {
-        guard = e.select(guard, *child.regional.endpointInvocationGuard, no);
-    }
-    if (child.regional.endpointEventGuard) {
-        auto value = child.regional.endpointEventGuard(point.event());
-        if (!value) {
-            return failure();
-        }
-        guard = e.select(guard, *value, no);
-    }
-    auto loop = child.regional.occurrenceLoops.empty() ? scf::ForOp{} : child.regional.occurrenceLoops[point.type];
-    auto coordinate = [&](scf::ForOp loop, Expr selected, uint64_t divisor) -> bool {
-        auto step = sequenceInteger(loop.getStep());
-        if (!step || *step <= 0 || !divisor) {
-            return false;
-        }
-        auto ordinal = e.div(e.sub(e.input(loop.getInductionVar()), e.input(loop.getLowerBound())), e.constant(*step));
-        ordinal = e.div(ordinal, e.constant(divisor));
-        guard = e.select(guard, e.eq(ordinal, selected), no);
-        return true;
-    };
-    if (loop && !coordinate(loop, point.ordinal, 1)) {
-        return failure();
-    }
-    if (!child.regional.outerLoops.empty()) {
-        auto& loops = child.regional.outerLoops[point.type];
-        if (loops.size() != point.visits.size()) {
-            return failure();
-        }
-        for (std::size_t i = 0; i < loops.size(); ++i) {
-            auto divisor = child.regional.outerDivisors.empty() ? 1 : child.regional.outerDivisors[point.type][i];
-            if (!coordinate(loops[i], point.visits[i], divisor)) {
-                return failure();
-            }
-        }
-    }
-    for (auto fixed : child.anchors[point.type].coordinates) {
-        guard = e.select(guard, e.eq(e.input(fixed.loop.getInductionVar()), e.constant(fixed.induction)), no);
-    }
-    return guard;
-}
 bool originalPrefixAnchor(const TemplateEndpointAnchor& anchor)
 {
     auto* op = anchor.phase ? anchor.phase->elementOp : nullptr;
@@ -169,19 +120,14 @@ struct PrefixCapturedRank {
     uint32_t yes = 0, no = 0;
 };
 LogicalResult capturePrimitivePrefixSource(
-    const std::shared_ptr<SequenceAnalysisState>& owner, uint32_t port, Operation* targetCut,
-    InvocationPrefixCollection& collection, std::map<uint32_t, PrefixCapturedRank>& captured,
-    std::string& error)
+    const std::shared_ptr<SequenceAnalysisState>& owner, uint32_t id, const PrefixOccurrencePtr& occurrence,
+    Operation* targetCut, InvocationPrefixCollection& collection,
+    std::map<uint32_t, PrefixCapturedRank>& captured, std::string& error)
 {
-    if (port >= owner->ports.size()) { error = "prefix source has an invalid primitive port"; return failure(); }
-    const auto& point = owner->ports[port];
-    if (point.child >= owner->children.size() || point.type >= owner->children[point.child].anchors.size()) {
-        error = "prefix source has an invalid primitive phase"; return failure();
-    }
-    const auto& anchor = owner->children[point.child].anchors[point.type];
+    if (!occurrence || occurrence->choose) { error = "prefix source has no primitive occurrence"; return failure(); }
+    const auto& anchor = occurrence->anchor;
     if (!originalPrefixAnchor(anchor)) { error = "prefix source lacks its original cut"; return failure(); }
-    auto guard = prefixPortGuard(*owner, point, owner->expressions.boolean(true));
-    if (failed(guard)) { error = "prefix source has unavailable primitive coordinates"; return failure(); }
+    const auto guard = occurrence->match;
     auto* sourceCut = anchor.phase->elementOp;
     auto& recipe = collection.recipe();
     const auto slot = recipe.slots.size();
@@ -202,7 +148,7 @@ LogicalResult capturePrimitivePrefixSource(
                 return success();
             }});
     }
-    auto expression = preparePrefixExpression(owner->arena, *guard, sourceCut, collection);
+    auto expression = preparePrefixExpression(owner->arena, guard, sourceCut, collection);
     if (failed(collection.source(anchor.phase,
         [expression, sourceCut, slot](OpBuilder& b, const IRMapping& mapping,
             MutableArrayRef<Value> state, Value ordinal, std::string& diagnostic) {
@@ -211,41 +157,41 @@ LogicalResult capturePrimitivePrefixSource(
             state[slot] = b.create<arith::SelectOp>(sourceCut->getLoc(), *selected, ordinal, state[slot]);
             return success();
         }, error))) { return failure(); }
-    captured.emplace(port, PrefixCapturedRank{slot});
+    captured.emplace(id, PrefixCapturedRank{slot});
     return success();
 }
-LogicalResult capturePrefixSource(
-    const std::shared_ptr<SequenceAnalysisState>& owner, uint32_t root, Operation* targetCut,
+FailureOr<uint32_t> capturePrefixSource(
+    const std::shared_ptr<SequenceAnalysisState>& owner, const PrefixOccurrencePtr& root, Operation* targetCut,
     InvocationPrefixCollection& collection, std::map<uint32_t, PrefixCapturedRank>& captured,
     std::string& error)
 {
-    std::set<uint32_t> pending;
-    SmallVector<uint32_t> work{root};
-    while (!work.empty()) {
-        const auto port = work.pop_back_val();
-        if (captured.count(port) || !pending.insert(port).second) { continue; }
-        if (port >= owner->ports.size()) { error = "prefix source has an invalid port"; return failure(); }
-        auto choice = owner->portChoices.find(port);
-        if (choice == owner->portChoices.end()) { continue; }
-        const auto& selected = choice->second;
-        // selectPort constructs children before their combined port. Validate
-        // that premise before building state; visit shared nodes only once.
-        if (selected.yes >= port || selected.no >= port) {
-            error = "prefix source choice is not an original acyclic port recipe"; return failure();
-        }
-        work.push_back(selected.yes); work.push_back(selected.no);
-    }
-    for (auto port : pending) {
-        auto choice = owner->portChoices.find(port);
-        if (choice != owner->portChoices.end()) {
-            const auto& selected = choice->second;
-            auto expression = preparePrefixExpression(owner->arena, selected.choose, targetCut, collection);
-            captured.emplace(port, PrefixCapturedRank{{}, std::move(expression), selected.yes, selected.no});
-        } else if (failed(capturePrimitivePrefixSource(owner, port, targetCut, collection, captured, error))) {
+    // Preparation owns a separate topological directory. Imported child recipes
+    // never mutate the retained ports, choices or sealed crossing evidence.
+    std::map<const PrefixOccurrence*, uint32_t> ids;
+    std::function<FailureOr<uint32_t>(const PrefixOccurrencePtr&)> visit =
+        [&](const auto& node) -> FailureOr<uint32_t> {
+        if (!node) {
+            if (error.empty()) { error = "prefix source has no producer occurrence recipe"; }
             return failure();
         }
-    }
-    return success();
+        if (auto found = ids.find(node.get()); found != ids.end()) { return found->second; }
+        PrefixCapturedRank rank;
+        if (node->choose) {
+            auto yes = visit(node->yes), no = visit(node->no);
+            if (failed(yes) || failed(no)) { return failure(); }
+            rank.yes = *yes; rank.no = *no;
+            rank.choose = preparePrefixExpression(owner->arena, *node->choose, targetCut, collection);
+        }
+        if (ids.size() >= UINT32_MAX) { error = "prefix occurrence identity overflow"; return failure(); }
+        const auto id = static_cast<uint32_t>(ids.size());
+        ids.emplace(node.get(), id);
+        if (node->choose) { captured.emplace(id, std::move(rank)); }
+        else if (failed(capturePrimitivePrefixSource(owner, id, node, targetCut, collection, captured, error))) {
+            return failure();
+        }
+        return id;
+    };
+    return visit(root);
 }
 FailureOr<Value> selectedPrefixRank(uint32_t root,
     const std::map<uint32_t, PrefixCapturedRank>& captured, Operation* cut, OpBuilder& b,
@@ -295,13 +241,16 @@ LogicalResult appendPrefixCrossing(
         }
     }
     auto p = static_cast<uint32_t>(aa.phase->kPipeValue), q = static_cast<uint32_t>(ab.phase->kPipeValue);
-    auto target = prefixPortGuard(*owner, b, edge.guard);
-    if (failed(target)) {
-        error = "prefix crossing has unavailable original coordinates";
+    PrefixOccurrenceCache occurrences;
+    auto targetOccurrence = sequencePrefixOccurrence(owner, edge.target, occurrences, error);
+    auto target = prefixOccurrenceMatch(e, targetOccurrence);
+    if (!target) {
+        if (error.empty()) { error = "prefix crossing has unavailable original coordinates"; }
         return failure();
     }
     auto* targetCut = ab.phase->elementOp;
-    auto expression = preparePrefixExpression(owner->arena, *target, targetCut, collection);
+    auto expression = preparePrefixExpression(
+        owner->arena, e.select(edge.guard, *target, e.boolean(false)), targetCut, collection);
     if (p == q) {
         if (p == static_cast<uint32_t>(PIPE::PIPE_S)) {
             error = "scalar crossing requires its native prerequisite contract";
@@ -325,10 +274,12 @@ LogicalResult appendPrefixCrossing(
         return success();
     }
     std::map<uint32_t, PrefixCapturedRank> captured;
-    if (failed(capturePrefixSource(owner, edge.source, targetCut, collection, captured, error))) { return failure(); }
+    auto sourceOccurrence = sequencePrefixOccurrence(owner, edge.source, occurrences, error);
+    auto sourceId = capturePrefixSource(owner, sourceOccurrence, targetCut, collection, captured, error);
+    if (failed(sourceId)) { return failure(); }
     return collection.consumer(
         targetCut, {p, q},
-        [expression, targetCut, source = edge.source, captured = std::move(captured)](
+        [expression, targetCut, source = *sourceId, captured = std::move(captured)](
             OpBuilder& b, const IRMapping& mapping, ArrayRef<Value> state, std::string& error) -> FailureOr<Value> {
             auto selected = expression(b, mapping, state, error);
             if (failed(selected)) {

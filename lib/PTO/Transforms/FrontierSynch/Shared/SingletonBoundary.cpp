@@ -8,6 +8,7 @@
 // Normalize a wrapper with at most one payload-bearing visit without proving
 // recurrence of its proper children. Original cuts and coordinates survive.
 #include "BoundarySlices.h"
+#include "PrefixOccurrence.h"
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RepeatedPhases.h"
 namespace mlir::pto::frontiersynch {
@@ -98,14 +99,14 @@ bool SequenceAnalysisState::singletonBoundaryChild(const StructureNode& node, Ex
     composed.state->completeInvocation = false;
     composed.state->requiredOuterLoops = context;
     auto body = sequenceRegionalResult(composed);
-    const auto prefix = body.invocationPrefix;
+    const auto prefixBody = body;
     auto lifted = repeatPhasedRegions(function, loop, {std::move(body)}, active->interval.end,
         node.loops, active->interval.begin, uint64_t{1});
     if (!lifted.error.empty()) { return unavailable(lifted.error); }
     // This proof covers every payload-bearing execution of the original loop,
     // unlike an arbitrary clipped one-visit regional view. Original cuts retain
     // branch control and nested-loop resets; there are no intervisit demands.
-    lifted.regional.invocationPrefix = prefix;
+    liftSingletonPrefixContribution(prefixBody, lifted.regional);
     Child child;
     child.regional = std::move(lifted.regional);
     child.anchors = child.regional.anchors;

@@ -16,7 +16,8 @@ struct Binding {
     Expr input;
     scf::ForOp loop;
     Operation* definition;
-    int64_t lower, induction;
+    int64_t lower;
+    Expr ordinal;
     std::size_t valueSlot, validSlot;
 };
 std::optional<int64_t> literal(Value value)
@@ -33,9 +34,10 @@ bool sameFrame(scf::ForOp loop, Operation* cut, DominanceInfo& dominance)
     }
     return true;
 }
-std::vector<Binding> collectBindings(RegionExpressions& arena, Expr root, Operation* cut,
+std::vector<Binding> collectBindings(const std::shared_ptr<RegionExpressions>& owner, Expr root, Operation* cut,
                                     InvocationPrefixCollection& collection)
 {
+    auto& arena = *owner;
     std::vector<Binding> bindings;
     DominanceInfo dominance(collection.function());
     for (auto [id, unused] : arena.referencedInputs(root)) {
@@ -45,18 +47,14 @@ std::vector<Binding> collectBindings(RegionExpressions& arena, Expr root, Operat
         auto* definition = evaluation->original.getDefiningOp();
         if (!loop || !definition || definition->getBlock() != loop.getBody() ||
             !collection.function()->isProperAncestor(loop) || !sameFrame(loop, cut, dominance)) { continue; }
-        const auto ordinal = arena.constantValue(evaluation->ordinal);
         const auto lower = literal(loop.getLowerBound()), step = literal(loop.getStep());
         // Unit-step signed loops cannot wrap on the final increment: IV<upper
         // implies IV+1<=upper<=INT64_MAX. Other strides need a retained proof.
-        if (!ordinal || !lower || step != 1 || !loop.getInductionVar().getType().isIndex()) { continue; }
-        const APInt actual = APInt(128, static_cast<uint64_t>(*lower), true) + APInt(128, *ordinal);
-        if (!actual.isSignedIntN(64)) { continue; }
-        const auto induction = actual.getSExtValue();
+        if (!lower || step != 1 || !loop.getInductionVar().getType().isIndex()) { continue; }
         std::string error;
-        auto slots = collection.snapshotPredicate(evaluation->original, loop, induction, error);
+        auto slots = collection.snapshotPredicate(evaluation->original, loop, owner, evaluation->ordinal, error);
         if (failed(slots)) { continue; }
-        bindings.push_back({id, loop, definition, *lower, induction, slots->first, slots->second});
+        bindings.push_back({id, loop, definition, *lower, evaluation->ordinal, slots->first, slots->second});
     }
     return bindings;
 }
@@ -67,16 +65,35 @@ bool independentWhenUnavailable(RegionExpressions& arena, Expr root, Operation* 
 {
     RegionExpressions::Transaction scratch(arena);
     auto available = arena.boolean(false), domain = arena.boolean(true);
-    const auto selected = arena.constant(static_cast<uint64_t>(binding.induction));
+    const auto selected = binding.ordinal;
+    const auto lower = arena.constant(static_cast<uint64_t>(binding.lower));
+    const auto upper = arena.input(binding.loop.getUpperBound());
+    const auto exists = arena.land(arena.slt(lower, upper), arena.lt(selected, arena.sub(upper, lower)));
     if (binding.loop->isProperAncestor(cut)) {
         const auto current = arena.input(binding.loop.getInductionVar());
-        available = arena.slt(selected, current);
+        const auto ordinal = arena.sub(current, lower);
+        available = arena.lt(selected, ordinal);
         DominanceInfo dominance(cut->getParentOfType<func::FuncOp>());
-        if (dominance.properlyDominates(binding.definition, cut)) { available = arena.sle(selected, current); }
+        if (dominance.properlyDominates(binding.definition, cut)) { available = arena.le(selected, ordinal); }
         domain = arena.land(arena.sle(arena.constant(static_cast<uint64_t>(binding.lower)), current),
                             arena.slt(current, arena.input(binding.loop.getUpperBound())));
     } else {
-        available = arena.slt(selected, arena.input(binding.loop.getUpperBound()));
+        available = exists;
+    }
+    // Keep a simple signed comparison when an absolute selected IV is known.
+    // This is equivalent on an executed visit, and avoids asking the proof
+    // engine to rediscover the unsigned-distance identity for constant visits.
+    if (auto ordinal = arena.constantValue(selected)) {
+        const APInt actual = APInt(128, static_cast<uint64_t>(binding.lower), true) + APInt(128, *ordinal);
+        if (actual.isSignedIntN(64)) {
+            const auto induction = arena.constant(static_cast<uint64_t>(actual.getSExtValue()));
+            if (binding.loop->isProperAncestor(cut)) {
+                const auto current = arena.input(binding.loop.getInductionVar());
+                DominanceInfo dominance(cut->getParentOfType<func::FuncOp>());
+                available = dominance.properlyDominates(binding.definition, cut) ?
+                    arena.sle(induction, current) : arena.slt(induction, current);
+            } else { available = arena.slt(induction, upper); }
+        }
     }
     if (arena.constantUnder(domain, available) == 1) { return true; }
     RegionExpressions::Substitution no({{binding.input, arena.boolean(false)}});
@@ -164,7 +181,7 @@ PrefixIncomingSelector preparePrefixExpression(std::shared_ptr<RegionExpressions
 {
     auto recipe = std::make_shared<ExpressionRecipe>();
     recipe->arena = std::move(arena); recipe->root = root; recipe->cut = cut;
-    recipe->bindings = collectBindings(*recipe->arena, root, cut, collection);
+    recipe->bindings = collectBindings(recipe->arena, root, cut, collection);
     return [recipe](OpBuilder& b, const IRMapping& mapping, ArrayRef<Value> state, std::string& error) {
         return recipe->emit(b, mapping, state, error);
     };
