@@ -301,3 +301,35 @@ history interpretation. Sequence/repeated crossings still prepare individual
 scalar alternatives. Before deferring those operations, publication and cleanup
 must be established as recipes; successful emission currently participates in
 that decision. No whole-M3 completion claim follows from this refactor.
+
+
+## Availability-recipe migration
+
+Contextual expression preparation now separates original-value availability from
+scalar materialization. Its immutable recipe records the selected expression,
+original deterministic replay producers, and required existing binding keys.
+No generated SSA is captured. The existing contextual emitter consumes this
+same recipe, and sequence ancestor-sharing probes explicitly plan before
+creating a detached arithmetic block. This removes the previous combined
+preflight/clone implementation without adding an alternative replay policy.
+
+The recipe borrows its arena and original invocation. It cannot survive arena
+rollback or payload/control mutation. Lowering checks its arena, original cut,
+required bindings and forbidden producers before emitting code. Failed planning
+creates no scalar code and does not charge successful replay bindings.
+
+Terminal cleanup still requires its existing singleton-cut certificate. Pure
+availability planning alone does not establish that certificate or matching.
+Early sequence/repeated family construction remains open until the publication
+protocol and cleanup evidence can be retained before their scalar predicates
+are materialized. This slice is a prerequisite within M3, not its completion.
+
+Validation: ten focused lit tests pass, including malformed specialization,
+missing binding, foreign arena/cut, replay prohibition, and production direct
+and prefix paths. Persistent retains equivalent logical IR and allocation
+evidence in all three serial pairs, and allocates with six IDs. Baseline and
+candidate medians are 3.807 s and 3.608 s with overlapping ranges; these are an
+overhead check, not evidence of a planning speedup. Prefill logical preparation
+succeeds in 75.601 s; allocation still reports its missing supported export.
+Receipts and manual review are retained in
+`.local/family-pipeline-availability/validation.json` and `review.md`.

@@ -900,6 +900,41 @@ bool checkImportReplay(Operation* cut)
     auto allowed = unrestricted.emitContextual(control, builder, cut, allowedContext);
     return succeeded(allowed) && !allowedCode.empty();
 }
+// Preparing a replay never creates SSA or mutates the original function.
+// Recipes reject a foreign arena/cut or a lost dependency before lowering.
+bool checkPreparedContextual(Operation* cut)
+{
+    using Arena = fs::RegionExpressions;
+    Arena arena, foreign;
+    Arena::CutEmission context;
+    const auto root = arena.add(arena.input(cut->getResult(0)), arena.constant(1));
+    const auto function = cut->getParentOfType<func::FuncOp>();
+    const auto original = render(function);
+    Arena::CutEmission invalidContext;
+    invalidContext.cofactors[root] = Arena::invalid;
+    if (succeeded(arena.prepareContextual(root, cut, invalidContext))) { return false; }
+    auto recipe = arena.prepareContextual(root, cut, context);
+    if (failed(recipe) || !context.values.empty() || !context.inputs.empty() ||
+        context.replayBindings || render(function) != original) { return false; }
+    fs::PreparedLogicalPlan plan(0);
+    auto& code = plan.addPreparation(cut);
+    OpBuilder builder(cut->getContext()); builder.setInsertionPointToEnd(&code);
+    if (succeeded(foreign.emitPreparedContextual(**recipe, builder, cut, context)) ||
+        succeeded(arena.emitPreparedContextual(**recipe, builder, cut->getNextNode(), context)) || !code.empty()) {
+        return false;
+    }
+    auto value = arena.emitPreparedContextual(**recipe, builder, cut, context);
+    if (failed(value) || code.empty() || render(function) != original) { return false; }
+    auto cached = arena.prepareContextual(root, cut, context);
+    if (failed(cached)) { return false; }
+    Arena::CutEmission missing;
+    auto& absent = plan.addPreparation(cut); builder.setInsertionPointToEnd(&absent);
+    if (succeeded(arena.emitPreparedContextual(**cached, builder, cut, missing)) || !absent.empty()) { return false; }
+    auto reused = arena.emitPreparedContextual(**cached, builder, cut, context);
+    if (failed(reused) || *reused != *value || !absent.empty()) { return false; }
+    arena.forbidRecomputation(cut);
+    return failed(arena.emitPreparedContextual(**recipe, builder, cut, missing)) && absent.empty();
+}
 bool checkSparseReplayBindings(Operation* cut)
 {
     fs::RegionExpressions arena;
@@ -913,7 +948,15 @@ bool checkSparseReplayBindings(Operation* cut)
         auto placeholder = placeholders.addArgument(source.getType(), cut->getLoc());
         context.inputs[placeholder] = source;
         auto root = arena.add(arena.input(placeholder), arena.constant(1));
-        auto emitted = arena.emitContextual(root, builder, cut, context);
+        auto recipe = arena.prepareContextual(root, cut, context);
+        if (failed(recipe)) { return false; }
+        if (i == 0) {
+            fs::RegionExpressions::CutEmission missing;
+            if (succeeded(arena.emitPreparedContextual(**recipe, builder, cut, missing)) || !code.empty()) {
+                return false;
+            }
+        }
+        auto emitted = arena.emitPreparedContextual(**recipe, builder, cut, context);
         if (failed(emitted)) { return false; }
         auto addition = emitted->getDefiningOp<arith::AddIOp>();
         if (!addition || (addition.getLhs() != source && addition.getRhs() != source) ||
@@ -1439,6 +1482,7 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
         !checked("checkImport", checkImport(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkImportOwners", checkImportOwners(function.getArgument(0))) ||
         !checked("checkImportReplay", checkImportReplay(cuts[0])) ||
+        !checked("checkPreparedContextual", checkPreparedContextual(cuts[0])) ||
         !checked("checkSparseReplayBindings", checkSparseReplayBindings(cuts[0])) ||
         !checked("runNestedRegionalChecks", runNestedRegionalChecks(function)) ||
         !checked("runRepeatedRegionChecks", runRepeatedRegionChecks(function)) ||

@@ -375,3 +375,15 @@ preparation share the same exact coordinate tests and original loop ordinal
 normalization. This interface returns arena expressions without generated SSA;
 activity, availability and publication protocols remain caller-owned. Necessary
 endpoint scheduling domains are a separate, one-way exclusion abstraction.
+
+
+Contextual scalar availability is planned by `prepareContextual` before
+`emitPreparedContextual` creates code. The immutable cut recipe retains original
+producers, expression IDs and required binding keys, with no generated SSA.
+Recipes and their cut-local contexts are scoped to an append-only arena and an
+unchanged original invocation; neither may survive rollback or source mutation.
+Materialization rejects the wrong arena/cut or missing bindings before creating
+operations. Payload producers and nondeterministic operations remain forbidden.
+Sequence ancestor sharing uses this split directly; the compatibility emitter
+calls the same planner and materializer. This does not yet replace terminal-cut
+qualification or all per-alternative regional preparation.
