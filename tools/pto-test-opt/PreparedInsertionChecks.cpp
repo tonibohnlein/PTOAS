@@ -32,6 +32,91 @@ bool rejectedUnchanged(func::FuncOp function, fs::PreparedLogicalPlan& plan)
     ScopedDiagnosticHandler silence(function.getContext(), [](Diagnostic&) { return success(); });
     return failed(fs::insertLogicalSynchronization(function, plan)) && render(function) == before;
 }
+bool coalescingChecks(MLIRContext* context)
+{
+    context->getOrLoadDialect<scf::SCFDialect>();
+    // Different coordinates are exclusive; repeated coordinates and commands
+    // interleaved in another direction must retain their multiplicity/order.
+    for (unsigned mode = 0; mode < 5; ++mode) {
+        for (unsigned count : {8U, 128U}) {
+            OpBuilder builder(context);
+            auto location = builder.getUnknownLoc();
+            OwningOpRef<ModuleOp> module = ModuleOp::create(location);
+            builder.setInsertionPointToStart(module->getBody());
+            auto type = builder.getFunctionType({builder.getI1Type()}, {});
+            auto function = builder.create<func::FuncOp>(location, "alternatives", type);
+            function->setAttr("test.trace_arguments", builder.getDenseI64ArrayAttr({1}));
+            builder.setInsertionPointToStart(function.addEntryBlock());
+            auto zero = builder.create<arith::ConstantIndexOp>(location, 0);
+            auto one = builder.create<arith::ConstantIndexOp>(location, 1);
+            auto end = builder.create<arith::ConstantIndexOp>(location, count);
+            auto loop = builder.create<scf::ForOp>(location, zero, end, one);
+            builder.create<func::ReturnOp>(location);
+            builder.setInsertionPoint(loop.getBody()->getTerminator());
+            auto cut = builder.create<arith::AddIOp>(location, zero, one).getOperation();
+            fs::PreparedLogicalPlan plan(0);
+            plan.independentPieces = true;
+            plan.groupedFamilies = true;
+            builder.setInsertionPointToEnd(&plan.addPreparation(cut));
+            for (unsigned record = 0; record < count; ++record) {
+                const auto coordinate = mode == 1 ? 0 : record;
+                const uint32_t target = mode == 2 && record % 2 ? 3 : 0;
+                const auto name = mode == 2 ? record % 2 : 0;
+                auto label = builder.create<arith::ConstantIndexOp>(location, record);
+                auto value = builder.create<arith::ConstantIndexOp>(location, coordinate);
+                Value guard = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq,
+                                                           loop.getInductionVar(), value);
+                if (mode >= 3) {
+                    Value predicate = function.getArgument(0);
+                    if (mode == 4 && record % 2) {
+                        auto yes = builder.create<arith::ConstantIntOp>(location, 1, 1);
+                        predicate = builder.create<arith::XOrIOp>(location, predicate, yes);
+                    }
+                    guard = builder.create<arith::AndIOp>(location, guard, predicate);
+                }
+                fs::EndpointFamily family;
+                family.id = record; family.sourcePipe = 4; family.targetPipe = target;
+                family.sourceCut = {cut->getBlock(), cut}; family.targetCut = family.sourceCut;
+                family.members.push_back({record, 0, 0, {{loop, coordinate}}, {{loop, coordinate}}});
+                plan.families.push_back(std::move(family));
+                for (auto kind : {fs::LogicalCommandKind::Set, fs::LogicalCommandKind::Wait}) {
+                    plan.endpoints.push_back({cut, kind, 4, target, name, guard, zero, {label},
+                                              {record}, static_cast<int64_t>(plan.endpoints.size())});
+                }
+            }
+            if (failed(fs::insertLogicalSynchronization(function, plan)) || failed(verify(*module))) { return false; }
+            unsigned sets = 0, waits = 0;
+            function.walk([&](pto::LogicalSetOp) { ++sets; });
+            function.walk([&](pto::LogicalWaitOp) { ++waits; });
+            const auto expected = mode == 0 || mode == 3 ? 1 : count;
+            if (sets != expected || waits != expected || plan.families.size() != count) { return false; }
+            unsigned coverage = 0;
+            for (const auto& endpoint : plan.endpoints) { coverage += endpoint.records.size(); }
+            if (coverage != 2 * count) { return false; }
+            auto trace = traceStructuredLogicalInsertion(function, {});
+            auto* events = trace.getArray("events");
+            const unsigned commands = mode == 4 ? count : 2 * count;
+            if (trace.getString("error") != "" || !events || events->size() != commands) { return false; }
+            for (unsigned i = 0; i < commands; ++i) {
+                auto* event = (*events)[i].getAsObject();
+                const bool publish = mode == 1 ? i < count : i % 2 == 0;
+                const auto record = mode == 1 ? i % count : (mode == 4 ? 2 : 1) * (i / 2);
+                auto* selected = event ? event->getArray("members") : nullptr;
+                if (!selected || selected->size() != 1 || (*selected)[0].getAsInteger() != record ||
+                    event->getString("kind") != (publish ? "set" : "wait")) { return false; }
+            }
+            if (mode == 3) {
+                function->setAttr("test.trace_arguments", builder.getDenseI64ArrayAttr({0}));
+                auto inactive = traceStructuredLogicalInsertion(function, {});
+                if (inactive.getString("error") != "" || !inactive.getArray("events")->empty()) { return false; }
+            }
+            loop.setUpperBound(zero);
+            auto empty = traceStructuredLogicalInsertion(function, {});
+            if (empty.getString("error") != "" || !empty.getArray("events")->empty()) { return false; }
+        }
+    }
+    return true;
+}
 LogicalResult sectionContextChecks(func::FuncOp function)
 {
     const auto before = render(function);
@@ -91,6 +176,7 @@ LogicalResult sectionContextChecks(func::FuncOp function)
 } // namespace
 LogicalResult runPreparedInsertionChecks(func::FuncOp function)
 {
+    if (!coalescingChecks(function.getContext())) { return function.emitError("endpoint coalescing changed coverage"); }
     if (fs::hasPhysicalSections(function)) { return sectionContextChecks(function); }
     SmallVector<Operation*> cuts;
     function.walk([&](Operation* op) {

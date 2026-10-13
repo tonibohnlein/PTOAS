@@ -961,3 +961,79 @@ Receipts are under
 `threshold-refinement-build`, `threshold-counter-build`,
 `delta-threshold-refinement`, and final commit checks. The separate device
 measurement handoff is kept outside the repository at the user's request.
+
+### Follow-up: compact executable command families (October 13)
+
+The device regression comparison separates synchronization order from the cost
+of issuing that order. The retained a166645 plans and the earlier plans have
+matching checked payload/command traces, while their emitted control code differs.
+The first physical-coordinate fix is committed as `d23568a8f`.
+
+The follow-up works at the common prepared-plan boundary. It coalesces consecutive
+singleton alternatives only when exact finite coordinates establish mutual
+exclusion, the matching tuple and direction agree, and the guards factor into
+explicit coordinate equalities and identical remaining predicates. The remaining
+predicates are opaque: no truth assumption, history reconstruction, or semantic
+equivalence search is performed. The shared family-expression builder then emits
+the coordinate-domain guard and original-record selector. Simultaneous commands,
+interleaved directions, differing predicates, and cleanup choices retain their
+separate sites. Every original record remains in the allocation certificate.
+
+Physical lowering uses the same palette helper for ordinary and tuple rules,
+including contiguous palettes. Fixed assignments in nested families can also
+compose directly with distinct original coordinates. ID selection normally stays
+inside its presence guard. A detached coordinate expression may be shared before
+the guard only when its inputs dominate the cut and its live arithmetic has at
+most eight operations, with no division or non-power-of-two remainder. Unused
+presence computations are removed from that detached expression first. This is a
+local hoisting policy, not a hardware latency model or an allocation budget.
+
+No ID assignment is changed. Comparing alternative feasible assignments by
+execution cost remains separate work. General irregular mappings do not acquire
+a constant-size representation from this change. The cycle-descendant splitting
+observation also remains a separate issue: the Persistent GEMM evidence located
+its expansion in singleton regional preparation, not that grouping routine.
+
+Validation includes independent interpreted command sequences for growing finite
+families, shared and differing predicates, overlapping coordinates, interleaved
+directions, and zero trips; flat and nested physical-coordinate tests include
+nonunit/sparse coordinates and noncontiguous IDs. The test interpreter reports
+arithmetic, select, and guard visits separately. These are MLIR interpretation
+counts, not device instruction counts: dead code, folding, and backend sharing
+must be accounted for before using them as a runtime estimate.
+
+The final same-backend C++ comparison against the retained a166645 artifacts is:
+
+| Kernel | a166645 lines | Follow-up lines |
+| --- | ---: | ---: |
+| TileLang GEMM | 2,974 | 529 |
+| PyPTO GEMM | 2,705 | 466 |
+| Persistent GEMM | 11,879 | 5,057 |
+
+Persistent GEMM's C++ `if` count falls from 2,847 to 611. Its logical preparation
+with allocation support takes 9.317 seconds in one diagnostic run; this is not a
+paired compiler-performance claim. Nine focused tests pass, including hardware
+protection, guarded publication, logical insertion, and allocation. Extended
+prepared-insertion tests independently check selected records and command order,
+including a shared predicate becoming false and differing predicates staying
+separate. The code-compliance prefilter's remaining brace findings are regex
+false positives on braced compound conditions; actual line-length findings were
+corrected. The C++17 assertions-enabled build succeeds with no new warnings.
+
+The final command traces retain identical payload events, synchronization events,
+and physical IDs on core 0 for both ordinary GEMMs and cores 0, 15, 16, 19 for
+Persistent GEMM. To fit the interpreter ceiling, trace copies remove only dead
+single-result arithmetic by SSA use counts; original payload operations and all
+commands remain intact. This is an audit normalization, not a production pass.
+On Persistent core 0, guard visits fall from 4,445,701 to 927,186 and select visits
+from 4,996,030 to 1,950,194. Arithmetic visits rise from 7,403,808 to 13,627,596.
+These counts still precede constant folding and backend optimization. They do
+not establish a total runtime-work reduction, and the smaller source does not
+establish recovered hardware latency. Device remeasurement and generated-machine
+code inspection remain necessary before declaring the performance regression
+closed. No physical reallocation or ordering repair is included.
+
+Local receipts: `.local/gemm-regression-20261013/final-family-validation.json`,
+`*-final-family.cpp`, `*-final-trace-*.json`, and
+`persistent-factored-logical.json`. The device-task document remains outside the
+repository.
