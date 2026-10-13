@@ -26,11 +26,15 @@ def fixed_source(source, outer, inner):
 def main():
     tool, optimizer, fixture = sys.argv[1:]
     source = Path(fixture).read_text()
-    cases = ((0, 3), (2, 0), (2, 2), (2, 3), (3, 4), (2, 5))
+    cases = ((0, 3, None), (2, 0, None), (2, 2, None), (2, 3, None),
+             (3, 4, None), (2, 5, None), (2, 3, 2), (3, 3, 2))
+    prepared = None
     with tempfile.TemporaryDirectory(prefix="finite-crossing-families-") as scratch:
         path = Path(scratch) / "case.pto"
-        for outer, inner in cases:
+        for outer, inner, outer_slots in cases:
             current = fixed_source(source, outer, inner)
+            if outer_slots:
+                current = current.replace("arith.remui %i, %two", "arith.remui %visit, %two")
             compiled = compile_profile(optimizer, current, False, True)
             if compiled.returncode:
                 raise RuntimeError(compiled.stderr)
@@ -39,12 +43,15 @@ def main():
             if count != 1:
                 raise RuntimeError("missing original invocation in compiled plan")
             path.write_text(traced)
-            check(json.loads(run(tool, "--structured-trace", path)), [outer, inner])
+            check(json.loads(run(tool, "--structured-trace", path)), [outer, inner], outer_slots=outer_slots)
+            if outer_slots is None:
+                _, control, _ = split_report(compiled.stderr)
+                prepared = control[0]
         # Production preparation, not a hand-constructed family test: the
         # original payload and both loop boundaries remain in the compiled IR.
-        _, control, _ = split_report(compiled.stderr)
-        prepared = control[0]
-        if prepared["stage"] != "prepared" or prepared["recipe_sites"] == 0:
+        # The outer-bank cases may select a different guarded producer; the
+        # regular finite fixture above owns the recipe-retention contract.
+        if prepared is None or prepared["stage"] != "prepared" or prepared["recipe_sites"] == 0:
             raise RuntimeError("finite regional families materialized before insertion")
     print(f"finite crossings: {len(cases)} independent closures and retained production recipes passed")
 

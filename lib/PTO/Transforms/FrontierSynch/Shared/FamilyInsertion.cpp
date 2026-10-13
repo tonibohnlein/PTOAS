@@ -15,7 +15,9 @@
 #include <map>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
-struct FamilyInvocationRecipe {
+enum class FamilyContextKind { Invocation, Activity };
+struct FamilyContextRecipe {
+    FamilyContextKind kind = FamilyContextKind::Invocation;
     std::shared_ptr<RegionExpressions> arena;
     std::map<Operation*, std::shared_ptr<const CutExpressionRecipe>> cuts;
 };
@@ -24,7 +26,7 @@ public:
     // A leaf owns a numerical endpoint plan. A composition references earlier
     // recipes and records namespace/placement transforms; append is constant work.
     std::shared_ptr<const FamilyEndpointRecipe> previous, child;
-    std::shared_ptr<const FamilyInvocationRecipe> invocation;
+    std::shared_ptr<const FamilyContextRecipe> context;
     uint32_t recordBase = 0, maximumRecord = 0;
     std::size_t endpointIndex = 0, maximumEndpointIndex = 0, pieceCount = 0;
     scf::ForOp outer;
@@ -250,24 +252,28 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> appendFamilyEndpointRecip
     recipe->child = std::move(child);
     return std::shared_ptr<const FamilyEndpointRecipe>(std::move(recipe));
 }
-FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> prefixFamilyInvocation(
+namespace {
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> bindFamilyContext(
     std::shared_ptr<const FamilyEndpointRecipe> child, std::shared_ptr<RegionExpressions> arena,
-    RegionExpressions::Id visit)
+    RegionExpressions::Id expression, FamilyContextKind kind)
 {
-    if (!child || !arena || visit >= arena->size() || arena->isBoolean(visit)) { return failure(); }
-    auto invocation = std::make_shared<FamilyInvocationRecipe>();
-    invocation->arena = std::move(arena);
+    if (!child || !arena || expression >= arena->size() ||
+        arena->isBoolean(expression) != (kind == FamilyContextKind::Activity)) { return failure(); }
+    auto context = std::make_shared<FamilyContextRecipe>();
+    context->kind = kind;
+    context->arena = std::move(arena);
     SmallVector<const FamilyEndpointRecipe*> pending{child.get()};
     while (!pending.empty()) {
         const auto* current = pending.pop_back_val();
         if (current->child) { pending.push_back(current->child.get()); }
         if (current->previous) { pending.push_back(current->previous.get()); }
         for (const auto& piece : current->pieces) {
-            if (piece.sourcePipe == piece.targetPipe || invocation->cuts.count(piece.cut.before)) { continue; }
-            RegionExpressions::CutEmission context;
-            auto prepared = invocation->arena->prepareContextual(visit, piece.cut.before, context);
+            if ((kind == FamilyContextKind::Invocation && piece.sourcePipe == piece.targetPipe) ||
+                context->cuts.count(piece.cut.before)) { continue; }
+            RegionExpressions::CutEmission emission;
+            auto prepared = context->arena->prepareContextual(expression, piece.cut.before, emission);
             if (failed(prepared)) { return failure(); }
-            invocation->cuts.emplace(piece.cut.before, std::move(*prepared));
+            context->cuts.emplace(piece.cut.before, std::move(*prepared));
         }
     }
     auto recipe = std::make_shared<FamilyEndpointRecipe>();
@@ -275,29 +281,53 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> prefixFamilyInvocation(
     recipe->maximumEndpointIndex = child->maximumEndpointIndex;
     recipe->pieceCount = child->pieceCount;
     recipe->child = std::move(child);
-    recipe->invocation = std::move(invocation);
+    recipe->context = std::move(context);
     return std::shared_ptr<const FamilyEndpointRecipe>(std::move(recipe));
 }
+} // namespace
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> prefixFamilyInvocation(
+    std::shared_ptr<const FamilyEndpointRecipe> child, std::shared_ptr<RegionExpressions> arena,
+    RegionExpressions::Id visit)
+{
+    return bindFamilyContext(std::move(child), std::move(arena), visit, FamilyContextKind::Invocation);
+}
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> maskFamilyActivity(
+    std::shared_ptr<const FamilyEndpointRecipe> child, std::shared_ptr<RegionExpressions> arena,
+    RegionExpressions::Id activity)
+{
+    return bindFamilyContext(std::move(child), std::move(arena), activity, FamilyContextKind::Activity);
+}
 namespace {
-struct InvocationPath {
-    const FamilyInvocationRecipe* recipe;
+struct FamilyContextPath {
+    const FamilyContextRecipe* recipe;
     std::size_t parent;
 };
-class InvocationLowering {
+class FamilyContextLowering {
 public:
-    explicit InvocationLowering(PreparedLogicalPlan& plan) : plan(plan) {}
-    LogicalResult prefix(PreparedLogicalEndpoint& endpoint, std::size_t path, ArrayRef<InvocationPath> paths)
+    explicit FamilyContextLowering(PreparedLogicalPlan& plan) : plan(plan) {}
+    LogicalResult apply(PreparedLogicalEndpoint& endpoint, std::size_t path, ArrayRef<FamilyContextPath> paths)
     {
-        if (endpoint.kind == LogicalCommandKind::Barrier) { return success(); }
-        if (endpoint.memberCoordinates.empty()) { return failure(); }
         // The innermost binding is visited first. Inserting at member one then
         // leaves enclosing invocation coordinates before their descendants.
         while (path != SIZE_MAX) {
             const auto& item = paths[path];
+            path = item.parent;
+            if (item.recipe->kind == FamilyContextKind::Invocation &&
+                endpoint.kind == LogicalCommandKind::Barrier) { continue; }
             auto value = lower(*item.recipe, endpoint.before);
             if (failed(value)) { return failure(); }
-            endpoint.memberCoordinates.insert(endpoint.memberCoordinates.begin() + 1, *value);
-            path = item.parent;
+            if (item.recipe->kind == FamilyContextKind::Invocation) {
+                if (endpoint.memberCoordinates.empty()) { return failure(); }
+                endpoint.memberCoordinates.insert(endpoint.memberCoordinates.begin() + 1, *value);
+            } else {
+                // The leaf guard can be in a later stage than the shared cut
+                // value. Append after both dependencies, never into that cache's block.
+                OpBuilder builder(endpoint.before->getContext());
+                builder.setInsertionPointToEnd(&plan.addPreparation(endpoint.before));
+                auto location = endpoint.before->getLoc();
+                auto no = builder.create<arith::ConstantIntOp>(location, 0, 1);
+                endpoint.guard = builder.create<arith::SelectOp>(location, *value, endpoint.guard, no);
+            }
         }
         return success();
     }
@@ -305,7 +335,7 @@ private:
     PreparedLogicalPlan& plan;
     std::map<Operation*, Block*> blocks;
     std::map<std::pair<RegionExpressions*, Operation*>, RegionExpressions::CutEmission> contexts;
-    FailureOr<Value> lower(const FamilyInvocationRecipe& recipe, Operation* cut)
+    FailureOr<Value> lower(const FamilyContextRecipe& recipe, Operation* cut)
     {
         auto found = recipe.cuts.find(cut);
         if (found == recipe.cuts.end()) { return failure(); }
@@ -328,24 +358,24 @@ LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, 
     struct Part {
         const FamilyEndpointRecipe* recipe;
         uint32_t recordBase;
-        std::size_t endpointIndex, invocation;
+        std::size_t endpointIndex, contextPath;
     };
     SmallVector<Part> pending{{&recipe, 0, 0, SIZE_MAX}}, leaves;
-    SmallVector<InvocationPath> invocations;
+    SmallVector<FamilyContextPath> contexts;
     // Preserve the original endpoint inventory order, including concrete
     // crossings between recipe contributions. No recursive host call stack.
     while (!pending.empty()) {
         auto part = pending.pop_back_val();
         if (part.recipe->child) {
-            auto path = part.invocation;
-            if (part.recipe->invocation) {
-                path = invocations.size();
-                invocations.push_back({part.recipe->invocation.get(), part.invocation});
+            auto path = part.contextPath;
+            if (part.recipe->context) {
+                path = contexts.size();
+                contexts.push_back({part.recipe->context.get(), part.contextPath});
             }
             pending.push_back({part.recipe->child.get(), part.recordBase + part.recipe->recordBase,
                                part.endpointIndex + part.recipe->endpointIndex, path});
             if (part.recipe->previous) {
-                pending.push_back({part.recipe->previous.get(), part.recordBase, part.endpointIndex, part.invocation});
+                pending.push_back({part.recipe->previous.get(), part.recordBase, part.endpointIndex, part.contextPath});
             }
         } else {
             if (!leaves.empty() && leaves.back().endpointIndex > part.endpointIndex) { return failure(); }
@@ -368,10 +398,10 @@ LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, 
             }
         }
     }
-    // Stage all lowering independently: unavailable invocation bindings must
+    // Stage all lowering independently: unavailable contextual bindings must
     // not consume the incumbent concrete inventory or partially lower a recipe.
     PreparedLogicalPlan lowered(prepared.planId);
-    InvocationLowering invocationLowering(lowered);
+    FamilyContextLowering contextLowering(lowered);
     std::size_t next = 0;
     for (const auto& part : leaves) {
         while (next < part.endpointIndex) { lowered.endpoints.push_back(prepared.endpoints[next++]); }
@@ -380,7 +410,7 @@ LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, 
             FamilyPreparer(*part.recipe, lowered, part.recordBase, namespaces).run();
         }
         for (std::size_t i = begin; i < lowered.endpoints.size(); ++i) {
-            if (failed(invocationLowering.prefix(lowered.endpoints[i], part.invocation, invocations))) {
+            if (failed(contextLowering.apply(lowered.endpoints[i], part.contextPath, contexts))) {
                 return failure();
             }
         }

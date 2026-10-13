@@ -36,6 +36,11 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> appendFamilyEndpointRecip
 FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> prefixFamilyInvocation(
     std::shared_ptr<const FamilyEndpointRecipe> child, std::shared_ptr<RegionExpressions> arena,
     RegionExpressions::Id visit);
+// Retain an exact activity mask through composition. Like invocation binding,
+// availability is established once per original cut; barriers are masked too.
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> maskFamilyActivity(
+    std::shared_ptr<const FamilyEndpointRecipe> child, std::shared_ptr<RegionExpressions> arena,
+    RegionExpressions::Id activity);
 // One namespace per direction/displacement, shared by concrete and delayed
 // sequence endpoints. Record provenance and member coordinates stay distinct.
 std::map<uint32_t, uint32_t> familyRecordNamespaces(ArrayRef<EndpointFamily> families);

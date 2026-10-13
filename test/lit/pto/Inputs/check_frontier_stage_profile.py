@@ -40,9 +40,13 @@ def split_report(stderr):
 
 
 def check_control(reports):
-    require([report["stage"] for report in reports] == ["prepared", "normalized", "inserted"],
+    require([report["stage"] for report in reports] == ["prepared", "materialized", "normalized", "inserted"],
             "missing control construction boundary")
-    prepared, normalized, inserted = reports
+    prepared, materialized, normalized, inserted = reports
+    require(materialized["record_members"] == prepared["record_members"], "materialization lost provenance")
+    require(materialized["recipe_sites"] == 0, "materialization retained deferred families")
+    require(materialized["endpoint_sites"] == prepared["endpoint_sites"] + prepared["recipe_sites"],
+            "materialization changed family command multiplicity")
     require(prepared["record_members"] == normalized["record_members"], "compaction lost provenance")
     require(normalized["endpoint_sites"] <= prepared["endpoint_sites"] + prepared["recipe_sites"],
             "compaction expanded sites")

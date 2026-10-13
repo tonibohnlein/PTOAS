@@ -25,7 +25,7 @@ exclusion evidence; they do not replace exact guards or matching identities.
 | M0: preparation ownership | Reproduce prefill failure; remap every affected non-SSA preparation reference before deletion; validate complementary cleanup and failure atomicity; replay prefill separately from the failing baseline. | Complete: `32b38b426` |
 | M1: measurement | Extend stage inventories with per-repeat lanes/extrema, candidate pairs/gaps, query construction, proof/cache work and actual traversal counts. Keep static records/sites distinct from dynamic commands and evaluated control. | Stage inventories and repeated-allocation work/traversal counters implemented; dynamic-control and complete ID-map inventories remain open |
 | M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans and attempt-owned relative queries implemented; economical candidate policy with parent retry remains open |
-| M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is planned before scalar lowering in `8a0a94536`; ordinary numerical sequence and repeated children retain recipes through composition; exact fixed-coordinate sequence crossings now form recipes before scalar preparation; guarded and relational crossing composition remains open |
+| M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is planned before scalar lowering in `8a0a94536`; ordinary numerical sequence and repeated children retain recipes through composition; exact fixed-coordinate sequence crossings now form recipes before scalar preparation; child activity masks retain those recipes through composition; guarded and relational crossing construction remains open |
 | M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; common nonconstant tuple terms compose before dispatch in `15f2007ea`; differing terms and early graph allocation remain open |
 | M5: session and capabilities | Retain facts, mathematics, recipes and allocation in one session; deterministic capability upgrades; common unified/split stage functions; self-contained versioned saved artifacts; delete redundant orchestration. | Pending |
 | M6: carryover and closure | Finish shared-fact and coarse-input integration, closed-child completion imports, guarded/relational rank transport and outstanding semantic oracles; run pinned eleven-kernel/corpus validation and report device results separately. | Eleven-kernel replay complete at `15f2007ea`; corpus, device, and interface closure remain open |
@@ -710,3 +710,56 @@ braced-control false positives; no new compiler warning is introduced.
 Local artifacts and manual self-review: `.local/family-pipeline-finite-crossing/`.
 This is an M3 slice. Guarded/relational crossings, early normalized-plan allocation,
 complete ID-map optimization, full pinned campaign and device validation remain open.
+
+
+## Deferred activity masks on compact family recipes
+
+Child site and invocation activity no longer force an otherwise deferred family
+through scalar materialization. The existing invocation-context recipe now also
+owns exact Boolean activity bindings. Both use the shared cut-expression planner
+and lower through one cut-local cache. Activity applies to same-pipe barriers as
+well as cross-pipe commands; invocation coordinates remain exclusive to matched
+handoffs. Exact masks are not inferred from necessary coordinate domains.
+
+Availability is checked at each original command cut before retaining the wrapper.
+Final materialization revalidates the binding transactionally. A rejected binding
+leaves the incumbent plan intact. Mask combinations occupy a stage after both the
+shared cut value and the endpoint guard, including when the guard belongs to a
+later leaf. This avoids a use-before-definition across detached preparation blocks.
+
+Compared with `9d0e2ca18`, Persistent GEMM changes as follows:
+
+| Quantity | Before | After |
+|---|---:|---:|
+| Concrete endpoints at root preparation | 128 | 56 |
+| Deferred family sites at root preparation | 0 | 72 |
+| Arithmetic at root preparation | 12,793 | 796 |
+| Arithmetic after materialization, before cleanup | 12,793 | 11,808 |
+| Normalized detached arithmetic | 3,865 | 3,865 |
+| Final SET / WAIT sites | 56 / 56 | 56 / 56 |
+
+The new `materialized` control-profile boundary is reported for direct plans
+between `prepared` and `normalized`. It exposes deferred work separately from
+eliminated work: the large preparation decrease is mainly postponement; total
+arithmetic constructed before cleanup falls by 985 operations. Final complete
+canonical output agrees with the pinned baseline and allocation still succeeds
+with six eligible IDs. The 1.905-second planning probe is diagnostic only, not a
+paired timing result or a demonstrated compiler/device speedup.
+
+Focused checks cover nested masks and invocation coordinates, barriers, arbitrary
+record labels, detached-stage dependencies, rejected bindings and transactional
+failure. Eight independently checked finite-loop closures include zero trips and
+outer-bank variants. The outer-bank variants can select another guarded producer;
+recipe retention is asserted separately on the regular finite fixture rather than
+assuming the same producer for every input.
+
+Eight focused suites pass, as do the 14 independent repeated-region closures.
+Prefill compiles in a 72.916-second diagnostic run and its complete canonical
+output agrees with the pinned baseline. Canonical comparisons reject changed
+comparison, command and scalar-operation negative controls. Six compliance
+matches are manually reviewed braced-control false positives.
+
+This extends M3 and its measurement boundary. Guarded/relational crossing
+construction, projection ownership, early normalized-plan allocation and the
+remaining full-pipeline milestones are unchanged. Local validation artifacts and
+manual self-review are in `.local/family-pipeline-masks/`.
