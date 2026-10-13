@@ -169,7 +169,8 @@ public:
     // Unknown means unsupported, not nonconstant. Visits only the root's operand
     // DAG; Boolean proofs also inspect the premise. Uses O(G^2) proof work in
     // their combined reachable size; no valuation search or arithmetic solver.
-    std::optional<uint64_t> constantUnder(Id premise, Id expression);
+    // Optional counter charges traversal steps, including repeated/shared visits.
+    std::optional<uint64_t> constantUnder(Id premise, Id expression, uint64_t* nodeVisits = nullptr);
     struct ThresholdProofCost {
         uint64_t dagVisits = 0, families = 0, cells = 0;
         uint64_t substitutionVisits = 0, proofRequests = 0;
@@ -184,7 +185,7 @@ public:
     // bounds on identical integer expressions. No arithmetic propagation, Boolean
     // search or SAT. A conjunction of A distinct obligations costs O(A*G)
     // for G DAG nodes; one obligation costs O(G). Does not grow the DAG.
-    bool implies(Id premise, Id consequence) const;
+    bool implies(Id premise, Id consequence, uint64_t* nodeVisits = nullptr) const;
     // Syntactic conjuncts implied by every nonfalse predicate. False predicates
     // impose no obligation. Comparisons and other Boolean formulas stay atoms;
     // this performs no valuation search or arithmetic reasoning.
@@ -238,8 +239,8 @@ private:
     struct Hash { std::size_t operator()(const Node& node) const; };
     enum class Truth : uint8_t { Unknown, False, True };
     Truth evaluateBoolean(const Node& node, const llvm::DenseMap<Id, Truth>& values) const;
-    bool refutesNegation(Id premise, Id consequence) const;
-    bool contradictoryConstantBounds(const llvm::DenseMap<Id, Truth>& bindings) const;
+    bool refutesNegation(Id premise, Id consequence, uint64_t* nodeVisits = nullptr) const;
+    bool contradictoryConstantBounds(const llvm::DenseMap<Id, Truth>& bindings, uint64_t* nodeVisits) const;
     Id intern(Node node);
     bool registerEvaluation(Id input, Evaluation evaluation);
     void appendOperands(const Node& node, SmallVectorImpl<Id>& operands) const;

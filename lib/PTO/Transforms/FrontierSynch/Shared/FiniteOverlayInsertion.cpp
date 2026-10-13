@@ -168,7 +168,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayLogicalInser
     if (!arena.constructionError().empty()) { error = arena.constructionError(); return failure(); }
     plan->allocationPreparation = [owned = std::make_shared<FiniteOverlayAnalysis>(analysis),
         baseView, overlayRecords = std::move(overlayRecords)](PreparedLogicalPlan& prepared) {
-        prepareAllocationSupport(*baseView);
+        prepareAllocationSupport(*baseView, prepared.allocationProfile);
         prepared.regionalAllocation = baseView->regionalAllocation;
         prepared.regionalAllocation = finiteOverlayAllocation(*owned, prepared, overlayRecords);
     };

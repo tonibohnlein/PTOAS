@@ -146,7 +146,7 @@ std::optional<uint64_t> RegionExpressions::constantValue(Id expression) const
     }
     return nodes[expression].literal;
 }
-std::optional<uint64_t> RegionExpressions::constantUnder(Id premise, Id expression)
+std::optional<uint64_t> RegionExpressions::constantUnder(Id premise, Id expression, uint64_t* nodeVisits)
 {
     if (!isBoolean(premise) || !valid(expression)) { return std::nullopt; }
     if (auto value = constantValue(expression)) { return value; }
@@ -156,6 +156,7 @@ std::optional<uint64_t> RegionExpressions::constantUnder(Id premise, Id expressi
     SmallVector<Id> pending{expression}, order;
     llvm::DenseSet<Id> seen;
     while (!pending.empty()) {
+        if (nodeVisits && *nodeVisits != UINT64_MAX) { ++*nodeVisits; }
         const auto next = pending.pop_back_val();
         if (!seen.insert(next).second) { continue; }
         order.push_back(next);
@@ -167,6 +168,7 @@ std::optional<uint64_t> RegionExpressions::constantUnder(Id premise, Id expressi
     llvm::DenseMap<Id, std::optional<uint64_t>> values;
     auto known = [&](Id id) { return id == invalid ? std::optional<uint64_t>() : values.lookup(id); };
     for (Id i : order) {
+        if (nodeVisits && *nodeVisits != UINT64_MAX) { ++*nodeVisits; }
         const auto node = nodes[i]; // Boolean negations below may grow nodes.
         const auto left = known(node.a), right = known(node.b);
         std::optional<uint64_t> value;
@@ -182,8 +184,8 @@ std::optional<uint64_t> RegionExpressions::constantUnder(Id premise, Id expressi
             value = fold(node.kind, *left, *right);
         }
         if (!value && node.boolean) {
-            if (refutesNegation(premise, i)) { value = 1; }
-            else if (refutesNegation(premise, lnot(i))) { value = 0; }
+            if (refutesNegation(premise, i, nodeVisits)) { value = 1; }
+            else if (refutesNegation(premise, lnot(i), nodeVisits)) { value = 0; }
         }
         values.try_emplace(i, value);
     }
@@ -218,7 +220,8 @@ RegionExpressions::Truth RegionExpressions::evaluateBoolean(
         default: return Truth::Unknown;
     }
 }
-bool RegionExpressions::contradictoryConstantBounds(const llvm::DenseMap<Id, Truth>& bindings) const
+bool RegionExpressions::contradictoryConstantBounds(
+    const llvm::DenseMap<Id, Truth>& bindings, uint64_t* nodeVisits) const
 {
     struct Range {
         uint64_t lower = 0, upper = UINT64_MAX;
@@ -226,6 +229,7 @@ bool RegionExpressions::contradictoryConstantBounds(const llvm::DenseMap<Id, Tru
     };
     llvm::DenseMap<Id, Range> ranges;
     for (const auto& binding : bindings) {
+        if (nodeVisits && *nodeVisits != UINT64_MAX) { ++*nodeVisits; }
         const auto& node = nodes[binding.first];
         if (node.kind != Kind::Eq && node.kind != Kind::Lt && node.kind != Kind::Le) { continue; }
         const auto a = constantValue(node.a), b = constantValue(node.b);
@@ -263,6 +267,7 @@ bool RegionExpressions::contradictoryConstantBounds(const llvm::DenseMap<Id, Tru
         if (range.lower > range.upper) { return true; }
     }
     for (const auto& entry : ranges) {
+        if (nodeVisits && *nodeVisits != UINT64_MAX) { ++*nodeVisits; }
         const auto& range = entry.second;
         if (range.lower == range.upper && llvm::is_contained(range.excluded, range.lower)) { return true; }
     }
@@ -270,7 +275,7 @@ bool RegionExpressions::contradictoryConstantBounds(const llvm::DenseMap<Id, Tru
     // through add/sub, whose modular wrap invalidates natural-number reasoning.
     return false;
 }
-bool RegionExpressions::refutesNegation(Id premise, Id consequence) const
+bool RegionExpressions::refutesNegation(Id premise, Id consequence, uint64_t* nodeVisits) const
 {
     // These bindings are necessary if premise AND NOT consequence holds.
     // Propagate only forced facts, never choose a Boolean valuation. Unsigned
@@ -279,6 +284,7 @@ bool RegionExpressions::refutesNegation(Id premise, Id consequence) const
     llvm::DenseMap<Id, Truth> bindings;
     SmallVector<std::pair<Id, Truth>> pending{{premise, Truth::True}, {consequence, Truth::False}};
     while (!pending.empty()) {
+        if (nodeVisits && *nodeVisits != UINT64_MAX) { ++*nodeVisits; }
         const auto [id, required] = pending.pop_back_val();
         auto [entry, added] = bindings.try_emplace(id, required);
         if (!added) {
@@ -309,7 +315,7 @@ bool RegionExpressions::refutesNegation(Id premise, Id consequence) const
             }
         }
     }
-    if (contradictoryConstantBounds(bindings)) { return true; }
+    if (contradictoryConstantBounds(bindings, nodeVisits)) { return true; }
     // Only Boolean ancestors of the two formulas can contribute to this
     // proof. Other region queries share the arena but are irrelevant here.
     // A postorder walk visits shared gates once; comparisons remain atoms.
@@ -317,6 +323,7 @@ bool RegionExpressions::refutesNegation(Id premise, Id consequence) const
     SmallVector<Id> order;
     llvm::DenseSet<Id> seen;
     while (!walk.empty()) {
+        if (nodeVisits && *nodeVisits != UINT64_MAX) { ++*nodeVisits; }
         const auto [id, expanded] = walk.pop_back_val();
         if (expanded) { order.push_back(id); continue; }
         if (!seen.insert(id).second) { continue; }
@@ -328,6 +335,7 @@ bool RegionExpressions::refutesNegation(Id premise, Id consequence) const
     }
     llvm::DenseMap<Id, Truth> values;
     for (Id id : order) {
+        if (nodeVisits && *nodeVisits != UINT64_MAX) { ++*nodeVisits; }
         const auto evaluated = evaluateBoolean(nodes[id], values);
         const auto required = bindings.lookup(id);
         if (required != Truth::Unknown && evaluated != Truth::Unknown && required != evaluated) {
@@ -337,18 +345,19 @@ bool RegionExpressions::refutesNegation(Id premise, Id consequence) const
     }
     return false;
 }
-bool RegionExpressions::implies(Id premise, Id consequence) const
+bool RegionExpressions::implies(Id premise, Id consequence, uint64_t* nodeVisits) const
 {
     if (!isBoolean(premise) || !isBoolean(consequence)) { return false; }
     SmallVector<Id> pending{consequence};
     llvm::DenseSet<Id> seen;
     while (!pending.empty()) {
+        if (nodeVisits && *nodeVisits != UINT64_MAX) { ++*nodeVisits; }
         Id next = pending.pop_back_val();
         if (!seen.insert(next).second) { continue; }
         if (nodes[next].kind == Kind::And) {
             pending.push_back(nodes[next].a);
             pending.push_back(nodes[next].b);
-        } else if (!refutesNegation(premise, next)) {
+        } else if (!refutesNegation(premise, next, nodeVisits)) {
             return false;
         }
     }

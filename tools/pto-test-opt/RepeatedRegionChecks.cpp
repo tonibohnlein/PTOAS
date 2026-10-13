@@ -12,6 +12,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RepeatedRegionInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RepeatedAllocation.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/OccurrenceBinding.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RepeatedLaneAllocation.h"
 #include <map>
 #include <set>
@@ -439,6 +440,117 @@ bool allocationCheck(func::FuncOp function, Operation* anchor, scf::ForOp loop,
     }
     return recordsSeen.size() == specs.size() && e.error().empty();
 }
+// Compare extrema with direct enumeration of active original occurrences.
+// Scrambled provenance does not affect order; a shuffled endpoint inventory
+// exercises coordinate sorting; conditional order exercises the fallback,
+// and mixed directions retain every bound.
+bool checkOrderedExtrema(func::FuncOp function, unsigned count, bool shuffle, bool mixed, bool conditional = false)
+{
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto& e = *arena;
+    const auto input = e.input(function.getArgument(0)), zero = e.constant(0), yes = e.boolean(true);
+    fs::RegionalAnalysis body;
+    body.expressions = arena;
+    body.anchors.resize(2 * count);
+    body.occurrenceLoops.resize(2 * count);
+    body.presence = [yes](fs::RegionalEvent) { return std::optional(yes); };
+    if (conditional) {
+        const auto reversed = e.eq(e.rem(input, e.constant(2)), e.constant(1));
+        body.referenceBefore = [&e, reversed](fs::RegionalEvent a, fs::RegionalEvent b) {
+            return std::optional(e.select(reversed, e.boolean(a.type > b.type), e.boolean(a.type < b.type)));
+        };
+    }
+    fs::RegionalAllocationGroup group{1, 2, 1, {}};
+    for (unsigned i = 0; i < count; ++i) {
+        // Repeating eight independently selectable guards keeps long fixtures
+        // compact, while allowing every combination in the small oracle.
+        auto active = e.eq(e.rem(e.div(input, e.constant(uint64_t(1) << (i % 8))), e.constant(2)), e.constant(1));
+        fs::RegionalAllocationMember member{count - i, 0, 0,
+            {2 * i, zero, fs::PeriodicEventKind::Start},
+            {2 * i + 1, zero, fs::PeriodicEventKind::Completion}, active};
+        if (mixed && i % 2) { member.sourcePipe = 2; member.targetPipe = 1; }
+        group.members.push_back(std::move(member));
+    }
+    if (shuffle) { std::reverse(group.members.begin(), group.members.end()); }
+    fs::RepeatedExtremaCost cost;
+    const auto initialSize = e.size();
+    auto result = fs::repeatedAllocationExtrema(body, group, &cost);
+    if (!result || cost.candidates != count) { return false; }
+    if (!conditional && !shuffle && !mixed &&
+        (cost.orderedLists != 2 || cost.comparisons != 2 * (count ? count - 1 : 0) ||
+         e.size() - initialSize > 8 * count + 2)) { return false; }
+    if (shuffle && !conditional && !mixed && cost.orderedLists != 2) { return false; }
+    for (unsigned mask = 0; mask < 256; ++mask) {
+        std::set<unsigned> expected;
+        for (unsigned i = 0; i < count; ++i) {
+            if (mask & (1U << (i % 8))) { expected.insert(i); }
+        }
+        fs::RegionExpressions::Transaction transaction(e);
+        fs::RegionExpressions::Substitution bindings({{input, e.constant(mask)}});
+        auto selected = [&](const auto& selectors) -> std::optional<std::set<unsigned>> {
+            std::set<unsigned> active;
+            for (const auto& selector : selectors) {
+                auto present = e.constantValue(e.substitute(selector.present, bindings));
+                if (!present) { return std::nullopt; }
+                if (*present) { active.insert(selector.event.type / 2); }
+            }
+            return active;
+        };
+        auto first = selected(result->first), last = selected(result->second);
+        auto expectedFirst = expected, expectedLast = expected;
+        if (!mixed && !expected.empty()) {
+            expectedFirst = {*expected.begin()}; expectedLast = {*expected.rbegin()};
+            if (conditional && mask % 2) { std::swap(expectedFirst, expectedLast); }
+        }
+        if (first != std::optional(expectedFirst) || last != std::optional(expectedLast)) { return false; }
+    }
+    return true;
+}
+// Evaluate the shared binding against original coordinates, including a
+// quotient outer frame and a fixed anchor coordinate. Neither the site guard
+// nor invocation activity belongs to this coordinate-only interpretation.
+bool checkOccurrenceBinding(func::FuncOp function, scf::ForOp outer, scf::ForOp inner)
+{
+    fs::RegionalAnalysis region;
+    region.expressions = std::make_shared<fs::RegionExpressions>();
+    auto& e = *region.expressions;
+    region.anchors.resize(1);
+    region.anchors[0].coordinates.push_back({inner, 2});
+    region.occurrenceLoops = {inner};
+    region.outerLoops = {{outer}};
+    region.outerDivisors = {{2}};
+    const auto condition = e.input(function.getArgument(1));
+    region.endpointEventGuard = [condition](auto) { return std::optional(condition); };
+    region.endpointSiteGuard = e.boolean(false);
+    region.endpointInvocationGuard = e.boolean(false);
+    fs::RegionalEvent event{0, e.constant(2), fs::PeriodicEventKind::Start, {e.constant(1)}};
+    std::string error;
+    auto constraints = fs::regionalOccurrenceConstraints(region, event, error);
+    if (failed(constraints) || constraints->size() != 4) { return false; }
+    auto guard = e.boolean(true);
+    for (auto value : *constraints) { guard = e.land(guard, value); }
+    const auto outerInput = e.input(outer.getInductionVar()), innerInput = e.input(inner.getInductionVar());
+    for (uint64_t i = 0; i < 5; ++i) {
+        for (uint64_t j = 0; j < 4; ++j) { for (bool enabled : {false, true}) {
+            fs::RegionExpressions::Transaction transaction(e);
+            fs::RegionExpressions::Substitution bindings({{outerInput, e.constant(i)},
+                {innerInput, e.constant(j)}, {condition, e.boolean(enabled)}});
+            auto actual = e.constantValue(e.substitute(guard, bindings));
+            if (actual != std::optional<uint64_t>(enabled && i / 2 == 1 && j == 2)) { return false; }
+        } }
+    }
+    region.outerDivisors[0][0] = 0;
+    if (succeeded(fs::regionalOccurrenceConstraints(region, event, error))) { return false; }
+    region.outerDivisors[0][0] = 2;
+    auto missingVisit = event; missingVisit.visits.clear();
+    if (succeeded(fs::regionalOccurrenceConstraints(region, missingVisit, error))) { return false; }
+    region.anchors[0].coordinates[0].loop = {};
+    if (succeeded(fs::regionalOccurrenceConstraints(region, event, error))) { return false; }
+    region.anchors[0].coordinates.clear();
+    region.endpointEventGuard = [](auto) { return std::optional(fs::RegionExpressions::invalid); };
+    return failed(fs::regionalOccurrenceConstraints(region, event, error)) &&
+        !fs::originalLoopOrdinal(e, {}) && !fs::originalLoopOrdinal(e, inner, 0);
+}
 // An invariant unknown return edge cannot certify reuse within any of six
 // gaps. Its repeated unknown/false proof requests must share work within one
 // call, while a second attempt after rollback must perform its own proofs.
@@ -483,12 +595,28 @@ bool checkReuseProofIsolation(func::FuncOp function, Operation* anchor, scf::For
             fs::RegionalAllocationSummary input;
             input.groups.push_back({static_cast<uint32_t>(phases[0].kPipeValue),
                                     static_cast<uint32_t>(phases[1].kPipeValue), 1, {member}});
+            auto duplicate = input.groups.front();
+            duplicate.members.front().record = 1;
+            input.groups.push_back(std::move(duplicate));
             fs::RepeatedLaneProofCost cost;
             if (fs::periodicLaneAllocation(state, input, {}, &cost) ||
                 !cost.implicationComputations || cost.implicationComputations >= cost.implicationRequests ||
-                cost.constantComputations != 3 || cost.constantComputations >= cost.constantRequests) { return false; }
+                cost.constantComputations != 3 || cost.constantComputations >= cost.constantRequests ||
+                !cost.relativeComputations || cost.relativeComputations >= cost.relativeQueries ||
+                !cost.proofNodeVisits) { return false; }
             // Exactly the true, false, and unknown-gate consequences are
             // specialized under true. Repeated unknown results are cached too.
+            state.weightedAcross = [](const auto&, const auto&, auto) {
+                return std::optional<fs::RegionExpressions::Id>();
+            };
+            fs::RepeatedLaneProofCost unavailable;
+            if (fs::periodicLaneAllocation(state, input, {}, &unavailable) ||
+                !unavailable.relativeComputations || unavailable.relativeComputations >= unavailable.relativeQueries) {
+                return false;
+            }
+            uint64_t saturated = UINT64_MAX;
+            if (!e.implies(yes, yes, &saturated) || e.constantUnder(yes, gate, &saturated) ||
+                saturated != UINT64_MAX) { return false; }
         }
         if (e.size() != initialSize) { return false; }
     }
@@ -512,7 +640,14 @@ bool runRepeatedRegionChecks(func::FuncOp function)
     if (function.getNumArguments() < 2 || !function.getArgument(1).getType().isInteger(1) ||
         !check(function, anchor, outer, inner, 2, 3, 7, checked, true) ||
         !check(function, anchor, outer, inner, 2, 3, 3, checked, true)) { return false; }
-    if (!checkReuseProofIsolation(function, anchor, inner)) { return false; }
+    if (!checkOccurrenceBinding(function, outer, inner) ||
+        !checkReuseProofIsolation(function, anchor, inner)) { return false; }
+    for (unsigned count : {0U, 1U, 8U, 128U}) {
+        if (!checkOrderedExtrema(function, count, false, false)) { return false; }
+    }
+    if (!checkOrderedExtrema(function, 8, true, false) ||
+        !checkOrderedExtrema(function, 8, false, true) ||
+        !checkOrderedExtrema(function, 8, false, false, true)) { return false; }
     uint64_t allocations = 0;
     fs::RepeatedLaneProofCost proofCost;
     for (unsigned q = 1; q <= 3; ++q) {

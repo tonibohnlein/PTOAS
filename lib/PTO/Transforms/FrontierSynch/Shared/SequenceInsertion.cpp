@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
+#include "OccurrenceBinding.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
 #include "PTO/Transforms/FrontierSynch/Shared/GuardedPublication.h"
@@ -207,36 +208,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         if (child.regional.endpointSiteGuard) {
             guard = expressions.select(guard, *child.regional.endpointSiteGuard, no());
         }
-        if (child.regional.endpointEventGuard) {
-            auto value = child.regional.endpointEventGuard(point.event());
-            if (!value) { fail("regional phase endpoint predicate unavailable"); return no(); }
-            guard = expressions.select(guard, *value, no());
-        }
-        const auto& anchor = child.anchors[point.type];
-        auto loop = child.regional.occurrenceLoops[point.type];
-        if (loop) {
-            auto ordinal = expressions.div(expressions.sub(expressions.input(loop.getInductionVar()),
-                expressions.input(loop.getLowerBound())), c(*sequenceInteger(loop.getStep())));
-            guard = expressions.select(guard, expressions.eq(ordinal, point.ordinal), no());
-        }
-        if (!child.regional.outerLoops.empty()) {
-            const auto& loops = child.regional.outerLoops[point.type];
-            for (std::size_t i = 0; i < loops.size(); ++i) {
-                auto coordinate = loops[i];
-                auto step = sequenceInteger(coordinate.getStep());
-                if (!step || *step <= 0) { fail("nested endpoint requires a constant positive step"); return no(); }
-                auto ordinal = expressions.div(expressions.sub(expressions.input(coordinate.getInductionVar()),
-                    expressions.input(coordinate.getLowerBound())), c(*step));
-                if (!child.regional.outerDivisors.empty()) {
-                    ordinal = expressions.div(ordinal, c(child.regional.outerDivisors[point.type][i]));
-                }
-                guard = expressions.select(guard, expressions.eq(ordinal, point.visits[i]), no());
-            }
-        }
-        for (auto coordinate : anchor.coordinates) {
-            guard = expressions.select(guard, expressions.eq(expressions.input(coordinate.loop.getInductionVar()),
-                                               c(coordinate.induction)), no());
-        }
+        std::string error;
+        auto conditions = regionalOccurrenceConstraints(child.regional, point.event(), error);
+        if (failed(conditions)) { fail(error); return no(); }
+        for (auto condition : *conditions) { guard = expressions.select(guard, condition, no()); }
         return guard;
     };
     struct SharedPreparation {
@@ -424,7 +399,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         auto summary = std::make_shared<RegionalAllocationSummary>();
         for (std::size_t i = 0; i < allocationChildren.size(); ++i) {
             const auto& child = allocationChildren[i];
-            prepareAllocationSupport(*child.view);
+            prepareAllocationSupport(*child.view, plan.allocationProfile);
             auto allocation = child.view->regionalAllocation;
             if (!allocation) { allocation = finiteRegionalAllocation(owner->children[i].regional, *child.view); }
             if (!allocation) { return; }

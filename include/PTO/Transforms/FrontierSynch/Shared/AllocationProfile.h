@@ -50,6 +50,21 @@ public:
     }
     AllocationProfile(const AllocationProfile&) = delete;
     AllocationProfile& operator=(const AllocationProfile&) = delete;
+    bool enabled() const { return ledger && ledger->profiling; }
+    void recordWork(std::string method, std::vector<std::pair<std::string, uint64_t>> work)
+    {
+        if (!enabled() || ledger->activeStages.empty()) { return; }
+        const auto parent = ledger->stages[ledger->activeStages.back()];
+        AnalysisStageRecord record;
+        record.id = ledger->stages.size() + 1;
+        record.parent = parent.id;
+        record.request = record.parentRequest = parent.request;
+        record.region = parent.region;
+        record.stage = "repeated-allocation-work";
+        record.method = std::move(method);
+        record.work = std::move(work);
+        ledger->stages.push_back(std::move(record));
+    }
     void visited(Stage stage)
     {
         if (enabled()) {
@@ -107,7 +122,6 @@ public:
     };
 
 private:
-    bool enabled() const { return ledger && ledger->profiling; }
     struct Bucket {
         uint64_t nanoseconds = 0, calls = 0, hits = 0, misses = 0;
     };

@@ -25,6 +25,7 @@
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/Support/SaveAndRestore.h"
 #include <map>
 #include <set>
 #include <tuple>
@@ -37,11 +38,12 @@ void retainEndpointCoordinates(PreparedLogicalEndpoint& endpoint, ArrayRef<Templ
     for (auto coordinate : coordinates) { box.push_back({coordinate.loop.getInductionVar(), 0, coordinate.induction}); }
     endpoint.domain.push_back(std::move(box));
 }
-void prepareAllocationSupport(PreparedLogicalPlan& plan)
+void prepareAllocationSupport(PreparedLogicalPlan& plan, AllocationProfile* profile)
 {
     if (plan.privateState || plan.completionOwner) { return; }
     auto prepare = std::move(plan.allocationPreparation);
     plan.allocationPreparation = {};
+    llvm::SaveAndRestore<AllocationProfile*> profiling(plan.allocationProfile, profile);
     if (prepare) { prepare(plan); }
 }
 LogicalResult materializeLogicalFamilies(PreparedLogicalPlan& plan)

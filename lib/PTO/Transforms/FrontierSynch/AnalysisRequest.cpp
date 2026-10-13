@@ -665,7 +665,7 @@ LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, 
     auto* allocationProfile = &allocationWork;
     {
         AllocationProfile::Scope summary(allocationProfile, AllocationProfile::Summary);
-        prepareAllocationSupport(plan);
+        prepareAllocationSupport(plan, allocationProfile);
     }
     if (cached == attempt.allocation.end()) {
         profile.constructed();

@@ -10,8 +10,14 @@
 #include "RepeatedAllocation.h"
 namespace mlir::pto::frontiersynch {
 struct RepeatedLaneProofCost {
+    RepeatedExtremaCost extrema;
     uint64_t implicationRequests = 0, implicationComputations = 0;
     uint64_t constantRequests = 0, constantComputations = 0;
+    uint64_t proofNodeVisits = 0, relativeQueries = 0, relativeComputations = 0;
+    uint64_t proofNanoseconds = 0, relativeNanoseconds = 0;
+    uint64_t lanes = 0, firstAlternatives = 0, lastAlternatives = 0;
+    uint64_t matrixPairs = 0, candidateGaps = 0, boundaryPairs = 0;
+    uint64_t partitionAttempts = 0, partitionMatrixEntries = 0;
 };
 // Allocate certified unit child lanes and boundary handoffs as a periodic word.
 // Only proved uniform reuse edges are admitted. Failure is an unavailable

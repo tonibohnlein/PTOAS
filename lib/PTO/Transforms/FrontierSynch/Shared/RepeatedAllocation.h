@@ -10,9 +10,13 @@
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 namespace mlir::pto::frontiersynch {
 struct RepeatedRegionState;
+class AllocationProfile;
+struct RepeatedExtremaCost {
+    uint64_t candidates = 0, comparisons = 0, orderedLists = 0;
+};
 using RepeatedAllocationExtrema = std::pair<std::vector<RegionalSelector>, std::vector<RegionalSelector>>;
 std::optional<RepeatedAllocationExtrema> repeatedAllocationExtrema(
-    const RegionalAnalysis& body, const RegionalAllocationGroup& group);
+    const RegionalAnalysis& body, const RegionalAllocationGroup& group, RepeatedExtremaCost* cost = nullptr);
 // Restricting a finite invocation must preserve the complete internal chain,
 // or the member must certify one handoff whose paired endpoints are clipped.
 bool canRestrictRepeatedAllocationMember(RepeatedRegionState& state, const RegionalAllocationMember& member);
@@ -26,6 +30,6 @@ std::vector<RegionalAllocationGroup> constantAllocationLanes(const RegionalAlloc
 // the logical plan requires more physical IDs.
 std::shared_ptr<RegionalAllocationSummary> repeatedRegionalAllocation(
     RepeatedRegionState& state, const RegionalAllocationSummary& child,
-    ArrayRef<std::pair<uint32_t, std::size_t>> crossings);
+    ArrayRef<std::pair<uint32_t, std::size_t>> crossings, AllocationProfile* profile = nullptr);
 } // namespace mlir::pto::frontiersynch
 #endif

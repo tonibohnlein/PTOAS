@@ -340,9 +340,38 @@ timings do not include subsequent IR attachment, physical-ID lowering,
 C++ emission, or device execution. External campaign receipts measure complete
 process elapsed time and peak RSS separately.
 
+Repeated allocation additionally publishes one `repeated-allocation-work`
+inventory per invocation of its regional exporter, with the original loop
+location and owning request. Counts distinguish lane/endpoint alternatives,
+extrema comparisons, lane-pair matrix cells, tested repeat gaps, relative-query
+requests/constructions, proof requests/computations, proof traversal steps, and
+partition submatrix construction. Traversals count repeated visits, not only
+distinct DAG nodes. Relative-query and proof nanoseconds describe cache-miss
+work; the inventory's `work.elapsed_ns` includes the whole repeated export.
+These diagnostic durations overlap the enclosing allocation-summary timing and
+are not added to stage totals. Logical-only requests construct no such support.
+The query/proof counters cover the lane-sharing attempt, including failures;
+coalescing and the independent-lift fallback remain in the enclosing elapsed
+time but do not yet contribute query/proof counters.
+
+Ordered extrema retain original coordinates and share first-present/last-present
+prefix/suffix guards after certifying strict reference order. Mixed-direction
+bounds and unresolved order keep the general representation. Relative-query
+reuse is local to one repeated allocation on one unchanged graph and append-only
+arena, including false and unavailable answers; it never survives rollback or
+an enclosing invocation change.
+
 Outcomes retain the session diagnostic ledger and request identity instead of
 copying cumulative estimate history. `costRecords()` explicitly materializes a
 report snapshot. Contract-audit refreshes in a session mark the report dirty in
 constant work; `result()` publishes it once at a reporting boundary. Reacquire
 `result()` after a mutating analysis request before reading its audit. Standalone
 program recognition keeps its eager audit behavior.
+
+
+Original occurrence coordinates are bound in `Shared/OccurrenceBinding.h`,
+implemented by `RegionalEvents.cpp`. Direct sequence, prefix and repeated
+preparation share the same exact coordinate tests and original loop ordinal
+normalization. This interface returns arena expressions without generated SSA;
+activity, availability and publication protocols remain caller-owned. Necessary
+endpoint scheduling domains are a separate, one-way exclusion abstraction.

@@ -23,18 +23,49 @@ exclusion evidence; they do not replace exact guards or matching identities.
 | Milestone | Work and acceptance | Current status |
 |---|---|---|
 | M0: preparation ownership | Reproduce prefill failure; remap every affected non-SSA preparation reference before deletion; validate complementary cleanup and failure atomicity; replay prefill separately from the failing baseline. | Complete: `32b38b426` |
-| M1: measurement | Count records, initial/normalized families, legacy singleton preparation, proof traversal, prepared/live generated arithmetic, command sites, state, and ID mappings; preserve profiling equivalence and pinned receipts. | Stage inventories implemented in `f8917325d`; proof-work and ID-map inventories remain open |
-| M2: family construction | Separate family construction from materialization using existing family types; migrate numerical, sequence, and repeated-crossing producers; retain known modular maps; remove migrated singleton arithmetic paths. | Numerical/rotating root recipes migrated in `a2ae91269`; regional and repeated crossings remain open |
-| M3: occurrence binding | Share identity, frame, availability, capture, history and reset interpretation between direct/prefix protocols; migrate numerical and guarded producers; transform or invalidate recipes with their coordinates. Validate Delta matching/order and control growth, not only logical acceptance. | Pending |
-| M4: allocation | Allocate the normalized command graph; return reuse evidence and complete ID-map recipes; request stronger evidence when needed; keep expensive dispatch conditional; preserve exact-order six-ID failures when unproved. | Pending |
+| M1: measurement | Extend stage inventories with per-repeat lanes/extrema, candidate pairs/gaps, query construction, proof/cache work and actual traversal counts. Keep static records/sites distinct from dynamic commands and evaluated control. | Stage inventories and repeated-allocation work/traversal counters implemented; dynamic-control and complete ID-map inventories remain open |
+| M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans and attempt-owned relative queries implemented; economical candidate policy with parent retry remains open |
+| M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding implemented; early regional/repeated family construction and availability planning remain open |
+| M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; early composition and nonconstant tuple extension pending |
 | M5: session and capabilities | Retain facts, mathematics, recipes and allocation in one session; deterministic capability upgrades; common unified/split stage functions; self-contained versioned saved artifacts; delete redundant orchestration. | Pending |
-| M6: carryover and closure | Finish shared-fact and coarse-input integration, closed-child completion imports, relational rank transport and outstanding semantic oracles; run pinned eleven-kernel/corpus validation and report device results separately. | Pending |
+| M6: carryover and closure | Finish shared-fact and coarse-input integration, closed-child completion imports, guarded/relational rank transport and outstanding semantic oracles; run pinned eleven-kernel/corpus validation and report device results separately. | Pending |
 
-Each milestone requires focused tests, correctness/architecture review, and a
-separate reviewable commit. Infrastructure does not complete a production
+Each milestone proceeds through focused, separately reviewable changes with
+regressions and correctness/architecture review. Infrastructure does not complete a production
 migration. A migrated producer must use the shared path and remove its redundant
 preparation implementation. The late compactor remains only for explicitly
 unmigrated producers.
+
+## Refinement: fixed-demand control compilation
+
+Minimum demands and maximum concurrency are hard requirements. The secondary
+objective reduces construction and executable-control work while preserving
+active communications, matching, cuts, coactive command order and invocation
+behavior. Physical IDs may change only under an independently valid certificate.
+This does not introduce command aggregation protocols or added-order repair.
+
+Persistent's banking periods, demand translation structure and certified ID
+periods are separate objects. Preserve the existing nested structure and boundary
+cases; do not infer a universal period two. Regular extrema may use shared
+first-present/last-present scans only under certified reference order. Mixed
+completion directions retain every bound needed for causal reuse. Unresolved
+order keeps the general guarded representation.
+
+A cheap repeated assignment is usable only when the combined request fits,
+including crossings and reservations. Preserve access to stronger sharing when
+a locally feasible child assignment prevents its parent from fitting. Buffer
+parity, storage extrema and emitted-WAIT counts are not reuse certificates.
+
+Regional migration first separates availability planning from materialization:
+publication, acquisition and cleanup must be settled before allocation. Existing
+recipes retain child references and coordinate transformations. Exact activity
+remains distinct from necessary exclusion evidence. Complete finite-domain
+checking may compact supplied points; it does not justify extrapolation.
+
+Extend complete-map normalization within the existing small candidate policy.
+Missing optimization proofs retain the incumbent. Liveness includes cleanup,
+state and immutable non-SSA evidence, not only SSA command operands. No new
+solver, admission cutoff, work budget or public pass is introduced.
 
 ## Interfaces and ownership
 
@@ -133,7 +164,7 @@ The 9.015-second diagnostic run is not a paired compiler-time result. Receipts
 are `.local/family-pipeline-m0/persistent-control.{json,out,err}`. Traversal,
 dynamic-control, and complete ID-map metrics remain outstanding.
 
-## M2 numerical/rotating migration
+## Earlier numerical/rotating migration (now M3)
 
 `a2ae91269` splits the existing numerical family construction from scalar
 materialization. The opaque immutable recipes retain validated coordinate maps,
@@ -166,7 +197,7 @@ flattening associative Boolean ANDs proves equality at all 5,443 uses outside
 those AND chains, and all other lines agree. Receipts, source/binary hashes and
 comparison results are under `.local/family-pipeline-m2/`.
 
-This is the first M2 production migration, not completion of the milestone.
+This is the first production family migration, not completion of M3.
 Sequence and repeated crossings still prepare individual alternatives. The late
 compactor still runs, physical-ID expressions are still lowered in the separate
 allocation pass, and producers do not yet export all known symbolic maps
@@ -174,3 +205,99 @@ directly. No planning-speedup or device-speedup claim follows from this change.
 The next migration must preserve availability and direct/cleanup protocol
 selection before allocation while removing the corresponding per-alternative
 preparation; merely delaying the same expanded preparation is insufficient.
+
+
+## Repeated-allocation refinement: measured result
+
+The baseline is `49f7ca18053b3e3cdbe321bfcfdc92a8fccbae11`. Per-invocation
+allocation profiling now records lanes, endpoint alternatives, extrema work,
+matrix and partition work, relative-query construction, proof requests/cache
+misses, traversal steps, and elapsed time. The temporary profile owner follows
+recursive preparation without escaping the request. Logical-only requests do
+not construct allocation evidence. Proof counters include revisits to shared
+nodes; arena size is not used as a substitute for traversed work. Coalescing and
+independent-lift fallback are included in elapsed time but not the lane-sharing
+query/proof counters.
+
+For certified reference-ordered endpoints, shared first-present and last-present
+scans replace incremental pairwise guard remasking. When the supplied inventory
+is unordered, constant coordinate tuples propose an order, and every adjacent
+pair must pass the existing reference-order contract. Conditional orders keep
+the general algorithm. Mixed completion directions retain all endpoints needed
+for causal reuse. Original event coordinates and allocation contracts remain
+unchanged. Relative-query results, including unavailable results, are cached
+only for one append-only allocation attempt.
+
+| Persistent diagnostic | Baseline | Candidate |
+|---|---:|---:|
+| Lanes | 21 | 21 |
+| First / last endpoint alternatives | 1,544 / 1,544 | 1,544 / 1,544 |
+| Matrix lane pairs | 105 | 105 |
+| Boundary-pair visits | 894,568 | 894,583 |
+| Relative queries constructed | 10,170 | 1,200 |
+| Implication computations | 57,264 | 134,934 |
+| Proof traversal steps | 828,111,780 | 2,047,458 |
+
+The candidate certifies 42 ordered extrema lists using 4,534 reference-order
+comparisons. More distinct implication requests do much less total traversal:
+the resulting guards are simpler. Persistent has no relative-query cache hits
+in this measurement; its improvement must not be attributed to that cache.
+The large boundary-pair inventory remains an outstanding representation cost.
+
+Three serial unprofiled pairs, with no overlapping builds or tests, measure the
+logical pass **including allocation support**, not physical lowering, C++
+emission, or device execution:
+
+| Pair | Baseline seconds | Candidate seconds |
+|---|---:|---:|
+| 1 | 9.115 | 3.909 |
+| 2 | 9.417 | 3.608 |
+| 3 | 9.016 | 3.507 |
+| Median | 9.115 | 3.608 |
+
+The median improvement is **2.53x**. All non-AND IR, including allocation
+certificates, agrees. The changed i1 AND chains have identical complete leaf
+multisets, compared with SSA scope preserved. The plan retains 1,544 records,
+3,088 prepared endpoints, 116 normalized command sites, 56 emitted SET sites,
+60 WAIT sites, one barrier, and 18,342 raw arithmetic operations. Six-ID physical
+allocation succeeds. This change reduces planning work; it does not reduce
+executed handshakes or claim a device speedup.
+
+Six focused lit tests pass. Independent checks cover all guard valuations for
+eight extrema, zero and long lists, shuffled provenance, conditional order,
+mixed directions, unknown/unavailable query caching, and rollback. Existing
+oracles also validate 1,583 allocation envelopes/reuse chains and 125,856 event
+queries. The broader phased-repeat test times out: its first case also times
+out on the preserved baseline and is not counted as passing. Receipts and
+source/binary hashes are in `.local/family-pipeline-refined/validation.json`.
+
+The next allocation policy change must retain ancestor fallback: a locally
+feasible independent assignment can prevent the enclosing plan from fitting.
+The current general sharing matrix is therefore still attempted first. The
+measured change does not claim that M2 is complete.
+
+
+## Shared occurrence-coordinate binding
+
+Direct sequence endpoints, invocation-prefix endpoints, singleton prefix
+lifting, and repeated-region endpoints now use the same original-loop ordinal
+and occurrence-constraint implementation. It returns arena expressions, never
+generated SSA. It preserves event predicates, leaf ordinals, enclosing quotient
+coordinates and fixed anchor coordinates. Callers retain their existing exact
+activity, masking and protocol behavior; repeated preparation retains its index
+IV requirement. Validation inspects the requested frame without scanning every
+event type at each endpoint.
+
+Six focused production tests pass across direct sequence preparation, endpoint
+retry, prefix matching, singleton lifting, invocation ownership, and the repeated
+allocation oracle. The new binding oracle checks quotient/fixed coordinates,
+all relevant Boolean outcomes, malformed frames and absent loops. Site and
+invocation predicates are deliberately excluded from its coordinate-only result.
+Persistent's logical IR and allocation evidence agree with the measured
+allocation refinement under the same scoped AND comparison.
+
+This removes duplicated coordinate decoding, not all availability, capture and
+history interpretation. Sequence/repeated crossings still prepare individual
+scalar alternatives. Before deferring those operations, publication and cleanup
+must be established as recipes; successful emission currently participates in
+that decision. No whole-M3 completion claim follows from this refactor.
