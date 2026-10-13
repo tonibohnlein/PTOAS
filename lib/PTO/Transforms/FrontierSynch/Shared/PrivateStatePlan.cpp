@@ -55,7 +55,7 @@ bool clean(const PreparedLogicalPlan& plan)
     return plan.completeInvocation && plan.preparation.empty() && plan.endpoints.empty() && plan.families.empty() &&
         !plan.nestedIdentities && !plan.independentPieces && !plan.groupedFamilies &&
         !plan.allocationCertificate && !plan.allocationPreparation && !plan.regionalAllocation &&
-        !plan.compactBoundingOwner;
+        !plan.compactBoundingOwner && !plan.completionOwner;
 }
 bool prefixMetadata(func::FuncOp function, int64_t planId)
 {

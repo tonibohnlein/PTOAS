@@ -1160,7 +1160,8 @@ LogicalResult checkRetainedDemands(func::FuncOp function, pto::GMAliasPolicy pol
   }
   logical.mode = AnalysisMode::Fallback;
   auto fallback = session.analyze(logical);
-  if (fallback.status != AnalysisStatus::UnmetObligation || fallback.mathematical != first.mathematical) {
+  if (fallback.status != AnalysisStatus::UnmetObligation || fallback.completion ||
+      fallback.mathematical != first.mathematical) {
     return function.emitError("fallback replaced the retained exact result");
   }
   return success();
@@ -1567,6 +1568,8 @@ LogicalResult checkOrderCoveredSequence(func::FuncOp, pto::GMAliasPolicy);
 int runSharedHandoffAllocationChecks();
 int runFiniteAllocationQueryChecks();
 int runNumericalHierarchyChecks(func::FuncOp function);
+int runCompletionTransferChecks();
+LogicalResult runCompletionRegionChecks(func::FuncOp function);
 int runBoundingRegionalChecks(func::FuncOp function, const pto::SyncInput& input);
 int runRequirementProvenanceChecks(func::FuncOp function, const pto::SyncInput& input);
 int runCertifiedPartialReductionChecks();
@@ -1802,6 +1805,8 @@ int main(int argc, char **argv) {
   const bool preparedInsertion = argc == 3 && StringRef(argv[1]) == "--prepared-insertion-checks";
   const bool insertionTrace = argc == 3 && StringRef(argv[1]) == "--insertion-trace";
   const bool expressionChecks = argc == 3 && StringRef(argv[1]) == "--region-expression-checks";
+  const bool completionRegionChecks = argc == 3 && StringRef(argv[1]) == "--completion-region-checks";
+  const bool completionChecks = argc == 3 && StringRef(argv[1]) == "--completion-transfer-checks";
   const bool hierarchyChecks = argc == 3 && StringRef(argv[1]) == "--numerical-hierarchy-checks";
   const bool boundingChecks = argc == 3 && StringRef(argv[1]) == "--bounding-contract-checks";
   const bool compactInputChecks = argc == 3 && StringRef(argv[1]) == "--compact-input-checks";
@@ -1831,7 +1836,8 @@ int main(int argc, char **argv) {
       !numericAnalysis && !insertLogical && !insertLogicalLibrary && !insertModuleLibrary && !recognitionBoundary &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
       !mixedSymbolicChecks && !rotatingRegionChecks && !finiteVisitInput && !arithmeticPeriodicInput &&
-      !expressionChecks && !hierarchyChecks && !boundingChecks && !compactInputChecks && !compactBoundsChecks &&
+      !expressionChecks && !completionRegionChecks && !completionChecks && !hierarchyChecks &&
+      !boundingChecks && !compactInputChecks && !compactBoundsChecks &&
       !balancedCompactChecks && !guardedCompactChecks && !conditionalCompactChecks && !finiteReplacementChecks &&
       !boundingSequenceChecks && !compactStorageBoundaryChecks && !compactBoundaryRanksChecks &&
       !boundingRepetitionChecks && !compactClassRepetitionChecks && !compactBoundingPipelineChecks &&
@@ -1848,7 +1854,7 @@ int main(int argc, char **argv) {
              "--insert-module-library|--prepared-insertion-checks|--insertion-trace|"
              "--finite-guarded-analysis|--finite-overlay-insertion|--region-expression-checks|--sequence-analysis|"
              "--structured-trace|--physical-trace|--numerical-hierarchy-checks|--bounding-contract-checks|"
-             "--compact-input-checks|"
+             "--compact-input-checks|--completion-transfer-checks|--completion-region-checks|"
              "--compact-order-bounds-checks|--balanced-compact-checks|--guarded-compact-checks|"
              "--conditional-compact-input-checks|--finite-replacement-checks|--bounding-sequence-checks|"
              "--compact-storage-boundary-checks|--compact-boundary-ranks-checks|"
@@ -1909,7 +1915,8 @@ int main(int argc, char **argv) {
       mixedSymbolicChecks || rotatingAnalysis || explicitAnalysis || expectFailure || capabilities || phaseIndex ||
       storageEffects || recognition || numericAnalysis || insertLogical || insertLogicalLibrary ||
       insertModuleLibrary || recognitionBoundary || insertionTrace || physicalTrace || structuredTrace ||
-      sequenceAnalysis || finiteGuardedAnalysis || finiteOverlayInsertion || expressionChecks || hierarchyChecks ||
+      sequenceAnalysis || finiteGuardedAnalysis || finiteOverlayInsertion || expressionChecks ||
+      completionChecks || completionRegionChecks || hierarchyChecks ||
       boundingChecks || compactInputChecks || compactBoundsChecks || balancedCompactChecks || guardedCompactChecks ||
       conditionalCompactChecks || finiteReplacementChecks || boundingSequenceChecks || compactStorageBoundaryChecks ||
       compactBoundaryRanksChecks || boundingRepetitionChecks || compactClassRepetitionChecks ||
@@ -2043,6 +2050,13 @@ int main(int argc, char **argv) {
     llvm::outs() << "analysis-session: retained-demands fresh-fragments source-unchanged\n";
     return 0;
   }
+  if (completionRegionChecks) {
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (failed(runCompletionRegionChecks(function))) { return 1; }
+    }
+    return 0;
+  }
+  if (completionChecks) { return runCompletionTransferChecks(); }
   if (hierarchyChecks) {
     for (auto function : module->getOps<func::FuncOp>()) {
       if (runNumericalHierarchyChecks(function)) { return 1; }

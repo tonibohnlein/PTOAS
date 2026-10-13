@@ -524,7 +524,8 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     if (result.status == frontiersynch::AnalysisStatus::Ready) {
         prepared = analysis.prepareLogical(result);
         if (succeeded(prepared)) {
-            logicalBackend = result.mathematical->backend;
+            logicalBackend = result.completion ? StringRef("completion-transfer") :
+                StringRef(result.mathematical->backend);
             // Missing allocation support leaves the selected logical graph available.
             if (prepareAllocation) { (void)analysis.attachAllocation(result, **prepared); }
         }
@@ -543,12 +544,14 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
             analysis.costRecords(), analysis.constructionCounts());
         NamedAttrList allocationReport((*prepared)->recognitionReport);
         allocationReport.set("logical_realization", StringAttr::get(function.getContext(),
-            (*prepared)->privateState ? "invocation-prefix" : "direct-endpoints"));
+            (*prepared)->completionOwner ? "conservative-completion" :
+                ((*prepared)->privateState ? "invocation-prefix" : "direct-endpoints")));
         allocationReport.set("allocation_support", StringAttr::get(function.getContext(),
             !prepareAllocation ? "not-requested" :
-                ((*prepared)->allocationCertificate ? "available" : "unavailable")));
+                ((*prepared)->completionOwner ? "not-needed" :
+                    ((*prepared)->allocationCertificate ? "available" : "unavailable"))));
         (*prepared)->recognitionReport = allocationReport.getDictionary(function.getContext());
-        if (result.mathematical->arithmeticPeriodicDemands) {
+        if (result.mathematical && result.mathematical->arithmeticPeriodicDemands) {
             const auto& conversion = result.mathematical->arithmeticPeriodicDemands->conversion;
             NamedAttrList report((*prepared)->recognitionReport);
             report.set("periodic_reducer", StringAttr::get(function.getContext(),

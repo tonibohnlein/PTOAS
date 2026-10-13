@@ -21,6 +21,7 @@ struct RegionalAllocationSummary;
 struct CompactBoundingOwner;
 struct MathematicalResult;
 class PrivateStatePlan;
+class CompletionRegion;
 enum class LogicalCommandKind { Set, Barrier, Wait };
 struct PreparedLogicalEndpoint {
     Operation* before = nullptr;
@@ -67,6 +68,8 @@ struct PreparedLogicalPlan {
     std::shared_ptr<const MathematicalResult> mathematicalOwner;
     // Whole-invocation private state is an exclusive alternative to endpoint pieces.
     std::unique_ptr<PrivateStatePlan> privateState;
+    // Conservative completion evidence never impersonates exact mathematics.
+    std::shared_ptr<const CompletionRegion> completionOwner;
     std::vector<LogicalPreparation> preparation;
     std::vector<PreparedLogicalEndpoint> endpoints;
     std::vector<EndpointFamily> families; // Exact source/target coordinate provenance.

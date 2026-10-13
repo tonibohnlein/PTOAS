@@ -107,6 +107,9 @@ struct SpecializedGuardedAttempt {
     std::string error;
 };
 struct AnalysisSessionState {
+    bool completionAttempted = false;
+    std::shared_ptr<const CompletionRegion> completion;
+    std::string completionError;
     // The diagnostic owner exists during initialization. Only an actual analysis
     // request freezes configurable profiles, matching the prior lazy session.
     bool requestsStarted = false;

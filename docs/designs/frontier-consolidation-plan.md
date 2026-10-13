@@ -642,3 +642,45 @@ pass with this change, including expression, sequence-prefix, allocation and
 public-pipeline checks. Both source reviews accepted the component. This closes
 the growing replay-mapping copy issue, not general historical-value availability.
 Receipts share `.local/three-paths/consolidation/m4-compact-memberships/`.
+
+
+## Section 6 completion transfer and qualified structured fallback
+
+The new completion-transfer provider owns mode-tagged A/E/S summaries and the
+transparent-visit bit independently of exact mathematical results. Its compact
+CFG retains branch joins and loop backedges. Two delta worklists propagate each
+storage-class mode over each reachable edge at most once per solve. Unreachable
+children do not contribute. A forward prerequisite is an explicit caller
+obligation; no generic callback silently declares it completed.
+
+The initial production adapter treats original payload operations as the closed
+children and uses one conservative all-memory class. It supports structured
+if/for/while control, including accesses on a while loop's final false visit.
+It inserts common completion at the selected original cuts and at function exit.
+Qualification requires the A3 single-core PIPE_ALL contract, modeled phases and
+effects, and synchronous scalar prerequisites. Unknown calls, mixed cores, macro
+protocols, manual flags and asynchronous scalar-readiness obligations refuse.
+A barrier completes prior work; it is never used to consume a child's flags.
+
+The completion owner binds the original function, source-input phase identities,
+index, operation identities and unchanged source text. Insertion stages one
+module clone, verifies it and then transfers the selected function body. Its
+logical plan cannot be mixed with exact endpoints or private-state plans. It
+needs no physical event IDs and exports no exact event queries or storage
+selectors. Reports explicitly identify conservative completion. Dispatch tries
+it only at the root in fallback mode after failing to retain exact mathematics;
+an exact result with an unavailable export remains an explicit refusal.
+
+This is the first production Section 6 subclass. Importing larger closed exact
+children and bypassing initial fine atomization remain open. Consequently the
+complete general fallback milestone is not yet finished.
+
+Validation: ten focused lit tests pass, including the 16,384-graph independent
+execution oracle, original-cut checks, stale-owner and transactional refusal,
+public logical and physical passes, and strict retained-exact fallback refusal.
+The initial failures exposed two test-driver/printer issues and missing empty
+logical-plan metadata; all are fixed. The standard empty endpoint-family
+contract now lets the physical pass accept the barrier-only plan without IDs.
+The C++17 build passes. The compliance prefilter's brace findings were inspected
+as braced control bodies. No device execution was performed. Receipts:
+`.local/three-paths/consolidation/m6-completion/`.

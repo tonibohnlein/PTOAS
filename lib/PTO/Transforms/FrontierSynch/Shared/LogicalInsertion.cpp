@@ -8,6 +8,7 @@
 // Validate prepared endpoints, then insert logical commands at actual cuts.
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PrivateStatePlan.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PTO/IR/PTO.h"
@@ -25,14 +26,14 @@ namespace mlir::pto::frontiersynch {
 PreparedLogicalPlan::PreparedLogicalPlan(int64_t planId) : planId(planId) {}
 void prepareAllocationSupport(PreparedLogicalPlan& plan)
 {
-    if (plan.privateState) { return; }
+    if (plan.privateState || plan.completionOwner) { return; }
     auto prepare = std::move(plan.allocationPreparation);
     plan.allocationPreparation = {};
     if (prepare) { prepare(plan); }
 }
 std::shared_ptr<PreparedLogicalPlan> takeRegionalAllocationView(PreparedLogicalPlan& plan)
 {
-    if (plan.privateState) { return {}; }
+    if (plan.privateState || plan.completionOwner) { return {}; }
     auto view = std::make_shared<PreparedLogicalPlan>(plan.planId);
     view->completeInvocation = plan.completeInvocation;
     view->nestedIdentities = plan.nestedIdentities;
@@ -506,6 +507,7 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
     if (!function) {
         return failure();
     }
+    if (plan.completionOwner) { return plan.completionOwner->insert(function, plan); }
     if (plan.privateState) { return plan.privateState->insert(function, plan); }
     function.getContext()->getOrLoadDialect<PTODialect>();
     function.getContext()->getOrLoadDialect<arith::ArithDialect>();
