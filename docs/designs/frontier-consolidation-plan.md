@@ -1,5 +1,9 @@
 # Frontier consolidation implementation plan
 
+The [compact command-family pipeline revision](frontier-family-pipeline-plan.md)
+supersedes the execution priorities below. Completed results remain evidence;
+unfinished obligations are carried forward explicitly in that revision.
+
 This plan supersedes the orchestration and runtime priorities in the earlier
 review plans. It retains their exact repeated-guard emission goal. The reference
 compiler is `f7bf2483e15ce1223cc02d474f163f6d463d69aa`. The revised draft is
