@@ -32,7 +32,7 @@ separate commit. Infrastructure alone does not complete a production milestone.
 | 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; logical-only allocation request complete; repeated-lane proof reuse complete; lane scheduling pending |
 | 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Sequence preparation failure isolation complete; broader capability consolidation pending |
 | 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; borrowed regional adapter complete; global compact memberships and universal descriptor dependency indexing complete; shared fact views and delayed atomization pending |
-| 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection complete; shared source facts pending |
+| 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection and scoped shared source facts complete; compact-route forwarding pending |
 | 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Qualified A3 structured completion complete; larger closed-child imports and coarse input preparation pending |
 | 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Regional prefix ownership, singleton forwarding, crossing presence and qualified predicate snapshots complete; general executable selectors and public Delta emission pending |
 | 8. Proof reuse and validation | Share lazy inactive-proof and premise contexts, replay mappings and safe Boolean conversion work. Close known guard-equivalence/oracle gaps and run pinned paired campaigns. | No unexplained acceptance loss or changed output; report eleven kernels and 783-input corpus by stage, wall time, memory and inner work. | Lazy inactive-proof setup shared; broader proof reuse and campaign pending |
@@ -743,3 +743,37 @@ ten-test snapshot/descriptor run, with a successful C++17 build. Source review
 accepted the component. The shared-input milestone remains partial. Receipts
 are in `.local/three-paths/consolidation/m7-snapshots/`; the separate commit
 manifest is in `.local/three-paths/consolidation/m4-descriptor-dependencies/`.
+
+
+## Scoped shared phase source facts
+
+PhaseIndex now retains an immutable owner for original source discovery,
+phase-independent relevance and proved carried ordinals. A regional view
+constructs its own selected-phase relevance delta and prerequisite edges. It
+does not import another view's prerequisite relation. Original function and
+phase-pointer membership are checked before publishing a view; an uncovered
+larger symbolic request explicitly rebuilds facts for its full input. Owners
+survive destruction of the initial index and borrow unchanged IR as before.
+
+Singleton, finite-visit, phased and rotating composition pass the source owner
+through the sequence interface. The symbolic fallback still requests its full
+original phase set, reusing discovery only when the owner covers that set.
+Compact-route forwarding is a separate follow-up; this is not a claim that
+every session request now shares all preparation.
+
+Validation: all 32 subsets of a five-phase fixture compare shared views against
+fresh indexes for relevance, carried proofs and native/demand prerequisites.
+The fixture includes duplicate envelopes, structured yields and dead carried
+state. Foreign-function, foreign-phase, expanded-universe and owner-lifetime
+checks pass. Twelve focused lit tests and two independent composed/carried-phase
+closure scripts pass. Source review accepted the changes. The C++17 build passed
+after adding a missing SCF include to the new test header. Compliance brace
+matches were inspected as braced bodies.
+
+The initial broader run hit an external 300-second timeout in composed-phase
+validation. Its periodic-length and owned-storage subtests also exceed separate
+60-second watchdogs on the saved M1 candidate. The bounding native-reclosure
+test fails on that saved binary too: it requires a particular merge count. That
+route-count assertion is being corrected separately, retaining the native-edge
+oracle. These observations do not establish full current-head corpus validation
+or a whole-pass speedup. Receipts: `.local/three-paths/consolidation/m5-source-facts/`.

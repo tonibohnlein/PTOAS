@@ -92,7 +92,8 @@ bool SequenceAnalysisState::singletonBoundaryChild(const StructureNode& node, Ex
     }
     SmallVector<scf::ForOp> context(node.loops.begin(), node.loops.end());
     context.push_back(loop);
-    auto composed = composeRegionalSequenceWithin(function, arena, std::move(parts), true, false, context);
+    auto composed = composeRegionalSequenceWithin(
+                function, arena, std::move(parts), true, false, context, index.sourceFacts());
     if (!composed.error.empty()) { return unavailable(composed.error); }
     composed.state->completeInvocation = false;
     composed.state->requiredOuterLoops = context;

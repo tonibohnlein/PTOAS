@@ -178,7 +178,8 @@ private:
             }
             SmallVector<scf::ForOp> enclosing(child.loops.begin(), child.loops.end());
             if (!llvm::is_contained(enclosing, loop)) { enclosing.push_back(loop); }
-            auto composed = composeRegionalSequenceWithin(function, arena, std::move(parts), true, true, enclosing);
+            auto composed = composeRegionalSequenceWithin(
+                function, arena, std::move(parts), true, true, enclosing, index.sourceFacts());
             if (!composed.error.empty()) { error = composed.error; return failure(); }
             return sequenceRegionalResult(composed);
         }
@@ -215,7 +216,8 @@ private:
                 if (failed(leaf)) { return failure(); }
                 parts.push_back(std::move(*leaf));
             }
-            auto composed = composeRegionalSequenceWithin(function, arena, std::move(parts), true, true, enclosing);
+            auto composed = composeRegionalSequenceWithin(
+                function, arena, std::move(parts), true, true, enclosing, index.sourceFacts());
             if (!composed.error.empty()) { error = composed.error; return failure(); }
             return sequenceRegionalResult(composed);
         }
