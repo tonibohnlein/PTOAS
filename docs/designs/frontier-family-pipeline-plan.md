@@ -387,3 +387,25 @@ command order and attributes after SSA substitution. Its three negative controls
 reject altered comparisons, selectors and commands. No device result or paired
 compiler speedup is claimed. Receipts and the manual self-review are retained in
 `.local/family-pipeline-publication/`.
+
+## Cycle-local early family refinement
+
+Numerical family provenance and independently partitioned endpoint sides now
+share one ordering implementation. When grouping creates cyclic command-order
+constraints, only groups in cyclic strongly connected components are refined.
+Previously every vertex left after topological elimination was split, including
+acyclic descendants. Refinement still reruns the complete coactive-order check.
+Endpoint-piece candidate pairs are collected per original cut; unrelated cuts
+no longer participate in the pair scan. Same-cut exclusion testing remains
+pairwise, with no general linear-composition claim.
+
+The regression exhausts all 65,536 four-node directed graphs against an
+independent reachability-closure oracle and checks an 8,192-node descendant
+chain. Early family fixtures vary downstream membership and record labels,
+checking startup/tail activity and unfolded command order. A downstream family
+with 16 alternatives remains one family and two endpoint pieces, while the
+actual two-group cycle is split. Five focused suites pass. Persistent retains
+equivalent IR/evidence under the scoped associative-AND comparison and allocates
+with six IDs. This is a general early-construction fix, not evidence of another
+Persistent speedup or completion of regional recipe composition.
+Validation and manual review: `.local/family-pipeline-order/`.
