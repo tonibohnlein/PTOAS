@@ -358,3 +358,32 @@ and allocation evidence agree with `477b7ae5e` under the scoped associative-AND
 comparison. Persistent still allocates with six IDs. Prefill logical compilation
 takes 75.330 s in this single correctness probe; no speedup is claimed.
 The manual review and receipts are in `.local/family-pipeline-cleanup/`.
+
+## Finite guarded publication recipes
+
+The direct/early publication decision is now a shared policy independent of
+scalar construction. An immutable recipe retains original cuts and the exact
+publication and terminal-cleanup expressions. The recipe planner requests
+availability and singleton selection before creating code; the compatibility
+adapter supplies the existing emitted-value checks to the same policy.
+
+Finite guarded preparation now plans supported protocols and caches their
+cut-specific availability recipes before endpoint arithmetic. Materialization
+consumes those recipes, sharing original scalar replay values across roots.
+Unsupported compact qualifications retain the incumbent materialized route.
+Matching identities, cleanup cuts and allocation envelopes are unchanged.
+
+This migrates publication planning, not the full regional family hierarchy.
+Finite endpoints still materialize within their producer, and sequence/repeated
+composition still requires concrete endpoint SSA. Family normalization before
+allocation and pure child composition remain open M3/M4 work.
+
+Six focused suites pass, including recipe-only planning, early cleanup, direct
+publication, wrong-arena rejection and shared scalar replay. Persistent retains
+equivalent logical commands and evidence and allocates with six IDs. Prefill
+changes independent arithmetic definition order: a scoped expression-DAG check
+preserves each arithmetic-run operation multiset and compares all other lines,
+command order and attributes after SSA substitution. Its three negative controls
+reject altered comparisons, selectors and commands. No device result or paired
+compiler speedup is claimed. Receipts and the manual self-review are retained in
+`.local/family-pipeline-publication/`.

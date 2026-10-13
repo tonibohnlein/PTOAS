@@ -11,12 +11,14 @@
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
+#include "PTO/Transforms/FrontierSynch/Shared/GuardedPublication.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
+#include <map>
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 namespace {
@@ -32,6 +34,55 @@ bool rejectedUnchanged(func::FuncOp function, fs::PreparedLogicalPlan& plan)
     auto before = render(function);
     ScopedDiagnosticHandler silence(function.getContext(), [](Diagnostic&) { return success(); });
     return failed(fs::insertLogicalSynchronization(function, plan)) && render(function) == before;
+}
+bool publicationRecipeChecks(MLIRContext* context)
+{
+    OpBuilder builder(context);
+    auto location = builder.getUnknownLoc();
+    OwningOpRef<ModuleOp> module = ModuleOp::create(location);
+    builder.setInsertionPointToStart(module->getBody());
+    auto function = builder.create<func::FuncOp>(location, "publication_recipe",
+        builder.getFunctionType({builder.getIndexType()}, {}));
+    builder.setInsertionPointToStart(function.addEntryBlock());
+    auto one = builder.create<arith::ConstantIndexOp>(location, 1);
+    auto source = builder.create<arith::AddIOp>(location, function.getArgument(0), one);
+    auto condition = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq, source, one);
+    auto consumer = builder.create<arith::AddIOp>(location, source, one);
+    auto terminal = builder.create<func::ReturnOp>(location);
+    fs::RegionExpressions arena, foreign;
+    // Model an original value that must not be replayed before its producer.
+    arena.forbidRecomputation(source);
+    auto guard = arena.input(condition);
+    auto sourceCut = fs::TemplateEndpointCut{source->getBlock(), source};
+    auto consumerCut = fs::TemplateEndpointCut{consumer->getBlock(), consumer};
+    std::map<Operation*, fs::RegionExpressions::CutEmission> preparation;
+    auto available = [&](fs::RegionExpressions::Id expression, Operation* cut) {
+        return success(succeeded(arena.prepareContextual(expression, cut, preparation[cut])));
+    };
+    const auto original = render(function);
+    std::string error;
+    auto recipe = fs::preparePublicationRecipe(function, arena, sourceCut, consumerCut,
+        guard, guard, guard, available, error);
+    if (failed(recipe) || render(function) != original) { return false; }
+    for (const auto& entry : preparation) {
+        if (!entry.second.values.empty() || !entry.second.inputs.empty()) { return false; }
+    }
+    fs::PreparedLogicalPlan plan(0);
+    std::map<Operation*, fs::RegionExpressions::CutEmission> contexts;
+    auto emit = [&](fs::RegionExpressions::Id expression, Operation* cut) {
+        builder.setInsertionPointToEnd(&plan.addPreparation(cut));
+        return arena.emitContextual(expression, builder, cut, contexts[cut]);
+    };
+    if (succeeded(fs::materializePublicationRecipe(**recipe, foreign, emit, condition, error)) ||
+        !plan.preparation.empty()) { return false; }
+    auto publication = fs::materializePublicationRecipe(**recipe, arena, emit, condition, error);
+    if (failed(publication) || publication->cleanupCut != terminal.getOperation() ||
+        !publication->targetChoices || render(function) != original) { return false; }
+    auto direct = fs::preparePublicationRecipe(function, arena, sourceCut, consumerCut,
+        arena.boolean(true), arena.boolean(true), arena.boolean(true), available, error);
+    if (failed(direct)) { return false; }
+    auto ordinary = fs::materializePublicationRecipe(**direct, arena, emit, condition, error);
+    return succeeded(ordinary) && !ordinary->cleanupCut && !ordinary->targetChoices;
 }
 bool cleanupSelectionChecks(MLIRContext* context)
 {
@@ -319,6 +370,9 @@ LogicalResult sectionContextChecks(func::FuncOp function)
 } // namespace
 LogicalResult runPreparedInsertionChecks(func::FuncOp function)
 {
+    if (!publicationRecipeChecks(function.getContext())) {
+        return function.emitError("publication recipe changed availability or cleanup");
+    }
     if (!cleanupSelectionChecks(function.getContext())) {
         return function.emitError("cleanup selection changed across scalar lowering");
     }

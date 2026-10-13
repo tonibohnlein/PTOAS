@@ -154,6 +154,7 @@ FailureOr<Value> RegionExpressions::emitPreparedContextual(const CutExpressionRe
             emissionMessage = "prepared guarded expression producer is no longer replayable"; return failure();
         }
     }
+    if (auto cached = context.values.lookup(recipe.selected)) { return cached; }
     IRMapping mapping;
     auto bind = [&](Value original, Value replacement) {
         mapping.map(original, replacement);
@@ -162,12 +163,19 @@ FailureOr<Value> RegionExpressions::emitPreparedContextual(const CutExpressionRe
     for (Value value : recipe.directInputs) { bind(value, value); }
     for (Value value : recipe.boundInputs) { bind(value, context.inputs.lookup(value)); }
     for (Operation* op : recipe.replay) {
+        // Independently planned roots can share original replay producers.
+        // Reuse the accepted cut-local values when another recipe lowered first.
+        if (llvm::all_of(op->getResults(), [&](Value value) { return context.inputs.count(value); })) {
+            for (Value value : op->getResults()) { mapping.map(value, context.inputs.lookup(value)); }
+            continue;
+        }
         Operation* clone = builder.clone(*op, mapping);
         for (auto pair : llvm::zip(op->getResults(), clone->getResults())) {
             context.inputs[std::get<0>(pair)] = std::get<1>(pair);
         }
     }
     for (auto id : recipe.inputs) {
+        if (context.values.count(id)) { continue; }
         Node node = nodes[id];
         node.value = mapping.lookupOrDefault(node.value);
         context.values[id] = emitNode(node, builder, cut->getLoc(), context.values);
