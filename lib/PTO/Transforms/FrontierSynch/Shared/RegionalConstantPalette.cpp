@@ -54,18 +54,76 @@ struct Compatibility {
         queries.emplace(std::move(key), answer);
         return answer;
     }
-    bool compatible(const RegionalAllocationGroup& a, const RegionalAllocationGroup& b)
+    struct Envelope { RegionalEvent first, last; };
+    std::optional<RegionalEvent> extremum(RegionalEvent a, RegionalEvent b, bool first)
     {
         auto& e = *region.expressions;
+        // Certify native event order, not just record or reference numbering.
+        // Both operands have the same kind and original pipe.
+        auto ab = regionalReachability(region, a, b);
+        if (ab && e.constantValue(*ab) == 1) { return first ? a : b; }
+        auto ba = regionalReachability(region, b, a);
+        if (ba && e.constantValue(*ba) == 1) { return first ? b : a; }
+        return std::nullopt;
+    }
+    std::optional<Envelope> combine(const std::optional<Envelope>& a, const std::optional<Envelope>& b)
+    {
+        if (!a || !b) { return std::nullopt; }
+        auto first = extremum(a->first, b->first, true);
+        auto last = extremum(a->last, b->last, false);
+        if (!first || !last) { return std::nullopt; }
+        return Envelope{*first, *last};
+    }
+    std::optional<Envelope> envelope(const RegionalAllocationGroup& group)
+    {
+        if (group.sourcePipe == group.targetPipe) { return std::nullopt; }
+        auto& e = *region.expressions;
+        std::optional<Envelope> result;
+        for (const auto& member : group.members) {
+            if (e.constantValue(member.active) != 1 ||
+                member.firstSource.type >= region.anchors.size() ||
+                member.lastTarget.type >= region.anchors.size()) { return std::nullopt; }
+            const auto& source = region.anchors[member.firstSource.type];
+            const auto& target = region.anchors[member.lastTarget.type];
+            if (!source.phase || !target.phase ||
+                static_cast<uint32_t>(source.phase->kPipeValue) != group.sourcePipe ||
+                static_cast<uint32_t>(target.phase->kPipeValue) != group.targetPipe) { return std::nullopt; }
+            auto ps = regionalPresence(region, member.firstSource);
+            auto pt = regionalPresence(region, member.lastTarget);
+            if (!ps || !pt || e.constantValue(*ps) != 1 || e.constantValue(*pt) != 1) { return std::nullopt; }
+            Envelope next{member.firstSource, member.lastTarget};
+            next.first.kind = PeriodicEventKind::Start;
+            next.last.kind = PeriodicEventKind::Completion;
+            result = result ? combine(result, next) : std::optional<Envelope>(next);
+            if (!result) { return std::nullopt; }
+        }
+        return result;
+    }
+    bool separated(Id active, const RegionalEvent& lastA, const RegionalEvent& firstB,
+                   const RegionalEvent& lastB, const RegionalEvent& firstA)
+    {
+        auto& e = *region.expressions;
+        if (proves(active, e.boolean(false))) { return true; }
+        auto ab = query(lastA, firstB);
+        if (ab && proves(active, *ab)) { return true; }
+        auto ba = query(lastB, firstA);
+        if (ba && proves(active, *ba)) { return true; }
+        return ab && ba && proves(active, e.lor(*ab, *ba));
+    }
+    bool compatible(const RegionalAllocationGroup& a, const RegionalAllocationGroup& b,
+                    const std::optional<Envelope>& boundsA, const std::optional<Envelope>& boundsB)
+    {
+        auto& e = *region.expressions;
+        // Unconditional native bounds cover every member lifetime. A proved
+        // envelope separation therefore covers their full Cartesian product.
+        // Overlapping/unavailable bounds do not reject interleaved lifetimes:
+        // retain the original all-pair sufficient proof in those cases.
+        if (boundsA && boundsB && separated(e.boolean(true), boundsA->last, boundsB->first,
+                                           boundsB->last, boundsA->first)) { return true; }
         for (const auto& x : a.members) {
             for (const auto& y : b.members) {
-                auto active = e.land(x.active, y.active);
-                if (proves(active, e.boolean(false))) { continue; }
-                auto xy = query(x.lastTarget, y.firstSource);
-                if (xy && proves(active, *xy)) { continue; }
-                auto yx = query(y.lastTarget, x.firstSource);
-                if (yx && proves(active, *yx)) { continue; }
-                if (!xy || !yx || !proves(active, e.lor(*xy, *yx))) { return false; }
+                if (!separated(e.land(x.active, y.active), x.lastTarget, y.firstSource,
+                               y.lastTarget, x.firstSource)) { return false; }
             }
         }
         return true;
@@ -97,7 +155,8 @@ std::shared_ptr<RegionalAllocationSummary> coalesceConstantRegionalAllocation(
 {
     if (!region.expressions || !region.capabilities.exactQueries) { return {}; }
     auto out = std::make_shared<RegionalAllocationSummary>();
-    std::vector<std::size_t> constants;
+    struct ConstantPalette { std::size_t index; std::optional<Compatibility::Envelope> bounds; };
+    std::vector<ConstantPalette> constants;
     Compatibility proof{region, {}, {}};
     for (const auto& group : input.groups) {
         if (!group.budget) { return {}; }
@@ -115,25 +174,28 @@ std::shared_ptr<RegionalAllocationSummary> coalesceConstantRegionalAllocation(
         }
         for (auto& lane : *lanes) {
             std::optional<std::size_t> destination;
-            for (auto id : constants) {
+            auto bounds = proof.envelope(lane);
+            for (std::size_t i = 0; i < constants.size(); ++i) {
                 // Check all original lifetimes against all existing users. A
                 // guarded compatibility relation is not assumed transitive.
-                const auto& candidate = out->groups[id];
+                const auto& candidate = out->groups[constants[i].index];
                 if (candidate.sourcePipe != lane.sourcePipe || candidate.targetPipe != lane.targetPipe) { continue; }
-                if (proof.compatible(candidate, lane)) { destination = id; break; }
+                if (proof.compatible(candidate, lane, constants[i].bounds, bounds)) { destination = i; break; }
             }
             if (!destination) {
-                constants.push_back(out->groups.size());
+                constants.push_back({out->groups.size(), std::move(bounds)});
                 out->groups.push_back(std::move(lane));
                 continue;
             }
-            auto& merged = out->groups[*destination];
+            auto& palette = constants[*destination];
+            palette.bounds = proof.combine(palette.bounds, bounds);
+            auto& merged = out->groups[palette.index];
             for (auto& member : lane.members) { merged.members.push_back(std::move(member)); }
         }
     }
-    for (auto id : constants) {
+    for (const auto& palette : constants) {
         // Formulas were remapped to lane zero; rebuild matching selectors.
-        if (!exportConstantRegionalLanes(out->groups[id])) { return {}; }
+        if (!exportConstantRegionalLanes(out->groups[palette.index])) { return {}; }
     }
     return out;
 }
