@@ -41,6 +41,18 @@ private:
 class ReuseProof {
 public:
     ReuseProof(RepeatedRegionState& state, RepeatedLaneProofCost* cost) : state(state), e(state.e()), cost(cost) {}
+    Id activity(Id end, Id begin)
+    {
+        count(&RepeatedLaneProofCost::activityRequests);
+        const auto key = std::make_pair(end, begin);
+        auto found = activities.find(key);
+        if (found != activities.end()) { return found->second; }
+        count(&RepeatedLaneProofCost::activityComputations);
+        WorkTimer timer(cost ? &cost->activityNanoseconds : nullptr);
+        auto active = e.land(end, begin);
+        activities.emplace(key, active);
+        return active;
+    }
     bool implies(Id premise, Id consequence)
     {
         if (cost) { increment(cost->implicationRequests); }
@@ -95,6 +107,10 @@ private:
     RepeatedRegionState& state;
     RegionExpressions& e;
     RepeatedLaneProofCost* cost;
+    // Cache before conjunction normalization: the implication cache is keyed
+    // by its result and cannot avoid reconstructing the same activity at each
+    // candidate gap. Keep ordered operands to preserve the existing IDs.
+    std::map<std::pair<Id, Id>, Id> activities;
     std::map<std::pair<Id, Id>, bool> implications;
     std::map<std::pair<Id, Id>, std::optional<uint64_t>> constants;
     std::map<std::tuple<EventKey, EventKey, uint64_t>, std::optional<Id>> relativeQueries;
@@ -163,7 +179,7 @@ std::optional<uint64_t> reuseCost(RepeatedRegionState& state, const Lane& from, 
         for (const auto& end : from.bounds.second) {
             for (const auto& begin : to.bounds.first) {
                 proof.count(&RepeatedLaneProofCost::boundaryPairs);
-                auto active = e.land(end.present, begin.present);
+                auto active = proof.activity(end.present, begin.present);
                 if (proof.implies(active, e.boolean(false))) { continue; }
                 auto consumer = end.event, producer = begin.event;
                 const auto& anchors = state.body.anchors;

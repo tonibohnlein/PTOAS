@@ -85,14 +85,21 @@ def main():
             continue
         require(bool(work), "repeated allocation was not measured")
         require(any(stage["work"]["matrix_pairs"] for stage in work), "fixture did not exercise sharing")
+        require(any(stage["work"]["activity_computations"] < stage["work"]["activity_requests"]
+                    for stage in work), "fixture did not reuse activity construction")
         for stage in work:
             counters = stage["work"]
             require(stage["parent"] > 0 and stage["method"], "unowned repeated-region inventory")
             require(stage["elapsed_ns"] == stage["exclusive_ns"] == 0, "inventory double-counted summary time")
-            for request, computation in (("relative_queries", "relative_computations"),
+            for request, computation in (("activity_requests", "activity_computations"),
+                                         ("relative_queries", "relative_computations"),
                                          ("implication_requests", "implication_computations"),
                                          ("constant_requests", "constant_computations")):
                 require(0 <= counters[computation] <= counters[request], "invalid work counters")
+            require(0 <= counters["coalescing_ns"] <= counters["elapsed_ns"],
+                    "invalid coalescing interval")
+            require(counters["activity_requests"] == counters["boundary_pairs"],
+                    "boundary activity was not counted")
             if counters["implication_computations"]:
                 require(counters["proof_node_visits"] > 0, "proof traversal was not measured")
     print("repeated allocation profile: unchanged plans and logical-only exports; owned work counters")

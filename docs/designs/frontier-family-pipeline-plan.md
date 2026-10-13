@@ -25,10 +25,10 @@ exclusion evidence; they do not replace exact guards or matching identities.
 | M0: preparation ownership | Reproduce prefill failure; remap every affected non-SSA preparation reference before deletion; validate complementary cleanup and failure atomicity; replay prefill separately from the failing baseline. | Complete: `32b38b426` |
 | M1: measurement | Extend stage inventories with per-repeat lanes/extrema, candidate pairs/gaps, query construction, proof/cache work and actual traversal counts. Keep static records/sites distinct from dynamic commands and evaluated control. | Stage inventories and repeated-allocation work/traversal counters implemented; dynamic-control and complete ID-map inventories remain open |
 | M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans and attempt-owned relative queries implemented; economical candidate policy with parent retry remains open |
-| M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; early regional/repeated family and publication planning remain open |
-| M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; early composition and nonconstant tuple extension pending |
+| M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is planned before scalar lowering in `8a0a94536`; early regional/repeated family composition remains open |
+| M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; common nonconstant tuple terms compose before dispatch in `15f2007ea`; differing terms and early graph allocation remain open |
 | M5: session and capabilities | Retain facts, mathematics, recipes and allocation in one session; deterministic capability upgrades; common unified/split stage functions; self-contained versioned saved artifacts; delete redundant orchestration. | Pending |
-| M6: carryover and closure | Finish shared-fact and coarse-input integration, closed-child completion imports, guarded/relational rank transport and outstanding semantic oracles; run pinned eleven-kernel/corpus validation and report device results separately. | Pending |
+| M6: carryover and closure | Finish shared-fact and coarse-input integration, closed-child completion imports, guarded/relational rank transport and outstanding semantic oracles; run pinned eleven-kernel/corpus validation and report device results separately. | Eleven-kernel replay complete at `15f2007ea`; corpus, device, and interface closure remain open |
 
 Each milestone proceeds through focused, separately reviewable changes with
 regressions and correctness/architecture review. Infrastructure does not complete a production
@@ -435,3 +435,57 @@ Receipts and manual self-review: `.local/family-pipeline-tuple/`.
 This closes one useful nonconstant-map subclass. General differing tuple terms,
 recipe-backed regional composition and allocation on its normalized graph remain
 open; no unrestricted symbolic synthesis has been introduced.
+
+## Pinned eleven-kernel replay at `15f2007ea`
+
+All eleven inputs complete logical insertion; seven complete six-ID allocation and C++ emission. The planner/allocator revision is `15f2007ea`; C++ uses the same retained backend as the earlier campaign. Local commands, input and binary hashes, profiles, and failure receipts are in `.local/generated-control-15f2007ea/`. These are serial single-run observations, not paired timing or device results.
+
+| Kernel | Logical SET / WAIT / barrier sites | Raw logical arithmetic | Logical seconds | Allocation / C++ |
+|---|---:|---:|---:|---|
+| tilelang_gemm | 14 / 14 / 1 | 1,401 | 0.203 | pass / pass |
+| pypto_gemm | 12 / 12 / 1 | 1,196 | 0.202 | pass / pass |
+| persistent_gemm | 56 / 60 / 1 | 18,342 | 3.910 | pass / pass |
+| group_norm | 17 / 17 / 24 | 367 | 0.202 | six-ID assignment not certified |
+| causal_conv1d_prefill | 59 / 84 / 62 | 92,786 | 74.524 | missing allocation export |
+| causal_conv1d_decode | 22 / 22 / 22 | 2,761 | 0.202 | six-ID assignment not certified |
+| gdn_chunk_cumsum | 3 / 3 / 1 | 41 | 0.303 | pass / pass |
+| mhc_head_mix | 3 / 3 / 7 | 45 | 0.202 | pass / pass |
+| elementwise_pipeline | 9 / 9 / 1 | 171 | 0.203 | pass / pass |
+| gated_delta_rule | 172 / 47 / 194 | 2,473,273 | 81.013 | missing prefix lifetime export |
+| lossless_block_cast | 5 / 5 / 4 | 83 | 3.423 | pass / pass |
+
+Static sites do not count executed commands or simultaneously live notifications. Raw arithmetic includes payload scalar work and preparation that downstream lowering can remove. The ten previously successful logical outputs retain their earlier aggregate site/arithmetic counts; this is an inventory comparison, not a semantic equivalence proof. Prefill separately confirms the ownership repair. Delta still generates 2,473,273 arithmetic operations and lacks physical lifetime export. Fewer static sites cannot establish six-ID feasibility.
+
+Persistent retains 1,544 record members. Its profile starts with 3,088 prepared endpoint sites and 20,257 arithmetic operations; late normalization leaves 116 sites, 18,283 prepared arithmetic operations, and 11,468 endpoint-reachable arithmetic operations. The final logical function contains 18,342 arithmetic operations including 59 original payload operations. These measurements confirm that early regional family construction remains unfinished; output compaction alone does not avoid preparation.
+
+Its repeated allocation visits 894,583 boundary pairs across 105 matrix pairs and 162 candidate gaps. There are 895,783 implication requests but 134,934 computations. The measured proof and relative-query computations occupy about 21 ms and 36 ms inside a 3.53 s repeated-allocation stage. Those timers exclude cache lookup and activity construction, so the residual time needs direct measurement before attributing it to either.
+
+## Allocation activity construction and coalescing attribution
+
+The repeated allocator now retains each ordered pair's activity conjunction in
+its existing attempt-owned proof context, before implication-cache lookup.
+Candidate gaps reuse the exact expression ID. The cache belongs to one unchanged
+command graph and append-only arena; it does not survive a rollback or invocation.
+New counters distinguish activity requests, conjunction constructions, and their
+construction time. The coalescing timer includes child validation/palette
+coalescing and is contained in the repeated-region time, never added to it.
+
+On Persistent, 894,583 requests construct 134,813 conjunctions. Proof answers,
+matrix pairs, candidate gaps, relative queries, and proof-node counts remain
+unchanged. Three alternating serial pairs measure baseline 3.609/3.908/3.809 s
+and candidate 3.908/3.609/3.608 s. Their ranges overlap; no reliable planning
+speedup is claimed. Each pair's full logical output agrees under the existing
+scoped Boolean-AND operand normalization, including allocation evidence.
+
+A separate profiled run locates 3.173 s of 3.382 s in child-palette coalescing,
+before periodic allocation. Activity construction occupies 42 ms, proof
+computation 21 ms, and relative-query computation 35 ms. This narrows the next
+performance investigation to coalescing; the periodic boundary-pair count alone
+does not explain the remaining elapsed time.
+
+The focused profile, regional-session, and physical-allocation suites pass.
+The direct repetition oracle passes 14 nested command closures, zero trips and
+compact-size checks. The combined repetition suite fails after 91 s, consistent with its previously
+recorded phased-loop timeout; it is not counted as passing. A separate nested
+allocation run was interrupted while stalled and is also not counted as passing. Local receipts and manual
+self-review are in `.local/family-pipeline-activity/`. Device latency is unmeasured.
