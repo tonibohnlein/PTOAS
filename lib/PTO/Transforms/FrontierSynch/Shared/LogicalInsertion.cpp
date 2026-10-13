@@ -805,6 +805,8 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
         (function->hasAttr(CyclicAllocationAttr) || function->hasAttr(FiniteAllocationAttr))) {
         return function.emitError("logical insertion cannot replace an existing allocation certificate");
     }
+    // Distinguish deferred construction from code eliminated by normalization.
+    profileLogicalControl(function, plan, "materialized");
     if (failed(deduplicatePreparation(plan))) {
         return function.emitError("preparation deduplication invalidated terminal cleanup evidence");
     }

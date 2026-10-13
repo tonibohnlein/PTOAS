@@ -114,12 +114,15 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         }
         auto prepared = std::move(*supplied);
         if (child.regional.endpointSiteGuard || child.regional.endpointInvocationGuard) {
-            // Guarded regional masks still use the concrete compatibility path.
-            if (failed(materializeLogicalFamilies(*prepared))) { return failure(); }
             auto active = yes();
             if (child.regional.endpointSiteGuard) { active = both(active, *child.regional.endpointSiteGuard); }
             if (child.regional.endpointInvocationGuard) {
                 active = both(active, *child.regional.endpointInvocationGuard);
+            }
+            if (prepared->familyRecipe) {
+                auto masked = maskFamilyActivity(prepared->familyRecipe, arena, active);
+                if (failed(masked)) { fail("phase family predicate unavailable at original cut"); return failure(); }
+                prepared->familyRecipe = std::move(*masked);
             }
             std::map<Operation*, RegionExpressions::CutEmission> contexts;
             for (auto& endpoint : prepared->endpoints) {

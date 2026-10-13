@@ -176,6 +176,86 @@ bool endpointRecipeCompositionChecks(const mlir::pto::frontiersynch::NumericTemp
         composed.endpoints[position++].record != 900002 || !checkLeaf(1100)) { return false; }
     return position == composed.endpoints.size();
 }
+// Masks must share original-cut values without referencing a later leaf's
+// detached guard from an earlier shared block. Check dependency order directly.
+bool endpointActivityRecipeChecks(const mlir::pto::frontiersynch::NumericTemplateEndpoints& input,
+                                 std::shared_ptr<const mlir::pto::frontiersynch::FamilyEndpointRecipe> leaf,
+                                 const std::vector<mlir::pto::frontiersynch::EndpointFamily>& families)
+{
+    namespace fs = mlir::pto::frontiersynch;
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto masked = fs::maskFamilyActivity(leaf, arena, arena->boolean(false));
+    if (failed(masked) || succeeded(fs::maskFamilyActivity(leaf, arena, arena->constant(7)))) { return false; }
+    auto prefixed = fs::prefixFamilyInvocation(*masked, arena, arena->constant(7));
+    if (failed(prefixed)) { return false; }
+    auto joined = fs::appendFamilyEndpointRecipe(*prefixed, *masked, 1000, 0);
+    if (failed(joined)) { return false; }
+    fs::PreparedLogicalPlan plan(0);
+    plan.familyRecipe = *joined;
+    for (uint32_t base : {0U, 1000U}) {
+        for (auto family : families) {
+            family.id += base;
+            for (auto& member : family.members) { member.record += base; }
+            plan.families.push_back(std::move(family));
+        }
+    }
+    if (failed(fs::materializeLogicalFamilies(plan))) { return false; }
+    llvm::DenseSet<mlir::Value> available;
+    for (const auto& stage : plan.preparation) {
+        for (auto& op : *stage.code) {
+            for (auto value : op.getOperands()) {
+                auto* definition = value.getDefiningOp();
+                if (definition && !definition->getParentOp() && !available.contains(value)) { return false; }
+            }
+            for (auto value : op.getResults()) { available.insert(value); }
+        }
+    }
+    for (const auto& endpoint : plan.endpoints) {
+        auto selected = endpoint.guard.getDefiningOp<mlir::arith::SelectOp>();
+        if (!selected) { return false; }
+        auto condition = selected.getCondition().getDefiningOp<mlir::arith::ConstantOp>();
+        if (!condition || !llvm::cast<mlir::IntegerAttr>(condition.getValue()).getValue().isZero()) { return false; }
+        if (endpoint.memberCoordinates.size() != (endpoint.records.front() < 1000 ? 2U : 1U)) { return false; }
+    }
+    auto* cut = input.groups.front().cut.before;
+    auto late = std::make_shared<fs::RegionExpressions>();
+    auto guard = late->eq(late->input(cut->getResult(0)), late->constant(0));
+    auto replay = fs::maskFamilyActivity(leaf, late, guard);
+    if (failed(replay)) { return false; }
+    late->forbidRecomputation(cut);
+    fs::PreparedLogicalPlan rejected(0);
+    rejected.familyRecipe = *replay;
+    rejected.families = families;
+    return failed(fs::materializeLogicalFamilies(rejected)) && rejected.preparation.empty() &&
+        rejected.endpoints.empty() && bool(rejected.familyRecipe);
+}
+bool endpointActivityBarrierChecks(mlir::pto::frontiersynch::NumericTemplateEndpoints input)
+{
+    namespace fs = mlir::pto::frontiersynch;
+    input.outer = {};
+    const auto pipe = static_cast<uint32_t>(input.anchors[0].phase->kPipeValue);
+    input.logical.recipes = {{0, 0, 0, pipe, 0, fs::EndpointKind::Barrier}};
+    auto leaf = fs::buildFiniteFamilyEndpointRecipe(input);
+    if (failed(leaf)) { return false; }
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto masked = fs::maskFamilyActivity(*leaf, arena, arena->boolean(false));
+    if (failed(masked)) { return false; }
+    auto outer = fs::prefixFamilyInvocation(*masked, arena, arena->constant(9));
+    if (failed(outer)) { return false; }
+    fs::PreparedLogicalPlan plan(0);
+    plan.familyRecipe = *outer;
+    fs::EndpointFamily family;
+    family.sourcePipe = pipe; family.targetPipe = pipe; family.local = true;
+    family.members.push_back({0, 0, 0, {}, {}});
+    plan.families.push_back(std::move(family));
+    if (failed(fs::materializeLogicalFamilies(plan)) || plan.endpoints.size() != 1) { return false; }
+    const auto& endpoint = plan.endpoints.front();
+    auto selected = endpoint.guard.getDefiningOp<mlir::arith::SelectOp>();
+    if (!selected) { return false; }
+    auto condition = selected.getCondition().getDefiningOp<mlir::arith::ConstantOp>();
+    return condition && llvm::cast<mlir::IntegerAttr>(condition.getValue()).getValue().isZero() &&
+        !endpoint.identity && endpoint.memberCoordinates.empty();
+}
 // Finite families share the ordering/selector compiler, but have no runtime
 // outer ordinal. Include holes, simultaneous points and arbitrary record labels.
 bool finiteEndpointRecipeChecks(mlir::pto::frontiersynch::NumericTemplateEndpoints input)
@@ -264,7 +344,9 @@ bool endpointOrderFamilyChecks(mlir::MLIRContext* context)
                 fs::familyEndpointPieceCount(**recipe) != 10 ||
                 !endpointRecipeCompositionChecks(input, *recipe, families.families) ||
                 !endpointInvocationRecipeChecks(input, *recipe, families.families) ||
-                !finiteEndpointRecipeChecks(input)) { return false; }
+                !finiteEndpointRecipeChecks(input) ||
+                !endpointActivityRecipeChecks(input, *recipe, families.families) ||
+                !endpointActivityBarrierChecks(input)) { return false; }
             auto downstream = llvm::find_if(families.families, [](const auto& f) { return f.displacement == 2; });
             if (downstream == families.families.end() || downstream->members.size() != count) { return false; }
             llvm::sort(pieces.pieces, [](const auto& a, const auto& b) { return a.order < b.order; });
