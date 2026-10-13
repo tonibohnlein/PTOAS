@@ -19,6 +19,7 @@
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
+#include "EndpointOrderChecks.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 namespace {
@@ -370,6 +371,9 @@ LogicalResult sectionContextChecks(func::FuncOp function)
 } // namespace
 LogicalResult runPreparedInsertionChecks(func::FuncOp function)
 {
+    if (!endpointOrderGraphChecks() || !endpointOrderFamilyChecks(function.getContext())) {
+        return function.emitError("early family refinement changed cycle membership or unfolded order");
+    }
     if (!publicationRecipeChecks(function.getContext())) {
         return function.emitError("publication recipe changed availability or cleanup");
     }

@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Group source and destination sites independently from original recipe coordinates.
 #include "PTO/Transforms/FrontierSynch/Shared/EndpointPieces.h"
+#include "EndpointOrder.h"
 #include <algorithm>
 #include <map>
 #include <set>
@@ -109,47 +110,29 @@ bool earlier(const Point& a, const Point& b)
     const auto pipeB = b.piece.kind == EndpointKind::Barrier ? b.piece.sourcePipe : 0;
     return std::tie(a.piece.kind, pipeA, a.recipe) < std::tie(b.piece.kind, pipeB, b.recipe);
 }
-struct Order {
-    std::vector<std::size_t> positions;
-    std::set<std::size_t> split;
-};
-Order order(ArrayRef<Point> points, std::size_t count)
+EndpointOrder order(ArrayRef<Point> points, std::size_t count)
 {
     std::vector<std::set<std::size_t>> edges(count);
-    std::vector<std::size_t> incoming(count, 0);
+    // Points at different original cuts cannot constrain one another. Keep
+    // their candidate inventories separate before testing coordinate exclusion.
+    std::map<std::pair<Block*, Operation*>, std::vector<std::size_t>> cuts;
     for (std::size_t i = 0; i < points.size(); ++i) {
-        for (std::size_t j = i + 1; j < points.size(); ++j) {
-            const auto& a = points[i];
-            const auto& b = points[j];
-            if (a.owner == b.owner || !sameCut(a.piece.cut, b.piece.cut) || disjoint(a, b)) {
-                continue;
-            }
-            const auto from = earlier(a, b) ? a.owner : b.owner;
-            const auto to = earlier(a, b) ? b.owner : a.owner;
-            if (edges[from].insert(to).second) {
-                ++incoming[to];
-            }
-        }
+        const auto cut = points[i].piece.cut;
+        cuts[{cut.block, cut.before}].push_back(i);
     }
-    Order result;
-    for (std::size_t i = 0; i < count; ++i) {
-        if (!incoming[i]) {
-            result.positions.push_back(i);
-        }
-    }
-    for (std::size_t next = 0; next < result.positions.size(); ++next) {
-        for (const auto target : edges[result.positions[next]]) {
-            if (!--incoming[target]) {
-                result.positions.push_back(target);
+    for (const auto& [cut, selected] : cuts) {
+        for (std::size_t i = 0; i < selected.size(); ++i) {
+            for (std::size_t j = i + 1; j < selected.size(); ++j) {
+                const auto& a = points[selected[i]];
+                const auto& b = points[selected[j]];
+                if (a.owner == b.owner || disjoint(a, b)) { continue; }
+                const auto from = earlier(a, b) ? a.owner : b.owner;
+                const auto to = earlier(a, b) ? b.owner : a.owner;
+                edges[from].insert(to);
             }
         }
     }
-    for (std::size_t i = 0; i < count; ++i) {
-        if (incoming[i]) {
-            result.split.insert(i);
-        }
-    }
-    return result;
+    return orderEndpointGroups(edges);
 }
 std::vector<EndpointPiece> group(std::vector<Point>& points, const std::set<std::size_t>& split = {})
 {
@@ -199,11 +182,11 @@ EndpointPieces buildEndpointPieces(const NumericTemplateEndpoints& plan)
     EndpointPieces result;
     result.pieces = group(points);
     auto ordering = order(points, result.pieces.size());
-    if (!ordering.split.empty()) {
-        result.pieces = group(points, ordering.split);
+    if (!ordering.cyclic.empty()) {
+        result.pieces = group(points, ordering.cyclic);
         ordering = order(points, result.pieces.size());
     }
-    if (!ordering.split.empty()) {
+    if (!ordering.cyclic.empty()) {
         return reject("endpoint pieces could not preserve coincident command order");
     }
     for (std::size_t i = 0; i < ordering.positions.size(); ++i) {

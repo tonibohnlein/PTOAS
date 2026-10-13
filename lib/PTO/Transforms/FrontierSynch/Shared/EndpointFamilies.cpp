@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Form exact finite endpoint families from analysis coordinates, without reading emitted guards.
 #include "PTO/Transforms/FrontierSynch/Shared/EndpointFamilies.h"
+#include "EndpointOrder.h"
 #include <algorithm>
 #include <map>
 #include <set>
@@ -176,39 +177,24 @@ struct CutOrder {
 };
 CutOrder order(const CutPieces& cut)
 {
-    std::map<Node, std::set<Node>> edges;
-    std::map<Node, std::size_t> incoming;
-    for (const auto& piece : cut.pieces) {
-        incoming.try_emplace({piece.family, piece.kind}, 0);
-    }
+    std::map<Node, std::size_t> indices;
+    for (const auto& piece : cut.pieces) { indices.try_emplace({piece.family, piece.kind}, 0); }
+    std::vector<Node> nodes;
+    for (auto& [node, index] : indices) { index = nodes.size(); nodes.push_back(node); }
+    std::vector<std::set<std::size_t>> edges(nodes.size());
     for (std::size_t i = 0; i < cut.pieces.size(); ++i) {
         for (std::size_t j = i + 1; j < cut.pieces.size(); ++j) {
             const auto& a = cut.pieces[i];
             const auto& b = cut.pieces[j];
-            const Node source{a.family, a.kind}, target{b.family, b.kind};
-            if (source != target && !disjoint(a.coordinates, b.coordinates) && edges[source].insert(target).second) {
-                ++incoming[target];
-            }
+            const auto source = indices.at({a.family, a.kind});
+            const auto target = indices.at({b.family, b.kind});
+            if (source != target && !disjoint(a.coordinates, b.coordinates)) { edges[source].insert(target); }
         }
     }
+    auto ordering = orderEndpointGroups(edges);
     CutOrder result;
-    for (const auto& entry : incoming) {
-        if (!entry.second) {
-            result.ordered.push_back(entry.first);
-        }
-    }
-    for (std::size_t next = 0; next < result.ordered.size(); ++next) {
-        for (const auto& target : edges[result.ordered[next]]) {
-            if (!--incoming[target]) {
-                result.ordered.push_back(target);
-            }
-        }
-    }
-    for (const auto& entry : incoming) {
-        if (entry.second) {
-            result.split.insert(entry.first.first);
-        }
-    }
+    for (auto index : ordering.positions) { result.ordered.push_back(nodes[index]); }
+    for (auto index : ordering.cyclic) { result.split.insert(nodes[index].first); }
     return result;
 }
 void splitFamilies(std::vector<EndpointFamily>& families, const std::set<std::size_t>& split)
