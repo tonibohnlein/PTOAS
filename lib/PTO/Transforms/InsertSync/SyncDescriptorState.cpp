@@ -383,12 +383,17 @@ SyncDescriptorState::SyncDescriptorState(
     // bounded by operand count times nesting depth, not by runtime trip counts.
     // Include translator-only base-buffer queries in the same context key.
     DenseMap<Operation*, DenseSet<Value>> dependencies;
+    DenseSet<Operation*> universalLoops;
     function.walk([&](Operation* op) {
         ++impl->counters.indexedOperations;
         SmallVector<Value> values(op->getOperands());
         if (isa<func::CallOp>(op) ||
             (op->getNumRegions() && !isa<scf::ForOp, scf::IfOp, SectionCubeOp, SectionVectorOp>(op))) {
-            values.append(impl->dynamicDescriptors.begin(), impl->dynamicDescriptors.end());
+            // One universal dependency per enclosing subtree. Repeated opaque
+            // operations do not enumerate descriptors at every ancestor again.
+            for (auto* parent = op->getParentOp(); parent && parent != function; parent = parent->getParentOp()) {
+                if (isa<scf::ForOp>(parent) && !universalLoops.insert(parent).second) { break; }
+            }
         }
         auto extra = impl->extra.find(op);
         if (extra != impl->extra.end()) {
@@ -407,6 +412,16 @@ SyncDescriptorState::SyncDescriptorState(
             }
         }
     });
+    for (auto* loop : universalLoops) {
+        for (auto descriptor : impl->dynamicDescriptors) {
+            if (impl->counters.universalDependencyProbes != UINT64_MAX) {
+                ++impl->counters.universalDependencyProbes;
+            }
+            if (!definedWithin(descriptor, loop) && dependencies[loop].insert(descriptor).second) {
+                impl->loopInputs[loop].push_back(descriptor);
+            }
+        }
+    }
     for (auto arg : function.getArguments()) {
         if (isa<TileBufType>(arg.getType())) {
             impl->state[arg] = initial(arg, function, *impl->scalars);

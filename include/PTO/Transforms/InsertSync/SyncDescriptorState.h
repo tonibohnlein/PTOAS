@@ -27,6 +27,7 @@ using SyncDescriptorShape = std::array<SyncDescriptorDimension, 2>;
 struct SyncDescriptorWork {
     uint64_t sourceVisits = 0;
     uint64_t indexedOperations = 0;
+    uint64_t universalDependencyProbes = 0;
     uint64_t headerFactLosses = 0;
     uint64_t reusedLoops = 0;
     uint64_t updates = 0;
