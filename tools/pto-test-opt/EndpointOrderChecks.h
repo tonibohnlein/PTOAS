@@ -176,6 +176,45 @@ bool endpointRecipeCompositionChecks(const mlir::pto::frontiersynch::NumericTemp
         composed.endpoints[position++].record != 900002 || !checkLeaf(1100)) { return false; }
     return position == composed.endpoints.size();
 }
+// Finite families share the ordering/selector compiler, but have no runtime
+// outer ordinal. Include holes, simultaneous points and arbitrary record labels.
+bool finiteEndpointRecipeChecks(mlir::pto::frontiersynch::NumericTemplateEndpoints input)
+{
+    namespace fs = mlir::pto::frontiersynch;
+    if (succeeded(fs::buildFiniteFamilyEndpointRecipe(input))) { return false; }
+    input.outer = {};
+    if (succeeded(fs::buildFiniteFamilyEndpointRecipe(input))) { return false; }
+    for (auto& recipe : input.logical.recipes) { recipe.displacement = 0; }
+    for (auto& anchor : input.anchors) {
+        for (auto& coordinate : anchor.coordinates) { coordinate.induction = 2 * coordinate.induction + 1; }
+    }
+    auto recipe = fs::buildFiniteFamilyEndpointRecipe(input);
+    auto pieces = fs::buildEndpointPieces(input);
+    if (failed(recipe) || !pieces.error.empty()) { return false; }
+    fs::PreparedLogicalPlan plan(0);
+    plan.familyRecipe = *recipe;
+    if (!plan.preparation.empty() || !plan.endpoints.empty() ||
+        failed(fs::materializeLogicalFamilies(plan)) || plan.endpoints.size() != pieces.pieces.size()) { return false; }
+    for (const auto& endpoint : plan.endpoints) {
+        auto ordinal = endpoint.identity.getDefiningOp<mlir::arith::ConstantOp>();
+        if (!ordinal || !llvm::cast<mlir::IntegerAttr>(ordinal.getValue()).getValue().isZero()) { return false; }
+        auto found = llvm::find_if(pieces.pieces, [&](const auto& piece) {
+            return piece.kind == (endpoint.kind == fs::LogicalCommandKind::Set ?
+                fs::EndpointKind::Set : fs::EndpointKind::Wait) &&
+                piece.members.size() == endpoint.records.size() &&
+                llvm::all_of(llvm::zip(piece.members, endpoint.records), [](auto pair) {
+                    return std::get<0>(pair).record == std::get<1>(pair);
+                });
+        });
+        if (found == pieces.pieces.end()) { return false; }
+    }
+    auto invalid = input;
+    invalid.groups.clear();
+    if (succeeded(fs::buildFiniteFamilyEndpointRecipe(invalid))) { return false; }
+    invalid = input;
+    invalid.logical.recipes.clear();
+    return failed(fs::buildFiniteFamilyEndpointRecipe(invalid));
+}
 bool endpointOrderFamilyChecks(mlir::MLIRContext* context)
 {
     using namespace mlir;
@@ -224,7 +263,8 @@ bool endpointOrderFamilyChecks(mlir::MLIRContext* context)
                 families.families.size() != 5 || pieces.pieces.size() != 10 ||
                 fs::familyEndpointPieceCount(**recipe) != 10 ||
                 !endpointRecipeCompositionChecks(input, *recipe, families.families) ||
-                !endpointInvocationRecipeChecks(input, *recipe, families.families)) { return false; }
+                !endpointInvocationRecipeChecks(input, *recipe, families.families) ||
+                !finiteEndpointRecipeChecks(input)) { return false; }
             auto downstream = llvm::find_if(families.families, [](const auto& f) { return f.displacement == 2; });
             if (downstream == families.families.end() || downstream->members.size() != count) { return false; }
             llvm::sort(pieces.pieces, [](const auto& a, const auto& b) { return a.order < b.order; });

@@ -39,10 +39,10 @@ public:
     FamilyPreparer(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared, uint32_t recordBase,
                    const std::map<uint32_t, uint32_t>& namespaces)
         : recipe(recipe), prepared(prepared), recordBase(recordBase), namespaces(namespaces),
-          builder(recipe.outer->getContext()) {}
+          builder(recipe.cuts.front().cut.before->getContext()) {}
     void run()
     {
-        initializeOrdinals();
+        if (recipe.outer) { initializeOrdinals(); }
         for (const auto& cut : recipe.cuts) {
             if (!cut.pieces.empty()) { prepareCut(cut.cut, cut.pieces); }
         }
@@ -137,6 +137,7 @@ private:
     void prepareCut(TemplateEndpointCut cut, ArrayRef<std::size_t> selected)
     {
         builder.setInsertionPointToEnd(&prepared.addPreparation(cut.before));
+        if (!recipe.outer) { ordinal = number(0, cut.before->getLoc()); }
         std::map<std::pair<bool, uint64_t>, Value> predicates;
         for (auto index : selected) {
             const auto& piece = recipe.pieces[index];
@@ -149,12 +150,14 @@ private:
         }
     }
 };
-} // namespace
-FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFamilyEndpointRecipe(const NumericTemplateEndpoints& plan)
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildRecipe(const NumericTemplateEndpoints& plan)
 {
-    if (!plan.outer || !plan.logical.error.empty()) { return failure(); }
+    if (!plan.logical.error.empty()) { return failure(); }
     auto pieces = buildEndpointPieces(plan);
-    if (!pieces.error.empty()) { return plan.outer->emitError(pieces.error), failure(); }
+    if (!pieces.error.empty()) {
+        if (plan.outer) { plan.outer->emitError(pieces.error); }
+        return failure();
+    }
     auto recipe = std::make_shared<FamilyEndpointRecipe>();
     recipe->outer = plan.outer;
     recipe->pieces = std::move(pieces.pieces);
@@ -167,7 +170,8 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFamilyEndpointRecipe
     }
     std::map<Operation*, std::size_t> cuts;
     for (const auto& group : plan.groups) {
-        if (!cuts.emplace(group.cut.before, recipe->cuts.size()).second) { return failure(); }
+        if (!group.cut.before || group.cut.block != group.cut.before->getBlock() ||
+            !cuts.emplace(group.cut.before, recipe->cuts.size()).second) { return failure(); }
         recipe->cuts.push_back({group.cut, {}});
     }
     for (const auto& piece : recipe->pieces) {
@@ -181,7 +185,10 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFamilyEndpointRecipe
             labels.push_back(member.record);
         }
         auto selection = buildFamilyExpressions(coordinates, labels);
-        if (!selection.error.empty()) { return plan.outer->emitError(selection.error), failure(); }
+        if (!selection.error.empty()) {
+            if (plan.outer) { plan.outer->emitError(selection.error); }
+            return failure();
+        }
         recipe->selectors.push_back(std::move(selection.recipe));
     }
     for (auto& cut : recipe->cuts) {
@@ -190,6 +197,21 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFamilyEndpointRecipe
         });
     }
     return std::shared_ptr<const FamilyEndpointRecipe>(std::move(recipe));
+}
+} // namespace
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFamilyEndpointRecipe(const NumericTemplateEndpoints& plan)
+{
+    if (!plan.outer) { return failure(); }
+    return buildRecipe(plan);
+}
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFiniteFamilyEndpointRecipe(
+    const NumericTemplateEndpoints& plan)
+{
+    if (plan.outer || plan.logical.recipes.empty() ||
+        llvm::any_of(plan.logical.recipes, [](const auto& recipe) { return recipe.displacement != 0; })) {
+        return failure();
+    }
+    return buildRecipe(plan);
 }
 std::map<uint32_t, uint32_t> familyRecordNamespaces(ArrayRef<EndpointFamily> families)
 {

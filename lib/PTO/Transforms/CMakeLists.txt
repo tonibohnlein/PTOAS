@@ -359,6 +359,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Shared/SequenceAnalysis.cpp
   FrontierSynch/Shared/SequenceBoundary.cpp
   FrontierSynch/Shared/SequenceConditional.cpp
+  FrontierSynch/Shared/SequenceFiniteFamilies.cpp
   FrontierSynch/Shared/SequenceInsertion.cpp
   FrontierSynch/Shared/BoundedPredicateHistory.cpp
   FrontierSynch/Shared/InvocationSourceBounds.cpp

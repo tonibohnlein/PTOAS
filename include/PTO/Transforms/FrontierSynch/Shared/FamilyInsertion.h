@@ -19,6 +19,12 @@ class FamilyEndpointRecipe;
 // plan families. Lowering stages arithmetic in detached blocks and preserves
 // original record identities across independently partitioned endpoint sides.
 FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFamilyEndpointRecipe(const NumericTemplateEndpoints& plan);
+// Finite point batches use the same family compiler with source ordinal zero.
+// No outer loop or displacement is admitted. The producer must prove that at
+// each original cut exact activity equals the supplied coordinate point, not
+// merely that the coordinates are a necessary domain for that activity.
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFiniteFamilyEndpointRecipe(
+    const NumericTemplateEndpoints& plan);
 // Append immutable child recipes without copying their selector inventories.
 // endpointIndex counts concrete endpoints preceding the child; recordBase is
 // the checked namespace translation applied equally to both matching sides.
