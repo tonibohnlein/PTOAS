@@ -516,6 +516,13 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
     if (failed(input.build(function))) {
         return failure();
     }
+    if (function->hasAttr("test.trace_existing")) {
+        // Replay a saved physical plan without selecting or inserting another
+        // plan. Allocation tests supply their own independent expected trace.
+        auto trace = Interpreter(input.instructions()).run(function);
+        llvm::outs() << llvm::json::Value(llvm::json::Object{{"accepted", true}, {"trace", std::move(trace)}}) << "\n";
+        return verify(function);
+    }
     auto render = [&]() {
         std::string text;
         llvm::raw_string_ostream stream(text);
