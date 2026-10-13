@@ -16,91 +16,146 @@
 #include <numeric>
 
 namespace mlir::pto::frontiersynch {
-LogicalResult PhaseIndex::build(func::FuncOp source, const SyncInput& input)
+// Immutable after the root build; scoped indexes retain their own phase map,
+// relevance delta and value prerequisites. Original IR/phase lifetimes are
+// unchanged from PhaseIndex's borrowed-source contract.
+struct PhaseSourceFacts {
+    func::FuncOp function;
+    DenseSet<const CompoundInstanceElement*> phases;
+    DenseSet<Value> baseline;
+    SmallVector<scf::ForOp> loops;
+    DenseMap<Value, PhaseIndex::CarriedOrdinalProof> carried;
+    PhaseIndex::SourceWork work;
+};
+namespace {
+bool selectedOperandSeed(Operation* op)
 {
-    return build(source, input.instructions());
+    return !isa<scf::ForOp, scf::IfOp>(op) &&
+        !(isa<scf::YieldOp>(op) && isa<scf::ForOp, scf::IfOp>(op->getParentOp()));
 }
-
-LogicalResult PhaseIndex::build(func::FuncOp source, ArrayRef<const CompoundInstanceElement*> phases)
+// Backwards structured SSA closure. Stop at the shared baseline, so ordinary
+// local views do not copy or walk the function's already discovered live state.
+void relevanceClosure(SmallVector<Value> work, const DenseSet<Value>& baseline,
+                      DenseSet<Value>& result, uint64_t& visits)
 {
-    anchorPhases.clear();
-    valuePrerequisites.clear();
-    prerequisites.clear();
-    relevantValues.clear();
-    carriedOrdinals.clear();
-    dominance.invalidate();
-    function = {};
-    if (!source) {
-        return failure();
-    }
-    DenseMap<Operation*, SmallVector<const CompoundInstanceElement*>> pending;
-    for (const auto* phase : phases) {
-        Operation* anchor = phase->elementOp;
-        if (!anchor || !anchor->getBlock() || !source->isProperAncestor(anchor)) {
-            return source.emitError("shared synchronization phase has no anchor in this function");
-        }
-        pending[anchor].push_back(phase);
-    }
-    anchorPhases = std::move(pending);
-    function = source;
-    computeRelevance();
-    computeCarriedOrdinals();
-    DenseMap<Operation*, bool> carriedRelevance;
-    for (const auto& entry : anchorPhases) {
-        if (entry.second.size() != 1) {
-            continue;
-        }
-        for (Value value : entry.first->getResults()) {
-            traceResult(entry.second.front(), value, carriedRelevance);
-        }
-    }
-    return success();
-}
-
-// Treat structured SSA edges as dataflow, without rewriting carried values or
-// dropping their initializers. Worklist visitation handles cross-carried cycles.
-void PhaseIndex::computeRelevance()
-{
-    SmallVector<Value> work;
-    DenseSet<Operation*> expandedDefinitions;
-    function.walk([&](Operation* op) {
-        if (auto loop = dyn_cast<scf::ForOp>(op)) {
-            work.append({loop.getLowerBound(), loop.getUpperBound(), loop.getStep()});
-        } else if (auto branch = dyn_cast<scf::IfOp>(op)) {
-            work.push_back(branch.getCondition());
-        } else if (isa<scf::YieldOp>(op) && isa<scf::ForOp, scf::IfOp>(op->getParentOp())) {
-            // A live block argument or result requests its incoming value below.
-        } else if (isa<func::ReturnOp>(op) || !phasesFor(op).empty() || !isMemoryEffectFree(op)) {
-            llvm::append_range(work, op->getOperands());
-        }
-    });
+    DenseSet<Operation*> expanded;
     auto incoming = [&](scf::ForOp loop, unsigned position) {
         work.push_back(loop.getInitArgs()[position]);
         work.push_back(cast<scf::YieldOp>(loop.getBody()->getTerminator()).getOperand(position));
     };
     while (!work.empty()) {
         Value value = work.pop_back_val();
-        if (!relevantValues.insert(value).second) { continue; }
+        if (baseline.contains(value) || !result.insert(value).second) { continue; }
+        if (visits != UINT64_MAX) { ++visits; }
         if (auto argument = dyn_cast<BlockArgument>(value)) {
             auto loop = dyn_cast<scf::ForOp>(argument.getOwner()->getParentOp());
             if (loop && argument.getArgNumber()) { incoming(loop, argument.getArgNumber() - 1); }
             continue;
         }
-        auto result = cast<OpResult>(value);
-        Operation* op = result.getOwner();
+        auto source = cast<OpResult>(value);
+        Operation* op = source.getOwner();
         if (auto loop = dyn_cast<scf::ForOp>(op)) {
-            incoming(loop, result.getResultNumber());
+            incoming(loop, source.getResultNumber());
         } else if (auto branch = dyn_cast<scf::IfOp>(op)) {
             for (Region& arm : branch->getRegions()) {
                 if (!arm.empty()) {
                     work.push_back(cast<scf::YieldOp>(arm.front().getTerminator())
-                                       .getOperand(result.getResultNumber()));
+                                       .getOperand(source.getResultNumber()));
                 }
             }
-        } else if (expandedDefinitions.insert(op).second) {
+        } else if (expanded.insert(op).second) {
             llvm::append_range(work, op->getOperands());
         }
     }
+}
+std::shared_ptr<PhaseSourceFacts> discoverSource(func::FuncOp function,
+    ArrayRef<const CompoundInstanceElement*> phases)
+{
+    auto result = std::make_shared<PhaseSourceFacts>();
+    result->function = function;
+    result->phases.insert(phases.begin(), phases.end());
+    SmallVector<Value> seeds;
+    function.walk([&](Operation* op) {
+        if (result->work.sourceVisits != UINT64_MAX) { ++result->work.sourceVisits; }
+        if (auto loop = dyn_cast<scf::ForOp>(op)) {
+            result->loops.push_back(loop);
+            seeds.append({loop.getLowerBound(), loop.getUpperBound(), loop.getStep()});
+        } else if (auto branch = dyn_cast<scf::IfOp>(op)) {
+            seeds.push_back(branch.getCondition());
+        } else if (selectedOperandSeed(op) && (isa<func::ReturnOp>(op) || !isMemoryEffectFree(op))) {
+            llvm::append_range(seeds, op->getOperands());
+        }
+    });
+    const DenseSet<Value> empty;
+    relevanceClosure(std::move(seeds), empty, result->baseline, result->work.baselineVisits);
+    return result;
+}
+} // namespace
+LogicalResult PhaseIndex::build(func::FuncOp source, const SyncInput& input)
+{
+    return build(source, input.instructions());
+}
+LogicalResult PhaseIndex::build(func::FuncOp source, ArrayRef<const CompoundInstanceElement*> phases)
+{
+    return build(source, phases, {});
+}
+LogicalResult PhaseIndex::build(func::FuncOp source, ArrayRef<const CompoundInstanceElement*> phases,
+                               std::shared_ptr<const PhaseSourceFacts> shared)
+{
+    anchorPhases.clear(); valuePrerequisites.clear(); prerequisites.clear(); relevantValues.clear();
+    facts.reset(); localRelevanceVisits = 0; dominance.invalidate(); function = {};
+    if (!source) { return failure(); }
+    if (shared && shared->function != source) {
+        return source.emitError("shared phase facts belong to another function");
+    }
+    DenseMap<Operation*, SmallVector<const CompoundInstanceElement*>> pending;
+    for (const auto* phase : phases) {
+        Operation* anchor = phase ? phase->elementOp : nullptr;
+        if (!anchor || !anchor->getBlock() || !source->isProperAncestor(anchor)) {
+            return source.emitError("shared synchronization phase has no anchor in this function");
+        }
+        if (shared && !shared->phases.contains(phase)) {
+            return source.emitError("scoped phase is outside the shared source-fact universe");
+        }
+        pending[anchor].push_back(phase);
+    }
+    auto created = shared ? std::shared_ptr<PhaseSourceFacts>{} : discoverSource(source, phases);
+    facts = shared ? std::move(shared) : created;
+    anchorPhases = std::move(pending); function = source;
+    computeRelevance();
+    if (created) { computeCarriedOrdinals(*created); }
+    DenseMap<Operation*, bool> carriedRelevance;
+    for (const auto& entry : anchorPhases) {
+        if (entry.second.size() != 1) { continue; }
+        for (Value value : entry.first->getResults()) {
+            traceResult(entry.second.front(), value, carriedRelevance);
+        }
+    }
+    return success();
+}
+void PhaseIndex::computeRelevance()
+{
+    SmallVector<Value> seeds;
+    for (const auto& entry : anchorPhases) {
+        if (selectedOperandSeed(entry.first)) { llvm::append_range(seeds, entry.first->getOperands()); }
+    }
+    relevanceClosure(std::move(seeds), facts->baseline, relevantValues, localRelevanceVisits);
+}
+bool PhaseIndex::isRelevant(Value value) const
+{
+    return relevantValues.contains(value) || (facts && facts->baseline.contains(value));
+}
+std::shared_ptr<const PhaseSourceFacts> PhaseIndex::sourceFactsFor(
+    func::FuncOp source, ArrayRef<const CompoundInstanceElement*> phases) const
+{
+    if (!facts || facts->function != source || llvm::any_of(phases, [&](const auto* phase) {
+            return !facts->phases.contains(phase);
+        })) { return {}; }
+    return facts;
+}
+PhaseIndex::SourceWork PhaseIndex::sourceWork() const
+{
+    return facts ? facts->work : SourceWork{};
 }
 
 bool PhaseIndex::hasRelevantResults(Operation* operation) const
@@ -115,12 +170,13 @@ bool PhaseIndex::hasRelevantCarriedState(Operation* operation) const
         [&](Value argument) { return isRelevant(argument); }));
 }
 
-void PhaseIndex::computeCarriedOrdinals()
+void PhaseIndex::computeCarriedOrdinals(PhaseSourceFacts& result)
 {
-    function.walk([&](scf::ForOp loop) {
+    for (auto loop : result.loops) {
         for (auto argument : loop.getRegionIterArgs()) {
             if (!isRelevant(argument)) { continue; }
             auto* context = function.getContext();
+            if (result.work.recurrenceAttempts != UINT64_MAX) { ++result.work.recurrenceAttempts; }
             mlir::pto::detail::ScalarEvolution evolution(context, loop);
             auto proof = evolution.modularRecurrence(argument);
             if (!proof) { continue; }
@@ -128,11 +184,11 @@ void PhaseIndex::computeCarriedOrdinals()
             auto scaled = mlir::pto::detail::checkedMul(ordinal, getAffineConstantExpr(proof->stride, context));
             auto expression = mlir::pto::detail::checkedAdd(getAffineConstantExpr(proof->seed, context), scaled);
             if (!expression) { continue; }
-            carriedOrdinals.try_emplace(argument, CarriedOrdinalProof{expression % proof->modulus,
+            result.carried.try_emplace(argument, CarriedOrdinalProof{expression % proof->modulus,
                 static_cast<uint64_t>(proof->seed), static_cast<uint64_t>(proof->stride),
                 static_cast<uint64_t>(proof->modulus)});
         }
-    });
+    }
 }
 
 uint64_t PhaseIndex::CarriedOrdinalProof::period() const
@@ -150,8 +206,9 @@ uint64_t PhaseIndex::CarriedOrdinalProof::atOrdinal(uint64_t ordinal) const
 
 const PhaseIndex::CarriedOrdinalProof* PhaseIndex::carriedOrdinal(Value argument) const
 {
-    auto found = carriedOrdinals.find(argument);
-    return found == carriedOrdinals.end() ? nullptr : &found->second;
+    if (!facts || !isRelevant(argument)) { return nullptr; }
+    auto found = facts->carried.find(argument);
+    return found == facts->carried.end() ? nullptr : &found->second;
 }
 
 bool PhaseIndex::hasUnprovedCarriedState(Operation* operation) const

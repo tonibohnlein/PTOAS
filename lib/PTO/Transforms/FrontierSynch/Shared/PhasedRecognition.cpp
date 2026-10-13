@@ -455,7 +455,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                         }
                         if (childParts.empty()) { return true; }
                         auto composed = composeRegionalSequenceWithin(
-                            function, arena, std::move(childParts), true, false, child.loops);
+                            function, arena, std::move(childParts), true, false, child.loops, index.sourceFacts());
                         if (!composed.error.empty()) {
                             return unavailable("nested slice composition: " + composed.error);
                         }
@@ -537,7 +537,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                 protectionContext.push_back(outer);
                 const bool emptyBody = parts.empty();
                 auto composed = composeRegionalSequenceWithin(function, arena, std::move(parts), true, false,
-                                                               protectionContext);
+                                                               protectionContext, index.sourceFacts());
                 if (!composed.error.empty()) {
                     compactFailure = "phase body composition: " + composed.error;
                     invalidExpression = !expressions.constructionError().empty();

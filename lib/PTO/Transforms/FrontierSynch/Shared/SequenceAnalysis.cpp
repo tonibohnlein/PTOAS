@@ -44,7 +44,8 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
             for (const auto& child : composer.children) { children.push_back(child.regional); }
             std::string diagnostic;
             if (!composer.indexReady) {
-                if (failed(composer.index.build(composer.function, *input))) {
+                auto facts = composer.index.sourceFactsFor(composer.function, input->instructions());
+                if (failed(composer.index.build(composer.function, input->instructions(), std::move(facts)))) {
                     result.error = "symbolic composition shared prerequisite index unavailable"; return result;
                 }
                 composer.indexReady = true;
@@ -268,14 +269,16 @@ SequenceAnalysis analyzeSequenceRegionWithResolver(func::FuncOp function, const 
 }
 SequenceAnalysis composeRegionalSequence(func::FuncOp function,
     std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
-    bool reconstructPrerequisites, bool requireEndpoints)
+    bool reconstructPrerequisites, bool requireEndpoints,
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts)
 {
     return composeRegionalSequenceWithin(function, std::move(expressions), std::move(children),
-                                        reconstructPrerequisites, requireEndpoints, {});
+                                        reconstructPrerequisites, requireEndpoints, {}, std::move(sourceFacts));
 }
 SequenceAnalysis composeRegionalSequenceWithin(func::FuncOp function,
     std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
-    bool reconstructPrerequisites, bool requireEndpoints, ArrayRef<scf::ForOp> enclosing)
+    bool reconstructPrerequisites, bool requireEndpoints, ArrayRef<scf::ForOp> enclosing,
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts)
 {
     SequenceAnalysis result;
     if (!function || function.isDeclaration() || !function.getBody().hasOneBlock() || !expressions ||
@@ -295,7 +298,7 @@ SequenceAnalysis composeRegionalSequenceWithin(func::FuncOp function,
             }
         }
     }
-    if (reconstructPrerequisites && failed(state->index.build(function, phases))) {
+    if (reconstructPrerequisites && failed(state->index.build(function, phases, std::move(sourceFacts)))) {
         result.error = "cannot reconstruct regional value prerequisites";
         return result;
     }

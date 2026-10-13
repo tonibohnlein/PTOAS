@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Check the shared recurrence proof against independently stepped bank state.
 #include "PTO/Transforms/FrontierSynch/Shared/PhaseIndex.h"
+#include "PhaseSourceFactChecks.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/PhaseNormalization.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
@@ -83,6 +84,9 @@ bool checkCase(MLIRContext* context, const Case& test)
 } // namespace
 bool runCarriedScalarChecks(MLIRContext* context)
 {
+    if (!checkSharedPhaseFacts(context)) {
+        llvm::errs() << "shared phase facts differ from fresh views\n"; return false;
+    }
     const std::array<Case, 10> cases{
         {{1, 1, 2, 0, 1},
          {0, 2, 6, 3, 2},

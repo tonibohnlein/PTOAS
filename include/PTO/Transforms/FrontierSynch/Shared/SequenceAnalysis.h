@@ -59,11 +59,13 @@ void recordSequenceContractAttempt(ProgramRecognition& program, const SyncInput&
                                    const SequenceAnalysis& analysis);
 SequenceAnalysis composeRegionalSequence(func::FuncOp function,
     std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
-    bool reconstructPrerequisites = true, bool requireEndpoints = true);
+    bool reconstructPrerequisites = true, bool requireEndpoints = true,
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts = {});
 // Enclosing loops are fixed during this composition, not repeated by it.
 SequenceAnalysis composeRegionalSequenceWithin(func::FuncOp function,
     std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
-    bool reconstructPrerequisites, bool requireEndpoints, ArrayRef<scf::ForOp> enclosing);
+    bool reconstructPrerequisites, bool requireEndpoints, ArrayRef<scf::ForOp> enclosing,
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts = {});
 // Analyze original children of a selected sequence, or one explicit/loop node.
 // The caller supplies a common arena; original cuts and access records remain borrowed.
 SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& input,

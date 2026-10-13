@@ -1688,5 +1688,21 @@
     "combined_run_tests": 10,
     "reviews": "source review accepted; build and focused tests passed",
     "receipts": ".local/three-paths/consolidation/m7-snapshots/"
+  },
+  "shared_phase_source_facts": {
+    "status": "scoped source-fact component complete; compact-route forwarding separate",
+    "baseline_revision": "2fb8b282dc0c1fe0505af2d49faa1a51a47eac88",
+    "subset_oracle_cases": 32,
+    "focused_tests": 12,
+    "independent_closure_scripts": 2,
+    "source_review": "accepted",
+    "build": "passed after test SCF include fix",
+    "limitations": [
+      "broad run external timeout",
+      "saved M1 periodic-length and owned-storage subtests also exceed 60 seconds",
+      "historical bounding merge-count assertion pending separate test correction",
+      "not a full current-head campaign"
+    ],
+    "receipts": ".local/three-paths/consolidation/m5-source-facts"
   }
 }

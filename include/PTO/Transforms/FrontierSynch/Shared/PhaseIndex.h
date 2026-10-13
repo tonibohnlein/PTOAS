@@ -15,6 +15,7 @@
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include <memory>
 
 namespace mlir::pto::frontiersynch {
 enum class Boundary { Before, After };
@@ -32,6 +33,7 @@ struct PhasePrerequisiteEdges {
     std::string error;
 };
 
+struct PhaseSourceFacts;
 class PhaseIndex {
 public:
     // Function, SyncInput and records must outlive the index. Preserve original
@@ -41,6 +43,18 @@ public:
     // Build validates every anchor and publishes no partial index on failure.
     LogicalResult build(func::FuncOp source, const SyncInput& input);
     LogicalResult build(func::FuncOp source, ArrayRef<const CompoundInstanceElement*> phases);
+    // A scoped view shares source discovery, never a different phase view's
+    // prerequisite edges or relevance delta. Reject foreign function/phases.
+    LogicalResult build(func::FuncOp source, ArrayRef<const CompoundInstanceElement*> phases,
+                        std::shared_ptr<const PhaseSourceFacts> facts);
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts() const { return facts; }
+    // Return reusable facts only if the requested view is covered. A caller
+    // may otherwise explicitly construct fresh facts for a larger universe.
+    std::shared_ptr<const PhaseSourceFacts> sourceFactsFor(
+        func::FuncOp source, ArrayRef<const CompoundInstanceElement*> phases) const;
+    struct SourceWork { uint64_t sourceVisits = 0, baselineVisits = 0, recurrenceAttempts = 0; };
+    SourceWork sourceWork() const;
+    uint64_t relevanceVisits() const { return localRelevanceVisits; }
     ArrayRef<const CompoundInstanceElement*> phasesFor(Operation* anchor) const;
 
     // Outer-to-inner region choices for one invocation of each enclosing
@@ -61,7 +75,7 @@ public:
 
     // Backward relevance to payload operands, effects, control and returned
     // values. Computed once, including zero-trip and loop-carried SSA edges.
-    bool isRelevant(Value value) const { return relevantValues.contains(value); }
+    bool isRelevant(Value value) const;
     bool hasRelevantCarriedState(Operation* loop) const;
     struct CarriedOrdinalProof {
         AffineExpr expression;
@@ -86,8 +100,9 @@ private:
     DenseMap<Operation*, SmallVector<const CompoundInstanceElement*>> anchorPhases;
     DenseSet<Operation*> valuePrerequisites;
     DenseSet<Value> relevantValues;
-    DenseMap<Value, CarriedOrdinalProof> carriedOrdinals;
-    void computeCarriedOrdinals();
+    std::shared_ptr<const PhaseSourceFacts> facts;
+    uint64_t localRelevanceVisits = 0;
+    void computeCarriedOrdinals(PhaseSourceFacts& result);
     void computeRelevance();
     DenseMap<Operation*, SmallVector<ValuePrerequisite>> prerequisites;
     void traceResult(const CompoundInstanceElement* producer, Value result,

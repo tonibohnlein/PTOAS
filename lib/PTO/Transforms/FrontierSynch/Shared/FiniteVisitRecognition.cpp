@@ -273,7 +273,7 @@ FiniteVisitAnalysis analyzeFiniteVisitLoop(func::FuncOp function, const SyncInpu
         // A type is a complete unmasked visit. Its original selection path is
         // retained for consumers, never reused as an inter-visit predicate.
         out.children.push_back(composeRegionalSequenceWithin(
-            function, arena, std::move(parts), true, false, within));
+            function, arena, std::move(parts), true, false, within, index->sourceFacts()));
         if (!out.children.back().error.empty()) {
             contract.demands = ContractImplementation::Unavailable;
             contract.implementationError = "finite whole-visit composition: " + out.children.back().error;
