@@ -138,7 +138,8 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
     std::map<uint32_t, std::vector<EntryLink>> incoming;
     using EventKey = std::tuple<uint32_t, uint32_t, Expr, PeriodicEventKind, std::vector<Expr>>;
     std::map<std::pair<EventKey, EventKey>, Expr> reachabilityCache;
-    std::vector<std::vector<CellBoundary>> boundaries;
+    // One ordered map of participating children per cell; absent children have no entry.
+    std::vector<std::map<uint32_t, CellBoundary>> boundaries;
     using NativeSelectors = std::map<uint32_t, std::vector<Selected>>;
     std::vector<NativeSelectors> nativeFirst, nativeLast;
     uint64_t childPreparationOperations = 0, crossingPreparationOperations = 0;

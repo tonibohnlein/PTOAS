@@ -8,7 +8,13 @@
 #ifndef PTO_FRONTIER_SEQUENCE_BRIDGE_CHECKS_H
 #define PTO_FRONTIER_SEQUENCE_BRIDGE_CHECKS_H
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceStorageIndex.h"
 namespace mlir::pto::test {
+inline bool bridgeCheckFailure(unsigned line)
+{
+    llvm::errs() << "sequence bridge oracle mismatch at line " << line << "\n";
+    return false;
+}
 struct BridgeAccess { unsigned group, pipe; bool write; };
 inline void bridgeFixture(frontiersynch::SequenceAnalysisState& state,
     ArrayRef<BridgeAccess> accesses, ArrayRef<frontiersynch::RegionExpressions::Id> guards,
@@ -16,7 +22,7 @@ inline void bridgeFixture(frontiersynch::SequenceAnalysisState& state,
 {
     state.children.resize(guards.size()); state.cells.resize(1);
     state.cells.front().space = AddressSpace::MAT;
-    state.boundaries.resize(guards.size(), std::vector<frontiersynch::CellBoundary>(1));
+    state.boundaries.resize(1);
     for (const auto& access : accesses) {
         auto& child = state.children[access.group];
         frontiersynch::TemplateEndpointAnchor anchor;
@@ -24,7 +30,7 @@ inline void bridgeFixture(frontiersynch::SequenceAnalysisState& state,
         auto type = child.anchors.size(); child.anchors.push_back(anchor);
         auto port = state.port(access.group, type, state.c(0));
         auto selected = frontiersynch::Selected{port, guards[access.group]};
-        auto& boundary = state.boundaries[access.group][0];
+        auto& boundary = state.boundaries[0][access.group];
         if (access.write) {
             boundary.firstWriters.push_back(selected); boundary.lastWriters.push_back(selected);
         } else {
@@ -65,7 +71,7 @@ inline bool checkBridgeClosure(frontiersynch::SequenceAnalysisState& state,
     }
     for (const auto& edge : state.crossings) {
         auto present = e.constantValue(e.substitute(edge.guard, binding));
-        if (!present) { return false; }
+        if (!present) { return bridgeCheckFailure(__LINE__); }
         if (*present) { actual[2 * edge.source + 1][2 * edge.target] = true; }
     }
     auto close = [](auto& graph) {
@@ -80,9 +86,118 @@ inline bool checkBridgeClosure(frontiersynch::SequenceAnalysisState& state,
     close(actual); close(required);
     return actual == required;
 }
+inline bool checkSparseBoundaryImport(func::FuncOp function, ArrayRef<CompoundInstanceElement> phases)
+{
+    namespace fs = frontiersynch;
+    OpBuilder builder(function.getContext());
+    auto pointer = PtrType::get(function.getContext(), builder.getI8Type(),
+        AddressSpaceAttr::get(function.getContext(), AddressSpace::GM));
+    OwningOpRef<func::FuncOp> owner(func::FuncOp::create(function.getLoc(),
+        "sparse_boundary_bases", builder.getFunctionType({pointer, pointer}, {})));
+    auto* bases = owner->addEntryBlock();
+    auto baseA = bases->getArgument(0);
+    auto baseB = bases->getArgument(1);
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    fs::SequenceAnalysisState state(function, arena);
+    state.children.resize(4);
+    struct Range { unsigned child, type; Value base; uint64_t begin, end; int presence; };
+    const std::vector<Range> ranges = {
+        {0, 0, baseA, 0, 4, 1}, {0, 1, baseA, 4, 6, 1},
+        {1, 0, baseA, 2, 5, 1}, {1, 1, baseB, 0, 3, 1},
+        {2, 0, baseA, 8, 10, 0}, {2, 1, baseB, 5, 7, -1},
+        {3, 0, baseA, 6, 6, 1}, {3, 1, baseA, 1, 3, 1}};
+    for (auto& child : state.children) {
+        auto& region = child.regional;
+        region.expressions = arena;
+        region.gmAliasPolicy = GMAliasPolicy::MayNotAlias;
+        region.capabilities.completeStorageModel = true;
+        region.capabilities.exactQueries = true;
+        region.capabilities.exactSelectors = true;
+        region.occurrenceLoops.resize(2);
+        for (const auto& phase : phases) {
+            fs::TemplateEndpointAnchor anchor; anchor.phase = &phase;
+            region.anchors.push_back(anchor);
+        }
+        region.presence = [arena](fs::RegionalEvent) { return std::optional(arena->boolean(true)); };
+        region.reachability = [arena](fs::RegionalEvent, fs::RegionalEvent) {
+            return std::optional(arena->boolean(false));
+        };
+    }
+    for (const auto& range : ranges) {
+        fs::RegionalStorageBoundary boundary;
+        boundary.cell = {AddressSpace::GM, range.begin, range.end, range.base};
+        if (range.presence >= 0) {
+            fs::RegionalSelector selected{{range.type, arena->constant(0), fs::PeriodicEventKind::Start},
+                                           arena->boolean(range.presence != 0)};
+            boundary.firstWriters.push_back(selected); boundary.lastWriters.push_back(selected);
+        }
+        state.children[range.child].regional.storageBoundary.push_back(std::move(boundary));
+    }
+    if (!state.importSummaries(false)) { llvm::errs() << state.error << "\n"; return bridgeCheckFailure(__LINE__); }
+    std::vector<SyncStorageCell> expected;
+    for (auto base : {baseA, baseB}) {
+        std::set<uint64_t> endpoints;
+        for (const auto& range : ranges) {
+            if (range.base == base && range.begin < range.end) {
+                endpoints.insert(range.begin); endpoints.insert(range.end);
+            }
+        }
+        for (auto it = endpoints.begin(); it != endpoints.end() && std::next(it) != endpoints.end(); ++it) {
+            const auto begin = *it, end = *std::next(it);
+            if (llvm::any_of(ranges, [&](const auto& range) {
+                    return range.base == base && range.begin <= begin && range.end >= end;
+                })) { expected.push_back({AddressSpace::GM, begin, end, base}); }
+        }
+    }
+    if (state.cells.size() != expected.size() || state.boundaries.size() != expected.size()) {
+        return bridgeCheckFailure(__LINE__);
+    }
+    std::vector<std::pair<unsigned, unsigned>> expectedPorts;
+    for (unsigned child = 0; child < state.children.size(); ++child) {
+        for (std::size_t cell = 0; cell < expected.size(); ++cell) {
+            const auto& wanted = expected[cell]; const auto& actual = state.cells[cell];
+            if (!sameStorageDomain(wanted, actual) || wanted.begin != actual.begin || wanted.end != actual.end) {
+                return bridgeCheckFailure(__LINE__);
+            }
+            std::set<unsigned> types;
+            for (const auto& range : ranges) {
+                if (range.child != child || range.presence != 1 || range.base != wanted.base ||
+                    range.begin > wanted.begin || range.end < wanted.end) { continue; }
+                types.insert(range.type);
+                auto key = std::make_pair(child, range.type);
+                if (!llvm::is_contained(expectedPorts, key)) { expectedPorts.push_back(key); }
+            }
+            auto found = state.boundaries[cell].find(child);
+            if (types.empty()) {
+                if (found != state.boundaries[cell].end()) {
+                    return bridgeCheckFailure(__LINE__);
+                }
+                continue;
+            }
+            if (found == state.boundaries[cell].end()) { return bridgeCheckFailure(__LINE__); }
+            for (const auto* side : {&found->second.firstWriters, &found->second.lastWriters}) {
+                std::set<unsigned> actualTypes;
+                for (const auto& selected : *side) {
+                    if (selected.port >= state.ports.size() || arena->constantValue(selected.present) != 1) {
+                        return bridgeCheckFailure(__LINE__);
+                    }
+                    actualTypes.insert(state.ports[selected.port].type);
+                }
+                if (actualTypes != types || side->size() != types.size()) { return bridgeCheckFailure(__LINE__); }
+            }
+        }
+    }
+    if (state.ports.size() != expectedPorts.size()) { return bridgeCheckFailure(__LINE__); }
+    for (std::size_t id = 0; id < expectedPorts.size(); ++id) {
+        if (std::make_pair(state.ports[id].child, state.ports[id].type) != expectedPorts[id]) {
+            return bridgeCheckFailure(__LINE__);
+        }
+    }
+    return true;
+}
 inline bool checkSequenceBridgeWork(func::FuncOp function, const SyncInput& input)
 {
-    if (input.instructions().empty()) { return false; }
+    if (input.instructions().empty()) { return bridgeCheckFailure(__LINE__); }
     std::array<CompoundInstanceElement, 2> phases = {*input.instructions().front(), *input.instructions().front()};
     phases[0].kPipeValue = static_cast<PipelineType>(PIPE::PIPE_MTE1);
     phases[1].kPipeValue = static_cast<PipelineType>(PIPE::PIPE_M);
@@ -99,7 +214,7 @@ inline bool checkSequenceBridgeWork(func::FuncOp function, const SyncInput& inpu
     frontiersynch::SequenceAnalysisState state(function, arena);
     bridgeFixture(state, accesses, guards, phases);
     for (unsigned bits = 0; bits < 32; ++bits) {
-        if (!checkBridgeClosure(state, accesses, guards, bits)) { return false; }
+        if (!checkBridgeClosure(state, accesses, guards, bits)) { return bridgeCheckFailure(__LINE__); }
     }
     for (unsigned count : {128U, 256U, 1024U}) {
         auto e = std::make_shared<frontiersynch::RegionExpressions>();
@@ -109,11 +224,15 @@ inline bool checkSequenceBridgeWork(func::FuncOp function, const SyncInput& inpu
         std::vector<frontiersynch::Expr> present(count, e->boolean(true));
         bridgeFixture(chain, writers, present, phases);
         if (chain.bridgeWork.candidates != count - 1 || chain.bridgeWork.remasked != 0 ||
-            chain.bridgeWork.retained != count - 1 || chain.crossings.size() != count - 1) { return false; }
+            chain.bridgeWork.retained != count - 1 || chain.crossings.size() != count - 1) {
+                return bridgeCheckFailure(__LINE__);
+            }
         std::fill(present.begin(), present.end(), e->boolean(false));
         frontiersynch::SequenceAnalysisState empty(function, e);
         bridgeFixture(empty, writers, present, phases);
-        if (empty.bridgeWork.candidates || empty.bridgeWork.remasked || empty.bridgeWork.retained) { return false; }
+        if (empty.bridgeWork.candidates || empty.bridgeWork.remasked || empty.bridgeWork.retained) {
+            return bridgeCheckFailure(__LINE__);
+        }
         // Repeated symbolic presence exercises removal after p AND NOT p,
         // rather than only the unconditional clear path above.
         auto shared = e->input(inputs.addArgument(IntegerType::get(function.getContext(), 1), function.getLoc()));
@@ -121,9 +240,50 @@ inline bool checkSequenceBridgeWork(func::FuncOp function, const SyncInput& inpu
         frontiersynch::SequenceAnalysisState guarded(function, e);
         bridgeFixture(guarded, writers, present, phases);
         if (guarded.bridgeWork.candidates != count - 1 || guarded.bridgeWork.remasked != count - 1 ||
-            guarded.bridgeWork.retained != count - 1) { return false; }
+            guarded.bridgeWork.retained != count - 1) { return bridgeCheckFailure(__LINE__); }
+        // Each child uses a different cell. Retain one participating entry per
+        // cell, including through both bridge and boundary-summary consumers.
+        frontiersynch::SequenceAnalysisState sparse(function, e);
+        sparse.children.resize(count); sparse.cells.resize(count); sparse.boundaries.resize(count);
+        sparse.nativeFirst.resize(count); sparse.nativeLast.resize(count);
+        for (unsigned i = 0; i < count; ++i) {
+            sparse.cells[i] = {AddressSpace::MAT, uint64_t(2) * i, uint64_t(2) * i + 1, {}};
+            frontiersynch::TemplateEndpointAnchor anchor;
+            anchor.phase = &phases.front();
+            sparse.children[i].anchors.push_back(anchor);
+            const auto port = sparse.port(i, 0, sparse.c(0));
+            auto& boundary = sparse.boundaries[i][i];
+            boundary.firstWriters.push_back({port, e->boolean(true)});
+            boundary.lastWriters = boundary.firstWriters;
+        }
+        sparse.bridges();
+        frontiersynch::SequenceAnalysis summary;
+        sparse.summarizeBoundaries(summary);
+        if (!sparse.crossings.empty() || summary.storageBoundary.size() != count ||
+            sparse.boundarySummaryVisits != 4 * count ||
+            llvm::any_of(sparse.boundaries, [](const auto& cell) { return cell.size() != 1; })) {
+                return bridgeCheckFailure(__LINE__);
+            }
+        // Compare indexed selection with an independent whole-partition scan.
+        const frontiersynch::SequenceStorageIndex partition(sparse.cells);
+        for (unsigned begin = 0; begin < 16; ++begin) {
+            for (unsigned end = begin; end < 20; ++end) {
+                for (auto space : {AddressSpace::MAT, AddressSpace::GM}) {
+                    SyncStorageCell range{space, begin, end, {}};
+                    std::vector<std::size_t> actual, expected;
+                    partition.covered(range, [&](std::size_t cell) { actual.push_back(cell); });
+                    for (std::size_t cell = 0; cell < sparse.cells.size(); ++cell) {
+                        const auto& value = sparse.cells[cell];
+                        if (sameStorageDomain(value, range) && value.begin >= begin && value.end <= end) {
+                            expected.push_back(cell);
+                        }
+                    }
+                    if (actual != expected) { return bridgeCheckFailure(__LINE__); }
+                }
+            }
+        }
     }
-    return true;
+    return checkSparseBoundaryImport(function, phases);
 }
 } // namespace mlir::pto::test
 #endif
