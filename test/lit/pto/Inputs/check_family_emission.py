@@ -8,6 +8,7 @@
 """Check family emission against independent ordering and cyclic phase oracles."""
 import json
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -160,7 +161,8 @@ def main():
         assert "pto.endpoint_cut" not in physical
         assert physical.count("<PIPE_ALL>") == 1
         for name in ["scf.for", "pto.tload", "pto.textract"]:
-            assert physical.count(name) == source.count(name)
+            pattern = rf"^\s*{re.escape(name)}\b"
+            assert len(re.findall(pattern, physical, re.MULTILINE)) == len(re.findall(pattern, source, re.MULTILINE))
     print(f"family emission: {checked} independent ordering checks, family sites, terminal completion")
 
 

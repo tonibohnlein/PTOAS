@@ -327,12 +327,24 @@ public:
         }
         return result;
     }
-    Value decision(ArrayRef<Tuple> points, ArrayRef<int64_t> labels)
+    Value decision(const Domain& domain)
     {
-        Value result = number(labels.empty() ? 0 : labels.front());
-        for (std::size_t member = 1; member < points.size(); ++member) {
-            result = builder.create<arith::SelectOp>(location, guard({points[member], points[member]}),
-                number(labels[member]), result);
+        const auto fallback = domain.labels.empty() ? 0 : domain.labels.front();
+        Value result = number(fallback);
+        std::map<int64_t, Domain> alternatives;
+        for (std::size_t member = 0; member < domain.points.size(); ++member) {
+            const auto label = domain.labels[member];
+            if (label == fallback) { continue; }
+            auto [entry, inserted] = alternatives.try_emplace(label);
+            if (inserted) { entry->second.axes = domain.axes; }
+            entry->second.points.push_back(domain.points[member]);
+        }
+        // Equal outcomes share one decision and adjacent coordinate boxes.
+        // Exact points are disjoint; no guard equivalence or valuation search
+        // is needed, and the result remains total outside the member domain.
+        for (const auto& alternative : alternatives) {
+            result = builder.create<arith::SelectOp>(location, presence(boxes(alternative.second)),
+                number(alternative.first), result);
         }
         return result;
     }
@@ -387,7 +399,7 @@ FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location,
     Value present = emitter.presence(regions);
     Value member = affine ? (modulus ? emitter.modular(coefficients, intercept, modulus) :
                                      emitter.affine(coefficients, intercept)) :
-                            emitter.decision(domain.points, domain.labels);
+                            emitter.decision(domain);
     return {{}, present, member};
 }
 } // namespace mlir::pto::frontiersynch

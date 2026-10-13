@@ -69,7 +69,32 @@ struct Endpoint {
     Operation* phaseBefore = nullptr;
     Value directPhase; // Original record label when tupleMembers selects mixed palettes; phase otherwise.
     SmallVector<const PhysicalRecordAllocation*> tupleMembers;
+    Value directId; // Coordinate-to-ID composition, independent of original record numbering.
 };
+std::optional<int64_t> constantTupleId(const PhysicalRecordAllocation& record);
+
+SmallVector<int64_t> constantMemberIds(const Endpoint& endpoint)
+{
+    SmallVector<int64_t> result;
+    for (const auto* member : endpoint.tupleMembers) {
+        auto id = constantTupleId(*member);
+        if (!id) { return {}; }
+        result.push_back(*id);
+    }
+    return result;
+}
+
+Value selectPhysicalPalette(OpBuilder& builder, Location location, Value index, ArrayRef<int64_t> palette)
+{
+    Value result = builder.create<arith::ConstantIndexOp>(location, palette.front());
+    for (std::size_t i = 1; i < palette.size(); ++i) {
+        Value position = builder.create<arith::ConstantIndexOp>(location, static_cast<int64_t>(i));
+        Value selected = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq, index, position);
+        Value id = builder.create<arith::ConstantIndexOp>(location, palette[i]);
+        result = builder.create<arith::SelectOp>(location, selected, id, result);
+    }
+    return result;
+}
 bool commonPalette(ArrayRef<const PhysicalRecordAllocation*> members)
 {
     return !members.empty() && llvm::all_of(members, [&](const PhysicalRecordAllocation* member) {
@@ -399,16 +424,31 @@ LogicalResult prepareCoordinatePhase(Endpoint& endpoint, const CoordinateProvena
     for (auto value : generic ? endpoint.labels : endpoint.phases) {
         values.push_back(static_cast<int64_t>(value));
     }
-    // Mixed palettes need the original record label, not a phase reduced in
-    // another record's modulus. Preserve the coordinate selector as one shared
-    // expression; the generic emitter selects the corresponding ID expression.
-    auto result = emitFamilyExpressions(builder, before->getLoc(), points, values,
-                                        generic ? 0 : endpoint.allocation->ids.size());
+    auto ids = constantMemberIds(endpoint);
+    SmallVector<int64_t> palette = ids;
+    llvm::sort(palette);
+    palette.erase(std::unique(palette.begin(), palette.end()), palette.end());
+    const bool directId = !ids.empty();
+    if (directId) {
+        // Compose with the final assignment before fitting coordinates. Record
+        // labels are arbitrary provenance, not a runtime lookup-table index.
+        // Palette ranks also support noncontiguous eligible hardware IDs.
+        values.clear();
+        for (auto id : ids) {
+            values.push_back(std::lower_bound(palette.begin(), palette.end(), id) - palette.begin());
+        }
+    }
+    const uint64_t modulus = directId ? palette.size() : generic ? 0 : endpoint.allocation->ids.size();
+    auto result = emitFamilyExpressions(builder, before->getLoc(), points, values, modulus);
     if (!result.error.empty()) {
         return before->emitError("invalid endpoint-family phase coordinates: ") << result.error;
     }
     endpoint.phaseBefore = outside ? branch.getOperation() : before;
-    endpoint.directPhase = result.member;
+    if (directId) {
+        endpoint.directId = selectPhysicalPalette(builder, before->getLoc(), result.member, palette);
+    } else {
+        endpoint.directPhase = result.member;
+    }
     endpoint.phaseCode = std::move(block);
     return success();
 }
@@ -890,14 +930,21 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
         }
         Value eventId;
         std::optional<int64_t> staticId;
-        if (endpoint.directPhase) {
+        if (endpoint.phaseCode) {
             auto* before = endpoint.phaseBefore;
             before->getBlock()->getOperations().splice(before->getIterator(), endpoint.phaseCode->getOperations());
             // The source ordinal can remain inside the guard even when a
             // coordinate-derived phase or original-record selector is outside.
             if (before == endpoint.operation) { builder.setInsertionPoint(endpoint.operation); }
         }
-        if (!endpoint.tupleMembers.empty()) {
+        if (endpoint.directId) {
+            APInt value;
+            if (matchPattern(endpoint.directId, m_ConstantInt(&value))) {
+                staticId = value.getSExtValue();
+            } else {
+                eventId = endpoint.directId;
+            }
+        } else if (!endpoint.tupleMembers.empty()) {
             staticId = constantTupleId(*endpoint.tupleMembers.front());
             for (const auto* member : endpoint.tupleMembers) {
                 if (constantTupleId(*member) != staticId) { staticId.reset(); break; }
