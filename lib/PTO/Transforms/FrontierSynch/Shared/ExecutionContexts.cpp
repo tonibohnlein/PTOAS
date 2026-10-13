@@ -157,6 +157,9 @@ public:
             endpoint.before = anchor(endpoint.before);
             if (!endpoint.before) { return failure(); }
             endpoint.guard = inverse.lookupOrDefault(endpoint.guard);
+            for (auto& box : endpoint.domain) {
+                for (auto& constraint : box) { constraint.coordinate = inverse.lookupOrDefault(constraint.coordinate); }
+            }
             if (endpoint.identity) { endpoint.identity = inverse.lookupOrDefault(endpoint.identity); }
             for (auto& coordinate : endpoint.memberCoordinates) { coordinate = inverse.lookupOrDefault(coordinate); }
         }

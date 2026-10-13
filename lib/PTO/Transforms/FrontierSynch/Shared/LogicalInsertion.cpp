@@ -29,6 +29,13 @@
 #include <tuple>
 namespace mlir::pto::frontiersynch {
 PreparedLogicalPlan::PreparedLogicalPlan(int64_t planId) : planId(planId) {}
+void retainEndpointCoordinates(PreparedLogicalEndpoint& endpoint, ArrayRef<TemplateCoordinate> coordinates)
+{
+    if (coordinates.empty()) { return; }
+    EndpointDomainBox box;
+    for (auto coordinate : coordinates) { box.push_back({coordinate.loop.getInductionVar(), 0, coordinate.induction}); }
+    endpoint.domain.push_back(std::move(box));
+}
 void prepareAllocationSupport(PreparedLogicalPlan& plan)
 {
     if (plan.privateState || plan.completionOwner) { return; }
@@ -104,6 +111,9 @@ void deduplicatePreparation(PreparedLogicalPlan& plan)
     // Endpoints hold Values directly, outside the SSA use lists.
     for (auto& endpoint : plan.endpoints) {
         remap(endpoint.guard); remap(endpoint.identity);
+        for (auto& box : endpoint.domain) {
+            for (auto& constraint : box) { remap(constraint.coordinate); }
+        }
         for (auto& member : endpoint.memberCoordinates) { remap(member); }
     }
 }
@@ -144,6 +154,73 @@ std::optional<SmallVector<Value>> residualGuard(Value guard, ArrayRef<TemplateCo
         return std::less<const void*>{}(a.getAsOpaquePointer(), b.getAsOpaquePointer());
     });
     return residual;
+}
+bool disjointDomains(const PreparedLogicalEndpoint& a, const PreparedLogicalEndpoint& b)
+{
+    if (a.domain.empty() || b.domain.empty()) { return false; }
+    for (const auto& left : a.domain) {
+        for (const auto& right : b.domain) {
+            bool excludes = false;
+            for (const auto& x : left) {
+                for (const auto& y : right) {
+                    excludes |= x.coordinate == y.coordinate && x.modulus == y.modulus && x.value != y.value;
+                }
+            }
+            if (!excludes) { return false; }
+        }
+    }
+    return true;
+}
+// Move an alternative earlier only across endpoints that cannot execute with
+// it. All potentially simultaneous commands retain their original relative
+// order, including commands in different directions. The bounded search is a
+// compaction heuristic, never an admission limit or a semantic approximation.
+template <typename DomainFor>
+void scheduleExclusiveAlternatives(PreparedLogicalPlan& plan, DomainFor domain)
+{
+    using Domain = decltype(domain(plan.endpoints.front()));
+    SmallVector<Domain> domains;
+    for (const auto& endpoint : plan.endpoints) {
+        domains.push_back(endpoint.kind == LogicalCommandKind::Barrier || endpoint.memberCoordinates.empty() ?
+            Domain{} : domain(endpoint));
+    }
+    using Key = std::pair<Operation*, LogicalCommandKind>;
+    std::map<Key, SmallVector<std::size_t>> cuts;
+    for (std::size_t i = 0; i < plan.endpoints.size(); ++i) {
+        const auto& endpoint = plan.endpoints[i];
+        if (endpoint.kind == LogicalCommandKind::Barrier) { continue; }
+        cuts[{endpoint.before, endpoint.kind}].push_back(i);
+    }
+    constexpr std::size_t lookback = 128;
+    for (const auto& [cut, indices] : cuts) {
+        (void)cut;
+        for (std::size_t i = 1; i < indices.size(); ++i) {
+            const auto& current = plan.endpoints[indices[i]];
+            if (current.records.size() != 1 || !domains[indices[i]]) { continue; }
+            std::optional<std::size_t> destination;
+            for (std::size_t j = i; j && i - j < lookback; --j) {
+                const auto& previous = plan.endpoints[indices[j - 1]];
+                if (!disjointDomains(current, previous)) { break; }
+                if (previous.records.size() == 1 && domains[indices[j - 1]] &&
+                    domains[indices[i]]->axes == domains[indices[j - 1]]->axes &&
+                    domains[indices[i]]->residual == domains[indices[j - 1]]->residual &&
+                    current.record == previous.record &&
+                    current.sourcePipe == previous.sourcePipe &&
+                    current.targetPipe == previous.targetPipe && current.identity == previous.identity &&
+                    ArrayRef<Value>(current.memberCoordinates).drop_front() ==
+                        ArrayRef<Value>(previous.memberCoordinates).drop_front()) { destination = j - 1; }
+            }
+            if (!destination || *destination + 1 == i) { continue; }
+            auto moved = std::move(plan.endpoints[indices[i]]);
+            auto movedDomain = std::move(domains[indices[i]]);
+            for (std::size_t j = i; j > *destination + 1; --j) {
+                plan.endpoints[indices[j]] = std::move(plan.endpoints[indices[j - 1]]);
+                domains[indices[j]] = std::move(domains[indices[j - 1]]);
+            }
+            plan.endpoints[indices[*destination + 1]] = std::move(moved);
+            domains[indices[*destination + 1]] = std::move(movedDomain);
+        }
+    }
 }
 // Combine consecutive command alternatives only when exact finite coordinates
 // prove mutual exclusion. Certificates retain every record; labels remain
@@ -186,13 +263,18 @@ LogicalResult coalesceEndpointAlternatives(PreparedLogicalPlan& plan)
         }
         return result.points.empty() ? std::nullopt : std::optional<Domain>(std::move(result));
     };
+    scheduleExclusiveAlternatives(plan, domain);
     using CutKind = std::pair<Operation*, LogicalCommandKind>;
     std::map<CutKind, std::size_t> previous;
     std::map<std::size_t, Domain> domains;
     std::vector<bool> removed(plan.endpoints.size(), false), combined(plan.endpoints.size(), false);
     for (std::size_t i = 0; i < plan.endpoints.size(); ++i) {
         auto& endpoint = plan.endpoints[i];
-        if (endpoint.kind == LogicalCommandKind::Barrier || endpoint.memberCoordinates.empty()) { continue; }
+        if (endpoint.kind == LogicalCommandKind::Barrier) { continue; }
+        if (endpoint.memberCoordinates.empty()) {
+            previous.erase({endpoint.before, endpoint.kind});
+            continue;
+        }
         auto current = domain(endpoint);
         auto [entry, fresh] = previous.emplace(CutKind{endpoint.before, endpoint.kind}, i);
         const auto old = entry->second;
@@ -211,6 +293,8 @@ LogicalResult coalesceEndpointAlternatives(PreparedLogicalPlan& plan)
             continue;
         }
         preceding.records.append(endpoint.records.begin(), endpoint.records.end());
+        if (preceding.domain.empty() || endpoint.domain.empty()) { preceding.domain.clear(); }
+        else { preceding.domain.append(endpoint.domain.begin(), endpoint.domain.end()); }
         known->second.points.insert(current->points.begin(), current->points.end());
         removed[i] = true; combined[old] = true;
     }
@@ -405,6 +489,16 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
         }
     }
     for (const auto& endpoint : plan.endpoints) {
+        for (const auto& box : endpoint.domain) {
+            for (const auto& constraint : box) {
+                if (!available.value(constraint.coordinate, endpoint.before) ||
+                    !constraint.coordinate.getType().isIntOrIndex() || constraint.modulus > INT64_MAX ||
+                    (constraint.modulus && (constraint.value < 0 ||
+                        static_cast<uint64_t>(constraint.value) >= constraint.modulus))) {
+                    return function.emitError("invalid or unavailable endpoint domain constraint");
+                }
+            }
+        }
         for (auto member : endpoint.memberCoordinates) {
             if (endpoint.kind == LogicalCommandKind::Barrier || !member || !member.getType().isIndex() ||
                 !available.value(member, endpoint.before)) {

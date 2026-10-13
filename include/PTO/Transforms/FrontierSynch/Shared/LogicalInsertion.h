@@ -23,6 +23,17 @@ struct MathematicalResult;
 class PrivateStatePlan;
 class CompletionRegion;
 enum class LogicalCommandKind { Set, Barrier, Wait };
+// A necessary execution domain, retained by the producer that binds an
+// occurrence. Every active endpoint satisfies every constraint in one box.
+// Empty domains convey no exclusion evidence. Modulus zero denotes equality;
+// otherwise the unsigned residue is constrained. Guard strengthening preserves
+// this evidence; coordinate remapping must remap or clear it.
+struct EndpointCoordinateConstraint {
+    Value coordinate;
+    uint64_t modulus = 0;
+    int64_t value = 0;
+};
+using EndpointDomainBox = SmallVector<EndpointCoordinateConstraint>;
 struct PreparedLogicalEndpoint {
     Operation* before = nullptr;
     LogicalCommandKind kind = LogicalCommandKind::Set;
@@ -34,6 +45,8 @@ struct PreparedLogicalEndpoint {
     SmallVector<Value> memberCoordinates; // Canonical source member tuple, identical at SET and WAIT.
     SmallVector<uint32_t> records; // Original records covered by this independently grouped side.
     int64_t piece = -1; // Plan-local emission piece ID for version-three provenance.
+    SmallVector<EndpointDomainBox> domain;
+
 };
 // A producer builds ordinary arith operations in detached blocks. Inputs may
 // refer to original SSA values or results of earlier preparation blocks.
@@ -74,6 +87,8 @@ struct PreparedLogicalPlan {
     std::vector<PreparedLogicalEndpoint> endpoints;
     std::vector<EndpointFamily> families; // Exact source/target coordinate provenance.
 };
+// For producers whose occurrence binding explicitly conjoins these equalities.
+void retainEndpointCoordinates(PreparedLogicalEndpoint& endpoint, ArrayRef<TemplateCoordinate> coordinates);
 void prepareAllocationSupport(PreparedLogicalPlan& plan);
 // Preserve a child's allocation namespace before composition rewrites it.
 // Returns null for a root-only private-state plan, which cannot be composed.

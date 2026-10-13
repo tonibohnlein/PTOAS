@@ -129,6 +129,7 @@ private:
             endpoint.memberCoordinates.push_back(selector.member);
         }
         for (const auto& member : piece.members) {
+            retainEndpointCoordinates(endpoint, member.coordinates);
             endpoint.records.push_back(member.record);
         }
         endpoint.piece = static_cast<int64_t>(prepared.endpoints.size());

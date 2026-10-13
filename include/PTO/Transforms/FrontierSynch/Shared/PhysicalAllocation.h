@@ -50,6 +50,9 @@ struct PhysicalAllocationPlan {
 };
 FailureOr<PhysicalAllocationPlan> decodePhysicalAllocation(func::FuncOp function, ArrayRef<int64_t> eligibleIds);
 FailureOr<PhysicalAllocationPlan> decodeCyclicAllocation(func::FuncOp function, ArrayRef<int64_t> eligibleIds);
+// Decode retained alternative evidence without temporarily changing function attributes.
+FailureOr<PhysicalAllocationPlan> decodeCyclicAllocationCertificate(
+    func::FuncOp function, DictionaryAttr certificate, ArrayRef<int64_t> eligibleIds);
 // Success lowers all logical commands; failure leaves the function unchanged.
 // The caller supplies an eligible subset of 0..5; 6/7 are reserved. Every
 // numeric ID holds at most one notification across all supported directions.

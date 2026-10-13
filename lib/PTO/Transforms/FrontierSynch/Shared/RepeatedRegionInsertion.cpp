@@ -292,6 +292,15 @@ class RepeatedPreparation
                     record,
                     *predicate,
                     {}};
+                retainEndpointCoordinates(endpoint, body.anchors[event.type].coordinates);
+                if (!state.typePhases.empty()) {
+                    auto visit = emit(originalVisit, cut);
+                    if (failed(visit)) { return fail("repeated domain coordinate unavailable"); }
+                    if (endpoint.domain.empty()) { endpoint.domain.emplace_back(); }
+                    for (auto& box : endpoint.domain) {
+                        box.push_back({*visit, state.phaseCount, state.typePhases[event.type]});
+                    }
+                }
                 endpoint.records = {record};
                 endpoint.piece = plan->endpoints.size();
                 if (p != q)

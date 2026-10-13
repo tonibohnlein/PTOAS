@@ -1037,3 +1037,94 @@ Local receipts: `.local/gemm-regression-20261013/final-family-validation.json`,
 `*-final-family.cpp`, `*-final-trace-*.json`, and
 `persistent-factored-logical.json`. The device-task document remains outside the
 repository.
+
+### Follow-up: domain scheduling and allocation mapping policy
+
+Prepared endpoints can retain producer-owned necessary execution domains as
+unions of coordinate boxes. An atom fixes either a coordinate or its unsigned
+residue. Numerical family, sequence crossing, and repeated crossing preparation
+supply this evidence. Context projection remaps it, and guard strengthening
+preserves it. An absent domain supplies no exclusion proof. This interface does
+not infer arbitrary Boolean equivalence or assume a benchmark's runtime bounds.
+
+Before finite-coordinate family compaction, a local scheduler may move an
+alternative across commands whose domains are provably disjoint from it. Commands
+that can execute together retain their relative order, including across directed
+namespaces. The scheduling heuristic examines at most 128 predecessors; missing
+an optimization leaves the original schedule valid. It is not an admission cap.
+The scheduler only targets an alternative with matching residual guards and
+coordinate axes, so it does not break existing families for an unmergeable
+candidate. Ungrouped commands remain ordering obstacles. The existing exact guard
+factorization still controls which adjacent alternatives can be combined. Residue evidence enables exclusion reasoning; it does not by
+itself establish a compact formula for every union of guarded domains.
+
+Physical lowering normalizes complete certified member mappings. Identical maps
+share a result, and a family with one common map does not build a record-selector
+expression. The ordinary and tuple paths use the same palette lowering. Complete
+small ID computations can share a dominating cut across sibling endpoint guards;
+this includes the final tuple/palette arithmetic, not just coordinate preparation.
+The policy permits at most eight nonconstant generated integer operations and
+only power-of-two unsigned remainders, without moving original computations.
+Large selectors stay conditional. These changes preserve the chosen assignment.
+
+For unconditional periodic certificates, preparation additionally retains the
+ordered cyclic assignment when that separate proof succeeds within six lanes.
+Physical allocation compares it with the existing cycle-cover assignment only
+when both are supported by the actual eligible IDs and pass endpoint preflight.
+The comparison lowers the composed family mappings into detached arithmetic and
+scores their live expressions: ordinary operations cost one, selects three, and
+non-power-of-two remainders eight. The lower score wins; ties retain the original
+assignment. `pto.physical_mapping_choice` records both scores and the selected
+strategy when a comparison is performed. These are deterministic compiler policy
+weights, not measured device instruction latencies or an optimality theorem.
+The candidate proof, rather than expression fitting, authorizes reallocation.
+There is no new synthesis search or weakening of the logical synchronization.
+
+
+Validation against `e5547ea72`, using the same retained C++ backend and identical
+three GEMM inputs:
+
+| Kernel | C++ lines before → after | Static kernel SET/WAIT sites before → after |
+|---|---:|---:|
+| TileLang GEMM | 529 → 527 | 14/14 → 14/14 |
+| PyPTO GEMM | 466 → 456 | 12/12 → 12/12 |
+| Persistent GEMM | 5,057 → 1,364 | 301/307 → 56/60 |
+
+Command counts exclude the common generated helper. The ordinary GEMMs select
+the separately certified regular candidate (costs 136 → 96 and 156 → 108).
+Persistent GEMM uses its existing regional assignment: this change does not yet
+compare alternative regional allocation certificates. Its `if` count falls from
+611 to 119. These are generated-source metrics, not device latency measurements.
+
+Production traces preserve the complete ordered payload and synchronization
+sequence, including numeric IDs: core 0 for both ordinary GEMMs and cores
+0/15/16/19 for Persistent GEMM. At Persistent core 0, the trace has 5,837 payloads
+and 5,011 matched SET/WAIT pairs. Interpreted arithmetic visits fall from
+13,627,596 to 7,085,421, guard visits from 927,186 to 108,537, and select visits
+from 1,950,194 to 1,801,419. The audit eliminates unused scalar arithmetic before
+interpreting both versions, leaves payload/control/synchronization intact, and
+checks publication/acquisition correspondence. These counters are not device
+instructions; no device speedup is claimed.
+
+The hand-tuned Persistent plan remains materially smaller: 12 SET and 12 WAIT
+sites. It uses `k % 2` for the two L1 banks, `kk % 2` for the two L0 banks, and
+fixed ID 0 for accumulator turnover. It publishes L1 readiness after both A/B
+loads and returns the bank after its last extraction; the L0 protocol similarly
+pairs the operand extracts before matrix execution. Five initial return tokens
+are drained at the terminal epilogue. This is a useful compact protocol reference,
+but reproducing its grouped handoffs may change payload ordering and requires a
+separate comparison. The current change preserves Frontier's existing commands.
+
+The native build and nine focused tests pass, including source/residue exclusion,
+interleaved simultaneous command order, complete tuple-ID sharing, expensive
+remainder guards, feasible candidate selection, physical reuse, and hardware
+restrictions. The sequence-analysis test also passes. The broader repeated-region
+test passes its first 14 command-closure cases, then hits the already documented
+90-second phased-repeat timeout; that suite is not reported as passing.
+The changed-code scanner's brace findings were inspected: all flagged conditions
+already have braced bodies (the regex matches closing parentheses inside compound
+conditions). There are no unbraced changed control bodies or new build warnings.
+
+Local receipts: `.local/gemm-regression-20261013/domain-mapping/`,
+`domain-integration.log`, `domain-prepared-final.log`, and the focused-test logs.
+The device task remains outside the repository.

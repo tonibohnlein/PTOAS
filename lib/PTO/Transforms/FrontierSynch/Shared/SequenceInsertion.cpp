@@ -388,6 +388,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         PreparedLogicalEndpoint wait{ab.before.before, LogicalCommandKind::Wait, p, q, record,
                                       *targetGuard, *targetIdentity};
         wait.memberCoordinates.push_back(*targetMember); wait.records.push_back(record); wait.piece = nextPiece++;
+        retainEndpointCoordinates(set, aa.coordinates);
+        retainEndpointCoordinates(wait, ab.coordinates);
         result->endpoints.push_back(std::move(set)); result->endpoints.push_back(std::move(wait));
         if (failed(appendPublicationCleanup(*publication, record, p, q, {c(0)},
             expressions, emit, *result, diagnostic))) { return false; }

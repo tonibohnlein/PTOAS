@@ -37,7 +37,7 @@ bool coalescingChecks(MLIRContext* context)
     context->getOrLoadDialect<scf::SCFDialect>();
     // Different coordinates are exclusive; repeated coordinates and commands
     // interleaved in another direction must retain their multiplicity/order.
-    for (unsigned mode = 0; mode < 5; ++mode) {
+    for (unsigned mode = 0; mode < 7; ++mode) {
         for (unsigned count : {8U, 128U}) {
             OpBuilder builder(context);
             auto location = builder.getUnknownLoc();
@@ -59,9 +59,11 @@ bool coalescingChecks(MLIRContext* context)
             plan.groupedFamilies = true;
             builder.setInsertionPointToEnd(&plan.addPreparation(cut));
             for (unsigned record = 0; record < count; ++record) {
-                const auto coordinate = mode == 1 ? 0 : record;
-                const uint32_t target = mode == 2 && record % 2 ? 3 : 0;
-                const auto name = mode == 2 ? record % 2 : 0;
+                const auto coordinate = mode == 1 ? 0 : mode == 6 ?
+                    (record / 4) * 2 + (record % 4 == 1 || record % 4 == 2) : record;
+                const bool alternating = mode == 2 || mode >= 5;
+                const uint32_t target = alternating && record % 2 ? 3 : 0;
+                const auto name = alternating ? record % 2 : 0;
                 auto label = builder.create<arith::ConstantIndexOp>(location, record);
                 auto value = builder.create<arith::ConstantIndexOp>(location, coordinate);
                 Value guard = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq,
@@ -82,14 +84,22 @@ bool coalescingChecks(MLIRContext* context)
                 for (auto kind : {fs::LogicalCommandKind::Set, fs::LogicalCommandKind::Wait}) {
                     plan.endpoints.push_back({cut, kind, 4, target, name, guard, zero, {label},
                                               {record}, static_cast<int64_t>(plan.endpoints.size())});
+                    fs::retainEndpointCoordinates(plan.endpoints.back(), {{loop, coordinate}});
+                    if (mode == 5) {
+                        // The same proof may arrive as a producer-owned residue
+                        // domain; no emitted Boolean expression is decoded.
+                        plan.endpoints.back().domain = {{{loop.getInductionVar(), count, coordinate}}};
+                    }
                 }
             }
             if (failed(fs::insertLogicalSynchronization(function, plan)) || failed(verify(*module))) { return false; }
             unsigned sets = 0, waits = 0;
             function.walk([&](pto::LogicalSetOp) { ++sets; });
             function.walk([&](pto::LogicalWaitOp) { ++waits; });
-            const auto expected = mode == 0 || mode == 3 ? 1 : count;
-            if (sets != expected || waits != expected || plan.families.size() != count) { return false; }
+            const auto expected = mode == 0 || mode == 3 ? 1 : (mode == 2 || mode == 4 || mode == 5) ? 2 : count;
+            if ((mode != 6 && (sets != expected || waits != expected)) ||
+                (mode == 6 && (sets < 3 || waits < 3 || sets > count || waits > count)) ||
+                plan.families.size() != count) { return false; }
             unsigned coverage = 0;
             for (const auto& endpoint : plan.endpoints) { coverage += endpoint.records.size(); }
             if (coverage != 2 * count) { return false; }
@@ -99,8 +109,10 @@ bool coalescingChecks(MLIRContext* context)
             if (trace.getString("error") != "" || !events || events->size() != commands) { return false; }
             for (unsigned i = 0; i < commands; ++i) {
                 auto* event = (*events)[i].getAsObject();
-                const bool publish = mode == 1 ? i < count : i % 2 == 0;
-                const auto record = mode == 1 ? i % count : (mode == 4 ? 2 : 1) * (i / 2);
+                const bool publish = mode == 1 ? i < count : mode == 6 ? i % 4 < 2 : i % 2 == 0;
+                constexpr unsigned crossingOrder[] = {0, 3, 0, 3, 1, 2, 1, 2};
+                const auto record = mode == 1 ? i % count : mode == 6 ? (i / 8) * 4 + crossingOrder[i % 8] :
+                    (mode == 4 ? 2 : 1) * (i / 2);
                 auto* selected = event ? event->getArray("members") : nullptr;
                 if (!selected || selected->size() != 1 || (*selected)[0].getAsInteger() != record ||
                     event->getString("kind") != (publish ? "set" : "wait")) { return false; }
