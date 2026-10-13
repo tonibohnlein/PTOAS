@@ -33,8 +33,8 @@ separate commit. Infrastructure alone does not complete a production milestone.
 | 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Sequence preparation failure isolation complete; broader capability consolidation pending |
 | 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; borrowed regional adapter complete; global compact memberships complete; shared fact views and delayed atomization pending |
 | 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection complete; shared source facts pending |
-| 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Pending |
-| 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Regional prefix ownership, singleton forwarding and crossing presence complete; executable selectors and public Delta emission pending |
+| 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Qualified A3 structured completion complete; larger closed-child imports and coarse input preparation pending |
+| 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Regional prefix ownership, singleton forwarding, crossing presence and qualified predicate snapshots complete; general executable selectors and public Delta emission pending |
 | 8. Proof reuse and validation | Share lazy inactive-proof and premise contexts, replay mappings and safe Boolean conversion work. Close known guard-equivalence/oracle gaps and run pinned paired campaigns. | No unexplained acceptance loss or changed output; report eleven kernels and 783-input corpus by stage, wall time, memory and inner work. | Lazy inactive-proof setup shared; broader proof reuse and campaign pending |
 
 ## Algorithm boundaries
@@ -684,3 +684,43 @@ contract now lets the physical pass accept the barrier-only plan without IDs.
 The C++17 build passes. The compliance prefilter's brace findings were inspected
 as braced control bodies. No device execution was performed. Receipts:
 `.local/three-paths/consolidation/m6-completion/`.
+
+
+## Qualified predicate snapshots for prefix expressions
+
+Sequence crossing recipes can retain actual Boolean evaluations at selected
+constant visits of an original unit-step loop. One invocation-owned collector
+shares each value/validity slot pair and resets it before every loop invocation,
+including an empty invocation after a nonempty one. The recipe snapshots the
+original mapped SSA result after its definition; it never replays an opaque
+producer. Layout is collected before the existing single staged clone.
+
+A read requires either original-cut availability or an independent cofactor
+proof that changing the missing evaluation cannot change the expression. These
+proofs leave other historical inputs unconstrained and use numeric control
+premises, so independently proved substitutions compose. Unsupported frames,
+nonunit strides, non-64-bit index layouts and overflowing selected coordinates
+remain explicit refusals. Emission binds only reached mapped inputs and replay
+dependencies. This extends the existing finite-fringe representation; it does
+not complete general executable selector construction.
+
+Public Gated Delta remains unresolved. A parent port can carry an ordinal whose
+selection was folded inside its child. Capturing historical predicate values
+does not recover the construction evidence needed to match that selected
+occurrence at both source and target cuts. The next integration step must
+preserve that producer-owned selector evidence across exports. No exact result
+is replaced and no physical allocation or device recovery is claimed.
+
+Validation: eight focused snapshot/expression/sequence/public-path tests pass,
+plus the two descriptor tests in the same isolated build (ten total). Snapshot
+checks cover nine acceptance/refusal modes, visits zero through four, two
+outer invocations, simultaneous unavailable values, signed lower bounds,
+nonunit-stride refusal and coordinate overflow. Both source reviews accepted
+the snapshot design; final sparse mapping review also accepted. The C++17 build
+passes with existing warnings in unchanged files. The compliance prefilter's
+brace matches were inspected as braced bodies; a test line was wrapped.
+
+The final public Delta logical-only probe still refuses another-invocation
+expression input: 15.727 seconds, 285,448 KiB peak RSS. This is a single diagnostic
+replay, not a speed comparison. No Cartesian threshold-product proof is included.
+Receipts: `.local/three-paths/consolidation/m7-snapshots/`.

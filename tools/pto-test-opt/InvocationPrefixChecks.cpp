@@ -8,6 +8,7 @@
 // Interpret emitted control independently; compare payload closure and exact token matching.
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/InvocationPrefix.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/InvocationPrefixCollection.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/PrefixExpression.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -144,6 +145,12 @@ struct Execution {
             values[c] = n.getValue().getSExtValue();
         } else if (auto add = dyn_cast<arith::AddIOp>(op)) {
             values[add] = get(add.getLhs()) + get(add.getRhs());
+        } else if (auto both = dyn_cast<arith::AndIOp>(op)) {
+            values[both] = get(both.getLhs()) & get(both.getRhs());
+        } else if (auto either = dyn_cast<arith::OrIOp>(op)) {
+            values[either] = get(either.getLhs()) | get(either.getRhs());
+        } else if (auto negate = dyn_cast<arith::XOrIOp>(op)) {
+            values[negate] = get(negate.getLhs()) ^ get(negate.getRhs());
         } else if (auto divide = dyn_cast<arith::DivUIOp>(op)) {
             auto divisor = uint64_t(get(divide.getRhs()));
             if (!divisor) { return false; }
@@ -158,7 +165,10 @@ struct Execution {
             auto a = get(compare.getLhs()), b = get(compare.getRhs());
             const bool invalid147 = compare.getPredicate() == arith::CmpIPredicate::slt;
             if (invalid147) { values[compare] = a < b; }
-            else if (compare.getPredicate() == arith::CmpIPredicate::ugt) {
+            else if (compare.getPredicate() == arith::CmpIPredicate::sle) { values[compare] = a <= b; }
+            else if (compare.getPredicate() == arith::CmpIPredicate::ule) {
+                values[compare] = uint64_t(a) <= uint64_t(b);
+            } else if (compare.getPredicate() == arith::CmpIPredicate::ugt) {
                 values[compare] = uint64_t(a) > uint64_t(b);
             } else if (compare.getPredicate() == arith::CmpIPredicate::ult) {
                 values[compare] = uint64_t(a) < uint64_t(b);
@@ -176,7 +186,7 @@ struct Execution {
                 auto carried = read(loop.getInitArgs());
                 const auto lower = get(loop.getLowerBound()), upper = get(loop.getUpperBound());
                 const auto step = get(loop.getStep());
-                if (step <= 0 || upper > 32 || lower < 0) { valid = false; return {}; }
+                if (step <= 0 || upper > 32 || lower < -32) { valid = false; return {}; }
                 for (auto i = lower; i < upper; i += step) {
                     values[loop.getInductionVar()] = i; assign(loop.getRegionIterArgs(), carried);
                     carried = block(*loop.getBody());
@@ -477,10 +487,124 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
     }
     return before == render(module->getOperation());
 }
+bool historicalExpression(MLIRContext& context, unsigned mode)
+{
+    OpBuilder b(&context); auto loc = b.getUnknownLoc();
+    OwningOpRef<ModuleOp> module(ModuleOp::create(loc));
+    b.setInsertionPointToEnd(module->getBody());
+    b.create<func::FuncOp>(loc, "payload", b.getFunctionType({b.getIndexType()}, {})).setPrivate();
+    SmallVector<Type> arguments(13, b.getI1Type()); arguments[0] = b.getIndexType();
+    auto function = b.create<func::FuncOp>(loc, "snapshots", b.getFunctionType(arguments, {}));
+    b.setInsertionPointToStart(function.addEntryBlock());
+    auto zero = b.create<arith::ConstantIndexOp>(loc, 0);
+    auto one = b.create<arith::ConstantIndexOp>(loc, 1);
+    auto two = b.create<arith::ConstantIndexOp>(loc, 2);
+    auto outer = b.create<scf::ForOp>(loc, zero, two, one);
+    b.setInsertionPointToStart(outer.getBody());
+    auto count = b.create<arith::SelectOp>(loc, function.getArgument(1), function.getArgument(0), zero);
+    Value lower = zero, upper = count;
+    if (mode == 6) {
+        lower = b.create<arith::ConstantIndexOp>(loc, -2);
+        upper = b.create<arith::AddIOp>(loc, count, lower);
+    } else if (mode == 7) {
+        auto firstInvocation = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
+                                                       outer.getInductionVar(), zero);
+        upper = b.create<arith::SelectOp>(loc, firstInvocation, count, zero);
+    }
+    auto loop = b.create<scf::ForOp>(loc, lower, upper, mode == 5 ? two : one);
+    b.setInsertionPointToStart(loop.getBody());
+    auto before = b.create<arith::ConstantIndexOp>(loc, 11);
+    auto shifted = b.create<arith::AddIOp>(loc, loop.getInductionVar(), outer.getInductionVar());
+    auto parity = b.create<arith::RemUIOp>(loc, shifted, two);
+    auto predicate = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, parity, zero);
+    auto after = b.create<arith::ConstantIndexOp>(loc, 12);
+    b.setInsertionPointAfter(loop);
+    auto post = b.create<arith::ConstantIndexOp>(loc, 13);
+    b.setInsertionPointAfter(outer);
+    auto escaped = b.create<arith::ConstantIndexOp>(loc, 14);
+    b.create<func::ReturnOp>(loc);
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    auto placeholders = std::make_shared<Block>(); arena->retainInputOwner(placeholders);
+    auto first = arena->evaluatedInput(placeholders->addArgument(b.getI1Type(), loc), predicate, loop,
+                                       arena->constant(mode == 8 ? UINT64_MAX : 0));
+    auto second = arena->evaluatedInput(placeholders->addArgument(b.getI1Type(), loc), predicate, loop,
+                                        arena->constant(1));
+    fs::InvocationPrefixCollection collection(function);
+    Operation* cut = mode == 1 ? before.getOperation() : (mode == 3 || mode == 7) ? post.getOperation() :
+                     mode == 4 ? escaped.getOperation() : after.getOperation();
+    auto root = first;
+    if (mode == 0 || mode == 6) {
+        root = arena->land(arena->slt(arena->constant(mode == 6 ? uint64_t(-2) : 0),
+                                       arena->input(loop.getInductionVar())), first);
+    } else if (mode == 2) {
+        root = arena->land(arena->slt(arena->constant(1), arena->input(loop.getInductionVar())),
+                           arena->lor(first, second));
+    } else if (mode == 3 || mode == 7) {
+        root = arena->land(arena->slt(arena->constant(0), arena->input(upper)), first);
+    }
+    auto emit = fs::preparePrefixExpression(arena, root, cut, collection);
+    std::optional<std::size_t> validity;
+    if (mode == 7) {
+        std::string message;
+        auto slots = collection.snapshotPredicate(predicate, loop, 0, message);
+        if (failed(slots)) { return false; }
+        validity = slots->second;
+    }
+    collection.recipe().actions.push_back({cut, fs::PrivateStateCut::Before,
+        [emit, loc, validity](OpBuilder& b, const IRMapping& mapping,
+                              MutableArrayRef<Value> state, std::string& error) {
+            auto value = emit(b, mapping, state, error);
+            if (failed(value)) { return failure(); }
+            auto yes = b.create<arith::ConstantIndexOp>(loc, 1), no = b.create<arith::ConstantIndexOp>(loc, 0);
+            Value tag = b.create<arith::SelectOp>(loc, *value, yes, no);
+            if (validity) {
+                auto two = b.create<arith::ConstantIndexOp>(loc, 2);
+                auto live = b.create<arith::SelectOp>(loc, state[*validity], two, no);
+                tag = b.create<arith::AddIOp>(loc, tag, live);
+            }
+            b.create<func::CallOp>(loc, "payload", TypeRange{}, ValueRange{tag});
+            return success();
+        }});
+    const auto beforeText = render(module->getOperation());
+    fs::PrivateStateError error;
+    auto staged = fs::materializeStructuredPrivateState(function, collection.recipe().slots,
+                                                        collection.recipe().actions, error);
+    if (mode == 1 || mode == 4 || mode == 5 || mode == 8) {
+        return failed(staged) && beforeText == render(module->getOperation());
+    }
+    if (failed(staged)) { llvm::errs() << "snapshot preparation: " << error.message << "\n"; return false; }
+    if (collection.recipe().slots.size() != (mode == 2 ? 4U : 2U)) { return false; }
+    for (unsigned trips = 0; trips <= 4; ++trips) {
+        for (unsigned active = 0; active < 2; ++active) {
+            Execution execution; execution.run((*staged)->function, trips, active);
+            std::vector<unsigned> expected;
+            for (unsigned invocation = 0; invocation < 2; ++invocation) {
+                const auto n = active && (mode != 7 || invocation == 0) ? trips : 0;
+                if (mode == 7) { expected.push_back(n ? 3 : 0); }
+                else if (mode == 3) { expected.push_back(n && invocation == 0); }
+                else {
+                    for (unsigned i = 0; i < n; ++i) {
+                        expected.push_back(mode == 2 ? i > 1 : i > 0 && invocation == 0);
+                    }
+                }
+            }
+            if (!execution.valid || execution.events.size() != expected.size()) { return false; }
+            for (auto [event, wanted] : llvm::zip(execution.events, expected)) {
+                if (event.kind != 0 || event.role != wanted) { return false; }
+            }
+        }
+    }
+    return beforeText == render(module->getOperation());
+}
 } // namespace
 bool runInvocationPrefixChecks() {
     MLIRContext context; context.disableMultithreading();
     context.loadDialect<func::FuncDialect, scf::SCFDialect, arith::ArithDialect, pto::PTODialect>();
+    for (unsigned mode = 0; mode < 9; ++mode) {
+        if (!historicalExpression(context, mode)) {
+            llvm::errs() << "historical expression mode " << mode << " failed\n"; return false;
+        }
+    }
     unsigned cases = 0;
     const bool invalid332 = !runCases(context, false, cases) || !runCases(context, true, cases) ||
         !lateSourceChoice(context, false) || !lateSourceChoice(context, true) ||

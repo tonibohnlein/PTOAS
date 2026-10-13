@@ -8,6 +8,7 @@
 #ifndef PTO_FRONTIERSYNCH_INVOCATIONPREFIXCOLLECTION_H
 #define PTO_FRONTIERSYNCH_INVOCATIONPREFIXCOLLECTION_H
 #include "InvocationPrefix.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include <set>
 namespace mlir::pto::frontiersynch {
@@ -30,6 +31,10 @@ public:
                                     Value, std::string&)> snapshot, std::string& error);
     LogicalResult consumer(Operation* original, PrefixDirection direction,
                            PrefixIncomingSelector selector, std::string& error);
+    // Snapshot an unconditional direct-body Boolean at one original IV. The
+    // caller certifies coordinate semantics and proves availability at each read.
+    FailureOr<std::pair<std::size_t, std::size_t>> snapshotPredicate(
+        Value original, scf::ForOp loop, int64_t induction, std::string& error);
     // Bounds and completeness are certified by the root coordinator after all
     // selected child and crossing records have contributed successfully.
 private:
@@ -40,6 +45,7 @@ private:
     std::map<std::pair<Operation*, uint32_t>, const CompoundInstanceElement*> sourceCuts;
     std::map<std::pair<Operation*, PrefixDirection>, std::size_t> consumers;
     std::set<PrefixDirection> directions;
+    llvm::DenseMap<std::pair<Value, int64_t>, std::pair<std::size_t, std::size_t>> predicateSnapshots;
 };
 // The callback owns producer-local evidence and proper child owners, never its
 // own MathematicalResult. The source owner keeps borrowed phase records alive.
