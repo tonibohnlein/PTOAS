@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_repeated_allocation_profile.py pto-test-opt %S/../../npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto
+// RUN: pto-sync-input-test --region-expression-checks %S/region_expression.mlir
+// The Python check shrinks the nested regular input and compares public
+// profiled/unprofiled and logical-only requests. The C++ oracle independently
+// enumerates ordered extrema and finite command-graph reuse, including rollback.

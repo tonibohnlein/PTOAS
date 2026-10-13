@@ -22,6 +22,8 @@ struct AnalysisStageRecord {
     uint64_t cacheHits = 0, firstDispatches = 0;
     // Aggregate substage counters never contribute to backend dispatch totals.
     uint64_t aggregateCalls = 0, aggregateCacheHits = 0, aggregateCacheMisses = 0;
+    // Diagnostic inventories are not timed children or backend attempts.
+    std::vector<std::pair<std::string, uint64_t>> work;
 };
 struct AnalysisLedger {
     std::vector<AnalysisCostRecord> estimates;

@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Common exact regional contract. All expressions belong to the supplied arena.
 #include "RepeatedRegionInternal.h"
+#include "OccurrenceBinding.h"
 #include "RepeatedAllocation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
@@ -57,11 +58,12 @@ class RepeatedPreparation
         if (unitCrossings) {
             plan->allocationPreparation = [owner = state.shared_from_this(), childView,
                 crossings = std::move(allocationCrossings)](PreparedLogicalPlan& prepared) {
-                prepareAllocationSupport(*childView);
+                prepareAllocationSupport(*childView, prepared.allocationProfile);
                 auto allocation = childView->regionalAllocation;
                 if (!allocation) { allocation = finiteRegionalAllocation(owner->body, *childView); }
                 if (allocation) {
-                    prepared.regionalAllocation = repeatedRegionalAllocation(*owner, *allocation, crossings);
+                    prepared.regionalAllocation = repeatedRegionalAllocation(
+                        *owner, *allocation, crossings, prepared.allocationProfile);
                 }
             };
         }
@@ -101,14 +103,8 @@ class RepeatedPreparation
     }
     std::optional<Id> ordinal(scf::ForOp coordinate)
     {
-        APInt step;
-        if (!matchPattern(coordinate.getStep(), m_ConstantInt(&step)) || !step.isSignedIntN(64) ||
-            step.getSExtValue() <= 0 || !coordinate.getInductionVar().getType().isIndex())
-        {
-            return std::nullopt;
-        }
-        return e().div(e().sub(e().input(coordinate.getInductionVar()), e().input(coordinate.getLowerBound())),
-                       e().constant(step.getSExtValue()));
+        if (!coordinate || !coordinate.getInductionVar().getType().isIndex()) { return std::nullopt; }
+        return originalLoopOrdinal(e(), coordinate);
     }
     std::optional<Id> at(const RegionalEvent &event, Id guard)
     {
@@ -120,42 +116,13 @@ class RepeatedPreparation
             guard = e().land(guard, e().eq(e().rem(originalVisit, e().constant(state.phaseCount)),
                 e().constant(state.typePhases[event.type])));
         }
-        if (body.endpointEventGuard) {
-            auto value = body.endpointEventGuard(event);
-            if (!value) { return std::nullopt; }
-            guard = e().land(guard, *value);
-        }
-        auto leaf = body.occurrenceLoops[event.type];
-        if (leaf)
-        {
-            auto value = ordinal(leaf);
-            if (!value)
-            {
-                return std::nullopt;
-            }
-            guard = e().land(guard, e().eq(*value, event.ordinal));
-        }
-        if (!body.outerLoops.empty())
-        {
-            const auto &frame = body.outerLoops[event.type];
-            for (std::size_t i = 0; i < frame.size(); ++i)
-            {
-                auto value = ordinal(frame[i]);
-                if (!value)
-                {
-                    return std::nullopt;
-                }
-                if (!body.outerDivisors.empty()) {
-                    value = e().div(*value, e().constant(body.outerDivisors[event.type][i]));
-                }
-                guard = e().land(guard, e().eq(*value, event.visits[i]));
-            }
-        }
-        for (auto coordinate : body.anchors[event.type].coordinates)
-        {
-            guard = e().land(guard,
-                             e().eq(e().input(coordinate.loop.getInductionVar()), e().constant(coordinate.induction)));
-        }
+        // This producer's existing counted-loop contract requires index IVs.
+        auto indexLoop = [](scf::ForOp loop) { return !loop || loop.getInductionVar().getType().isIndex(); };
+        if (!indexLoop(body.occurrenceLoops[event.type])) { return std::nullopt; }
+        if (!body.outerLoops.empty() && !llvm::all_of(body.outerLoops[event.type], indexLoop)) { return std::nullopt; }
+        auto conditions = regionalOccurrenceConstraints(body, event, state.error);
+        if (failed(conditions)) { return std::nullopt; }
+        for (auto condition : *conditions) { guard = e().land(guard, condition); }
         return guard;
     }
     LogicalResult prefixInternal()

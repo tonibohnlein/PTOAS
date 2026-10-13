@@ -8,20 +8,65 @@
 #include "RepeatedAllocation.h"
 #include "RepeatedLaneAllocation.h"
 #include "RepeatedRegionInternal.h"
+#include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
+#include "llvm/Support/raw_ostream.h"
 #include <algorithm>
+#include <chrono>
 namespace mlir::pto::frontiersynch {
 namespace {
 using Id = RegionExpressions::Id;
 constexpr uint64_t maximumPaletteWidth = 6;
 using Selectors = std::vector<RegionalSelector>;
 
+// One inventory per repeated region, including failed attempts. Its elapsed
+// time is diagnostic only: the enclosing summary already owns that duration.
+class RepeatedWork {
+public:
+    RepeatedWork(AllocationProfile* profile, scf::ForOp loop) : profile(profile), loop(loop)
+    {
+        if (profile && profile->enabled()) { started = Clock::now(); }
+        else { this->profile = nullptr; }
+    }
+    ~RepeatedWork()
+    {
+        if (!profile) { return; }
+        std::string location;
+        llvm::raw_string_ostream stream(location);
+        if (loop) { loop.getLoc().print(stream); }
+        profile->recordWork(stream.str(), {
+            {"elapsed_ns", static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                Clock::now() - started).count())},
+            {"extrema_candidates", cost.extrema.candidates}, {"extrema_comparisons", cost.extrema.comparisons},
+            {"ordered_extrema_lists", cost.extrema.orderedLists},
+            {"lanes", cost.lanes}, {"first_alternatives", cost.firstAlternatives},
+            {"last_alternatives", cost.lastAlternatives}, {"matrix_pairs", cost.matrixPairs},
+            {"candidate_gaps", cost.candidateGaps}, {"boundary_pairs", cost.boundaryPairs},
+            {"relative_queries", cost.relativeQueries}, {"relative_computations", cost.relativeComputations},
+            {"implication_requests", cost.implicationRequests},
+            {"implication_computations", cost.implicationComputations},
+            {"constant_requests", cost.constantRequests}, {"constant_computations", cost.constantComputations},
+            {"proof_node_visits", cost.proofNodeVisits}, {"partition_attempts", cost.partitionAttempts},
+            {"proof_ns", cost.proofNanoseconds}, {"relative_ns", cost.relativeNanoseconds},
+            {"partition_matrix_entries", cost.partitionMatrixEntries}});
+    }
+    RepeatedLaneProofCost* counters() { return profile ? &cost : nullptr; }
+private:
+    using Clock = std::chrono::steady_clock;
+    AllocationProfile* profile;
+    scf::ForOp loop;
+    Clock::time_point started;
+    RepeatedLaneProofCost cost;
+};
+
 // Preserve original event coordinates. Selecting extrema changes guards only,
 // avoiding selected-coordinate queries in the nested reachability backend.
-bool addExtremum(const RegionalAnalysis& body, Selectors& values, RegionalSelector next, bool first)
+bool addExtremum(const RegionalAnalysis& body, Selectors& values, RegionalSelector next, bool first,
+                 RepeatedExtremaCost* cost)
 {
     auto& e = *body.expressions;
     for (auto& prior : values) {
+        if (cost) { accumulateCost(cost->comparisons, 1); }
         auto earlier = first ? regionalReferenceBefore(body, next.event, prior.event) :
                                regionalReferenceBefore(body, prior.event, next.event);
         if (!earlier) { return false; }
@@ -39,8 +84,72 @@ bool addExtremum(const RegionalAnalysis& body, Selectors& values, RegionalSelect
     if (e.constantValue(next.present) != 0) { values.push_back(std::move(next)); }
     return true;
 }
+// A strict reference-order certificate on adjacent endpoints suffices by
+// transitivity. Keep original event coordinates; only the presence DAG changes.
+// Equal/simultaneous or conditionally ordered endpoints use the general path.
+bool orderedExtrema(const RegionalAnalysis& body, Selectors& values, bool first, RepeatedExtremaCost* cost)
+{
+    auto& e = *body.expressions;
+    for (std::size_t i = 1; i < values.size(); ++i) {
+        if (cost) { accumulateCost(cost->comparisons, 1); }
+        auto before = regionalReferenceBefore(body, values[i - 1].event, values[i].event);
+        if (!before || e.constantValue(*before) != 1) { return false; }
+    }
+    if (cost) { accumulateCost(cost->orderedLists, 1); }
+    auto remaining = e.boolean(true);
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        auto& value = values[first ? i : values.size() - 1 - i];
+        const auto present = value.present;
+        value.present = e.select(remaining, present, e.boolean(false));
+        remaining = e.select(remaining, e.lnot(present), e.boolean(false));
+    }
+    llvm::erase_if(values, [&](const auto& value) { return e.constantValue(value.present) == 0; });
+    return true;
+}
+std::optional<Selectors> numericalOrder(const RegionalAnalysis& body, const Selectors& candidates)
+{
+    // Record/provenance order is not occurrence order. For supplied numerical
+    // endpoints, propose coordinate order, then certify it through the same
+    // reference-order interface. No order is inferred from expression IDs.
+    std::vector<std::pair<std::vector<uint64_t>, std::size_t>> keys;
+    auto& e = *body.expressions;
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        const auto& event = candidates[i].event;
+        std::vector<uint64_t> key;
+        for (Id coordinate : event.visits) {
+            auto value = e.constantValue(coordinate);
+            if (!value) { break; }
+            key.push_back(*value);
+        }
+        auto ordinal = e.constantValue(event.ordinal);
+        if (key.size() != event.visits.size() || !ordinal) { break; }
+        key.push_back(*ordinal);
+        key.push_back(event.type);
+        keys.emplace_back(std::move(key), i);
+    }
+    if (keys.size() != candidates.size()) { return std::nullopt; }
+    llvm::sort(keys);
+    Selectors ordered;
+    for (const auto& key : keys) { ordered.push_back(candidates[key.second]); }
+    return ordered;
+}
+bool reduceExtrema(const RegionalAnalysis& body, Selectors& candidates, bool first, RepeatedExtremaCost* cost)
+{
+    if (orderedExtrema(body, candidates, first, cost)) { return true; }
+    auto ordered = numericalOrder(body, candidates);
+    if (ordered && orderedExtrema(body, *ordered, first, cost)) {
+        candidates = std::move(*ordered);
+        return true;
+    }
+    Selectors selected;
+    for (auto& candidate : candidates) {
+        if (!addExtremum(body, selected, std::move(candidate), first, cost)) { return false; }
+    }
+    candidates = std::move(selected);
+    return true;
+}
 std::optional<std::pair<Selectors, Selectors>> extrema(
-    const RegionalAnalysis& body, const RegionalAllocationGroup& group)
+    const RegionalAnalysis& body, const RegionalAllocationGroup& group, RepeatedExtremaCost* cost = nullptr)
 {
     Selectors first, last;
     auto& e = *body.expressions;
@@ -48,20 +157,19 @@ std::optional<std::pair<Selectors, Selectors>> extrema(
         return regionalAllocationDirection(group, member) != std::make_pair(group.sourcePipe, group.targetPipe);
     });
     for (const auto& member : group.members) {
+        if (cost) { accumulateCost(cost->candidates, 1); }
         auto ps = regionalPresence(body, member.firstSource), pt = regionalPresence(body, member.lastTarget);
         if (!ps || !pt) { return std::nullopt; }
         auto active = e.select(member.active,
             e.select(*ps, *pt, e.boolean(false)), e.boolean(false));
         if (e.constantValue(active) == 0) { continue; }
-        // Across directions, reference-last completion need not causally
-        // dominate other completions. Keep every active bound for the proof.
-        if (mixed) {
-            first.push_back({member.firstSource, active});
-            last.push_back({member.lastTarget, active});
-            continue;
-        }
-        if (!addExtremum(body, first, {member.firstSource, active}, true) ||
-            !addExtremum(body, last, {member.lastTarget, active}, false)) { return std::nullopt; }
+        first.push_back({member.firstSource, active});
+        last.push_back({member.lastTarget, active});
+    }
+    // Reference-last completion across different directions need not dominate
+    // the others causally. Retain every bound in that case, as before.
+    if (!mixed && (!reduceExtrema(body, first, true, cost) || !reduceExtrema(body, last, false, cost))) {
+        return std::nullopt;
     }
     return std::make_pair(std::move(first), std::move(last));
 }
@@ -211,9 +319,9 @@ std::vector<RegionalAllocationGroup> constantLanes(const RegionalAllocationGroup
 }
 } // namespace
 std::optional<RepeatedAllocationExtrema> repeatedAllocationExtrema(
-    const RegionalAnalysis& body, const RegionalAllocationGroup& group)
+    const RegionalAnalysis& body, const RegionalAllocationGroup& group, RepeatedExtremaCost* cost)
 {
-    return extrema(body, group);
+    return extrema(body, group, cost);
 }
 bool canRestrictRepeatedAllocationMember(RepeatedRegionState& state, const RegionalAllocationMember& member)
 {
@@ -231,14 +339,15 @@ std::vector<RegionalAllocationGroup> constantAllocationLanes(const RegionalAlloc
 }
 std::shared_ptr<RegionalAllocationSummary> repeatedRegionalAllocation(
     RepeatedRegionState& state, const RegionalAllocationSummary& child,
-    ArrayRef<std::pair<uint32_t, std::size_t>> crossings)
+    ArrayRef<std::pair<uint32_t, std::size_t>> crossings, AllocationProfile* profile)
 {
+    RepeatedWork work(profile, state.loop);
     // A terminal acquisition cannot be lifted to the end of each visit.
     // Repeated surplus publications need their own history/matching contract.
     if (llvm::any_of(child.groups, [](const auto& group) { return group.terminalCleanup; })) { return {}; }
     auto coalesced = coalesceRegionalAllocation(state.body, child);
     if (!coalesced) { return {}; }
-    if (auto periodic = periodicLaneAllocation(state, *coalesced, crossings)) { return periodic; }
+    if (auto periodic = periodicLaneAllocation(state, *coalesced, crossings, work.counters())) { return periodic; }
     auto result = std::make_shared<RegionalAllocationSummary>();
     for (const auto& group : coalesced->groups) {
         for (auto lane : constantLanes(group)) {

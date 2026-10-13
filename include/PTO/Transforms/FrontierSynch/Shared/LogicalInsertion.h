@@ -23,6 +23,7 @@ struct MathematicalResult;
 class PrivateStatePlan;
 class CompletionRegion;
 class FamilyEndpointRecipe;
+class AllocationProfile;
 enum class LogicalCommandKind { Set, Barrier, Wait };
 // A necessary execution domain, retained by the producer that binds an
 // occurrence. Every active endpoint satisfies every constraint in one box.
@@ -73,6 +74,9 @@ struct PreparedLogicalPlan {
     // A one-shot export on this detached graph. Captures own the retained
     // mathematics; failed support must leave logical endpoints available.
     std::function<void(PreparedLogicalPlan&)> allocationPreparation;
+    // Borrowed only during the synchronous allocation export; never captured,
+    // copied into views, or serialized. Recursive exports pass it explicitly.
+    AllocationProfile* allocationProfile = nullptr;
     // Immutable recognition snapshot, attached only when insertion commits.
     DictionaryAttr recognitionReport;
     // Optional typed lifetime interface for parent composition; invalidated with
@@ -94,7 +98,7 @@ struct PreparedLogicalPlan {
 };
 // For producers whose occurrence binding explicitly conjoins these equalities.
 void retainEndpointCoordinates(PreparedLogicalEndpoint& endpoint, ArrayRef<TemplateCoordinate> coordinates);
-void prepareAllocationSupport(PreparedLogicalPlan& plan);
+void prepareAllocationSupport(PreparedLogicalPlan& plan, AllocationProfile* profile = nullptr);
 // Explicit compatibility boundary for consumers requiring concrete endpoint SSA.
 LogicalResult materializeLogicalFamilies(PreparedLogicalPlan& plan);
 // Opt-in aggregate snapshots; no expression evaluation or generated IR mutation.

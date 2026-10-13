@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Typed nested identities and flat-backend compatibility checks.
 #include "RegionalCapabilitiesInternal.h"
+#include "OccurrenceBinding.h"
+#include "mlir/IR/Matchers.h"
 namespace mlir::pto::frontiersynch {
 RegionalContextView regionalContext(const RegionalAnalysis& region)
 {
@@ -149,5 +151,54 @@ std::optional<RegionExpressions::Id> regionalReferenceBefore(
     auto& e = *region.expressions;
     return e.lor(e.lt(source.ordinal, target.ordinal),
         e.land(e.eq(source.ordinal, target.ordinal), e.boolean(source.type < target.type)));
+}
+std::optional<RegionExpressions::Id> originalLoopOrdinal(
+    RegionExpressions& e, scf::ForOp loop, uint64_t divisor)
+{
+    APInt step;
+    if (!loop || !divisor || !matchPattern(loop.getStep(), m_ConstantInt(&step)) ||
+        !step.isSignedIntN(64) || step.getSExtValue() <= 0) { return std::nullopt; }
+    auto ordinal = e.div(e.sub(e.input(loop.getInductionVar()), e.input(loop.getLowerBound())),
+                         e.constant(step.getSExtValue()));
+    ordinal = e.div(ordinal, e.constant(divisor));
+    return ordinal == RegionExpressions::invalid ? std::nullopt : std::optional(ordinal);
+}
+FailureOr<SmallVector<RegionExpressions::Id>> regionalOccurrenceConstraints(
+    const RegionalAnalysis& region, const RegionalEvent& event, std::string& error)
+{
+    // Validate only the requested frame: scanning every event type here would
+    // multiply whole-region validation by the number of prepared endpoints.
+    if (!validRegionalEvent(region, event) || event.type >= region.anchors.size()) {
+        error = "regional endpoint has an invalid occurrence frame"; return failure();
+    }
+    auto& e = *region.expressions;
+    SmallVector<RegionExpressions::Id> conditions;
+    if (region.endpointEventGuard) {
+        auto value = region.endpointEventGuard(event);
+        if (!value || *value >= e.size() || !e.isBoolean(*value)) {
+            error = "regional phase endpoint predicate unavailable"; return failure();
+        }
+        conditions.push_back(*value);
+    }
+    auto bind = [&](scf::ForOp loop, RegionExpressions::Id selected, uint64_t divisor) {
+        auto ordinal = originalLoopOrdinal(e, loop, divisor);
+        if (!ordinal) { error = "nested endpoint requires a constant positive step and nonzero divisor"; return false; }
+        conditions.push_back(e.eq(*ordinal, selected));
+        return true;
+    };
+    auto leaf = region.occurrenceLoops[event.type];
+    if (leaf && !bind(leaf, event.ordinal, 1)) { return failure(); }
+    if (!region.outerLoops.empty()) {
+        const auto& frame = region.outerLoops[event.type];
+        for (std::size_t i = 0; i < frame.size(); ++i) {
+            auto divisor = region.outerDivisors.empty() ? 1 : region.outerDivisors[event.type][i];
+            if (!bind(frame[i], event.visits[i], divisor)) { return failure(); }
+        }
+    }
+    for (auto fixed : region.anchors[event.type].coordinates) {
+        if (!fixed.loop) { error = "regional endpoint has an absent fixed-coordinate loop"; return failure(); }
+        conditions.push_back(e.eq(e.input(fixed.loop.getInductionVar()), e.constant(fixed.induction)));
+    }
+    return conditions;
 }
 } // namespace mlir::pto::frontiersynch

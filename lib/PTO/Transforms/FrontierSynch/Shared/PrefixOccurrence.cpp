@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PrefixOccurrence.h"
+#include "OccurrenceBinding.h"
 #include "InvocationPrefixCollection.h"
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
@@ -22,42 +23,10 @@ FailureOr<Expr> prefixPortGuard(SequenceAnalysisState& state, const Port& point,
     if (child.regional.endpointInvocationGuard) {
         guard = e.select(guard, *child.regional.endpointInvocationGuard, no);
     }
-    if (child.regional.endpointEventGuard) {
-        auto value = child.regional.endpointEventGuard(point.event());
-        if (!value) {
-            return failure();
-        }
-        guard = e.select(guard, *value, no);
-    }
-    auto loop = child.regional.occurrenceLoops.empty() ? scf::ForOp{} : child.regional.occurrenceLoops[point.type];
-    auto coordinate = [&](scf::ForOp loop, Expr selected, uint64_t divisor) -> bool {
-        auto step = sequenceInteger(loop.getStep());
-        if (!step || *step <= 0 || !divisor) {
-            return false;
-        }
-        auto ordinal = e.div(e.sub(e.input(loop.getInductionVar()), e.input(loop.getLowerBound())), e.constant(*step));
-        ordinal = e.div(ordinal, e.constant(divisor));
-        guard = e.select(guard, e.eq(ordinal, selected), no);
-        return true;
-    };
-    if (loop && !coordinate(loop, point.ordinal, 1)) {
-        return failure();
-    }
-    if (!child.regional.outerLoops.empty()) {
-        auto& loops = child.regional.outerLoops[point.type];
-        if (loops.size() != point.visits.size()) {
-            return failure();
-        }
-        for (std::size_t i = 0; i < loops.size(); ++i) {
-            auto divisor = child.regional.outerDivisors.empty() ? 1 : child.regional.outerDivisors[point.type][i];
-            if (!coordinate(loops[i], point.visits[i], divisor)) {
-                return failure();
-            }
-        }
-    }
-    for (auto fixed : child.anchors[point.type].coordinates) {
-        guard = e.select(guard, e.eq(e.input(fixed.loop.getInductionVar()), e.constant(fixed.induction)), no);
-    }
+    std::string error;
+    auto conditions = regionalOccurrenceConstraints(child.regional, point.event(), error);
+    if (failed(conditions)) { return failure(); }
+    for (auto condition : *conditions) { guard = e.select(guard, condition, no); }
     return guard;
 }
 // Callback semantics are immutable under the regional export contract. Adapters
@@ -211,12 +180,10 @@ void liftSingletonPrefixContribution(const RegionalAnalysis& body, RegionalAnaly
         auto& e = *snapshot->expressions;
         if (snapshot->outerLoops.empty() || snapshot->outerLoops[type].empty()) { return {}; }
         auto loop = snapshot->outerLoops[type].front();
-        auto step = sequenceInteger(loop.getStep());
         const auto divisor = snapshot->outerDivisors.empty() ? 1 : snapshot->outerDivisors[type].front();
-        if (!step || *step <= 0 || !divisor) { return {}; }
-        auto actual = e.div(e.div(e.sub(e.input(loop.getInductionVar()), e.input(loop.getLowerBound())),
-                                  e.constant(*step)), e.constant(divisor));
-        const auto match = e.eq(actual, coordinate);
+        auto actual = originalLoopOrdinal(e, loop, divisor);
+        if (!actual) { error = "singleton occurrence recipe has an unsupported loop coordinate"; return {}; }
+        const auto match = e.eq(*actual, coordinate);
         std::map<const PrefixOccurrence*, PrefixOccurrencePtr> copies;
         std::function<PrefixOccurrencePtr(const PrefixOccurrencePtr&)> lift =
             [&](const auto& node) -> PrefixOccurrencePtr {
