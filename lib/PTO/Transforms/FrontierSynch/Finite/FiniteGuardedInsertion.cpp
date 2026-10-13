@@ -26,12 +26,32 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
     plan->independentPieces = true;
     std::map<Operation*, RegionExpressions::CutEmission> contexts;
     std::map<Operation*, Block*> blocks;
+    std::map<std::pair<Expr, Operation*>, std::shared_ptr<const CutExpressionRecipe>> expressions;
     auto emit = [&](Expr expression, Operation* cut) -> FailureOr<Value> {
         auto found = blocks.find(cut);
         if (found == blocks.end()) { found = blocks.emplace(cut,&plan->addPreparation(cut)).first; }
         OpBuilder builder(function.getContext());
         builder.setInsertionPointToEnd(found->second);
-        return arena->emitContextual(expression,builder,cut,contexts[cut]);
+        auto recipe = expressions.find({expression, cut});
+        return recipe == expressions.end() ? arena->emitContextual(expression, builder, cut, contexts[cut]) :
+            arena->emitPreparedContextual(*recipe->second, builder, cut, contexts[cut]);
+    };
+    // Settle finite guarded protocols before constructing any endpoint SSA.
+    // Unmigrated relational predicates keep the existing materialized check;
+    // a missed recipe is not a reason to lose an accepted mathematical result.
+    struct PlannedDemand {
+        GuardedDemand demand;
+        std::shared_ptr<const GuardedPublicationRecipe> publication;
+    };
+    std::vector<PlannedDemand> planned;
+    std::map<Operation*, RegionExpressions::CutEmission> availability;
+    auto available = [&](Expr expression, Operation* cut) -> LogicalResult {
+        auto key = std::make_pair(expression, cut);
+        if (expressions.count(key)) { return success(); }
+        auto recipe = arena->prepareContextual(expression, cut, availability[cut]);
+        if (failed(recipe)) { return failure(); }
+        expressions.emplace(key, std::move(*recipe));
+        return success();
     };
     for (auto demand : retained) {
         if (filter) {
@@ -44,6 +64,17 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
             demand.guard = both(demand.guard, *condition);
         }
         if (arena->constantValue(demand.guard) == 0) { continue; }
+        std::shared_ptr<const GuardedPublicationRecipe> publication;
+        if (pipe(demand.source) != pipe(demand.target)) {
+            std::string unavailable;
+            auto recipe = preparePublicationRecipe(function, *arena, anchors[demand.source].after,
+                anchors[demand.target].before, demand.guard, demand.guard, demand.guard, available, unavailable);
+            if (succeeded(recipe)) { publication = std::move(*recipe); }
+        }
+        planned.push_back({demand, std::move(publication)});
+    }
+    for (const auto& candidate : planned) {
+        const auto& demand = candidate.demand;
         auto p = pipe(demand.source), q = pipe(demand.target);
         if (plan->families.size() >= UINT32_MAX) {
             insertionError = "finite guarded record identity overflow"; return failure();
@@ -67,8 +98,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
             continue;
         }
         auto zero = arena->constant(0);
-        auto publication = prepareGuardedPublication(function, *arena, a.after, b.before,
-            demand.guard, demand.guard, emit, insertionError, *targetGuard);
+        auto publication = candidate.publication ?
+            materializePublicationRecipe(*candidate.publication, *arena, emit, *targetGuard, insertionError) :
+            prepareGuardedPublication(function, *arena, a.after, b.before,
+                demand.guard, demand.guard, emit, insertionError, *targetGuard);
         if (failed(publication)) { return failure(); }
         plan->families.back().targetChoices = publication->targetChoices;
         allocationGroups.push_back({p, q, 1, {{record, 0, 0,

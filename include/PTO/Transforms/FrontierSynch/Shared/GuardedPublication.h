@@ -52,6 +52,20 @@ FailureOr<GuardedPublication> prepareGuardedPublication(func::FuncOp function,
     RegionExpressions::Id sourceGuard, RegionExpressions::Id activity,
     const EndpointExpressionEmitter& emit, std::string& error, Value consumerPredicate,
     std::optional<SelectedPublication> selectedSource = {}, EndpointEmissionFailure* failure = nullptr);
+// Pure protocol planning: availability must be established without generated
+// SSA. The recipe borrows this arena and unchanged original cuts. It retains
+// the exact chosen predicates, not emitted Values or necessary-domain evidence.
+// Matching identities remain the caller's separate obligation.
+class GuardedPublicationRecipe;
+using EndpointExpressionAvailability =
+    std::function<LogicalResult(RegionExpressions::Id, Operation*)>;
+FailureOr<std::shared_ptr<const GuardedPublicationRecipe>> preparePublicationRecipe(func::FuncOp function,
+    RegionExpressions& arena, TemplateEndpointCut source, TemplateEndpointCut consumer,
+    RegionExpressions::Id sourceGuard, RegionExpressions::Id activity, RegionExpressions::Id consumerGuard,
+    const EndpointExpressionAvailability& available, std::string& error,
+    std::optional<SelectedPublication> selectedSource = {});
+FailureOr<GuardedPublication> materializePublicationRecipe(const GuardedPublicationRecipe& recipe,
+    RegionExpressions& arena, const EndpointExpressionEmitter& emit, Value consumerPredicate, std::string& error);
 // Append the alternative WAIT using the same record and matching tuple as the
 // ordinary pair. The final tuple component is the logical occurrence identity;
 // preceding components follow the normal memberCoordinates convention.

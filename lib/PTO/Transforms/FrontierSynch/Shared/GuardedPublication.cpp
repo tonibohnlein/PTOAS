@@ -6,7 +6,17 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Shared/GuardedPublication.h"
+#include <map>
 namespace mlir::pto::frontiersynch {
+class GuardedPublicationRecipe {
+public:
+    const RegionExpressions* owner = nullptr;
+    TemplateEndpointCut source, consumer;
+    RegionExpressions::Id sourceGuard = RegionExpressions::invalid;
+    RegionExpressions::Id publicationGuard = RegionExpressions::invalid;
+    Operation* cleanupCut = nullptr;
+    RegionExpressions::Id cleanupGuard = RegionExpressions::invalid;
+};
 const char* endpointFailureStageName(EndpointFailureStage stage)
 {
     switch (stage) {
@@ -44,24 +54,18 @@ RegionExpressions::Id structuralPresence(func::FuncOp function, Operation* cut, 
     }
     return present;
 }
-} // namespace
-FailureOr<GuardedPublication> prepareGuardedPublication(func::FuncOp function,
+// Both preparation adapters use this policy. Their only differences are how
+// availability and singleton multiplicity are established, never the protocol.
+FailureOr<GuardedPublicationRecipe> publicationPolicy(func::FuncOp function,
     RegionExpressions& arena, TemplateEndpointCut source, TemplateEndpointCut consumer,
     RegionExpressions::Id sourceGuard, RegionExpressions::Id activity,
-    const EndpointExpressionEmitter& emit, std::string& error, Value consumerPredicate,
-    std::optional<SelectedPublication> selectedSource, EndpointEmissionFailure* failureInfo)
+    const std::function<LogicalResult(RegionExpressions::Id, Operation*, EndpointFailureStage)>& attempt,
+    const std::function<bool(TemplateEndpointCut)>& consumerSingle,
+    const std::function<bool(TemplateEndpointCut, RegionExpressions::Id)>& sourceSingle,
+    std::string& error, std::optional<SelectedPublication> selectedSource,
+    EndpointEmissionFailure* failureInfo = nullptr)
 {
-    auto attempt = [&](RegionExpressions::Id expression, Operation* cut, EndpointFailureStage stage) {
-        auto value = emit(expression, cut);
-        const bool failedAttempt = failed(value) && failureInfo;
-        if (failedAttempt) {
-            auto diagnostic = failureInfo->expression == expression && failureInfo->cut == cut ?
-                failureInfo->diagnostic : arena.lastEmissionError();
-            *failureInfo = {stage, expression, cut, std::move(diagnostic)};
-        }
-        return value;
-    };
-    if (!function || !source.before || !consumer.before || !emit ||
+    if (!function || !source.before || !consumer.before || !attempt ||
         sourceGuard >= arena.size() || activity >= arena.size() ||
         !arena.isBoolean(sourceGuard) || !arena.isBoolean(activity)) {
         error = "publication requires original cuts and Boolean activity"; return failure();
@@ -70,8 +74,8 @@ FailureOr<GuardedPublication> prepareGuardedPublication(func::FuncOp function,
         !arena.isBoolean(selectedSource->existence) || !arena.isBoolean(selectedSource->atCut))) {
         error = "selected publication requires Boolean existence and visit predicates"; return failure();
     }
-    auto ordinary = attempt(sourceGuard, source.before, EndpointFailureStage::SourceGuard);
-    if (succeeded(ordinary)) { return GuardedPublication{*ordinary, activity}; }
+    GuardedPublicationRecipe recipe{&arena, source, consumer, sourceGuard, activity};
+    if (succeeded(attempt(sourceGuard, source.before, EndpointFailureStage::SourceGuard))) { return recipe; }
     if (!function.getBody().hasOneBlock()) {
         error = "terminal cleanup requires a single-exit invocation"; return failure();
     }
@@ -80,33 +84,112 @@ FailureOr<GuardedPublication> prepareGuardedPublication(func::FuncOp function,
     if (failureInfo) {
         *failureInfo = {EndpointFailureStage::PublicationContract, sourceGuard, source.before, {}};
     }
-    auto choices = qualifyTerminalCleanupCuts({consumer, final}, consumerPredicate);
-    if (!choices || (!selectedSource && !qualifyTerminalCleanupCuts({source, final}))) {
+    if (!consumerSingle(final) || (!selectedSource && !qualifyTerminalCleanupCuts({source, final}))) {
         error = "late SET guard requires single-publication cuts and a terminal cleanup interface";
         return failure();
     }
-    auto present = selectedSource ? selectedSource->existence : structuralPresence(function, source.before, arena);
-    auto atCut = selectedSource ? selectedSource->atCut : present;
-    // Qualify compact exact predicates before creating scalar code. Some
-    // unmigrated relational recipes expose their singleton equality only when
-    // lowered; retain that existing acceptance path through the same proof.
-    const bool selectedBeforeLowering = qualifyTerminalCleanupSelection({source, final}, arena, atCut);
-    auto publish = attempt(atCut, source.before, EndpointFailureStage::SourceGuard);
-    if (failed(publish)) {
+    recipe.publicationGuard = selectedSource ? selectedSource->existence :
+        structuralPresence(function, source.before, arena);
+    recipe.sourceGuard = selectedSource ? selectedSource->atCut : recipe.publicationGuard;
+    const bool selectedBeforeLowering = qualifyTerminalCleanupSelection({source, final}, arena, recipe.sourceGuard);
+    if (failed(attempt(recipe.sourceGuard, source.before, EndpointFailureStage::SourceGuard))) {
         error = "early publication predicate unavailable: " +
             (failureInfo ? failureInfo->diagnostic : arena.lastEmissionError()); return failure();
     }
-    auto cleanup = attempt(arena.select(present, arena.lnot(activity), arena.boolean(false)), terminal,
-        EndpointFailureStage::CleanupGuard);
-    if (failed(cleanup)) {
+    recipe.cleanupCut = terminal;
+    recipe.cleanupGuard = arena.select(recipe.publicationGuard, arena.lnot(activity), arena.boolean(false));
+    if (failed(attempt(recipe.cleanupGuard, terminal, EndpointFailureStage::CleanupGuard))) {
         error = "terminal cleanup predicate unavailable: " +
-            (failureInfo ? failureInfo->diagnostic : arena.lastEmissionError());
-        return failure();
+            (failureInfo ? failureInfo->diagnostic : arena.lastEmissionError()); return failure();
     }
-    if (!selectedBeforeLowering && !qualifyTerminalCleanupCuts({source, final}, *publish)) {
+    if (!selectedBeforeLowering && !sourceSingle(final, recipe.sourceGuard)) {
         error = "early publication does not select a single original source occurrence"; return failure();
     }
-    return GuardedPublication{*publish, present, terminal, *cleanup, std::move(choices)};
+    return recipe;
+}
+} // namespace
+FailureOr<GuardedPublication> prepareGuardedPublication(func::FuncOp function,
+    RegionExpressions& arena, TemplateEndpointCut source, TemplateEndpointCut consumer,
+    RegionExpressions::Id sourceGuard, RegionExpressions::Id activity,
+    const EndpointExpressionEmitter& emit, std::string& error, Value consumerPredicate,
+    std::optional<SelectedPublication> selectedSource, EndpointEmissionFailure* failureInfo)
+{
+    if (!emit) { error = "publication requires an endpoint emitter"; return failure(); }
+    std::map<std::pair<RegionExpressions::Id, Operation*>, Value> values;
+    auto attempt = [&](RegionExpressions::Id expression, Operation* cut, EndpointFailureStage stage) {
+        auto value = emit(expression, cut);
+        if (succeeded(value)) { values[{expression, cut}] = *value; return success(); }
+        if (failureInfo) {
+            auto diagnostic = failureInfo->expression == expression && failureInfo->cut == cut ?
+                failureInfo->diagnostic : arena.lastEmissionError();
+            *failureInfo = {stage, expression, cut, std::move(diagnostic)};
+        }
+        return failure();
+    };
+    std::shared_ptr<const EndpointCutChoices> choices;
+    auto consumerSingle = [&](TemplateEndpointCut final) {
+        choices = qualifyTerminalCleanupCuts({consumer, final}, consumerPredicate);
+        return bool(choices);
+    };
+    auto sourceSingle = [&](TemplateEndpointCut final, RegionExpressions::Id guard) {
+        return bool(qualifyTerminalCleanupCuts({source, final}, values.at({guard, source.before})));
+    };
+    auto recipe = publicationPolicy(function, arena, source, consumer, sourceGuard, activity,
+        attempt, consumerSingle, sourceSingle, error, selectedSource, failureInfo);
+    if (failed(recipe)) { return failure(); }
+    return GuardedPublication{values.at({recipe->sourceGuard, source.before}), recipe->publicationGuard,
+        recipe->cleanupCut, recipe->cleanupCut ? values.at({recipe->cleanupGuard, recipe->cleanupCut}) : Value(),
+        std::move(choices)};
+}
+FailureOr<std::shared_ptr<const GuardedPublicationRecipe>> preparePublicationRecipe(func::FuncOp function,
+    RegionExpressions& arena, TemplateEndpointCut source, TemplateEndpointCut consumer,
+    RegionExpressions::Id sourceGuard, RegionExpressions::Id activity, RegionExpressions::Id consumerGuard,
+    const EndpointExpressionAvailability& available, std::string& error,
+    std::optional<SelectedPublication> selectedSource)
+{
+    error.clear();
+    if (!function || !source.before || !consumer.before || !available ||
+        source.block != source.before->getBlock() || consumer.block != consumer.before->getBlock() ||
+        source.before->getParentOfType<func::FuncOp>() != function ||
+        consumer.before->getParentOfType<func::FuncOp>() != function || !arena.isBoolean(consumerGuard)) {
+        error = "publication recipe requires original cuts and Boolean consumer activity"; return failure();
+    }
+    if (failed(available(consumerGuard, consumer.before))) {
+        error = "publication consumer predicate unavailable"; return failure();
+    }
+    auto attempt = [&](RegionExpressions::Id expression, Operation* cut, EndpointFailureStage) {
+        return available(expression, cut);
+    };
+    auto consumerSingle = [&](TemplateEndpointCut final) {
+        return qualifyTerminalCleanupSelection({consumer, final}, arena, consumerGuard);
+    };
+    auto sourceSingle = [](TemplateEndpointCut, RegionExpressions::Id) { return false; };
+    auto recipe = publicationPolicy(function, arena, source, consumer, sourceGuard, activity,
+        attempt, consumerSingle, sourceSingle, error, selectedSource);
+    if (failed(recipe)) { return failure(); }
+    return std::make_shared<const GuardedPublicationRecipe>(std::move(*recipe));
+}
+FailureOr<GuardedPublication> materializePublicationRecipe(const GuardedPublicationRecipe& recipe,
+    RegionExpressions& arena, const EndpointExpressionEmitter& emit, Value consumerPredicate, std::string& error)
+{
+    if (recipe.owner != &arena || !emit || !arena.constructionError().empty()) {
+        error = "publication recipe requires its original arena and emitter"; return failure();
+    }
+    std::shared_ptr<const EndpointCutChoices> choices;
+    if (recipe.cleanupCut) {
+        choices = qualifyTerminalCleanupCuts({recipe.consumer,
+            {recipe.cleanupCut->getBlock(), recipe.cleanupCut}}, consumerPredicate);
+        if (!choices) { error = "publication recipe lost its singleton consumer"; return failure(); }
+    }
+    auto source = emit(recipe.sourceGuard, recipe.source.before);
+    if (failed(source)) { error = "publication recipe source predicate unavailable"; return failure(); }
+    Value cleanup;
+    if (recipe.cleanupCut) {
+        auto value = emit(recipe.cleanupGuard, recipe.cleanupCut);
+        if (failed(value)) { error = "publication recipe cleanup predicate unavailable"; return failure(); }
+        cleanup = *value;
+    }
+    return GuardedPublication{*source, recipe.publicationGuard, recipe.cleanupCut, cleanup, std::move(choices)};
 }
 LogicalResult appendPublicationCleanup(const GuardedPublication& publication,
     uint32_t record, uint32_t sourcePipe, uint32_t targetPipe,

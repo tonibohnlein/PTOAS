@@ -916,6 +916,9 @@ bool checkPreparedContextual(Operation* cut)
     auto recipe = arena.prepareContextual(root, cut, context);
     if (failed(recipe) || !context.values.empty() || !context.inputs.empty() ||
         context.replayBindings || render(function) != original) { return false; }
+    auto siblingRoot = arena.add(arena.input(cut->getResult(0)), arena.constant(2));
+    auto sibling = arena.prepareContextual(siblingRoot, cut, context);
+    if (failed(sibling)) { return false; }
     fs::PreparedLogicalPlan plan(0);
     auto& code = plan.addPreparation(cut);
     OpBuilder builder(cut->getContext()); builder.setInsertionPointToEnd(&code);
@@ -925,6 +928,13 @@ bool checkPreparedContextual(Operation* cut)
     }
     auto value = arena.emitPreparedContextual(**recipe, builder, cut, context);
     if (failed(value) || code.empty() || render(function) != original) { return false; }
+    const auto captured = context.inputs.lookup(cut->getResult(0));
+    const auto operations = code.getOperations().size();
+    auto sameRecipe = arena.emitPreparedContextual(**recipe, builder, cut, context);
+    if (failed(sameRecipe) || *sameRecipe != *value || code.getOperations().size() != operations) { return false; }
+    auto siblingValue = arena.emitPreparedContextual(**sibling, builder, cut, context);
+    if (failed(siblingValue) || context.inputs.lookup(cut->getResult(0)) != captured ||
+        code.getOperations().size() != operations + 2) { return false; }
     auto cached = arena.prepareContextual(root, cut, context);
     if (failed(cached)) { return false; }
     Arena::CutEmission missing;

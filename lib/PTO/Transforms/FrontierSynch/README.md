@@ -394,3 +394,10 @@ loop/branch and invariant-coordinate interpretation for that query and for
 emitted command validation. Availability is a separate obligation. The legacy
 emitted-predicate route remains for recipes whose singleton equality is only
 exposed by relational lowering.
+
+`GuardedPublication` separates the shared direct/early protocol policy from its
+availability adapter. Finite guarded preparation retains immutable publication
+and cut-expression recipes before generating scalar operations. Existing
+relational and historical adapters keep their materialized acceptance route
+through the same policy. Recipe lowering reuses cut-local scalar captures made
+by other prepared roots; it does not replay a shared original producer twice.
