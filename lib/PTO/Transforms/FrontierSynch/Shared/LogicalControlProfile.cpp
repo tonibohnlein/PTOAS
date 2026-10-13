@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
 #include "PrivateStatePlan.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/JSON.h"
@@ -83,7 +84,9 @@ void profileLogicalControl(func::FuncOp function, const PreparedLogicalPlan& pla
         {"realization", plan.privateState ? "invocation-prefix" :
             (plan.completionOwner ? "conservative-completion" : "direct-endpoints")},
         {"record_members", records}, {"families", plan.families.size()},
-        {"endpoint_sites", plan.endpoints.size()}, {"preparation", preparation(plan)},
+        {"endpoint_sites", plan.endpoints.size()},
+        {"recipe_sites", plan.familyRecipe ? familyEndpointPieceCount(*plan.familyRecipe) : 0},
+        {"preparation", preparation(plan)},
         {"function_scope", staged ? "staged-invocation" : "original-or-inserted"},
         {"function_control", functionControl(staged ? staged : function)}}) << "\n";
 }

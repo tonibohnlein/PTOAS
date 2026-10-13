@@ -22,6 +22,7 @@ struct CompactBoundingOwner;
 struct MathematicalResult;
 class PrivateStatePlan;
 class CompletionRegion;
+class FamilyEndpointRecipe;
 enum class LogicalCommandKind { Set, Barrier, Wait };
 // A necessary execution domain, retained by the producer that binds an
 // occurrence. Every active endpoint satisfies every constraint in one box.
@@ -84,6 +85,9 @@ struct PreparedLogicalPlan {
     std::unique_ptr<PrivateStatePlan> privateState;
     // Conservative completion evidence never impersonates exact mathematics.
     std::shared_ptr<const CompletionRegion> completionOwner;
+    // Numerical family construction owns no generated SSA. Root allocation
+    // consumes its fixed protocol before insertion lowers this one-shot recipe.
+    std::shared_ptr<const FamilyEndpointRecipe> familyRecipe;
     std::vector<LogicalPreparation> preparation;
     std::vector<PreparedLogicalEndpoint> endpoints;
     std::vector<EndpointFamily> families; // Exact source/target coordinate provenance.
@@ -91,6 +95,8 @@ struct PreparedLogicalPlan {
 // For producers whose occurrence binding explicitly conjoins these equalities.
 void retainEndpointCoordinates(PreparedLogicalEndpoint& endpoint, ArrayRef<TemplateCoordinate> coordinates);
 void prepareAllocationSupport(PreparedLogicalPlan& plan);
+// Explicit compatibility boundary for consumers requiring concrete endpoint SSA.
+LogicalResult materializeLogicalFamilies(PreparedLogicalPlan& plan);
 // Opt-in aggregate snapshots; no expression evaluation or generated IR mutation.
 void profileLogicalControl(func::FuncOp function, const PreparedLogicalPlan& plan, StringRef stage);
 // Preserve a child's allocation namespace before composition rewrites it.

@@ -275,6 +275,10 @@ bool recurringFreshPlans(func::FuncOp function, const fs::ProgramRecognition& pr
     auto first = fs::prepareNumericTemplateInsertion(function, program);
     auto second = fs::prepareNumericTemplateInsertion(function, program);
     if (failed(first) || failed(second) || !(*first)->allocationCertificate || !(*second)->allocationCertificate ||
+        !(*first)->familyRecipe || !(*second)->familyRecipe ||
+        !(*first)->preparation.empty() || !(*second)->preparation.empty() ||
+        failed(fs::materializeLogicalFamilies(**first)) || failed(fs::materializeLogicalFamilies(**second)) ||
+        (*first)->familyRecipe || (*second)->familyRecipe ||
         (*first)->preparation.empty() || (*second)->preparation.empty() || !independentPlans(**first, **second)) {
         return false;
     }

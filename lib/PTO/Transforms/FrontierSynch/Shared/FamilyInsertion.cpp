@@ -13,44 +13,29 @@
 #include <algorithm>
 #include <map>
 namespace mlir::pto::frontiersynch {
+class FamilyEndpointRecipe {
+public:
+    scf::ForOp outer;
+    std::vector<EndpointPiece> pieces;
+    std::vector<std::shared_ptr<const FamilyExpressionRecipe>> selectors;
+    struct Cut { TemplateEndpointCut cut; SmallVector<std::size_t> pieces; };
+    std::vector<Cut> cuts;
+};
 namespace {
-bool sameCut(TemplateEndpointCut a, TemplateEndpointCut b)
-{
-    return a.block == b.block && a.before == b.before;
-}
-SmallVector<const EndpointPiece*> collectPieces(TemplateEndpointCut cut, ArrayRef<EndpointPiece> pieces)
-{
-    SmallVector<const EndpointPiece*> result;
-    for (const auto& piece : pieces) {
-        if (sameCut(cut, piece.cut)) {
-            result.push_back(&piece);
-        }
-    }
-    std::sort(result.begin(), result.end(), [](const EndpointPiece* a, const EndpointPiece* b) {
-        return a->order < b->order;
-    });
-    return result;
-}
 class FamilyPreparer {
 public:
-    FamilyPreparer(const NumericTemplateEndpoints& plan, PreparedLogicalPlan& prepared,
-                   ArrayRef<EndpointPiece> pieces)
-        : plan(plan), prepared(prepared), pieces(pieces), builder(plan.outer->getContext()) {}
-    LogicalResult run()
+    FamilyPreparer(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared)
+        : recipe(recipe), prepared(prepared), builder(recipe.outer->getContext()) {}
+    void run()
     {
         initializeOrdinals();
-        for (const auto& group : plan.groups) {
-            auto selected = collectPieces(group.cut, pieces);
-            if (!selected.empty() && failed(prepareCut(group.cut, selected))) {
-                return failure();
-            }
+        for (const auto& cut : recipe.cuts) {
+            if (!cut.pieces.empty()) { prepareCut(cut.cut, cut.pieces); }
         }
-        return success();
     }
 private:
-    const NumericTemplateEndpoints& plan;
+    const FamilyEndpointRecipe& recipe;
     PreparedLogicalPlan& prepared;
-    ArrayRef<EndpointPiece> pieces;
     OpBuilder builder;
     Value trips;
     Value ordinal;
@@ -67,7 +52,7 @@ private:
     }
     void initializeOrdinals()
     {
-        auto loop = plan.outer;
+        auto loop = recipe.outer;
         auto location = loop.getLoc();
         builder.setInsertionPointToEnd(&prepared.addPreparation(loop));
         zero = number(0, location);
@@ -99,19 +84,11 @@ private:
         auto beforeEnd = compare(arith::CmpIPredicate::ult, ordinal, remaining, location);
         return builder.create<arith::AndIOp>(location, hasTarget, beforeEnd);
     }
-    LogicalResult preparePiece(Operation* before, const EndpointPiece& piece, Value partnerPresent)
+    void preparePiece(Operation* before, std::size_t index, Value partnerPresent)
     {
         auto location = before->getLoc();
-        SmallVector<SmallVector<TemplateCoordinate>> coordinates;
-        SmallVector<int64_t> labels;
-        for (const auto& member : piece.members) {
-            coordinates.push_back(member.coordinates);
-            labels.push_back(member.record);
-        }
-        auto selector = emitFamilyExpressions(builder, location, coordinates, labels);
-        if (!selector.error.empty()) {
-            return before->emitError(selector.error);
-        }
+        const auto& piece = recipe.pieces[index];
+        auto selector = emitFamilyExpressions(builder, location, *recipe.selectors[index]);
         Value guard = builder.create<arith::AndIOp>(location, selector.present, partnerPresent);
         Value identity;
         auto kind = LogicalCommandKind::Barrier;
@@ -134,41 +111,62 @@ private:
         }
         endpoint.piece = static_cast<int64_t>(prepared.endpoints.size());
         prepared.endpoints.push_back(std::move(endpoint));
-        return success();
     }
-    LogicalResult prepareCut(TemplateEndpointCut cut, ArrayRef<const EndpointPiece*> selected)
+    void prepareCut(TemplateEndpointCut cut, ArrayRef<std::size_t> selected)
     {
         builder.setInsertionPointToEnd(&prepared.addPreparation(cut.before));
         std::map<std::pair<bool, uint64_t>, Value> predicates;
-        for (const auto* piece : selected) {
+        for (auto index : selected) {
+            const auto& piece = recipe.pieces[index];
             auto [entry, inserted] = predicates.try_emplace(
-                std::make_pair(piece->kind == EndpointKind::Set, piece->displacement));
+                std::make_pair(piece.kind == EndpointKind::Set, piece.displacement));
             if (inserted) {
-                entry->second = boundary(*piece, cut.before->getLoc());
+                entry->second = boundary(piece, cut.before->getLoc());
             }
-            if (failed(preparePiece(cut.before, *piece, entry->second))) {
-                return failure();
-            }
+            preparePiece(cut.before, index, entry->second);
         }
-        return success();
     }
 };
 } // namespace
-LogicalResult prepareFamilyEndpointCode(const NumericTemplateEndpoints& plan, PreparedLogicalPlan& prepared)
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFamilyEndpointRecipe(const NumericTemplateEndpoints& plan)
 {
-    if (!plan.outer || !plan.logical.error.empty() ||
-        (plan.logical.recipes.empty() != prepared.families.empty())) {
-        return failure();
-    }
+    if (!plan.outer || !plan.logical.error.empty()) { return failure(); }
     auto pieces = buildEndpointPieces(plan);
-    if (!pieces.error.empty()) {
-        return plan.outer->emitError(pieces.error);
+    if (!pieces.error.empty()) { return plan.outer->emitError(pieces.error), failure(); }
+    auto recipe = std::make_shared<FamilyEndpointRecipe>();
+    recipe->outer = plan.outer;
+    recipe->pieces = std::move(pieces.pieces);
+    std::map<Operation*, std::size_t> cuts;
+    for (const auto& group : plan.groups) {
+        if (!cuts.emplace(group.cut.before, recipe->cuts.size()).second) { return failure(); }
+        recipe->cuts.push_back({group.cut, {}});
     }
-    if (!pieces.pieces.empty() && failed(FamilyPreparer(plan, prepared, pieces.pieces).run())) {
-        return failure();
+    for (const auto& piece : recipe->pieces) {
+        auto cut = cuts.find(piece.cut.before);
+        if (cut == cuts.end() || recipe->cuts[cut->second].cut.block != piece.cut.block) { return failure(); }
+        recipe->cuts[cut->second].pieces.push_back(recipe->selectors.size());
+        SmallVector<SmallVector<TemplateCoordinate>> coordinates;
+        SmallVector<int64_t> labels;
+        for (const auto& member : piece.members) {
+            coordinates.push_back(member.coordinates);
+            labels.push_back(member.record);
+        }
+        auto selection = buildFamilyExpressions(coordinates, labels);
+        if (!selection.error.empty()) { return plan.outer->emitError(selection.error), failure(); }
+        recipe->selectors.push_back(std::move(selection.recipe));
     }
+    for (auto& cut : recipe->cuts) {
+        llvm::sort(cut.pieces, [&](std::size_t a, std::size_t b) {
+            return recipe->pieces[a].order < recipe->pieces[b].order;
+        });
+    }
+    return std::shared_ptr<const FamilyEndpointRecipe>(std::move(recipe));
+}
+std::size_t familyEndpointPieceCount(const FamilyEndpointRecipe& recipe) { return recipe.pieces.size(); }
+void materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared)
+{
+    if (!recipe.pieces.empty()) { FamilyPreparer(recipe, prepared).run(); }
     prepared.groupedFamilies = true;
     prepared.independentPieces = true;
-    return success();
 }
 } // namespace mlir::pto::frontiersynch

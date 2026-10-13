@@ -132,6 +132,9 @@ public:
     }
     LogicalResult remap(PreparedLogicalPlan& plan, DenseMap<Block*, Operation*>& ends)
     {
+        // Projection currently remaps concrete SSA. Lower while borrowed recipe
+        // coordinates still belong to the unchanged projected function.
+        if (failed(materializeLogicalFamilies(plan))) { return failure(); }
         auto anchor = [&](Operation* op) -> Operation* {
             auto found = cuts.find(op);
             if (found == cuts.end() || !found->second.block) { return nullptr; }

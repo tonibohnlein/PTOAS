@@ -175,7 +175,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareRotatingInsertion(
     }
     auto prepared = std::make_unique<PreparedLogicalPlan>(0);
     prepared->completeInvocation = !analysis.phases.empty();
-    if (failed(prepareCountedEndpointCode(function, analysis.endpoints, *prepared))) {
+    if (failed(prepareCountedEndpointRecipe(function, analysis.endpoints, *prepared))) {
         return failure();
     }
     prepared->allocationCertificate =

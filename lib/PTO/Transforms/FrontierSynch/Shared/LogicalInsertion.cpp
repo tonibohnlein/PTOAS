@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PrivateStatePlan.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyExpressions.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
@@ -43,9 +44,19 @@ void prepareAllocationSupport(PreparedLogicalPlan& plan)
     plan.allocationPreparation = {};
     if (prepare) { prepare(plan); }
 }
+LogicalResult materializeLogicalFamilies(PreparedLogicalPlan& plan)
+{
+    if (!plan.familyRecipe) { return success(); }
+    if (plan.privateState || plan.completionOwner || !plan.preparation.empty() || !plan.endpoints.empty()) {
+        return failure();
+    }
+    materializeFamilyEndpointCode(*plan.familyRecipe, plan);
+    plan.familyRecipe.reset();
+    return success();
+}
 std::shared_ptr<PreparedLogicalPlan> takeRegionalAllocationView(PreparedLogicalPlan& plan)
 {
-    if (plan.privateState || plan.completionOwner) { return {}; }
+    if (plan.privateState || plan.completionOwner || failed(materializeLogicalFamilies(plan))) { return {}; }
     auto view = std::make_shared<PreparedLogicalPlan>(plan.planId);
     view->completeInvocation = plan.completeInvocation;
     view->nestedIdentities = plan.nestedIdentities;
@@ -757,6 +768,7 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
     if (!function) {
         return failure();
     }
+    if (failed(materializeLogicalFamilies(plan))) { return failure(); }
     if (plan.completionOwner || plan.privateState) {
         auto inserted = plan.completionOwner ? plan.completionOwner->insert(function, plan) :
             plan.privateState->insert(function, plan);

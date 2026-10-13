@@ -10,10 +10,14 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_FAMILYINSERTION_H
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 namespace mlir::pto::frontiersynch {
-// The caller preflights cuts, bounds, 64-bit index arithmetic, and correspondence
-// of prepared.families to plan. Arithmetic is staged in detached blocks; failure
-// leaves the original function unchanged. Source and destination pieces select
-// the same original record identity, independently of their piece partitions.
-LogicalResult prepareFamilyEndpointCode(const NumericTemplateEndpoints& plan, PreparedLogicalPlan& prepared);
+class FamilyEndpointRecipe;
+// Split construction from lowering. Recipes retain exact pieces and validated
+// selector maps, but allocate no MLIR operations. Original IR stays immutable.
+// The caller certifies cuts, bounds, 64-bit indices and correspondence with the
+// plan families. Lowering stages arithmetic in detached blocks and preserves
+// original record identities across independently partitioned endpoint sides.
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFamilyEndpointRecipe(const NumericTemplateEndpoints& plan);
+void materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared);
+std::size_t familyEndpointPieceCount(const FamilyEndpointRecipe& recipe);
 } // namespace mlir::pto::frontiersynch
 #endif

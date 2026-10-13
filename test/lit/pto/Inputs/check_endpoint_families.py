@@ -106,8 +106,12 @@ def main():
             emitted = opt(optimizer, path, ["--pto-frontier-analysis"]).stdout
             assert ("pto.endpoint_families" in emitted) == bool(plan["families"])
             assert "pto.set_flag" not in emitted and "pto.wait_flag" not in emitted
+            # Diagnostic attributes can name operations too. Count actual
+            # payload statements, not quoted names in recognition evidence.
             for operation in ["scf.for", "pto.tload", "pto.textract"]:
-                assert emitted.count(operation) == text.count(operation)
+                expected = sum(line.lstrip().startswith(operation + " ") for line in text.splitlines())
+                actual = sum(line.lstrip().startswith(operation + " ") for line in emitted.splitlines())
+                assert actual == expected, (name, operation, expected, actual)
             emitted_path.write_text(emitted)
             assert opt(optimizer, emitted_path, []).stdout == emitted, "family metadata changed on roundtrip"
     print(f"endpoint families: {len(cases)} exact partitions and order checks, {grouped} grouped cases")
