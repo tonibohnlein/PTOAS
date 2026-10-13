@@ -175,12 +175,25 @@ DictionaryAttr encodePeriodicSharedAllocation(const PeriodicAnalysis& analysis, 
             b.getNamedAttr("lane_count", b.getI64IntegerAttr(static_cast<int64_t>(p.laneCount))),
             b.getNamedAttr("offset", b.getI64IntegerAttr(static_cast<int64_t>(p.offset)))}));
     }
-    return b.getDictionaryAttr({b.getNamedAttr("version", b.getI64IntegerAttr(3)),
+    auto certificate = b.getDictionaryAttr({b.getNamedAttr("version", b.getI64IntegerAttr(3)),
         b.getNamedAttr("plan", b.getI64IntegerAttr(plan)),
         b.getNamedAttr("strategy", b.getStringAttr("directed-cycle-cover")),
         b.getNamedAttr("order_exact", b.getBoolAttr(assignment->orderExact)),
         b.getNamedAttr("budget", b.getI64IntegerAttr(static_cast<int64_t>(allocation.budget))),
         b.getNamedAttr("entries", b.getArrayAttr(entries))});
+    // Retain a second independently certified assignment for the same logical
+    // commands. Ordered cyclic reuse uses required-order witnesses and is safe
+    // even when command barriers add order. Selection waits for actual eligible
+    // IDs and composed family mappings; fewer lanes is not the code objective.
+    auto regular = buildPeriodicAllocation(analysis);
+    if (!records.empty() && regular.error.empty() && llvm::all_of(regular.directions, [](const auto& direction) {
+            return direction.uniformBudget && *direction.uniformBudget <= 6;
+        })) {
+        NamedAttrList alternatives(certificate);
+        alternatives.set("regular_candidate", encodeCyclicAllocation(regular, plan, context));
+        certificate = alternatives.getDictionary(context);
+    }
+    return certificate;
 }
 FailureOr<PhysicalAllocationPlan> decodePeriodicSharedAllocation(
     func::FuncOp function, DictionaryAttr certificate, ArrayRef<int64_t> eligibleIds)

@@ -100,10 +100,13 @@ FailureOr<Direction> decodeDirection(func::FuncOp function, Attribute attr)
 } // namespace
 FailureOr<PhysicalAllocationPlan> decodeCyclicAllocation(func::FuncOp function, ArrayRef<int64_t> eligibleIds)
 {
-    if (failed(validateIds(function, eligibleIds))) {
-        return failure();
-    }
-    auto certificate = function->getAttrOfType<DictionaryAttr>(CyclicAllocationAttr);
+    return decodeCyclicAllocationCertificate(function,
+        function->getAttrOfType<DictionaryAttr>(CyclicAllocationAttr), eligibleIds);
+}
+FailureOr<PhysicalAllocationPlan> decodeCyclicAllocationCertificate(
+    func::FuncOp function, DictionaryAttr certificate, ArrayRef<int64_t> eligibleIds)
+{
+    if (failed(validateIds(function, eligibleIds))) { return failure(); }
     if (!certificate) {
         return function.emitError("physical allocation requires a cyclic allocation certificate"), failure();
     }

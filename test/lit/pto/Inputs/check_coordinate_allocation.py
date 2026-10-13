@@ -101,6 +101,73 @@ def commands(tool, path):
             if event["kind"] in ("set", "wait")]
 
 
+def candidate_checks(optimizer, interpreter, path):
+    # These saved, producer-trusted certificates isolate candidate consumption.
+    # The production physical-allocation suite separately checks causal reuse.
+    source, expected = fixture(8)
+    records = [(4 * row + column) ** 2 + 13 for row in range(8) for column in range(4)]
+    def alternative(budget):
+        return ('regular_candidate = {version = 2 : i64, plan = 0 : i64, directions = ['
+                '{source = 4 : i64, target = 3 : i64, budget = ' + str(budget) +
+                ' : i64, records = array<i64: ' + ', '.join(map(str, records)) + '>}]}, ')
+    # A cheaper certified constant map wins; an oversized candidate is ignored.
+    for budget in (1, 3):
+        path.write_text(source.replace('strategy = "directed-cycle-cover",',
+                                       alternative(budget) + 'strategy = "directed-cycle-cover",'))
+        physical = opt(optimizer, path, ["--pto-frontier-allocate=eligible-ids=1,5"]).stdout
+        path.write_text(physical)
+        wanted = [[kind, 1] for kind, _ in expected] if budget == 1 else expected
+        assert commands(interpreter, path) == wanted
+        if budget == 1:
+            assert 'strategy = "regular"' in physical
+            assert 'pto.set_flag_dyn' not in physical and 'pto.wait_flag_dyn' not in physical
+
+
+def sharing_checks(optimizer, interpreter, path):
+    source, _ = fixture(8)
+    # Every member has the same dynamic mapping. Arbitrary labels must disappear
+    # before profitability is judged, even for nested tuple-family exports.
+    source = re.sub(r'lane_begin = [01] : i64, lane_count = 1',
+                    'lane_begin = 0 : i64, lane_count = 2', source)
+    source = source.replace('ordinal %zero', 'ordinal %row')
+    source = source.replace('pto.endpoint_families = {version = 3',
+                            'pto.endpoint_families = {version = 4')
+    records = [(4 * row + column) ** 2 + 13 for row in range(8) for column in range(4)]
+    values = ', '.join(map(str, records))
+    zeros = ', '.join('0' for _ in records)
+    rule = '{coordinate_count = 1 : i64, base = 0 : i64, terms = [array<i64: 0, 1, 0, 2, 1>]}'
+    certificate = ('pto.finite_allocation = {version = 2 : i64, plan = 0 : i64, kind = "finite", '
+                   'strategy = "regional-palettes", groups = [{source = 4 : i64, target = 3 : i64, '
+                   'budget = 2 : i64, records = array<i64: ' + values + '>, strides = array<i64: ' + zeros +
+                   '>, phases = array<i64: ' + zeros + '>, conflicts = array<i64>, tuple_rules = [' +
+                   ', '.join(rule for _ in records) + ']}]},\n    ')
+    start = source.index('pto.cyclic_allocation =')
+    end = source.index('pto.endpoint_families =', start)
+    source = source[:start] + certificate + source[end:]
+    path.write_text(source)
+    physical = opt(optimizer, path, ["--pto-frontier-allocate=eligible-ids=1,5"]).stdout
+    # A common final palette expression is shared across the three sibling
+    # endpoint guards. Count its result, not unrelated original label selects.
+    palette_selects = re.findall(r' = arith.select .* : index', physical)
+    assert len(palette_selects) == 1, physical
+    path.write_text(physical)
+    expected = [[kind, [1, 5][row % 2]] for row in range(8) for _ in range(4) for kind in ('set', 'wait')]
+    assert commands(interpreter, path) == expected
+    # Non-power-of-two division is outside the cheap-sharing policy. Its
+    # complete selector must remain inside each command's original guard.
+    source = source.replace('budget = 2 : i64', 'budget = 3 : i64')
+    source = source.replace('array<i64: 0, 1, 0, 2, 1>', 'array<i64: 0, 1, 0, 3, 1>')
+    path.write_text(source)
+    physical = opt(optimizer, path, ["--pto-frontier-allocate=eligible-ids=1,3,5"]).stdout
+    threes = set(re.findall(r'(%[\w]+) = arith.constant 3 : index', physical))
+    remainders = [line for line in physical.splitlines() if ' = arith.remui ' in line
+                  and any(re.search(r', ' + re.escape(value) + r' : index', line) for value in threes)]
+    assert len(remainders) == 6 and all(len(line) - len(line.lstrip()) >= 12 for line in remainders), physical
+    path.write_text(physical)
+    expected = [[kind, [1, 3, 5][row % 3]] for row in range(8) for _ in range(4) for kind in ('set', 'wait')]
+    assert commands(interpreter, path) == expected
+
+
 def main():
     optimizer, interpreter = map(shutil.which, sys.argv[1:3])
     scratch = Path(sys.argv[3])
@@ -108,6 +175,8 @@ def main():
     observed = []
     with tempfile.TemporaryDirectory(dir=scratch) as directory:
         path = Path(directory) / "case.pto"
+        candidate_checks(optimizer, interpreter, path)
+        sharing_checks(optimizer, interpreter, path)
         for threshold, sparse, nested in [(t, s, n) for t, s in [(False, False), (False, True), (True, False)]
                                          for n in (False, True)]:
             sizes = []

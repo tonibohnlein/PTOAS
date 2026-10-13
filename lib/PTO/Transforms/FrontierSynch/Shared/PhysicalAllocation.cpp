@@ -73,6 +73,25 @@ struct Endpoint {
 };
 std::optional<int64_t> constantTupleId(const PhysicalRecordAllocation& record);
 
+std::vector<uint64_t> physicalMappingKey(const PhysicalRecordAllocation& member)
+{
+    if (auto fixed = constantTupleId(member)) { return {0, static_cast<uint64_t>(*fixed)}; }
+    PhysicalTupleRule flat{1, 0, {{0, member.stride, member.phase, member.ids.size(), 1}}};
+    const auto& rule = member.tupleRule ? *member.tupleRule : flat;
+    std::vector<std::array<uint64_t, 5>> terms;
+    for (const auto& term : rule.terms) {
+        if (term.scale && term.modulus > 1) {
+            terms.push_back({term.coordinate, term.stride % term.modulus,
+                term.phase % term.modulus, term.modulus, term.scale});
+        }
+    }
+    llvm::sort(terms);
+    std::vector<uint64_t> key{1, rule.base, member.ids.size()};
+    for (auto id : member.ids) { key.push_back(static_cast<uint64_t>(id)); }
+    for (const auto& term : terms) { key.insert(key.end(), term.begin(), term.end()); }
+    return key;
+}
+
 SmallVector<int64_t> constantMemberIds(const Endpoint& endpoint)
 {
     SmallVector<int64_t> result;
@@ -449,6 +468,17 @@ LogicalResult prepareCoordinatePhase(Endpoint& endpoint, const CoordinateProvena
         anyCoordinates |= !point.empty();
         points.push_back(std::move(point));
     }
+    if (!endpoint.tupleMembers.empty()) {
+        const auto key = physicalMappingKey(*endpoint.tupleMembers.front());
+        if (llvm::all_of(endpoint.tupleMembers, [&](const auto* member) {
+                return physicalMappingKey(*member) == key;
+            })) {
+            // This whole family has one map. Its arbitrary record selector is
+            // irrelevant to physical IDs, including for nested matching tuples.
+            endpoint.tupleMembers.resize(1);
+            return success();
+        }
+    }
     if (!anyCoordinates) {
         // Old saved v3 fixtures can certify label selections without coordinate
         // provenance. They use the same exact label-to-phase expression adapter.
@@ -807,11 +837,15 @@ Value tuplePhysicalId(OpBuilder& builder, const Endpoint& endpoint)
 {
     auto* op = endpoint.operation;
     auto location = op->getLoc();
+    std::map<uint64_t, Value> constants;
     auto constant = [&](uint64_t value) -> Value {
-        return builder.create<arith::ConstantIndexOp>(location, static_cast<int64_t>(value));
+        auto [entry, added] = constants.try_emplace(value);
+        if (added) { entry->second = builder.create<arith::ConstantIndexOp>(location, static_cast<int64_t>(value)); }
+        return entry->second;
     };
     using TermKey = std::tuple<uint64_t, uint64_t, uint64_t, uint64_t>;
     std::map<TermKey, Value> terms;
+    std::map<std::vector<uint64_t>, Value> mappings;
     auto memberId = [&](const PhysicalRecordAllocation& member) -> Value {
         if (auto fixed = constantTupleId(member)) { return constant(*fixed); }
         // Flat grouped families keep their original source ordinal in operand
@@ -819,6 +853,8 @@ Value tuplePhysicalId(OpBuilder& builder, const Endpoint& endpoint)
         // the same bounded arithmetic and common-term cache as nested tuples.
         PhysicalTupleRule flatRule{1, 0, {{0, member.stride, member.phase, member.ids.size(), 1}}};
         const auto& rule = member.tupleRule ? *member.tupleRule : flatRule;
+        auto [cached, inserted] = mappings.try_emplace(physicalMappingKey(member));
+        if (!inserted) { return cached->second; }
         Value offset = constant(rule.base);
         for (const auto& term : rule.terms) {
             if (!term.scale || term.modulus == 1) { continue; }
@@ -845,14 +881,18 @@ Value tuplePhysicalId(OpBuilder& builder, const Endpoint& endpoint)
         // The checked term bound keeps every intermediate within the palette;
         // positive-scale moduli are at most its six eligible entries. Products
         // use reduced residues, so large original source coordinates cannot wrap.
-        return selectPhysicalPalette(builder, location, offset, member.ids);
+        cached->second = selectPhysicalPalette(builder, location, offset, member.ids);
+        return cached->second;
     };
-    Value result = memberId(*endpoint.tupleMembers.front());
+    Value fallback = memberId(*endpoint.tupleMembers.front());
+    Value result = fallback;
     for (std::size_t i = 1; i < endpoint.tupleMembers.size(); ++i) {
+        Value selectedId = memberId(*endpoint.tupleMembers[i]);
+        if (selectedId == fallback) { continue; }
         Value label = endpoint.directPhase ? endpoint.directPhase : op->getOperand(1);
         auto selected = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq,
             label, constant(endpoint.labels[i]));
-        result = builder.create<arith::SelectOp>(location, selected, memberId(*endpoint.tupleMembers[i]), result);
+        result = builder.create<arith::SelectOp>(location, selected, selectedId, result);
     }
     return result;
 }
@@ -876,6 +916,121 @@ void emitAllocatedCommand(OpBuilder& builder, Operation* op, std::optional<int64
         }
     }
 }
+// Compare two retained proofs using the actual composed endpoint expressions.
+// This bounded candidate policy does not claim a hardware latency optimum.
+uint64_t mappingCost(ArrayRef<Endpoint> endpoints)
+{
+    uint64_t cost = 0;
+    for (const auto& endpoint : endpoints) {
+        Block scratch;
+        OpBuilder builder(endpoint.operation->getContext());
+        builder.setInsertionPointToEnd(&scratch);
+        Value id = endpoint.directId;
+        if (!id && !endpoint.tupleMembers.empty()) { id = tuplePhysicalId(builder, endpoint); }
+        if (!id && endpoint.allocation->ids.size() > 1) {
+            auto phase = endpoint.directPhase ? endpoint.directPhase : memberPhase(builder, endpoint);
+            id = physicalId(builder, endpoint.operation->getLoc(), endpoint.operation->getOperand(0),
+                            *endpoint.allocation, phase);
+        }
+        SmallVector<Value> pending;
+        if (id) { pending.push_back(id); }
+        llvm::DenseSet<Operation*> seen;
+        while (!pending.empty()) {
+            auto* op = pending.pop_back_val().getDefiningOp();
+            if (!op || (op->getBlock() != &scratch && op->getBlock() != endpoint.phaseCode.get()) ||
+                !seen.insert(op).second) { continue; }
+            if (!isa<arith::ConstantOp>(op)) {
+                uint64_t weight = isa<arith::SelectOp>(op) ? 3 : 1;
+                if (auto remainder = dyn_cast<arith::RemUIOp>(op)) {
+                    APInt modulus;
+                    if (!matchPattern(remainder.getRhs(), m_ConstantInt(&modulus)) || !modulus.isPowerOf2()) {
+                        weight = 8;
+                    }
+                }
+                if (cost > static_cast<uint64_t>(INT64_MAX) - weight) { return INT64_MAX; }
+                cost += weight;
+            }
+            llvm::append_range(pending, op->getOperands());
+        }
+    }
+    return cost;
+}
+bool candidateFits(DictionaryAttr candidate, std::size_t capacity)
+{
+    auto directions = candidate.getAs<ArrayAttr>("directions");
+    if (!directions) { return false; }
+    return llvm::all_of(directions, [&](Attribute raw) {
+        auto direction = dyn_cast<DictionaryAttr>(raw);
+        auto budget = direction ? direction.getAs<IntegerAttr>("budget") : IntegerAttr{};
+        return budget && budget.getType().isInteger(64) && budget.getInt() >= 0 &&
+            static_cast<uint64_t>(budget.getInt()) <= capacity;
+    });
+}
+// Share the complete small ID calculation, including tuple rules and palette
+// selection. Only generated, total integer arithmetic crosses a command guard.
+// Original payloads and expensive selectors remain at their original positions.
+class CheapIdSharing {
+public:
+    CheapIdSharing(const llvm::DenseSet<Operation*>& original, DominanceInfo& dominance)
+        : original(original), dominance(dominance) {}
+    Value share(Value id, Operation* command)
+    {
+        auto branch = dyn_cast<scf::IfOp>(command->getParentOp());
+        if (!branch || !branch->hasAttr("pto.endpoint_cut")) { return id; }
+        SmallVector<Operation*> ordered;
+        llvm::DenseSet<Operation*> seen;
+        unsigned cost = 0;
+        std::function<bool(Value)> collect = [&](Value value) {
+            if (dominance.properlyDominates(value, branch)) { return true; }
+            auto* op = value.getDefiningOp();
+            if (!op || original.contains(op) || !branch->isProperAncestor(op)) { return false; }
+            if (!seen.insert(op).second) { return true; }
+            if (seen.size() > 64 || (!isa<arith::ConstantOp>(op) && ++cost > 8)) { return false; }
+            if (!isa<arith::ConstantOp, arith::AddIOp, arith::SubIOp, arith::MulIOp,
+                     arith::RemUIOp, arith::CmpIOp, arith::SelectOp, arith::IndexCastOp>(op)) { return false; }
+            if (auto rem = dyn_cast<arith::RemUIOp>(op)) {
+                APInt modulus;
+                if (!matchPattern(rem.getRhs(), m_ConstantInt(&modulus)) || !modulus.isPowerOf2()) { return false; }
+            }
+            for (auto operand : op->getOperands()) { if (!collect(operand)) { return false; } }
+            ordered.push_back(op);
+            return true;
+        };
+        if (!collect(id) || ordered.empty()) { return id; }
+        OpBuilder builder(branch);
+        IRMapping mapping;
+        auto& buckets = cuts[branch->getBlock()];
+        for (auto* operation : ordered) {
+            auto* copy = builder.clone(*operation, mapping);
+            auto hash = static_cast<std::size_t>(OperationEquivalence::computeHash(copy,
+                OperationEquivalence::directHashValue, OperationEquivalence::ignoreHashValue,
+                OperationEquivalence::IgnoreLocations));
+            auto& candidates = buckets[hash];
+            auto found = llvm::find_if(candidates, [&](Operation* previous) {
+                return dominance.properlyDominates(previous, branch) &&
+                    OperationEquivalence::isEquivalentTo(previous, copy, OperationEquivalence::IgnoreLocations);
+            });
+            if (found == candidates.end()) { candidates.push_back(copy); }
+            else {
+                for (auto [old, shared] : llvm::zip(operation->getResults(), (*found)->getResults())) {
+                    mapping.map(old, shared);
+                }
+                copy->erase();
+            }
+        }
+        auto result = mapping.lookupOrDefault(id);
+        // These operations have no users except generated ID arithmetic until
+        // the allocated command is emitted below. Remove unused originals now.
+        for (auto* operation : llvm::reverse(ordered)) {
+            if (operation->use_empty()) { operation->erase(); }
+        }
+        return result;
+    }
+private:
+    const llvm::DenseSet<Operation*>& original;
+    DominanceInfo& dominance;
+    DenseMap<Block*, DenseMap<std::size_t, SmallVector<Operation*>>> cuts;
+};
 void compactGeneratedArithmetic(func::FuncOp function, const llvm::DenseSet<Operation*>& original,
                                 DominanceInfo& dominance)
 {
@@ -950,9 +1105,37 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
     if (width.isScalable() || width.getFixedValue() != 64) {
         return function.emitError("physical allocation requires 64-bit occurrence indices");
     }
+    auto cyclicEvidence = function->getAttrOfType<DictionaryAttr>(CyclicAllocationAttr);
+    auto alternativeEvidence = cyclicEvidence ?
+        cyclicEvidence.getAs<DictionaryAttr>("regular_candidate") : DictionaryAttr{};
+    std::optional<uint64_t> originalCost, alternativeCost;
+    bool choseAlternative = false;
+    if (alternativeEvidence && candidateFits(alternativeEvidence, eligibleIds.size())) {
+        auto alternative = decodeCyclicAllocationCertificate(function, alternativeEvidence, eligibleIds);
+        if (failed(alternative)) { return failure(); }
+        auto alternativeEndpoints = preflight(function, *alternative);
+        if (failed(alternativeEndpoints)) { return failure(); }
+        originalCost = mappingCost(*endpoints);
+        alternativeCost = mappingCost(*alternativeEndpoints);
+        if (*alternativeCost < *originalCost) {
+            choseAlternative = true;
+            // Endpoints borrow the candidate's record storage. Moving the vector
+            // preserves those addresses; discard the old preparation first.
+            *endpoints = std::move(*alternativeEndpoints);
+            *plan = std::move(*alternative);
+        }
+    }
+    if (originalCost) {
+        Builder metadata(function.getContext());
+        function->setAttr("pto.physical_mapping_choice", metadata.getDictionaryAttr({
+            metadata.getNamedAttr("strategy", metadata.getStringAttr(choseAlternative ? "regular" : "cycle-cover")),
+            metadata.getNamedAttr("cycle_cost", metadata.getI64IntegerAttr(*originalCost)),
+            metadata.getNamedAttr("regular_cost", metadata.getI64IntegerAttr(*alternativeCost))}));
+    }
     DominanceInfo dominance(function);
     llvm::DenseSet<Operation*> original;
     function.walk([&](Operation* operation) { original.insert(operation); });
+    CheapIdSharing sharing(original, dominance);
     for (const auto& endpoint : *endpoints) {
         OpBuilder builder(endpoint.operation);
         // Keep allocation arithmetic conditional on the command. Dominance
@@ -991,8 +1174,9 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
             eventId = physicalId(builder, endpoint.operation->getLoc(), endpoint.operation->getOperand(0),
                                  *endpoint.allocation, phase);
         }
-        // General ID dispatch stays guarded; only the small, preflighted
-        // coordinate slice may already have been shared before this branch.
+        if (eventId) { eventId = sharing.share(eventId, endpoint.operation); }
+        // Large dispatch remains conditional; complete small ID expressions may
+        // share a dominating cut without changing the selected assignment.
         builder.setInsertionPoint(endpoint.operation);
         emitAllocatedCommand(builder, endpoint.operation, staticId, eventId);
         original.erase(endpoint.operation);
