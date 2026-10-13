@@ -80,11 +80,12 @@ namespace {
 // Called only after preflight. Independent producers can prepare the same
 // arithmetic at one original cut. Reuse the first identical operation there;
 // neither original payloads nor arithmetic at other cuts is changed.
-void deduplicatePreparation(PreparedLogicalPlan& plan)
+LogicalResult deduplicatePreparation(PreparedLogicalPlan& plan)
 {
     using Buckets = DenseMap<std::size_t, SmallVector<Operation*>>;
     DenseMap<Operation*, Buckets> cuts;
     DenseMap<Value, Value> replacements;
+    SmallVector<Operation*> redundant;
     for (auto& stage : plan.preparation) {
         auto& buckets = cuts[stage.before];
         for (auto& operation : llvm::make_early_inc_range(*stage.code)) {
@@ -102,7 +103,7 @@ void deduplicatePreparation(PreparedLogicalPlan& plan)
                 replacements[old] = shared;
                 old.replaceAllUsesWith(shared);
             }
-            operation.erase();
+            redundant.push_back(&operation);
         }
     }
     auto remap = [&](Value& value) {
@@ -116,6 +117,21 @@ void deduplicatePreparation(PreparedLogicalPlan& plan)
         }
         for (auto& member : endpoint.memberCoordinates) { remap(member); }
     }
+    // Cut-choice predicates also live outside SSA use lists. Rebuild their
+    // immutable evidence before deleting any referenced preparation values.
+    for (auto& family : plan.families) {
+        for (auto* choices : {&family.sourceChoices, &family.targetChoices}) {
+            if (!*choices || !(*choices)->consumerPredicate()) { continue; }
+            auto predicate = (*choices)->consumerPredicate();
+            remap(predicate);
+            if (predicate == (*choices)->consumerPredicate()) { continue; }
+            auto updated = qualifyTerminalCleanupCuts((*choices)->cuts(), predicate);
+            if (!updated) { return failure(); }
+            *choices = std::move(updated);
+        }
+    }
+    for (auto* operation : redundant) { operation->erase(); }
+    return success();
 }
 // Factor only explicit conjunctions and equality tests on certified induction
 // coordinates. Other predicates remain opaque, evaluated at their original cut.
@@ -753,7 +769,9 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
         (function->hasAttr(CyclicAllocationAttr) || function->hasAttr(FiniteAllocationAttr))) {
         return function.emitError("logical insertion cannot replace an existing allocation certificate");
     }
-    deduplicatePreparation(plan);
+    if (failed(deduplicatePreparation(plan))) {
+        return function.emitError("preparation deduplication invalidated terminal cleanup evidence");
+    }
     if (failed(coalesceEndpointAlternatives(plan))) { return failure(); }
     if (failed(preflight(function, plan))) { return failure(); }
     for (auto& stage : plan.preparation) {
