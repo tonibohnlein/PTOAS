@@ -16,6 +16,7 @@ class PrivateStatePlan {
 public:
     ~PrivateStatePlan();
     LogicalResult insert(func::FuncOp function, PreparedLogicalPlan& plan);
+    func::FuncOp preparedFunction() const;
     // Trusted module coordinator only: call for EVERY pending private plan
     // before changing any sibling body. Subsequent edits may only insert the
     // already prepared synchronization or materialize physical section guards.

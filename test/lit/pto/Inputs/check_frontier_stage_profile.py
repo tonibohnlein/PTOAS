@@ -28,13 +28,31 @@ def run(optimizer, source, checkpoint, profile):
 
 
 def split_report(stderr):
-    profiles, diagnostics = [], []
+    profiles, control, diagnostics = [], [], []
     for line in stderr.splitlines(keepends=True):
         if line.startswith("frontier-profile "):
             profiles.append(json.loads(line.removeprefix("frontier-profile ")))
+        elif line.startswith("frontier-control-profile "):
+            control.append(json.loads(line.removeprefix("frontier-control-profile ")))
         else:
             diagnostics.append(line)
-    return profiles, "".join(diagnostics)
+    return profiles, control, "".join(diagnostics)
+
+
+def check_control(reports):
+    require([report["stage"] for report in reports] == ["prepared", "normalized", "inserted"],
+            "missing control construction boundary")
+    prepared, normalized, inserted = reports
+    require(prepared["record_members"] == normalized["record_members"], "compaction lost provenance")
+    require(normalized["endpoint_sites"] <= prepared["endpoint_sites"], "compaction expanded sites")
+    for report in reports:
+        work = report["preparation"]
+        require(0 <= work["endpoint_reachable_arithmetic"] <= work["arithmetic"],
+                "invalid preparation reachability inventory")
+    require(inserted["preparation"]["arithmetic"] == 0, "insertion retained detached arithmetic")
+    commands = inserted["function_control"]
+    require(commands["sets"] == commands["waits"] and commands["sets"] > 0,
+            "fixture command inventory missing")
 
 
 def check_stages(report):
@@ -72,9 +90,14 @@ def main():
         plain = run(optimizer, source, checkpoint, False)
         measured = run(optimizer, source, checkpoint, True)
         require(plain.returncode == measured.returncode == int(checkpoint), plain.stderr + measured.stderr)
-        plain_reports, plain_diagnostics = split_report(plain.stderr)
-        reports, measured_diagnostics = split_report(measured.stderr)
+        plain_reports, plain_control, plain_diagnostics = split_report(plain.stderr)
+        reports, control, measured_diagnostics = split_report(measured.stderr)
         require(not plain_reports and len(reports) == 1, "profiling opt-in violated")
+        require(not plain_control, "control profiling was not opt-in")
+        if checkpoint:
+            require(not control, "analysis-only mode prepared control")
+        else:
+            check_control(control)
         require(plain.stdout == measured.stdout and plain_diagnostics == measured_diagnostics,
                 "profiling changed emitted commands or failure diagnostics")
         require(reports[0]["workload"] == ("exhaustive-certification" if checkpoint else "production-root"),

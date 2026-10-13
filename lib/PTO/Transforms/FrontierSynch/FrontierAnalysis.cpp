@@ -538,6 +538,8 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
         routeError = "unmet-exports: exact whole-function demands retained; " + routeError;
     }
     if (succeeded(prepared)) {
+        (*prepared)->profileControl = profileStages;
+        profileLogicalControl(function, **prepared, "prepared");
         (*prepared)->recognitionReport = contractReport(*analysis.result(), logicalBackend,
             analysis.arithmeticGeneratorConstructions(), analysis.arithmeticRegionConstructions(),
             analysis.specializedArithmeticConstructions(),
