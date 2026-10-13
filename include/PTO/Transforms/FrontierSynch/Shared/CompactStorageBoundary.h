@@ -61,11 +61,13 @@ private:
     friend CompactClasses captureFiniteClassBoundary(FiniteRequirements, FiniteSelection, std::string&);
     friend CompactClasses captureGuardedClassBoundary(func::FuncOp, Block&, ArrayRef<Operation*>,
         const PhaseIndex&, const SyncInput&, std::shared_ptr<RegionExpressions>, std::string&);
-    friend CompactClassRepetition repeatCompactClassBoundary(func::FuncOp, scf::ForOp, CompactClasses);
+    friend CompactClassRepetition repeatCompactClassBoundary(func::FuncOp, scf::ForOp, CompactClasses,
+        std::shared_ptr<const PhaseSourceFacts>);
     friend CompactClassComposition composeCompactClassBoundariesInBlock(
-        func::FuncOp, Block&, const SyncInput&, std::vector<CompactClasses>);
+        func::FuncOp, Block&, const SyncInput&, std::vector<CompactClasses>,
+        std::shared_ptr<const PhaseSourceFacts>);
     friend CompactClassComposition composeCompactClassBoundaries(
-        func::FuncOp, const SyncInput&, std::vector<CompactClasses>);
+        func::FuncOp, const SyncInput&, std::vector<CompactClasses>, std::shared_ptr<const PhaseSourceFacts>);
 };
 // Reuses shared fixed/balanced extraction and derives its M3 upper graph itself;
 // it cannot bind an unrelated caller-provided class list to an existing graph.
@@ -114,11 +116,13 @@ struct CompactClassComposition {
 // and are concatenated for subsequent merges. No physical-byte storage capability
 // is asserted, and no endpoint/allocation/realized-excess claim is manufactured.
 CompactClassComposition composeCompactClassBoundaries(
-    func::FuncOp function, const SyncInput& input, std::vector<CompactClasses> children);
+    func::FuncOp function, const SyncInput& input, std::vector<CompactClasses> children,
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts = {});
 // Explicit relative invocation variant. The children must cover an ordered
 // contiguous span of invocation, and every child carries the identical block.
 // No invariance across repeated invocations is implied by this composition.
 CompactClassComposition composeCompactClassBoundariesInBlock(
-    func::FuncOp function, Block& invocation, const SyncInput& input, std::vector<CompactClasses> children);
+    func::FuncOp function, Block& invocation, const SyncInput& input, std::vector<CompactClasses> children,
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts = {});
 } // namespace mlir::pto::frontiersynch
 #endif

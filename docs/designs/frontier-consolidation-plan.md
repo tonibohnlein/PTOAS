@@ -32,7 +32,7 @@ separate commit. Infrastructure alone does not complete a production milestone.
 | 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; logical-only allocation request complete; repeated-lane proof reuse complete; lane scheduling pending |
 | 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Sequence preparation failure isolation complete; broader capability consolidation pending |
 | 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; borrowed regional adapter complete; global compact memberships and universal descriptor dependency indexing complete; shared fact views and delayed atomization pending |
-| 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection and scoped shared source facts complete; compact-route forwarding pending |
+| 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection and scoped source facts implemented through sequence and compact routes; session-wide consolidation remains |
 | 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Qualified A3 structured completion complete; larger closed-child imports and coarse input preparation pending |
 | 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Regional prefix ownership, singleton forwarding, crossing presence and qualified predicate snapshots complete; general executable selectors and public Delta emission pending |
 | 8. Proof reuse and validation | Share lazy inactive-proof and premise contexts, replay mappings and safe Boolean conversion work. Close known guard-equivalence/oracle gaps and run pinned paired campaigns. | No unexplained acceptance loss or changed output; report eleven kernels and 783-input corpus by stage, wall time, memory and inner work. | Lazy inactive-proof setup shared; broader proof reuse and campaign pending |
@@ -777,3 +777,29 @@ test fails on that saved binary too: it requires a particular merge count. That
 route-count assertion is being corrected separately, retaining the native-edge
 oracle. These observations do not establish full current-head corpus validation
 or a whole-pass speedup. Receipts: `.local/three-paths/consolidation/m5-source-facts/`.
+
+
+## Compact composition forwards source facts
+
+Compact body construction now forwards its immutable source facts to nested
+sequence and repetition adapters. Both signs of bounding composition retain the
+same owner, while rebuilding their own selected prerequisite relations. Repeated
+compact bodies retain the full original input view they previously used. A caller
+that supplies value links can retain an empty phase view for later symbolic
+conversion: it adds neither phase entries nor value edges.
+
+The bounding oracle checks owner identity in both modes and verifies all 69,984
+independent event pairs. Its native-reclosure check still requires the original
+completion-to-start link and no software crossing. An obsolete assertion of two
+numerical merges was removed after reproducing its failure on the saved M1
+candidate; this test no longer claims to force a particular numerical route.
+The dedicated numerical-session test remains part of validation.
+
+All ten focused tests pass, including nested compact repetition, bounding,
+numerical, sequence and public-pipeline checks. Source review accepted the
+forwarding, empty-view semantics and oracle correction. The C++17 incremental
+build passes. The compliance prefilter's one brace match is a braced body.
+Top-level compact requests still build their initial full-input index; local
+prerequisite tracing remains local work. No whole-pass timing improvement or
+complete session-wide sharing is claimed. Receipts:
+`.local/three-paths/consolidation/m5-compact-facts/`.

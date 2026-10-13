@@ -69,8 +69,10 @@ struct BoundingSequenceResult {
 // No execution expansion. Each sign uses the existing regional composition
 // cost plus one reclosure after adding supplied crossings. Child queries remain
 // exact selected-graph queries; unavailable exports preserve original snapshots.
-// Input/IR are borrowed unchanged, as in RegionalOrderContext.
+// Input/IR are borrowed unchanged, as in RegionalOrderContext. Optional source
+// facts must cover both signs; each sign reconstructs its own prerequisites.
 BoundingSequenceResult composeBoundingSequence(
-    func::FuncOp function, const SyncInput& input, BoundingSequenceInput specification);
+    func::FuncOp function, const SyncInput& input, BoundingSequenceInput specification,
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts = {});
 } // namespace mlir::pto::frontiersynch
 #endif

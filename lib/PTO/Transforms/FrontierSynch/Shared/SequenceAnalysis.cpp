@@ -298,9 +298,16 @@ SequenceAnalysis composeRegionalSequenceWithin(func::FuncOp function,
             }
         }
     }
-    if (reconstructPrerequisites && failed(state->index.build(function, phases, std::move(sourceFacts)))) {
-        result.error = "cannot reconstruct regional value prerequisites";
-        return result;
+    // Retain supplied source facts even when value links were supplied by the
+    // caller. An empty local phase view adds no prerequisite edges; a later
+    // symbolic fallback can still reuse discovery for its full-input view.
+    if (reconstructPrerequisites || sourceFacts) {
+        ArrayRef<const CompoundInstanceElement*> selected = reconstructPrerequisites ?
+            ArrayRef<const CompoundInstanceElement*>(phases) : ArrayRef<const CompoundInstanceElement*>{};
+        if (failed(state->index.build(function, selected, std::move(sourceFacts)))) {
+            result.error = "cannot reconstruct regional value prerequisites";
+            return result;
+        }
     }
     for (auto& regional : children) {
         Child child;
