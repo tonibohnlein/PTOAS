@@ -1704,5 +1704,19 @@
       "not a full current-head campaign"
     ],
     "receipts": ".local/three-paths/consolidation/m5-source-facts"
+  },
+  "compact_phase_source_facts": {
+    "status": "nested compact and both-sign source-fact sharing complete; initial per-request indexing remains",
+    "focused_tests": 10,
+    "bounding_event_pair_oracle": 69984,
+    "checks": [
+      "shared owner for both signs",
+      "empty phase view adds no phase entries or prerequisite edges",
+      "native completion-to-start relation preserved after reclosure",
+      "zero added software crossings"
+    ],
+    "build": "passed",
+    "review": "accepted",
+    "receipts": ".local/three-paths/consolidation/m5-compact-facts/"
   }
 }

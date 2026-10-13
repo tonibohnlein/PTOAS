@@ -38,9 +38,11 @@ CompactClassRepetition captureCompactClassSequence(func::FuncOp function, Block&
 // coordinate, retain inner coordinates, and mask zero counts independently.
 // Unavailable qualification/export retains original; physical storage and actual
 // endpoint/excess claims are never fabricated. Existing frontend/manual-sync
-// contracts still apply to the borrowed unchanged input.
+// contracts still apply to the borrowed unchanged input. Optional source facts
+// cover the full input; repetition keeps its full-input prerequisite view.
 CompactClassRepetition repeatCompactClassBoundary(
-    func::FuncOp function, scf::ForOp loop, CompactClasses body);
+    func::FuncOp function, scf::ForOp loop, CompactClasses body,
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts = {});
 // Automatic scoped producer for an executed sequence of explicit spans and
 // counted children. Fixed/balanced leaf words use the shared compact adapter;
 // nested children recurse through this same qualified repetition contract.

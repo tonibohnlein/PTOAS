@@ -304,7 +304,8 @@ CompactClassCrossings collectCompactClassCrossings(llvm::ArrayRef<CompactClasses
     return result;
 }
 CompactClassComposition composeCompactClassBoundariesInBlock(
-    func::FuncOp function, Block& invocation, const SyncInput& input, std::vector<CompactClasses> children)
+    func::FuncOp function, Block& invocation, const SyncInput& input, std::vector<CompactClasses> children,
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts)
 {
     CompactClassComposition result;
     result.original = children;
@@ -371,7 +372,7 @@ CompactClassComposition composeCompactClassBoundariesInBlock(
     result.crossings = collectCompactClassCrossings(children);
     if (!result.crossings.error.empty()) { result.error = result.crossings.error; return result; }
     specification.upper.crossings = result.crossings.upper;
-    auto composed = composeBoundingSequence(function, input, std::move(specification));
+    auto composed = composeBoundingSequence(function, input, std::move(specification), std::move(sourceFacts));
     result.mathematical = std::make_shared<const BoundingSequenceResult>(std::move(composed));
     if (!result.mathematical->error.empty()) { result.error = result.mathematical->error; return result; }
     if (!result.mathematical->bounds.upper || !result.mathematical->bounds.lower) {
@@ -400,13 +401,15 @@ CompactClassComposition composeCompactClassBoundariesInBlock(
     return result;
 }
 CompactClassComposition composeCompactClassBoundaries(
-    func::FuncOp function, const SyncInput& input, std::vector<CompactClasses> children)
+    func::FuncOp function, const SyncInput& input, std::vector<CompactClasses> children,
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts)
 {
     if (!function || function.isDeclaration()) {
         CompactClassComposition result;
         result.original = std::move(children); result.error = "class composition needs a defined function";
         return result;
     }
-    return composeCompactClassBoundariesInBlock(function, function.front(), input, std::move(children));
+    return composeCompactClassBoundariesInBlock(function, function.front(), input, std::move(children),
+                                               std::move(sourceFacts));
 }
 } // namespace mlir::pto::frontiersynch

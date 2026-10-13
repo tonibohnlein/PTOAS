@@ -80,7 +80,8 @@ void clearStorage(RegionalAnalysis& regional)
     regional.storageBoundary.clear(); regional.accessBoundary.clear(); regional.deferredAccessBoundary.clear();
     regional.storageSelectors = {}; regional.symbolicStorageEffects.clear();
 }
-BoundingSequenceSign composeSign(func::FuncOp function, const BoundingSequenceInput& specification, bool upper)
+BoundingSequenceSign composeSign(func::FuncOp function, const BoundingSequenceInput& specification, bool upper,
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts)
 {
     BoundingSequenceSign result;
     const auto& selected = upper ? specification.upper : specification.lower;
@@ -109,7 +110,7 @@ BoundingSequenceSign composeSign(func::FuncOp function, const BoundingSequenceIn
     }
     auto arena = specification.children.front().bounds.context->expressions();
     auto sequence = composeRegionalSequenceWithin(function, arena, std::move(children),
-        specification.reconstructPrerequisites, false, specification.enclosing);
+        specification.reconstructPrerequisites, false, specification.enclosing, std::move(sourceFacts));
     if (!sequence.error.empty()) { result.exportError = sequence.error; return result; }
     auto& state = *sequence.state;
     if (!crossings.empty()) {
@@ -156,7 +157,8 @@ BoundingSequenceSign composeSign(func::FuncOp function, const BoundingSequenceIn
 }
 } // namespace
 BoundingSequenceResult composeBoundingSequence(
-    func::FuncOp function, const SyncInput& input, BoundingSequenceInput specification)
+    func::FuncOp function, const SyncInput& input, BoundingSequenceInput specification,
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts)
 {
     BoundingSequenceResult result;
     result.original = std::make_shared<const BoundingSequenceInput>(std::move(specification));
@@ -176,8 +178,8 @@ BoundingSequenceResult composeBoundingSequence(
         }
         if (!first) { first = context; }
     }
-    result.lower = composeSign(function, original, false);
-    result.upper = composeSign(function, original, true);
+    result.lower = composeSign(function, original, false, sourceFacts);
+    result.upper = composeSign(function, original, true, std::move(sourceFacts));
     auto* domain = result.upper.regional ? &*result.upper.regional :
         (result.lower.regional ? &*result.lower.regional : nullptr);
     if (!domain) { return result; }

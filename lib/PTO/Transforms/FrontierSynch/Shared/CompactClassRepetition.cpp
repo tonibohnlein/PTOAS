@@ -102,7 +102,8 @@ public:
         if (!flush()) { return {}; }
         if (children.empty()) { return finite(invocation, {}); }
         if (children.size() == 1) { return children.front(); }
-        auto combined = composeCompactClassBoundariesInBlock(function, invocation, input, std::move(children));
+        auto combined = composeCompactClassBoundariesInBlock(
+            function, invocation, input, std::move(children), index.sourceFacts());
         if (!combined.boundary) { error = combined.error; return {}; }
         captured.push_back(combined.boundary);
         return combined.boundary;
@@ -124,7 +125,7 @@ private:
         if (nested) {
             auto inner = body(*loop.getBody());
             if (!inner) { return {}; }
-            auto repeated = repeatCompactClassBoundary(function, loop, inner);
+            auto repeated = repeatCompactClassBoundary(function, loop, inner, index.sourceFacts());
             if (!repeated.boundary) { error = repeated.error; return {}; }
             return repeated.boundary;
         }
@@ -142,7 +143,8 @@ private:
     CompactClassPreparation prepare;
 };
 } // namespace
-CompactClassRepetition repeatCompactClassBoundary(func::FuncOp function, scf::ForOp loop, CompactClasses body)
+CompactClassRepetition repeatCompactClassBoundary(func::FuncOp function, scf::ForOp loop, CompactClasses body,
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts)
 {
     CompactClassRepetition result;
     result.original = body;
@@ -153,7 +155,7 @@ CompactClassRepetition repeatCompactClassBoundary(func::FuncOp function, scf::Fo
     const auto& input = body->bounds().context->input();
     auto arena = body->bounds().context->expressions();
     PhaseIndex index;
-    if (failed(index.build(function, input))) {
+    if (failed(index.build(function, input.instructions(), std::move(sourceFacts)))) {
         result.error = "class repetition shared index unavailable"; return result;
     }
     if (!body->exportError().empty()) { result.error = body->exportError(); return result; }
@@ -257,7 +259,7 @@ CompactClassRepetition analyzeCompactClassRepetition(func::FuncOp function, scf:
     }
     auto body = builder.body(*loop.getBody());
     if (!body) { result.error = builder.error; result.captured = std::move(builder.captured); return result; }
-    result = repeatCompactClassBoundary(function, loop, std::move(body));
+    result = repeatCompactClassBoundary(function, loop, std::move(body), builder.index.sourceFacts());
     result.captured = std::move(builder.captured);
     return result;
 }

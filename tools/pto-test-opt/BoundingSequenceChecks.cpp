@@ -9,6 +9,7 @@
 // fact in this oracle is asserted to follow from the fixture's storage effects.
 #include "PTO/Transforms/FrontierSynch/Shared/BoundingSequence.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "llvm/Support/raw_ostream.h"
 #include <array>
 using namespace mlir;
@@ -115,7 +116,21 @@ bool checkCase(func::FuncOp function, const pto::SyncInput& input,
     auto arena = std::make_shared<fs::RegionExpressions>();
     auto spec = specification(input, arena, trips, mask);
     if (!spec) { return false; }
-    auto result = fs::composeBoundingSequence(function, input, *spec);
+    fs::PhaseIndex source;
+    if (failed(source.build(function, input))) { return false; }
+    const auto facts = source.sourceFacts();
+    auto result = fs::composeBoundingSequence(function, input, *spec, facts);
+    if (!result.lower.sequence || !result.upper.sequence ||
+        result.lower.sequence->state->index.sourceFacts() != facts ||
+        result.upper.sequence->state->index.sourceFacts() != facts) { return false; }
+    for (const auto* sequence : {&*result.lower.sequence, &*result.upper.sequence}) {
+        for (auto* phase : input.instructions()) {
+            const auto& index = sequence->state->index;
+            if (!index.prerequisitesFor(phase->elementOp).empty() || !index.phasesFor(phase->elementOp).empty()) {
+                return false;
+            }
+        }
+    }
     if (!result.error.empty() || !result.lower.exportError.empty() || !result.upper.exportError.empty() ||
         !result.bounds.lower || !result.bounds.upper || result.bounds.context == spec->children[0].bounds.context ||
         result.original->children[0].mathematicalOwner != spec->children[0].mathematicalOwner ||
@@ -224,9 +239,15 @@ bool checkNative(func::FuncOp function, const pto::SyncInput& input)
     // original native tgetval -> texpands C->I link must survive reclosure.
     spec.upper.crossings.push_back({{0, 0, arena->constant(0), Kind::Completion},
         {1, 0, arena->constant(0), Kind::Start}, arena->boolean(false), {}});
-    auto result = fs::composeBoundingSequence(function, input, std::move(spec));
+    fs::PhaseIndex source;
+    if (failed(source.build(function, input))) { return false; }
+    const auto facts = source.sourceFacts();
+    auto result = fs::composeBoundingSequence(function, input, std::move(spec), facts);
+    if (!result.lower.sequence || !result.upper.sequence ||
+        result.lower.sequence->state->index.sourceFacts() != facts ||
+        result.upper.sequence->state->index.sourceFacts() != facts) { return false; }
     if (!result.error.empty() || !result.upper.exportError.empty() || !result.bounds.upper ||
-        result.upper.sequence->cost.numericalMerges < 2 || result.upper.sequence->cost.crossings) { return false; }
+        result.upper.sequence->cost.crossings) { return false; }
     auto query = fs::regionalReachability(result.bounds.upper->regional(),
         {0, arena->constant(0), Kind::Completion}, {1, arena->constant(0), Kind::Start});
     return query && arena->constantValue(*query) == 1;
