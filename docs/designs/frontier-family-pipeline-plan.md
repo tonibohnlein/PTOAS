@@ -25,7 +25,7 @@ exclusion evidence; they do not replace exact guards or matching identities.
 | M0: preparation ownership | Reproduce prefill failure; remap every affected non-SSA preparation reference before deletion; validate complementary cleanup and failure atomicity; replay prefill separately from the failing baseline. | Complete: `32b38b426` |
 | M1: measurement | Extend stage inventories with per-repeat lanes/extrema, candidate pairs/gaps, query construction, proof/cache work and actual traversal counts. Keep static records/sites distinct from dynamic commands and evaluated control. | Stage inventories and repeated-allocation work/traversal counters implemented; dynamic-control and complete ID-map inventories remain open |
 | M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans and attempt-owned relative queries implemented; economical candidate policy with parent retry remains open |
-| M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding implemented; early regional/repeated family construction and availability planning remain open |
+| M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; early regional/repeated family and publication planning remain open |
 | M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; early composition and nonconstant tuple extension pending |
 | M5: session and capabilities | Retain facts, mathematics, recipes and allocation in one session; deterministic capability upgrades; common unified/split stage functions; self-contained versioned saved artifacts; delete redundant orchestration. | Pending |
 | M6: carryover and closure | Finish shared-fact and coarse-input integration, closed-child completion imports, guarded/relational rank transport and outstanding semantic oracles; run pinned eleven-kernel/corpus validation and report device results separately. | Pending |
@@ -333,3 +333,28 @@ overhead check, not evidence of a planning speedup. Prefill logical preparation
 succeeds in 75.601 s; allocation still reports its missing supported export.
 Receipts and manual review are retained in
 `.local/family-pipeline-availability/validation.json` and `review.md`.
+
+## Singleton cleanup qualification before materialization
+
+Terminal cleanup selection now uses one narrow predicate interpreter for exact
+arena expressions and emitted scalar SSA. It checks original structured cuts,
+positive-step counted coordinates, invariant selected values, and original
+then-arm facts. The same traversal serves serialized-command revalidation.
+This is a multiplicity proof, not an availability proof, and does not interpret
+necessary domains as exact predicates. No loop visits or branch valuations are
+enumerated by production code.
+
+Early-publication preparation requests this proof before constructing its
+publication predicate. Unmigrated relational recipes may still need the existing
+emitted-predicate check when their equality is exposed only during lowering.
+They retain that acceptance path; a missed compact pattern never forces a new
+refusal. Consumer guards and full publication recipes still need migration.
+
+Four affected lit suites pass. The helper regression compares 216 exact
+predicate cases before and after lowering across negative/zero/positive lower
+bounds, unit/nonunit steps and zero/short loops, plus nested-coordinate,
+original-branch and malformed-input cases. Persistent and prefill logical IR
+and allocation evidence agree with `477b7ae5e` under the scoped associative-AND
+comparison. Persistent still allocates with six IDs. Prefill logical compilation
+takes 75.330 s in this single correctness probe; no speedup is claimed.
+The manual review and receipts are in `.local/family-pipeline-cleanup/`.

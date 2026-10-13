@@ -87,6 +87,10 @@ FailureOr<GuardedPublication> prepareGuardedPublication(func::FuncOp function,
     }
     auto present = selectedSource ? selectedSource->existence : structuralPresence(function, source.before, arena);
     auto atCut = selectedSource ? selectedSource->atCut : present;
+    // Qualify compact exact predicates before creating scalar code. Some
+    // unmigrated relational recipes expose their singleton equality only when
+    // lowered; retain that existing acceptance path through the same proof.
+    const bool selectedBeforeLowering = qualifyTerminalCleanupSelection({source, final}, arena, atCut);
     auto publish = attempt(atCut, source.before, EndpointFailureStage::SourceGuard);
     if (failed(publish)) {
         error = "early publication predicate unavailable: " +
@@ -99,7 +103,7 @@ FailureOr<GuardedPublication> prepareGuardedPublication(func::FuncOp function,
             (failureInfo ? failureInfo->diagnostic : arena.lastEmissionError());
         return failure();
     }
-    if (!qualifyTerminalCleanupCuts({source, final}, *publish)) {
+    if (!selectedBeforeLowering && !qualifyTerminalCleanupCuts({source, final}, *publish)) {
         error = "early publication does not select a single original source occurrence"; return failure();
     }
     return GuardedPublication{*publish, present, terminal, *cleanup, std::move(choices)};

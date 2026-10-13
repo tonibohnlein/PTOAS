@@ -235,6 +235,9 @@ public:
     FailureOr<Value> emitContextual(Id expression, OpBuilder& builder, Operation* cut, CutEmission& context);
 
 private:
+    // The cleanup qualifier shares one narrow predicate interpreter between
+    // retained arena expressions and emitted SSA; it never changes the DAG.
+    friend class CutPredicate;
     enum class Kind { Constant, Input, Add, Sub, Div, Rem, Lt, Le, Eq, SLt, SLe, And, Or, Not, Select, Integer };
     struct IntegerRecipe;
     class RelationBuilder;

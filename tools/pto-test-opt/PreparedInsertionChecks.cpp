@@ -10,6 +10,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -31,6 +32,90 @@ bool rejectedUnchanged(func::FuncOp function, fs::PreparedLogicalPlan& plan)
     auto before = render(function);
     ScopedDiagnosticHandler silence(function.getContext(), [](Diagnostic&) { return success(); });
     return failed(fs::insertLogicalSynchronization(function, plan)) && render(function) == before;
+}
+bool cleanupSelectionChecks(MLIRContext* context)
+{
+    context->getOrLoadDialect<scf::SCFDialect>();
+    for (int64_t lower : {-3, 0, 2}) {
+        for (int64_t step : {1, 2}) {
+            for (int64_t count : {0, 1, 4}) {
+                OpBuilder builder(context);
+                auto location = builder.getUnknownLoc();
+                OwningOpRef<ModuleOp> module = ModuleOp::create(location);
+                builder.setInsertionPointToStart(module->getBody());
+                auto type = builder.getFunctionType({builder.getIndexType(), builder.getI1Type()}, {});
+                auto function = builder.create<func::FuncOp>(location, "cleanup_selection", type);
+                builder.setInsertionPointToStart(function.addEntryBlock());
+                auto lo = builder.create<arith::ConstantIndexOp>(location, lower);
+                auto hi = builder.create<arith::ConstantIndexOp>(location, lower + count * step);
+                auto stride = builder.create<arith::ConstantIndexOp>(location, step);
+                auto loop = builder.create<scf::ForOp>(location, lo, hi, stride);
+                auto terminal = builder.create<func::ReturnOp>(location).getOperation();
+                builder.setInsertionPoint(loop.getBody()->getTerminator());
+                auto difference = builder.create<arith::SubIOp>(location, loop.getInductionVar(), lo);
+                auto visit = builder.create<arith::DivUIOp>(location, difference, stride);
+                auto first = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq, visit, stride);
+                auto cut = builder.create<arith::AddIOp>(location, lo, stride).getOperation();
+                fs::RegionExpressions arena;
+                auto offset = arena.sub(arena.input(loop.getInductionVar()), arena.input(lo));
+                auto ordinal = arena.div(offset, arena.constant(step));
+                auto selected = arena.eq(ordinal, arena.constant(1));
+                auto residual = arena.input(function.getArgument(1));
+                std::vector<std::pair<fs::RegionExpressions::Id, bool>> predicates = {
+                    {arena.eq(arena.input(loop.getInductionVar()), arena.constant(lower)), true},
+                    {selected, true}, {arena.land(selected, residual), true},
+                    {arena.select(residual, selected, arena.boolean(false)), true},
+                    {arena.lt(ordinal, arena.constant(2)), false},
+                    {arena.eq(arena.div(offset, arena.constant(2 * step)), arena.constant(1)), false},
+                    {arena.eq(ordinal, arena.add(ordinal, arena.constant(1))), false},
+                    {arena.boolean(false), true}, {arena.boolean(true), false},
+                    {arena.eq(ordinal, arena.input(function.getArgument(0))), true},
+                    {arena.input(first), true},
+                    {arena.lor(selected, arena.eq(ordinal, arena.constant(2))), false}};
+                SmallVector<fs::TemplateEndpointCut> cuts{{cut->getBlock(), cut}, {terminal->getBlock(), terminal}};
+                const auto original = render(function);
+                for (auto [predicate, expected] : predicates) {
+                    const bool planned = fs::qualifyTerminalCleanupSelection(cuts, arena, predicate);
+                    if (planned != expected || render(function) != original) { return false; }
+                    Block detached;
+                    builder.setInsertionPointToEnd(&detached);
+                    llvm::DenseMap<fs::RegionExpressions::Id, Value> values;
+                    auto emitted = arena.emit(predicate, builder, cut, values);
+                    if (failed(emitted) || bool(fs::qualifyTerminalCleanupCuts(cuts, *emitted)) != expected) {
+                        return false;
+                    }
+                }
+                if (fs::qualifyTerminalCleanupSelection(cuts, arena, fs::RegionExpressions::invalid) ||
+                    fs::qualifyTerminalCleanupSelection(cuts, arena, arena.constant(0)) ||
+                    fs::qualifyTerminalCleanupSelection({}, arena, selected)) { return false; }
+                // Original then-arm facts still constrain a predicate that is
+                // itself true; an else arm does not imply the equality.
+                builder.setInsertionPoint(cut);
+                auto branch = builder.create<scf::IfOp>(location, first, true);
+                for (bool thenArm : {true, false}) {
+                    auto* branchCut = thenArm ? branch.thenBlock()->getTerminator() :
+                                                branch.elseBlock()->getTerminator();
+                    cuts.front() = {branchCut->getBlock(), branchCut};
+                    if (fs::qualifyTerminalCleanupSelection(cuts, arena, arena.boolean(true)) != thenArm) {
+                        return false;
+                    }
+                }
+                // One fixed coordinate in the inner loop is insufficient when
+                // the selected value varies with an enclosing invocation.
+                builder.setInsertionPoint(cut);
+                auto inner = builder.create<scf::ForOp>(location, lo, hi, stride);
+                builder.setInsertionPoint(inner.getBody()->getTerminator());
+                auto nested = builder.create<arith::AddIOp>(location, lo, stride).getOperation();
+                auto dependent = arena.eq(arena.input(inner.getInductionVar()), arena.input(loop.getInductionVar()));
+                auto both = arena.land(arena.eq(arena.input(inner.getInductionVar()), arena.constant(lower)),
+                    arena.eq(arena.input(loop.getInductionVar()), arena.constant(lower)));
+                cuts.front() = {nested->getBlock(), nested};
+                if (fs::qualifyTerminalCleanupSelection(cuts, arena, dependent) ||
+                    !fs::qualifyTerminalCleanupSelection(cuts, arena, both)) { return false; }
+            }
+        }
+    }
+    return true;
 }
 bool cleanupPredicateChecks(MLIRContext* context)
 {
@@ -234,6 +319,9 @@ LogicalResult sectionContextChecks(func::FuncOp function)
 } // namespace
 LogicalResult runPreparedInsertionChecks(func::FuncOp function)
 {
+    if (!cleanupSelectionChecks(function.getContext())) {
+        return function.emitError("cleanup selection changed across scalar lowering");
+    }
     if (!cleanupPredicateChecks(function.getContext())) {
         return function.emitError("preparation deduplication lost terminal cleanup predicate");
     }
