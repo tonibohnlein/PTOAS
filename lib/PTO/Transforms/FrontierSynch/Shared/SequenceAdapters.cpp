@@ -444,7 +444,7 @@ void SequenceAnalysisState::bindAdapters()
                     buildNumericTemplateEndpoints(*current.numericTemplate, current.periodic));
             }
             const auto& endpoints = current.numericRecipe ? *current.numericRecipe : current.endpoints;
-            if (failed(prepareCountedEndpointCode(function, endpoints, *prepared))) { return failure(); }
+            if (failed(prepareCountedEndpointRecipe(function, endpoints, *prepared))) { return failure(); }
             prepared->allocationPreparation = [owner = shared_from_this(), id](PreparedLogicalPlan& plan) {
                 const auto& child = owner->children[id];
                 plan.regionalAllocation = periodicRegionalAllocation(child.regional, child.periodic, child.trips);

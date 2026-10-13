@@ -50,21 +50,23 @@ void prepareAllocationSupport(PreparedLogicalPlan& plan, AllocationProfile* prof
 LogicalResult materializeLogicalFamilies(PreparedLogicalPlan& plan)
 {
     if (!plan.familyRecipe) { return success(); }
-    if (plan.privateState || plan.completionOwner || !plan.preparation.empty() || !plan.endpoints.empty()) {
+    if (plan.privateState || plan.completionOwner) {
         return failure();
     }
-    materializeFamilyEndpointCode(*plan.familyRecipe, plan);
+    if (failed(materializeFamilyEndpointCode(*plan.familyRecipe, plan))) { return failure(); }
     plan.familyRecipe.reset();
     return success();
 }
-std::shared_ptr<PreparedLogicalPlan> takeRegionalAllocationView(PreparedLogicalPlan& plan)
+std::shared_ptr<PreparedLogicalPlan> takeRegionalAllocationView(PreparedLogicalPlan& plan, bool retainFamilyRecipe)
 {
-    if (plan.privateState || plan.completionOwner || failed(materializeLogicalFamilies(plan))) { return {}; }
+    if (plan.privateState || plan.completionOwner ||
+        (!retainFamilyRecipe && failed(materializeLogicalFamilies(plan)))) { return {}; }
     auto view = std::make_shared<PreparedLogicalPlan>(plan.planId);
     view->completeInvocation = plan.completeInvocation;
     view->nestedIdentities = plan.nestedIdentities;
     view->independentPieces = plan.independentPieces;
     view->groupedFamilies = plan.groupedFamilies;
+    view->familyRecipe = plan.familyRecipe;
     view->endpoints = plan.endpoints;
     view->families = plan.families;
     view->mathematicalOwner = plan.mathematicalOwner;

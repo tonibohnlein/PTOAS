@@ -105,6 +105,8 @@ def main():
                 "workload mislabeled")
         check_stages(reports[0])
         if not checkpoint and len(sys.argv) == 4:
+            require(control[0]["recipe_sites"] > 0,
+                    "sequence materialized every numerical child before allocation")
             names = {stage["stage"] for stage in reports[0]["stages"]}
             expected = {"allocation-groups-aggregate", "allocation-lanes-aggregate", "allocation-summary-aggregate"}
             require(expected <= names,

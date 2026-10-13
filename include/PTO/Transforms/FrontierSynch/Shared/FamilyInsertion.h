@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_FAMILYINSERTION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_FAMILYINSERTION_H
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
+#include <map>
 namespace mlir::pto::frontiersynch {
 class FamilyEndpointRecipe;
 // Split construction from lowering. Recipes retain exact pieces and validated
@@ -17,7 +18,16 @@ class FamilyEndpointRecipe;
 // plan families. Lowering stages arithmetic in detached blocks and preserves
 // original record identities across independently partitioned endpoint sides.
 FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFamilyEndpointRecipe(const NumericTemplateEndpoints& plan);
-void materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared);
+// Append immutable child recipes without copying their selector inventories.
+// endpointIndex counts concrete endpoints preceding the child; recordBase is
+// the checked namespace translation applied equally to both matching sides.
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> appendFamilyEndpointRecipe(
+    std::shared_ptr<const FamilyEndpointRecipe> previous,
+    std::shared_ptr<const FamilyEndpointRecipe> child, uint32_t recordBase, std::size_t endpointIndex);
+// One namespace per direction/displacement, shared by concrete and delayed
+// sequence endpoints. Record provenance and member coordinates stay distinct.
+std::map<uint32_t, uint32_t> familyRecordNamespaces(ArrayRef<EndpointFamily> families);
+LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared);
 std::size_t familyEndpointPieceCount(const FamilyEndpointRecipe& recipe);
 } // namespace mlir::pto::frontiersynch
 #endif

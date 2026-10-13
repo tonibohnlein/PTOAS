@@ -5,16 +5,23 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Materialize family domains and matching identities before logical insertion.
+// Retain numerical family recipes through sequence composition; lower at insertion.
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyExpressions.h"
 #include "PTO/Transforms/FrontierSynch/Shared/EndpointPieces.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include <algorithm>
+#include <limits>
 #include <map>
+#include <tuple>
 namespace mlir::pto::frontiersynch {
 class FamilyEndpointRecipe {
 public:
+    // A leaf owns a numerical endpoint plan. A composition references earlier
+    // recipes and records namespace/placement transforms; append is constant work.
+    std::shared_ptr<const FamilyEndpointRecipe> previous, child;
+    uint32_t recordBase = 0, maximumRecord = 0;
+    std::size_t endpointIndex = 0, maximumEndpointIndex = 0, pieceCount = 0;
     scf::ForOp outer;
     std::vector<EndpointPiece> pieces;
     std::vector<std::shared_ptr<const FamilyExpressionRecipe>> selectors;
@@ -24,8 +31,10 @@ public:
 namespace {
 class FamilyPreparer {
 public:
-    FamilyPreparer(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared)
-        : recipe(recipe), prepared(prepared), builder(recipe.outer->getContext()) {}
+    FamilyPreparer(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared, uint32_t recordBase,
+                   const std::map<uint32_t, uint32_t>& namespaces)
+        : recipe(recipe), prepared(prepared), recordBase(recordBase), namespaces(namespaces),
+          builder(recipe.outer->getContext()) {}
     void run()
     {
         initializeOrdinals();
@@ -36,6 +45,8 @@ public:
 private:
     const FamilyEndpointRecipe& recipe;
     PreparedLogicalPlan& prepared;
+    uint32_t recordBase;
+    const std::map<uint32_t, uint32_t>& namespaces;
     OpBuilder builder;
     Value trips;
     Value ordinal;
@@ -101,13 +112,19 @@ private:
             }
         }
         PreparedLogicalEndpoint endpoint{before, kind, piece.sourcePipe, piece.targetPipe,
-                                         piece.namespaceId, guard, identity, {}};
+                                         namespaces.empty() ? piece.namespaceId + recordBase :
+                                             namespaces.at(piece.members.front().record + recordBase),
+                                         guard, identity, {}};
         if (!local) {
-            endpoint.memberCoordinates.push_back(selector.member);
+            Value member = selector.member;
+            if (recordBase) {
+                member = builder.create<arith::AddIOp>(location, member, number(recordBase, location));
+            }
+            endpoint.memberCoordinates.push_back(member);
         }
         for (const auto& member : piece.members) {
             retainEndpointCoordinates(endpoint, member.coordinates);
-            endpoint.records.push_back(member.record);
+            endpoint.records.push_back(member.record + recordBase);
         }
         endpoint.piece = static_cast<int64_t>(prepared.endpoints.size());
         prepared.endpoints.push_back(std::move(endpoint));
@@ -136,6 +153,13 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFamilyEndpointRecipe
     auto recipe = std::make_shared<FamilyEndpointRecipe>();
     recipe->outer = plan.outer;
     recipe->pieces = std::move(pieces.pieces);
+    recipe->pieceCount = recipe->pieces.size();
+    for (const auto& piece : recipe->pieces) {
+        recipe->maximumRecord = std::max(recipe->maximumRecord, piece.namespaceId);
+        for (const auto& member : piece.members) {
+            recipe->maximumRecord = std::max(recipe->maximumRecord, member.record);
+        }
+    }
     std::map<Operation*, std::size_t> cuts;
     for (const auto& group : plan.groups) {
         if (!cuts.emplace(group.cut.before, recipe->cuts.size()).second) { return failure(); }
@@ -162,11 +186,98 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFamilyEndpointRecipe
     }
     return std::shared_ptr<const FamilyEndpointRecipe>(std::move(recipe));
 }
-std::size_t familyEndpointPieceCount(const FamilyEndpointRecipe& recipe) { return recipe.pieces.size(); }
-void materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared)
+std::map<uint32_t, uint32_t> familyRecordNamespaces(ArrayRef<EndpointFamily> families)
 {
-    if (!recipe.pieces.empty()) { FamilyPreparer(recipe, prepared).run(); }
+    using Key = std::tuple<uint32_t, uint32_t, uint64_t>;
+    std::map<Key, uint32_t> minima;
+    for (const auto& family : families) {
+        Key key{family.sourcePipe, family.targetPipe, family.displacement};
+        for (const auto& member : family.members) {
+            auto entry = minima.emplace(key, member.record).first;
+            entry->second = std::min(entry->second, member.record);
+        }
+    }
+    std::map<uint32_t, uint32_t> result;
+    for (const auto& family : families) {
+        Key key{family.sourcePipe, family.targetPipe, family.displacement};
+        for (const auto& member : family.members) { result.emplace(member.record, minima.at(key)); }
+    }
+    return result;
+}
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> appendFamilyEndpointRecipe(
+    std::shared_ptr<const FamilyEndpointRecipe> previous,
+    std::shared_ptr<const FamilyEndpointRecipe> child, uint32_t recordBase, std::size_t endpointIndex)
+{
+    const auto limit = std::numeric_limits<std::size_t>::max();
+    if (!child || child->maximumRecord > UINT32_MAX - recordBase ||
+        child->maximumEndpointIndex > limit - endpointIndex ||
+        (previous && child->pieceCount > limit - previous->pieceCount)) { return failure(); }
+    auto recipe = std::make_shared<FamilyEndpointRecipe>();
+    recipe->maximumRecord = std::max(previous ? previous->maximumRecord : 0U, child->maximumRecord + recordBase);
+    recipe->maximumEndpointIndex = std::max(previous ? previous->maximumEndpointIndex : 0,
+                                           endpointIndex + child->maximumEndpointIndex);
+    recipe->pieceCount = child->pieceCount + (previous ? previous->pieceCount : 0);
+    recipe->recordBase = recordBase;
+    recipe->endpointIndex = endpointIndex;
+    recipe->previous = std::move(previous);
+    recipe->child = std::move(child);
+    return std::shared_ptr<const FamilyEndpointRecipe>(std::move(recipe));
+}
+std::size_t familyEndpointPieceCount(const FamilyEndpointRecipe& recipe) { return recipe.pieceCount; }
+LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared)
+{
+    if (!recipe.child && (!prepared.preparation.empty() || !prepared.endpoints.empty())) { return failure(); }
+    if (prepared.endpoints.size() > static_cast<uint64_t>(INT64_MAX) ||
+        recipe.maximumEndpointIndex > prepared.endpoints.size() ||
+        recipe.pieceCount > static_cast<uint64_t>(INT64_MAX) - prepared.endpoints.size()) { return failure(); }
+    struct Part { const FamilyEndpointRecipe* recipe; uint32_t recordBase; std::size_t endpointIndex; };
+    SmallVector<Part> pending{{&recipe, 0, 0}}, leaves;
+    // Preserve the original endpoint inventory order, including concrete
+    // crossings between recipe contributions. No recursive host call stack.
+    while (!pending.empty()) {
+        auto part = pending.pop_back_val();
+        if (part.recipe->child) {
+            pending.push_back({part.recipe->child.get(), part.recordBase + part.recipe->recordBase,
+                               part.endpointIndex + part.recipe->endpointIndex});
+            if (part.recipe->previous) {
+                pending.push_back({part.recipe->previous.get(), part.recordBase, part.endpointIndex});
+            }
+        } else {
+            if (!leaves.empty() && leaves.back().endpointIndex > part.endpointIndex) { return failure(); }
+            leaves.push_back(part);
+        }
+    }
+    // Sequence namespace normalization applies to delayed and concrete records
+    // alike. Validate the translated provenance before allocating any operations.
+    auto namespaces = recipe.child ? familyRecordNamespaces(prepared.families) : std::map<uint32_t, uint32_t>{};
+    if (recipe.child) {
+        for (const auto& part : leaves) {
+            for (const auto& piece : part.recipe->pieces) {
+                if (piece.members.empty()) { return failure(); }
+                std::optional<uint32_t> space;
+                for (const auto& member : piece.members) {
+                    auto found = namespaces.find(member.record + part.recordBase);
+                    if (found == namespaces.end() || (space && *space != found->second)) { return failure(); }
+                    space = found->second;
+                }
+            }
+        }
+    }
+    auto concrete = std::move(prepared.endpoints);
+    prepared.endpoints.clear();
+    std::size_t next = 0;
+    for (const auto& part : leaves) {
+        while (next < part.endpointIndex) { prepared.endpoints.push_back(std::move(concrete[next++])); }
+        if (!part.recipe->pieces.empty()) {
+            FamilyPreparer(*part.recipe, prepared, part.recordBase, namespaces).run();
+        }
+    }
+    while (next < concrete.size()) { prepared.endpoints.push_back(std::move(concrete[next++])); }
+    for (std::size_t i = 0; i < prepared.endpoints.size(); ++i) {
+        prepared.endpoints[i].piece = static_cast<int64_t>(i);
+    }
     prepared.groupedFamilies = true;
     prepared.independentPieces = true;
+    return success();
 }
 } // namespace mlir::pto::frontiersynch

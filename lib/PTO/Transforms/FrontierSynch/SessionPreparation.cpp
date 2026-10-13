@@ -153,8 +153,6 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
         auto plan = std::make_unique<PreparedLogicalPlan>(0);
         plan->completeInvocation = demands.region == 0 && !rotating.phases.empty();
         if (failed(prepareCountedEndpointRecipe(function, endpoints, *plan))) { return failure(); }
-        // Child composition still rewrites concrete endpoint SSA and records.
-        if (demands.region != 0 && failed(materializeLogicalFamilies(*plan))) { return failure(); }
         return plan;
     }
     if (demands.guardedRotatingDemands) {

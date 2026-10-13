@@ -114,6 +114,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         }
         auto prepared = std::move(*supplied);
         if (child.regional.endpointSiteGuard || child.regional.endpointInvocationGuard) {
+            // Guarded regional masks still use the concrete compatibility path.
+            if (failed(materializeLogicalFamilies(*prepared))) { return failure(); }
             auto active = yes();
             if (child.regional.endpointSiteGuard) { active = both(active, *child.regional.endpointSiteGuard); }
             if (child.regional.endpointInvocationGuard) {
@@ -136,7 +138,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
             childPreparationOperations += stage.code->getOperations().size();
         }
         result->nestedIdentities |= prepared->nestedIdentities;
-        allocationChildren.push_back({takeRegionalAllocationView(*prepared), typeBase, nextRecord});
+        allocationChildren.push_back({takeRegionalAllocationView(*prepared, true), typeBase, nextRecord});
         if (child.anchors.size() > UINT32_MAX - nextType) {
             fail("regional allocation type overflow"); return failure();
         }
@@ -158,6 +160,12 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
                 member.record += nextRecord;
             }
             result->families.push_back(std::move(family));
+        }
+        if (prepared->familyRecipe) {
+            auto joined = appendFamilyEndpointRecipe(result->familyRecipe, prepared->familyRecipe,
+                                                     nextRecord, result->endpoints.size());
+            if (failed(joined)) { fail("regional family recipe translation overflow"); return failure(); }
+            result->familyRecipe = std::move(*joined);
         }
         for (auto& stage : prepared->preparation) { result->preparation.push_back(std::move(stage)); }
         for (auto& endpoint : prepared->endpoints) {
@@ -380,19 +388,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
     for (const auto& edge : crossings) {
         if (!addDemand(ports[edge.source], ports[edge.target], edge.guard)) { return failure(); }
     }
-    using Namespace = std::tuple<uint32_t, uint32_t, uint64_t>;
-    std::map<Namespace, uint32_t> namespaces;
-    std::map<uint32_t, Namespace> recordNamespace;
-    for (const auto& family : result->families) {
-        Namespace key{family.sourcePipe, family.targetPipe, family.displacement};
-        for (const auto& member : family.members) {
-            auto [it, added] = namespaces.emplace(key, member.record);
-            it->second = std::min(it->second, member.record);
-            recordNamespace.emplace(member.record, key);
-        }
-    }
+    const auto namespaces = familyRecordNamespaces(result->families);
     for (auto& endpoint : result->endpoints) {
-        endpoint.record = namespaces.at(recordNamespace.at(endpoint.records.front()));
+        endpoint.record = namespaces.at(endpoint.records.front());
     }
     if (!expressions.constructionError().empty()) { fail(expressions.constructionError()); }
     // Optional ancestor-cut probes may leave a stale emission diagnostic.
