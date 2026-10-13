@@ -31,7 +31,7 @@ separate commit. Infrastructure alone does not complete a production milestone.
 | 1. Measured baseline | Aggregate allocation summary/query/proof/lane timing and inner-loop counts; precise retained-prefix refusal; pinned baseline replay. | Profiling preserves commands and certificates; bounded diagnostic storage; classify the Persistent GEMM hot stage and Delta blocker. | Complete; evidence below |
 | 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; logical-only allocation request complete; repeated-lane proof reuse complete; lane scheduling pending |
 | 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Sequence preparation failure isolation complete; broader capability consolidation pending |
-| 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; borrowed regional adapter complete; global compact memberships complete; shared fact views and delayed atomization pending |
+| 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; borrowed regional adapter complete; global compact memberships and universal descriptor dependency indexing complete; shared fact views and delayed atomization pending |
 | 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection complete; shared source facts pending |
 | 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Qualified A3 structured completion complete; larger closed-child imports and coarse input preparation pending |
 | 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Regional prefix ownership, singleton forwarding, crossing presence and qualified predicate snapshots complete; general executable selectors and public Delta emission pending |
@@ -724,3 +724,22 @@ The final public Delta logical-only probe still refuses another-invocation
 expression input: 15.727 seconds, 285,448 KiB peak RSS. This is a single diagnostic
 replay, not a speed comparison. No Cartesian threshold-product proof is included.
 Receipts: `.local/three-paths/consolidation/m7-snapshots/`.
+
+
+## Shared universal descriptor dependencies
+
+Opaque calls and unsupported region operations now mark enclosing loop subtrees
+once. Dependency indexing enumerates the dynamic descriptors once per marked
+loop, excluding descriptors defined inside that loop. Repeated calls reuse the
+mark, preserving the same loop inputs and conservative call invalidation. This
+removes the descriptor-count times call-count times nesting-depth dependency
+probe term. It does not eliminate per-call invalidation or all ancestry walks.
+
+The new counter measures actual universal descriptor probes. Eighteen generated
+families vary descriptor count (4/8), call count (1/16/64), and depth (1/3/6),
+requiring unknown shapes after opaque calls and at exit while bounding universal
+probes by descriptors times depth. Both descriptor tests pass in the final
+ten-test snapshot/descriptor run, with a successful C++17 build. Source review
+accepted the component. The shared-input milestone remains partial. Receipts
+are in `.local/three-paths/consolidation/m7-snapshots/`; the separate commit
+manifest is in `.local/three-paths/consolidation/m4-descriptor-dependencies/`.

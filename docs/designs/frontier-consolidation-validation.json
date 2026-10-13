@@ -1665,5 +1665,28 @@
     },
     "reviews": "source-qualified acceptance; final tests passed",
     "receipts": ".local/three-paths/consolidation/m7-snapshots"
+  },
+  "universal_descriptor_dependencies": {
+    "status": "component complete; general shared-input milestone remains partial",
+    "families": 18,
+    "descriptor_counts": [
+      4,
+      8
+    ],
+    "call_counts": [
+      1,
+      16,
+      64
+    ],
+    "nesting_depths": [
+      1,
+      3,
+      6
+    ],
+    "probe_bound": "descriptors * depth, independent of call count",
+    "focused_tests": 2,
+    "combined_run_tests": 10,
+    "reviews": "source review accepted; build and focused tests passed",
+    "receipts": ".local/three-paths/consolidation/m7-snapshots/"
   }
 }

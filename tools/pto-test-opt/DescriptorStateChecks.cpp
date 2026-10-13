@@ -65,6 +65,12 @@ LogicalResult checkDescriptorState(func::FuncOp function)
             good = false;
         }
     }
+    if (auto limit = function->getAttrOfType<IntegerAttr>("test.max_universal_dependency_probes")) {
+        if (limit.getInt() < 0 || facts.work().universalDependencyProbes > static_cast<uint64_t>(limit.getInt())) {
+            function.emitError("opaque-call dependency indexing repeated the descriptor-ancestor product");
+            good = false;
+        }
+    }
     pto::SyncScalarFacts sharedScalars;
     DenseMap<Value, unsigned> identities;
     function.walk([&](Operation* op) {
