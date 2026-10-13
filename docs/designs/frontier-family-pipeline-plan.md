@@ -28,7 +28,7 @@ exclusion evidence; they do not replace exact guards or matching identities.
 | M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is planned before scalar lowering in `8a0a94536`; ordinary numerical sequence and repeated children retain recipes through composition; exact fixed-coordinate sequence crossings now form recipes before scalar preparation; child activity masks retain those recipes through composition; guarded and relational crossing construction remains open |
 | M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; common nonconstant tuple terms compose before dispatch in `15f2007ea`; coordinate-selected phase shifts now compose under the same skeleton with a cost-checked incumbent; different skeletons and early graph allocation remain open |
 | M5: session and capabilities | Retain facts, mathematics, recipes and allocation in one session; deterministic capability upgrades; common unified/split stage functions; self-contained versioned saved artifacts; delete redundant orchestration. | Pending |
-| M6: carryover and closure | Finish shared-fact and coarse-input integration, closed-child completion imports, guarded/relational rank transport and outstanding semantic oracles; run pinned eleven-kernel/corpus validation and report device results separately. | Eleven-kernel replay complete at `15f2007ea`; corpus, device, and interface closure remain open |
+| M6: carryover and closure | Finish shared-fact and coarse-input integration, closed-child completion imports, guarded/relational rank transport and outstanding semantic oracles; run pinned eleven-kernel/corpus validation and report device results separately. | Eleven-kernel replay refreshed at `e0e17e5db`: 11 logical, 7 six-ID/C++ successes; corpus, device, and interface closure remain open |
 
 Each milestone proceeds through focused, separately reviewable changes with
 regressions and correctness/architecture review. Infrastructure does not complete a production
@@ -818,3 +818,65 @@ No compiler-time or device-speed claim follows from these code counts. This is a
 bounded M4 extension; differing term skeletons, family-level allocation before
 materialization, and the M2 parent-aware cheap-candidate policy remain open.
 Local artifacts and manual self-review: `.local/family-pipeline-phase-maps/`.
+
+
+## Pinned eleven-kernel refresh at e0e17e5db
+
+The serial campaign keeps all eleven inputs and the C++ backend pinned, verifies
+tool/input hashes, uses MayNotAlias and IDs 0--5, and retains every diagnostic.
+All eleven logical compilations succeed; seven allocate and emit C++. There are
+no compiler timeouts. These are one-run stage diagnostics, not paired timings or
+device results. The later requested-output change below is validated separately.
+
+| Kernel | Logical SET / WAIT sites | Raw function arithmetic | Allocation / C++ |
+|---|---:|---:|---|
+| tilelang_gemm | 14 / 14 | 1,401 | pass / pass |
+| pypto_gemm | 12 / 12 | 1,196 | pass / pass |
+| persistent_gemm | 56 / 56 | 3,924 | pass / pass |
+| group_norm | 17 / 17 | 365 | assignment uncertified |
+| causal_conv1d_prefill | 59 / 84 | 92,648 | missing allocation export |
+| causal_conv1d_decode | 22 / 22 | 2,761 | assignment uncertified |
+| gdn_chunk_cumsum | 3 / 3 | 41 | pass / pass |
+| mhc_head_mix | 3 / 3 | 45 | pass / pass |
+| elementwise_pipeline | 9 / 9 | 171 | pass / pass |
+| gated_delta_rule | 172 / 47 | 2,473,273 | missing prefix lifetime export |
+| lossless_block_cast | 5 / 5 | 83 | pass / pass |
+
+The direct-plan profiles now distinguish preparation, materialization,
+normalization and insertion. Prefix/private-state output retains its own profile
+boundaries; Delta's zero prepared direct endpoints do not mean zero construction
+work. Its final 2,473,273 arithmetic operations remain an unresolved expansion.
+Prefill retains 92,437 normalized preparation operations and requires a separate
+allocation export. Neither refusal establishes minimum required hardware capacity.
+
+Persistent's preparation/materialization/normalization counts are 796 / 11,808 /
+3,865 arithmetic operations, with 56 / 56 final SET / WAIT sites. All static counts
+remain distinct from active demand instances, executed commands and live flags.
+The input/expert inventories, stage diagnostics and control/allocation counters are
+retained in [the pinned results](frontier-family-control-validation.json).
+Full local artifacts: `.local/generated-control-e0e17e5db/`.
+
+
+## Requested family-expression outputs
+
+Physical mapping requests only the selected member/base/phase value from the
+existing family-expression planner. Its enclosing logical command already owns
+the exact activity domain. The planner validates every coordinate and label as
+before, but does not build the full presence-domain boxes or emit their guard.
+Residual decision guards needed to select a value remain. Command-family clients
+retain the default presence-and-member contract.
+
+Coordinate normalization is lazy within one emitter. Unused axes and the divisor
+of a constant modular result are never emitted. This replaces construction and
+subsequent deletion of that unused arithmetic; it does not change domain fitting,
+matching, certificates or synchronization protocols. Member-only values remain
+meaningful only within the caller-established exact domain.
+
+The construction regression checks sparse constant mappings before any cleanup:
+ordinary and modular selected values each create exactly one constant, while the
+command request retains its presence guard. Duplicate coordinates still reject
+without emitting operations. Eight focused suites pass. Complete canonical
+comparisons cover new logical compilation of all three GEMMs and physical
+allocation of all seven successful saved campaign plans. Those outputs agree
+with `e0e17e5db`; this is a construction improvement, with no paired compiler-time
+or device-speed claim. Artifacts: `.local/family-pipeline-requested-output/`.

@@ -567,7 +567,8 @@ LogicalResult prepareCoordinatePhase(Endpoint& endpoint, const CoordinateProvena
     const uint64_t modulus = directId ? palette.size() : commonTuple ?
         static_cast<uint64_t>(*llvm::max_element(commonTuple->bases)) + 1 :
         generic ? 0 : endpoint.allocation->ids.size();
-    auto result = emitFamilyExpressions(builder, before->getLoc(), points, values, modulus);
+    auto result = emitFamilyExpressions(builder, before->getLoc(), points, values, modulus,
+                                        FamilyExpressionOutputs::Member);
     if (!result.error.empty()) {
         return before->emitError("invalid endpoint-family phase coordinates: ") << result.error;
     }
@@ -581,7 +582,8 @@ LogicalResult prepareCoordinatePhase(Endpoint& endpoint, const CoordinateProvena
         if (commonTuple->varyingPhases) {
             for (std::size_t i = 0; i < commonTuple->phases.size(); ++i) {
                 auto phase = emitFamilyExpressions(builder, before->getLoc(), points, commonTuple->phases[i],
-                                                   endpoint.composedTuple->rule.terms[i].modulus);
+                                                   endpoint.composedTuple->rule.terms[i].modulus,
+                                                   FamilyExpressionOutputs::Member);
                 if (!phase.error.empty()) {
                     return before->emitError("invalid endpoint-family tuple phase: ") << phase.error;
                 }
