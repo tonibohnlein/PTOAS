@@ -229,14 +229,20 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
             values = found->second.values;
             context = found->second.context;
         }
-        // Availability can fail at an ancestor cut even when endpoint-local
-        // emission succeeds. Work transactionally: failed attempts leave no
-        // operations or memo values in the accepted detached preparation.
+        // Establish contextual availability before allocating detached scalar
+        // code. The recipe retains original producers and binding keys only.
+        std::shared_ptr<const CutExpressionRecipe> recipe;
+        if (contextual) {
+            auto planned = expressions.prepareContextual(expression, cut, context);
+            if (failed(planned)) { return failure(); }
+            recipe = std::move(*planned);
+        }
+        // Failed ordinary probes remain transactional too.
         Block scratch;
         OpBuilder builder(function.getContext());
         builder.setInsertionPointToEnd(&scratch);
-        auto value = contextual ? expressions.emitContextual(expression, builder, cut, context) :
-                                  expressions.emit(expression, builder, cut, values);
+        auto value = recipe ? expressions.emitPreparedContextual(*recipe, builder, cut, context) :
+                              expressions.emit(expression, builder, cut, values);
         if (failed(value)) { return failure(); }
         auto& stage = shared[cut];
         if (!stage.block) {

@@ -22,6 +22,7 @@
 #include <unordered_map>
 #include <vector>
 namespace mlir::pto::frontiersynch {
+class CutExpressionRecipe;
 class RegionExpressions {
 public:
     using Id = uint32_t;
@@ -221,6 +222,16 @@ public:
     // establish deterministic duplication (for example, LLVM freeze).
     // Payloads are registered explicitly and may never be replayed.
     void forbidRecomputation(Operation* operation) { forbiddenRecomputation.insert(operation); }
+    // Plan cofactoring and deterministic replay without creating generated SSA.
+    // The immutable recipe borrows this append-only arena and unchanged original
+    // IR. Like emission memos, it cannot escape rollback. A supplied context may
+    // contain already available expression/input bindings; the recipe retains
+    // only their keys and lowering requires those bindings in the same context.
+    // Empty contexts produce self-contained original-value availability recipes.
+    FailureOr<std::shared_ptr<const CutExpressionRecipe>> prepareContextual(
+        Id expression, Operation* cut, CutEmission& context);
+    FailureOr<Value> emitPreparedContextual(const CutExpressionRecipe& recipe,
+        OpBuilder& builder, Operation* cut, CutEmission& context);
     FailureOr<Value> emitContextual(Id expression, OpBuilder& builder, Operation* cut, CutEmission& context);
 
 private:
