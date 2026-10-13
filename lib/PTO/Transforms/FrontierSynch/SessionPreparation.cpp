@@ -130,7 +130,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
         if (failed(validateNumericTemplateInsertion(function, numeric, *recipe, *storage))) { return failure(); }
         auto plan = std::make_unique<PreparedLogicalPlan>(0);
         plan->completeInvocation = !numeric.form.emptyInvocation;
-        if (failed(prepareCountedEndpointCode(function, *recipe, *plan))) { return failure(); }
+        if (failed(prepareCountedEndpointRecipe(function, *recipe, *plan))) { return failure(); }
         return plan;
     }
     if (demands.rotatingDemands) {
@@ -152,7 +152,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
         if (!endpoints.logical.error.empty()) { return failure(); }
         auto plan = std::make_unique<PreparedLogicalPlan>(0);
         plan->completeInvocation = demands.region == 0 && !rotating.phases.empty();
-        if (failed(prepareCountedEndpointCode(function, endpoints, *plan))) { return failure(); }
+        if (failed(prepareCountedEndpointRecipe(function, endpoints, *plan))) { return failure(); }
+        // Child composition still rewrites concrete endpoint SSA and records.
+        if (demands.region != 0 && failed(materializeLogicalFamilies(*plan))) { return failure(); }
         return plan;
     }
     if (demands.guardedRotatingDemands) {

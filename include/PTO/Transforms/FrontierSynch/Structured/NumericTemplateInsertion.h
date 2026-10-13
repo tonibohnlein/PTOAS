@@ -18,6 +18,10 @@ namespace mlir::pto::frontiersynch {
 // Preserve whole-invocation bounds, scope and recipe checks for an owned result.
 LogicalResult validateNumericTemplateInsertion(func::FuncOp function, const NumericalRegionDemands& demands,
                                               const NumericTemplateEndpoints& endpoints, const SyncInput& input);
+// Build a validated numerical family recipe without preparing scalar MLIR.
+LogicalResult prepareCountedEndpointRecipe(func::FuncOp function, const NumericTemplateEndpoints& endpoints,
+                                           PreparedLogicalPlan& prepared);
+// Compatibility for regional adapters still requiring concrete endpoint SSA.
 LogicalResult prepareCountedEndpointCode(func::FuncOp function, const NumericTemplateEndpoints& endpoints,
                                          PreparedLogicalPlan& prepared);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplateLogicalInsertion(

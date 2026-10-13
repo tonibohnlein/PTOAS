@@ -178,6 +178,18 @@ LogicalResult preflight(func::FuncOp function, const NumericTemplate& input, con
     }
     return success();
 }
+LogicalResult retainFamilyRecipe(const NumericTemplateEndpoints& endpoints, PreparedLogicalPlan& prepared)
+{
+    auto families = buildEndpointFamilies(endpoints);
+    if (!families.error.empty()) { return endpoints.outer->emitError(families.error); }
+    auto recipe = buildFamilyEndpointRecipe(endpoints);
+    if (failed(recipe)) { return failure(); }
+    prepared.families = std::move(families.families);
+    prepared.familyRecipe = std::move(*recipe);
+    prepared.groupedFamilies = true;
+    prepared.independentPieces = true;
+    return success();
+}
 } // namespace
 LogicalResult validateNumericTemplateInsertion(func::FuncOp function, const NumericalRegionDemands& demands,
                                               const NumericTemplateEndpoints& endpoints, const SyncInput& input)
@@ -185,10 +197,11 @@ LogicalResult validateNumericTemplateInsertion(func::FuncOp function, const Nume
     if (!function) { return failure(); }
     return preflight(function, demands.form, demands.analysis, endpoints, input.instructions());
 }
-LogicalResult prepareCountedEndpointCode(func::FuncOp function, const NumericTemplateEndpoints& endpoints,
+LogicalResult prepareCountedEndpointRecipe(func::FuncOp function, const NumericTemplateEndpoints& endpoints,
                                          PreparedLogicalPlan& prepared)
 {
-    if (!endpoints.outer || !endpoints.logical.error.empty()) {
+    if (!endpoints.outer || !endpoints.logical.error.empty() || prepared.familyRecipe ||
+        !prepared.preparation.empty() || !prepared.endpoints.empty() || !prepared.families.empty()) {
         return failure();
     }
     auto loop = endpoints.outer;
@@ -203,12 +216,13 @@ LogicalResult prepareCountedEndpointCode(func::FuncOp function, const NumericTem
         bits.isScalable() || bits.getFixedValue() != 64 || !validCuts(endpoints, dominance)) {
         return failure();
     }
-    auto families = buildEndpointFamilies(endpoints);
-    if (!families.error.empty()) {
-        return function.emitError(families.error);
-    }
-    prepared.families = std::move(families.families);
-    return prepareFamilyEndpointCode(endpoints, prepared);
+    return retainFamilyRecipe(endpoints, prepared);
+}
+LogicalResult prepareCountedEndpointCode(func::FuncOp function, const NumericTemplateEndpoints& endpoints,
+                                       PreparedLogicalPlan& prepared)
+{
+    if (failed(prepareCountedEndpointRecipe(function, endpoints, prepared))) { return failure(); }
+    return materializeLogicalFamilies(prepared);
 }
 namespace {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplate(
@@ -230,12 +244,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareNumericTemplate(
     }
     auto prepared = std::make_unique<PreparedLogicalPlan>(planId);
     prepared->completeInvocation = !node->numericTemplate->emptyInvocation;
-    auto families = buildEndpointFamilies(*node->logicalEndpoints);
-    if (!families.error.empty()) {
-        return function.emitError(families.error), failure();
-    }
-    prepared->families = std::move(families.families);
-    if (failed(prepareFamilyEndpointCode(*node->logicalEndpoints, *prepared))) {
+    if (failed(retainFamilyRecipe(*node->logicalEndpoints, *prepared))) {
         return failure();
     }
     if (allocation && node->periodicAnalysis && node->periodicAnalysis->error.empty()) {

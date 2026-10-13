@@ -327,23 +327,11 @@ public:
         }
         return result;
     }
-    Value decision(const Domain& domain)
+    Value decision(int64_t fallback, const std::map<int64_t, SmallVector<Box>>& alternatives)
     {
-        const auto fallback = domain.labels.empty() ? 0 : domain.labels.front();
         Value result = number(fallback);
-        std::map<int64_t, Domain> alternatives;
-        for (std::size_t member = 0; member < domain.points.size(); ++member) {
-            const auto label = domain.labels[member];
-            if (label == fallback) { continue; }
-            auto [entry, inserted] = alternatives.try_emplace(label);
-            if (inserted) { entry->second.axes = domain.axes; }
-            entry->second.points.push_back(domain.points[member]);
-        }
-        // Equal outcomes share one decision and adjacent coordinate boxes.
-        // Exact points are disjoint; no guard equivalence or valuation search
-        // is needed, and the result remains total outside the member domain.
         for (const auto& alternative : alternatives) {
-            result = builder.create<arith::SelectOp>(location, presence(boxes(alternative.second)),
+            result = builder.create<arith::SelectOp>(location, presence(alternative.second),
                 number(alternative.first), result);
         }
         return result;
@@ -371,35 +359,75 @@ private:
     std::map<std::tuple<std::size_t, arith::CmpIPredicate, int64_t>, Value> comparisons;
 };
 } // namespace
-FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location,
-    ArrayRef<SmallVector<TemplateCoordinate>> members, ArrayRef<int64_t> labels, uint64_t modulus)
+class FamilyExpressionRecipe {
+public:
+    SmallVector<Axis> axes;
+    int64_t fallback = 0;
+    SmallVector<Box> regions;
+    Tuple coefficients;
+    int64_t intercept = 0;
+    uint64_t modulus = 0;
+    bool affine = false;
+    std::map<int64_t, SmallVector<Box>> alternatives;
+};
+FamilyExpressionPlan buildFamilyExpressions(ArrayRef<SmallVector<TemplateCoordinate>> members,
+    ArrayRef<int64_t> labels, uint64_t modulus)
 {
     constexpr uint64_t maximumModulus = 6;
     if (modulus > maximumModulus) {
-        return {"family modular labels require a modulus of at most six", {}, {}};
+        return {"family modular labels require a modulus of at most six", {}};
     }
     if (!labels.empty() && labels.size() != members.size()) {
-        return {"family member and label counts differ", {}, {}};
+        return {"family member and label counts differ", {}};
     }
+    auto recipe = std::make_shared<FamilyExpressionRecipe>();
     Domain domain;
-    if (auto error = validate(members, domain); !error.empty()) {
-        return {std::move(error), {}, {}};
-    }
+    if (auto error = validate(members, domain); !error.empty()) { return {std::move(error), {}}; }
     for (std::size_t member = 0; member < members.size(); ++member) {
         const auto label = labels.empty() ? static_cast<int64_t>(member) : labels[member];
         domain.labels.push_back(modulus ? residue(label, modulus) : label);
     }
-    Tuple coefficients;
-    int64_t intercept = 0;
-    const bool affine = !domain.points.empty() && (modulus ? fitModular(domain, modulus, coefficients, intercept) :
-                                                            fit(domain, coefficients, intercept));
-    auto regions = boxes(domain);
+    recipe->modulus = modulus;
+    recipe->affine = !domain.points.empty() &&
+        (modulus ? fitModular(domain, modulus, recipe->coefficients, recipe->intercept) :
+                   fit(domain, recipe->coefficients, recipe->intercept));
+    recipe->regions = boxes(domain);
+    if (!recipe->affine) {
+        std::map<int64_t, Domain> alternatives;
+        const auto fallback = domain.labels.empty() ? 0 : domain.labels.front();
+        for (std::size_t member = 0; member < domain.points.size(); ++member) {
+            const auto label = domain.labels[member];
+            if (label == fallback) { continue; }
+            auto [entry, inserted] = alternatives.try_emplace(label);
+            if (inserted) { entry->second.axes = domain.axes; }
+            entry->second.points.push_back(domain.points[member]);
+        }
+        // Equal outcomes share exact disjoint boxes; no guard-equivalence
+        // search is needed. The default remains total outside the domain.
+        for (const auto& alternative : alternatives) {
+            recipe->alternatives.emplace(alternative.first, boxes(alternative.second));
+        }
+    }
+    recipe->axes = std::move(domain.axes);
+    recipe->fallback = domain.labels.empty() ? 0 : domain.labels.front();
+    return {{}, std::move(recipe)};
+}
+FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location, const FamilyExpressionRecipe& recipe)
+{
     Emitter emitter(builder, location);
-    emitter.normalize(domain.axes);
-    Value present = emitter.presence(regions);
-    Value member = affine ? (modulus ? emitter.modular(coefficients, intercept, modulus) :
-                                     emitter.affine(coefficients, intercept)) :
-                            emitter.decision(domain);
+    emitter.normalize(recipe.axes);
+    Value present = emitter.presence(recipe.regions);
+    Value member = recipe.affine ?
+        (recipe.modulus ? emitter.modular(recipe.coefficients, recipe.intercept, recipe.modulus) :
+                         emitter.affine(recipe.coefficients, recipe.intercept)) :
+        emitter.decision(recipe.fallback, recipe.alternatives);
     return {{}, present, member};
+}
+FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location,
+    ArrayRef<SmallVector<TemplateCoordinate>> members, ArrayRef<int64_t> labels, uint64_t modulus)
+{
+    auto plan = buildFamilyExpressions(members, labels, modulus);
+    if (!plan.error.empty()) { return {std::move(plan.error), {}, {}}; }
+    return emitFamilyExpressions(builder, location, *plan.recipe);
 }
 } // namespace mlir::pto::frontiersynch

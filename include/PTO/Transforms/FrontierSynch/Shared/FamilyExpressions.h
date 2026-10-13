@@ -10,6 +10,7 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_FAMILYEXPRESSIONS_H
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplate.h"
 #include "mlir/IR/Builders.h"
+#include <memory>
 #include <string>
 namespace mlir::pto::frontiersynch {
 struct FamilyExpressions {
@@ -17,6 +18,16 @@ struct FamilyExpressions {
     Value present;
     Value member; // Selected label (default: list ordinal); meaningful only when present.
 };
+// Immutable, validated coordinate domain and selected-label mapping. It owns
+// no generated SSA values and borrows only original induction variables.
+class FamilyExpressionRecipe;
+struct FamilyExpressionPlan {
+    std::string error;
+    std::shared_ptr<const FamilyExpressionRecipe> recipe;
+};
+FamilyExpressionPlan buildFamilyExpressions(ArrayRef<SmallVector<TemplateCoordinate>> members,
+    ArrayRef<int64_t> labels = {}, uint64_t modulus = 0);
+FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location, const FamilyExpressionRecipe& recipe);
 // The caller establishes a 64-bit index layout and availability of every loop
 // induction value at the insertion point. Each tuple uses the same ordered loop
 // schema. Literal lower/step bounds permit lattice normalization; otherwise

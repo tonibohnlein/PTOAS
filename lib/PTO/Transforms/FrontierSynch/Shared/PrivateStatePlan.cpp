@@ -52,7 +52,8 @@ std::vector<Operation*> operations(func::FuncOp function)
 }
 bool clean(const PreparedLogicalPlan& plan)
 {
-    return plan.completeInvocation && plan.preparation.empty() && plan.endpoints.empty() && plan.families.empty() &&
+    return plan.completeInvocation && !plan.familyRecipe && plan.preparation.empty() &&
+        plan.endpoints.empty() && plan.families.empty() &&
         !plan.nestedIdentities && !plan.independentPieces && !plan.groupedFamilies &&
         !plan.allocationCertificate && !plan.allocationPreparation && !plan.regionalAllocation &&
         !plan.compactBoundingOwner && !plan.completionOwner;

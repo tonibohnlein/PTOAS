@@ -44,7 +44,8 @@ def check_control(reports):
             "missing control construction boundary")
     prepared, normalized, inserted = reports
     require(prepared["record_members"] == normalized["record_members"], "compaction lost provenance")
-    require(normalized["endpoint_sites"] <= prepared["endpoint_sites"], "compaction expanded sites")
+    require(normalized["endpoint_sites"] <= prepared["endpoint_sites"] + prepared["recipe_sites"],
+            "compaction expanded sites")
     for report in reports:
         work = report["preparation"]
         require(0 <= work["endpoint_reachable_arithmetic"] <= work["arithmetic"],
