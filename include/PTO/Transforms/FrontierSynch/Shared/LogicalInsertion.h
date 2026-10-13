@@ -89,8 +89,8 @@ struct PreparedLogicalPlan {
     std::unique_ptr<PrivateStatePlan> privateState;
     // Conservative completion evidence never impersonates exact mathematics.
     std::shared_ptr<const CompletionRegion> completionOwner;
-    // Numerical family construction owns no generated SSA. Root allocation
-    // consumes its fixed protocol before insertion lowers this one-shot recipe.
+    // Numerical families and qualified sequence composition own no generated
+    // SSA. Allocation consumes the fixed protocol before one final lowering.
     std::shared_ptr<const FamilyEndpointRecipe> familyRecipe;
     std::vector<LogicalPreparation> preparation;
     std::vector<PreparedLogicalEndpoint> endpoints;
@@ -106,8 +106,10 @@ void profileLogicalControl(func::FuncOp function, const PreparedLogicalPlan& pla
 // Preserve a child's allocation namespace before composition rewrites it.
 // Returns null for a root-only private-state plan, which cannot be composed.
 // The view borrows endpoint Values from the enclosing detached plan, which must
-// outlive it. Allocation exports on regional views must not emit additional IR.
-std::shared_ptr<PreparedLogicalPlan> takeRegionalAllocationView(PreparedLogicalPlan& plan);
+// outlive it. A recipe-retaining view is for family-metadata allocation exports
+// that require no concrete endpoint Values. Neither view may emit additional IR.
+std::shared_ptr<PreparedLogicalPlan> takeRegionalAllocationView(
+    PreparedLogicalPlan& plan, bool retainFamilyRecipe = false);
 // Producer obligations: certified demands, legal cuts, safely evaluable arithmetic,
 // paired guards and matching identities, and all endpoints sharing a cut in one
 // batch. No original IR may change between preparation and insertion. This API

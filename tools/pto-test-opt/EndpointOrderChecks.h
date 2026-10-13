@@ -51,6 +51,84 @@ bool endpointOrderGraphChecks()
     auto result = fs::orderEndpointGroups(chain);
     return result.cyclic == std::set<std::size_t>{0, 1};
 }
+// Compare delayed sequence assembly with an independently materialized leaf.
+// Concrete commands between children must keep their exact inventory position.
+bool endpointRecipeCompositionChecks(const mlir::pto::frontiersynch::NumericTemplateEndpoints& input,
+                                     std::shared_ptr<const mlir::pto::frontiersynch::FamilyEndpointRecipe> leaf,
+                                     const std::vector<mlir::pto::frontiersynch::EndpointFamily>& families)
+{
+    namespace fs = mlir::pto::frontiersynch;
+    fs::PreparedLogicalPlan reference(0), composed(0);
+    reference.familyRecipe = leaf;
+    if (failed(fs::materializeLogicalFamilies(reference))) { return false; }
+    auto first = fs::appendFamilyEndpointRecipe({}, leaf, 10, 1);
+    if (failed(first)) { return false; }
+    auto child = fs::appendFamilyEndpointRecipe(*first, leaf, 100, 2);
+    auto prefix = fs::appendFamilyEndpointRecipe({}, leaf, 3000, 0);
+    if (failed(child) || failed(prefix)) { return false; }
+    auto root = fs::appendFamilyEndpointRecipe(*prefix, *child, 1000, 1);
+    if (failed(root)) { return false; }
+    composed.familyRecipe = *root;
+    for (uint32_t base : {3000U, 1010U, 1100U}) {
+        for (auto family : families) {
+            family.id += base;
+            for (auto& member : family.members) { member.record += base; }
+            composed.families.push_back(std::move(family));
+        }
+    }
+    bool allocationSawRecipe = false;
+    composed.allocationPreparation = [&](fs::PreparedLogicalPlan& view) {
+        allocationSawRecipe = view.familyRecipe && view.endpoints.empty() && view.preparation.empty();
+    };
+    auto view = fs::takeRegionalAllocationView(composed, true);
+    if (!view) { return false; }
+    fs::prepareAllocationSupport(*view);
+    if (!allocationSawRecipe || !composed.preparation.empty()) { return false; }
+    auto cut = input.groups.front().cut.before;
+    for (uint32_t record : {900000U, 900001U, 900002U}) {
+        fs::PreparedLogicalEndpoint endpoint{cut, fs::LogicalCommandKind::Barrier, 1, 1, record, {}, {}};
+        endpoint.records.push_back(record);
+        composed.endpoints.push_back(std::move(endpoint));
+    }
+    // Invalid placement and namespace overflow fail before any scalar lowering.
+    auto bad = fs::appendFamilyEndpointRecipe({}, leaf, 0, 4);
+    fs::PreparedLogicalPlan invalid(0);
+    if (failed(bad)) { return false; }
+    invalid.familyRecipe = *bad;
+    if (succeeded(fs::materializeLogicalFamilies(invalid)) || !invalid.preparation.empty() ||
+        !invalid.endpoints.empty() ||
+        succeeded(fs::appendFamilyEndpointRecipe({}, leaf, UINT32_MAX, 0)) ||
+        succeeded(fs::appendFamilyEndpointRecipe({}, *child, 0, SIZE_MAX))) { return false; }
+    auto reversed = fs::appendFamilyEndpointRecipe(*child, leaf, 200, 0);
+    if (failed(reversed)) { return false; }
+    invalid.familyRecipe = *reversed;
+    invalid.endpoints.resize(2);
+    if (succeeded(fs::materializeLogicalFamilies(invalid)) || !invalid.preparation.empty() ||
+        invalid.endpoints.size() != 2) { return false; }
+    invalid.familyRecipe = *root;
+    invalid.endpoints.resize(3);
+    if (succeeded(fs::materializeLogicalFamilies(invalid)) || !invalid.preparation.empty() ||
+        invalid.endpoints.size() != 3) { return false; }
+    if (failed(fs::materializeLogicalFamilies(composed)) || composed.familyRecipe ||
+        composed.endpoints.size() != reference.endpoints.size() * 3 + 3) { return false; }
+    std::size_t position = 0;
+    auto checkLeaf = [&](uint32_t base) {
+        for (const auto& original : reference.endpoints) {
+            const auto& actual = composed.endpoints[position++];
+            auto records = original.records;
+            for (auto& record : records) { record += base; }
+            if (actual.before != original.before || actual.kind != original.kind || actual.records != records ||
+                actual.record != original.record + 1010 || actual.piece != int64_t(position - 1)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!checkLeaf(3000) || composed.endpoints[position++].record != 900000 ||
+        composed.endpoints[position++].record != 900001 || !checkLeaf(1010) ||
+        composed.endpoints[position++].record != 900002 || !checkLeaf(1100)) { return false; }
+    return position == composed.endpoints.size();
+}
 bool endpointOrderFamilyChecks(mlir::MLIRContext* context)
 {
     using namespace mlir;
@@ -97,7 +175,8 @@ bool endpointOrderFamilyChecks(mlir::MLIRContext* context)
             auto recipe = fs::buildFamilyEndpointRecipe(input);
             if (!families.error.empty() || !pieces.error.empty() || failed(recipe) ||
                 families.families.size() != 5 || pieces.pieces.size() != 10 ||
-                fs::familyEndpointPieceCount(**recipe) != 10) { return false; }
+                fs::familyEndpointPieceCount(**recipe) != 10 ||
+                !endpointRecipeCompositionChecks(input, *recipe, families.families)) { return false; }
             auto downstream = llvm::find_if(families.families, [](const auto& f) { return f.displacement == 2; });
             if (downstream == families.families.end() || downstream->members.size() != count) { return false; }
             llvm::sort(pieces.pieces, [](const auto& a, const auto& b) { return a.order < b.order; });
