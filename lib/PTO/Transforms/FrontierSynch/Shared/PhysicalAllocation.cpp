@@ -60,6 +60,11 @@ struct Family {
 };
 using Records = llvm::DenseMap<int64_t, const PhysicalRecordAllocation*>;
 using Families = std::map<int64_t, Family>;
+struct ComposedTupleMapping {
+    PhysicalTupleRule rule;
+    Value base;
+    SmallVector<Value> phases;
+};
 struct Endpoint {
     Operation* operation = nullptr;
     const PhysicalRecordAllocation* allocation = nullptr;
@@ -70,11 +75,11 @@ struct Endpoint {
     Value directPhase; // Original record label when tupleMembers selects mixed palettes; phase otherwise.
     SmallVector<const PhysicalRecordAllocation*> tupleMembers;
     Value directId; // Coordinate-to-ID composition, independent of original record numbering.
-    // Identical dynamic tuple terms with a coordinate-selected constant base.
-    std::unique_ptr<PhysicalTupleRule> composedTuple;
-    Value tupleBase;
+    // Shared dynamic tuple skeleton with coordinate-selected base and phases.
+    std::unique_ptr<ComposedTupleMapping> composedTuple;
 };
 std::optional<int64_t> constantTupleId(const PhysicalRecordAllocation& record);
+uint64_t mappingCost(ArrayRef<Endpoint> endpoints);
 
 std::vector<uint64_t> physicalMappingKey(const PhysicalRecordAllocation& member)
 {
@@ -109,6 +114,8 @@ SmallVector<int64_t> constantMemberIds(const Endpoint& endpoint)
 struct CommonTupleMapping {
     PhysicalTupleRule dynamic;
     SmallVector<int64_t> bases;
+    SmallVector<SmallVector<int64_t>> phases;
+    bool varyingPhases = false;
 };
 // Factor a supplied assignment, never infer reuse from the resulting formula.
 // The input rules have already passed the complete palette-range certificate.
@@ -128,16 +135,26 @@ std::optional<CommonTupleMapping> commonTupleMapping(ArrayRef<const PhysicalReco
             if (!term.scale || term.modulus == 1) { continue; }
             const auto stride = term.stride % term.modulus, phase = term.phase % term.modulus;
             if (!stride) { base += term.scale * phase; }
-            else { terms.push_back({term.coordinate, stride, phase, term.modulus, term.scale}); }
+            // Sort by the common skeleton before phase, so independently
+            // ordered terms still pair exactly. Equal skeletons are additive.
+            else { terms.push_back({term.coordinate, stride, term.modulus, term.scale, phase}); }
         }
         llvm::sort(terms);
-        if (result.bases.empty()) { common = std::move(terms); }
-        else if (terms != common) { return std::nullopt; }
+        if (result.bases.empty()) {
+            common = terms;
+            result.phases.resize(terms.size());
+        }
+        if (terms.size() != common.size()) { return std::nullopt; }
+        for (std::size_t i = 0; i < terms.size(); ++i) {
+            if (!std::equal(terms[i].begin(), terms[i].begin() + 4, common[i].begin())) { return std::nullopt; }
+            result.phases[i].push_back(static_cast<int64_t>(terms[i][4]));
+            result.varyingPhases |= terms[i][4] != common[i][4];
+        }
         result.bases.push_back(static_cast<int64_t>(base));
     }
     if (common.empty()) { return std::nullopt; } // Constant IDs already have a stronger composition path.
     for (const auto& term : common) {
-        result.dynamic.terms.push_back({term[0], term[1], term[2], term[3], term[4]});
+        result.dynamic.terms.push_back({term[0], term[1], term[4], term[2], term[3]});
     }
     return result;
 }
@@ -558,25 +575,52 @@ LogicalResult prepareCoordinatePhase(Endpoint& endpoint, const CoordinateProvena
     if (directId) {
         endpoint.directId = selectPhysicalPalette(builder, before->getLoc(), result.member, palette);
     } else if (commonTuple) {
-        endpoint.composedTuple = std::make_unique<PhysicalTupleRule>(std::move(commonTuple->dynamic));
-        endpoint.tupleBase = result.member;
+        endpoint.composedTuple = std::make_unique<ComposedTupleMapping>();
+        endpoint.composedTuple->rule = std::move(commonTuple->dynamic);
+        endpoint.composedTuple->base = result.member;
+        if (commonTuple->varyingPhases) {
+            for (std::size_t i = 0; i < commonTuple->phases.size(); ++i) {
+                auto phase = emitFamilyExpressions(builder, before->getLoc(), points, commonTuple->phases[i],
+                                                   endpoint.composedTuple->rule.terms[i].modulus);
+                if (!phase.error.empty()) {
+                    return before->emitError("invalid endpoint-family tuple phase: ") << phase.error;
+                }
+                endpoint.composedTuple->phases.push_back(phase.member);
+            }
+        }
     } else {
         endpoint.directPhase = result.member;
     }
     // Presence is already guarded by the logical command; retain only the ID
     // slice of this detached family expression before judging its runtime cost.
-    Value root = endpoint.directId ? endpoint.directId : endpoint.tupleBase ? endpoint.tupleBase : endpoint.directPhase;
+    Value root = endpoint.directId ? endpoint.directId :
+        endpoint.composedTuple ? endpoint.composedTuple->base : endpoint.directPhase;
     for (auto& operation : llvm::make_early_inc_range(llvm::reverse(*block))) {
-        if (operation.getResult(0) != root && operation.use_empty()) { operation.erase(); }
+        const bool phase = endpoint.composedTuple &&
+            llvm::is_contained(endpoint.composedTuple->phases, operation.getResult(0));
+        if (operation.getResult(0) != root && !phase && operation.use_empty()) { operation.erase(); }
+    }
+    endpoint.phaseCode = std::move(block);
+    if (commonTuple && commonTuple->varyingPhases) {
+        // One bounded re-expression candidate, not a new allocation. Compare
+        // complete live ID DAGs with the existing cost model; irregular phase
+        // selectors may cost more than the incumbent member dispatcher.
+        Endpoint incumbent{before, endpoint.allocation, {}, {}};
+        incumbent.labels = endpoint.labels;
+        incumbent.tupleMembers = endpoint.tupleMembers;
+        if (mappingCost(ArrayRef<Endpoint>(&endpoint, 1)) >= mappingCost(ArrayRef<Endpoint>(&incumbent, 1))) {
+            endpoint.composedTuple.reset();
+            endpoint.phaseCode.reset();
+            return success();
+        }
     }
     auto branch = dyn_cast<scf::IfOp>(before->getParentOp());
-    const bool available = branch && llvm::all_of(*block, [&](Operation& operation) {
+    const bool available = branch && llvm::all_of(*endpoint.phaseCode, [&](Operation& operation) {
         return llvm::all_of(operation.getOperands(), [&](Value operand) {
-            return operand.getParentBlock() == block.get() || dominance.properlyDominates(operand, branch);
+            return operand.getParentBlock() == endpoint.phaseCode.get() || dominance.properlyDominates(operand, branch);
         });
     });
-    if (available && cheapPhaseCode(*block)) { endpoint.phaseBefore = branch; }
-    endpoint.phaseCode = std::move(block);
+    if (available && cheapPhaseCode(*endpoint.phaseCode)) { endpoint.phaseBefore = branch; }
     return success();
 }
 FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const PhysicalAllocationPlan& plan,
@@ -893,10 +937,23 @@ Value tuplePhysicalId(OpBuilder& builder, const Endpoint& endpoint)
     using TermKey = std::tuple<uint64_t, uint64_t, uint64_t, uint64_t>;
     std::map<TermKey, Value> terms;
     std::map<std::vector<uint64_t>, Value> mappings;
-    auto tupleOffset = [&](const PhysicalTupleRule& rule, Value offset) {
-        for (const auto& term : rule.terms) {
+    auto tupleOffset = [&](const PhysicalTupleRule& rule, Value offset, ArrayRef<Value> phases = {}) {
+        for (auto [index, term] : llvm::enumerate(rule.terms)) {
             if (!term.scale || term.modulus == 1) { continue; }
             const auto stride = term.stride % term.modulus, phase = term.phase % term.modulus;
+            if (!phases.empty()) {
+                // Selected phases are exact on the supplied member domain.
+                // Reduce the source coordinate first, as for static phases.
+                auto coordinate = op->getOperand(term.coordinate == 0 ? 0 : term.coordinate + 1);
+                auto modulus = constant(term.modulus);
+                Value product = builder.create<arith::RemUIOp>(location, coordinate, modulus);
+                if (stride != 1) { product = builder.create<arith::MulIOp>(location, product, constant(stride)); }
+                Value value = builder.create<arith::AddIOp>(location, product, phases[index]);
+                value = builder.create<arith::RemUIOp>(location, value, modulus);
+                if (term.scale != 1) { value = builder.create<arith::MulIOp>(location, value, constant(term.scale)); }
+                offset = builder.create<arith::AddIOp>(location, offset, value);
+                continue;
+            }
             const TermKey key{term.coordinate, stride, phase, term.modulus};
             auto [entry, added] = terms.try_emplace(key);
             if (added) {
@@ -918,11 +975,12 @@ Value tuplePhysicalId(OpBuilder& builder, const Endpoint& endpoint)
         }
         return offset;
     };
-    // Compose source selection with the shared nonconstant map before lowering
-    // a dispatcher. Only the exact member base varies over original coordinates.
+    // Compose source selection with the common nonconstant skeleton before
+    // lowering a dispatcher. Exact bases/phases use original coordinates.
     if (endpoint.composedTuple) {
-        return selectPhysicalPalette(builder, location,
-            tupleOffset(*endpoint.composedTuple, endpoint.tupleBase), endpoint.allocation->ids);
+        auto offset = tupleOffset(endpoint.composedTuple->rule, endpoint.composedTuple->base,
+                                  endpoint.composedTuple->phases);
+        return selectPhysicalPalette(builder, location, offset, endpoint.allocation->ids);
     }
     auto memberId = [&](const PhysicalRecordAllocation& member) -> Value {
         if (auto fixed = constantTupleId(member)) { return constant(*fixed); }
