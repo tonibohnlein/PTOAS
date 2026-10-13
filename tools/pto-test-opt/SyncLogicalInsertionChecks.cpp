@@ -75,6 +75,7 @@ private:
     llvm::json::Array events;
     std::string error;
     uint64_t visits = 0;
+    uint64_t arithmeticVisits = 0, selectVisits = 0, guardVisits = 0;
     uint64_t visitLimit = MaxVisits;
     uint64_t payloads = 0;
     uint64_t outerTrips = 0;
@@ -106,6 +107,9 @@ bool Interpreter::block(Block& body, SmallVectorImpl<Attribute>& yielded, unsign
         if (++visits > visitLimit || events.size() >= MaxEvents) {
             return fail("trace visit or event limit exceeded");
         }
+        arithmeticVisits += op.getName().getDialectNamespace() == "arith";
+        selectVisits += isa<arith::SelectOp>(op);
+        guardVisits += isa<scf::IfOp>(op);
         if (isa<scf::YieldOp, func::ReturnOp>(op)) {
             for (auto operand : op.getOperands()) {
                 yielded.push_back(lookup(operand));
@@ -361,6 +365,7 @@ llvm::json::Object Interpreter::run(func::FuncOp function)
     }
     return llvm::json::Object{{"function", function.getSymName()}, {"error", error},
         {"payloads", payloads}, {"outer_trips", outerTrips}, {"visits", visits},
+        {"arithmetic_visits", arithmeticVisits}, {"select_visits", selectVisits}, {"guard_visits", guardVisits},
         {"visit_limit", visitLimit}, {"events", std::move(events)}};
 }
 } // namespace

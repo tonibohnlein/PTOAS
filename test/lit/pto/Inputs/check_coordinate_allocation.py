@@ -108,10 +108,14 @@ def main():
     observed = []
     with tempfile.TemporaryDirectory(dir=scratch) as directory:
         path = Path(directory) / "case.pto"
-        for threshold, sparse in [(False, False), (False, True), (True, False)]:
+        for threshold, sparse, nested in [(t, s, n) for t, s in [(False, False), (False, True), (True, False)]
+                                         for n in (False, True)]:
             sizes = []
             for size in (8, 32, 128):
                 source, expected = fixture(size, threshold, sparse)
+                if nested:
+                    source = source.replace("pto.endpoint_families = {version = 3",
+                                            "pto.endpoint_families = {version = 4")
                 path.write_text(source)
                 physical = opt(optimizer, path, ["--pto-frontier-allocate=eligible-ids=1,5"]).stdout
                 sizes.append(len(re.findall(r" = arith\.", physical)))

@@ -5,9 +5,12 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Validate prepared endpoints, then insert logical commands at actual cuts.
+// Validate prepared endpoints, compact provably exclusive finite alternatives,
+// then insert logical commands at actual cuts. Compaction factors only explicit
+// coordinate equalities; opaque predicates and coincident command order survive.
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PrivateStatePlan.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyExpressions.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
@@ -16,7 +19,9 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include <map>
@@ -101,6 +106,141 @@ void deduplicatePreparation(PreparedLogicalPlan& plan)
         remap(endpoint.guard); remap(endpoint.identity);
         for (auto& member : endpoint.memberCoordinates) { remap(member); }
     }
+}
+// Factor only explicit conjunctions and equality tests on certified induction
+// coordinates. Other predicates remain opaque, evaluated at their original cut.
+std::optional<SmallVector<Value>> residualGuard(Value guard, ArrayRef<TemplateCoordinate> coordinates)
+{
+    SmallVector<Value> pending{guard}, residual;
+    llvm::DenseSet<Value> seen, bound;
+    while (!pending.empty()) {
+        auto value = pending.pop_back_val();
+        if (!seen.insert(value).second || matchPattern(value, m_One())) { continue; }
+        if (auto both = value.getDefiningOp<arith::AndIOp>()) {
+            pending.push_back(both.getLhs()); pending.push_back(both.getRhs()); continue;
+        }
+        if (auto choice = value.getDefiningOp<arith::SelectOp>();
+            choice && matchPattern(choice.getFalseValue(), m_Zero())) {
+            pending.push_back(choice.getCondition()); pending.push_back(choice.getTrueValue()); continue;
+        }
+        bool coordinateTest = false;
+        if (auto equal = value.getDefiningOp<arith::CmpIOp>();
+            equal && equal.getPredicate() == arith::CmpIPredicate::eq) {
+            for (auto coordinate : coordinates) {
+                Value induction = coordinate.loop.getInductionVar();
+                Value other = equal.getLhs() == induction ? equal.getRhs() :
+                    equal.getRhs() == induction ? equal.getLhs() : Value{};
+                APInt constant;
+                if (other && matchPattern(other, m_ConstantInt(&constant)) && constant.isSignedIntN(64) &&
+                    constant.getSExtValue() == coordinate.induction) {
+                    bound.insert(induction); coordinateTest = true; break;
+                }
+            }
+        }
+        if (!coordinateTest) { residual.push_back(value); }
+    }
+    if (bound.size() != coordinates.size()) { return std::nullopt; }
+    llvm::sort(residual, [](Value a, Value b) {
+        return std::less<const void*>{}(a.getAsOpaquePointer(), b.getAsOpaquePointer());
+    });
+    return residual;
+}
+// Combine consecutive command alternatives only when exact finite coordinates
+// prove mutual exclusion. Certificates retain every record; labels remain
+// provenance, and simultaneously active commands are never collapsed.
+LogicalResult coalesceEndpointAlternatives(PreparedLogicalPlan& plan)
+{
+    if (!plan.independentPieces || plan.endpoints.empty()) { return success(); }
+    auto* cut = plan.endpoints.front().before;
+    const auto width = DataLayout::closest(cut).getTypeSizeInBits(IndexType::get(cut->getContext()));
+    if (width.isScalable() || width.getFixedValue() != 64) { return success(); }
+    struct Domain {
+        SmallVector<Operation*> axes;
+        std::set<std::vector<int64_t>> points;
+        SmallVector<Value> residual;
+    };
+    std::map<uint32_t, std::pair<const EndpointFamily*, const EndpointFamilyMember*>> members;
+    for (const auto& family : plan.families) {
+        for (const auto& member : family.members) { members.emplace(member.record, std::make_pair(&family, &member)); }
+    }
+    auto domain = [&](const PreparedLogicalEndpoint& endpoint) -> std::optional<Domain> {
+        Domain result;
+        // Already grouped domains keep their existing compact representation.
+        if (endpoint.records.size() != 1) { return std::nullopt; }
+        for (auto record : endpoint.records) {
+            const auto [family, member] = members.at(record);
+            if (family->sourceChoices || family->targetChoices) { return std::nullopt; }
+            const auto& coordinates = endpoint.kind == LogicalCommandKind::Set ?
+                member->sourceCoordinates : member->targetCoordinates;
+            if (coordinates.empty()) { return std::nullopt; }
+            auto remaining = residualGuard(endpoint.guard, coordinates);
+            if (!remaining) { return std::nullopt; }
+            result.residual = std::move(*remaining);
+            SmallVector<Operation*> axes;
+            std::vector<int64_t> point;
+            for (auto coordinate : coordinates) {
+                axes.push_back(coordinate.loop.getOperation()); point.push_back(coordinate.induction);
+            }
+            if (result.points.empty()) { result.axes = axes; }
+            if (result.axes != axes || !result.points.insert(std::move(point)).second) { return std::nullopt; }
+        }
+        return result.points.empty() ? std::nullopt : std::optional<Domain>(std::move(result));
+    };
+    using CutKind = std::pair<Operation*, LogicalCommandKind>;
+    std::map<CutKind, std::size_t> previous;
+    std::map<std::size_t, Domain> domains;
+    std::vector<bool> removed(plan.endpoints.size(), false), combined(plan.endpoints.size(), false);
+    for (std::size_t i = 0; i < plan.endpoints.size(); ++i) {
+        auto& endpoint = plan.endpoints[i];
+        if (endpoint.kind == LogicalCommandKind::Barrier || endpoint.memberCoordinates.empty()) { continue; }
+        auto current = domain(endpoint);
+        auto [entry, fresh] = previous.emplace(CutKind{endpoint.before, endpoint.kind}, i);
+        const auto old = entry->second;
+        auto known = domains.find(old);
+        auto& preceding = plan.endpoints[old];
+        const bool compatible = !fresh && current && known != domains.end() &&
+            preceding.record == endpoint.record && preceding.identity == endpoint.identity &&
+            preceding.sourcePipe == endpoint.sourcePipe && preceding.targetPipe == endpoint.targetPipe &&
+            ArrayRef<Value>(preceding.memberCoordinates).drop_front() ==
+                ArrayRef<Value>(endpoint.memberCoordinates).drop_front() &&
+            known->second.axes == current->axes && known->second.residual == current->residual &&
+            llvm::none_of(current->points, [&](const auto& point) { return known->second.points.count(point); });
+        if (!compatible) {
+            entry->second = i;
+            if (current) { domains.emplace(i, std::move(*current)); }
+            continue;
+        }
+        preceding.records.append(endpoint.records.begin(), endpoint.records.end());
+        known->second.points.insert(current->points.begin(), current->points.end());
+        removed[i] = true; combined[old] = true;
+    }
+    std::vector<PreparedLogicalEndpoint> retained;
+    for (std::size_t i = 0; i < plan.endpoints.size(); ++i) {
+        if (removed[i]) { continue; }
+        auto& endpoint = plan.endpoints[i];
+        if (combined[i]) {
+            SmallVector<SmallVector<TemplateCoordinate>> points;
+            SmallVector<int64_t> labels;
+            for (auto record : endpoint.records) {
+                const auto* member = members.at(record).second;
+                points.push_back(endpoint.kind == LogicalCommandKind::Set ?
+                    member->sourceCoordinates : member->targetCoordinates);
+                labels.push_back(record);
+            }
+            OpBuilder builder(endpoint.before->getContext());
+            builder.setInsertionPointToEnd(&plan.addPreparation(endpoint.before));
+            auto selection = emitFamilyExpressions(builder, endpoint.before->getLoc(), points, labels);
+            if (!selection.error.empty()) { return endpoint.before->emitError(selection.error); }
+            endpoint.memberCoordinates.front() = selection.member;
+            endpoint.guard = selection.present;
+            for (auto factor : domains.at(i).residual) {
+                endpoint.guard = builder.create<arith::AndIOp>(endpoint.before->getLoc(), endpoint.guard, factor);
+            }
+        }
+        retained.push_back(std::move(endpoint));
+    }
+    plan.endpoints = std::move(retained);
+    return success();
 }
 bool concretePipe(uint32_t pipe)
 {
@@ -520,6 +660,8 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
         return function.emitError("logical insertion cannot replace an existing allocation certificate");
     }
     deduplicatePreparation(plan);
+    if (failed(coalesceEndpointAlternatives(plan))) { return failure(); }
+    if (failed(preflight(function, plan))) { return failure(); }
     for (auto& stage : plan.preparation) {
         auto* target = stage.before->getBlock();
         target->getOperations().splice(stage.before->getIterator(), stage.code->getOperations());

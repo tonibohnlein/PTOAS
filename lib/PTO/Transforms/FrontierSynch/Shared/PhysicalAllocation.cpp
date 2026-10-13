@@ -86,6 +86,13 @@ SmallVector<int64_t> constantMemberIds(const Endpoint& endpoint)
 
 Value selectPhysicalPalette(OpBuilder& builder, Location location, Value index, ArrayRef<int64_t> palette)
 {
+    if (palette.size() > 1 && llvm::all_of(llvm::enumerate(palette), [&](auto entry) {
+            return entry.value() == palette.front() + static_cast<int64_t>(entry.index());
+        })) {
+        if (!palette.front()) { return index; }
+        Value base = builder.create<arith::ConstantIndexOp>(location, palette.front());
+        return builder.create<arith::AddIOp>(location, index, base);
+    }
     Value result = builder.create<arith::ConstantIndexOp>(location, palette.front());
     for (std::size_t i = 1; i < palette.size(); ++i) {
         Value position = builder.create<arith::ConstantIndexOp>(location, static_cast<int64_t>(i));
@@ -377,14 +384,46 @@ FailureOr<CoordinateProvenance> readCoordinates(func::FuncOp function)
     }
     return result;
 }
+bool distinctCoordinateMembers(const Endpoint& endpoint, const CoordinateProvenance& provenance, bool publish)
+{
+    llvm::DenseSet<Attribute> seen;
+    SmallVector<int64_t> axes;
+    for (auto label : endpoint.labels) {
+        auto found = provenance.members.find(static_cast<int64_t>(label));
+        if (found == provenance.members.end()) { return false; }
+        auto tuple = found->second.getAs<ArrayAttr>(publish ? "source" : "target");
+        if (!tuple || tuple.empty() || !seen.insert(tuple).second) { return false; }
+        SmallVector<int64_t> current;
+        for (auto attr : tuple) {
+            auto coordinate = dyn_cast<DenseI64ArrayAttr>(attr);
+            if (!coordinate || coordinate.size() != 2) { return false; }
+            current.push_back(coordinate[0]);
+        }
+        if (axes.empty()) { axes = current; }
+        if (axes != current) { return false; }
+    }
+    return !seen.empty();
+}
+bool cheapPhaseCode(Block& code)
+{
+    unsigned cost = 0;
+    for (auto& operation : code) {
+        if (isa<arith::ConstantOp>(operation)) { continue; }
+        if (++cost > 8) { return false; }
+        if (auto remainder = dyn_cast<arith::RemUIOp>(operation)) {
+            APInt modulus;
+            if (!matchPattern(remainder.getRhs(), m_ConstantInt(&modulus)) || !modulus.isPowerOf2()) { return false; }
+        }
+        if (isa<arith::DivSIOp, arith::DivUIOp, arith::RemSIOp>(operation)) { return false; }
+    }
+    return true;
+}
 LogicalResult prepareCoordinatePhase(Endpoint& endpoint, const CoordinateProvenance& provenance,
                                      DominanceInfo& dominance, bool publish)
 {
     SmallVector<SmallVector<TemplateCoordinate>> points;
     bool anyCoordinates = false;
     Operation* before = endpoint.operation;
-    auto branch = dyn_cast<scf::IfOp>(before->getParentOp());
-    bool outside = static_cast<bool>(branch);
     for (auto label : endpoint.labels) {
         auto member = provenance.members.find(static_cast<int64_t>(label));
         if (member == provenance.members.end()) {
@@ -405,7 +444,6 @@ LogicalResult prepareCoordinatePhase(Endpoint& endpoint, const CoordinateProvena
             if (!loop || !dominance.properlyDominates(loop.getInductionVar(), before)) {
                 return before->emitError("endpoint-family coordinate is unavailable at its command cut");
             }
-            outside &= branch && dominance.properlyDominates(loop.getInductionVar(), branch.getOperation());
             point.push_back({loop, coordinate[1]});
         }
         anyCoordinates |= !point.empty();
@@ -443,12 +481,25 @@ LogicalResult prepareCoordinatePhase(Endpoint& endpoint, const CoordinateProvena
     if (!result.error.empty()) {
         return before->emitError("invalid endpoint-family phase coordinates: ") << result.error;
     }
-    endpoint.phaseBefore = outside ? branch.getOperation() : before;
+    endpoint.phaseBefore = before;
     if (directId) {
         endpoint.directId = selectPhysicalPalette(builder, before->getLoc(), result.member, palette);
     } else {
         endpoint.directPhase = result.member;
     }
+    // Presence is already guarded by the logical command; retain only the ID
+    // slice of this detached family expression before judging its runtime cost.
+    Value root = endpoint.directId ? endpoint.directId : endpoint.directPhase;
+    for (auto& operation : llvm::make_early_inc_range(llvm::reverse(*block))) {
+        if (operation.getResult(0) != root && operation.use_empty()) { operation.erase(); }
+    }
+    auto branch = dyn_cast<scf::IfOp>(before->getParentOp());
+    const bool available = branch && llvm::all_of(*block, [&](Operation& operation) {
+        return llvm::all_of(operation.getOperands(), [&](Value operand) {
+            return operand.getParentBlock() == block.get() || dominance.properlyDominates(operand, branch);
+        });
+    });
+    if (available && cheapPhaseCode(*block)) { endpoint.phaseBefore = branch; }
     endpoint.phaseCode = std::move(block);
     return success();
 }
@@ -525,7 +576,10 @@ FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const Ph
             endpoint.labels.push_back(static_cast<uint64_t>(record));
         }
         if (!nested && commonPalette(endpoint.tupleMembers)) { endpoint.tupleMembers.clear(); }
-        if (!nested && failed(prepareCoordinatePhase(endpoint, *coordinates, dominance, publish))) {
+        const bool fixedCoordinates = nested && !constantMemberIds(endpoint).empty() &&
+            distinctCoordinateMembers(endpoint, *coordinates, publish);
+        if ((!nested || fixedCoordinates) &&
+            failed(prepareCoordinatePhase(endpoint, *coordinates, dominance, publish))) {
             return WalkResult::interrupt();
         }
         endpoints.push_back(std::move(endpoint));
@@ -733,22 +787,7 @@ Value physicalId(OpBuilder& builder, Location location, Value ordinal,
         phase = builder.create<arith::AddIOp>(location, term, phase);
         phase = builder.create<arith::RemUIOp>(location, phase, modulus);
     }
-    bool contiguous = true;
-    for (std::size_t i = 0; i < record.ids.size(); ++i) {
-        contiguous &= record.ids[i] == record.ids.front() + static_cast<int64_t>(i);
-    }
-    if (contiguous) {
-        if (record.ids.front()) {
-            return builder.create<arith::AddIOp>(location, phase, constant(record.ids.front()));
-        }
-        return phase;
-    }
-    Value id = constant(record.ids.front());
-    for (std::size_t i = 1; i < record.ids.size(); ++i) {
-        Value selected = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq, phase, constant(i));
-        id = builder.create<arith::SelectOp>(location, selected, constant(record.ids[i]), id);
-    }
-    return id;
+    return selectPhysicalPalette(builder, location, phase, record.ids);
 }
 std::optional<int64_t> constantTupleId(const PhysicalRecordAllocation& record)
 {
@@ -806,12 +845,7 @@ Value tuplePhysicalId(OpBuilder& builder, const Endpoint& endpoint)
         // The checked term bound keeps every intermediate within the palette;
         // positive-scale moduli are at most its six eligible entries. Products
         // use reduced residues, so large original source coordinates cannot wrap.
-        Value id = constant(member.ids.front());
-        for (std::size_t i = 1; i < member.ids.size(); ++i) {
-            auto selected = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq, offset, constant(i));
-            id = builder.create<arith::SelectOp>(location, selected, constant(member.ids[i]), id);
-        }
-        return id;
+        return selectPhysicalPalette(builder, location, offset, member.ids);
     };
     Value result = memberId(*endpoint.tupleMembers.front());
     for (std::size_t i = 1; i < endpoint.tupleMembers.size(); ++i) {
@@ -921,13 +955,8 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
     function.walk([&](Operation* operation) { original.insert(operation); });
     for (const auto& endpoint : *endpoints) {
         OpBuilder builder(endpoint.operation);
-        auto branch = dyn_cast<scf::IfOp>(endpoint.operation->getParentOp());
-        if (branch && branch->hasAttr("pto.endpoint_cut") &&
-            llvm::all_of(endpoint.operation->getOperands(), [&](Value operand) {
-                return dominance.properlyDominates(operand, branch.getOperation());
-            })) {
-            builder.setInsertionPoint(branch);
-        }
+        // Keep allocation arithmetic conditional on the command. Dominance
+        // permits hoisting, but does not make speculative dispatch profitable.
         Value eventId;
         std::optional<int64_t> staticId;
         if (endpoint.phaseCode) {
@@ -962,8 +991,8 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
             eventId = physicalId(builder, endpoint.operation->getLoc(), endpoint.operation->getOperand(0),
                                  *endpoint.allocation, phase);
         }
-        // All member-phase arithmetic is total and may be shared at the cut.
-        // Command execution remains inside the original presence guard.
+        // General ID dispatch stays guarded; only the small, preflighted
+        // coordinate slice may already have been shared before this branch.
         builder.setInsertionPoint(endpoint.operation);
         emitAllocatedCommand(builder, endpoint.operation, staticId, eventId);
         original.erase(endpoint.operation);
