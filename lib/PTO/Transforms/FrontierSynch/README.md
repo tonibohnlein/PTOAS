@@ -33,17 +33,23 @@ allocation pass; detached preparation and certificate construction precede it.
    and required mathematical interfaces. Each route retains its native result
    representation; composition requests child queries and storage selectors.
 3. Route-specific preparation uses the retained demands and the structure that
-   established them to construct detached synchronization fragments at original
-   cuts. Shared endpoint and insertion helpers preserve matching identities.
+   established them. Numerical and rotating root plans retain immutable family
+   recipes, validated coordinate maps and command order without generating
+   scalar MLIR. Other producers still construct detached fragments. Shared
+   endpoint and insertion helpers preserve matching identities.
 4. Route-specific allocation adapters certify reuse for the selected completed
    graph. `Shared/LogicalInsertion.cpp` invokes deferred allocation preparation;
    `Shared/PhysicalAllocation.cpp` lowers certified logical families to physical
    event IDs. `Finite/FiniteAllocation.cpp` and shared compact/handoff engines
    perform their supported allocation strategies. Capacity remains six eligible
    IDs under the default policy, with explicit failure and no scarcity repair.
-5. Accepted fragments are attached transactionally. Failed preparation never
-   changes the original IR. A missing emission or allocation adapter does not
-   discard exact mathematical results.
+5. Numerical family recipes are materialized once at insertion, after requested
+   allocation support. Regional composition and physical-section projection
+   explicitly materialize before rewriting concrete coordinates and endpoints;
+   those adapters have not yet migrated to recipe composition. Accepted
+   fragments are attached transactionally. Failed preparation never changes
+   the original IR. A missing emission or allocation adapter does not discard
+   exact mathematical results.
 
 Mathematics, code preparation and allocation remain separate requests inside
 each end-to-end route. IDs must be assigned against the selected composed graph;

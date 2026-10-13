@@ -23,8 +23,8 @@ exclusion evidence; they do not replace exact guards or matching identities.
 | Milestone | Work and acceptance | Current status |
 |---|---|---|
 | M0: preparation ownership | Reproduce prefill failure; remap every affected non-SSA preparation reference before deletion; validate complementary cleanup and failure atomicity; replay prefill separately from the failing baseline. | Complete: `32b38b426` |
-| M1: measurement | Count records, initial/normalized families, legacy singleton preparation, proof traversal, prepared/live generated arithmetic, command sites, state, and ID mappings; preserve profiling equivalence and pinned receipts. | Eleven-kernel baseline captured; stage instrumentation pending |
-| M2: family construction | Separate family construction from materialization using existing family types; migrate numerical, sequence, and repeated-crossing producers; retain known modular maps; remove migrated singleton arithmetic paths. | Pending |
+| M1: measurement | Count records, initial/normalized families, legacy singleton preparation, proof traversal, prepared/live generated arithmetic, command sites, state, and ID mappings; preserve profiling equivalence and pinned receipts. | Stage inventories implemented in `f8917325d`; proof-work and ID-map inventories remain open |
+| M2: family construction | Separate family construction from materialization using existing family types; migrate numerical, sequence, and repeated-crossing producers; retain known modular maps; remove migrated singleton arithmetic paths. | Numerical/rotating root recipes migrated in `a2ae91269`; regional and repeated crossings remain open |
 | M3: occurrence binding | Share identity, frame, availability, capture, history and reset interpretation between direct/prefix protocols; migrate numerical and guarded producers; transform or invalidate recipes with their coordinates. Validate Delta matching/order and control growth, not only logical acceptance. | Pending |
 | M4: allocation | Allocate the normalized command graph; return reuse evidence and complete ID-map recipes; request stronger evidence when needed; keep expensive dispatch conditional; preserve exact-order six-ID failures when unproved. | Pending |
 | M5: session and capabilities | Retain facts, mathematics, recipes and allocation in one session; deterministic capability upgrades; common unified/split stage functions; self-contained versioned saved artifacts; delete redundant orchestration. | Pending |
@@ -107,3 +107,70 @@ Six-ID allocation still refuses because the finite/uniform allocation export is
 missing. This is neither a capacity lower bound nor a compiler-time improvement.
 The original failing receipt is unchanged. Repair receipts are under
 `.local/family-pipeline-m0/`.
+
+## M1 stage inventories
+
+`profile-stages=true` now emits aggregate `frontier-control-profile` records at
+preparation, normalization and insertion. They count provenance families and
+record members separately from endpoint sites, detached arithmetic and its
+structural endpoint reachability. Function arithmetic explicitly includes
+payload arithmetic. Private-state paths report their staged invocation rather
+than pretending that an empty ordinary endpoint list means no generated work.
+These are static inventories, not executed-instruction counts or proof costs.
+The two focused profile tests establish unchanged public IR and diagnostics.
+
+A Persistent GEMM probe at `f8917325d` reports:
+
+| Stage | Record members | Endpoint sites | Detached arithmetic | Endpoint-reachable arithmetic |
+|---|---:|---:|---:|---:|
+| Prepared | 1,544 | 3,088 | 20,257 | 20,257 |
+| Normalized | 1,544 | 116 | 18,283 | 11,468 |
+
+Insertion emits 56 SET sites, 60 WAIT sites, one barrier, and 18,342 arithmetic
+operations including payload arithmetic. Thus the late reduction in command
+sites still follows substantial preparation; it is not demand elimination.
+The 9.015-second diagnostic run is not a paired compiler-time result. Receipts
+are `.local/family-pipeline-m0/persistent-control.{json,out,err}`. Traversal,
+dynamic-control, and complete ID-map metrics remain outstanding.
+
+## M2 numerical/rotating migration
+
+`a2ae91269` splits the existing numerical family construction from scalar
+materialization. The opaque immutable recipes retain validated coordinate maps,
+ordered pieces, original cuts and record provenance. Affine/modular fitting and
+irregular-domain construction run before emission; lowering consumes the chosen
+map without reconstructing it. A cut directory replaces the old per-cut scan
+through all pieces. Temporary point lists used to fit maps are not retained in
+the expression recipe.
+
+Numerical and rotating root requests now retain these recipes through allocation
+support with zero detached scalar operations. Insertion consumes each recipe
+once. Standalone numerical and rotating entry points use the same constructor;
+the old immediate family-preparation wrapper is removed. Existing regional
+consumers materialize explicitly before editing endpoint SSA. Physical-section
+projection materializes before remapping its borrowed coordinates. Private-state
+and completion plans reject mixed recipe ownership.
+
+Eleven focused lit tests pass, covering production preparation with and without
+allocation support, six-ID allocation, section projection, independent matching
+and ordering oracles, irregular family maps, zero/short/nonunit loops, and fresh
+plan ownership. The endpoint-family fixture needed a test correction: operation
+names in diagnostic attributes are not payload statements. Its corrected check
+still requires every original loop and payload operation to be present.
+
+The saved rotating output is byte-identical. The numerical output differs only
+in a location line moved by the new RUN directive; arithmetic, commands,
+provenance and certificates agree. Persistent retains the M1 inventories and
+passes six-ID allocation. Its output differs in ten `arith.andi` definitions;
+flattening associative Boolean ANDs proves equality at all 5,443 uses outside
+those AND chains, and all other lines agree. Receipts, source/binary hashes and
+comparison results are under `.local/family-pipeline-m2/`.
+
+This is the first M2 production migration, not completion of the milestone.
+Sequence and repeated crossings still prepare individual alternatives. The late
+compactor still runs, physical-ID expressions are still lowered in the separate
+allocation pass, and producers do not yet export all known symbolic maps
+directly. No planning-speedup or device-speedup claim follows from this change.
+The next migration must preserve availability and direct/cleanup protocol
+selection before allocation while removing the corresponding per-alternative
+preparation; merely delaying the same expanded preparation is insufficient.
