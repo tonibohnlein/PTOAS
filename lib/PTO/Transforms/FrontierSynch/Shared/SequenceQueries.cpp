@@ -10,6 +10,7 @@
 namespace mlir::pto::frontiersynch {
 void SequenceAnalysisState::bridges()
 {
+    bridgeWork = {};
     const SyncStorageEffects* model = nullptr;
     SmallVector<const CompoundInstanceElement*> phases;
     bool residual = false;
@@ -21,6 +22,8 @@ void SequenceAnalysisState::bridges()
     residual |= model && model->hasUniformRelationships(phases);
     const auto protection = model ? structuredProtection(*model) : StructuredProtection{};
     auto storageCrossing = [&](uint32_t cell, Selected source, Selected target) {
+        ++bridgeWork.candidates;
+        if (expressions.constantValue(both(source.present, target.present)) == 0) { return; }
         if (ptoStorageProtection().protectsScalar(pipe(source.port), pipe(target.port))) { return; }
         const auto& a = ports[source.port];
         const auto& b = ports[target.port];
@@ -29,7 +32,9 @@ void SequenceAnalysisState::bridges()
         if (cells[cell].space == AddressSpace::ACC && hardwareProtectsConflict(
                 pipe(source.port), protection.within(x, requiredOuterLoops),
                 pipe(target.port), protection.within(y, requiredOuterLoops))) { return; }
+        const auto before = crossings.size();
         crossing(source, target);
+        bridgeWork.retained += crossings.size() - before;
     };
     if (residual) {
         for (uint32_t a = 0; a < children.size(); ++a) {
@@ -81,6 +86,24 @@ void SequenceAnalysisState::bridges()
             }
         }
     }
+    // Update a complete occurrence group before discarding dead alternatives.
+    // In particular, simultaneous macro envelopes never suppress one another.
+    // Only constant-false entries are removed; unresolved guards remain exact.
+    auto maskFrontier = [&](std::vector<Selected>& values, Expr replaced) {
+        if (expressions.constantValue(replaced) == 1) { values.clear(); return; }
+        if (expressions.constantValue(replaced) == 0) { return; }
+        const auto keep = negate(replaced);
+        llvm::erase_if(values, [&](Selected& value) {
+            ++bridgeWork.remasked;
+            value.present = both(value.present, keep);
+            return expressions.constantValue(value.present) == 0;
+        });
+    };
+    auto appendLive = [&](std::vector<Selected>& frontier, const std::vector<Selected>& values) {
+        for (auto value : values) {
+            if (expressions.constantValue(value.present) != 0) { frontier.push_back(value); }
+        }
+    };
     for (uint32_t cell = 0; cell < cells.size(); ++cell) {
         std::vector<Selected> writers;
         std::map<uint32_t, std::vector<Selected>> readers;
@@ -101,17 +124,17 @@ void SequenceAnalysisState::bridges()
                     for (auto old : writers) { storageCrossing(cell, old, first); }
                 }
             }
-            for (auto& old : writers) { old.present = both(old.present, negate(overwritten)); }
-            llvm::append_range(writers, summary.lastWriters);
+            maskFrontier(writers, overwritten);
+            appendLive(writers, summary.lastWriters);
             for (auto& [p, old] : readers) {
                 Expr replaced = overwritten;
                 auto found = summary.lastReaders.find(p);
                 if (found != summary.lastReaders.end()) {
                     for (auto current : found->second) { replaced = either(replaced, current.present); }
                 }
-                for (auto& reader : old) { reader.present = both(reader.present, negate(replaced)); }
+                maskFrontier(old, replaced);
             }
-            for (const auto& [p, current] : summary.lastReaders) { llvm::append_range(readers[p], current); }
+            for (const auto& [p, current] : summary.lastReaders) { appendLive(readers[p], current); }
         }
     }
 }

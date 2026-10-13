@@ -26,13 +26,49 @@ all code at the reference compiler.
 Each milestone has focused tests, architectural and correctness review, and a
 separate commit. Infrastructure alone does not complete a production milestone.
 
+### Priority revision after the review of `a166645de`
+
+Keep the eight milestones and their acceptance criteria. Execute the remaining
+work in this order:
+
+1. **Milestone 5 bridge construction:** remove constant-false writer/reader
+   frontier entries after processing complete occurrence groups. Count bridge
+   candidates, remasked entries and retained bridges independently of boundary
+   summary visits. Test separate compact children, simultaneous macro envelopes,
+   conditional replacement and untouched intermediate children. Then address
+   sparse child/cell participation; pruning dead history alone does not remove
+   the child-by-cell traversal or residual alias pair products.
+2. **Milestone 7 executable selectors:** retain producer-owned occurrence-choice
+   recipes across exports and coordinate adapters. Capture primitive executed
+   source ranks at their actual cuts, and evaluate choices at consumers. Preserve
+   target occurrence selection as well, including same-pipe barriers. Predicate
+   snapshots are supporting machinery, not a substitute for lost construction
+   evidence. Public Delta logical success remains the completion criterion.
+3. **Milestones 2, 3, 4 and 6 consolidation:** finish demand-driven allocation
+   evidence, session-owned facts and capability upgrades, coarse input admission,
+   and import of closed executable children into Section 6. Preserve the exact
+   retention policy; the conservative fallback does not rescue a failed export
+   of retained exact whole-region mathematics.
+4. **Milestone 8 measurement and closure:** measure threshold substitutions and
+   implication traversals as well as expression counts; share safe attempt-owned
+   proof preparation. Close outstanding semantic oracles and run the pinned
+   full pipeline with the new counters. Report successful compilation, retained
+   mathematics, refusal, allocation and device execution separately.
+
+The seven-kernel device comparison is a separate measurement task in
+`test/npu_validation/benchmarks/auto_sync/DEVICE_TASK.md`; it does not expand the
+compiler milestone scope to event-scarcity repair. The current eleven-kernel
+replay gives ten logical plans and seven allocated C++ outputs, with 240/240
+MayNotAlias exact regions. This is current-head coverage evidence, not the final
+paired corpus campaign or device validation.
+
 | Milestone | Implementation | Acceptance | Status |
 |---|---|---|---|
 | 1. Measured baseline | Aggregate allocation summary/query/proof/lane timing and inner-loop counts; precise retained-prefix refusal; pinned baseline replay. | Profiling preserves commands and certificates; bounded diagnostic storage; classify the Persistent GEMM hot stage and Delta blocker. | Complete; evidence below |
 | 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; logical-only allocation request complete; repeated-lane proof reuse complete; lane scheduling pending |
 | 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Sequence preparation failure isolation complete; broader capability consolidation pending |
 | 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; borrowed regional adapter complete; global compact memberships and universal descriptor dependency indexing complete; shared fact views and delayed atomization pending |
-| 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection and scoped source facts implemented through sequence and compact routes; session-wide consolidation remains |
+| 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Dead bridge-frontier pruning and counters complete; ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection and scoped source facts implemented through sequence and compact routes; session-wide consolidation remains |
 | 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Qualified A3 structured completion complete; larger closed-child imports and coarse input preparation pending |
 | 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Regional prefix ownership, singleton forwarding, crossing presence and qualified predicate snapshots complete; general executable selectors and public Delta emission pending |
 | 8. Proof reuse and validation | Share lazy inactive-proof and premise contexts, replay mappings and safe Boolean conversion work. Close known guard-equivalence/oracle gaps and run pinned paired campaigns. | No unexplained acceptance loss or changed output; report eleven kernels and 783-input corpus by stage, wall time, memory and inner work. | Lazy inactive-proof setup shared; broader proof reuse and campaign pending |
@@ -803,3 +839,31 @@ Top-level compact requests still build their initial full-input index; local
 prerequisite tracing remains local work. No whole-pass timing improvement or
 complete session-wide sharing is claimed. Receipts:
 `.local/three-paths/consolidation/m5-compact-facts/`.
+
+## Milestone 5 follow-up: live bridge frontiers
+
+Bridge construction now removes constant-false alternatives after masking a
+complete writer/reader group. An unconditional replacement clears the old
+frontier before appending the new simultaneous envelopes. Incoming alternatives
+already known false are not appended. Conditional alternatives remain until the
+expression arena proves them false; no guard-equivalence solver or admission
+limit was added.
+
+The diagnostic interface separately counts examined storage bridge candidates,
+individual frontier entries remasked, and newly retained live endpoint pairs.
+These counts exclude the residual-alias pair loop and boundary-summary work.
+At 128, 256 and 1,024 unconditional writer children, candidate visits are 127,
+255 and 1,023, with no individual remasking visits. Repeated identical symbolic
+guards have the same linear candidate counts and one remasking per replacement.
+All-false children produce no frontier candidates. An independent dense conflict
+closure agrees across 32 guarded executions, including simultaneous writer
+envelopes and skipped intermediate regions. The existing sequence regression
+also checks candidate/remasking growth for 8/16/32 separate compact loop children.
+
+The focused bridge and sequence-analysis lit tests pass in the optimized
+assertions-enabled build. A separate source review accepted the group handling,
+pruning and counter definitions. This does not close the sparse child/cell
+participation work, residual alias products, or the full composition milestone.
+Local build and test receipts are under
+`.local/three-paths/consolidation/m7-selector-recipes/` (the shared validation run
+also exercises the in-progress selector work).

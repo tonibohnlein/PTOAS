@@ -325,6 +325,10 @@ uint64_t sequenceBoundarySummaryVisits(const SequenceAnalysis& analysis)
 {
     return analysis.state ? analysis.state->boundarySummaryVisits : 0;
 }
+SequenceBridgeWork sequenceBridgeWork(const SequenceAnalysis& analysis)
+{
+    return analysis.state ? analysis.state->bridgeWork : SequenceBridgeWork{};
+}
 RegionExpressions* sequenceExpressions(SequenceAnalysis& analysis)
 {
     return analysis.state ? &analysis.state->expressions : nullptr;

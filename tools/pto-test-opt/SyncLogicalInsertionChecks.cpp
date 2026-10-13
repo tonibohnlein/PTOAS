@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/MixedStrideAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRegional.h"
 #include "SyncLogicalInsertionChecks.h"
+#include "SequenceBridgeChecks.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/InvocationPrefixCollection.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/CountedLoop.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/InvocationSourceBounds.h"
@@ -1263,6 +1264,11 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
     if (!checkSequenceBoundarySets(function)) { return failure(); }
     pto::SyncInput input(policy);
     if (failed(input.build(function))) { return failure(); }
+    if (function->hasAttr("test.bridge_work")) {
+        const bool valid = pto::test::checkSequenceBridgeWork(function, input);
+        llvm::outs() << "bridge-frontier checks: " << (valid ? "passed" : "failed") << "\n";
+        return success(valid);
+    }
     if (!checkCrossingPresence(function, input)) { return failure(); }
     if (function->hasAttr("test.finite_arithmetic_fill")) {
         return success(checkFiniteArithmeticFill(function, input));
@@ -1294,6 +1300,9 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
     if (function->hasAttr("test.boundary_summary_only")) {
         llvm::outs() << llvm::json::Value(llvm::json::Object{
             {"error", analysis.error}, {"children", analysis.cost.children},
+            {"bridge_candidates", fs::sequenceBridgeWork(analysis).candidates},
+            {"bridge_remasked", fs::sequenceBridgeWork(analysis).remasked},
+            {"bridge_retained", fs::sequenceBridgeWork(analysis).retained},
             {"boundary_summary_visits", fs::sequenceBoundarySummaryVisits(analysis)}}) << "\n";
         return success(analysis.error.empty());
     }
@@ -1382,6 +1391,9 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         {"repeated_regions", analysis.cost.repeatedRegions}, {"phase_descriptions", analysis.cost.phaseDescriptions},
         {"selector_comparisons", analysis.cost.selectorComparisons},
         {"crossing_candidates", analysis.cost.crossingCandidates},
+        {"bridge_candidates", fs::sequenceBridgeWork(analysis).candidates},
+        {"bridge_remasked", fs::sequenceBridgeWork(analysis).remasked},
+        {"bridge_retained", fs::sequenceBridgeWork(analysis).retained},
         {"boundary_summary_visits", fs::sequenceBoundarySummaryVisits(analysis)},
         {"implication_checks", analysis.cost.implicationChecks},
         {"expressions", expressions ? expressions->size() : 0}, {"emitted", emitted}}) << "\n";
