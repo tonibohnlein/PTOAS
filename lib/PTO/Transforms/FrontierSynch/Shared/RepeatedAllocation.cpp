@@ -42,6 +42,9 @@ public:
             {"lanes", cost.lanes}, {"first_alternatives", cost.firstAlternatives},
             {"last_alternatives", cost.lastAlternatives}, {"matrix_pairs", cost.matrixPairs},
             {"candidate_gaps", cost.candidateGaps}, {"boundary_pairs", cost.boundaryPairs},
+            {"coalescing_ns", cost.coalescingNanoseconds},
+            {"activity_requests", cost.activityRequests}, {"activity_computations", cost.activityComputations},
+            {"activity_ns", cost.activityNanoseconds},
             {"relative_queries", cost.relativeQueries}, {"relative_computations", cost.relativeComputations},
             {"implication_requests", cost.implicationRequests},
             {"implication_computations", cost.implicationComputations},
@@ -49,6 +52,15 @@ public:
             {"proof_node_visits", cost.proofNodeVisits}, {"partition_attempts", cost.partitionAttempts},
             {"proof_ns", cost.proofNanoseconds}, {"relative_ns", cost.relativeNanoseconds},
             {"partition_matrix_entries", cost.partitionMatrixEntries}});
+    }
+    // This prelude includes child validation and palette coalescing, before
+    // periodic proof construction. It is contained in elapsed_ns, not added.
+    void coalesced()
+    {
+        if (profile) {
+            cost.coalescingNanoseconds = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                Clock::now() - started).count());
+        }
     }
     RepeatedLaneProofCost* counters() { return profile ? &cost : nullptr; }
 private:
@@ -346,6 +358,7 @@ std::shared_ptr<RegionalAllocationSummary> repeatedRegionalAllocation(
     // Repeated surplus publications need their own history/matching contract.
     if (llvm::any_of(child.groups, [](const auto& group) { return group.terminalCleanup; })) { return {}; }
     auto coalesced = coalesceRegionalAllocation(state.body, child);
+    work.coalesced();
     if (!coalesced) { return {}; }
     if (auto periodic = periodicLaneAllocation(state, *coalesced, crossings, work.counters())) { return periodic; }
     auto result = std::make_shared<RegionalAllocationSummary>();

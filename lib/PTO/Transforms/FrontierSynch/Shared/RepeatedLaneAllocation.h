@@ -11,6 +11,8 @@
 namespace mlir::pto::frontiersynch {
 struct RepeatedLaneProofCost {
     RepeatedExtremaCost extrema;
+    uint64_t coalescingNanoseconds = 0;
+    uint64_t activityRequests = 0, activityComputations = 0, activityNanoseconds = 0;
     uint64_t implicationRequests = 0, implicationComputations = 0;
     uint64_t constantRequests = 0, constantComputations = 0;
     uint64_t proofNodeVisits = 0, relativeQueries = 0, relativeComputations = 0;
