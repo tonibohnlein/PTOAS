@@ -409,3 +409,29 @@ equivalent IR/evidence under the scoped associative-AND comparison and allocates
 with six IDs. This is a general early-construction fix, not evidence of another
 Persistent speedup or completion of regional recipe composition.
 Validation and manual review: `.local/family-pipeline-order/`.
+
+## Shared nonconstant physical tuple maps
+
+M4's bounded mapping normalization now covers members sharing a certified palette
+and normalized dynamic tuple terms but differing in their constant base. Zero
+terms are removed, strides/phases reduced, constant terms folded, and remaining
+terms sorted. Original endpoint coordinates select the exact base through the
+existing finite-family expression builder; the common dynamic terms and palette
+lookup are lowered once. Different dynamic terms or palettes retain the original
+dispatcher. This re-expresses the supplied assignment, not a new reuse proof or
+allocation. Expensive complete selectors retain the existing conditional policy.
+
+For a saved-certificate scaling family with 32/128/512 records, total emitted
+arithmetic drops from 183/471/1,623 operations to 85/85/85. Sparse, nested-tuple
+and modulo-three variants also have constant counts across these sizes. The
+modulo-three regression checks that expensive arithmetic remains guarded. Tests
+compare every executed physical ID with the supplied formula, including zero
+trips, nonunit coordinates, noncontiguous IDs and unsigned-maximum ordinals;
+a differing-term case exercises the incumbent dispatcher. Four affected suites
+pass, followed by the extended targeted mapping oracle. Persistent's six-ID
+allocated output is byte-identical. No planning or device speedup is claimed.
+Receipts and manual self-review: `.local/family-pipeline-tuple/`.
+
+This closes one useful nonconstant-map subclass. General differing tuple terms,
+recipe-backed regional composition and allocation on its normalized graph remain
+open; no unrestricted symbolic synthesis has been introduced.

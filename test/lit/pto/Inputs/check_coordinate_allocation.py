@@ -168,6 +168,76 @@ def sharing_checks(optimizer, interpreter, path):
     assert commands(interpreter, path) == expected
 
 
+def common_tuple_checks(optimizer, interpreter, path):
+    """Compose differing nonconstant mappings; preserve every supplied ID rule."""
+    observed = []
+    cases = [(False, False, False, False, 2), (False, True, True, False, 2),
+             (True, False, False, False, 2), (False, False, False, True, 2), (False, False, False, False, 3)]
+    for nested, sparse, huge, different, modulus in cases:
+        sizes = []
+        for size in ((8,) if different else (8, 32, 128)):
+            source, _ = fixture(size, sparse=sparse)
+            records, rules, expected = [], [], []
+            for row in range(size):
+                for column in range(4):
+                    if sparse and column == 2:
+                        continue
+                    record = (4 * row + column) ** 2 + 13
+                    records.append(record)
+                    base = (row + column) % 2
+                    # Vary spelling and term order without changing the complete
+                    # function. Constant terms fold into the certified base.
+                    phase = int(different and row == 0 and column == 0)
+                    terms = [f"array<i64: 0, {modulus + 1}, {modulus + phase}, {modulus}, 2>"]
+                    if nested:
+                        terms.append("array<i64: 1, 1, 0, 2, 2>")
+                    terms.append(f"array<i64: 0, 0, {base}, 2, 1>")
+                    if column % 2:
+                        terms.reverse()
+                    rules.append("{coordinate_count = " + str(2 if nested else 1) +
+                                 " : i64, base = 0 : i64, terms = [" + ", ".join(terms) + "]}")
+                    ordinal = (1 << 64) - 1 if huge else row
+                    offset = base + 2 * ((ordinal + phase) % modulus) + (2 * (column % 2) if nested else 0)
+                    palette = list(range(6)) if nested or modulus == 3 else [0, 2, 3, 5]
+                    expected.extend([[kind, palette[offset]] for kind in ("set", "wait")])
+            values = ", ".join(map(str, records))
+            zeros = ", ".join("0" for _ in records)
+            certificate = ('pto.finite_allocation = {version = 2 : i64, plan = 0 : i64, kind = "finite", '
+                           'strategy = "regional-palettes", groups = [{source = 4 : i64, target = 3 : i64, '
+                           'budget = ' + str(len(palette)) + ' : i64, records = array<i64: ' + values +
+                           '>, strides = array<i64: ' + zeros + '>, phases = array<i64: ' + zeros +
+                           '>, conflicts = array<i64>, tuple_rules = [' + ', '.join(rules) + ']}]},\n    ')
+            start = source.index('pto.cyclic_allocation =')
+            end = source.index('pto.endpoint_families =', start)
+            source = source[:start] + certificate + source[end:]
+            source = source.replace('pto.endpoint_families = {version = 3',
+                                    'pto.endpoint_families = {version = 4')
+            source = source.replace('ordinal %zero', 'ordinal %huge' if huge else 'ordinal %row')
+            if huge:
+                source = source.replace('%zero = arith.constant',
+                                        '%huge = arith.constant -1 : index\n    %zero = arith.constant', 1)
+            if nested:
+                source = source.replace('members(%label)', 'members(%label, %j)')
+            path.write_text(source)
+            flags = ['--pto-frontier-allocate=eligible-ids=' + ','.join(map(str, palette))]
+            physical = opt(optimizer, path, flags).stdout
+            sizes.append(len(re.findall(r" = arith\.", physical)))
+            if modulus == 3:
+                threes = set(re.findall(r'(%[\w]+) = arith.constant 3 : index', physical))
+                remainders = [line for line in physical.splitlines() if ' = arith.remui ' in line
+                              and any(re.search(r', ' + re.escape(value) + r' : index', line) for value in threes)]
+                assert remainders and all(len(line) - len(line.lstrip()) >= 12 for line in remainders)
+            assert physical.count('pto.set_flag') == 1 and physical.count('pto.wait_flag') == 2
+            path.write_text(physical)
+            assert commands(interpreter, path) == expected, (size, nested, sparse, huge, different)
+            path.write_text(physical.replace(f"array<i64: {1 + 2 * size}>", "array<i64: 1>"))
+            assert commands(interpreter, path) == []
+        if not different:
+            assert max(sizes) < 150 and max(sizes) - min(sizes) <= 8, sizes
+        observed.append(sizes)
+    print("shared nonconstant tuple maps:", observed)
+
+
 def main():
     optimizer, interpreter = map(shutil.which, sys.argv[1:3])
     scratch = Path(sys.argv[3])
@@ -177,6 +247,7 @@ def main():
         path = Path(directory) / "case.pto"
         candidate_checks(optimizer, interpreter, path)
         sharing_checks(optimizer, interpreter, path)
+        common_tuple_checks(optimizer, interpreter, path)
         for threshold, sparse, nested in [(t, s, n) for t, s in [(False, False), (False, True), (True, False)]
                                          for n in (False, True)]:
             sizes = []

@@ -70,6 +70,9 @@ struct Endpoint {
     Value directPhase; // Original record label when tupleMembers selects mixed palettes; phase otherwise.
     SmallVector<const PhysicalRecordAllocation*> tupleMembers;
     Value directId; // Coordinate-to-ID composition, independent of original record numbering.
+    // Identical dynamic tuple terms with a coordinate-selected constant base.
+    std::unique_ptr<PhysicalTupleRule> composedTuple;
+    Value tupleBase;
 };
 std::optional<int64_t> constantTupleId(const PhysicalRecordAllocation& record);
 
@@ -99,6 +102,42 @@ SmallVector<int64_t> constantMemberIds(const Endpoint& endpoint)
         auto id = constantTupleId(*member);
         if (!id) { return {}; }
         result.push_back(*id);
+    }
+    return result;
+}
+
+struct CommonTupleMapping {
+    PhysicalTupleRule dynamic;
+    SmallVector<int64_t> bases;
+};
+// Factor a supplied assignment, never infer reuse from the resulting formula.
+// The input rules have already passed the complete palette-range certificate.
+std::optional<CommonTupleMapping> commonTupleMapping(ArrayRef<const PhysicalRecordAllocation*> members)
+{
+    if (members.empty() || !members.front()->tupleRule) { return std::nullopt; }
+    CommonTupleMapping result;
+    result.dynamic.coordinateCount = members.front()->tupleRule->coordinateCount;
+    using Term = std::array<uint64_t, 5>;
+    std::vector<Term> common;
+    for (const auto* member : members) {
+        if (!member->tupleRule || member->ids != members.front()->ids ||
+            member->tupleRule->coordinateCount != result.dynamic.coordinateCount) { return std::nullopt; }
+        uint64_t base = member->tupleRule->base;
+        std::vector<Term> terms;
+        for (const auto& term : member->tupleRule->terms) {
+            if (!term.scale || term.modulus == 1) { continue; }
+            const auto stride = term.stride % term.modulus, phase = term.phase % term.modulus;
+            if (!stride) { base += term.scale * phase; }
+            else { terms.push_back({term.coordinate, stride, phase, term.modulus, term.scale}); }
+        }
+        llvm::sort(terms);
+        if (result.bases.empty()) { common = std::move(terms); }
+        else if (terms != common) { return std::nullopt; }
+        result.bases.push_back(static_cast<int64_t>(base));
+    }
+    if (common.empty()) { return std::nullopt; } // Constant IDs already have a stronger composition path.
+    for (const auto& term : common) {
+        result.dynamic.terms.push_back({term[0], term[1], term[2], term[3], term[4]});
     }
     return result;
 }
@@ -493,6 +532,7 @@ LogicalResult prepareCoordinatePhase(Endpoint& endpoint, const CoordinateProvena
         values.push_back(static_cast<int64_t>(value));
     }
     auto ids = constantMemberIds(endpoint);
+    auto commonTuple = ids.empty() ? commonTupleMapping(endpoint.tupleMembers) : std::nullopt;
     SmallVector<int64_t> palette = ids;
     llvm::sort(palette);
     palette.erase(std::unique(palette.begin(), palette.end()), palette.end());
@@ -506,7 +546,10 @@ LogicalResult prepareCoordinatePhase(Endpoint& endpoint, const CoordinateProvena
             values.push_back(std::lower_bound(palette.begin(), palette.end(), id) - palette.begin());
         }
     }
-    const uint64_t modulus = directId ? palette.size() : generic ? 0 : endpoint.allocation->ids.size();
+    if (commonTuple) { values = commonTuple->bases; }
+    const uint64_t modulus = directId ? palette.size() : commonTuple ?
+        static_cast<uint64_t>(*llvm::max_element(commonTuple->bases)) + 1 :
+        generic ? 0 : endpoint.allocation->ids.size();
     auto result = emitFamilyExpressions(builder, before->getLoc(), points, values, modulus);
     if (!result.error.empty()) {
         return before->emitError("invalid endpoint-family phase coordinates: ") << result.error;
@@ -514,12 +557,15 @@ LogicalResult prepareCoordinatePhase(Endpoint& endpoint, const CoordinateProvena
     endpoint.phaseBefore = before;
     if (directId) {
         endpoint.directId = selectPhysicalPalette(builder, before->getLoc(), result.member, palette);
+    } else if (commonTuple) {
+        endpoint.composedTuple = std::make_unique<PhysicalTupleRule>(std::move(commonTuple->dynamic));
+        endpoint.tupleBase = result.member;
     } else {
         endpoint.directPhase = result.member;
     }
     // Presence is already guarded by the logical command; retain only the ID
     // slice of this detached family expression before judging its runtime cost.
-    Value root = endpoint.directId ? endpoint.directId : endpoint.directPhase;
+    Value root = endpoint.directId ? endpoint.directId : endpoint.tupleBase ? endpoint.tupleBase : endpoint.directPhase;
     for (auto& operation : llvm::make_early_inc_range(llvm::reverse(*block))) {
         if (operation.getResult(0) != root && operation.use_empty()) { operation.erase(); }
     }
@@ -606,9 +652,10 @@ FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const Ph
             endpoint.labels.push_back(static_cast<uint64_t>(record));
         }
         if (!nested && commonPalette(endpoint.tupleMembers)) { endpoint.tupleMembers.clear(); }
-        const bool fixedCoordinates = nested && !constantMemberIds(endpoint).empty() &&
+        const bool composedCoordinates = nested &&
+            (!constantMemberIds(endpoint).empty() || commonTupleMapping(endpoint.tupleMembers)) &&
             distinctCoordinateMembers(endpoint, *coordinates, publish);
-        if ((!nested || fixedCoordinates) &&
+        if ((!nested || composedCoordinates) &&
             failed(prepareCoordinatePhase(endpoint, *coordinates, dominance, publish))) {
             return WalkResult::interrupt();
         }
@@ -846,16 +893,7 @@ Value tuplePhysicalId(OpBuilder& builder, const Endpoint& endpoint)
     using TermKey = std::tuple<uint64_t, uint64_t, uint64_t, uint64_t>;
     std::map<TermKey, Value> terms;
     std::map<std::vector<uint64_t>, Value> mappings;
-    auto memberId = [&](const PhysicalRecordAllocation& member) -> Value {
-        if (auto fixed = constantTupleId(member)) { return constant(*fixed); }
-        // Flat grouped families keep their original source ordinal in operand
-        // zero. Express each cyclic palette as a one-coordinate rule, allowing
-        // the same bounded arithmetic and common-term cache as nested tuples.
-        PhysicalTupleRule flatRule{1, 0, {{0, member.stride, member.phase, member.ids.size(), 1}}};
-        const auto& rule = member.tupleRule ? *member.tupleRule : flatRule;
-        auto [cached, inserted] = mappings.try_emplace(physicalMappingKey(member));
-        if (!inserted) { return cached->second; }
-        Value offset = constant(rule.base);
+    auto tupleOffset = [&](const PhysicalTupleRule& rule, Value offset) {
         for (const auto& term : rule.terms) {
             if (!term.scale || term.modulus == 1) { continue; }
             const auto stride = term.stride % term.modulus, phase = term.phase % term.modulus;
@@ -878,9 +916,25 @@ Value tuplePhysicalId(OpBuilder& builder, const Endpoint& endpoint)
             if (term.scale != 1) { value = builder.create<arith::MulIOp>(location, value, constant(term.scale)); }
             offset = builder.create<arith::AddIOp>(location, offset, value);
         }
-        // The checked term bound keeps every intermediate within the palette;
-        // positive-scale moduli are at most its six eligible entries. Products
-        // use reduced residues, so large original source coordinates cannot wrap.
+        return offset;
+    };
+    // Compose source selection with the shared nonconstant map before lowering
+    // a dispatcher. Only the exact member base varies over original coordinates.
+    if (endpoint.composedTuple) {
+        return selectPhysicalPalette(builder, location,
+            tupleOffset(*endpoint.composedTuple, endpoint.tupleBase), endpoint.allocation->ids);
+    }
+    auto memberId = [&](const PhysicalRecordAllocation& member) -> Value {
+        if (auto fixed = constantTupleId(member)) { return constant(*fixed); }
+        // Flat grouped families keep their original source ordinal in operand
+        // zero. The same bounded arithmetic serves nested tuple families.
+        PhysicalTupleRule flatRule{1, 0, {{0, member.stride, member.phase, member.ids.size(), 1}}};
+        const auto& rule = member.tupleRule ? *member.tupleRule : flatRule;
+        auto [cached, inserted] = mappings.try_emplace(physicalMappingKey(member));
+        if (!inserted) { return cached->second; }
+        // Checked term bounds keep offsets within the palette. Products use
+        // reduced residues, so large original coordinates cannot wrap.
+        Value offset = tupleOffset(rule, constant(rule.base));
         cached->second = selectPhysicalPalette(builder, location, offset, member.ids);
         return cached->second;
     };
