@@ -15,6 +15,129 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include <algorithm>
 namespace mlir::pto::frontiersynch {
+// One structural interpreter for exact predicates, before and after scalar
+// lowering. Arena inputs are original SSA leaves, not a second control model.
+class CutPredicate {
+public:
+    using Id = RegionExpressions::Id;
+    using Ref = std::pair<Id, Value>;
+    enum class Binary { And, Equal, Subtract, Divide };
+    explicit CutPredicate(const RegionExpressions* arena = nullptr) : arena(arena) {}
+    Ref get(Value value) const { return {RegionExpressions::invalid, value}; }
+    Ref get(Id id) const
+    {
+        if (!arena || !arena->valid(id)) { return get(Value()); }
+        const auto& node = arena->nodes[id];
+        return node.kind == RegionExpressions::Kind::Input ? get(node.value) : Ref{id, {}};
+    }
+    bool valid(Ref ref) const { return ref.second || (arena && arena->valid(ref.first)); }
+    bool boolean(Ref ref) const
+    {
+        return ref.second ? ref.second.getType().isInteger(1) : arena && arena->isBoolean(ref.first);
+    }
+    std::optional<uint64_t> number(Ref ref) const
+    {
+        if (!ref.second) { return arena ? arena->constantValue(ref.first) : std::nullopt; }
+        APInt number;
+        if (!matchPattern(ref.second, m_ConstantInt(&number)) || !number.isSignedIntN(64)) {
+            return std::nullopt;
+        }
+        return number.sextOrTrunc(64).getZExtValue();
+    }
+    std::optional<std::pair<Ref, Ref>> binary(Ref ref, Binary kind) const
+    {
+        if (!ref.second) {
+            if (!arena || !arena->valid(ref.first)) { return std::nullopt; }
+            const auto& node = arena->nodes[ref.first];
+            using Kind = RegionExpressions::Kind;
+            const auto expected = kind == Binary::And ? Kind::And : kind == Binary::Equal ? Kind::Eq :
+                kind == Binary::Subtract ? Kind::Sub : Kind::Div;
+            if (node.kind != expected) { return std::nullopt; }
+            return std::make_pair(get(node.a), get(node.b));
+        }
+        auto* op = ref.second.getDefiningOp();
+        bool matches = op && ((kind == Binary::And && isa<arith::AndIOp>(op) && boolean(ref)) ||
+            (kind == Binary::Subtract && isa<arith::SubIOp>(op)) ||
+            (kind == Binary::Divide && isa<arith::DivUIOp>(op)));
+        if (kind == Binary::Equal) {
+            auto compare = dyn_cast_or_null<arith::CmpIOp>(op);
+            matches = compare && compare.getPredicate() == arith::CmpIPredicate::eq;
+        }
+        if (!matches) { return std::nullopt; }
+        return std::make_pair(get(op->getOperand(0)), get(op->getOperand(1)));
+    }
+    std::optional<std::pair<Ref, Ref>> masked(Ref ref) const
+    {
+        if (!ref.second) {
+            if (!arena || !arena->valid(ref.first)) { return std::nullopt; }
+            const auto& node = arena->nodes[ref.first];
+            if (node.kind != RegionExpressions::Kind::Select || number(get(node.c)) != 0) {
+                return std::nullopt;
+            }
+            return std::make_pair(get(node.a), get(node.b));
+        }
+        auto select = ref.second.getDefiningOp<arith::SelectOp>();
+        if (!select || number(get(select.getFalseValue())) != 0) { return std::nullopt; }
+        return std::make_pair(get(select.getCondition()), get(select.getTrueValue()));
+    }
+    void conjuncts(Ref root, SmallVectorImpl<Ref>& atoms) const
+    {
+        SmallVector<Ref> work{root};
+        llvm::DenseSet<Ref> seen;
+        while (!work.empty()) {
+            auto ref = work.pop_back_val();
+            if (!valid(ref) || !seen.insert(ref).second) { continue; }
+            auto both = binary(ref, Binary::And);
+            if (!both) { both = masked(ref); }
+            if (both) { work.push_back(both->first); work.push_back(both->second); }
+            else { atoms.push_back(ref); }
+        }
+    }
+    bool ordinal(Ref ref, scf::ForOp loop) const
+    {
+        // Unsigned distance/positive step is the exact visit coordinate,
+        // including a signed counted-loop interval crossing zero.
+        auto iv = get(loop.getInductionVar());
+        if (ref == iv) { return true; }
+        if (auto division = binary(ref, Binary::Divide)) {
+            auto domain = CountedLoop::get(loop);
+            if (!domain || number(division->second) != static_cast<uint64_t>(domain->step)) { return false; }
+            ref = division->first;
+            if (ref == iv && number(get(loop.getLowerBound())) == 0) { return true; }
+        }
+        auto difference = binary(ref, Binary::Subtract);
+        if (!difference || difference->first != iv) { return false; }
+        auto lower = get(loop.getLowerBound());
+        return difference->second == lower ||
+            (number(difference->second) && number(difference->second) == number(lower));
+    }
+    bool invariant(Ref root, Operation* outer, DominanceInfo& dominance) const
+    {
+        SmallVector<Ref> work{root};
+        llvm::DenseSet<Ref> seen;
+        while (!work.empty()) {
+            auto ref = work.pop_back_val();
+            if (!valid(ref)) { return false; }
+            if (!seen.insert(ref).second) { continue; }
+            if (ref.second) {
+                auto* region = ref.second.getParentRegion();
+                if (region && region->getParentOp() && dominance.properlyDominates(ref.second, outer)) {
+                    continue;
+                }
+                auto* op = ref.second.getDefiningOp();
+                if (!mlir::pto::detail::canReplayScalar(op)) { return false; }
+                for (auto operand : op->getOperands()) { work.push_back(get(operand)); }
+            } else {
+                SmallVector<Id> operands;
+                arena->appendOperands(arena->nodes[ref.first], operands);
+                for (Id operand : operands) { work.push_back(get(operand)); }
+            }
+        }
+        return true;
+    }
+private:
+    const RegionExpressions* arena;
+};
 namespace {
 using Path = SmallVector<Region*>;
 bool transparentSection(Operation* operation)
@@ -26,75 +149,12 @@ bool transparentSection(Operation* operation)
         (isa<SectionVectorOp>(operation) &&
          (operation->hasAttr("pto.sync_context_only") || !needsA5NoSplitVectorGuard(operation)));
 }
-bool constant(Value value, int64_t expected)
+bool singletonConsumer(Operation* cut, const CutPredicate& view, CutPredicate::Ref predicate, func::FuncOp function)
 {
-    APInt number;
-    return value && matchPattern(value, m_ConstantInt(&number)) && number.isSignedIntN(64) &&
-        number.getSExtValue() == expected;
-}
-bool sameBound(Value a, Value b)
-{
-    APInt x, y;
-    return a == b || (matchPattern(a, m_ConstantInt(&x)) && matchPattern(b, m_ConstantInt(&y)) &&
-        x.sextOrTrunc(64) == y.sextOrTrunc(64));
-}
-bool ordinal(Value value, scf::ForOp loop)
-{
-    // Direct IV and unsigned distance from the lower bound are injective.
-    // Dividing that distance by the original positive step is the exact visit
-    // ordinal on the counted-loop domain, even when the bounds straddle zero.
-    if (value == loop.getInductionVar()) { return true; }
-    if (auto division = value.getDefiningOp<arith::DivUIOp>()) {
-        auto domain = CountedLoop::get(loop);
-        if (!domain || !constant(division.getRhs(), domain->step)) { return false; }
-        value = division.getLhs();
-        if (value == loop.getInductionVar() && constant(loop.getLowerBound(), 0)) { return true; }
-    }
-    auto difference = value.getDefiningOp<arith::SubIOp>();
-    return difference && difference.getLhs() == loop.getInductionVar() &&
-        sameBound(difference.getRhs(), loop.getLowerBound());
-}
-bool invariant(Value root, Operation* outer, DominanceInfo& dominance)
-{
-    SmallVector<Value> work{root};
-    llvm::DenseSet<Value> seen;
-    while (!work.empty()) {
-        auto value = work.pop_back_val();
-        if (!seen.insert(value).second) { continue; }
-        auto* region = value.getParentRegion();
-        if (region && region->getParentOp() && dominance.properlyDominates(value, outer)) { continue; }
-        auto* op = value.getDefiningOp();
-        // Detached or endpoint-local arithmetic may depend only on invariant
-        // values. In particular, a memory read within a visit is not invariant.
-        if (!mlir::pto::detail::canReplayScalar(op)) { return false; }
-        llvm::append_range(work, op->getOperands());
-    }
-    return true;
-}
-void conjuncts(Value root, SmallVectorImpl<Value>& atoms)
-{
-    SmallVector<Value> work{root};
-    llvm::DenseSet<Value> seen;
-    while (!work.empty()) {
-        auto value = work.pop_back_val();
-        if (!value || !seen.insert(value).second) { continue; }
-        if (auto both = value.getDefiningOp<arith::AndIOp>()) {
-            if (value.getType().isInteger(1)) { llvm::append_range(work, both->getOperands()); continue; }
-        }
-        if (auto select = value.getDefiningOp<arith::SelectOp>()) {
-            if (constant(select.getFalseValue(), 0)) {
-                work.push_back(select.getCondition()); work.push_back(select.getTrueValue()); continue;
-            }
-        }
-        atoms.push_back(value);
-    }
-}
-bool singletonConsumer(Operation* cut, Value predicate, func::FuncOp function)
-{
-    if (predicate && !predicate.getType().isInteger(1)) { return false; }
+    if (view.valid(predicate) && !view.boolean(predicate)) { return false; }
     SmallVector<scf::ForOp> loops;
-    SmallVector<Value> atoms;
-    conjuncts(predicate, atoms);
+    SmallVector<CutPredicate::Ref> atoms;
+    view.conjuncts(predicate, atoms);
     auto* descendant = cut;
     for (auto* parent = cut->getParentOp(); parent != function; parent = parent->getParentOp()) {
         if (auto loop = dyn_cast<scf::ForOp>(parent)) {
@@ -102,21 +162,21 @@ bool singletonConsumer(Operation* cut, Value predicate, func::FuncOp function)
             loops.push_back(loop);
         } else if (auto branch = dyn_cast<scf::IfOp>(parent)) {
             if (descendant->getParentRegion() == &branch.getThenRegion()) {
-                conjuncts(branch.getCondition(), atoms);
+                view.conjuncts(view.get(branch.getCondition()), atoms);
             }
         } else if (!transparentSection(parent)) { return false; }
         descendant = parent;
     }
     if (loops.empty()) { return true; }
-    if (!predicate) { return false; }
-    if (constant(predicate, 0)) { return true; }
+    if (!view.valid(predicate)) { return false; }
+    if (view.number(predicate) == 0) { return true; }
     DominanceInfo dominance(function);
     for (auto loop : loops) {
-        bool selected = llvm::any_of(atoms, [&](Value atom) {
-            auto equality = atom.getDefiningOp<arith::CmpIOp>();
-            if (!equality || equality.getPredicate() != arith::CmpIPredicate::eq) { return false; }
-            return (ordinal(equality.getLhs(), loop) && invariant(equality.getRhs(), loops.back(), dominance)) ||
-                (ordinal(equality.getRhs(), loop) && invariant(equality.getLhs(), loops.back(), dominance));
+        bool selected = llvm::any_of(atoms, [&](CutPredicate::Ref atom) {
+            auto equality = view.binary(atom, CutPredicate::Binary::Equal);
+            if (!equality) { return false; }
+            return (view.ordinal(equality->first, loop) && view.invariant(equality->second, loops.back(), dominance)) ||
+                (view.ordinal(equality->second, loop) && view.invariant(equality->first, loops.back(), dominance));
         });
         if (!selected) { return false; }
     }
@@ -198,24 +258,43 @@ std::shared_ptr<const EndpointCutChoices> qualifyEndpointCutChoices(
     if (!validate(loop, operations, false)) { return nullptr; }
     return std::shared_ptr<const EndpointCutChoices>(new EndpointCutChoices(loop, cuts));
 }
-std::shared_ptr<const EndpointCutChoices> qualifyTerminalCleanupCuts(
-    ArrayRef<TemplateEndpointCut> cuts, Value consumerPredicate)
+namespace {
+func::FuncOp terminalFunction(ArrayRef<TemplateEndpointCut> cuts)
 {
     if (cuts.size() != 2 || !cuts[0].before || !cuts[1].before || cuts[0].before == cuts[1].before) {
-        return nullptr;
+        return {};
     }
     auto function = cuts[1].before->getParentOfType<func::FuncOp>();
     if (!function || !function.getBody().hasOneBlock() ||
         cuts[1].before != function.front().getTerminator() || !isa<func::ReturnOp>(cuts[1].before)) {
-        return nullptr;
+        return {};
     }
     for (const auto& cut : cuts) {
         if (cut.block != cut.before->getBlock() || cut.before->getParentOfType<func::FuncOp>() != function) {
-            return nullptr;
+            return {};
         }
     }
-    if (!singletonConsumer(cuts[0].before, consumerPredicate, function)) { return nullptr; }
+    return function;
+}
+} // namespace
+std::shared_ptr<const EndpointCutChoices> qualifyTerminalCleanupCuts(
+    ArrayRef<TemplateEndpointCut> cuts, Value consumerPredicate)
+{
+    auto function = terminalFunction(cuts);
+    CutPredicate view;
+    if (!function || !singletonConsumer(cuts[0].before, view, view.get(consumerPredicate), function)) {
+        return nullptr;
+    }
     return std::shared_ptr<const EndpointCutChoices>(new EndpointCutChoices({}, cuts, consumerPredicate));
+}
+bool qualifyTerminalCleanupSelection(ArrayRef<TemplateEndpointCut> cuts,
+    const RegionExpressions& arena, uint32_t consumerPredicate)
+{
+    auto function = terminalFunction(cuts);
+    CutPredicate view(&arena);
+    auto predicate = view.get(consumerPredicate);
+    return function && arena.constructionError().empty() && view.valid(predicate) && view.boolean(predicate) &&
+        singletonConsumer(cuts[0].before, view, predicate, function);
 }
 bool validateTerminalCleanupCommands(func::FuncOp function, ArrayRef<Operation*> commands)
 {
@@ -225,7 +304,8 @@ bool validateTerminalCleanupCommands(func::FuncOp function, ArrayRef<Operation*>
         auto wrapper = dyn_cast_or_null<scf::IfOp>(command->getParentOp());
         if (!wrapper || !wrapper->hasAttr("pto.endpoint_cut") ||
             command->getParentRegion() != &wrapper.getThenRegion()) { return false; }
-        if (!singletonConsumer(wrapper, wrapper.getCondition(), function)) { return false; }
+        CutPredicate view;
+        if (!singletonConsumer(wrapper, view, view.get(wrapper.getCondition()), function)) { return false; }
         terminal += terminalSuffix(wrapper, function);
     }
     return terminal >= 1;

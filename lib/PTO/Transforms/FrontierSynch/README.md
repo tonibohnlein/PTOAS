@@ -387,3 +387,10 @@ operations. Payload producers and nondeterministic operations remain forbidden.
 Sequence ancestor sharing uses this split directly; the compatibility emitter
 calls the same planner and materializer. This does not yet replace terminal-cut
 qualification or all per-alternative regional preparation.
+
+Cleanup multiplicity can also be qualified directly on a retained exact arena
+predicate, before scalar emission. `EndpointCutChoices` uses the same original
+loop/branch and invariant-coordinate interpretation for that query and for
+emitted command validation. Availability is a separate obligation. The legacy
+emitted-predicate route remains for recipes whose singleton equality is only
+exposed by relational lowering.

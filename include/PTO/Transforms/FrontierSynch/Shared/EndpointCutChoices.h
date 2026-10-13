@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateEndpoints.h"
 #include <memory>
 namespace mlir::pto::frontiersynch {
+class RegionExpressions;
 class EndpointCutChoices {
 public:
     scf::ForOp loop() const { return invocation; }
@@ -41,6 +42,12 @@ std::shared_ptr<const EndpointCutChoices> qualifyEndpointCutChoices(
 // allocator rechecks the same property on the actual command guard.
 std::shared_ptr<const EndpointCutChoices> qualifyTerminalCleanupCuts(
     ArrayRef<TemplateEndpointCut> cuts, Value consumerPredicate = {});
+// The same singleton-cut proof before scalar materialization. The exact arena
+// predicate is interpreted with original branch facts; necessary exclusion
+// domains are insufficient. This proves multiplicity, not value availability.
+// The arena and original invocation must remain unchanged until lowering.
+bool qualifyTerminalCleanupSelection(ArrayRef<TemplateEndpointCut> cuts,
+    const RegionExpressions& arena, uint32_t consumerPredicate);
 bool validateTerminalCleanupCommands(func::FuncOp function, ArrayRef<Operation*> commands);
 // Revalidate serialized alternatives against actual command ancestors. Only
 // each command's immediate generated endpoint guard wrapper is omitted; every
