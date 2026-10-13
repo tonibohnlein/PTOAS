@@ -26,7 +26,7 @@ exclusion evidence; they do not replace exact guards or matching identities.
 | M1: measurement | Extend stage inventories with per-repeat lanes/extrema, candidate pairs/gaps, query construction, proof/cache work and actual traversal counts. Keep static records/sites distinct from dynamic commands and evaluated control. | Stage inventories and repeated-allocation work/traversal counters implemented; dynamic-control and complete ID-map inventories remain open |
 | M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans and attempt-owned relative queries implemented; economical candidate policy with parent retry remains open |
 | M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is planned before scalar lowering in `8a0a94536`; ordinary numerical sequence and repeated children retain recipes through composition; exact fixed-coordinate sequence crossings now form recipes before scalar preparation; child activity masks retain those recipes through composition; guarded and relational crossing construction remains open |
-| M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; common nonconstant tuple terms compose before dispatch in `15f2007ea`; differing terms and early graph allocation remain open |
+| M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; common nonconstant tuple terms compose before dispatch in `15f2007ea`; coordinate-selected phase shifts now compose under the same skeleton with a cost-checked incumbent; different skeletons and early graph allocation remain open |
 | M5: session and capabilities | Retain facts, mathematics, recipes and allocation in one session; deterministic capability upgrades; common unified/split stage functions; self-contained versioned saved artifacts; delete redundant orchestration. | Pending |
 | M6: carryover and closure | Finish shared-fact and coarse-input integration, closed-child completion imports, guarded/relational rank transport and outstanding semantic oracles; run pinned eleven-kernel/corpus validation and report device results separately. | Eleven-kernel replay complete at `15f2007ea`; corpus, device, and interface closure remain open |
 
@@ -763,3 +763,58 @@ This extends M3 and its measurement boundary. Guarded/relational crossing
 construction, projection ownership, early normalized-plan allocation and the
 remaining full-pipeline milestones are unchanged. Local validation artifacts and
 manual self-review are in `.local/family-pipeline-masks/`.
+
+
+## Coordinate-selected phases in certified physical maps
+
+Physical lowering now factors members whose tuple rules have the same palette,
+arity, coordinate/stride/modulus/scale skeleton and different constant phases.
+The existing exact finite-coordinate expression builder selects each phase and
+constant base. One shared modular calculation then implements the complete map.
+Every supplied member rule remains authoritative; no assignment, reuse proof,
+logical command, cut or payload order changes.
+
+Terms are normalized modulo their declared modulus and sorted by skeleton before
+phase. Zero-stride terms fold into the base. Reordered duplicate terms retain their
+full additive contribution. Unsupported skeletons use the incumbent dispatcher.
+The candidate is compared with that dispatcher using the existing weighted live
+ID-DAG cost; ties and higher costs retain the incumbent. This is one bounded
+re-expression attempt, not a solver or additional allocation search. Original
+record-label computation is not charged to the incumbent, making that comparison
+conservative. Expensive calculations retain the existing conditional placement.
+
+The independent formula fixtures compare every executed ID, including sparse
+points, nonunit loops, noncontiguous palettes, nested source tuples, maximum
+unsigned ordinals, zero trips and independently grouped waits. For sizes 8, 32
+and 128 (four points per row before optional holes), raw arithmetic inventories
+including original fixture arithmetic are:
+
+| Phase-map fixture | `26ed9fb7f` | Candidate |
+|---|---|---|
+| One shifted parity term | 193 / 481 / 1,633 | 88 / 88 / 88 |
+| Two nested shifted terms | 205 / 565 / 2,005 | 81 / 81 / 81 |
+| Sparse points, maximum ordinal | 170 / 386 / 1,250 | 89 / 89 / 89 |
+| Shifted modulus-three term | 241 / 721 / 2,641 | 95 / 95 / 95 |
+
+Existing identical-term cases retain their previous inventories. Additional
+exceptional-phase, duplicate-term and incompatible-stride cases check exact IDs
+without claiming constant-size code. The initial duplicate-term growth assertion
+was too strong: canonical pairing can require a non-affine phase selector. Its
+semantic check remains; that residual language limitation remains explicit.
+
+Four focused allocation/sequence suites pass. The baseline/candidate growth replay
+retains all ID and zero-trip checks, disabling only the new growth assertion for
+the old compiler. These fixtures consume saved producer-trusted certificates and
+test map implementation, not independent discovery of reuse. The physical
+allocation suite separately checks production reuse behavior.
+
+Persistent still allocates with six IDs; its physical IR is byte-identical to
+the baseline. All ordered physical events agree on cores 0, 15, 16 and 19.
+Four compliance matches are manually reviewed braced-control false positives.
+The initial build exceeded LLVM SmallVector's default inline-element size check;
+packing optional composition state together fixed that build error.
+
+No compiler-time or device-speed claim follows from these code counts. This is a
+bounded M4 extension; differing term skeletons, family-level allocation before
+materialization, and the M2 parent-aware cheap-candidate policy remain open.
+Local artifacts and manual self-review: `.local/family-pipeline-phase-maps/`.

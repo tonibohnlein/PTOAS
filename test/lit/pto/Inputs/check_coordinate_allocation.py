@@ -172,10 +172,16 @@ def common_tuple_checks(optimizer, interpreter, path):
     """Compose differing nonconstant mappings; preserve every supplied ID rule."""
     observed = []
     cases = [(False, False, False, False, 2), (False, True, True, False, 2),
-             (True, False, False, False, 2), (False, False, False, True, 2), (False, False, False, False, 3)]
+             (True, False, False, False, 2), (False, False, False, True, 2), (False, False, False, False, 3),
+             (False, False, False, "regular", 2), (True, False, False, "regular", 2),
+             (False, True, True, "regular", 2), (False, False, False, "regular", 3),
+             (True, False, True, "duplicate", 2), (False, False, False, "stride", 3)]
     for nested, sparse, huge, different, modulus in cases:
         sizes = []
-        for size in ((8,) if different else (8, 32, 128)):
+        # Duplicate skeletons can require a non-affine phase selection after
+        # sorting. Check exact semantics there, without promising compact fits.
+        residual = different is True or different in ("stride", "duplicate")
+        for size in ((8,) if residual else (8, 32, 128)):
             source, _ = fixture(size, sparse=sparse)
             records, rules, expected = [], [], []
             for row in range(size):
@@ -187,17 +193,24 @@ def common_tuple_checks(optimizer, interpreter, path):
                     base = (row + column) % 2
                     # Vary spelling and term order without changing the complete
                     # function. Constant terms fold into the certified base.
-                    phase = int(different and row == 0 and column == 0)
-                    terms = [f"array<i64: 0, {modulus + 1}, {modulus + phase}, {modulus}, 2>"]
+                    shifted = different in ("regular", "duplicate")
+                    phase = (row + column) % modulus if shifted else int(
+                        different and row == 0 and column == 0)
+                    inner_phase = row % 2 if shifted else 0
+                    stride = 1 + (column % 2 if different == "stride" else 0)
+                    terms = [f"array<i64: 0, {modulus + stride}, {modulus + phase}, {modulus}, 2>"]
                     if nested:
-                        terms.append("array<i64: 1, 1, 0, 2, 2>")
+                        coordinate = 0 if different == "duplicate" else 1
+                        terms.append(f"array<i64: {coordinate}, 1, {inner_phase}, 2, 2>")
                     terms.append(f"array<i64: 0, 0, {base}, 2, 1>")
                     if column % 2:
                         terms.reverse()
                     rules.append("{coordinate_count = " + str(2 if nested else 1) +
                                  " : i64, base = 0 : i64, terms = [" + ", ".join(terms) + "]}")
                     ordinal = (1 << 64) - 1 if huge else row
-                    offset = base + 2 * ((ordinal + phase) % modulus) + (2 * (column % 2) if nested else 0)
+                    inner_coordinate = ordinal if different == "duplicate" else column
+                    offset = base + 2 * ((stride * ordinal + phase) % modulus) + (
+                        2 * ((inner_coordinate + inner_phase) % 2) if nested else 0)
                     palette = list(range(6)) if nested or modulus == 3 else [0, 2, 3, 5]
                     expected.extend([[kind, palette[offset]] for kind in ("set", "wait")])
             values = ", ".join(map(str, records))
@@ -232,7 +245,7 @@ def common_tuple_checks(optimizer, interpreter, path):
             assert commands(interpreter, path) == expected, (size, nested, sparse, huge, different)
             path.write_text(physical.replace(f"array<i64: {1 + 2 * size}>", "array<i64: 1>"))
             assert commands(interpreter, path) == []
-        if not different:
+        if not residual:
             assert max(sizes) < 150 and max(sizes) - min(sizes) <= 8, sizes
         observed.append(sizes)
     print("shared nonconstant tuple maps:", observed)
