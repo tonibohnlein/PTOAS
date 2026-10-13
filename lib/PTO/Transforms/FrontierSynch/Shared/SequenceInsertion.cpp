@@ -385,8 +385,12 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         nextPiece = result->endpoints.size();
         return true;
     };
-    for (const auto& edge : crossings) {
-        if (!addDemand(ports[edge.source], ports[edge.target], edge.guard)) { return failure(); }
+    auto finite = prepareFiniteCrossings(*result, allocationCrossings, typeOffsets, nextRecord);
+    if (failed(finite)) { fail("finite crossing family preparation failed"); return failure(); }
+    if (!*finite) {
+        for (const auto& edge : crossings) {
+            if (!addDemand(ports[edge.source], ports[edge.target], edge.guard)) { return failure(); }
+        }
     }
     const auto namespaces = familyRecordNamespaces(result->families);
     for (auto& endpoint : result->endpoints) {

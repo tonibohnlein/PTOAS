@@ -38,6 +38,7 @@ struct Pattern {
     bool read = false;
     bool write = false;
 };
+struct RegionalAllocationGroup;
 struct OrderCoveredPeriodicResult;
 class InvocationPrefixCollection;
 struct Child {
@@ -253,6 +254,9 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
         std::string& diagnostic, ArrayRef<scf::ForOp> enclosing, ArrayRef<uint32_t> typeBases,
         const SequenceEndpointResolver& resolver = {});
 private:
+    // False keeps the existing guarded crossing adapter; no partial batch is adopted.
+    FailureOr<bool> prepareFiniteCrossings(PreparedLogicalPlan& plan,
+        std::vector<RegionalAllocationGroup>& allocation, ArrayRef<uint32_t> typeOffsets, uint32_t& nextRecord);
     std::shared_ptr<const SequenceCrossingPresence> crossingPresence;
     void sealCrossingPresence();
 };
