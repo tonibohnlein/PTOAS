@@ -69,6 +69,10 @@ bool prefixMetadata(func::FuncOp function, int64_t planId)
 }
 } // namespace
 PrivateStatePlan::~PrivateStatePlan() = default;
+func::FuncOp PrivateStatePlan::preparedFunction() const
+{
+    return staged ? staged->function : func::FuncOp{};
+}
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> preparePrivateStatePlan(
     func::FuncOp original, const InvocationPrefixRecipe& recipe,
     std::shared_ptr<const MathematicalResult> mathematics, PrivateStateTarget target, PrivateStateError& error)

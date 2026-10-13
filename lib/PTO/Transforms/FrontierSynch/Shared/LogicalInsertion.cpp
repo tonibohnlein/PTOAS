@@ -757,8 +757,12 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
     if (!function) {
         return failure();
     }
-    if (plan.completionOwner) { return plan.completionOwner->insert(function, plan); }
-    if (plan.privateState) { return plan.privateState->insert(function, plan); }
+    if (plan.completionOwner || plan.privateState) {
+        auto inserted = plan.completionOwner ? plan.completionOwner->insert(function, plan) :
+            plan.privateState->insert(function, plan);
+        if (succeeded(inserted)) { profileLogicalControl(function, plan, "inserted"); }
+        return inserted;
+    }
     function.getContext()->getOrLoadDialect<PTODialect>();
     function.getContext()->getOrLoadDialect<arith::ArithDialect>();
     function.getContext()->getOrLoadDialect<scf::SCFDialect>();
@@ -774,6 +778,7 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
     }
     if (failed(coalesceEndpointAlternatives(plan))) { return failure(); }
     if (failed(preflight(function, plan))) { return failure(); }
+    profileLogicalControl(function, plan, "normalized");
     for (auto& stage : plan.preparation) {
         auto* target = stage.before->getBlock();
         target->getOperations().splice(stage.before->getIterator(), stage.code->getOperations());
@@ -804,6 +809,7 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
         function->setAttr(kind && kind.getValue() == "finite" ? FiniteAllocationAttr : CyclicAllocationAttr,
                           plan.allocationCertificate);
     }
+    profileLogicalControl(function, plan, "inserted");
     return success();
 }
 } // namespace mlir::pto::frontiersynch

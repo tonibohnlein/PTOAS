@@ -61,6 +61,7 @@ struct PreparedLogicalPlan {
     PreparedLogicalPlan& operator=(const PreparedLogicalPlan&) = delete;
     Block& addPreparation(Operation* before);
     int64_t planId;
+    bool profileControl = false; // Diagnostic snapshots only; never serialized into the plan.
     bool completeInvocation = false; // Drain whole-function work before return.
     bool nestedIdentities = false; // Version-four matching tuples; physical allocation is separate.
     bool independentPieces = false; // Match records across independently grouped endpoint sides.
@@ -90,6 +91,8 @@ struct PreparedLogicalPlan {
 // For producers whose occurrence binding explicitly conjoins these equalities.
 void retainEndpointCoordinates(PreparedLogicalEndpoint& endpoint, ArrayRef<TemplateCoordinate> coordinates);
 void prepareAllocationSupport(PreparedLogicalPlan& plan);
+// Opt-in aggregate snapshots; no expression evaluation or generated IR mutation.
+void profileLogicalControl(func::FuncOp function, const PreparedLogicalPlan& plan, StringRef stage);
 // Preserve a child's allocation namespace before composition rewrites it.
 // Returns null for a root-only private-state plan, which cannot be composed.
 // The view borrows endpoint Values from the enclosing detached plan, which must
