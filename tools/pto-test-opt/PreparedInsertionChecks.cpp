@@ -169,6 +169,52 @@ bool cleanupSelectionChecks(MLIRContext* context)
     }
     return true;
 }
+bool preparationLivenessChecks(MLIRContext* context)
+{
+    for (unsigned mode = 0; mode < 4; ++mode) {
+        OpBuilder builder(context);
+        auto location = builder.getUnknownLoc();
+        OwningOpRef<ModuleOp> module = ModuleOp::create(location);
+        builder.setInsertionPointToStart(module->getBody());
+        auto function = builder.create<func::FuncOp>(location, "preparation_liveness", builder.getFunctionType({}, {}));
+        builder.setInsertionPointToStart(function.addEntryBlock());
+        auto original = builder.create<arith::ConstantIndexOp>(location, 3);
+        original->setAttr("test.original", builder.getUnitAttr());
+        auto terminal = builder.create<func::ReturnOp>(location);
+        fs::PreparedLogicalPlan plan(0);
+        builder.setInsertionPointToEnd(&plan.addPreparation(terminal));
+        auto generated = builder.create<arith::AddIOp>(location, original, original);
+        generated->setAttr("test.generated", builder.getUnitAttr());
+        builder.create<arith::MulIOp>(location, generated, generated);
+        Block external;
+        bool invoked = false;
+        if (mode == 1) {
+            plan.allocationPreparation = [&](fs::PreparedLogicalPlan&) {
+                invoked = generated->getParentOfType<func::FuncOp>() == function;
+            };
+        } else if (mode == 2) {
+            auto yes = builder.create<arith::ConstantIntOp>(location, 1, 1);
+            fs::PreparedLogicalEndpoint barrier{terminal, fs::LogicalCommandKind::Barrier, 1, 1, 0, yes, {}};
+            barrier.domain.push_back({{generated, 0, 6}});
+            plan.endpoints.push_back(std::move(barrier));
+        } else if (mode == 3) {
+            builder.setInsertionPointToEnd(&external);
+            builder.create<arith::AddIOp>(location, generated, original);
+        }
+        if (failed(fs::insertLogicalSynchronization(function, plan)) || failed(verify(*module))) { return false; }
+        unsigned originals = 0, retained = 0;
+        function.walk([&](Operation* op) {
+            originals += op->hasAttr("test.original");
+            retained += op->hasAttr("test.generated");
+        });
+        if (originals != 1 || retained != (mode != 0)) { return false; }
+        if (mode == 1) {
+            plan.allocationPreparation(plan);
+            if (!invoked) { return false; }
+        }
+    }
+    return true;
+}
 bool cleanupPredicateChecks(MLIRContext* context)
 {
     OpBuilder builder(context);
@@ -189,7 +235,7 @@ bool cleanupPredicateChecks(MLIRContext* context)
     auto yes = builder.create<arith::ConstantIntOp>(location, 1, 1);
     Value first = builder.create<arith::AndIOp>(location, function.getArgument(0), yes);
     Value duplicate = builder.create<arith::AndIOp>(location, function.getArgument(0), yes);
-    auto unused = builder.create<arith::XOrIOp>(location, duplicate, yes);
+    auto unused = builder.create<arith::XOrIOp>(location, function.getArgument(0), yes);
     fs::EndpointFamily family;
     family.sourcePipe = 4; family.targetPipe = 1;
     family.sourceCut = {source->getBlock(), source};
@@ -201,7 +247,7 @@ bool cleanupPredicateChecks(MLIRContext* context)
     plan.families.push_back(std::move(family));
     using Kind = fs::LogicalCommandKind;
     plan.endpoints = {{source, Kind::Set, 4, 1, 0, yes, zero, {zero}, {0}, 0},
-                      {target, Kind::Wait, 4, 1, 0, duplicate, zero, {zero}, {0}, 1},
+                      {target, Kind::Wait, 4, 1, 0, function.getArgument(0), zero, {zero}, {0}, 1},
                       {terminal, Kind::Wait, 4, 1, 0, unused, zero, {zero}, {0}, 2}};
     if (failed(fs::insertLogicalSynchronization(function, plan)) || failed(verify(*module)) ||
         plan.families.front().targetChoices->consumerPredicate() != first) { return false; }
@@ -380,6 +426,9 @@ LogicalResult runPreparedInsertionChecks(func::FuncOp function)
     if (!cleanupSelectionChecks(function.getContext())) {
         return function.emitError("cleanup selection changed across scalar lowering");
     }
+    if (!preparationLivenessChecks(function.getContext())) {
+        return function.emitError("preparation liveness changed payloads or lost non-SSA roots");
+    }
     if (!cleanupPredicateChecks(function.getContext())) {
         return function.emitError("preparation deduplication lost terminal cleanup predicate");
     }
@@ -460,10 +509,10 @@ LogicalResult runPreparedInsertionChecks(func::FuncOp function)
     // emit SET, one coalesced local barrier, WAIT regardless of record order.
     plan.endpoints = {
         {cuts[1], Kind::Wait, mte2, vector, 0, duplicateGuard, duplicateIdentity, {duplicateZero}},
-        {cuts[2], Kind::Wait, vector, mte3, 1, other, identity},
+        {cuts[2], Kind::Wait, vector, mte3, 1, other, laterUse},
         {cuts[1], Kind::Barrier, vector, vector, 2, guard, {}},
         {cuts[0], Kind::Set, mte2, vector, 0, duplicateGuard, duplicateIdentity, {duplicateZero}},
-        {cuts[1], Kind::Set, vector, mte3, 1, other, identity},
+        {cuts[1], Kind::Set, vector, mte3, 1, other, laterUse},
         {cuts[1], Kind::Barrier, vector, vector, 3, other, {}}};
     if (failed(fs::insertLogicalSynchronization(function, plan)) || failed(verify(function))) {
         return failure();

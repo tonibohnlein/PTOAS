@@ -48,7 +48,7 @@ def check_control(reports):
             "compaction expanded sites")
     for report in reports:
         work = report["preparation"]
-        require(0 <= work["endpoint_reachable_arithmetic"] <= work["arithmetic"],
+        require(0 <= work["endpoint_reachable_arithmetic"] <= work["required_arithmetic"] <= work["arithmetic"],
                 "invalid preparation reachability inventory")
     require(inserted["preparation"]["arithmetic"] == 0, "insertion retained detached arithmetic")
     commands = inserted["function_control"]

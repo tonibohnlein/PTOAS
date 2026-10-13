@@ -10,6 +10,7 @@
 // coordinate equalities; opaque predicates and coincident command order survive.
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PrivateStatePlan.h"
+#include "PreparedControlLiveness.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyExpressions.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
@@ -145,6 +146,21 @@ LogicalResult deduplicatePreparation(PreparedLogicalPlan& plan)
     }
     for (auto* operation : redundant) { operation->erase(); }
     return success();
+}
+// This only prunes detached generated arithmetic. Required evidence and opaque
+// allocation captures are roots alongside ordinary SSA command operands.
+void discardUnusedPreparation(PreparedLogicalPlan& plan)
+{
+    auto live = livePreparedControl(plan);
+    SmallVector<Operation*> dead;
+    for (const auto& stage : plan.preparation) {
+        for (auto& operation : *stage.code) {
+            if (!live.contains(&operation)) { dead.push_back(&operation); }
+        }
+    }
+    // A dead user may precede its operand's deletion across detached blocks.
+    for (auto* operation : dead) { operation->dropAllReferences(); }
+    for (auto* operation : dead) { operation->erase(); }
 }
 // Factor only explicit conjunctions and equality tests on certified induction
 // coordinates. Other predicates remain opaque, evaluated at their original cut.
@@ -792,6 +808,7 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
     }
     if (failed(coalesceEndpointAlternatives(plan))) { return failure(); }
     if (failed(preflight(function, plan))) { return failure(); }
+    discardUnusedPreparation(plan);
     profileLogicalControl(function, plan, "normalized");
     for (auto& stage : plan.preparation) {
         auto* target = stage.before->getBlock();
