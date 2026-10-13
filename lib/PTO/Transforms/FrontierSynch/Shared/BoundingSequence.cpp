@@ -38,6 +38,8 @@ std::optional<RegionalAnalysis> childExport(const BoundingSequenceChild& child, 
         error = "sequence pipe directory for abstract child slots unavailable"; return {};
     }
     auto result = *supplied;
+    // Query/guard replacement has no executable occurrence recipe adapter.
+    result.invocationPrefix.reset();
     result.anchors = canonical.anchors;
     result.presence = canonical.presence;
     result.referenceBefore = canonical.referenceBefore;

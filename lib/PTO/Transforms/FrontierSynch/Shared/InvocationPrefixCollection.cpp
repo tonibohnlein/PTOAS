@@ -51,6 +51,7 @@ std::shared_ptr<const RegionalPrefixContribution> sequencePrefixContribution(
     result->function = state->function;
     result->accessModel = region.accessModel;
     result->aliasPolicy = region.gmAliasPolicy;
+    attachSequenceOccurrenceRecipes(region, state, *result);
     result->collect = [state = std::move(state)](InvocationPrefixCollection& collection, std::string& error) {
         return state->collectPrefix(collection, error);
     };
@@ -62,7 +63,8 @@ LogicalResult collectRegionalInvocationPrefix(const RegionalAnalysis& region,
     const auto& contribution = region.invocationPrefix;
     const bool valid = contribution && contribution->collect && contribution->function == collection.function() &&
         contribution->expressions == region.expressions && contribution->accessModel == region.accessModel &&
-        contribution->aliasPolicy == region.gmAliasPolicy;
+        contribution->aliasPolicy == region.gmAliasPolicy && contribution->matchesOccurrenceFrame &&
+        contribution->matchesOccurrenceFrame(region);
     if (!valid) {
         error = "regional prefix contribution has stale invocation or semantic context";
         return failure();

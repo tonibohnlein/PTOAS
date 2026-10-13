@@ -190,9 +190,22 @@ bool checkThresholdInactivity(Value index, Value predicate)
     Block inputs;
     const auto y = e.input(inputs.addArgument(index.getType(), index.getLoc()));
     const auto distinct = e.land(pastFour, e.lt(y, e.constant(5)));
+    // A rebuilt select can expose another comparison on the same symbolic
+    // input. Preserve the nonconstant value while specializing its condition.
+    const auto nested = e.select(e.lt(zero, clipped), x, zero);
+    const auto nestedMismatch = e.land(positive, e.lnot(e.eq(nested, x)));
+    const auto unsignedPositive = e.lt(zero, x);
+    const auto unsignedClip = e.select(unsignedPositive, x, zero);
+    const auto hiddenInteriorEquality = e.land(unsignedPositive, e.eq(unsignedClip, e.constant(4)));
+    const auto hiddenSignedBoundary = e.land(unsignedPositive, e.lnot(e.sle(unsignedClip, e.constant(5))));
+    const auto fringe = e.select(e.lt(e.constant(4), clipped), e.sub(clipped, e.constant(4)), zero);
+    const auto fringeOutside = e.land(positive, e.lnot(e.lt(fringe, x)));
     const auto before = e.size();
     fs::RegionExpressions::ThresholdProofCost cost;
     if (!e.inactiveByThresholds(impossible, &cost) || !cost.dagVisits || cost.families != 1 || !cost.cells ||
+        !cost.substitutionVisits || !e.inactiveByThresholds(nestedMismatch) ||
+        !e.inactiveByThresholds(fringeOutside) ||
+        e.inactiveByThresholds(hiddenInteriorEquality) || e.inactiveByThresholds(hiddenSignedBoundary) ||
         !e.inactiveByThresholds(negativeBelowSign) || !e.inactiveByThresholds(maximumIsZero) ||
         e.inactiveByThresholds(liveInterval) || e.inactiveByThresholds(maximum) ||
         e.inactiveByThresholds(distinct) || e.inactiveByThresholds(p) ||
@@ -219,6 +232,33 @@ bool checkThresholdInactivity(Value index, Value predicate)
             const auto original = e.size();
             if (!e.inactiveByThresholds(contradiction) || e.size() != original) { return false; }
         }
+    }
+    // Independent concrete witnesses challenge shifted comparisons near both
+    // modular wrap and the signed discontinuity. A live valuation must never
+    // acquire an inactivity certificate, regardless of other interval points.
+    const uint64_t starts[] = {0, 1, uint64_t(INT64_MAX) - 2, uint64_t(INT64_MAX),
+                               uint64_t(1) << 63, UINT64_MAX - 3};
+    const uint64_t offsets[] = {0, 1, 3, uint64_t(INT64_MAX), UINT64_MAX};
+    for (auto lower : starts) {
+        const auto upper = lower > UINT64_MAX - 3 ? UINT64_MAX : lower + 3;
+        for (auto a : offsets) { for (auto b : offsets) {
+            fs::RegionExpressions::Transaction scratch(e);
+            const auto left = e.add(x, e.constant(a)), right = e.add(x, e.constant(b));
+            const auto domain = e.land(e.le(e.constant(lower), x), e.le(x, e.constant(upper)));
+            const fs::RegionExpressions::Id comparisons[] = {e.lt(left, right), e.slt(left, right),
+                e.eq(left, e.constant(b)), e.lt(e.sub(e.constant(a), x), right),
+                e.eq(e.add(x, x), e.constant(b))};
+            for (unsigned kind = 0; kind < 5; ++kind) {
+                bool live = false;
+                for (auto value = lower;; ++value) {
+                    const APInt lhs(64, kind == 3 ? a - value : kind == 4 ? value + value : value + a);
+                    const APInt rhs(64, kind == 2 || kind == 4 ? b : value + b);
+                    live |= kind == 0 || kind == 3 ? lhs.ult(rhs) : kind == 1 ? lhs.slt(rhs) : lhs == rhs;
+                    if (value == upper) { break; }
+                }
+                if (live && e.inactiveByThresholds(e.land(domain, comparisons[kind]))) { return false; }
+            }
+        } }
     }
     return e.error().empty();
 }

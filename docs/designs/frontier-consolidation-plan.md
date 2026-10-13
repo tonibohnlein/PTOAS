@@ -55,12 +55,11 @@ work in this order:
    full pipeline with the new counters. Report successful compilation, retained
    mathematics, refusal, allocation and device execution separately.
 
-The seven-kernel device comparison is a separate measurement task in
-`test/npu_validation/benchmarks/auto_sync/DEVICE_TASK.md`; it does not expand the
-compiler milestone scope to event-scarcity repair. The current eleven-kernel
+The seven-kernel device comparison is a separate external measurement task;
+it does not expand the compiler milestone scope to event-scarcity repair. The pinned `a166645de` eleven-kernel
 replay gives ten logical plans and seven allocated C++ outputs, with 240/240
-MayNotAlias exact regions. This is current-head coverage evidence, not the final
-paired corpus campaign or device validation.
+MayNotAlias exact regions. This is coverage evidence for that revision, not the
+final paired corpus campaign or device validation.
 
 | Milestone | Implementation | Acceptance | Status |
 |---|---|---|---|
@@ -70,7 +69,7 @@ paired corpus campaign or device validation.
 | 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; borrowed regional adapter complete; global compact memberships and universal descriptor dependency indexing complete; shared fact views and delayed atomization pending |
 | 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Dead bridge-frontier pruning, sparse child/cell participation and counters complete; ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection and scoped source facts implemented through sequence and compact routes; session-wide consolidation remains |
 | 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Qualified A3 structured completion complete; larger closed-child imports and coarse input preparation pending |
-| 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Regional prefix ownership, singleton forwarding, crossing presence and qualified predicate snapshots complete; general executable selectors and public Delta emission pending |
+| 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Producer-owned occurrence recipes and invariant-ordinal snapshots implemented; public Delta MayNotAlias logical-only emission succeeds; relational rank transport and full-kernel semantic validation pending |
 | 8. Proof reuse and validation | Share lazy inactive-proof and premise contexts, replay mappings and safe Boolean conversion work. Close known guard-equivalence/oracle gaps and run pinned paired campaigns. | No unexplained acceptance loss or changed output; report eleven kernels and 783-input corpus by stage, wall time, memory and inner work. | Lazy inactive-proof setup shared; broader proof reuse and campaign pending |
 
 ## Algorithm boundaries
@@ -888,3 +887,77 @@ prefix and expression tests pass (`focused7` receipts under
 `.local/three-paths/consolidation/m7-selector-recipes/`). Source review accepted
 the interval and ownership changes. This closes the child-by-cell scan described
 in the latest review, not residual alias products or all session consolidation.
+
+
+## Milestone 7 follow-up: producer-owned occurrence recipes
+
+Sequence exports now retain the construction of their selected occurrences as
+an owned choice DAG. Primitive nodes match original cuts and visit coordinates;
+consumer-side choices select ranks captured at those cuts. Nested exports and
+certified singleton wrappers transport the recipe explicitly. Adapters that
+change its frame invalidate it. Preparation leaves retained ports, choices and
+crossing-presence evidence unchanged, and resolution-local caches cannot escape
+an expression rollback. Source ranks remain executed-source ordinals, not loop
+iteration numbers.
+
+Predicate snapshots now admit invocation-invariant selected ordinals, including
+runtime fringes. They retain original evaluations and validity, reset before
+each invocation, and compare unsigned distance from the original signed lower
+bound. The caller proves availability or independence of every missing value,
+leaving all other historical inputs unconstrained. No opaque producer is
+replayed. Unsupported frames and varying selected ordinals remain refusals.
+
+Threshold specialization preserves symbolic values in nonsingleton intervals.
+It follows selections and affine shifts with slope zero or one, and refines
+intervals at exact modular preimages of newly exposed comparison boundaries,
+wrap points and signed discontinuities. Equality checks account for interior
+roots. Other input families remain independent; no Cartesian product or new
+admission cutoff was introduced. Scratch expressions roll back after each
+attempt. Refinement terminates over the finite integer domain; this is not a
+claim of a small or polynomial bound on the number of discovered cells.
+Counters distinguish initial discovery, cell attempts (including retries),
+substitution/classification visits and subsequent proof requests. The latter
+counts calls, not all internal implication traversal work.
+
+The optimized C++17 assertions-enabled build and all ten focused expression,
+prefix and composition tests pass. The independent command interpreter checks
+8,738 executions, 48 late-choice cases and 32 inactive cases. Thirteen historical
+expression modes cover runtime-selected fringes, negative lower bounds, skipped
+and empty invocations, and refusal of varying or unavailable selections.
+Threshold tests include independent APInt live witnesses near unsigned wrap and
+the signed boundary, hidden interior equality, nested selection and rollback.
+Source review accepted the ownership and proof changes. The compliance prefilter
+reports brace-rule false positives on already braced conditions; its one real
+line-length finding was fixed. Only existing warnings in unchanged diagnostic
+files appeared in the build.
+
+A clean public Gated Delta MayNotAlias run succeeds with
+`--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false`.
+The report identifies `logical_plan = "ready"` and
+`logical_realization = "invocation-prefix"`. It takes 114.358 seconds and
+1,351,824 KiB peak RSS in a single serial diagnostic replay under an external
+180-second, 4-GiB address-space limit. This is functional logical recovery,
+not a speedup comparison or a physical-allocation result.
+
+The generated IR is 152,832,848 bytes and 2,474,347 lines. Its protocol reports
+294 private-state slots and six directions; static command sites are 172 SETs,
+47 WAITs and 194 barriers. These are static sites, not executed counts or an
+extra-order measurement. All 142 original PTO operation sites are preserved by
+opcode counts after excluding synchronization. That inventory is a sanity check,
+not a full-kernel payload-equivalence or command-closure proof. Generated scalar
+code size is a substantial remaining problem.
+
+This closes the previously recorded public logical-emission refusal for this
+MayNotAlias probe. It does not complete the whole milestone: relational crossing
+exports still need certified transport from selected source tuples to executed
+ranks; the full Delta semantic audit, MayAlias replay, physical allocation,
+C++ emission, device execution and current-head corpus campaign remain open.
+The next relational adapter must consume retained `newCrossings` and exact
+child owners, without rebuilding callback relations or equating coordinates
+with executed ranks.
+
+Receipts are under
+`.local/three-paths/consolidation/m7-selector-recipes/`: `focused10`,
+`threshold-refinement-build`, `threshold-counter-build`,
+`delta-threshold-refinement`, and final commit checks. The separate device
+measurement handoff is kept outside the repository at the user's request.
