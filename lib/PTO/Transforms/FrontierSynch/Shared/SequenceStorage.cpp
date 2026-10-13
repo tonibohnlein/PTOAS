@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
+#include "SequenceStorageIndex.h"
 #include "CountedLoop.h"
 #include "../Structured/OrderCoveredPeriodic.h"
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingRegion.h"
@@ -595,18 +596,21 @@ bool SequenceAnalysisState::partition()
 
 void SequenceAnalysisState::summarize()
 {
-    boundaries.resize(children.size(), std::vector<CellBoundary>(cells.size()));
+    boundaries.resize(cells.size());
+    const SequenceStorageIndex cellIndex(cells);
     for (uint32_t childId = 0; childId < children.size(); ++childId) {
         auto& child = children[childId];
         if (child.regional.presence) { continue; }
         const auto comparisonsBefore = costs.selectorComparisons;
-        for (uint32_t cellId = 0; cellId < cells.size(); ++cellId) {
-            const auto& cell = cells[cellId];
-            auto& summary = boundaries[childId][cellId];
+        std::map<std::size_t, std::vector<const Pattern*>> participating;
+        for (const auto& pattern : child.patterns) {
+            cellIndex.covered(pattern.range, [&](std::size_t cell) { participating[cell].push_back(&pattern); });
+        }
+        for (const auto& [cellId, patterns] : participating) {
+            auto& summary = boundaries[cellId][childId];
             std::vector<Selected> firstWrites, lastWrites, firstReads, lastReads;
-            for (const auto& pattern : child.patterns) {
-                if (!sameStorageDomain(pattern.range, cell) || pattern.range.begin > cell.begin ||
-                    pattern.range.end < cell.end) { continue; }
+            for (const auto* selectedPattern : patterns) {
+                const auto& pattern = *selectedPattern;
                 Expr exists = expressions.lt(c(pattern.residue), child.trips);
                 auto last = expressions.sub(child.trips, c(1));
                 last = expressions.sub(last, expressions.rem(expressions.sub(last, c(pattern.residue)),

@@ -139,8 +139,7 @@ void SequenceAnalysisState::summarizeBoundaries(SequenceAnalysis& result)
         out.cell = composer.cells[cell];
         auto seenWriter = composer.no();
         std::map<uint32_t, Expr> seenReaders;
-        for (uint32_t child = 0; child < composer.children.size(); ++child) {
-            const auto& local = composer.boundaries[child][cell];
+        for (const auto& [child, local] : composer.boundaries[cell]) {
             append(out.firstWriters, local.firstWriters, seenWriter, false);
             for (const auto& [pipe, reads] : local.firstReaders) {
                 auto seen = lookup(seenReaders, pipe);
@@ -150,8 +149,7 @@ void SequenceAnalysisState::summarizeBoundaries(SequenceAnalysis& result)
             seenWriter = composer.either(seenWriter, any(local.firstWriters));
         }
         seenWriter = composer.no(); seenReaders.clear();
-        for (std::size_t child = composer.children.size(); child > 0; --child) {
-            const auto& local = composer.boundaries[child - 1][cell];
+        for (const auto& [child, local] : llvm::reverse(composer.boundaries[cell])) {
             append(out.lastWriters, local.lastWriters, seenWriter, true);
             for (const auto& [pipe, reads] : local.lastReaders) {
                 auto seen = lookup(seenReaders, pipe);

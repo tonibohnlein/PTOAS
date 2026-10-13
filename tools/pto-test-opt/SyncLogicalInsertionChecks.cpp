@@ -1033,12 +1033,12 @@ bool checkSequenceBoundarySets(func::FuncOp function)
                                                          function.getLoc())));
     }
     state.children.resize(groups); state.cells.resize(1);
-    state.boundaries.resize(groups, std::vector<fs::CellBoundary>(1));
+    state.boundaries.resize(1);
     state.nativeFirst.resize(groups); state.nativeLast.resize(groups);
     for (unsigned port = 0; port < accesses.size(); ++port) {
         const auto& access = accesses[port];
         const auto selected = fs::Selected{port, guards[access.group]};
-        auto& boundary = state.boundaries[access.group][0];
+        auto& boundary = state.boundaries[0][access.group];
         if (access.write) {
             boundary.firstWriters.push_back(selected); boundary.lastWriters.push_back(selected);
         } else {

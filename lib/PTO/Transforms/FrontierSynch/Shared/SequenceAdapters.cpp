@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "SequenceAnalysisInternal.h"
+#include "SequenceStorageIndex.h"
 #include "InvocationPrefixCollection.h"
 #include "../Structured/OrderCoveredPeriodic.h"
 #include "RecognitionInternal.h"
@@ -360,6 +361,12 @@ std::optional<RegionalStorageSelectors> sequenceStorageSelectors(const SequenceA
 } // namespace
 void SequenceAnalysisState::bindAdapters()
 {
+    std::vector<std::vector<std::pair<std::size_t, const CellBoundary*>>> childCells(children.size());
+    for (std::size_t cell = 0; cell < boundaries.size(); ++cell) {
+        for (const auto& [child, boundary] : boundaries[cell]) {
+            childCells[child].emplace_back(cell, &boundary);
+        }
+    }
     for (uint32_t id = 0; id < children.size(); ++id) {
         auto& child = children[id];
         auto& out = child.regional;
@@ -448,8 +455,8 @@ void SequenceAnalysisState::bindAdapters()
             const auto& port = ports[selected.port];
             return RegionalSelector{{port.type, port.ordinal, PeriodicEventKind::Start, port.visits}, selected.present};
         };
-        for (std::size_t cell = 0; cell < cells.size(); ++cell) {
-            const auto& local = boundaries[id][cell];
+        for (const auto& [cell, boundary] : childCells[id]) {
+            const auto& local = *boundary;
             RegionalStorageBoundary value;
             value.cell = cells[cell];
             for (auto selected : local.firstWriters) { value.firstWriters.push_back(convert(selected)); }
@@ -491,7 +498,7 @@ bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
         !projectFiniteCrossings(children, finiteCrossingPairs, costs)) {
         return fail("symbolic storage crossings require a constructed uniform-atom or relational adapter");
     }
-    std::map<AddressSpace, llvm::MapVector<Value, std::set<uint64_t>>> points;
+    std::map<AddressSpace, llvm::MapVector<Value, std::map<uint64_t, int64_t>>> points;
     SmallVector<SyncStorageCell> identities;
     std::optional<GMAliasPolicy> gmPolicy;
     for (const auto& child : children) {
@@ -536,8 +543,8 @@ bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
                 }
                 gmPolicy = out.gmAliasPolicy;
             }
-            points[cell.cell.space][cell.cell.base].insert(cell.cell.begin);
-            points[cell.cell.space][cell.cell.base].insert(cell.cell.end);
+            ++points[cell.cell.space][cell.cell.base][cell.cell.begin];
+            --points[cell.cell.space][cell.cell.base][cell.cell.end];
         }
     }
     const SyncStorageEffects* commonModel = nullptr;
@@ -566,20 +573,17 @@ bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
     nativeFirst.resize(children.size()); nativeLast.resize(children.size());
     for (const auto& [space, bases] : points) {
         for (const auto& [base, endpoints] : bases) {
-            for (auto it = endpoints.begin(); it != endpoints.end() && std::next(it) != endpoints.end(); ++it) {
-                SyncStorageCell cell{space, *it, *std::next(it), base};
-                bool covered = false;
-                for (const auto& child : children) {
-                    for (const auto& local : child.regional.storageBoundary) {
-                        covered |= sameStorageDomain(local.cell, cell) && local.cell.begin <= cell.begin &&
-                                   local.cell.end >= cell.end;
-                    }
-                }
-                if (covered) { cells.push_back(cell); }
+            int64_t active = 0;
+            uint64_t previous = 0;
+            for (const auto& [point, delta] : endpoints) {
+                if (active > 0 && point > previous) { cells.push_back({space, previous, point, base}); }
+                active += delta;
+                previous = point;
             }
         }
     }
-    boundaries.resize(children.size(), std::vector<CellBoundary>(cells.size()));
+    boundaries.resize(cells.size());
+    const SequenceStorageIndex cellIndex(cells);
     for (uint32_t id = 0; id < children.size(); ++id) {
         auto& child = children[id];
         child.anchors = child.regional.anchors;
@@ -624,17 +628,25 @@ bool SequenceAnalysisState::importSummaries(bool requireEndpoints)
             }
             destination.push_back({port(id, selector.event), selector.present});
         };
-        for (std::size_t cell = 0; cell < cells.size(); ++cell) {
-            auto& out = boundaries[id][cell];
-            for (const auto& local : child.regional.storageBoundary) {
-                if (!sameStorageDomain(local.cell, cells[cell]) || local.cell.begin > cells[cell].begin ||
-                    local.cell.end < cells[cell].end) { continue; }
-                for (auto selected : local.firstWriters) { convert(selected, out.firstWriters); }
-                for (auto selected : local.lastWriters) { convert(selected, out.lastWriters); }
-                for (const auto& [pipe, values] : local.firstReaders) {
+        std::map<std::size_t, std::vector<const RegionalStorageBoundary*>> participating;
+        for (const auto& local : child.regional.storageBoundary) {
+            const auto hasReaders = [](const auto& groups) {
+                return llvm::any_of(groups, [](const auto& group) { return !group.second.empty(); });
+            };
+            if (local.firstWriters.empty() && local.lastWriters.empty() &&
+                !hasReaders(local.firstReaders) && !hasReaders(local.lastReaders)) { continue; }
+            cellIndex.covered(local.cell, [&](std::size_t cell) { participating[cell].push_back(&local); });
+        }
+        for (const auto& [cell, locals] : participating) {
+            auto& out = boundaries[cell][id];
+            // Preserve the previous cell/local traversal order for port IDs.
+            for (const auto* local : locals) {
+                for (auto selected : local->firstWriters) { convert(selected, out.firstWriters); }
+                for (auto selected : local->lastWriters) { convert(selected, out.lastWriters); }
+                for (const auto& [pipe, values] : local->firstReaders) {
                     for (auto selected : values) { convert(selected, out.firstReaders[pipe]); }
                 }
-                for (const auto& [pipe, values] : local.lastReaders) {
+                for (const auto& [pipe, values] : local->lastReaders) {
                     for (auto selected : values) { convert(selected, out.lastReaders[pipe]); }
                 }
             }

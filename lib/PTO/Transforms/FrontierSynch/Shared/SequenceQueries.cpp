@@ -107,8 +107,7 @@ void SequenceAnalysisState::bridges()
     for (uint32_t cell = 0; cell < cells.size(); ++cell) {
         std::vector<Selected> writers;
         std::map<uint32_t, std::vector<Selected>> readers;
-        for (uint32_t child = 0; child < children.size(); ++child) {
-            const auto& summary = boundaries[child][cell];
+        for (const auto& [child, summary] : boundaries[cell]) {
             Expr overwritten = no();
             for (auto first : summary.firstWriters) {
                 overwritten = either(overwritten, first.present);

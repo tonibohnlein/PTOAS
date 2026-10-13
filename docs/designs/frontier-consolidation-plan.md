@@ -68,7 +68,7 @@ paired corpus campaign or device validation.
 | 2. Directional finite allocation | Implement Section 7's ordered SET/WAIT threshold sweep and interval coloring under explicit premises, including insufficient-capacity cases. Make logical-only allocation evidence optional; request stronger lane evidence only when useful. | Independent exact allocation oracle, linear reuse-query count, just-over-capacity regression; full compilation preserves allocation successes. | Finite sweep complete; logical-only allocation request complete; repeated-lane proof reuse complete; lane scheduling pending |
 | 3. Capability ownership | Separate mathematical provider, recognized form, conversion, composition and requested export. Upgrade endpoint capabilities on retained evidence. Add distinct logical-plan, closed-matching and completion-summary capabilities. | Owner/context/occurrence identities survive upgrades; failed upgrades retain mathematics; unchanged work is shared. | Sequence preparation failure isolation complete; broader capability consolidation pending |
 | 4. Shared compact input | Delay fine cell memberships; preserve compact selections and borrowed memberships through regional adapters. Index/shared-own aliases, pointer/view origins, scalar/descriptor/control facts; compactly represent universal descriptor invalidation. | Select-chain, wide-access, view-depth and descriptor/call/depth scaling counters; same physical overlap and alias semantics. Coarse Section 6 input avoids fine atomization. | Alias duplicate-search indexing complete; borrowed regional adapter complete; global compact memberships and universal descriptor dependency indexing complete; shared fact views and delayed atomization pending |
-| 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Dead bridge-frontier pruning and counters complete; ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection and scoped source facts implemented through sequence and compact routes; session-wide consolidation remains |
+| 5. Numerical composition | Project to actual parent ports with hierarchical interior queries; reduce crossings once; construct guarded boundaries with prefix/suffix passes; share immutable PhaseIndex facts. | Independent reachability/boundary oracle including macro envelopes and empty/guarded regions; bounded-port and sibling-region scaling families. | Dead bridge-frontier pruning, sparse child/cell participation and counters complete; ordinary boundary prefix/suffix construction and single numerical crossing reduction complete; parent-port projection and scoped source facts implemented through sequence and compact routes; session-wide consolidation remains |
 | 6. General Section 6 fallback | Closed executable child interface and mode-tagged completion transfer on immediate-child CFG; two delta fixed points; qualified completion protocols, explicit loss and independent physical reuse. | Joins, backedges, while final-false visit, opaque/scalar prerequisites, child cleanup and repeated invocation tests; strict Section 8 dispatch policy. | Qualified A3 structured completion complete; larger closed-child imports and coarse input preparation pending |
 | 7. Exact repeated-guard integration | Derive certified incoming executed-source ordinals from retained demands, including relational sequence crossings. Use shared predicate histories, one invocation-owned recipe and one staged clone. | Public Gated Delta MayNotAlias logical emission succeeds with 29/29 exact regions; independent matching/closure and payload preservation; correct skipped-source, nested-reset and cleanup behavior. MayAlias gaps remain separately reported. | Regional prefix ownership, singleton forwarding, crossing presence and qualified predicate snapshots complete; general executable selectors and public Delta emission pending |
 | 8. Proof reuse and validation | Share lazy inactive-proof and premise contexts, replay mappings and safe Boolean conversion work. Close known guard-equivalence/oracle gaps and run pinned paired campaigns. | No unexplained acceptance loss or changed output; report eleven kernels and 783-input corpus by stage, wall time, memory and inner work. | Lazy inactive-proof setup shared; broader proof reuse and campaign pending |
@@ -867,3 +867,24 @@ participation work, residual alias products, or the full composition milestone.
 Local build and test receipts are under
 `.local/three-paths/consolidation/m7-selector-recipes/` (the shared validation run
 also exercises the in-progress selector work).
+
+## Milestone 5 follow-up: sparse storage participation
+
+Composition now stores boundaries only for participating child/cell pairs. Both
+bridge construction and boundary summaries traverse those ordered participants.
+A physical-domain interval index maps compact child ranges onto the finalized
+partition; an interval sweep constructs imported cells without rescanning every
+child for each interval. Zero-delta endpoints remain partition boundaries, and
+port creation retains the original cell/local ordering. Explicit access incidence
+work and residual alias products remain separate costs.
+
+The independent dense importer oracle covers overlapping GM ranges, distinct
+canonical argument bases under MayNotAlias, empty and false selectors, gaps and
+zero-length ranges. Sparse fixtures with 128, 256 and 1,024 disjoint child/cell
+pairs retain one entry per cell, create no storage bridges, and perform exactly
+four boundary-summary visits per participating pair. Indexed range selection is
+also checked against an independent full scan. All ten focused composition,
+prefix and expression tests pass (`focused7` receipts under
+`.local/three-paths/consolidation/m7-selector-recipes/`). Source review accepted
+the interval and ownership changes. This closes the child-by-cell scan described
+in the latest review, not residual alias products or all session consolidation.
