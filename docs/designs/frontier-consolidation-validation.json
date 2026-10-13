@@ -1608,5 +1608,16 @@
     "expected_bindings": 128,
     "focused_tests": 11,
     "receipts": ".local/three-paths/consolidation/m4-compact-memberships"
+  },
+  "section6_completion": {
+    "status": "qualified production subclass complete; larger closed-child import and coarse input preparation open",
+    "baseline_commit": "17dc6dfaf",
+    "focused_tests": 10,
+    "execution_graph_oracle_cases": 16384,
+    "public_logical": "passed",
+    "public_physical": "passed; no event IDs required",
+    "strict_retained_exact_refusal": "passed",
+    "device_execution": "not run",
+    "receipts": ".local/three-paths/consolidation/m6-completion/"
   }
 }

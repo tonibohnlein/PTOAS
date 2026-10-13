@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-test-opt --pto-frontier-analysis="prepare-allocation=false" %s | FileCheck %s
+// RUN: pto-test-opt --pto-frontier-analysis --pto-frontier-allocate="eligible-ids=0,1,2,3,4,5" %s > %t
+// CHECK: pto.completion_protocol = "a3-single-core-all; coarse-memory-class"
+// CHECK-SAME: selected_logical_backend = "completion-transfer"
+// CHECK: scf.while
+// CHECK: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: %{{.*}} = pto.tgetval
+// CHECK: scf.condition
+// CHECK: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: pto.texpands
+// CHECK: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: return
+!tile = !pto.tile_buf<vec, 1x8xf32>
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @while_control(%condition: i1) attributes {test.completion_cuts = array<i64: 1, 2, 3>} {
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %addr : !tile
+    pto.texpands ins(%one : f32) outs(%tile : !tile)
+    scf.while : () -> () {
+      %read = "pto.tgetval"(%tile, %zero) {test.cut = 1 : i64} : (!tile, index) -> f32
+      %positive = arith.cmpf ogt, %read, %one : f32
+      %continue = arith.andi %positive, %condition : i1
+      scf.condition(%continue)
+    } do {
+      "pto.texpands"(%one, %tile) {test.cut = 2 : i64} : (f32, !tile) -> ()
+      scf.yield
+    }
+    "func.return"() {test.cut = 3 : i64} : () -> ()
+  }
+}

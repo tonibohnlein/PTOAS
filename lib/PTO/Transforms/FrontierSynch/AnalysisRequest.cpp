@@ -8,6 +8,7 @@
 // Request protocol adapters. Cache mathematical construction independently of
 // export checks; detached command fragments always have fresh ownership.
 #include "AnalysisSessionInternal.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "Shared/SequenceAnalysisInternal.h"
 #include "WholeInvocationIdentity.h"
@@ -491,6 +492,30 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
         llvm::append_range(conservative.obligations, result.obligations);
         conservative.ledger = sessionState->ledger;
         conservative.requestId = profile.requestId();
+        if (conservative.status == AnalysisStatus::Ready) { return conservative; }
+        if (!sessionState->completionAttempted) {
+            sessionState->completionAttempted = true;
+            sessionState->completion = CompletionRegion::build(function, storage, *structuralIndex,
+                                                               sessionState->completionError);
+        }
+        if (sessionState->completion) {
+            AnalysisOutcome completion;
+            completion.completion = sessionState->completion;
+            completion.available.synchronization = true;
+            completion.available.allocation = true; // Barrier-only, no event IDs.
+            completion.status = request.needs.queries || request.needs.selectors ?
+                AnalysisStatus::UnmetObligation : AnalysisStatus::Ready;
+            completion.stage = AnalysisStage::Synchronization;
+            completion.obligations = std::move(conservative.obligations);
+            if (completion.status != AnalysisStatus::Ready) {
+                completion.obligations.push_back({AnalysisStage::Queries,
+                    "completion transfer does not export exact queries or storage selectors"});
+            }
+            completion.ledger = sessionState->ledger;
+            completion.requestId = profile.requestId();
+            return completion;
+        }
+        conservative.obligations.push_back({AnalysisStage::Synchronization, sessionState->completionError});
         return conservative;
     }
     result.ledger = sessionState->ledger;
@@ -499,6 +524,14 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical(const AnalysisOutcome& result)
 {
+    if (result.completion) {
+        if (result.mathematical || !sessionState || result.completion != sessionState->completion ||
+            result.completion->inputOwner() != storage || hasWholeFunctionMinimumDemands()) { return failure(); }
+        auto plan = std::make_unique<PreparedLogicalPlan>(0);
+        plan->completeInvocation = true;
+        plan->completionOwner = result.completion;
+        return plan;
+    }
     if (!result.mathematical || !sessionState || result.mathematical->input != storage) { return failure(); }
     auto& attempts = sessionState->attempts[result.mathematical->region];
     auto retained = llvm::find_if(attempts, [&](const auto& attempt) {
@@ -605,6 +638,10 @@ DictionaryAttr FrontierAnalysis::allocateIdentity(const MathematicalResult& dema
 }
 LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan)
 {
+    if (result.completion) {
+        return success(!result.mathematical && sessionState && result.completion == sessionState->completion &&
+                       plan.completionOwner == result.completion && result.completion->inputOwner() == storage);
+    }
     // Private invocation prefixes require their own lifetime export. Never reuse
     // a direct-endpoint certificate cached for the same mathematical graph.
     if (plan.privateState) { return failure(); }

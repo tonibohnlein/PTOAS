@@ -14,6 +14,7 @@
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticDemandAnalysis.h"
 #include <memory>
 namespace mlir::pto::frontiersynch {
+class CompletionRegion;
 struct ProgramRecognition;
 struct WholeInvocationIdentity;
 struct RegionalAnalysis;
@@ -98,6 +99,7 @@ struct AnalysisOutcome {
     AnalysisStatus status = AnalysisStatus::NotApplicable;
     AnalysisStage stage = AnalysisStage::Form;
     std::shared_ptr<const MathematicalResult> mathematical;
+    std::shared_ptr<const CompletionRegion> completion;
     std::shared_ptr<const RegionalAnalysis> regionalExports;
     AnalysisExports available;
     std::vector<AnalysisObligation> obligations;
