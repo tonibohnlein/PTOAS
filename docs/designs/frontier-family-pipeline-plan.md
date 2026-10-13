@@ -532,3 +532,40 @@ The optimization is a sufficient coalescing proof on qualified groups. It does
 not replace general guarded allocation, establish minimum capacity, or complete
 the planned candidate policy with parent retry. Early regional family planning
 and owned capability upgrades remain open.
+
+## Evidence-aware liveness before insertion
+
+After family normalization and preflight, insertion now deletes detached generated
+arithmetic that no required root reaches. The shared liveness helper also supplies
+profiling's new `required_arithmetic` count. Roots include command guards/identities,
+member coordinates, necessary-domain coordinates, terminal-cleanup predicates,
+non-arithmetic/effectful preparation, and SSA users outside preparation. A pending
+allocation callback conservatively retains all preparation because its captured
+Values are opaque. Original payload IR is never part of the deletion set.
+
+Tests cover dead generated chains, untouched original arithmetic, domain-only
+values, pending allocation captures, external SSA users, and a cleanup predicate
+used only by immutable evidence. The existing later-SSA-use test now makes that
+use an actual matching operand. Four insertion/publication/family suites and the
+stage-profile suite pass. The build initially exposed a missing CMake source-list
+entry after extracting the shared helper; the entry is added and both tools link.
+
+Persistent retains 56 SET / 60 WAIT sites, while raw logical arithmetic falls from
+18,342 to 11,527 and selects from 5,858 to 2,596. Prefill succeeds in a separate
+74.321 s diagnostic replay, retaining 59 SET / 84 WAIT / 62 barrier sites and
+reducing arithmetic from 92,786 to 92,648. Its canonical IR is byte-identical after
+normalizing the original input path spelling. Persistent's canonical IR agrees
+under scalar-DAG substitution and complete Boolean-AND operand-multiset
+normalization; every non-arithmetic line, ordering and attribute is retained.
+Negative controls changing a comparison, selection or SET fail this comparison.
+
+Persistent still allocates with six IDs and emits C++. Both old and new C++ have
+1,360 lines, 119 `if` statements and 69 ternaries: the backend already removes the
+dead arithmetic. This is an intermediate-IR reduction, not a device-speed result.
+No paired planning-speedup claim is made for this slice. Four compliance matches
+are manually reviewed braced-control false positives.
+
+Receipts and manual self-review: `.local/family-pipeline-liveness/`. Preparation
+still constructs 20,257 arithmetic operations and 3,088 endpoints for Persistent;
+this deletion boundary does not complete early regional family construction.
+Private-state prefix plans use their existing materializer and are unchanged.

@@ -292,6 +292,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Shared/LogicalEndpoints.cpp
   FrontierSynch/Shared/LogicalInsertion.cpp
   FrontierSynch/Shared/LogicalControlProfile.cpp
+  FrontierSynch/Shared/PreparedControlLiveness.cpp
   FrontierSynch/Shared/ModularScalar.cpp
   FrontierSynch/Shared/NormalizedControl.cpp
   FrontierSynch/Shared/NormalizedScalar.cpp

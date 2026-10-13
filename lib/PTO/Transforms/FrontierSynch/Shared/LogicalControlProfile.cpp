@@ -10,9 +10,8 @@
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
 #include "PrivateStatePlan.h"
+#include "PreparedControlLiveness.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 namespace mlir::pto::frontiersynch {
@@ -23,32 +22,16 @@ bool arithmetic(Operation* operation)
 }
 llvm::json::Object preparation(const PreparedLogicalPlan& plan)
 {
-    llvm::DenseSet<Operation*> operations, live;
-    SmallVector<Operation*> pending;
     uint64_t total = 0;
     for (const auto& stage : plan.preparation) {
-        for (auto& operation : *stage.code) {
-            operations.insert(&operation);
-            total += arithmetic(&operation);
-            if (!isMemoryEffectFree(&operation)) { pending.push_back(&operation); }
-        }
+        for (auto& operation : *stage.code) { total += arithmetic(&operation); }
     }
-    auto root = [&](Value value) {
-        if (auto* operation = value ? value.getDefiningOp() : nullptr) { pending.push_back(operation); }
+    auto count = [&](bool evidence) {
+        auto live = livePreparedControl(plan, evidence);
+        return llvm::count_if(live, arithmetic);
     };
-    for (const auto& endpoint : plan.endpoints) {
-        root(endpoint.guard); root(endpoint.identity);
-        for (auto value : endpoint.memberCoordinates) { root(value); }
-    }
-    uint64_t reachable = 0;
-    while (!pending.empty()) {
-        auto* operation = pending.pop_back_val();
-        if (!operations.contains(operation) || !live.insert(operation).second) { continue; }
-        reachable += arithmetic(operation);
-        for (auto value : operation->getOperands()) { root(value); }
-    }
-    return llvm::json::Object{{"arithmetic", total}, {"endpoint_reachable_arithmetic", reachable},
-                             {"blocks", plan.preparation.size()}};
+    return llvm::json::Object{{"arithmetic", total}, {"endpoint_reachable_arithmetic", count(false)},
+                             {"required_arithmetic", count(true)}, {"blocks", plan.preparation.size()}};
 }
 llvm::json::Object functionControl(func::FuncOp function)
 {
