@@ -9,6 +9,8 @@
 #include "BoundedLifetimeInactiveRecords.h"
 #include "../Shared/BoundedPredicateHistory.h"
 #include "../Shared/CountedLoop.h"
+#include "../Shared/PrefixExpressionProfile.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Dominance.h"
@@ -34,6 +36,7 @@ struct Owner {
     std::optional<BoundedPredicateHistory> history;
     std::vector<Leaf> leaves;
     std::map<uint32_t, Rank> ranks;
+    std::shared_ptr<PrefixExpressionProfile> profile;
 };
 Id definitionPresence(Owner& owner, Value value, uint64_t offset)
 {
@@ -175,8 +178,9 @@ LogicalResult appendRank(
 }
 FailureOr<Value> guard(
     const std::shared_ptr<Owner>& owner, GuardedRankEdge edge, Operation* cut, OpBuilder& builder,
-    const IRMapping& mapping, ArrayRef<Value> state, std::string& error)
+    const IRMapping& mapping, ArrayRef<Value> state, std::string& error, PrefixExpressionProfile::Entry& work)
 {
+    accumulateCost(work.emissions, 1);
     auto& demands = *owner->demands;
     auto& e = demands.expressions;
     const auto distance = edge.target / demands.anchors.size();
@@ -223,7 +227,12 @@ FailureOr<Value> guard(
     OpBuilder detached(builder.getContext());
     detached.setInsertionPointToEnd(&scratch);
     auto emitted = e.emitContextual(root, detached, cut, context);
+    const auto operations = scratch.getOperations().size();
+    accumulateCost(work.attempts, 1);
+    accumulateCost(work.constructed, operations);
     if (succeeded(emitted)) {
+        accumulateCost(work.retained, operations);
+        work.maximumRetained = std::max(work.maximumRetained, static_cast<uint64_t>(operations));
         builder.getInsertionBlock()->getOperations().splice(builder.getInsertionPoint(), scratch.getOperations());
     }
     if (failed(emitted) && error.empty()) {
@@ -239,6 +248,7 @@ LogicalResult appendRecord(
     const auto distance = edge.target / demands.anchors.size();
     const auto target = edge.target % demands.anchors.size();
     auto* cut = demands.anchors[target].before.before;
+    auto* work = &owner->profile->request(&demands.expressions, edge.guard, cut, "bounded", distance);
     auto p = static_cast<uint32_t>(demands.anchors[edge.source].phase->kPipeValue);
     auto q = static_cast<uint32_t>(demands.anchors[target].phase->kPipeValue);
     if (p == q) {
@@ -248,9 +258,9 @@ LogicalResult appendRecord(
         }
         collection.recipe().actions.push_back(
             {cut, PrivateStateCut::Before,
-             [owner, edge, cut, p](
+             [owner, edge, cut, p, work](
                  OpBuilder& b, const IRMapping& mapping, MutableArrayRef<Value> state, std::string& error) {
-                 auto active = guard(owner, edge, cut, b, mapping, state, error);
+                 auto active = guard(owner, edge, cut, b, mapping, state, error, *work);
                  if (failed(active)) {
                      return failure();
                  }
@@ -265,9 +275,9 @@ LogicalResult appendRecord(
     const auto rank = owner->ranks.at(edge.source);
     return collection.consumer(
         cut, {p, q},
-        [owner, edge, cut, rank, distance](
+        [owner, edge, cut, rank, distance, work](
             OpBuilder& b, const IRMapping& mapping, ArrayRef<Value> state, std::string& error) -> FailureOr<Value> {
-            auto active = guard(owner, edge, cut, b, mapping, state, error);
+            auto active = guard(owner, edge, cut, b, mapping, state, error, *work);
             if (failed(active)) {
                 return failure();
             }
@@ -303,6 +313,9 @@ LogicalResult appendBoundedPrefixRealization(
     }
     auto owner = std::make_shared<Owner>();
     owner->demands = std::move(demands);
+    auto& profile = collection.recipe().expressionProfile;
+    if (!profile) { profile = std::make_shared<PrefixExpressionProfile>(); }
+    owner->profile = profile;
     if (failed(appendHistory(*owner, collection.recipe(), error))) {
         return failure();
     }

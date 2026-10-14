@@ -9,6 +9,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/InvocationPrefix.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/InvocationPrefixCollection.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/PrefixExpression.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/PrefixExpressionProfile.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -542,6 +543,25 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
     auto prepared = fs::materializeInvocationPrefix(function, spec, error);
     if (inactive == 2) { return failed(prepared) && before == render(module->getOperation()); }
     if (failed(prepared)) { llvm::errs() << error.message << "\n"; return false; }
+    if (partitions > 1) {
+        if (!spec.expressionProfile) { return false; }
+        const auto first = spec.expressionProfile->report();
+        const auto requests = first.getInteger("requests");
+        const auto emissions = first.getInteger("emissions");
+        const auto constructed = first.getInteger("constructed_operations");
+        const auto retained = first.getInteger("retained_operations");
+        if (!requests || !emissions || !constructed || !retained || *requests < partitions ||
+            *emissions == 0 || *constructed < *retained) { return false; }
+        // A fresh staged retry must reset emission accounting without losing
+        // recipe registrations or changing the already accepted staged program.
+        const auto accepted = render((*prepared)->function);
+        auto retry = fs::materializeInvocationPrefix(function, spec, error);
+        const auto second = spec.expressionProfile->report();
+        if (failed(retry) || render((*prepared)->function) != accepted ||
+            second.getInteger("requests") != requests || second.getInteger("emissions") != emissions ||
+            second.getInteger("constructed_operations") != constructed ||
+            second.getInteger("retained_operations") != retained) { return false; }
+    }
     for (unsigned trips = 0; trips <= (inactive ? 7U : 3U); ++trips) {
         for (unsigned chooseFirst = 0; chooseFirst < 2; ++chooseFirst) {
             Execution actual; actual.run((*prepared)->function, trips, chooseFirst);

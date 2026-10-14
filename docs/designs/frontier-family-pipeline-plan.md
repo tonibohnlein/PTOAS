@@ -1559,3 +1559,50 @@ compiler pair is 79.41 / 83.72 seconds; it establishes no speedup. Allocation
 still refuses the missing invocation-prefix lifetime export. No full Delta
 command-trace equivalence or device result is claimed from this structural
 probe. Receipts and the explicit refusal are in `.local/prefix-source-captures/`.
+
+## Prefix expression construction accounting
+
+The invocation coordinator now owns an expression profile for its staged
+materialization attempt. Regional prefix selectors and bounded-lifetime guards
+register their original arena/root/cut identity; bounded entries also retain
+the consumer translation distance. The profile counts requests, emissions,
+direct/history attempts, and scalar operations constructed and retained at
+those cuts. It reports the sixteen largest constructions through the existing
+control-profile output. It changes neither expression planning nor emission.
+
+A new attempt resets emission counters while retaining recipe-registration
+counts. An accepted private-state plan copies the profile, so a later failed or
+successful retry cannot change the accepted plan's diagnostic snapshot. The
+profile retains no generated SSA values. Bounded roots are identified before
+their temporary coordinate substitution and arena rollback.
+
+These counts cover the detached scalar blocks constructed by the two guard
+emitters. They exclude publication/acquisition bookkeeping, predicate-history
+updates, mathematical proof traversals and work from abandoned attempts before
+the latest materialization. They are not dynamic device operation counts.
+
+The pinned Delta diagnostic against `e02aa4b6e` produces byte-identical logical
+IR (SHA-256 `12d8b4ad7637ade129b6664fed14972da1fc9640296b15337a107dac28deaae1`).
+It has 294 distinct registered root/cut/translation entries and 294 emissions,
+not repeated whole-root requests. The 330 emission attempts include 36 failed
+direct attempts, followed by 33 proven-inactive constants and three historical
+bindings. Those failed attempts construct no retained or discarded scalar IR:
+constructed and retained totals are both 2,471,573 operations. The full function
+contains 2,473,233 arithmetic operations, including original payload arithmetic.
+
+One regional expression at the `pto.tcvt` cut on input line 261 constructs
+600,293 operations. The next largest entries are bounded guards at consumer
+distance three, with 24,630 and 24,618 operations at line 257; several other
+bounded guards construct about 22,000 operations each. Whole-root memoization
+alone therefore does not address this output. The next investigation must
+separate common subexpressions across bounded guards from expansion already
+inside the retained regional expression, while preserving their original
+availability and history bindings. These measurements do not establish that
+arbitrary cross-cut or cross-history sharing is valid.
+
+All six focused prefix/private-plan/stage-profile tests pass. Added checks cover
+fresh retries, frozen accepted diagnostics, bounded zero-trip elimination and
+nonempty bounded emission. The single Delta run is 96.31 seconds and is only a
+diagnostic, not paired speedup evidence. Logical commands, private-state slots
+and output bytes are unchanged; no new physical lifetime export or device
+result is claimed. Receipts: `.local/prefix-expression-profile/`.

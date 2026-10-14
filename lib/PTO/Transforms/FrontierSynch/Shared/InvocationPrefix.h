@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <map>
 namespace mlir::pto::frontiersynch {
+class PrefixExpressionProfile;
 struct PrefixDirection {
     uint32_t sourcePipe = 0, targetPipe = 0;
     bool operator<(const PrefixDirection& other) const;
@@ -47,6 +48,7 @@ struct InvocationPrefixRecipe {
     std::vector<PrefixSource> sources;
     std::vector<PrefixConsumer> consumers;
     std::vector<PrefixDirection> directions;
+    std::shared_ptr<PrefixExpressionProfile> expressionProfile;
 };
 // Internal proof boundary: supplied selectors must denote the maximum EXACT
 // retained incoming executed-source ordinal (zero if absent), be available at

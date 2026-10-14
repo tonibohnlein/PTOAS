@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Validate a complete staged invocation before consuming it with one body transfer.
 #include "PrivateStatePlan.h"
+#include "PrefixExpressionProfile.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
@@ -74,6 +75,10 @@ func::FuncOp PrivateStatePlan::preparedFunction() const
 {
     return staged ? staged->function : func::FuncOp{};
 }
+llvm::json::Object PrivateStatePlan::expressionProfile() const
+{
+    return expressions ? expressions->report() : llvm::json::Object{};
+}
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> preparePrivateStatePlan(
     func::FuncOp original, const InvocationPrefixRecipe& recipe,
     std::shared_ptr<const MathematicalResult> mathematics, PrivateStateTarget target, PrivateStateError& error)
@@ -99,6 +104,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> preparePrivateStatePlan(
     auto staged = materializeInvocationPrefix(original, recipe, error);
     if (failed(staged)) { return failure(); }
     owner->staged = std::move(*staged);
+    if (recipe.expressionProfile) {
+        owner->expressions = std::make_shared<PrefixExpressionProfile>(*recipe.expressionProfile);
+    }
     // Preserve the existing complete-invocation exit interface, after all prefix
     // cleanup acquisitions and before the original return.
     auto* terminal = owner->staged->function.front().getTerminator();

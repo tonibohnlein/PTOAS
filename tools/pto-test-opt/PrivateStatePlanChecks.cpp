@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Root attachment is transactional and never implies physical allocation support.
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/PrivateStatePlan.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/PrefixExpressionProfile.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
@@ -61,8 +62,14 @@ bool rejectionAndRetry(MLIRContext& context)
     Fixture fixture(context), foreign(context);
     fs::PrivateStateError error;
     const auto original = printed(fixture.module->getOperation());
+    fixture.recipe.expressionProfile = std::make_shared<fs::PrefixExpressionProfile>();
+    fixture.recipe.expressionProfile->request(&fixture, 0, fixture.source);
     auto plan = fixture.prepare(error);
     if (failed(plan)) { return false; }
+    // Accepted diagnostics are a snapshot, independent of later attempts.
+    fixture.recipe.expressionProfile->request(&fixture, 0, fixture.source);
+    fixture.recipe.expressionProfile->resetEmission();
+    if ((*plan)->privateState->expressionProfile().getInteger("requests") != 1) { return false; }
     auto wrongTarget = fs::preparePrivateStatePlan(fixture.function, fixture.recipe, fixture.mathematics,
                                                  fs::PrivateStateTarget::Unavailable, error);
     if (succeeded(wrongTarget)) { return false; }
