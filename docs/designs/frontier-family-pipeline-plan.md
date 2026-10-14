@@ -25,7 +25,7 @@ exclusion evidence; they do not replace exact guards or matching identities.
 | M0: preparation ownership | Reproduce prefill failure; remap every affected non-SSA preparation reference before deletion; validate complementary cleanup and failure atomicity; replay prefill separately from the failing baseline. | Complete: `32b38b426` |
 | M1: measurement | Extend stage inventories with per-repeat lanes/extrema, candidate pairs/gaps, query construction, proof/cache work and actual traversal counts. Keep static records/sites distinct from dynamic commands and evaluated control. | Stage inventories and repeated-allocation work/traversal counters implemented; dynamic-control and complete ID-map inventories remain open |
 | M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans and attempt-owned relative queries implemented; economical candidate policy with parent retry remains open |
-| M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is planned before scalar lowering in `8a0a94536`; ordinary numerical sequence and repeated children retain recipes through composition; exact fixed-coordinate sequence crossings now form recipes before scalar preparation; child activity masks retain those recipes through composition; repeated crossings now retain numerical or contextual recipes before scalar lowering; guarded sequence crossings now retain publication/cleanup and common-cut expression recipes; relational crossings and capture closure remain open |
+| M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is now retained entirely in shared family recipes; ordinary numerical sequence and repeated children retain recipes through composition; exact fixed-coordinate sequence crossings now form recipes before scalar preparation; child activity masks retain those recipes through composition; repeated crossings now retain numerical or contextual recipes before scalar lowering; guarded sequence crossings now retain publication/cleanup and common-cut expression recipes; relational crossings and capture closure remain open |
 | M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; common nonconstant tuple terms compose before dispatch in `15f2007ea`; coordinate-selected phase shifts now compose under the same skeleton with a cost-checked incumbent; different skeletons and early graph allocation remain open |
 | M5: session and capabilities | Retain facts, mathematics, recipes and allocation in one session; deterministic capability upgrades; common unified/split stage functions; self-contained versioned saved artifacts; delete redundant orchestration. | Pending |
 | M6: carryover and closure | Finish shared-fact and coarse-input integration, closed-child completion imports, guarded/relational rank transport and outstanding semantic oracles; run pinned eleven-kernel/corpus validation and report device results separately. | Eleven-kernel replay refreshed at `e0e17e5db`: 11 logical, 7 six-ID/C++ successes; corpus, device, and interface closure remain open |
@@ -973,3 +973,28 @@ these are not paired timing evidence and establish no planning speedup. No devic
 execution is claimed. Full receipts are retained under
 `.local/generated-control-sequence-context/` and
 `.local/family-pipeline-sequence-context/`.
+
+## M3 finite guarded family recipes
+
+Finite guarded insertion now retains exact activity, publication, acquisition
+and complementary terminal cleanup as contextual family recipes. It builds no
+per-endpoint arithmetic or generated identities before common materialization.
+Allocation retains the same source/consumer envelopes and terminal-lifetime flag;
+stream namespaces and record provenance preserve their previous meanings.
+
+The producer-specific scalar emitter is removed. The former standalone
+publication-recipe materializer, whose last production caller was this producer,
+is removed too. Its tests now exercise the shared family materializer. The older
+circuit endpoint adapter remains for the unmigrated bounded/arithmetic paths;
+this slice does not claim those paths have migrated or that guarded records
+have become numerical periodic maps.
+
+Validation: seven focused suites pass; shared publication and prepared insertion
+pass again after deleting the obsolete helper. The finite guarded analysis
+regression checks zero preparation operations and nonempty materialized code for
+live shared-storage cases. Thirty-two before/after traces preserve every ordered
+payload and logical command across ordinary, branch-selected, early-publication
+and local-barrier cases. The public prefill replay succeeds and matches the
+preceding candidate after canonicalization; record namespace additions now fold
+before lowering. Receipts are retained under
+`.local/family-pipeline-finite-context/`. No compiler or device speedup is claimed.

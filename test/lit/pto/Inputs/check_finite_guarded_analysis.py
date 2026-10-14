@@ -145,6 +145,7 @@ def main():
                     )
                     report = invoke(tool, "--finite-guarded-analysis", path)
                     assert not report["error"] and report["prepared"] and report["unchanged"], report
+                    assert report["emitted"] == 0, report
                     active = [event for event in report["trace"]["events"] if event["kind"] == "payload"]
                     graph = required(active, effects)
                     position = {event["label"]: i for i, event in enumerate(active)}
@@ -186,6 +187,9 @@ def main():
             path.write_text(expanded)
             report = invoke(tool, "--finite-guarded-analysis", path)
             assert not report["error"] and report["prepared"] and report["unchanged"], report
+            assert report["emitted"] == 0, report
+            if shared:
+                assert report["recipe_pieces"] > 0 and report["materialized"] > 0, report
             assert report["ports"] == count and report["analysis_expressions"] < 20 * count**3, report
             print(
                 "guarded size:",

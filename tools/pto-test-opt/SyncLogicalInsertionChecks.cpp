@@ -22,6 +22,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalRelations.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticInsertion.h"
@@ -1434,11 +1435,20 @@ LogicalResult runFiniteGuardedAnalysisChecks(func::FuncOp function, pto::GMAlias
     if (succeeded(prepared)) {
         for (const auto& stage : (**prepared).preparation) { emitted += stage.code->getOperations().size(); }
     }
+    uint64_t pieces = 0, materialized = 0;
+    if (succeeded(prepared)) {
+        if ((*prepared)->familyRecipe) { pieces = fs::familyEndpointPieceCount(*(*prepared)->familyRecipe); }
+        if (failed(fs::materializeLogicalFamilies(**prepared))) {
+            return function.emitError("finite guarded family materialization failed");
+        }
+        for (const auto& stage : (*prepared)->preparation) { materialized += stage.code->getOperations().size(); }
+    }
     llvm::json::Object report{{"error", analysis.error}, {"insertion_error", analysis.insertionError},
         {"prepared", succeeded(prepared)}, {"unchanged", before == render()},
         {"cells", analysis.cost.cells}, {"ports", analysis.cost.ports},
         {"analysis_expressions", analysis.cost.expressionNodes},
-        {"expressions", regional.expressions ? regional.expressions->size() : 0}, {"emitted", emitted}};
+        {"expressions", regional.expressions ? regional.expressions->size() : 0}, {"emitted", emitted},
+        {"recipe_pieces", pieces}, {"materialized", materialized}};
     if (regional.reachability && regional.expressions) {
         const auto zero = regional.expressions->constant(0);
         for (uint32_t type = 0; type < regional.anchors.size(); ++type) {

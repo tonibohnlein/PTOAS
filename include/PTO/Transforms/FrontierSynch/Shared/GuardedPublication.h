@@ -71,8 +71,6 @@ FailureOr<std::shared_ptr<const GuardedPublicationRecipe>> preparePublicationRec
     RegionExpressions::Id sourceGuard, RegionExpressions::Id activity, RegionExpressions::Id consumerGuard,
     const EndpointExpressionAvailability& available, std::string& error,
     std::optional<SelectedPublication> selectedSource = {});
-FailureOr<GuardedPublication> materializePublicationRecipe(const GuardedPublicationRecipe& recipe,
-    RegionExpressions& arena, const EndpointExpressionEmitter& emit, Value consumerPredicate, std::string& error);
 // Append the alternative WAIT using the same record and matching tuple as the
 // ordinary pair. The final tuple component is the logical occurrence identity;
 // preceding components follow the normal memberCoordinates convention.
