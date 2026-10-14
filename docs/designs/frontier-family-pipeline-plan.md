@@ -2,12 +2,16 @@
 
 This revision supersedes the execution priorities of
 [the consolidation plan](frontier-consolidation-plan.md), while carrying its
-unfinished obligations forward. The implementation baseline is
-`9e86b5232b92cf9b4efe27464a061d78a2ca7406`.
+unfinished obligations forward. The historical implementation baseline is
+`9e86b5232b92cf9b4efe27464a061d78a2ca7406`. The active revision below is pinned to
+implementation `34b7ed8119f95e3a0b612a630ce7066c3c5296e2` and the October 14 draft
+at `b5a5df8` in `synchronization_draft`. Older results below remain historical
+receipts, not evidence that the new milestones are complete.
 
 ## Contract
 
-Keep the existing mathematical algorithms. Build executable command-family
+Keep the existing mathematical providers and replace qualifying internal
+algorithms with the revised draft's stronger constructions. Build executable command-family
 recipes, normalize their logical protocol, request allocation for that protocol,
 then materialize generated arithmetic and commands transactionally. These are
 internal stages, not additional public passes or a new dialect.
@@ -18,39 +22,235 @@ cutoffs, general symbolic solver, runtime demand analyzer, or weaker fallback
 after exact retention is introduced. Necessary activity domains remain one-way
 exclusion evidence; they do not replace exact guards or matching identities.
 
-## Review-driven execution order after the rebase
+## Active execution plan: revised Sections 5–8
 
-The next work reduces duplication inside the shared materializer before
-migrating more producers. Deferred contextual singletons establish ownership
-and protocol selection; they do not by themselves compress guarded control.
+This execution order supersedes the earlier post-rebase priorities. Retain the
+completed family recipes, shared occurrence/availability service, demand-driven
+shared bindings, mixed regular/residual batches, complete-map normalization,
+owned allocation requests and parent retry. Deferred contextual singletons are
+not a compactness guarantee. Do not add another dispatcher backend for an
+internal algorithm specialization.
 
-1. Rebuild the rebased source and establish focused baseline results.
-2. Completed: replace eager common-cut memo copying with demand-driven lookup. Use one
-   context for the staged materialization, isolating arena, cut and binding
-   environments and discarding all caches on failure. Measure published
-   bindings, lookup requests, imported bindings and retained local entries.
-3. Completed: admit qualified numerical sub-batches beside guarded residual crossings in
-   one command-order inventory. A residual must not disqualify unrelated regular
-   families. Preserve simultaneous-command order, matching and exact activity;
-   necessary domains remain exclusion evidence only.
-4. Normalize the recipe-level protocol before allocation. Retain inexpensive
-   certified candidates and permit parent requests for stronger sharing; do not
-   permanently accept the first locally feasible child assignment.
-5. Finish remaining producer migrations, bounded complete-map normalization,
-   session ownership and the validation obligations below.
+The scope of "implement Sections 6 and 7" here is the SCC completion policy,
+closed-child integration, and applicable order-preserving allocation and span
+algorithms. It does not include the section's ordering-changing repairs,
+unrestricted protocol synthesis, or an assumption that every symbolic result
+admits a cheap allocation. Theorem 7.23's cross-lane reversal issue remains a
+draft obligation; its excess formula must not authorize a production decision.
 
-Wrapper subtree discovery and availability requests are now counted. Measure
-lowering context-chain traversal separately before optimizing it.
-Sharing caches must not hide incompatible binding environments or allow values
-from a later detached block to become operands of an earlier block. Original
-cuts alone are not a complete cache key.
+| Step | Reviewable work | Completion gate | Existing obligations |
+|---|---|---|---|
+| R1 (implemented) | SCC-ordered completion transfer | Concrete pending-state oracle, fixed-child containment, bounded fact propagation pass | M6; Section 6 |
+| R2 | Core-chain periodic frontier specialization | Exact demand/query agreement and linear gate/work scaling at fixed pipe count | M1/M3; Section 5.4 |
+| R3 | Writer-centered guarded storage and shared boundary scans | Exact conflict/boundary agreement, including macro envelopes and protected effects; read-heavy scaling | M1/M3; Section 5.2 |
+| R4a | Ordered periodic/repeated first-reuse sweeps | Certified applicability, linear query counts, exact capacity and finite-restriction checks | M2/M4; Propositions 7.8/7.10 |
+| R4b | Linear periodic allocation from suffix thresholds | Independent command-graph reuse/width oracle; no general assignment matrix on this route | M2/M4; Proposition 7.12 |
+| R4c | Direct modulo-lane span extraction and qualified boundary export | Exact span/presence agreement without generation expansion; parent retry preserved | M2/M4; Proposition 7.13, Corollary 7.14 |
+| R5 | Binding-aware multi-output control construction and producer query slicing | Less total constructed/live control, unchanged matching and payload order; Delta lifetime gate separate | M3/M4 |
+| R6 | Normalized logical graph allocation, owned session and closed-child completion import | Shared unified/split stages, allocation before scalar materialization, deleted superseded paths | M3/M4/M5/M6; Sections 6/8 |
+| R7 | Pinned pipeline, scaling and device closure | Distinct logical/physical/C++/device outcomes and reproducible receipts | M1/M6 |
 
-Delta has separate production gates for control-construction size and the
-missing prefix-lifetime allocation export. Logical insertion alone closes
-neither. The upstream dynamic-subview row proof integration is explicitly
-deferred until this work is complete; existing InsertSync already uses it.
+R1 transfer is implemented; R2–R7 remain open. Existing primitives are starting
+points, not completed migrations. Continue with R2, R3, R4a–c, R5, R6, then R7.
+Run focused integration checks at each step; do not defer all production
+validation to R7. A newly measured bottleneck may justify resequencing, recorded
+with evidence rather than another untracked fallback.
 
-## Milestones
+### R1: SCC-local conservative transfer
+
+Replace the global two-solve placement in `CompletionTransfer.cpp` with the
+Theorem 6.2 policy. Preinstall mandatory prerequisite completions. Compute
+reachable SCCs and process their condensation graph in topological order.
+An acyclic singleton transfers finalized incoming facts once. A cyclic SCC
+holds external inputs fixed, solves locally, marks conflicting entries, then
+solves locally again. Publish only final outputs to successor components.
+Reuse the mode-tagged delta worklist and existing summary contract; no change
+to completion protocol legality or physical flag ownership is implied.
+
+Keep the old global policy in test support for the stated containment check,
+not as a second production policy. Compare selected sites and payload closure
+only with identical child code, effects, mandatory entries and protocols.
+Use a separate concrete pending-state oracle for summaries and coverage.
+Include write/read/read, joins, self-loops, multi-node SCCs, unreachable nodes,
+mandatory entries and final-false while visits. Count SCC visits, solves and
+internal/inter-component fact propagation. No completion may be dropped merely
+because another child decomposition selected fewer sites. This step does not
+permit conservative replacement of retained exact mathematics.
+
+### R2: core-chain periodic frontiers
+
+Specialize `GuardedPeriodicQuotient` inside its current provider. Preserve
+parallel-record normalization, winner/provenance rules and query interfaces.
+For certified core chains, build ordered potential-site lists per pipe; compute
+masked native closure by prefix/suffix scans including period wrap and payload
+start-to-completion edges. Seed each required origin kind, then perform at most
+`k` demand-edge rounds, each followed by complete native closure. Retain the
+generic supplied-graph path when additional native semantics lack this contract.
+Changing only the old relaxation round limit is invalid.
+
+Use shared last-edge exclusion scans. Charge requested all-pair exports
+separately; do not construct them merely to answer sparse queries. Evaluate
+scaled `(period, rank)` frontier representation within the same interface to
+avoid multiplication by pipe length, with explicit infinity, signed bounds and
+overflow checks. A representation change is a separate reviewable part if
+needed; the core native-closure migration must not depend on an unchecked
+integer encoding.
+
+Compare against independent shortest-path/unfolded graph oracles and the old
+algorithm on small numerical and guarded inputs. Cover absent sites, empty
+pipes, wrap, parallel ties, zero-distance edges, both query origins, partial
+periods and zero trips. Scale sites/records at fixed pipes and count native
+scans, demand relaxations, unique gates and exclusion work. The target is
+Proposition 5.17's supplied-description bound, not a new general guarded
+periodicity recognizer. Independently changing iteration guards do not qualify.
+
+### R3: writer-centered guarded construction
+
+Retain the guarded rank reducer. Replace qualifying finite storage input and
+boundary construction with one shared per-cell ordered-access builder:
+potential writers drive candidate generation, intervening-write predicates are
+shared, equal endpoint witnesses are merged, and prefix/suffix scans build
+writer/reader boundary selectors. Measure `c`, `W = sum(w_x * m_x)`, candidate
+visits and gates. A read-only cell must construct no internal storage-conflict
+candidates and must still export its reader boundaries in linear scan work.
+
+Qualification itself must not retain a hidden all-access-pair loop. Separate
+residual alias/conflict work and hardware-protected cases explicitly. Process
+simultaneous macro envelopes against the same preceding state before updating
+it. Preserve scalar-pipe restrictions and accumulator/tile-shape protections.
+Use the shared builder for finite and qualifying bounded-lifetime consumers;
+retain general paths where their stronger semantics are needed. Do not infer
+an impossible write through an unrequested satisfiability proof.
+
+Test read-heavy and all-writer cases, RMW, guarded absence, repeated witnesses,
+macro envelopes, alias residuals and protected conflicts. Compare generators,
+reduced demands and boundary queries with independent explicit executions.
+Attribute Delta's large roots to producers before claiming this closes them.
+
+### R4: specialized Section 7 allocation
+
+Extend the existing allocation request with a certified first-reuse capability:
+direction, ordered publication/consumption phases, exact suffix thresholds,
+admitted context, finite-restriction evidence and owning query/index lifetime.
+Do not introduce a second program representation. Canonical handoffs and
+contracted child spans need different applicability evidence.
+
+R4a precomputes endpoint-to-port projections and uses the ordered monotone
+sweep/direct cyclic assignment where Propositions 7.8/7.10 apply. Both success
+and insufficient-capacity results use the stronger algorithm. Zero-capacity,
+empty and short invocations remain explicit cases.
+
+R4b implements Proposition 7.12's residue/permutation construction from supplied
+first-reuse positions `t_r = c*a_r + b_r`. Validate the suffix contract and
+required reachability/finite thresholds before computing its minimum. Retain
+the general assignment solver for arbitrary sufficient-link matrices; such a
+matrix is not automatically an exact suffix-threshold description. Test
+unordered matching, tied residues, large distances and malformed descriptions
+against a separate command-graph oracle. Charge threshold construction
+separately from linear allocation.
+
+R4c derives first/last lane occurrences from certified modulo rules over
+interval domains using gcd compatibility, modular inverses and interval
+rounding. Compare original command positions, including within-cut order.
+Split holes only through supported exact phase descriptions. Handle empty,
+short and clipped intervals without enumerating their generations. Extend
+qualified rotating-child boundary certificates with lane endpoints, charging
+numerical residue expansion explicitly. Other children retain supplied span
+selectors. Neither storage extrema nor lane endpoint extraction proves reuse.
+
+All three parts preserve parent-aware candidate retry, reservations, direction
+budgets and zero/partial-invocation obligations. Compare complete executable
+ID maps among independently certified candidates and retain the incumbent on
+unproved or unprofitable rewrites. No candidate may buy cheaper control by
+adding payload prerequisites. Include a shared command-semantics regression:
+an outgoing SET textually preceding an incoming WAIT does not itself establish
+a causal SET-to-WAIT edge; test the local-barrier case separately.
+
+### R5: shared control construction and Delta
+
+Extend the common expression service with multi-output requests under one
+arena, original cut, occurrence translation, history environment and private
+state version. Slice to the union of live roots before scalar creation. Reuse
+subexpressions only with equal bindings and legal placement. Original cut
+identity alone is not a sufficient key; snapshots, resets, absent values,
+rollback and temporary expression identities remain ownership boundaries.
+
+Distinguish repeated sub-DAGs across roots from one already-large reachable
+root. The pinned Delta profile has 294 distinct emissions and one regional
+expression constructing 600,293 operations; whole-root caching is insufficient.
+Attribute this root to query construction and coordinate/guard composition.
+When endpoint maps are supplied, use the draft's restricted incoming queries
+(`app:incoming-cut-queries`) inside existing producers where qualified: latest
+incoming source per pipe plus preceding executed payload, with shared queries.
+Their O(k^2) query count does not bound arbitrary query or selector complexity,
+and does not prove availability at the source cut. Preserve early publication,
+cleanup and the chosen protocol rather than introducing a runtime analyzer.
+
+Acceptance measures unique reachable mathematical nodes, constructed scalar
+operations, live lowered operations and dynamic evaluated control separately.
+Test sharing and non-sharing across history versions, zero/empty/nested
+invocations and guarded absence. Compare active communications, matching,
+cuts and payload closure, not only command counts or output numerics.
+Delta additionally requires an actual invocation-prefix lifetime export and
+finite-ID reuse proof. If the fixed protocol cannot be certified, report that
+separately; compact logical code is not physical success and no modulo-ID guess
+or silent conservative substitution is allowed.
+
+### R6: finish the retained-plan boundary
+
+Normalize recipes and their coactive command order before allocation; consume
+matching metadata without scalar materialization. Allocate the resulting
+logical protocol, compose certified physical maps with occurrence selectors,
+then lower its live control once. Preserve the current split-pass artifacts and
+make unified and split entry points use the same stage functions. Saved
+artifacts must be self-contained and versioned, with no borrowed callbacks.
+Keep effect precision, cover reduction and realization-order guarantees
+distinct in capability results. Delete superseded producer orchestration as
+each migration completes; do not discard specialized mathematical kernels.
+
+Complete Section 6's closed-child import with sound effects and executable,
+closed matching across the imported whole invocation. An isolated iteration
+with open inter-iteration handoffs is not a closed child. Preserve selective
+child code without requiring arbitrary reachability/storage selectors or
+draining at every boundary. Physical certification must include inter-visit
+reuse and completion-protocol resources. Add the coarse shared-input path so
+qualified completion requests do not first require fine physical partitioning.
+Keep unsupported calls, scalar readiness, mixed-core and hardware protocol
+restrictions explicit.
+
+### R7 and remaining carryover
+
+Refresh the eleven-kernel campaign with pinned planner, allocator and backend
+revisions, flags and hashes. Report logical insertion, mathematical retention,
+physical certification, C++ generation and device execution separately. Keep
+GroupNorm/decode capacity certification, prefill allocation export and Delta
+prefix lifetime failures distinct; refusal is not a lower bound above six IDs.
+Close phased-repeat/corpus and semantic-oracle gaps as well as focused tests.
+Keep source-fact, relational crossing, capture-closure and rank-transport work
+from M3/M6 on the ledger until production callers and tests establish closure.
+
+Run structural scaling on loop counts, banks, read/write ratios, SCC shapes,
+lane/phase counts, bindings and record-label permutations. Retain the pipeline
+inventory: records -> families -> query/proof work -> prepared/materialized
+arithmetic -> live control -> static sites -> executed communications/control.
+Use paired compiler timings before claiming speedup; device claims require
+device runs. Hardware restrictions and exact-order acceptance remain fixed.
+
+The fused explicit scan/reducer is a subsequent task inside the existing
+explicit provider, primarily to reduce working storage. Keep materialized
+generators for requested witnesses, supplied-graph inputs and test oracles.
+It does not block R1–R7. The upstream dynamic-subview row proof integration
+remains explicitly deferred, as previously agreed.
+
+Use the existing configured build incrementally, targeting affected objects,
+test drivers and `ptoas`. Do not reconfigure, reinstall or rebuild LLVM for
+routine milestones. Run focused tests once after each meaningful change and
+broaden only for integration risks or failures; at most two aggregate intensive
+workers. Record each milestone's code, contracts, deleted paths, test results
+and remaining limitations before a reviewable commit. This planning revision
+does not restart builds or implement any R step.
+
+## Existing milestone ledger (carried forward into R1–R7)
 
 | Milestone | Work and acceptance | Current status |
 |---|---|---|
@@ -1606,3 +1806,28 @@ nonempty bounded emission. The single Delta run is 96.31 seconds and is only a
 diagnostic, not paired speedup evidence. Logical commands, private-state slots
 and output bytes are unchanged; no new physical lifetime export or device
 result is claimed. Receipts: `.local/prefix-expression-profile/`.
+
+## R1 result: SCC-local completion transfer
+
+The production transfer now finalizes reachable SCCs in topological order,
+preinstalling mandatory completions. Acyclic singletons transfer once; cyclic
+components solve twice against fixed external input. Internal delta queues and
+external propagation are separate, so provisional cyclic facts never reach a
+downstream component. Decomposition and propagation use iterative traversals.
+The old global two-solve production implementation is removed.
+
+The existing concrete-state oracle now checks SCC placement using an independent
+transitive-closure component decomposition, final summaries and conflict safety.
+It separately checks selected-site containment against the old global policy
+with identical children. All 16,384 enumerated graph cases, 1,000 deterministic
+random graphs and a 100,000-node chain with a two-node cycle pass. The
+write/read/read regression protects only the first reader. Propagation counters
+check internal and external fact bounds and one/two solves per component.
+
+The three completion transfer/region/public lit tests pass with the existing
+assertions-enabled incremental candidate build. No compiler warnings were
+introduced. The compliance prefilter's five brace findings in the test driver
+are false positives: each reported conditional has a braced body, including
+the multiline conditions. This establishes the transfer-policy migration, not
+closed-child import, broader hardware protocols or device execution. Receipts:
+`.local/r1-build.log`, `.local/r1-tests.log`, `.local/r1-compliance.log`.
