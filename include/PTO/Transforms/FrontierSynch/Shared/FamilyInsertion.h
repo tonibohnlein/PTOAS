@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_FAMILYINSERTION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_FAMILYINSERTION_H
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/EndpointPieces.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
@@ -25,6 +26,18 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFamilyEndpointRecipe
 // merely that the coordinates are a necessary domain for that activity.
 FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFiniteFamilyEndpointRecipe(
     const NumericTemplateEndpoints& plan);
+// Residual guarded families retain the producer's exact activity and matching
+// expressions. Each piece has one provenance member; numerical batches use the
+// grouped builders above. Availability is certified without generated SSA.
+struct ContextualEndpointFamily {
+    EndpointPiece piece;
+    RegionExpressions::Id activity = RegionExpressions::invalid;
+    RegionExpressions::Id ordinal = RegionExpressions::invalid;
+    RegionExpressions::Id residueCoordinate = RegionExpressions::invalid;
+    uint64_t modulus = 0, residue = 0;
+};
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndpointRecipe(
+    std::shared_ptr<RegionExpressions> arena, ArrayRef<ContextualEndpointFamily> families);
 // Append immutable child recipes without copying their selector inventories.
 // endpointIndex counts concrete endpoints preceding the child; recordBase is
 // the checked namespace translation applied equally to both matching sides.

@@ -190,6 +190,10 @@ class RepeatedPreparation
     }
     LogicalResult addCrossings()
     {
+        auto compact = prepareRepeatedCrossingFamilies(state, *plan, allocationCrossings, nextRecord);
+        if (failed(compact)) { return fail("repeated crossing family preparation failed"); }
+        if (*compact) { return success(); }
+        std::vector<ContextualEndpointFamily> families;
         for (const auto &crossing : state.crossings)
         {
             if (crossing.native || e().constantValue(crossing.guard) == 0)
@@ -255,44 +259,30 @@ class RepeatedPreparation
                 {
                     return fail("repeated crossing coordinate unavailable");
                 }
-                auto predicate = emit(*guard, cut);
-                if (failed(predicate))
-                {
-                    return fail("repeated crossing predicate unavailable at its cut");
-                }
-                PreparedLogicalEndpoint endpoint{
-                    cut,
-                    p == q ? LogicalCommandKind::Barrier :
-                        (publish ? LogicalCommandKind::Set : LogicalCommandKind::Wait),
-                    p,
-                    q,
-                    record,
-                    *predicate,
-                    {}};
-                retainEndpointCoordinates(endpoint, body.anchors[event.type].coordinates);
+                ContextualEndpointFamily endpoint;
+                endpoint.piece.namespaceId = record;
+                endpoint.piece.sourcePipe = p; endpoint.piece.targetPipe = q;
+                endpoint.piece.displacement = crossing.displacement;
+                endpoint.piece.kind = p == q ? EndpointKind::Barrier :
+                    (publish ? EndpointKind::Set : EndpointKind::Wait);
+                endpoint.piece.cut = {cut->getBlock(), cut};
+                endpoint.piece.members.push_back({record, body.anchors[event.type].coordinates});
+                endpoint.activity = *guard;
+                endpoint.ordinal = publish ? *current : e().sub(*current, distance);
                 if (!state.typePhases.empty()) {
-                    auto visit = emit(originalVisit, cut);
-                    if (failed(visit)) { return fail("repeated domain coordinate unavailable"); }
-                    if (endpoint.domain.empty()) { endpoint.domain.emplace_back(); }
-                    for (auto& box : endpoint.domain) {
-                        box.push_back({*visit, state.phaseCount, state.typePhases[event.type]});
-                    }
+                    endpoint.residueCoordinate = originalVisit;
+                    endpoint.modulus = state.phaseCount;
+                    endpoint.residue = state.typePhases[event.type];
                 }
-                endpoint.records = {record};
-                endpoint.piece = plan->endpoints.size();
-                if (p != q)
-                {
-                    auto identity = emit(publish ? *current : e().sub(*current, distance), cut);
-                    auto member = emit(e().constant(record), cut);
-                    if (failed(identity) || failed(member))
-                    {
-                        return fail("repeated matching identity unavailable");
-                    }
-                    endpoint.identity = *identity;
-                    endpoint.memberCoordinates.push_back(*member);
-                }
-                plan->endpoints.push_back(std::move(endpoint));
+                families.push_back(std::move(endpoint));
             }
+        }
+        if (!families.empty()) {
+            auto recipe = buildContextualFamilyEndpointRecipe(body.expressions, families);
+            if (failed(recipe)) { return fail("repeated crossing expressions unavailable at their cuts"); }
+            auto joined = appendFamilyEndpointRecipe(plan->familyRecipe, *recipe, 0, plan->endpoints.size());
+            if (failed(joined)) { return fail("repeated crossing family composition failed"); }
+            plan->familyRecipe = std::move(*joined);
         }
         return success();
     }

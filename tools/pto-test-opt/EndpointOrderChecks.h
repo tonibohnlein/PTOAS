@@ -43,6 +43,52 @@ bool familyRequestedOutputChecks(mlir::scf::ForOp loop)
     auto command = fs::emitFamilyExpressions(builder, loop.getLoc(), points, labels);
     return command.error.empty() && command.present && command.member && code.getOperations().size() > 1;
 }
+bool contextualEndpointRecipeChecks(const mlir::pto::frontiersynch::NumericTemplateEndpoints& input)
+{
+    using namespace mlir;
+    namespace fs = mlir::pto::frontiersynch;
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    fs::ContextualEndpointFamily family;
+    family.piece.cut = input.groups.front().cut;
+    family.piece.sourcePipe = 1; family.piece.targetPipe = 2;
+    family.piece.namespaceId = 7;
+    family.piece.members.push_back({7, {}});
+    family.activity = arena->boolean(true);
+    family.ordinal = arena->constant(13);
+    family.residueCoordinate = arena->constant(5);
+    family.modulus = 3; family.residue = 2;
+    auto leaf = fs::buildContextualFamilyEndpointRecipe(arena, {family});
+    if (failed(leaf)) { return false; }
+    fs::PreparedLogicalPlan plan(0);
+    plan.familyRecipe = *leaf;
+    if (!plan.endpoints.empty() || !plan.preparation.empty() ||
+        failed(fs::materializeLogicalFamilies(plan)) || plan.endpoints.size() != 1) { return false; }
+    const auto& endpoint = plan.endpoints.front();
+    auto ordinal = endpoint.identity.getDefiningOp<arith::ConstantIndexOp>();
+    auto member = endpoint.memberCoordinates.front().getDefiningOp<arith::ConstantIndexOp>();
+    if (!ordinal || ordinal.value() != 13 || !member || member.value() != 7 || endpoint.record != 7 ||
+        endpoint.domain.size() != 1 || endpoint.domain.front().size() != 1 ||
+        endpoint.domain.front().front().modulus != 3 || endpoint.domain.front().front().value != 2) { return false; }
+    auto invalid = family;
+    invalid.residue = 3;
+    if (succeeded(fs::buildContextualFamilyEndpointRecipe(arena, {invalid}))) { return false; }
+    invalid = family; invalid.activity = family.ordinal;
+    if (succeeded(fs::buildContextualFamilyEndpointRecipe(arena, {invalid}))) { return false; }
+    invalid = family; invalid.piece.members.push_back({8, {}});
+    if (succeeded(fs::buildContextualFamilyEndpointRecipe(arena, {invalid}))) { return false; }
+    // Replayability revoked after planning must fail atomically during final
+    // lowering, preserving the still-owned recipe and original payload IR.
+    auto* cut = family.piece.cut.before;
+    family.ordinal = arena->input(cut->getResult(0));
+    auto replay = fs::buildContextualFamilyEndpointRecipe(arena, {family});
+    if (failed(replay)) { return false; }
+    arena->forbidRecomputation(cut);
+    fs::PreparedLogicalPlan rejected(0);
+    rejected.familyRecipe = *replay;
+    return failed(fs::materializeLogicalFamilies(rejected)) && rejected.preparation.empty() &&
+        rejected.endpoints.empty() && bool(rejected.familyRecipe) &&
+        failed(fs::buildContextualFamilyEndpointRecipe(arena, {family}));
+}
 bool endpointOrderGraphChecks()
 {
     namespace fs = mlir::pto::frontiersynch;
@@ -378,6 +424,7 @@ bool endpointOrderFamilyChecks(mlir::MLIRContext* context)
                 !endpointInvocationRecipeChecks(input, *recipe, families.families) ||
                 !finiteEndpointRecipeChecks(input) ||
                 !endpointActivityRecipeChecks(input, *recipe, families.families) ||
+                !contextualEndpointRecipeChecks(input) ||
                 !endpointActivityBarrierChecks(input)) { return false; }
             auto downstream = llvm::find_if(families.families, [](const auto& f) { return f.displacement == 2; });
             if (downstream == families.families.end() || downstream->members.size() != count) { return false; }

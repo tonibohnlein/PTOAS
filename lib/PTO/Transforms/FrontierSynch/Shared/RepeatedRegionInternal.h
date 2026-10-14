@@ -69,6 +69,10 @@ struct RepeatedRegionState : std::enable_shared_from_this<RepeatedRegionState> {
     std::optional<Id> portDistance(std::size_t source, std::size_t target);
     std::optional<Id> bodyPortQuery(const RegionalEvent& source, const RegionalEvent& target);
 };
+// Build exact numerical crossing families transactionally; false preserves the
+// general guarded realization. No endpoint arithmetic is allocated here.
+FailureOr<bool> prepareRepeatedCrossingFamilies(RepeatedRegionState& state, PreparedLogicalPlan& plan,
+    std::vector<std::pair<uint32_t, std::size_t>>& allocation, uint64_t& nextRecord);
 void attachNumericalRepeatedExports(const std::shared_ptr<RepeatedRegionState>& state, RegionalAnalysis& out);
 // Export a validated state's body, coordinates, selectors and recipes. Callers
 // establish its crossing graph (possibly empty for a certified singleton).
