@@ -30,6 +30,7 @@ std::vector<RegionalAllocationGroup> constantAllocationLanes(const RegionalAlloc
 // the logical plan requires more physical IDs.
 std::shared_ptr<RegionalAllocationSummary> repeatedRegionalAllocation(
     RepeatedRegionState& state, const RegionalAllocationSummary& child,
-    ArrayRef<std::pair<uint32_t, std::size_t>> crossings, AllocationProfile* profile = nullptr);
+    ArrayRef<std::pair<uint32_t, std::size_t>> crossings, AllocationProfile* profile = nullptr,
+    AllocationStrength strength = AllocationStrength::Shared);
 } // namespace mlir::pto::frontiersynch
 #endif

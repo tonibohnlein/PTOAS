@@ -25,7 +25,7 @@ migrating more producers. Deferred contextual singletons establish ownership
 and protocol selection; they do not by themselves compress guarded control.
 
 1. Rebuild the rebased source and establish focused baseline results.
-2. Replace eager common-cut memo copying with demand-driven lookup. Use one
+2. Completed: replace eager common-cut memo copying with demand-driven lookup. Use one
    context for the staged materialization, isolating arena, cut and binding
    environments and discarding all caches on failure. Measure published
    bindings, lookup requests, imported bindings and retained local entries.
@@ -55,7 +55,7 @@ deferred until this work is complete; existing InsertSync already uses it.
 |---|---|---|
 | M0: preparation ownership | Reproduce prefill failure; remap every affected non-SSA preparation reference before deletion; validate complementary cleanup and failure atomicity; replay prefill separately from the failing baseline. | Complete: `32b38b426` |
 | M1: measurement | Extend stage inventories with per-repeat lanes/extrema, candidate pairs/gaps, query construction, proof/cache work and actual traversal counts. Keep static records/sites distinct from dynamic commands and evaluated control. | Stage inventories and repeated-allocation work/traversal counters implemented; dynamic-control and complete ID-map inventories remain open |
-| M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans and attempt-owned relative queries implemented; economical candidate policy with parent retry remains open |
+| M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans and attempt-owned relative queries implemented; owned independent/shared candidate requests with parent retry implemented; explicit-capacity selection is internal, and production policy integration remains open |
 | M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is now retained entirely in shared family recipes; ordinary numerical sequence and repeated children retain recipes through composition; exact fixed-coordinate sequence crossings now form recipes before scalar preparation; child activity masks retain those recipes through composition; repeated crossings now retain numerical or contextual recipes before scalar lowering; guarded sequence crossings now retain publication/cleanup and common-cut expression recipes; finite overlays and guarded/numerical periodic adapters retain recipes through allocation; relational crossings and capture closure remain open |
 | M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; common nonconstant tuple terms compose before dispatch in `15f2007ea`; coordinate-selected phase shifts now compose under the same skeleton with a cost-checked incumbent; different skeletons and early graph allocation remain open |
 | M5: session and capabilities | Retain facts, mathematics, recipes and allocation in one session; deterministic capability upgrades; common unified/split stage functions; self-contained versioned saved artifacts; delete redundant orchestration. | Pending |
@@ -1194,3 +1194,42 @@ protocol. No paired compiler-speed or device-performance claim is made.
 Receipts are retained locally under `.local/family-pipeline-mixed-batches/`.
 The historical phased-repeat timeouts and four physical/export refusals remain
 open; this focused validation does not replace the full pinned campaign.
+
+## Owned allocation requests and parent retry
+
+The prepared plan's one-shot allocation callback is replaced by an owned
+`AllocationPreparation` capability. Independent and shared constructions cache
+separate answers, including failure, on the unchanged logical command graph.
+Requesting a candidate does not select it. Sequence, repetition, conditional
+masking and finite overlays propagate the parent's requested strength through
+their retained child views. A stronger parent request can therefore revisit a
+locally feasible independent assignment without recomputing demands or endpoint
+arithmetic. Unmigrated producers retain one-shot compatibility, including
+certificate-only results.
+
+The independent repeated construction uses the existing certified lifting; it
+does not infer reuse from buffer parity. Shared requests preserve the previous
+periodic-lane-first policy. Once Shared has run, later requests reuse retained
+answers instead of constructing a weaker result. Candidate state expires with
+the plan; no callback enters a saved certificate.
+
+An internal explicit-capacity selector checks the complete regional certificate,
+including palette conflicts and reservations, against the supplied eligible ID
+pool. It tries independent and shared candidates, requests optional lane
+evidence only when the base certificate does not fit, and selects only a
+successfully decoded certificate. Failed attempts preserve the incumbent plan.
+This establishes the request lifecycle, not the full production cost policy:
+the public split pipeline still requests Shared and retains its existing output
+contract. It does not know a subsequent allocator's eligible pool.
+
+The focused checks cover parent escalation from a seven-ID independent
+composition to a six-ID shared composition, cached failure, repeated requests,
+shared-first requests, moved ownership and legacy certificate-only output.
+Production mixed-family fixtures exercise explicit-capacity selection before
+scalar materialization, invalid/empty pools, failed-attempt preservation, retry,
+physical allocation and independent unfolded command-closure checking.
+
+Remaining work is to pass the real capacity through the owned production
+session, compare complete executable mapping costs, and reduce the expanded
+lifetime inventory. This milestone does not claim those are complete or that
+a diagnostic count reduction proves a compiler-time improvement.

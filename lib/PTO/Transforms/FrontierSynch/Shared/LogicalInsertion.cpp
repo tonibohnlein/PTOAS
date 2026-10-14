@@ -43,9 +43,9 @@ void prepareAllocationSupport(PreparedLogicalPlan& plan, AllocationProfile* prof
 {
     if (plan.privateState || plan.completionOwner) { return; }
     auto prepare = std::move(plan.allocationPreparation);
-    plan.allocationPreparation = {};
+    plan.allocationPreparation = AllocationPreparation{};
     llvm::SaveAndRestore<AllocationProfile*> profiling(plan.allocationProfile, profile);
-    if (prepare) { prepare(plan); }
+    prepare(plan);
 }
 LogicalResult materializeLogicalFamilies(PreparedLogicalPlan& plan)
 {
@@ -73,7 +73,7 @@ std::shared_ptr<PreparedLogicalPlan> takeRegionalAllocationView(PreparedLogicalP
     view->compactBoundingOwner = plan.compactBoundingOwner;
     view->regionalAllocation = std::move(plan.regionalAllocation);
     view->allocationPreparation = std::move(plan.allocationPreparation);
-    plan.allocationPreparation = {};
+    plan.allocationPreparation = AllocationPreparation{};
     // Certificates describe the child graph and cannot survive composition.
     plan.allocationCertificate = {};
     return view;

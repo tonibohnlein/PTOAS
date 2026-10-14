@@ -8,6 +8,7 @@
 // Preserve filtered child recipes and append finite overlay families before SSA.
 #include "PTO/Transforms/FrontierSynch/Shared/FiniteOverlayInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
+#include "llvm/Support/SaveAndRestore.h"
 #include "OccurrenceBinding.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FiniteOverlayAllocation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -148,12 +149,15 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayLogicalInser
         endpoint.record = namespaces.at(endpoint.records.front()); endpoint.piece = piece++;
     }
     if (!arena.constructionError().empty()) { error = arena.constructionError(); return failure(); }
-    plan->allocationPreparation = [owned = std::make_shared<FiniteOverlayAnalysis>(analysis),
-        baseView, overlayRecords = std::move(overlayRecords)](PreparedLogicalPlan& prepared) {
-        prepareAllocationSupport(*baseView, prepared.allocationProfile);
-        prepared.regionalAllocation = baseView->regionalAllocation;
-        prepared.regionalAllocation = finiteOverlayAllocation(*owned, prepared, overlayRecords);
-    };
+    plan->allocationPreparation = AllocationPreparation::candidates(
+        [owned = std::make_shared<FiniteOverlayAnalysis>(analysis), baseView,
+         overlayRecords = std::move(overlayRecords)](PreparedLogicalPlan& prepared, AllocationStrength strength) {
+        auto allocation = requestAllocationSummary(*baseView, strength, prepared.allocationProfile);
+        // The overlay queries matching shape from recipes. Its temporary input
+        // does not replace the incumbent selected on the enclosing plan.
+        llvm::SaveAndRestore<std::shared_ptr<RegionalAllocationSummary>> input(prepared.regionalAllocation, allocation);
+        return finiteOverlayAllocation(*owned, prepared, overlayRecords);
+    });
     return plan;
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayInsertion(

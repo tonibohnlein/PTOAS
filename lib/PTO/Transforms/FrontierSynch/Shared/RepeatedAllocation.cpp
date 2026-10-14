@@ -351,7 +351,7 @@ std::vector<RegionalAllocationGroup> constantAllocationLanes(const RegionalAlloc
 }
 std::shared_ptr<RegionalAllocationSummary> repeatedRegionalAllocation(
     RepeatedRegionState& state, const RegionalAllocationSummary& child,
-    ArrayRef<std::pair<uint32_t, std::size_t>> crossings, AllocationProfile* profile)
+    ArrayRef<std::pair<uint32_t, std::size_t>> crossings, AllocationProfile* profile, AllocationStrength strength)
 {
     RepeatedWork work(profile, state.loop);
     // A terminal acquisition cannot be lifted to the end of each visit.
@@ -360,7 +360,9 @@ std::shared_ptr<RegionalAllocationSummary> repeatedRegionalAllocation(
     auto coalesced = coalesceRegionalAllocation(state.body, child);
     work.coalesced();
     if (!coalesced) { return {}; }
-    if (auto periodic = periodicLaneAllocation(state, *coalesced, crossings, work.counters())) { return periodic; }
+    if (strength == AllocationStrength::Shared) {
+        if (auto periodic = periodicLaneAllocation(state, *coalesced, crossings, work.counters())) { return periodic; }
+    }
     auto result = std::make_shared<RegionalAllocationSummary>();
     for (const auto& group : coalesced->groups) {
         for (auto lane : constantLanes(group)) {

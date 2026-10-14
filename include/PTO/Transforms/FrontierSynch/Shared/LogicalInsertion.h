@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_LOGICALINSERTION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_LOGICALINSERTION_H
 #include "PTO/Transforms/FrontierSynch/Shared/EndpointFamilies.h"
+#include "PTO/Transforms/FrontierSynch/Shared/AllocationPreparation.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -76,9 +77,9 @@ struct PreparedLogicalPlan {
     // Optional producer certificate for the immediately following allocation
     // pass. It owns no borrowed analysis state; changing the plan invalidates it.
     DictionaryAttr allocationCertificate;
-    // A one-shot export on this detached graph. Captures own the retained
-    // mathematics; failed support must leave logical endpoints available.
-    std::function<void(PreparedLogicalPlan&)> allocationPreparation;
+    // Owned capability on this unchanged graph; supports a cheap request and
+    // parent-requested sharing without rebuilding retained mathematics.
+    AllocationPreparation allocationPreparation;
     // Borrowed only during the synchronous allocation export; never captured,
     // copied into views, or serialized. Recursive exports pass it explicitly.
     AllocationProfile* allocationProfile = nullptr;

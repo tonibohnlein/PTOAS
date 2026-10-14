@@ -384,22 +384,22 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
     // Optional ancestor-cut probes do not govern acceptance. Required recipe
     // failures and occurrence-binding failures remain explicit diagnostics.
     if (!diagnostic.empty()) { return failure(); }
-    result->allocationPreparation = [owner = shared_from_this(),
+    result->allocationPreparation = AllocationPreparation::candidates([owner = shared_from_this(),
         allocationChildren = std::move(allocationChildren),
-        allocationCrossings = std::move(allocationCrossings)](PreparedLogicalPlan& plan) {
+        allocationCrossings = std::move(allocationCrossings)](PreparedLogicalPlan& plan, AllocationStrength strength)
+        -> std::shared_ptr<RegionalAllocationSummary> {
         auto summary = std::make_shared<RegionalAllocationSummary>();
         for (std::size_t i = 0; i < allocationChildren.size(); ++i) {
             const auto& child = allocationChildren[i];
-            prepareAllocationSupport(*child.view, plan.allocationProfile);
-            auto allocation = child.view->regionalAllocation;
+            auto allocation = requestAllocationSummary(*child.view, strength, plan.allocationProfile);
             if (!allocation) { allocation = finiteRegionalAllocation(owner->children[i].regional, *child.view); }
-            if (!allocation) { return; }
+            if (!allocation) { return {}; }
             for (auto group : allocation->groups) {
                 exportConstantRegionalLanes(group);
                 for (auto& member : group.members) {
                     if (member.record > UINT32_MAX - child.recordBase ||
                         member.firstSource.type > UINT32_MAX - child.typeBase ||
-                        member.lastTarget.type > UINT32_MAX - child.typeBase) { return; }
+                        member.lastTarget.type > UINT32_MAX - child.typeBase) { return {}; }
                     member.record += child.recordBase;
                     member.firstSource.type += child.typeBase;
                     member.lastTarget.type += child.typeBase;
@@ -407,7 +407,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
                 for (auto& lane : group.lanes) {
                     for (auto* selectors : {&lane.firstSources, &lane.lastTargets}) {
                         for (auto& selector : *selectors) {
-                            if (selector.event.type > UINT32_MAX - child.typeBase) { return; }
+                            if (selector.event.type > UINT32_MAX - child.typeBase) { return {}; }
                             selector.event.type += child.typeBase;
                         }
                     }
@@ -419,8 +419,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
             exportConstantRegionalLanes(group);
             summary->groups.push_back(std::move(group));
         }
-        plan.regionalAllocation = std::move(summary);
-    };
+        return summary;
+    });
     uint64_t preparationOperations = 0;
     for (const auto& stage : result->preparation) {
         preparationOperations += stage.code->getOperations().size();
