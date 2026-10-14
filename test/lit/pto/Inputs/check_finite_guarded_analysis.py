@@ -262,6 +262,23 @@ def main():
             validate(result, ["L"] + (["C"] if g and h else []) + ["E"], effects)
             report = invoke(tool, "--sequence-analysis", path)
             assert not report["error"] and report["prepared"] and report["queries_available"], report
+        # A shared read-only cell needs boundary selectors but no conflict
+        # candidates. Original scalar pipe semantics still apply.
+        for count in (16, 64, 256):
+            lines = ['!tile = !pto.tile_buf<vec, 8x8xf32>', 'module {',
+                     'func.func @reads(%g: i1) {',
+                     '%c0 = arith.constant 0 : index', '%addr = arith.constant 0 : i64',
+                     '%tile = pto.alloc_tile addr = %addr : !tile']
+            for index in range(count):
+                lines += ['scf.if %g {',
+                          f'%r{index} = pto.tgetval ins(%tile, %c0 : !tile, index) outs : f32', '}']
+            lines += ['return', '}', '}']
+            path.write_text('\n'.join(lines))
+            report = invoke(tool, "--finite-guarded-analysis", path)
+            assert not report["error"] and report["prepared"], report
+            assert report["ports"] == count and report["cells"] > 0, report
+            assert report["crossing_candidates"] == 0, report
+            assert report["selector_comparisons"] == 4 * count, report
     print(f"finite guarded: {checked} concrete valuations, late barriers and terminal cleanup passed")
 
 

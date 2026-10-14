@@ -42,7 +42,7 @@ draft obligation; its excess formula must not authorize a production decision.
 |---|---|---|---|
 | R1 (implemented) | SCC-ordered completion transfer | Concrete pending-state oracle, fixed-child containment, bounded fact propagation pass | M6; Section 6 |
 | R2 (implemented) | Core-chain periodic frontier specialization | Exact demand/query agreement, linear scan/relaxation scaling and period/residue scores | M1/M3; Section 5.4 |
-| R3 | Writer-centered guarded storage and shared boundary scans | Exact conflict/boundary agreement, including macro envelopes and protected effects; read-heavy scaling | M1/M3; Section 5.2 |
+| R3 (qualifying paths implemented) | Writer-centered guarded storage and shared boundary scans | Exact conflict/boundary agreement, including macro envelopes and protected effects; read-heavy scaling | M1/M3; Section 5.2 |
 | R4a | Ordered periodic/repeated first-reuse sweeps | Certified applicability, linear query counts, exact capacity and finite-restriction checks | M2/M4; Propositions 7.8/7.10 |
 | R4b | Linear periodic allocation from suffix thresholds | Independent command-graph reuse/width oracle; no general assignment matrix on this route | M2/M4; Proposition 7.12 |
 | R4c | Direct modulo-lane span extraction and qualified boundary export | Exact span/presence agreement without generation expansion; parent retry preserved | M2/M4; Proposition 7.13, Corollary 7.14 |
@@ -50,8 +50,8 @@ draft obligation; its excess formula must not authorize a production decision.
 | R6 | Normalized logical graph allocation, owned session and closed-child completion import | Shared unified/split stages, allocation before scalar materialization, deleted superseded paths | M3/M4/M5/M6; Sections 6/8 |
 | R7 | Pinned pipeline, scaling and device closure | Distinct logical/physical/C++/device outcomes and reproducible receipts | M1/M6 |
 
-R1 transfer and R2 frontiers are implemented; R3–R7 remain open. Existing primitives are starting
-points, not completed migrations. Continue with R3, R4a–c, R5, R6, then R7.
+R1 transfer, R2 frontiers and the qualifying R3 scans are implemented; R4–R7 remain open. Existing primitives are starting
+points, not completed migrations. Continue with R4a–c, R5, R6, then R7.
 Run focused integration checks at each step; do not defer all production
 validation to R7. A newly measured bottleneck may justify resequencing, recorded
 with evidence rather than another untracked fallback.
@@ -1886,3 +1886,38 @@ and generic fallback reports zero scaling additions. The historical phased
 rotating timeout remains unresolved as recorded above. This establishes
 representation and correctness checks, not a paired compilation or device
 speedup. Receipts: `.local/r2-pairs-build.log`, `.local/r2-pairs-tests.log`.
+
+### R3: shared writer-centered candidates and grouped boundaries
+
+Finite guarded and bounded-lifetime analysis now share a writer-centered
+ordered-access traversal. It visits writer/reader pairs in both directions and
+writer/writer pairs once. Intervening writer and read-only witness state is
+maintained over the exact open interval in either scan direction. Constant-false
+bounded write predicates do not create writer scans. The rank reducer and
+scalar/ACC protection contracts remain unchanged.
+
+Both producers use the same grouped boundary scan. Simultaneous envelopes
+observe the incoming state before any group member updates it. Finite boundary
+exports retain their original selector ordering. Expanded descriptions whose
+static operation identities recur in separate groups retain the prior exact
+comparison path; no new dynamic identity is inferred. A complete comparable
+materialized partition bypasses residual pair checks, while unresolved storage
+relationships retain them. These are qualified construction improvements, not
+a global linearity claim for unresolved alias queries or expanded identities.
+
+Six focused suites pass: rotating boundary certificates, finite guarded
+analysis, finite expansion, bounded lifetime provenance/storage lanes, bounded
+macro selectors, and bounded boundary presence. New independent checks cover
+all 256 writer patterns on eight accesses (including exact interval contents),
+4,096 absent/read/write/RMW patterns with simultaneous envelopes, and read-heavy
+bounded inputs of 32/128/512 accesses. At 512 accesses, zero/one/two writers
+produce 0/511/1,021 candidate pairs. Production finite read-only fixtures of
+16/64/256 accesses produce zero candidates and exactly four selector visits
+per access, including payload boundaries. Existing graph and storage-lane
+oracles verify reduced demands and allocation witnesses.
+
+Incremental build and diff checks pass. Four compliance brace findings are
+parser false positives on already braced nested calls; no suppression was
+added. Receipts: `.local/r3-build.log`, `.local/r3-tests.log`,
+`.local/r3-compliance.log`. No paired compiler timing, Delta recovery, or device
+speedup is claimed by this milestone.

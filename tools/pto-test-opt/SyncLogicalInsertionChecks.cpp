@@ -1447,6 +1447,8 @@ LogicalResult runFiniteGuardedAnalysisChecks(func::FuncOp function, pto::GMAlias
         {"prepared", succeeded(prepared)}, {"unchanged", before == render()},
         {"cells", analysis.cost.cells}, {"ports", analysis.cost.ports},
         {"analysis_expressions", analysis.cost.expressionNodes},
+        {"crossing_candidates", analysis.cost.crossingCandidates},
+        {"selector_comparisons", analysis.cost.selectorComparisons},
         {"expressions", regional.expressions ? regional.expressions->size() : 0}, {"emitted", emitted},
         {"recipe_pieces", pieces}, {"materialized", materialized}};
     if (regional.reachability && regional.expressions) {

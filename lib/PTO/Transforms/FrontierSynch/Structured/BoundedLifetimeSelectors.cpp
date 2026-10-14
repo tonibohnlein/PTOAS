@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Entry/exit selector certificates are independent of global query transport.
 // Macro envelopes share one occurrence boundary: none suppresses a sibling.
+#include "../Shared/GuardedStorageScan.h"
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeRegional.h"
 #include "../Shared/CountedLoop.h"
 #include "../Shared/RecognitionInternal.h"
@@ -393,38 +394,22 @@ private:
         }
         return groups;
     }
-    void selectGroup(ArrayRef<Use> group, bool tail, RegionalStorageBoundary& boundary,
-                     Id& noWriter, std::map<uint32_t, Id>& noReader)
-    {
-        auto writes = e.boolean(false);
-        std::map<uint32_t, Id> reads;
-        for (const auto& use : group) {
-            auto writer = RegionalSelector{use.event, e.land(noWriter, use.write)};
-            if (e.constantValue(writer.present) != 0) {
-                (tail ? boundary.lastWriters : boundary.firstWriters).push_back(writer);
-            }
-            auto unseen = noReader.try_emplace(use.pipe, e.boolean(true)).first->second;
-            auto present = e.land(noWriter, e.land(unseen, e.land(use.read, e.lnot(use.write))));
-            if (e.constantValue(present) != 0) {
-                (tail ? boundary.lastReaders : boundary.firstReaders)[use.pipe].push_back({use.event, present});
-            }
-            auto accumulated = reads.try_emplace(use.pipe, e.boolean(false)).first;
-            accumulated->second = e.lor(accumulated->second, use.read);
-            writes = e.lor(writes, use.write);
-        }
-        // All envelopes above observe the incoming group state. Only a
-        // different original occurrence can be hidden by these accesses.
-        noWriter = e.land(noWriter, e.lnot(writes));
-        for (auto [pipe, read] : reads) { noReader[pipe] = e.land(noReader[pipe], e.lnot(read)); }
-    }
     void selectBoundary(unsigned cell, bool tail, RegionalStorageBoundary& boundary)
     {
         auto fringe = uses(cell, tail ? tailBegin() : e.constant(0));
         auto groups = occurrenceGroups(fringe);
-        auto noWriter = e.boolean(true);
-        std::map<uint32_t, Id> noReader;
+        detail::GuardedBoundaryScan scan(e);
         for (std::size_t index = 0; index < groups.size(); ++index) {
-            selectGroup(groups[tail ? groups.size() - 1 - index : index], tail, boundary, noWriter, noReader);
+            scan.group(groups[tail ? groups.size() - 1 - index : index],
+                [](const Use& use) { return detail::GuardedStorageMode{use.pipe, use.read, use.write}; },
+                [&](const Use& use, Id writer, Id reader) {
+                    if (e.constantValue(writer) != 0) {
+                        (tail ? boundary.lastWriters : boundary.firstWriters).push_back({use.event, writer});
+                    }
+                    if (e.constantValue(reader) != 0) {
+                        (tail ? boundary.lastReaders : boundary.firstReaders)[use.pipe].push_back({use.event, reader});
+                    }
+                });
         }
     }
     bool storage(unsigned cell)
