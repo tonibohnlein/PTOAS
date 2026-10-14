@@ -28,6 +28,57 @@ std::string render(func::FuncOp function)
     function.print(stream);
     return result;
 }
+bool checkLiteralChoiceComparisons(Value index, Value predicate)
+{
+    fs::RegionExpressions e;
+    const auto p = e.input(predicate), x = e.input(index);
+    const uint64_t sign = uint64_t(1) << 63;
+    const std::vector<uint64_t> values{0, 1, 2, sign - 1, sign, sign + 1, UINT64_MAX};
+    auto symbolic = [&](unsigned kind, auto a, auto b) {
+        switch (kind) {
+        case 0: return e.lt(a, b);
+        case 1: return e.le(a, b);
+        case 2: return e.eq(a, b);
+        case 3: return e.slt(a, b);
+        default: return e.sle(a, b);
+        }
+    };
+    auto concrete = [&](unsigned kind, uint64_t a, uint64_t b) {
+        switch (kind) {
+        case 0: return a < b;
+        case 1: return a <= b;
+        case 2: return a == b;
+        case 3: return (a ^ sign) < (b ^ sign);
+        default: return (a ^ sign) <= (b ^ sign);
+        }
+    };
+    for (auto a : values) {
+        for (auto b : values) {
+            const auto choice = e.select(p, e.constant(a), e.constant(b));
+            for (auto c : values) {
+                for (unsigned kind = 0; kind < 5; ++kind) {
+                    for (bool reverse : {false, true}) {
+                        const bool yes = reverse ? concrete(kind, c, a) : concrete(kind, a, c);
+                        const bool no = reverse ? concrete(kind, c, b) : concrete(kind, b, c);
+                        const auto expected = yes == no ? e.boolean(yes) : yes ? p : e.lnot(p);
+                        const auto actual = reverse ? symbolic(kind, e.constant(c), choice) :
+                                                      symbolic(kind, choice, e.constant(c));
+                        if (actual != expected) { return false; }
+                    }
+                }
+            }
+        }
+    }
+    const auto one = e.constant(1), zero = e.constant(0);
+    if (e.select(e.lnot(p), one, e.select(p, one, zero)) != one ||
+        e.select(p, x, e.select(e.lnot(p), x, zero)) != x) { return false; }
+    // Nonliteral choices remain one comparison, not a recursively distributed
+    // expression. This bounds the new construction work to the immediate gate.
+    const auto residual = e.select(p, x, one), two = e.constant(2);
+    const auto before = e.size();
+    const auto root = e.lt(residual, two);
+    return !e.constantValue(root) && e.size() <= before + 1;
+}
 bool checkAlgebra(Value index, Value predicate)
 {
     fs::RegionExpressions expressions;
@@ -1469,7 +1520,8 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
         return function.emitError("regional expression fixture requires two arguments, cuts and a hidden result");
     }
     const auto before = render(function);
-    if (!checkAlgebra(function.getArgument(0), function.getArgument(1))) {
+    if (!checkAlgebra(function.getArgument(0), function.getArgument(1)) ||
+        !checkLiteralChoiceComparisons(function.getArgument(0), function.getArgument(1))) {
         return function.emitError("regional expression algebra checks failed");
     }
     auto checked = [](StringRef name, bool result) {
