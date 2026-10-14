@@ -24,6 +24,8 @@ struct FamilyEndpointForms {
     std::size_t numericalSites = 0, contextualSites = 0, mixedLeaves = 0;
     // Construction work counted once per immutable leaf, not per reference.
     uint64_t sharedRoots = 0, sharedLookups = 0, sharedCandidates = 0, sharedBindings = 0;
+    uint64_t wrapperDiscoveryNodes = 0, wrapperDiscoveryPieces = 0;
+    uint64_t wrapperIndexImports = 0, wrapperIndexEntries = 0, wrapperBindingRequests = 0;
 };
 FailureOr<FamilyEndpointForms> familyEndpointForms(const FamilyEndpointRecipe& recipe);
 } // namespace mlir::pto::frontiersynch

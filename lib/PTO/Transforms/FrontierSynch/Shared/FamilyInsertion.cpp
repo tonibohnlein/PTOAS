@@ -24,7 +24,11 @@ struct FamilyContextRecipe {
     FamilyContextKind kind = FamilyContextKind::Invocation;
     std::shared_ptr<RegionExpressions> arena;
     std::map<Operation*, std::shared_ptr<const CutExpressionRecipe>> cuts;
+    uint64_t discoveryNodes = 0, discoveryPieces = 0, indexImports = 0, indexEntries = 0, bindingRequests = 0;
 };
+// Original cuts do not change under namespace translation, activity masking or
+// invocation-coordinate binding. Only nonlocal commands need tuple bindings.
+using FamilyCutIndex = std::map<Operation*, bool>;
 class FamilyEndpointRecipe {
 public:
     // A leaf owns numerical selectors or contextual bindings. A composition references earlier
@@ -45,6 +49,9 @@ public:
     };
     std::vector<Shared> shared;
     uint64_t sharedLookups = 0, sharedCandidates = 0, sharedBindings = 0;
+    // Lazy metadata owned by this compilation; no expression availability is
+    // cached here. Wrappers share the immutable index of their unchanged child.
+    mutable std::shared_ptr<const FamilyCutIndex> originalCuts;
     scf::ForOp outer;
     std::vector<EndpointPiece> pieces;
     std::vector<std::shared_ptr<const FamilyExpressionRecipe>> selectors;
@@ -524,6 +531,36 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> appendFamilyEndpointRecip
     return std::shared_ptr<const FamilyEndpointRecipe>(std::move(recipe));
 }
 namespace {
+std::shared_ptr<const FamilyCutIndex> originalFamilyCuts(const FamilyEndpointRecipe& recipe,
+                                                       FamilyContextRecipe& work)
+{
+    if (recipe.originalCuts) {
+        accumulateCost(work.indexImports, 1);
+        return recipe.originalCuts;
+    }
+    auto index = std::make_shared<FamilyCutIndex>();
+    SmallVector<const FamilyEndpointRecipe*> pending{&recipe};
+    llvm::DenseSet<const FamilyEndpointRecipe*> seen;
+    while (!pending.empty()) {
+        const auto* current = pending.pop_back_val();
+        if (!seen.insert(current).second) { continue; }
+        accumulateCost(work.discoveryNodes, 1);
+        if (current->originalCuts) {
+            accumulateCost(work.indexImports, 1);
+            accumulateCost(work.indexEntries, current->originalCuts->size());
+            for (const auto& [cut, nonlocal] : *current->originalCuts) { (*index)[cut] |= nonlocal; }
+            continue;
+        }
+        if (current->child) { pending.push_back(current->child.get()); }
+        if (current->previous) { pending.push_back(current->previous.get()); }
+        for (const auto& piece : current->pieces) {
+            accumulateCost(work.discoveryPieces, 1);
+            (*index)[piece.cut.before] |= piece.sourcePipe != piece.targetPipe;
+        }
+    }
+    recipe.originalCuts = index;
+    return index;
+}
 FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> bindFamilyContext(
     std::shared_ptr<const FamilyEndpointRecipe> child, std::shared_ptr<RegionExpressions> arena,
     RegionExpressions::Id expression, FamilyContextKind kind)
@@ -533,24 +570,20 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> bindFamilyContext(
     auto context = std::make_shared<FamilyContextRecipe>();
     context->kind = kind;
     context->arena = std::move(arena);
-    SmallVector<const FamilyEndpointRecipe*> pending{child.get()};
-    while (!pending.empty()) {
-        const auto* current = pending.pop_back_val();
-        if (current->child) { pending.push_back(current->child.get()); }
-        if (current->previous) { pending.push_back(current->previous.get()); }
-        for (const auto& piece : current->pieces) {
-            if ((kind == FamilyContextKind::Invocation && piece.sourcePipe == piece.targetPipe) ||
-                context->cuts.count(piece.cut.before)) { continue; }
-            RegionExpressions::CutEmission emission;
-            auto prepared = context->arena->prepareContextual(expression, piece.cut.before, emission);
-            if (failed(prepared)) { return failure(); }
-            context->cuts.emplace(piece.cut.before, std::move(*prepared));
-        }
+    auto cuts = originalFamilyCuts(*child, *context);
+    for (const auto& [cut, nonlocal] : *cuts) {
+        if (kind == FamilyContextKind::Invocation && !nonlocal) { continue; }
+        accumulateCost(context->bindingRequests, 1);
+        RegionExpressions::CutEmission emission;
+        auto prepared = context->arena->prepareContextual(expression, cut, emission);
+        if (failed(prepared)) { return failure(); }
+        context->cuts.emplace(cut, std::move(*prepared));
     }
     auto recipe = std::make_shared<FamilyEndpointRecipe>();
     recipe->maximumRecord = child->maximumRecord;
     recipe->maximumEndpointIndex = child->maximumEndpointIndex;
     recipe->pieceCount = child->pieceCount;
+    recipe->originalCuts = std::move(cuts);
     recipe->child = std::move(child);
     recipe->context = std::move(context);
     return std::shared_ptr<const FamilyEndpointRecipe>(std::move(recipe));
@@ -669,6 +702,16 @@ FailureOr<FamilyEndpointForms> familyEndpointForms(const FamilyEndpointRecipe& r
     SmallVector<FamilyContextPath> contexts;
     if (failed(collectFamilyParts(recipe, leaves, contexts))) { return failure(); }
     FamilyEndpointForms result;
+    llvm::DenseSet<const FamilyContextRecipe*> countedContexts;
+    for (const auto& path : contexts) {
+        const auto* context = path.recipe;
+        if (!countedContexts.insert(context).second) { continue; }
+        accumulateCost(result.wrapperDiscoveryNodes, context->discoveryNodes);
+        accumulateCost(result.wrapperDiscoveryPieces, context->discoveryPieces);
+        accumulateCost(result.wrapperIndexImports, context->indexImports);
+        accumulateCost(result.wrapperIndexEntries, context->indexEntries);
+        accumulateCost(result.wrapperBindingRequests, context->bindingRequests);
+    }
     llvm::DenseSet<const FamilyEndpointRecipe*> counted;
     for (const auto& part : leaves) {
         const auto& leaf = *part.recipe;
