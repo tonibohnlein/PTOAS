@@ -16,8 +16,10 @@ import sys
 from check_frontier_stage_profile import check_stages, require, split_report
 
 
-def compile_plan(tool, source, profile, allocation):
+def compile_plan(tool, source, profile, allocation, pool=None):
     flags = f"profile-stages={str(profile).lower()} prepare-allocation={str(allocation).lower()}"
+    if pool is not None:
+        flags += " allocation-ids=" + pool
     return subprocess.run([tool, "--mlir-disable-threading", "--pto-frontier-analysis=" + flags, "-"],
                           input=source, capture_output=True, text=True, check=False, timeout=90)
 
@@ -102,6 +104,17 @@ def main():
                     "boundary activity was not counted")
             if counters["implication_computations"]:
                 require(counters["proof_node_visits"] > 0, "proof traversal was not measured")
+    # Force a parent retry on the same owned child graph. The two candidate
+    # algorithms differ, but unchanged palette preparation must be shared.
+    retry = compile_plan(tool, source, True, True, "0")
+    require(retry.returncode == 0, retry.stderr)
+    reports, _, _ = split_report(retry.stderr)
+    require(len(reports) == 1, "missing retry profile")
+    check_stages(reports[0])
+    work = [stage["work"] for stage in reports[0]["stages"]
+            if stage["stage"] == "repeated-allocation-work"]
+    require(any(item["coalescing_cache_hits"] for item in work),
+            "parent retry rebuilt every unchanged child palette")
     print("repeated allocation profile: unchanged plans and logical-only exports; owned work counters")
 
 

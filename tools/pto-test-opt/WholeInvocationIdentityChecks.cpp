@@ -113,7 +113,8 @@ bool checkPositive(func::FuncOp function, fs::FrontierAnalysis& session, pto::GM
         session.constructionCounts().logicalPreparations != preparations) { return false; }
     const auto surviving = printPreparation(**second);
     first->reset();
-    if (printPreparation(**second) != surviving || failed(session.attachAllocation(weak, **second))) { return false; }
+    if (printPreparation(**second) != surviving ||
+        failed(session.attachAllocation(weak, **second, {0, 1, 2, 3, 4, 5}))) { return false; }
     // Foreign indexes and a rebuilt alias context cannot reuse this owner.
     fs::PhaseIndex foreign;
     if (failed(foreign.build(function, *session.input())) ||

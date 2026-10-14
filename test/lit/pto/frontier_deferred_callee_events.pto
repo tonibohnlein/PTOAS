@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: not pto-sync-input-test --insert-module-library %s 2>&1 | FileCheck %s
+// RUN: not pto-test-opt --mlir-disable-threading --pto-frontier-analysis="allocation-ids=0,1,2,3,4,5" %s 2>&1 | FileCheck %s
+// CHECK-NOT: failed module preparation mutated original IR
+// CHECK: ordinary helper call requires an interprocedural event-lifetime contract
+// CHECK-NOT: failed module preparation mutated original IR
+// A manual caller can retain an occupied flag across the call. Deferred child
+// command families must count as new event use before any scalar code exists.
+!tile = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+module attributes {pto.target_arch = "a3"} {
+  func.func @caller(%a: !pto.ptr<f16, gm>, %n: index) {
+    pto.set_flag [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_MTE1>, #pto.event<EVENT_ID0>]
+    call @child(%a, %n) : (!pto.ptr<f16, gm>, index) -> ()
+    pto.wait_flag [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_MTE1>, #pto.event<EVENT_ID0>]
+    return
+  }
+  func.func private @child(%a: !pto.ptr<f16, gm>, %n: index) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %sixteen = arith.constant 16 : index
+    %view = pto.make_tensor_view %a, shape = [%sixteen, %sixteen], strides = [%sixteen, %one]
+      {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%zero, %zero], sizes = [%sixteen, %sixteen]
+      : !pto.tensor_view<?x?xf16>
+    %tile = pto.alloc_tile addr = %base : !tile
+    %left = pto.alloc_tile addr = %base : !left
+    scf.for %t = %zero to %n step %one {
+      pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%tile : !tile)
+      pto.textract ins(%tile, %zero, %zero : !tile, index, index) outs(%left : !left)
+    }
+    return
+  }
+}

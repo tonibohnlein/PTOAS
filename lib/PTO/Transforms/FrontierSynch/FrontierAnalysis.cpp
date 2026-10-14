@@ -503,7 +503,7 @@ struct StageProfileReport {
 FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     func::FuncOp function, GMAliasPolicy policy,
     const std::optional<frontiersynch::ArithmeticLimits>& profile = std::nullopt, bool profileStages = false,
-    bool prepareAllocation = true)
+    bool prepareAllocation = true, ArrayRef<int64_t> allocationIds = {})
 {
     frontiersynch::FrontierAnalysis analysis(function);
     analysis.enableStageProfiling(profileStages);
@@ -527,7 +527,7 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
             logicalBackend = result.completion ? StringRef("completion-transfer") :
                 StringRef(result.mathematical->backend);
             // Missing allocation support leaves the selected logical graph available.
-            if (prepareAllocation) { (void)analysis.attachAllocation(result, **prepared); }
+            if (prepareAllocation) { (void)analysis.attachAllocation(result, **prepared, allocationIds); }
         }
     }
     std::string routeError;
@@ -603,6 +603,19 @@ public:
             signalPassFailure();
             return;
         }
+        llvm::SmallDenseSet<int64_t, 8> uniqueIds;
+        for (auto id : allocationIds) {
+            if (id < 0 || id > 5 || !uniqueIds.insert(id).second) {
+                getOperation().emitError("allocation-ids must be distinct eligible IDs from 0..5");
+                signalPassFailure();
+                return;
+            }
+        }
+        if (!allocationIds.empty() && (analysisOnly || !prepareAllocation)) {
+            getOperation().emitError("allocation-ids requires logical preparation with prepare-allocation=true");
+            signalPassFailure();
+            return;
+        }
         auto policy = gmAlias == "may-alias" ? GMAliasPolicy::MayAlias : GMAliasPolicy::MayNotAlias;
         std::optional<frontiersynch::ArithmeticLimits> profile;
         if (!arithmeticProfile.empty()) {
@@ -617,7 +630,8 @@ public:
         if (!analysisOnly) {
             if (failed(frontiersynch::insertModuleSynchronization(getOperation(), policy,
                     [&](func::FuncOp function, GMAliasPolicy contextPolicy) {
-                        return prepareFunction(function, contextPolicy, profile, profileStages, prepareAllocation);
+                        return prepareFunction(function, contextPolicy, profile, profileStages,
+                            prepareAllocation, allocationIds);
                     }))) {
                 signalPassFailure();
             }

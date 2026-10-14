@@ -55,10 +55,10 @@ deferred until this work is complete; existing InsertSync already uses it.
 |---|---|---|
 | M0: preparation ownership | Reproduce prefill failure; remap every affected non-SSA preparation reference before deletion; validate complementary cleanup and failure atomicity; replay prefill separately from the failing baseline. | Complete: `32b38b426` |
 | M1: measurement | Extend stage inventories with per-repeat lanes/extrema, candidate pairs/gaps, query construction, proof/cache work and actual traversal counts. Keep static records/sites distinct from dynamic commands and evaluated control. | Stage inventories and repeated-allocation work/traversal counters implemented; dynamic-control and complete ID-map inventories remain open |
-| M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans and attempt-owned relative queries implemented; owned independent/shared candidate requests with parent retry implemented; explicit-capacity selection is internal, and production policy integration remains open |
+| M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans and attempt-owned relative queries implemented; owned independent/shared candidate requests with parent retry implemented; explicit-capacity selection is available through the session and analysis-pass resource request; complete mapping-cost policy remains open |
 | M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is now retained entirely in shared family recipes; ordinary numerical sequence and repeated children retain recipes through composition; exact fixed-coordinate sequence crossings now form recipes before scalar preparation; child activity masks retain those recipes through composition; repeated crossings now retain numerical or contextual recipes before scalar lowering; guarded sequence crossings now retain publication/cleanup and common-cut expression recipes; finite overlays and guarded/numerical periodic adapters retain recipes through allocation; relational crossings and capture closure remain open |
 | M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; common nonconstant tuple terms compose before dispatch in `15f2007ea`; coordinate-selected phase shifts now compose under the same skeleton with a cost-checked incumbent; different skeletons and early graph allocation remain open |
-| M5: session and capabilities | Retain facts, mathematics, recipes and allocation in one session; deterministic capability upgrades; common unified/split stage functions; self-contained versioned saved artifacts; delete redundant orchestration. | Pending |
+| M5: session and capabilities | Retain facts, mathematics, recipes and allocation in one session; deterministic capability upgrades; common unified/split stage functions; self-contained versioned saved artifacts; delete redundant orchestration. | Explicit-capacity allocation requests now reuse the retained session and identity owner; capacity-specific answers are isolated from unrestricted exports. Unified physical materialization and remaining orchestration are open |
 | M6: carryover and closure | Finish shared-fact and coarse-input integration, closed-child completion imports, guarded/relational rank transport and outstanding semantic oracles; run pinned eleven-kernel/corpus validation and report device results separately. | Eleven-kernel replay refreshed at `e0e17e5db`: 11 logical, 7 six-ID/C++ successes; corpus, device, and interface closure remain open |
 
 Each milestone proceeds through focused, separately reviewable changes with
@@ -1233,3 +1233,86 @@ Remaining work is to pass the real capacity through the owned production
 session, compare complete executable mapping costs, and reduce the expanded
 lifetime inventory. This milestone does not claim those are complete or that
 a diagnostic count reduction proves a compiler-time improvement.
+
+## Explicit capacity during session preparation
+
+`FrontierAnalysis::attachAllocation` accepts an optional eligible-ID pool. The
+existing public pass forwards `allocation-ids=0,1,2,3,4,5` to that request, before
+materializing deferred families. IDs must be distinct and in 0–5. The option is
+incompatible with analysis-only mode or `prepare-allocation=false`. An omitted
+pool preserves the existing unrestricted shared export. This is a resource
+request on the existing pipeline, not another demand-analysis route.
+
+For an already available regional interface, the session tries the retained
+independent/shared candidates using the whole-parent certificate decoder. It
+does not run another recognizer or construct general queries to obtain that
+interface. Capacity-specific certificates stay on their prepared plan and never
+enter the unrestricted export cache used by fresh preparations. A failed
+candidate attempt falls back to the existing certificate-export path; it does
+not change the selected demands or substitute a conservative protocol.
+
+The saved output remains a logical plan plus self-contained evidence. Run the
+physical pass immediately afterward with its actual eligible pool:
+
+```text
+--pto-frontier-analysis="allocation-ids=0,1,2,3,4,5"
+--pto-frontier-allocate="eligible-ids=0,1,2,3,4,5"
+```
+
+The physical pass remains authoritative for supported mappings, command
+bindings, reservations and capacity. The analysis pass still permits logical
+output when allocation support is unavailable. Its success is not a hardware
+feasibility claim. Identity adapters forward to retained child exports through
+the same ownership check as unrestricted allocation. Providers without a retained regional export
+keep their existing allocation path.
+
+This integration exposes parent-aware candidate selection in production but
+does not yet score complete executable mappings before materialization or
+replace record-level lifetime inventories by a normalized family graph. The
+combined transactional physical session and broader interface closure remain
+open.
+
+### Share preparation across candidate requests
+
+Candidate selection must not double unchanged child work. A producer-owned
+input cache retains immutable summary identities within one fixed command graph,
+arena, coordinate translation and binding context. Sequence namespace mapping,
+conditional masks and finite overlays reuse their summary when their owned child
+answers are unchanged. Repetition also reuses certified palette coalescing and
+finite fallback preparation. A stronger child answer with a different identity
+invalidates this reuse. No structural guard comparison or global cache is used.
+The independent and shared allocation algorithms remain separate.
+
+The profile now counts `coalescing_cache_hits`. Before this sharing fix, the
+new explicit-pool retry performed two expensive coalescing passes on Persistent.
+A final serial diagnostic pair measured allocation support at 1.483 seconds for
+baseline `41eb8be66` and 1.484 seconds for the candidate, with the second
+coalescing request served from the owned cache. This is evidence that the new
+retry avoids that repeated work, not a compiler-speedup or device-latency claim.
+
+### Deferred callees and validation
+
+The module's event-use check now reads deferred recipe matching metadata. A
+callee containing only recipe-backed SET/WAIT sites still needs the existing
+interprocedural event-lifetime contract when a caller can retain occupied flags
+across the call. The previous check saw only concrete endpoints/private state.
+The regression's baseline accepted that unsupported call; the repaired library
+and public paths reject it without mutating the original module.
+
+Validation receipts are in `.local/family-allocation-session/`:
+
+- Eleven distinct focused lit tests pass, covering candidate ownership and
+  invalid/sparse pools, identity forwarding, overlays, guarded specialization,
+  repeated recipes/profiles, closed callees, completion and stage accounting.
+  The repeated profile test forces a parent retry and requires a coalescing
+  cache hit. The broad repeated-region/storage checks were interrupted and are
+  not counted as passing; the historical phase coverage remains open.
+- Default TileLang, PyPTO and Persistent logical outputs retain canonical
+  agreement with the baseline, allowing associative Boolean-AND ordering.
+  A changed-command negative control is rejected.
+- Explicit six-ID Persistent preparation retains all ordered logical events on
+  cores 0, 15, 16 and 19. Physical traces independently pass matching and causal
+  reuse checks. Cores 0/15 retain 5,011 pairs and cores 16/19 retain 4,625 pairs.
+  Physical arithmetic remains 4,600 operations.
+- No new device execution, full corpus closure or minimum-capacity claim is
+  established by these checks.

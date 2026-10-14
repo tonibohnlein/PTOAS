@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
+#include "AllocationInputCache.h"
 #include "OccurrenceBinding.h"
 #include "MixedFamilyInsertion.h"
 #include "OriginalCutFacts.h"
@@ -82,6 +83,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         std::shared_ptr<PreparedLogicalPlan> view;
         uint32_t typeBase;
         uint32_t recordBase;
+        bool fallbackReady = false;
+        std::shared_ptr<RegionalAllocationSummary> fallback;
     };
     std::vector<ChildAllocation> allocationChildren;
     std::vector<RegionalAllocationGroup> allocationCrossings;
@@ -386,40 +389,53 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
     if (!diagnostic.empty()) { return failure(); }
     result->allocationPreparation = AllocationPreparation::candidates([owner = shared_from_this(),
         allocationChildren = std::move(allocationChildren),
-        allocationCrossings = std::move(allocationCrossings)](PreparedLogicalPlan& plan, AllocationStrength strength)
-        -> std::shared_ptr<RegionalAllocationSummary> {
-        auto summary = std::make_shared<RegionalAllocationSummary>();
+        allocationCrossings = std::move(allocationCrossings), cache = AllocationInputCache{}](
+            PreparedLogicalPlan& plan, AllocationStrength strength) mutable -> AllocationPreparation::Summary {
+        std::vector<AllocationInputCache::Input> inputs;
         for (std::size_t i = 0; i < allocationChildren.size(); ++i) {
-            const auto& child = allocationChildren[i];
+            auto& child = allocationChildren[i];
             auto allocation = requestAllocationSummary(*child.view, strength, plan.allocationProfile);
-            if (!allocation) { allocation = finiteRegionalAllocation(owner->children[i].regional, *child.view); }
-            if (!allocation) { return {}; }
-            for (auto group : allocation->groups) {
-                exportConstantRegionalLanes(group);
-                for (auto& member : group.members) {
-                    if (member.record > UINT32_MAX - child.recordBase ||
-                        member.firstSource.type > UINT32_MAX - child.typeBase ||
-                        member.lastTarget.type > UINT32_MAX - child.typeBase) { return {}; }
-                    member.record += child.recordBase;
-                    member.firstSource.type += child.typeBase;
-                    member.lastTarget.type += child.typeBase;
+            if (!allocation) {
+                if (!child.fallbackReady) {
+                    child.fallback = finiteRegionalAllocation(owner->children[i].regional, *child.view);
+                    child.fallbackReady = true;
                 }
-                for (auto& lane : group.lanes) {
-                    for (auto* selectors : {&lane.firstSources, &lane.lastTargets}) {
-                        for (auto& selector : *selectors) {
-                            if (selector.event.type > UINT32_MAX - child.typeBase) { return {}; }
-                            selector.event.type += child.typeBase;
+                allocation = child.fallback;
+            }
+            if (!allocation) { return {}; }
+            inputs.push_back(std::move(allocation));
+        }
+        return cache.request(inputs, [&]() -> AllocationPreparation::Summary {
+            auto summary = std::make_shared<RegionalAllocationSummary>();
+            for (std::size_t i = 0; i < allocationChildren.size(); ++i) {
+                const auto& child = allocationChildren[i];
+                for (auto group : inputs[i]->groups) {
+                    exportConstantRegionalLanes(group);
+                    for (auto& member : group.members) {
+                        if (member.record > UINT32_MAX - child.recordBase ||
+                            member.firstSource.type > UINT32_MAX - child.typeBase ||
+                            member.lastTarget.type > UINT32_MAX - child.typeBase) { return {}; }
+                        member.record += child.recordBase;
+                        member.firstSource.type += child.typeBase;
+                        member.lastTarget.type += child.typeBase;
+                    }
+                    for (auto& lane : group.lanes) {
+                        for (auto* selectors : {&lane.firstSources, &lane.lastTargets}) {
+                            for (auto& selector : *selectors) {
+                                if (selector.event.type > UINT32_MAX - child.typeBase) { return {}; }
+                                selector.event.type += child.typeBase;
+                            }
                         }
                     }
+                    summary->groups.push_back(std::move(group));
                 }
+            }
+            for (auto group : allocationCrossings) {
+                exportConstantRegionalLanes(group);
                 summary->groups.push_back(std::move(group));
             }
-        }
-        for (auto group : allocationCrossings) {
-            exportConstantRegionalLanes(group);
-            summary->groups.push_back(std::move(group));
-        }
-        return summary;
+            return summary;
+        });
     });
     uint64_t preparationOperations = 0;
     for (const auto& stage : result->preparation) {

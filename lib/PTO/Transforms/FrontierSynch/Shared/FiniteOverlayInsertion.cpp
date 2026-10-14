@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "llvm/Support/SaveAndRestore.h"
 #include "OccurrenceBinding.h"
+#include "AllocationInputCache.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FiniteOverlayAllocation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include <map>
@@ -151,12 +152,16 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayLogicalInser
     if (!arena.constructionError().empty()) { error = arena.constructionError(); return failure(); }
     plan->allocationPreparation = AllocationPreparation::candidates(
         [owned = std::make_shared<FiniteOverlayAnalysis>(analysis), baseView,
-         overlayRecords = std::move(overlayRecords)](PreparedLogicalPlan& prepared, AllocationStrength strength) {
+         overlayRecords = std::move(overlayRecords), cache = AllocationInputCache{}](
+             PreparedLogicalPlan& prepared, AllocationStrength strength) mutable {
         auto allocation = requestAllocationSummary(*baseView, strength, prepared.allocationProfile);
-        // The overlay queries matching shape from recipes. Its temporary input
-        // does not replace the incumbent selected on the enclosing plan.
-        llvm::SaveAndRestore<std::shared_ptr<RegionalAllocationSummary>> input(prepared.regionalAllocation, allocation);
-        return finiteOverlayAllocation(*owned, prepared, overlayRecords);
+        return cache.request({allocation}, [&]() {
+            // The overlay queries matching shape from recipes. Its temporary input
+            // does not replace the incumbent selected on the enclosing plan.
+            llvm::SaveAndRestore<std::shared_ptr<RegionalAllocationSummary>> input(
+                prepared.regionalAllocation, allocation);
+            return finiteOverlayAllocation(*owned, prepared, overlayRecords);
+        });
     });
     return plan;
 }

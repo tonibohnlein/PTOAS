@@ -12,6 +12,7 @@
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RegionalAllocationCandidates.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/AllocationInputCache.h"
 #include "llvm/Support/raw_ostream.h"
 namespace {
 namespace fs = mlir::pto::frontiersynch;
@@ -24,9 +25,26 @@ Summary palette(uint64_t budget)
     result->groups.push_back(std::move(group));
     return result;
 }
+bool inputCacheChecks()
+{
+    fs::AllocationInputCache cache;
+    auto first = palette(1), distinct = palette(1);
+    unsigned builds = 0;
+    bool reused = true;
+    auto unavailable = [&]() { ++builds; return Summary{}; };
+    if (cache.request({first}, unavailable, &reused) || reused || builds != 1) { return false; }
+    if (cache.request({first}, unavailable, &reused) || !reused || builds != 1) { return false; }
+    auto available = [&]() { ++builds; return palette(2); };
+    auto result = cache.request({distinct}, available, &reused);
+    if (!result || reused || builds != 2) { return false; }
+    if (cache.request({distinct}, available, &reused) != result || !reused || builds != 2) { return false; }
+    if (!cache.request({distinct, first}, available, &reused) || reused || builds != 3) { return false; }
+    return true;
+}
 }
 bool runAllocationPreparationChecks()
 {
+    if (!inputCacheChecks()) { return false; }
     fs::PreparedLogicalPlan child(0), parent(0);
     unsigned cheap = 0, shared = 0;
     child.allocationPreparation = fs::AllocationPreparation::candidates(
@@ -117,6 +135,7 @@ bool runRegionalAllocationCandidateChecks(mlir::func::FuncOp function,
         return text;
     };
     const auto original = render();
+    const auto attempts = analysis.constructionCounts().mathematicalAttempts;
     const auto recipe = plan.familyRecipe;
     const auto prepared = plan.preparation.size();
     const auto endpoints = plan.endpoints.size();
@@ -128,18 +147,25 @@ bool runRegionalAllocationCandidateChecks(mlir::func::FuncOp function,
     if (mlir::failed(incumbent) || mlir::failed(analysis.attachAllocation(outcome, **incumbent))) { return false; }
     const auto originalSummary = plan.regionalAllocation;
     const auto originalCertificate = plan.allocationCertificate;
-    if (mlir::succeeded(fs::selectRegionalAllocationCandidate(function, *region, plan, {6})) ||
+    if (mlir::succeeded(analysis.attachAllocation(outcome, plan, {6})) ||
+        mlir::succeeded(analysis.attachAllocation(outcome, plan, {0, 0})) ||
+        mlir::succeeded(fs::selectRegionalAllocationCandidate(function, *region, plan, {6})) ||
         mlir::succeeded(fs::selectRegionalAllocationCandidate(function, *region, plan, {})) ||
         plan.regionalAllocation != originalSummary || plan.allocationCertificate != originalCertificate) {
         return false;
     }
     const llvm::SmallVector<int64_t> ids{0, 1, 2, 3, 4, 5};
-    if (mlir::failed(fs::selectRegionalAllocationCandidate(function, *region, plan, ids))) {
+    if (mlir::failed(analysis.attachAllocation(outcome, plan, ids))) {
         llvm::errs() << "regional allocation candidate did not fit fixture\n";
         return false;
     }
-    if (plan.familyRecipe != recipe || plan.preparation.size() != prepared ||
+    if (!cheap || plan.regionalAllocation != cheap || plan.familyRecipe != recipe ||
+        plan.preparation.size() != prepared ||
         plan.endpoints.size() != endpoints || plan.allocationPreparation || render() != original) { return false; }
+    auto unrestricted = analysis.prepareLogical(outcome);
+    if (mlir::failed(unrestricted) || mlir::failed(analysis.attachAllocation(outcome, **unrestricted)) ||
+        (*unrestricted)->allocationCertificate != (*incumbent)->allocationCertificate ||
+        analysis.constructionCounts().mathematicalAttempts != attempts) { return false; }
     llvm::errs() << "regional-allocation-candidates: independent=" << bool(cheap)
                  << "; selected certificate without scalar materialization\n";
     return true;

@@ -11,6 +11,7 @@
 namespace mlir::pto::frontiersynch {
 struct RepeatedRegionState;
 class AllocationProfile;
+class AllocationInputCache;
 struct RepeatedExtremaCost {
     uint64_t candidates = 0, comparisons = 0, orderedLists = 0;
 };
@@ -29,8 +30,8 @@ std::vector<RegionalAllocationGroup> constantAllocationLanes(const RegionalAlloc
 // Failure means this sufficient palette construction is unavailable, not that
 // the logical plan requires more physical IDs.
 std::shared_ptr<RegionalAllocationSummary> repeatedRegionalAllocation(
-    RepeatedRegionState& state, const RegionalAllocationSummary& child,
+    RepeatedRegionState& state, std::shared_ptr<const RegionalAllocationSummary> child,
     ArrayRef<std::pair<uint32_t, std::size_t>> crossings, AllocationProfile* profile = nullptr,
-    AllocationStrength strength = AllocationStrength::Shared);
+    AllocationStrength strength = AllocationStrength::Shared, AllocationInputCache* coalescing = nullptr);
 } // namespace mlir::pto::frontiersynch
 #endif
