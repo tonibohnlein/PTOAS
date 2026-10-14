@@ -161,7 +161,7 @@ def main():
     cases.append({"pipes": [], "records": [], "samples": [[]]})
     # Largest accepted core scan bound: h=2, V+2=6, seed at most1.
     # Evaluate the large distance itself, beyond every unfolded test prefix.
-    maximum_safe = (2**64 - 2) // 12
+    maximum_safe = (2**64 - 2) // 6
     cases.append({"pipes": [0, 0], "records": [
         {"source": 0, "target": 1, "bound": maximum_safe}],
         "samples": [[1, 1, 1, maximum_safe], [0, 1, 1, maximum_safe]]})
@@ -211,7 +211,7 @@ def main():
             assert result["demand_rounds"] == 2 * k * k
             assert result["native_scan_visits"] == (8 * k * (k + 1) + 2 * k) * m
         assert result["threshold_queries"] == ((2 * m)**2 if case["export_thresholds"] else 0)
-        assert result["scaling_additions"] <= 2 * k * edges * max(1, m.bit_length())
+        assert result["scaling_additions"] == 0
     for case, result in zip(cases[sparse_begin:-1], results[sparse_begin:-1]):
         m = len(case["pipes"])
         assert result["edges"] == m
