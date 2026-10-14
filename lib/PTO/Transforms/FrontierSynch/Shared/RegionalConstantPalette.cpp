@@ -54,33 +54,34 @@ struct Compatibility {
         queries.emplace(std::move(key), answer);
         return answer;
     }
-    struct Envelope { RegionalEvent first, last; };
-    std::optional<RegionalEvent> extremum(RegionalEvent a, RegionalEvent b, bool first)
+    struct Envelope { RegionalEvent first, last; Id active; };
+    std::optional<RegionalEvent> extremum(RegionalEvent a, RegionalEvent b, Id active, bool first)
     {
-        auto& e = *region.expressions;
         // Certify native event order, not just record or reference numbering.
         // Both operands have the same kind and original pipe.
         auto ab = regionalReachability(region, a, b);
-        if (ab && e.constantValue(*ab) == 1) { return first ? a : b; }
+        if (ab && proves(active, *ab)) { return first ? a : b; }
         auto ba = regionalReachability(region, b, a);
-        if (ba && e.constantValue(*ba) == 1) { return first ? b : a; }
+        if (ba && proves(active, *ba)) { return first ? b : a; }
         return std::nullopt;
     }
     std::optional<Envelope> combine(const std::optional<Envelope>& a, const std::optional<Envelope>& b)
     {
-        if (!a || !b) { return std::nullopt; }
-        auto first = extremum(a->first, b->first, true);
-        auto last = extremum(a->last, b->last, false);
+        // A bound must exist whenever any member of the combined group does.
+        // Different activities need a selected endpoint, not an unconditional
+        // choice of one group's bound. Keep the all-member fallback there.
+        if (!a || !b || a->active != b->active) { return std::nullopt; }
+        auto first = extremum(a->first, b->first, a->active, true);
+        auto last = extremum(a->last, b->last, a->active, false);
         if (!first || !last) { return std::nullopt; }
-        return Envelope{*first, *last};
+        return Envelope{*first, *last, a->active};
     }
     std::optional<Envelope> envelope(const RegionalAllocationGroup& group)
     {
         if (group.sourcePipe == group.targetPipe) { return std::nullopt; }
-        auto& e = *region.expressions;
         std::optional<Envelope> result;
         for (const auto& member : group.members) {
-            if (e.constantValue(member.active) != 1 ||
+            if ((result && result->active != member.active) ||
                 member.firstSource.type >= region.anchors.size() ||
                 member.lastTarget.type >= region.anchors.size()) { return std::nullopt; }
             const auto& source = region.anchors[member.firstSource.type];
@@ -90,8 +91,10 @@ struct Compatibility {
                 static_cast<uint32_t>(target.phase->kPipeValue) != group.targetPipe) { return std::nullopt; }
             auto ps = regionalPresence(region, member.firstSource);
             auto pt = regionalPresence(region, member.lastTarget);
-            if (!ps || !pt || e.constantValue(*ps) != 1 || e.constantValue(*pt) != 1) { return std::nullopt; }
-            Envelope next{member.firstSource, member.lastTarget};
+            if (!ps || !pt || !proves(member.active, *ps) || !proves(member.active, *pt)) {
+                return std::nullopt;
+            }
+            Envelope next{member.firstSource, member.lastTarget, member.active};
             next.first.kind = PeriodicEventKind::Start;
             next.last.kind = PeriodicEventKind::Completion;
             result = result ? combine(result, next) : std::optional<Envelope>(next);
@@ -114,12 +117,13 @@ struct Compatibility {
                     const std::optional<Envelope>& boundsA, const std::optional<Envelope>& boundsB)
     {
         auto& e = *region.expressions;
-        // Unconditional native bounds cover every member lifetime. A proved
-        // envelope separation therefore covers their full Cartesian product.
+        // Native bounds exist under the group's exact common activity and
+        // cover every member lifetime there. Separation under both activities
+        // therefore covers the full Cartesian product.
         // Overlapping/unavailable bounds do not reject interleaved lifetimes:
         // retain the original all-pair sufficient proof in those cases.
-        if (boundsA && boundsB && separated(e.boolean(true), boundsA->last, boundsB->first,
-                                           boundsB->last, boundsA->first)) { return true; }
+        if (boundsA && boundsB && separated(e.land(boundsA->active, boundsB->active),
+                boundsA->last, boundsB->first, boundsB->last, boundsA->first)) { return true; }
         for (const auto& x : a.members) {
             for (const auto& y : b.members) {
                 if (!separated(e.land(x.active, y.active), x.lastTarget, y.firstSource,

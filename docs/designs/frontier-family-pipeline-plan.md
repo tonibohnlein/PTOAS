@@ -59,7 +59,7 @@ deferred until this work is complete; existing InsertSync already uses it.
 | M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is now retained entirely in shared family recipes; ordinary numerical sequence and repeated children retain recipes through composition; exact fixed-coordinate sequence crossings now form recipes before scalar preparation; child activity masks retain those recipes through composition; repeated crossings now retain numerical or contextual recipes before scalar lowering; guarded sequence crossings now retain publication/cleanup and common-cut expression recipes; finite overlays and guarded/numerical periodic adapters retain recipes through allocation; relational crossings and capture closure remain open |
 | M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; common nonconstant tuple terms compose before dispatch in `15f2007ea`; coordinate-selected phase shifts now compose under the same skeleton with a cost-checked incumbent; different skeletons and early graph allocation remain open |
 | M5: session and capabilities | Retain facts, mathematics, recipes and allocation in one session; deterministic capability upgrades; common unified/split stage functions; self-contained versioned saved artifacts; delete redundant orchestration. | Explicit-capacity allocation requests now reuse the retained session and identity owner; capacity-specific answers are isolated from unrestricted exports. Unified physical materialization and remaining orchestration are open |
-| M6: carryover and closure | Finish shared-fact and coarse-input integration, closed-child completion imports, guarded/relational rank transport and outstanding semantic oracles; run pinned eleven-kernel/corpus validation and report device results separately. | Eleven-kernel replay refreshed at `e0e17e5db`: 11 logical, 7 six-ID/C++ successes; corpus, device, and interface closure remain open |
+| M6: carryover and closure | Finish shared-fact and coarse-input integration, closed-child completion imports, guarded/relational rank transport and outstanding semantic oracles; run pinned eleven-kernel/corpus validation and report device results separately. | Eleven-kernel replay refreshed at `c088495d8`: 11 logical, 7 six-ID/C++ successes with the pinned planner/allocator and fixed retained C++ backend; corpus, device, and interface closure remain open |
 
 Each milestone proceeds through focused, separately reviewable changes with
 regressions and correctness/architecture review. Infrastructure does not complete a production
@@ -1361,3 +1361,41 @@ same explicit six-ID request, measured median logical-pass time including
 allocation support at 1.734 seconds before and 1.499 seconds after (about 14%
 lower). No concurrent builds or tests ran during the pairs. This is one host's
 compiler measurement; it does not imply a device-latency improvement.
+
+## Guarded lifetime envelopes and pinned campaign
+
+The constant-palette coalescer now permits one exact common activity predicate
+per group. It proves that the group's source/consumer bounds exist and enclose
+all member lifetimes under that predicate. Separation is proved under the
+conjunction of both groups' activities. When merging different activities,
+the combined envelope becomes unavailable: selecting an absent group's bound
+would be unsound. The existing all-member compatibility path remains available
+for that case and for overlapping envelopes. Necessary activity domains never
+replace the exact predicate.
+
+This extends the existing lifetime-summary construction to a shared residual
+predicate without adding an allocation algorithm or symbolic-equivalence
+solver. The new concrete-interval oracle covers 1/8/128-member groups, shared,
+complementary and independent predicates, interleaved lifetimes, and true
+conflicts. All four predicate valuations are checked. Separated groups with a
+shared predicate have bounded cross-pipe reuse-query calls independent of their
+member count; native extremum certification still visits the supplied members.
+
+Five focused tests pass. TileLang and PyPTO core-0 logical traces remain equal
+to `c088495d8`; Persistent remains equal on cores 0/15/16/19. Physical matching
+and causal reuse checks pass for all those executions. Physical arithmetic
+counts remain 1,563 / 1,372 / 4,600 respectively. The single Persistent compiler
+pair is effectively unchanged (1.519 / 1.521 seconds); no additional Persistent
+speedup is claimed. Local receipts: `.local/family-guarded-envelopes/`.
+
+The separately pinned eleven-kernel campaign is recorded in
+[the validation inventory](frontier-family-pipeline-validation.json), including
+input/tool hashes, stage outcomes, generated-control counts and repeated-work
+counters. It uses `c088495d8`, before this guarded-envelope extension, and the
+fixed retained C++ emitter identified by its hash. All eleven logical requests
+succeeded; seven completed six-ID allocation and C++ emission. GroupNorm and
+decode still lack a certified six-ID assignment, prefill lacks an allocation
+export, and Delta lacks a prefix-lifetime export. Delta still contains 2,473,273
+logical arithmetic operations. No device execution is included, and logical
+success does not close those production blockers. Campaign timings are single
+watchdog-run diagnostics, not paired speedup measurements.
