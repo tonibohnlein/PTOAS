@@ -8,6 +8,7 @@
 // One count per source pipe, one acquisition watermark per selected direction.
 #include "InvocationPrefix.h"
 #include "PrefixExpressionProfile.h"
+#include "PrefixExpressionSession.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOSyncUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -189,6 +190,11 @@ FailureOr<std::unique_ptr<StructuredPrivateState>> materializeInvocationPrefix(
     func::FuncOp original, const InvocationPrefixRecipe& recipe, PrivateStateError& error)
 {
     if (failed(check(original, recipe, error))) { return failure(); }
+    auto expressionScope = recipe.expressionSession ? recipe.expressionSession->begin() : nullptr;
+    if (recipe.expressionSession && !expressionScope) {
+        error = {PrivateStateFailure::InvalidInput, original, "prefix expression recipe is already materializing"};
+        return failure();
+    }
     if (recipe.expressionProfile) { recipe.expressionProfile->resetEmission(); }
     original.getContext()->getOrLoadDialect<PTODialect>();
     auto slots = recipe.slots;

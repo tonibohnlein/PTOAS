@@ -2042,3 +2042,37 @@ and diff checks pass; compliance findings are already-braced nested-call
 conditions. Receipts: `.local/r5-batch-*-build.log`,
 `.local/r5-batch-complete-tests.log`, `.local/r5-batch-oracle-final.log`,
 `.local/r5-batch-compliance.log`.
+
+
+### R5 increment: scoped regional-prefix expression sharing
+
+The invocation coordinator now owns an expression-sharing scope for its staged
+materialization. Regional recipes consult the existing shared-binding service
+lazily and publish only successful lowered values. Cache identity includes the
+arena, original cut, output block, mapped invocation and actual historical
+input bindings. A changed cut drops prior entries; scope destruction clears
+all generated values, including on failure. Standalone recipe calls remain
+uncached. This avoids another function-wide cache or eager per-cut copying.
+Bounded batches preserve first-seen directional namespaces independently of
+pointer ordering.
+
+Five prefix suites pass. Historical-expression fixtures now exercise identical
+and complementary roots, changed/restored snapshot values at one cut, empty
+and nested invocations, failed retries and identical successful retries.
+The complementary root emits at most two additional operations after its
+shared root; changed history must produce a distinct expression.
+
+A bounded Delta diagnostic at `531bc777b` succeeds logically in 76.401 seconds,
+with 1,936,223 constructed prefix operations and about 114 MB of output. Its
+six-ID pass refuses with the missing prefix lifetime export. With this scoped
+sharing, logical compilation succeeds in 76.502 seconds and constructs
+1,936,116 operations. The largest regional root still constructs 607,621
+operations at the final state conversion (input line 261). These single-run
+diagnostics establish neither a timing improvement nor physical recovery.
+The 107-operation saving confirms that sharing across roots is insufficient
+for the dominant producer-built root. Continue with restricted/native query
+construction and lifetime certification, not a claim that Delta is fixed.
+
+Incremental build, diff checks and the five suites pass. Compliance reports
+four already-braced test conditions. Receipts: `.local/r5-session-*.log`,
+`.local/r5-delta-current/`, `.local/r5-delta-shared/`.

@@ -656,6 +656,7 @@ bool historicalExpression(MLIRContext& context, unsigned mode)
         root = arena->land(arena->slt(arena->constant(mode == 12 ? uint64_t(-2) : 0), arena->input(upper)), first);
     }
     auto emit = fs::preparePrefixExpression(arena, root, cut, collection);
+    auto complement = fs::preparePrefixExpression(arena, arena->lnot(root), cut, collection);
     std::optional<std::size_t> validity;
     if (mode == 7) {
         std::string message;
@@ -664,10 +665,33 @@ bool historicalExpression(MLIRContext& context, unsigned mode)
         validity = slots->second;
     }
     collection.recipe().actions.push_back({cut, fs::PrivateStateCut::Before,
-        [emit, loc, validity](OpBuilder& b, const IRMapping& mapping,
+        [emit, complement, loc, validity, changeHistory = mode == 0](OpBuilder& b, const IRMapping& mapping,
                               MutableArrayRef<Value> state, std::string& error) {
             auto value = emit(b, mapping, state, error);
             if (failed(value)) { return failure(); }
+            auto shared = emit(b, mapping, state, error);
+            if (failed(shared) || *shared != *value) {
+                error = "prefix snapshot roots did not share one binding environment";
+                return failure();
+            }
+            if (changeHistory) {
+                auto saved = state.front();
+                auto one = b.create<arith::ConstantIntOp>(loc, 1, 1);
+                state.front() = b.create<arith::XOrIOp>(loc, saved, one);
+                auto changed = emit(b, mapping, state, error);
+                state.front() = saved;
+                auto restored = emit(b, mapping, state, error);
+                if (failed(changed) || failed(restored) || *changed == *value || *restored != *value) {
+                    error = "prefix sharing crossed a historical-state binding change";
+                    return failure();
+                }
+            }
+            const auto operations = b.getInsertionBlock()->getOperations().size();
+            auto inverse = complement(b, mapping, state, error);
+            if (failed(inverse) || b.getInsertionBlock()->getOperations().size() > operations + 2) {
+                error = "prefix roots duplicated their common historical expression";
+                return failure();
+            }
             auto yes = b.create<arith::ConstantIndexOp>(loc, 1), no = b.create<arith::ConstantIndexOp>(loc, 0);
             Value tag = b.create<arith::SelectOp>(loc, *value, yes, no);
             if (validity) {
@@ -680,13 +704,17 @@ bool historicalExpression(MLIRContext& context, unsigned mode)
         }});
     const auto beforeText = render(module->getOperation());
     fs::PrivateStateError error;
-    auto staged = fs::materializeStructuredPrivateState(function, collection.recipe().slots,
-                                                        collection.recipe().actions, error);
+    collection.recipe().privateScalarControl = true;
+    auto staged = fs::materializeInvocationPrefix(function, collection.recipe(), error);
     if (mode == 1 || mode == 4 || mode == 5 || mode == 8 || mode == 11) {
-        return failed(staged) && beforeText == render(module->getOperation());
+        auto retry = fs::materializeInvocationPrefix(function, collection.recipe(), error);
+        return failed(staged) && failed(retry) && beforeText == render(module->getOperation());
     }
     if (failed(staged)) { llvm::errs() << "snapshot preparation: " << error.message << "\n"; return false; }
     if (collection.recipe().slots.size() != (mode == 2 ? 4U : 2U)) { return false; }
+    const auto firstAttempt = render((*staged)->function);
+    staged = fs::materializeInvocationPrefix(function, collection.recipe(), error);
+    if (failed(staged) || render((*staged)->function) != firstAttempt) { return false; }
     for (unsigned trips = 0; trips <= 4; ++trips) {
         for (unsigned active = 0; active < 2; ++active) {
             Execution execution; execution.run((*staged)->function, trips, active);
