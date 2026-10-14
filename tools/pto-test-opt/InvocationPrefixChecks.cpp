@@ -281,7 +281,7 @@ bool verifyTrace(ArrayRef<Event> events, ArrayRef<unsigned> roles, const Graph* 
         auto entry = records.emplace(direction,event.record).first;
         if (entry->second != event.record || event.plan != 19 || event.ordinal <= 0) { return false; }
         const bool allowed = direction == std::make_pair(P,Q) || direction == std::make_pair(P,S) ||
-                             direction == std::make_pair(R,Q);
+                             direction == std::make_pair(R,Q) || direction == std::make_pair(P,R);
         if (!allowed) { return false; }
         if (event.kind == 1) {
             const bool invalid252 = !last.count(event.source) || event.ordinal != counts[event.source] ||
@@ -371,7 +371,7 @@ bool runCases(MLIRContext& context, bool loops, unsigned& cases) {
 // Supplied child interfaces have native order and no internal demands; the
 // independent graph below supplies the one selected crossing prerequisite.
 bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, unsigned inactive = 0,
-                      bool exported = false)
+                      bool exported = false, unsigned partitions = 1, bool resetContexts = false)
 {
     OpBuilder b(&context); auto loc = b.getUnknownLoc();
     OwningOpRef<ModuleOp> module(ModuleOp::create(loc));
@@ -390,7 +390,7 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
         outer = b.create<scf::ForOp>(loc, zero, two, one);
         b.setInsertionPointToStart(outer.getBody());
         auto first = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, outer.getInductionVar(), zero);
-        count = b.create<arith::SelectOp>(loc, first, count, one);
+        count = b.create<arith::SelectOp>(loc, first, count, resetContexts ? zero : one);
     }
     auto loop = b.create<scf::ForOp>(loc, zero, count, one, ValueRange{function.getArgument(1)});
     b.setInsertionPointToStart(loop.getBody());
@@ -399,14 +399,18 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
     b.setInsertionPointAfter(loop);
     auto target = b.create<func::CallOp>(loc, "payload", TypeRange{}, ValueRange{inactive == 3 ? zero : two});
     if (outer) { b.setInsertionPointAfter(outer); }
+    func::CallOp outside;
+    if (resetContexts) { outside = b.create<func::CallOp>(loc, "payload", TypeRange{}, ValueRange{one}); }
     b.create<func::ReturnOp>(loc);
     if (failed(verify(*module))) { return false; }
     auto arena = std::make_shared<fs::RegionExpressions>();
     auto input = std::make_shared<pto::SyncInput>();
     auto state = std::make_shared<fs::SequenceAnalysisState>(function, arena);
     if (outer) { state->requiredOuterLoops.push_back(outer); }
-    std::vector<pto::CompoundInstanceElement> phases; phases.reserve(2);
-    for (auto [op, pipe] : std::vector<std::pair<Operation*, unsigned>>{{source, P}, {target, inactive == 3 ? P : Q}}) {
+    std::vector<pto::CompoundInstanceElement> phases; phases.reserve(3);
+    std::vector<std::pair<Operation*, unsigned>> payloads{{source, P}, {target, inactive == 3 ? P : Q}};
+    if (outside) { payloads.push_back({outside, R}); }
+    for (auto [op, pipe] : payloads) {
         phases.emplace_back(phases.size(), SmallVector<const pto::BaseMemInfo*>{},
             SmallVector<const pto::BaseMemInfo*>{}, static_cast<pto::PipelineType>(pipe), op->getName());
         phases.back().elementOp = op;
@@ -424,9 +428,10 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
                                  arena->constant(0));
             };
         }
-        child.regional.presence = [arena, count, isSource, phased](fs::RegionalEvent event) {
+        auto sourceBound = resetContexts ? function.getArgument(0) : count;
+        child.regional.presence = [arena, sourceBound, isSource, phased](fs::RegionalEvent event) {
             auto visit = phased && isSource ? arena->add(event.visits.front(), event.visits.front()) : event.ordinal;
-            return isSource ? arena->lt(visit, arena->input(count)) : arena->boolean(true);
+            return isSource ? arena->lt(visit, arena->input(sourceBound)) : arena->boolean(true);
         };
         auto contribution = std::make_shared<fs::RegionalPrefixContribution>();
         contribution->input = input; contribution->expressions = arena; contribution->function = function;
@@ -438,7 +443,8 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
             return region.expressions == arena && region.anchors.size() == 1 &&
                    region.anchors.front().phase == anchor.phase;
         };
-        contribution->occurrence = [arena, anchor, induction = loop.getInductionVar(), isSource, phased](
+        contribution->occurrence = [arena, anchor, induction = loop.getInductionVar(), isSource, phased,
+                                    outerInduction = outer ? outer.getInductionVar() : Value{}, resetContexts](
             fs::RegionalEvent event, std::string& error) -> fs::PrefixOccurrencePtr {
             if (event.type != 0 || event.visits.size() != (isSource && phased ? 1U : 0U)) {
                 error = "fixture occurrence has invalid coordinates"; return {};
@@ -450,6 +456,10 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
                 auto selected = event.ordinal;
                 if (phased) { selected = arena->add(event.visits.front(), event.visits.front()); }
                 recipe->match = arena->eq(actual, selected);
+                if (resetContexts) {
+                    recipe->match = arena->land(recipe->match,
+                        arena->eq(arena->input(outerInduction), arena->constant(0)));
+                }
             }
             return recipe;
         };
@@ -460,7 +470,7 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
         phased ? std::vector<fs::Expr>{arena->constant(0)} : std::vector<fs::Expr>{});
     const auto second = state->port(0, 0, arena->constant(phased ? 0 : 1),
         phased ? std::vector<fs::Expr>{arena->constant(1)} : std::vector<fs::Expr>{});
-    auto choose = arena->input(loop.getResult(0));
+    auto choose = arena->input(resetContexts ? function.getArgument(1) : loop.getResult(0));
     if (inactive) {
         auto opaque = std::make_shared<Block>();
         choose = arena->input(opaque->addArgument(b.getI1Type(), loc));
@@ -495,6 +505,10 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
         selectedVisit = arena->add(state->ports[selected].visits.front(), state->ports[selected].visits.front());
     }
     auto guard = arena->lt(selectedVisit, arena->input(count));
+    if (resetContexts) {
+        guard = arena->land(arena->lt(selectedVisit, arena->input(function.getArgument(0))),
+            arena->eq(arena->input(outer.getInductionVar()), arena->constant(0)));
+    }
     if (inactive) {
         const auto x = arena->input(count), limit = arena->constant(5);
         const auto large = arena->slt(arena->constant(4), x);
@@ -502,13 +516,26 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
         const auto comparison = inactive == 2 ? arena->lt(limit, rank) : arena->lt(rank, limit);
         guard = arena->land(guard, arena->land(choose, arena->land(large, comparison)));
     }
-    state->crossings.push_back({selected, consumer, guard});
+    for (unsigned i = 0; i < partitions; ++i) {
+        // Disjoint records select the same two primitive occurrences. Their
+        // consumer guards remain separate, but source captures need not grow.
+        auto active = partitions == 1 ? arena->boolean(true) : arena->eq(
+            arena->rem(arena->input(count), arena->constant(partitions)), arena->constant(i));
+        state->crossings.push_back({selected, consumer, arena->land(guard, active)});
+    }
+    if (outside) {
+        auto outsidePort = state->port(2, 0, arena->constant(0));
+        state->crossings.push_back({selected, outsidePort,
+            arena->lt(selectedVisit, arena->input(function.getArgument(0)))});
+    }
     fs::InvocationPrefixCollection collection(function, input);
     std::string diagnostic;
     const auto originalPorts = state->ports.size(), originalChoices = state->portChoices.size();
     if (failed(state->collectPrefix(collection, diagnostic))) { llvm::errs() << diagnostic << "\n"; return false; }
     if (state->ports.size() != originalPorts || state->portChoices.size() != originalChoices) { return false; }
     auto& spec = collection.recipe();
+    if (partitions > 1 && spec.slots.size() != 2) { return false; }
+    if (resetContexts && spec.slots.size() != 4) { return false; }
     spec.privateScalarControl = true; spec.planId = 19; spec.sourceBounds = {{P, inactive ? 8U : nested ? 4U : 3U}};
     fs::PrivateStateError error;
     const auto before = render(module->getOperation());
@@ -519,13 +546,21 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
         for (unsigned chooseFirst = 0; chooseFirst < 2; ++chooseFirst) {
             Execution actual; actual.run((*prepared)->function, trips, chooseFirst);
             std::vector<unsigned> roles(trips, 0); roles.push_back(inactive == 3 ? 0 : 2);
-            if (nested) { roles.push_back(0); roles.push_back(2); }
+            if (nested) {
+                if (!resetContexts) { roles.push_back(0); }
+                roles.push_back(2);
+            }
+            if (outside) { roles.push_back(1); }
             auto expected = native(roles);
             const auto selectedVisit = chooseFirst ? 0U : phased ? 2U : 1U;
             if (!inactive && selectedVisit < trips) { edge(expected, 2 * selectedVisit + 1, 2 * trips); }
-            if (nested && chooseFirst) { edge(expected, 2 * (trips + 1) + 1, 2 * (trips + 2)); }
+            if (nested && !resetContexts && chooseFirst) {
+                edge(expected, 2 * (trips + 1) + 1, 2 * (trips + 2));
+            }
+            if (outside && selectedVisit < trips) { edge(expected, 2 * selectedVisit + 1, 2 * (trips + 2)); }
             close(expected);
             if (!actual.valid || !verifyTrace(actual.events, roles, &expected,
+                    outside ? std::optional<unsigned>(2 * trips) :
                     inactive == 3 ? std::optional<unsigned>(0) : std::nullopt)) {
                 llvm::errs() << "late source choice mismatch: trips=" << trips << " first=" << chooseFirst
                              << " nested=" << nested << " phased=" << phased << " interpreted=" << actual.valid << "\n";
@@ -672,8 +707,12 @@ bool runInvocationPrefixChecks() {
         !lateSourceChoice(context, false, true) || !lateSourceChoice(context, false, false, 1) ||
         !lateSourceChoice(context, false, false, 2) || !lateSourceChoice(context, false, false, 3) ||
         !lateSourceChoice(context, false, false, 0, true) || !lateSourceChoice(context, true, false, 0, true) ||
-        !lateSourceChoice(context, false, true, 0, true);
+        !lateSourceChoice(context, false, true, 0, true) ||
+        !lateSourceChoice(context, false, false, 0, false, 4) ||
+        !lateSourceChoice(context, true, false, 0, true, 128) ||
+        !lateSourceChoice(context, true, false, 0, false, 1, true);
     if (invalid332) { return false; }
-    llvm::outs() << "invocation prefix checks passed executions=" << cases << " late-choice=48 inactive=32\n";
+    llvm::outs() << "invocation prefix checks passed executions=" << cases
+                 << " late-choice=48 inactive=32 capture-sharing=24\n";
     return true;
 }
