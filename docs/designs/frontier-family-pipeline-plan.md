@@ -29,7 +29,7 @@ and protocol selection; they do not by themselves compress guarded control.
    context for the staged materialization, isolating arena, cut and binding
    environments and discarding all caches on failure. Measure published
    bindings, lookup requests, imported bindings and retained local entries.
-3. Admit qualified numerical sub-batches beside guarded residual crossings in
+3. Completed: admit qualified numerical sub-batches beside guarded residual crossings in
    one command-order inventory. A residual must not disqualify unrelated regular
    families. Preserve simultaneous-command order, matching and exact activity;
    necessary domains remain exclusion evidence only.
@@ -1147,3 +1147,50 @@ Remaining costs include shared-root availability planning per cut, wrapper
 subtree discovery, the extra reachable-DAG lookup traversal, and conservatively
 separate nonempty environments. This refinement does not claim compact guarded
 families, allocation on a normalized recipe graph, or Delta lifetime support.
+
+## Mixed numerical and guarded crossing batches
+
+Sequence and repeated producers now retain the existing exact numerical
+qualification for each crossing instead of losing all qualifications when one
+crossing needs contextual activity. The repeated qualification still requires
+an unquotiented, unclipped original counted loop with matching trip bounds.
+Qualified points and residual publication/cleanup recipes enter one endpoint
+inventory. Necessary coordinate evidence authorizes exclusion only; the
+producer's exact activity proof authorizes numerical lowering.
+
+The shared piece scheduler groups compatible numerical points while retaining
+before/after constraints on coactive residual commands. Its complete order
+check and SCC refinement remain authoritative. Residual singletons retain their
+relative order through a chain, avoiding a dense residual-only order graph.
+Numerical/residual comparisons are limited to common original cuts. Unsupported
+mixed grouping keeps the exact contextual realization available. Matching
+identities, allocation envelopes and publication policy are unchanged.
+
+Mixed leaves reuse the numerical selector builder and contextual binding
+service. No new emitter or expression language is introduced. The opt-in
+`recipe_forms` inventory reports numerical sites, contextual sites and mixed
+leaves by walking the retained recipe; it is not independently maintained
+semantic state.
+
+Validation against `6a19b11db`:
+
+- Twelve focused lit tests pass, including production mixed crossings with both
+  guard outcomes and zero-trip cases checked against an independent unfolded
+  effect graph. All ten cases also allocate with IDs 0–5 and preserve the
+  baseline ordered logical and physical traces, including numeric IDs.
+- The grouping oracle checks 8/32/128 point families, residuals at the start,
+  middle and end, reversed record numbering, excluded and coactive alternatives,
+  simultaneous commands and malformed inventories. A 4,096-residual case checks
+  preserved order without a dense residual-pair graph.
+- TileLang and PyPTO canonical outputs are unchanged. Persistent allocates with
+  eligible IDs 0–5 and preserves complete ordered payload/command traces,
+  matching identities and numeric IDs on cores 0, 15, 16 and 19. Core 0 retains
+  5,011 matched pairs.
+
+This closes the all-or-nothing crossing-batch limitation for the existing
+numerical qualification. It does not compress arbitrary residual guards, add
+phase/partial-invocation qualifications, or complete allocation on the compact
+protocol. No paired compiler-speed or device-performance claim is made.
+Receipts are retained locally under `.local/family-pipeline-mixed-batches/`.
+The historical phased-repeat timeouts and four physical/export refusals remain
+open; this focused validation does not replace the full pinned campaign.

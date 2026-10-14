@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
 #include "PrivateStatePlan.h"
+#include "MixedFamilyInsertion.h"
 #include "PreparedControlLiveness.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "llvm/Support/JSON.h"
@@ -32,6 +33,14 @@ llvm::json::Object preparation(const PreparedLogicalPlan& plan)
     };
     return llvm::json::Object{{"arithmetic", total}, {"endpoint_reachable_arithmetic", count(false)},
                              {"required_arithmetic", count(true)}, {"blocks", plan.preparation.size()}};
+}
+llvm::json::Object familyForms(const PreparedLogicalPlan& plan)
+{
+    if (!plan.familyRecipe) { return {}; }
+    auto forms = familyEndpointForms(*plan.familyRecipe);
+    if (failed(forms)) { return llvm::json::Object{{"error", "invalid family recipe inventory"}}; }
+    return llvm::json::Object{{"numerical_sites", forms->numericalSites}, {"contextual_sites", forms->contextualSites},
+            {"mixed_leaves", forms->mixedLeaves}};
 }
 llvm::json::Object functionControl(func::FuncOp function)
 {
@@ -70,6 +79,7 @@ void profileLogicalControl(func::FuncOp function, const PreparedLogicalPlan& pla
         {"endpoint_sites", plan.endpoints.size()},
         {"recipe_sites", plan.familyRecipe ? familyEndpointPieceCount(*plan.familyRecipe) : 0},
         {"preparation", preparation(plan)},
+        {"recipe_forms", familyForms(plan)},
         {"family_materialization", llvm::json::Object{
             {"shared_published", plan.familyWork.sharedPublished},
             {"shared_requests", plan.familyWork.sharedRequests},

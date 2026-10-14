@@ -8,6 +8,8 @@
 // Retain numerical and contextual family recipes through composition; lower at insertion.
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "FamilyMaterialization.h"
+#include "MixedFamilyInsertion.h"
+#include "MixedEndpointPieces.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyExpressions.h"
 #include "PTO/Transforms/FrontierSynch/Shared/EndpointPieces.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -57,8 +59,8 @@ public:
           builder(recipe.cuts.front().cut.before->getContext()) {}
     LogicalResult run()
     {
-        if (recipe.arena) { return prepareContextual(); }
         if (recipe.outer) { initializeOrdinals(); }
+        if (recipe.arena) { return prepareContextual(); }
         for (const auto& cut : recipe.cuts) {
             if (!cut.pieces.empty()) { prepareCut(cut.cut, cut.pieces); }
         }
@@ -94,6 +96,12 @@ private:
             auto* cut = piece.cut.before;
             Block code;
             builder.setInsertionPointToEnd(&code);
+            if (!recipe.selectors.empty() && recipe.selectors[i]) {
+                if (!recipe.outer) { ordinal = number(0, cut->getLoc()); }
+                preparePiece(cut, i, boundary(piece, cut->getLoc()));
+                adopt(code, cut);
+                continue;
+            }
             auto emit = [&](const std::shared_ptr<const CutExpressionRecipe>& value) {
                 return materialization.emit(*recipe.arena, *value, builder, cut, environment);
             };
@@ -226,6 +234,16 @@ private:
         }
     }
 };
+FamilyExpressionPlan buildPieceSelector(const EndpointPiece& piece)
+{
+    SmallVector<SmallVector<TemplateCoordinate>> coordinates;
+    SmallVector<int64_t> labels;
+    for (const auto& member : piece.members) {
+        coordinates.push_back(member.coordinates);
+        labels.push_back(member.record);
+    }
+    return buildFamilyExpressions(coordinates, labels);
+}
 FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildRecipe(const NumericTemplateEndpoints& plan)
 {
     if (!plan.logical.error.empty()) { return failure(); }
@@ -254,13 +272,7 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildRecipe(const Numeric
         auto cut = cuts.find(piece.cut.before);
         if (cut == cuts.end() || recipe->cuts[cut->second].cut.block != piece.cut.block) { return failure(); }
         recipe->cuts[cut->second].pieces.push_back(recipe->selectors.size());
-        SmallVector<SmallVector<TemplateCoordinate>> coordinates;
-        SmallVector<int64_t> labels;
-        for (const auto& member : piece.members) {
-            coordinates.push_back(member.coordinates);
-            labels.push_back(member.record);
-        }
-        auto selection = buildFamilyExpressions(coordinates, labels);
+        auto selection = buildPieceSelector(piece);
         if (!selection.error.empty()) {
             if (plan.outer) { plan.outer->emitError(selection.error); }
             return failure();
@@ -389,6 +401,72 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndp
         recipe->cuts.push_back({piece.cut, {}});
         recipe->pieces.push_back(piece);
         recipe->bindings.push_back(std::move(binding));
+    }
+    recipe->pieceCount = recipe->pieces.size();
+    return std::shared_ptr<const FamilyEndpointRecipe>(std::move(recipe));
+}
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildMixedFamilyEndpointRecipe(
+    ContextualFamilyExpressions& expressions, ArrayRef<ContextualEndpointFamily> families,
+    ArrayRef<uint8_t> numerical, scf::ForOp outer, ArrayRef<ContextualSharedExpression> shared)
+{
+    if (families.size() != numerical.size() || families.empty()) { return failure(); }
+    if (llvm::none_of(numerical, [](uint8_t value) { return value != 0; })) {
+        return buildContextualFamilyEndpointRecipe(expressions, families, shared);
+    }
+    auto* firstCut = families.front().piece.cut.before;
+    auto function = firstCut ? firstCut->getParentOfType<func::FuncOp>() : func::FuncOp{};
+    if (!function || (outer && outer->getParentOfType<func::FuncOp>() != function)) { return failure(); }
+    using Key = std::tuple<uint32_t, EndpointKind, Operation*>;
+    std::map<Key, std::size_t> origins, residuals;
+    SmallVector<EndpointPiece> points;
+    SmallVector<ContextualEndpointFamily> residual;
+    for (std::size_t i = 0; i < families.size(); ++i) {
+        const auto& piece = families[i].piece;
+        if (!piece.cut.before || piece.cut.before->getParentOfType<func::FuncOp>() != function ||
+            piece.members.size() != 1 || (!outer && numerical[i] && piece.displacement)) { return failure(); }
+        Key key{piece.members.front().record, piece.kind, piece.cut.before};
+        if (!origins.emplace(key, i).second) { return failure(); }
+        points.push_back(piece);
+        if (!numerical[i]) {
+            residuals.emplace(key, residual.size());
+            residual.push_back(families[i]);
+        }
+    }
+    auto grouped = buildMixedEndpointPieces(points, numerical);
+    if (!grouped.error.empty()) { return failure(); }
+    auto recipe = std::make_shared<FamilyEndpointRecipe>();
+    std::shared_ptr<const FamilyEndpointRecipe> contextual;
+    if (!residual.empty()) {
+        auto planned = buildContextualFamilyEndpointRecipe(expressions, residual, shared);
+        if (failed(planned)) { return failure(); }
+        contextual = *planned;
+        recipe->arena = contextual->arena;
+        recipe->shared = contextual->shared;
+    } else {
+        recipe->arena = expressions.arena();
+    }
+    if (!recipe->arena) { return failure(); }
+    recipe->outer = outer;
+    llvm::sort(grouped.pieces, [](const auto& a, const auto& b) { return a.order < b.order; });
+    for (auto& piece : grouped.pieces) {
+        Key key{piece.members.front().record, piece.kind, piece.cut.before};
+        FamilyEndpointRecipe::Binding binding;
+        std::shared_ptr<const FamilyExpressionRecipe> selector;
+        if (numerical[origins.at(key)]) {
+            auto selected = buildPieceSelector(piece);
+            if (!selected.error.empty()) { return failure(); }
+            selector = std::move(selected.recipe);
+        } else {
+            binding = contextual->bindings[residuals.at(key)];
+        }
+        recipe->maximumRecord = std::max(recipe->maximumRecord, piece.namespaceId);
+        for (const auto& member : piece.members) {
+            recipe->maximumRecord = std::max(recipe->maximumRecord, member.record);
+        }
+        recipe->cuts.push_back({piece.cut, {}});
+        recipe->pieces.push_back(std::move(piece));
+        recipe->bindings.push_back(std::move(binding));
+        recipe->selectors.push_back(std::move(selector));
     }
     recipe->pieceCount = recipe->pieces.size();
     return std::shared_ptr<const FamilyEndpointRecipe>(std::move(recipe));
@@ -570,6 +648,24 @@ private:
 };
 } // namespace
 std::size_t familyEndpointPieceCount(const FamilyEndpointRecipe& recipe) { return recipe.pieceCount; }
+FailureOr<FamilyEndpointForms> familyEndpointForms(const FamilyEndpointRecipe& recipe)
+{
+    SmallVector<FamilyPart> leaves;
+    SmallVector<FamilyContextPath> contexts;
+    if (failed(collectFamilyParts(recipe, leaves, contexts))) { return failure(); }
+    FamilyEndpointForms result;
+    for (const auto& part : leaves) {
+        const auto& leaf = *part.recipe;
+        std::size_t numerical = 0;
+        for (std::size_t i = 0; i < leaf.pieces.size(); ++i) {
+            numerical += !leaf.arena || (!leaf.selectors.empty() && leaf.selectors[i]);
+        }
+        result.numericalSites += numerical;
+        result.contextualSites += leaf.pieces.size() - numerical;
+        result.mixedLeaves += numerical && numerical < leaf.pieces.size();
+    }
+    return result;
+}
 FailureOr<std::map<uint32_t, uint64_t>> familyMatchingArities(const FamilyEndpointRecipe& recipe)
 {
     SmallVector<FamilyPart> leaves;

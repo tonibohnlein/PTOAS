@@ -254,9 +254,10 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
         std::string& diagnostic, ArrayRef<scf::ForOp> enclosing, ArrayRef<uint32_t> typeBases,
         const SequenceEndpointResolver& resolver = {});
 private:
-    // False keeps the existing guarded crossing adapter; no partial batch is adopted.
+    // False retains per-crossing qualifications for one mixed ordered batch; no partial plan is adopted.
     FailureOr<bool> prepareFiniteCrossings(PreparedLogicalPlan& plan,
-        std::vector<RegionalAllocationGroup>& allocation, ArrayRef<uint32_t> typeOffsets, uint32_t& nextRecord);
+        std::vector<RegionalAllocationGroup>& allocation, ArrayRef<uint32_t> typeOffsets,
+        uint32_t& nextRecord, std::vector<uint8_t>& qualified);
     std::shared_ptr<const SequenceCrossingPresence> crossingPresence;
     void sealCrossingPresence();
 };

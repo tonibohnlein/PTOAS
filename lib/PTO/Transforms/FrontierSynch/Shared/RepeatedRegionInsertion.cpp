@@ -8,6 +8,7 @@
 // Common exact regional contract. All expressions belong to the supplied arena.
 #include "RepeatedRegionInternal.h"
 #include "OccurrenceBinding.h"
+#include "MixedFamilyInsertion.h"
 #include "RepeatedAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -190,10 +191,12 @@ class RepeatedPreparation
     }
     LogicalResult addCrossings()
     {
-        auto compact = prepareRepeatedCrossingFamilies(state, *plan, allocationCrossings, nextRecord);
+        std::vector<uint8_t> qualified;
+        auto compact = prepareRepeatedCrossingFamilies(state, *plan, allocationCrossings, nextRecord, qualified);
         if (failed(compact)) { return fail("repeated crossing family preparation failed"); }
         if (*compact) { return success(); }
         std::vector<ContextualEndpointFamily> families;
+        SmallVector<uint8_t> numericalEndpoints;
         for (const auto &crossing : state.crossings)
         {
             if (crossing.native || e().constantValue(crossing.guard) == 0)
@@ -275,10 +278,13 @@ class RepeatedPreparation
                     endpoint.residue = state.typePhases[event.type];
                 }
                 families.push_back(std::move(endpoint));
+                numericalEndpoints.push_back(qualified[&crossing - state.crossings.data()]);
             }
         }
         if (!families.empty()) {
-            auto recipe = buildContextualFamilyEndpointRecipe(body.expressions, families);
+            ContextualFamilyExpressions expressions(body.expressions);
+            auto recipe = buildMixedFamilyEndpointRecipe(expressions, families, numericalEndpoints, loop);
+            if (failed(recipe)) { recipe = buildContextualFamilyEndpointRecipe(expressions, families); }
             if (failed(recipe)) { return fail("repeated crossing expressions unavailable at their cuts"); }
             auto joined = appendFamilyEndpointRecipe(plan->familyRecipe, *recipe, 0, plan->endpoints.size());
             if (failed(joined)) { return fail("repeated crossing family composition failed"); }
