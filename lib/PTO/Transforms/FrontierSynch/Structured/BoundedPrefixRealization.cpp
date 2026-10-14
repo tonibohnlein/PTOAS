@@ -16,6 +16,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
@@ -257,7 +258,7 @@ LogicalResult appendRecords(const std::shared_ptr<Owner>& owner, ArrayRef<uint8_
     auto& demands = *owner->demands;
     std::map<Operation*, std::vector<GuardRecord>> barriers;
     using Key = std::tuple<Operation*, uint32_t, uint32_t>;
-    std::map<Key, std::vector<GuardRecord>> incoming;
+    llvm::MapVector<Key, std::vector<GuardRecord>> incoming;
     for (auto [index, edge] : llvm::enumerate(demands.analysis.sourceDemands)) {
         if (inactive[index]) { continue; }
         const auto distance = edge.target / demands.anchors.size();

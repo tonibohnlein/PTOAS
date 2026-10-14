@@ -9,6 +9,7 @@
 #include "PrefixExpression.h"
 #include "MappedCutInputs.h"
 #include "PrefixExpressionProfile.h"
+#include "PrefixExpressionSession.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "../../InsertSync/SyncScalarReplay.h"
 #include "mlir/IR/Matchers.h"
@@ -122,6 +123,7 @@ struct ExpressionRecipe {
     std::vector<Binding> bindings;
     std::optional<bool> historyProved;
     std::shared_ptr<PrefixExpressionProfile> profile;
+    std::shared_ptr<PrefixExpressionSession> session;
     PrefixExpressionProfile::Entry* work = nullptr;
     FailureOr<Value> emit(OpBuilder& builder, const IRMapping& mapping,
                           ArrayRef<Value> state, std::string& error)
@@ -135,7 +137,21 @@ struct ExpressionRecipe {
             accumulateCost(work->constructed, scratch.getOperations().size());
         };
         auto context = contextFor(e, root, cut, mapping);
-        auto value = e.emitContextual(root, detached, cut, context);
+        RegionExpressions::CutEmission* accepted = nullptr;
+        auto lower = [&](PrefixExpressionSession::Environment environment) -> FailureOr<Value> {
+            auto* shared = session->bindings(&e, cut, builder.getInsertionBlock(), mapping, std::move(environment));
+            auto lookupValue = [&](Expr id) { return shared ? shared->values.lookup(id) : Value{}; };
+            auto lookupInput = [&](Value input) { return shared ? shared->inputs.lookup(input) : Value{}; };
+            auto hasValue = [&](Expr id) { return bool(lookupValue(id)); };
+            RegionExpressions::SharedCutPlanning planning{hasValue};
+            RegionExpressions::SharedCutBindings emitted{lookupValue, lookupInput};
+            auto recipe = e.prepareContextual(root, cut, context, shared ? &planning : nullptr);
+            if (failed(recipe)) { return failure(); }
+            auto result = e.emitPreparedContextual(**recipe, detached, cut, context, shared ? &emitted : nullptr);
+            if (succeeded(result)) { accepted = shared; }
+            return result;
+        };
+        auto value = lower({});
         attempt();
         if (failed(value)) {
             accumulateCost(work->directFailures, 1);
@@ -155,6 +171,7 @@ struct ExpressionRecipe {
                 if (!*historyProved) { error = directError; return failure(); }
                 accumulateCost(work->historyAttempts, 1);
                 context = contextFor(e, root, cut, mapping);
+                PrefixExpressionSession::Environment environment;
                 for (const auto& binding : bindings) {
                     if (binding.validSlot >= state.size() || !state[binding.valueSlot].getType().isInteger(1) ||
                         !state[binding.validSlot].getType().isInteger(1)) {
@@ -164,8 +181,9 @@ struct ExpressionRecipe {
                     // while invalid. Validity is retained, never assumed true.
                     context.values[binding.input] = state[binding.valueSlot];
                     context.cofactors[binding.input] = binding.input;
+                    environment.emplace_back(binding.input, state[binding.valueSlot].getAsOpaquePointer());
                 }
-                value = e.emitContextual(root, detached, cut, context);
+                value = lower(std::move(environment));
                 attempt();
             }
             if (failed(value)) { error = e.lastEmissionError(); return failure(); }
@@ -174,6 +192,10 @@ struct ExpressionRecipe {
         accumulateCost(work->retained, kept);
         work->maximumRetained = std::max(work->maximumRetained, static_cast<uint64_t>(kept));
         builder.getInsertionBlock()->getOperations().splice(builder.getInsertionPoint(), scratch.getOperations());
+        if (accepted) {
+            for (auto item : context.values) { accepted->values.try_emplace(item.first, item.second); }
+            for (auto item : context.inputs) { accepted->inputs.try_emplace(item.first, item.second); }
+        }
         return *value;
     }
 };
@@ -248,6 +270,9 @@ PrefixIncomingSelector preparePrefixExpression(std::shared_ptr<RegionExpressions
     auto& profile = collection.recipe().expressionProfile;
     if (!profile) { profile = std::make_shared<PrefixExpressionProfile>(); }
     recipe->profile = profile;
+    auto& session = collection.recipe().expressionSession;
+    if (!session) { session = std::make_shared<PrefixExpressionSession>(); }
+    recipe->session = session;
     recipe->work = &profile->request(recipe->arena.get(), root, cut);
     recipe->bindings = collectBindings(recipe->arena, root, cut, collection);
     return [recipe](OpBuilder& b, const IRMapping& mapping, ArrayRef<Value> state, std::string& error) {
