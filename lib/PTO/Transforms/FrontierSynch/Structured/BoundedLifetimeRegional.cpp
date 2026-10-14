@@ -209,6 +209,19 @@ struct Queries {
         if (auto found = answers.find(key); found != answers.end()) { return found->second; }
         auto& e = window->expressions;
         const auto m = window->window.sites;
+        const bool nativeKinds = source.kind == PeriodicEventKind::Start ||
+            target.kind == PeriodicEventKind::Completion;
+        if (nativeKinds && window->window.payloads[source.type].pipe == window->window.payloads[target.type].pipe) {
+            // On one pipe, native start/start and completion/completion chains,
+            // plus I->C at the target, decide these kinds exactly. All graph
+            // edges are reference-forward, so reverse occurrences cannot reach.
+            // C->I remains a genuine demand/query obligation, even on one pipe.
+            auto ordered = e.lt(source.ordinal, target.ordinal);
+            if (source.type <= target.type) { ordered = e.lor(ordered, e.eq(source.ordinal, target.ordinal)); }
+            const auto answer = e.land(e.land(*a, *b), ordered);
+            answers.emplace(key, answer);
+            return answer;
+        }
         auto distance = e.sub(target.ordinal, source.ordinal);
         auto answer = e.boolean(false);
         const auto fixedDistance = e.constantValue(distance);
