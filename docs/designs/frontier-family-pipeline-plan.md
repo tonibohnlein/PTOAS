@@ -2189,3 +2189,25 @@ above is the timing evidence for activity-only rank joins. No device execution
 or full 783-input corpus claim is made. R5, R6, remaining Section 7 exports and
 broader R7 validation remain open. Durable local receipts are under
 `.local/r7-revised-draft-campaign/`.
+
+### R5 increment: bounded literal-choice normalization
+
+The common expression builder folds comparisons of a two-literal selection
+against a constant, including signed comparisons, without distributing over
+nonliteral DAGs. Selection conditions use a consistent positive orientation,
+so complementary nested selections can collapse while preserving their lazy
+branch semantics. Each rule inspects only immediate operands.
+
+Fourteen suites pass, including expression ownership/availability, guarded
+periodic queries and the finite/bounded/prefix checks. The new algebra fixture
+checks 3,430 symbolic comparison cases against independent machine-word truth
+values at signed/unsigned boundaries, complementary selections, and a gate-size
+bound that prevents expansion of nonliteral choices. Incremental build and diff
+checks pass; compliance findings are two already-braced test conditions.
+
+Delta remains on the same prefix route. A single diagnostic constructs 672,883
+prefix operations versus 673,216 before these folds; the largest root is still
+207,669 operations. The 25.335-second diagnostic is not paired speedup evidence.
+The small reduction does not close the large-root or physical-lifetime work.
+Receipts: `.local/r5-literal-choices/{build,tests,compliance}.log` and `delta.*`.
+The broad campaign above remains explicitly pinned to `c08615c32`.

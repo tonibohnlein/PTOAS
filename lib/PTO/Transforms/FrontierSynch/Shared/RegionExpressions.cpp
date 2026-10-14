@@ -487,6 +487,21 @@ RegionExpressions::Id RegionExpressions::binary(Kind kind, Id a, Id b)
         if (kind == Kind::Sub) { return constant(0); }
         if (logic) { return a; }
     }
+    if (comparison) {
+        // A literal two-way choice is a complete finite domain. Fold its
+        // comparison directly instead of materializing a selected integer and
+        // comparing it later. Never distribute over nonliteral choice DAGs.
+        for (unsigned side = 0; side < 2; ++side) {
+            const Node choice = nodes[side ? b : a];
+            const auto fixed = side ? av : bv;
+            if (!fixed || choice.kind != Kind::Select) { continue; }
+            const auto yes = constantValue(choice.b), no = constantValue(choice.c);
+            if (!yes || !no) { continue; }
+            const auto y = side ? fold(kind, *fixed, *yes) : fold(kind, *yes, *fixed);
+            const auto n = side ? fold(kind, *fixed, *no) : fold(kind, *no, *fixed);
+            if (y && n) { return select(choice.a, boolean(*y), boolean(*n)); }
+        }
+    }
     // These are unsigned identities. Signed loop-bound comparisons retain
     // their separate semantics, including for negative source indices.
     if (kind == Kind::Le && (av == 0 || bv == UINT64_MAX)) { return boolean(true); }
@@ -652,6 +667,10 @@ RegionExpressions::Id RegionExpressions::select(Id condition, Id yes, Id no)
 {
     if (!isBoolean(condition) || !valid(yes) || !valid(no) || isBoolean(yes) != isBoolean(no)) {
         return reject("regional selection requires Boolean condition and equally typed values");
+    }
+    if (nodes[condition].kind == Kind::Not) {
+        condition = nodes[condition].a;
+        std::swap(yes, no);
     }
     if (yes == no) { return yes; }
     if (auto value = constantValue(condition)) { return *value ? yes : no; }
