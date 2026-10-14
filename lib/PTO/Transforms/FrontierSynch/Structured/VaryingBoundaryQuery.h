@@ -8,22 +8,48 @@
 // Numerical universal queries over a certified affine boundary sequence.
 #ifndef PTO_FRONTIERSYNCH_VARYINGBOUNDARYQUERY_H
 #define PTO_FRONTIERSYNCH_VARYINGBOUNDARYQUERY_H
-#include "PTO/Transforms/FrontierSynch/Structured/RotatingBoundary.h"
+#include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.h"
 #include <map>
+#include <memory>
+#include <utility>
 namespace mlir::pto::frontiersynch {
 struct VaryingBoundaryPort {
     BoundaryOccurrence occurrence;
     PeriodicEventKind kind;
 };
 using VaryingBoundaryMatrix = std::vector<std::vector<uint8_t>>;
+// One numerical transfer representation serves ordinary regional queries and
+// allocation-only frame refinement. The original schedule supplies crossings;
+// the attachment frame supplies its certified cutoff, radius and residues.
+class VaryingBoundaryFrame {
+public:
+    static std::shared_ptr<const VaryingBoundaryFrame> build(
+        std::shared_ptr<const AffineRotatingVisits> original,
+        std::shared_ptr<const AffineRotatingVisits> attachments, std::string& error);
+    const AffineRotatingVisits& visits() const { return *attachments; }
+    std::vector<VaryingBoundaryPort> ports;
+    std::vector<VaryingBoundaryMatrix> startup, suffix;
+    std::vector<std::vector<VaryingBoundaryMatrix>> powers;
+    std::vector<unsigned> lastPower;
+private:
+    explicit VaryingBoundaryFrame(std::shared_ptr<const AffineRotatingVisits> attachments)
+        : attachments(std::move(attachments)) {}
+    std::shared_ptr<const AffineRotatingVisits> attachments;
+};
+bool sameVaryingBoundaryQuotient(const PeriodicAnalysis& a, const PeriodicAnalysis& b);
+// Production retry retains one assignment and uses it with both proof frames.
+std::shared_ptr<RegionalAllocationSummary> buildVaryingAllocationWithAssignment(
+    const RegionalAnalysis& region, const AffineRotatingVisits& visits, RegionExpressions::Id trips,
+    ArrayRef<VaryingAllocationRecord> records, const VaryingBoundaryReuseQuery& query, std::string& error,
+    const AffineRotatingVisits* proofDomain, const std::optional<PeriodicSharedAssignment>& shared);
+RotatingBoundaryType selectVaryingBoundaryType(const AffineRotatingVisits& visits, uint64_t visit);
 // Borrows the immutable certificate and transfer matrices owned by the regional
 // state. Startup[k] crosses k->k+1. Suffix[p] crosses phase p->p+1 relative to
 // startup; powers[p][b] crosses 2^b complete suffix periods from phase p.
 class VaryingBoundaryQuery {
 public:
-    VaryingBoundaryQuery(const AffineRotatingVisits& visits, const std::vector<VaryingBoundaryPort>& ports,
-        const std::vector<VaryingBoundaryMatrix>& startup, const std::vector<VaryingBoundaryMatrix>& suffix,
-        const std::vector<std::vector<VaryingBoundaryMatrix>>& powers);
+    explicit VaryingBoundaryQuery(const VaryingBoundaryFrame& frame);
     // Short sourceVisit is exact. Long sourceVisit represents every visit in
     // its certified suffix residue class. Invalid or nonconstant attachment
     // relations return unavailable rather than extrapolating a sample.

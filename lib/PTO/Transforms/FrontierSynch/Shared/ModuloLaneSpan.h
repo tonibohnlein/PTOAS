@@ -19,21 +19,10 @@ struct ModuloLaneSpan {
 class ModuloLaneDomain {
 public:
     ModuloLaneDomain(uint64_t stride, uint64_t phase, uint64_t width)
-        : width(width), phase(width ? phase % width : 0), divisor(std::gcd(stride, width)),
-          period(width && divisor ? width / divisor : 0)
-    {
-        if (period > 1) {
-            inverse = modularInverse(stride / divisor, period);
-        }
-    }
+        : congruence(stride, phase, width), period(congruence.period()) {}
     std::optional<uint64_t> residue(uint64_t lane) const
     {
-        if (!period || lane >= width) { return std::nullopt; }
-        const auto delta = lane >= phase ? lane - phase : width - (phase - lane);
-        if (delta % divisor) { return std::nullopt; }
-        if (period == 1) { return 0; }
-        return (llvm::APInt(128, delta / divisor) * llvm::APInt(128, inverse))
-            .urem(llvm::APInt(128, period)).getZExtValue();
+        return congruence.residue(lane);
     }
     // Inclusive nonnegative-ordinal interval [lower, upper], under exact activity.
     // Coordinates are meaningful only under returned presence. Check remaining
@@ -61,7 +50,8 @@ public:
         return {present, first, last};
     }
 private:
-    uint64_t width, phase, divisor, period, inverse = 0;
+    ModuloLaneCongruence congruence;
+    uint64_t period;
 };
 } // namespace mlir::pto::frontiersynch::detail
 #endif

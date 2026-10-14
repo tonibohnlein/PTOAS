@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingAllocation.h"
-#include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.h"
+#include "VaryingBoundaryQuery.h"
 #include <algorithm>
 #include <map>
 #include <numeric>
@@ -37,7 +37,8 @@ std::optional<uint64_t> length(const AffineRotatingVisits& visits, uint64_t v)
 }
 struct InternalPhase { const Record* record; uint64_t offset; };
 struct BuilderState {
-    const AffineRotatingVisits& visits;
+    const AffineRotatingVisits& visits; // Original emitted record domain.
+    const AffineRotatingVisits& proofVisits; // Allocation-only universal query classes.
     RegionExpressions& e;
     Id trips;
     const VaryingBoundaryReuseQuery& query;
@@ -127,9 +128,9 @@ struct BuilderState {
     bool wholeRecordReuse(const Record& record, uint64_t banks)
     {
         uint64_t contexts;
-        if (!add(visits.startup, visits.period, contexts)) { return false; }
+        if (!add(proofVisits.startup, proofVisits.period, contexts)) { return false; }
         for (uint64_t v = 0; v < contexts; ++v) {
-            if (v < visits.startup) {
+            if (v < proofVisits.startup) {
                 auto count = length(visits, v);
                 if (!count) { return false; }
                 if (*count <= record.displacement) { continue; }
@@ -145,7 +146,7 @@ struct BuilderState {
     bool sharedReuse(ArrayRef<InternalPhase> phases, uint64_t width, uint64_t banks)
     {
         uint64_t contexts;
-        if (!add(visits.startup, visits.period, contexts)) { return false; }
+        if (!add(proofVisits.startup, proofVisits.period, contexts)) { return false; }
         for (uint64_t v = 0; v < contexts; ++v) {
             uint64_t next;
             if (!add(v, banks, next)) { return false; }
@@ -157,7 +158,7 @@ struct BuilderState {
                     uint64_t firstConsumer;
                     if (!add(residue, from.record->displacement, firstConsumer)) { return false; }
                     if (*count <= firstConsumer) {
-                        if (v >= visits.startup) { return false; }
+                        if (v >= proofVisits.startup) { return false; }
                         continue;
                     }
                     const auto r = (*count - 1) % width, t = firstConsumer % width;
@@ -167,7 +168,7 @@ struct BuilderState {
                         uint64_t threshold;
                         if (!add(head, to.record->displacement, threshold)) { return false; }
                         if (*nextCount <= threshold) {
-                            if (next >= visits.startup) { return false; }
+                            if (next >= proofVisits.startup) { return false; }
                             continue;
                         }
                         auto proof = query({from.record->target, tail, true}, PeriodicEventKind::Completion,
@@ -221,15 +222,24 @@ struct BuilderState {
             if (!add(visits.startup, record.targetVisit ? record.targetVisit : visits.period, firstTarget)) {
                 return std::nullopt;
             }
-            uint64_t representative;
-            if (!add(visits.startup, visits.period, representative) ||
-                !add(representative, record.targetVisit, representative)) { return std::nullopt; }
+            uint64_t contexts;
+            if (!add(std::max(proofVisits.startup, firstTarget), proofVisits.period, contexts)) {
+                return std::nullopt;
+            }
             for (; width <= maxWidth; ++width) {
                 uint64_t gap;
                 if (!multiply(visits.period / std::gcd(visits.period, width), width, gap)) { continue; }
-                auto proof = query(record.consumption, PeriodicEventKind::Completion,
-                    record.publication, PeriodicEventKind::Start, representative, gap - 1);
-                if (proof && *proof) { break; }
+                bool certified = true;
+                for (uint64_t target = firstTarget; target < contexts; target += visits.period) {
+                    // A source visit target-1 is followed by its consumer at
+                    // target. Reuse must hold in every compatible exact/new
+                    // suffix context, including the original/new startup seam.
+                    auto proof = query(record.consumption, PeriodicEventKind::Completion,
+                        record.publication, PeriodicEventKind::Start, target, gap - 1);
+                    if (!proof || !*proof) { certified = false; break; }
+                    if (visits.period > UINT64_MAX - target) { certified = false; break; }
+                }
+                if (certified) { break; }
             }
             if (width > maxWidth) { return std::nullopt; }
         }
@@ -317,19 +327,26 @@ std::optional<std::vector<VaryingAllocationRecord>> enumerateVaryingAllocationRe
     }
     return out;
 }
-std::shared_ptr<RegionalAllocationSummary> buildVaryingRotatingAllocation(
+std::shared_ptr<RegionalAllocationSummary> buildVaryingAllocationWithAssignment(
     const RegionalAnalysis& region, const AffineRotatingVisits& visits, Id trips,
-    ArrayRef<VaryingAllocationRecord> records, const VaryingBoundaryReuseQuery& query, std::string& error)
+    ArrayRef<VaryingAllocationRecord> records, const VaryingBoundaryReuseQuery& query, std::string& error,
+    const AffineRotatingVisits* proofDomain, const std::optional<PeriodicSharedAssignment>& shared)
 {
     error.clear();
+    const auto& proof = proofDomain ? *proofDomain : visits;
     if (!region.expressions || trips >= region.expressions->size() || region.expressions->isBoolean(trips) ||
         !query || !visits.slope || !visits.period || !visits.child.period ||
         !visits.error.empty() || !visits.child.error.empty() ||
-        region.anchors.size() != visits.child.quotient.payloads.size()) {
+        region.anchors.size() != visits.child.quotient.payloads.size() || !proof.error.empty() ||
+        !proof.child.error.empty() || !proof.child.refresh || !proof.child.period ||
+        proof.slope != visits.slope || proof.intercept != visits.intercept || !proof.period ||
+        proof.startup < visits.startup || proof.period % visits.period ||
+        proof.period > UINT64_MAX - proof.startup ||
+        !sameVaryingBoundaryQuotient(visits.child.quotient, proof.child.quotient)) {
         error = "varying allocation requires an exact numerical boundary query and original coordinate frame";
         return {};
     }
-    BuilderState builder{visits, *region.expressions, trips, query};
+    BuilderState builder{visits, proof, *region.expressions, trips, query};
     auto out = std::make_shared<RegionalAllocationSummary>();
     std::map<uint32_t, const Record*> internal;
     for (std::size_t i = 0; i < records.size(); ++i) {
@@ -345,12 +362,11 @@ std::shared_ptr<RegionalAllocationSummary> buildVaryingRotatingAllocation(
         }
     }
     std::set<uint32_t> allocated;
-    auto shared = buildPeriodicSharedAssignment(visits.child.quotient);
     if (shared) {
         for (std::size_t cycle = 0; cycle < shared->allocation.cycles.size(); ++cycle) {
             const auto width = shared->allocation.cycles[cycle].laneCount;
-            if (!width || width > maxWidth || width > visits.child.refresh || visits.child.period % width ||
-                visits.child.cutoff <= 2 * width - 1) { continue; }
+            if (!width || width > maxWidth || width > proof.child.refresh || proof.child.period % width ||
+                proof.child.cutoff <= 2 * width - 1) { continue; }
             // d<=B below gives d+residue<=2B-1<cutoff. Therefore every
             // member/lane exists throughout each long class; only exact short
             // startup checks may omit an absent member.
@@ -392,5 +408,13 @@ std::shared_ptr<RegionalAllocationSummary> buildVaryingRotatingAllocation(
     // Each original record occurs exactly once. M3 may share these palettes
     // using the supplied exact lane spans. This producer makes no pool minimum claim.
     return out;
+}
+std::shared_ptr<RegionalAllocationSummary> buildVaryingRotatingAllocation(
+    const RegionalAnalysis& region, const AffineRotatingVisits& visits, Id trips,
+    ArrayRef<VaryingAllocationRecord> records, const VaryingBoundaryReuseQuery& query, std::string& error,
+    const AffineRotatingVisits* proofDomain)
+{
+    const auto shared = buildPeriodicSharedAssignment(visits.child.quotient);
+    return buildVaryingAllocationWithAssignment(region, visits, trips, records, query, error, proofDomain, shared);
 }
 } // namespace mlir::pto::frontiersynch

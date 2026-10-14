@@ -11,6 +11,7 @@
 #include "llvm/ADT/APInt.h"
 #include <cstdint>
 #include <numeric>
+#include <optional>
 namespace mlir::pto::frontiersynch::detail {
 // Precondition: a nonzero modulus and coprime value; callers divide by gcd.
 inline uint64_t modularInverse(uint64_t value, uint64_t modulus)
@@ -35,5 +36,28 @@ inline uint64_t modularInverse(uint64_t value, uint64_t modulus)
     }
     return result.getZExtValue();
 }
+// Preprocess a*n+b == lane (mod width) once, then answer each lane in
+// constant arithmetic work. Zero width and incompatible lanes are unavailable.
+class ModuloLaneCongruence {
+public:
+    ModuloLaneCongruence(uint64_t stride, uint64_t phase, uint64_t width)
+        : width(width), phase(width ? phase % width : 0), divisor(std::gcd(stride, width)),
+          modulus(width && divisor ? width / divisor : 0)
+    {
+        if (modulus > 1) { inverse = modularInverse(stride / divisor, modulus); }
+    }
+    uint64_t period() const { return modulus; }
+    std::optional<uint64_t> residue(uint64_t lane) const
+    {
+        if (!modulus || lane >= width) { return std::nullopt; }
+        const auto delta = lane >= phase ? lane - phase : width - (phase - lane);
+        if (delta % divisor) { return std::nullopt; }
+        if (modulus == 1) { return 0; }
+        return (llvm::APInt(128, delta / divisor) * llvm::APInt(128, inverse))
+            .urem(llvm::APInt(128, modulus)).getZExtValue();
+    }
+private:
+    uint64_t width, phase, divisor, modulus, inverse = 0;
+};
 } // namespace mlir::pto::frontiersynch::detail
 #endif

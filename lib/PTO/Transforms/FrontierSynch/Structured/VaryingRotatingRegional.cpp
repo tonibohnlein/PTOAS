@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.h"
 #include "VaryingBoundaryQuery.h"
 #include "../Shared/CountedLoop.h"
 #include "../Shared/CircuitEndpoints.h"
@@ -21,24 +22,6 @@ namespace {
 using Id = RegionExpressions::Id;
 using Occ = BoundaryOccurrence;
 using Matrix = VaryingBoundaryMatrix;
-using Port = VaryingBoundaryPort;
-using PortKey = std::tuple<uint32_t, uint64_t, bool, unsigned>;
-PortKey key(Port p) { return {p.occurrence.type, p.occurrence.coordinate, p.occurrence.tail, unsigned(p.kind)}; }
-Matrix product(const Matrix& a, const Matrix& b)
-{
-    Matrix out(a.size(), std::vector<uint8_t>(a.size()));
-    for (std::size_t i = 0; i < a.size(); ++i) {
-        for (std::size_t k = 0; k < a.size(); ++k) {
-            if (!a[i][k]) {
-                continue;
-            }
-            for (std::size_t j = 0; j < a.size(); ++j) {
-                out[i][j] |= b[k][j];
-            }
-        }
-    }
-    return out;
-}
 struct State : std::enable_shared_from_this<State> {
     func::FuncOp function;
     VaryingRotatingRecognition recognized;
@@ -49,11 +32,7 @@ struct State : std::enable_shared_from_this<State> {
     std::shared_ptr<RegionExpressions> arena;
     RegionalAnalysis out;
     Id trips;
-    std::vector<Port> ports;
-    std::map<PortKey, std::size_t> portIds;
-    std::vector<Matrix> startup, suffix;
-    std::vector<std::vector<Matrix>> powers;
-    std::vector<unsigned> lastPower;
+    std::shared_ptr<const VaryingBoundaryFrame> queryFrame, allocationFrame;
     using TransferKey = std::tuple<uint32_t, Id, unsigned, Id, Id>;
     std::map<TransferKey, std::vector<Id>> transferMemo;
     std::string error, allocationError;
@@ -104,139 +83,18 @@ struct State : std::enable_shared_from_this<State> {
         return e().land(
             e().le(a.ordinal, b.ordinal), e().le(c(*threshold.displacement), e().sub(b.ordinal, a.ordinal)));
     }
-    RotatingBoundaryType type(uint64_t t)
-    {
-        // Artificial transfer representatives need not be executable visits().
-        // Compute their residue without overflowing even when K(t) itself is
-        // beyond uint64; only exact short lengths are converted back to uint64.
-        const auto n = llvm::APInt(128, visits().slope) * llvm::APInt(128, t) + llvm::APInt(128, visits().intercept);
-        return n.ult(llvm::APInt(128, visits().child.cutoff)) ? visits().child.select(n.getZExtValue()) :
-            visits().child.types[n.urem(llvm::APInt(128, visits().child.period)).getZExtValue()];
-    }
-    void add(Occ x)
-    {
-        for (auto kind : {PeriodicEventKind::Start, PeriodicEventKind::Completion}) {
-            Port p{x, kind};
-            if (portIds.emplace(key(p), ports.size()).second) {
-                ports.push_back(p);
-            }
-        }
-    }
-    void collect(const RotatingBoundaryType& t)
-    {
-        for (auto occurrence : t.relationshipPorts) {
-            add(occurrence);
-        }
-        for (const auto& cell : t.cells) {
-            if (cell.firstWriter) {
-                add(*cell.firstWriter);
-            }
-            if (cell.lastWriter) {
-                add(*cell.lastWriter);
-            }
-            for (auto [pipe, x] : cell.firstReaders) {
-                add(x);
-            }
-            for (auto [pipe, x] : cell.lastReaders) {
-                add(x);
-            }
-        }
-        for (auto [pipe, x] : t.firstPayloads) {
-            add(x);
-        }
-        for (auto [pipe, x] : t.lastPayloads) {
-            add(x);
-        }
-    }
-    bool nativeReaches(Port a, Port b, uint64_t n)
-    {
-        if (!n || (a.occurrence.tail && a.occurrence.coordinate > n) ||
-            (b.occurrence.tail && b.occurrence.coordinate > n) || a.occurrence.at(n) >= n || b.occurrence.at(n) >= n) {
-            return false;
-        }
-        auto threshold = child.periodic.eventThreshold({a.occurrence.type, a.kind}, {b.occurrence.type, b.kind});
-        if (threshold.error != PeriodicQueryError::None) {
-            error = "varying child query unavailable";
-            return false;
-        }
-        return threshold.displacement && a.occurrence.at(n) <= b.occurrence.at(n) &&
-               b.occurrence.at(n) - a.occurrence.at(n) >= *threshold.displacement;
-    }
-    Matrix transfer(uint64_t target)
-    {
-        auto left = type(target - 1), right = type(target);
-        Matrix crossing(ports.size(), std::vector<uint8_t>(ports.size()));
-        std::vector<std::pair<Port, Port>> edges;
-        for (auto d : visits().crossingInto(target)) {
-            edges.push_back({{d.source, PeriodicEventKind::Completion}, {d.target, PeriodicEventKind::Start}});
-        }
-        for (auto [pipe, last] : left.lastPayloads) {
-            auto first = right.firstPayloads.find(pipe);
-            if (first == right.firstPayloads.end()) {
-                continue;
-            }
-            for (auto kind : {PeriodicEventKind::Start, PeriodicEventKind::Completion}) {
-                edges.push_back({{last, kind}, {first->second, kind}});
-            }
-        }
-        for (const auto& [a, b] : edges) {
-            auto from = portIds.find(key(a)), to = portIds.find(key(b));
-            if (from == portIds.end() || to == portIds.end()) {
-                error = "varying crossing has no exported event port";
-                return crossing;
-            }
-            crossing[from->second][to->second] = 1;
-        }
-        Matrix prefix(ports.size(), std::vector<uint8_t>(ports.size()));
-        Matrix suffixPaths = prefix;
-        for (std::size_t i = 0; i < ports.size(); ++i) {
-            for (std::size_t j = 0; j < ports.size(); ++j) {
-                prefix[i][j] = nativeReaches(ports[i], ports[j], left.representative);
-                suffixPaths[i][j] = nativeReaches(ports[i], ports[j], right.representative);
-            }
-        }
-        // Two Boolean products share paths among crossings: O(P^3), rather
-        // than one P-by-P outer product for each of up to O(P^2) crossings.
-        return product(product(prefix, crossing), suffixPaths);
-    }
+    RotatingBoundaryType type(uint64_t t) { return selectVaryingBoundaryType(visits(), t); }
     bool build()
     {
-        for (uint64_t t = 0; t <= visits().startup + visits().period; ++t) {
-            collect(type(t));
-        }
-        for (uint64_t t = 1; t <= visits().startup; ++t) {
-            startup.push_back(transfer(t));
-        }
-        for (uint64_t phase = 0; phase < visits().period; ++phase) {
-            suffix.push_back(transfer(visits().startup + visits().period + phase + 1));
-        }
-        for (uint64_t phase = 0; phase < visits().period; ++phase) {
-            Matrix cycle(ports.size(), std::vector<uint8_t>(ports.size()));
-            for (std::size_t i = 0; i < ports.size(); ++i) {
-                cycle[i][i] = 1;
-            }
-            for (uint64_t j = 0; j < visits().period; ++j) {
-                cycle = product(cycle, suffix[(phase + j) % visits().period]);
-            }
-            std::vector<Matrix> column{std::move(cycle)};
-            for (unsigned bit = 1; bit < 64; ++bit) {
-                column.push_back(product(column.back(), column.back()));
-            }
-            unsigned last = 63;
-            for (unsigned bit = 0; bit < 63; ++bit) {
-                if (column[bit] == column[bit + 1]) { last = bit; break; }
-            }
-            lastPower.push_back(last);
-            powers.push_back(std::move(column));
-        }
-        return error.empty();
+        queryFrame = VaryingBoundaryFrame::build(certificate, certificate, error);
+        return bool(queryFrame);
     }
     std::vector<Id> advance(const std::vector<Id>& values, const Matrix& matrix, Id enabled)
     {
         if (e().constantValue(enabled) == 0) { return values; }
-        std::vector<Id> next(ports.size(), e().boolean(false));
-        for (std::size_t j = 0; j < ports.size(); ++j) {
-            for (std::size_t i = 0; i < ports.size(); ++i) {
+        std::vector<Id> next(queryFrame->ports.size(), e().boolean(false));
+        for (std::size_t j = 0; j < queryFrame->ports.size(); ++j) {
+            for (std::size_t i = 0; i < queryFrame->ports.size(); ++i) {
                 if (matrix[i][j]) {
                     next[j] = e().lor(next[j], values[i]);
                 }
@@ -264,33 +122,34 @@ struct State : std::enable_shared_from_this<State> {
         auto cached = transferMemo.find(memoKey);
         if (cached == transferMemo.end()) {
             std::vector<Id> values;
-            for (auto port : ports) {
+            for (auto port : queryFrame->ports) {
                 auto target = event(port.occurrence, s, port.kind);
                 values.push_back(e().land(present(target), inside(a, target)));
             }
-            for (std::size_t j = 0; j < startup.size(); ++j) {
-                values = advance(values, startup[j], e().land(e().le(s, c(j)), e().lt(c(j), t)));
+            for (std::size_t j = 0; j < queryFrame->startup.size(); ++j) {
+                values = advance(values, queryFrame->startup[j], e().land(e().le(s, c(j)), e().lt(c(j), t)));
             }
             auto begin = e().select(e().lt(s, c(visits().startup)), c(visits().startup), s);
             auto count = e().select(e().lt(begin, t), e().sub(t, begin), c(0));
             auto phase = e().rem(e().sub(begin, c(visits().startup)), c(visits().period));
             auto cycles = e().div(count, c(visits().period)), tail = e().rem(count, c(visits().period));
-            std::vector<Id> final(ports.size(), e().boolean(false));
+            std::vector<Id> final(queryFrame->ports.size(), e().boolean(false));
             for (uint64_t p = 0; p < visits().period; ++p) {
                 auto row = values;
-                for (unsigned bit = 0; bit < lastPower[p]; ++bit) {
+                for (unsigned bit = 0; bit < queryFrame->lastPower[p]; ++bit) {
                     auto active = e().eq(e().rem(e().div(cycles, c(uint64_t(1) << bit)), c(2)), c(1));
-                    row = advance(row, powers[p][bit], active);
+                    row = advance(row, queryFrame->powers[p][bit], active);
                 }
                 // Equal adjacent squares certify an idempotent matrix. Every
                 // remaining set bit applies that same matrix, so apply it once
                 // exactly when the remaining unsigned quotient is nonzero.
                 // Without stabilization, bit 63 has this same threshold test.
-                row = advance(row, powers[p][lastPower[p]], e().le(c(uint64_t(1) << lastPower[p]), cycles));
+                row = advance(row, queryFrame->powers[p][queryFrame->lastPower[p]],
+                    e().le(c(uint64_t(1) << queryFrame->lastPower[p]), cycles));
                 for (uint64_t j = 0; j < visits().period; ++j) {
-                    row = advance(row, suffix[(p + j) % visits().period], e().lt(c(j), tail));
+                    row = advance(row, queryFrame->suffix[(p + j) % visits().period], e().lt(c(j), tail));
                 }
-                for (std::size_t j = 0; j < ports.size(); ++j) {
+                for (std::size_t j = 0; j < queryFrame->ports.size(); ++j) {
                     final[j] = e().lor(final[j], e().land(e().eq(phase, c(p)), row[j]));
                 }
             }
@@ -298,8 +157,8 @@ struct State : std::enable_shared_from_this<State> {
         }
         const auto& final = cached->second;
         auto across = e().boolean(false);
-        for (std::size_t j = 0; j < ports.size(); ++j) {
-            auto source = event(ports[j].occurrence, t, ports[j].kind);
+        for (std::size_t j = 0; j < queryFrame->ports.size(); ++j) {
+            auto source = event(queryFrame->ports[j].occurrence, t, queryFrame->ports[j].kind);
             across = e().lor(across, e().land(final[j], e().land(present(source), inside(source, b))));
         }
         return e().land(e().land(pa, pb), e().lor(direct, e().land(e().lt(s, t), across)));
@@ -445,18 +304,38 @@ void State::buildAllocation()
     allocationAttempted = true;
     allocationRecords = enumerateVaryingAllocationRecords(visits(), allocationError);
     if (!allocationRecords) { return; }
-    VaryingBoundaryQuery queries(visits(), ports, startup, suffix, powers);
-    if (!queries.error().empty()) { allocationError = queries.error(); return; }
-    const VaryingBoundaryReuseQuery query = [&queries](Occ source, PeriodicEventKind sourceKind,
-        Occ target, PeriodicEventKind targetKind, uint64_t sourceVisit, uint64_t gap) {
-        return queries.query(source, sourceKind, target, targetKind, sourceVisit, gap);
+    const auto shared = buildPeriodicSharedAssignment(child.periodic);
+    auto attempt = [&](const VaryingBoundaryFrame& frame) {
+        VaryingBoundaryQuery queries(frame);
+        if (!queries.error().empty()) { allocationError = queries.error(); return; }
+        const VaryingBoundaryReuseQuery query = [&queries](Occ source, PeriodicEventKind sourceKind,
+            Occ target, PeriodicEventKind targetKind, uint64_t sourceVisit, uint64_t gap) {
+            return queries.query(source, sourceKind, target, targetKind, sourceVisit, gap);
+        };
+        allocation = buildVaryingAllocationWithAssignment(out, visits(), trips, *allocationRecords, query,
+                                                         allocationError, &frame.visits(), shared);
+        allocationQueries += std::min(queries.queryCount, UINT64_MAX - allocationQueries);
     };
-    allocation = buildVaryingRotatingAllocation(out, visits(), trips, *allocationRecords, query, allocationError);
-    allocationQueries = queries.queryCount;
-    // Query proof cost is numerical, not expression-circuit size. Each uncached
-    // query uses O(P) quotient attachments and O((startup+period+64)*P^2)
-    // Boolean row work. Existing transfer/power construction costs
-    // O((startup+period^2+64*period)*P^3), with no runtime-trip expansion.
+    attempt(*queryFrame);
+    if (allocation) { return; } // Keep the existing feasible incumbent unchanged.
+    const auto incumbentError = allocationError;
+    if (!shared) { return; }
+    std::vector<BoundaryLaneRule> rules;
+    for (std::size_t phase = 0; phase < shared->records.size(); ++phase) {
+        const auto& assigned = shared->allocation.phases[phase];
+        const auto width = shared->allocation.cycles[assigned.cycle].laneCount;
+        if (width && width <= 6) {
+            rules.push_back({shared->records[phase], assigned.cycle, 1, assigned.offset, width});
+        }
+    }
+    if (rules.empty()) { return; }
+    auto extended = std::make_shared<const AffineRotatingVisits>(extendAffineRotatingLaneBoundary(visits(), rules));
+    if (!extended->error.empty()) {
+        allocationError = incumbentError + "; lane frame unavailable: " + extended->error; return;
+    }
+    allocationFrame = VaryingBoundaryFrame::build(certificate, std::move(extended), allocationError);
+    if (!allocationFrame) { allocationError = incumbentError + "; lane frame unavailable: " + allocationError; return; }
+    attempt(*allocationFrame);
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> State::prepare()
 {
@@ -627,7 +506,7 @@ std::shared_ptr<VaryingRegionalExports> buildVaryingQueries(
     result.capabilities = {false, true, false, true, true};
     result.cost.repeatedRegions = 1;
     result.cost.cells = out.storageBoundary.size();
-    result.cost.ports = state->ports.size();
+    result.cost.ports = state->queryFrame->ports.size();
     result.cost.phaseDescriptions = state->visits().startup + state->visits().period;
     result.cost.expressionNodes = state->e().size();
     result.cost.implicationChecks = state->allocationQueries;

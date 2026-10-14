@@ -22,6 +22,7 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
+#include "RepeatedOrderedAllocationChecks.h"
 namespace {
 using Matrix = std::vector<std::vector<bool>>;
 void closure(Matrix& graph)
@@ -732,7 +733,8 @@ bool runRepeatedRegionChecks(func::FuncOp function)
     if (function.getNumArguments() < 2 || !function.getArgument(1).getType().isInteger(1) ||
         !check(function, anchor, outer, inner, 2, 3, 7, checked, true) ||
         !check(function, anchor, outer, inner, 2, 3, 3, checked, true)) { return false; }
-    if (!checkOccurrenceBinding(function, outer, inner) ||
+    if (!checkOrderedLaneAllocations(function, anchor, inner) ||
+        !checkOccurrenceBinding(function, outer, inner) ||
         !checkReuseProofIsolation(function, anchor, inner)) { return false; }
     for (unsigned count : {0U, 1U, 8U, 128U}) {
         if (!checkOrderedExtrema(function, count, false, false)) { return false; }

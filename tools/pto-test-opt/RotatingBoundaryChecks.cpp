@@ -8,6 +8,7 @@
 // Algebraic storage generators without expanding banks or loop iterations.
 // Independent unfolded all-conflict graph, including cross-visit buffer reuse.
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingBoundary.h"
+#include "PeriodicLaneBoundaryChecks.h"
 #include "llvm/Support/raw_ostream.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include <set>
@@ -182,7 +183,7 @@ bool checkProtectionScope()
 } // namespace
 int runRotatingBoundaryChecks()
 {
-    if (!checkRelationshipPorts() || !checkProtectionScope()) {
+    if (!mlir::pto::test::checkPeriodicLaneBoundaries() || !checkRelationshipPorts() || !checkProtectionScope()) {
         llvm::errs() << "boundary relationship or protection adapter failed\n";
         return 1;
     }

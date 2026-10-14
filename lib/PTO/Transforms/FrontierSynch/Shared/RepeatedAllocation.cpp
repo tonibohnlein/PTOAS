@@ -44,6 +44,8 @@ public:
             {"duplicate_extrema_guards", cost.extrema.duplicateGuards},
             {"lanes", cost.lanes}, {"first_alternatives", cost.firstAlternatives},
             {"last_alternatives", cost.lastAlternatives}, {"matrix_pairs", cost.matrixPairs},
+            {"ordered_attempts", cost.orderedAttempts}, {"ordered_phases", cost.orderedPhases},
+            {"ordered_reuse_queries", cost.orderedReuseQueries}, {"ordered_accepted", cost.orderedAccepted},
             {"candidate_gaps", cost.candidateGaps}, {"boundary_pairs", cost.boundaryPairs},
             {"coalescing_ns", cost.coalescingNanoseconds}, {"coalescing_cache_hits", coalescingHit ? 1U : 0U},
             {"activity_requests", cost.activityRequests}, {"activity_computations", cost.activityComputations},

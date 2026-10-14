@@ -20,19 +20,9 @@ namespace {
 using Occ = BoundaryOccurrence;
 std::optional<std::pair<uint64_t, uint64_t>> progression(const RotatingFragment& f, uint64_t slot)
 {
-    const auto stride = f.stride % f.slots, offset = f.offset % f.slots;
-    const auto divisor = std::gcd(stride, f.slots), period = f.slots / divisor;
-    const auto delta = slot >= offset ? slot - offset : f.slots - (offset - slot);
-    if (delta % divisor) {
-        return std::nullopt;
-    }
-    const auto first = period == 1 ?
-                           0 :
-                           (llvm::APInt(128, delta / divisor) *
-                            llvm::APInt(128, detail::modularInverse(stride / divisor, period)))
-                               .urem(llvm::APInt(128, period))
-                               .getZExtValue();
-    return std::make_pair(first, period);
+    const detail::ModuloLaneCongruence domain(f.stride, f.offset, f.slots);
+    const auto first = domain.residue(slot);
+    return first ? std::make_optional(std::make_pair(*first, domain.period())) : std::nullopt;
 }
 bool before(Occ a, Occ b, uint64_t length)
 {
@@ -103,6 +93,10 @@ void indexBoundary(RotatingBoundaryType& type, const PeriodicAnalysis& quotient)
     for (const auto& [pipe, value] : type.lastPayloads) {
         add(value);
     }
+    for (const auto& [lane, selectors] : type.lanes) {
+        if (selectors.firstPublication) { add(*selectors.firstPublication); }
+        if (selectors.lastConsumption) { add(*selectors.lastConsumption); }
+    }
     if (!type.index.error.empty()) {
         return;
     }
@@ -118,15 +112,49 @@ void indexBoundary(RotatingBoundaryType& type, const PeriodicAnalysis& quotient)
             quotient, events[a].first, events[a].second, events[b].first, events[b].second, type.representative);
     });
 }
+bool indexBoundaryTypes(RotatingBoundaryCertificate& out, uint64_t maximumTypes)
+{
+    out.types.clear();
+    uint64_t maximum = 0;
+    for (const auto& row : out.quotient.frontiers) {
+        for (const auto& distance : row.distances) {
+            if (distance) {
+                maximum = std::max(maximum, periodic::threshold(*distance, row.count, row.count));
+            }
+        }
+    }
+    if (!periodic::multiply(out.refresh, 2, out.cutoff) || !periodic::add(out.cutoff, maximum, out.cutoff) ||
+        !periodic::add(out.cutoff, 1, out.cutoff)) {
+        out.error = "boundary cutoff overflow"; return false;
+    }
+    if (out.period > maximumTypes || out.period > out.types.max_size()) {
+        out.error = "boundary residue expansion exceeds representation"; return false;
+    }
+    for (uint64_t residue = 0; residue < out.period; ++residue) {
+        const auto current = out.cutoff % out.period;
+        const auto shift = residue >= current ? residue - current : out.period - (current - residue);
+        uint64_t representative;
+        if (!periodic::add(out.cutoff, shift, representative)) {
+            out.error = "boundary representative overflow"; return false;
+        }
+        out.types.push_back(out.select(representative));
+        if (!out.types.back().index.error.empty()) {
+            out.error = "boundary chain queries unavailable"; return false;
+        }
+    }
+    return true;
+}
 } // namespace
 RotatingBoundaryType RotatingBoundaryCertificate::select(uint64_t length) const
 {
     RotatingBoundaryType result;
     result.representative = length;
     result.cells.resize(cells.size());
-    if (!length || !error.empty()) {
-        return result;
+    if (!error.empty()) { return result; }
+    for (const auto& rule : laneRules) {
+        for (uint64_t lane = 0; lane < rule.width; ++lane) { result.lanes.try_emplace({rule.group, lane}); }
     }
+    if (!length) { return result; }
     for (uint32_t type = 0; type < quotient.payloads.size(); ++type) {
         auto pipe = quotient.payloads[type].pipe;
         result.firstPayloads.emplace(pipe, Occ{type, 0, false});
@@ -180,6 +208,21 @@ RotatingBoundaryType RotatingBoundaryCertificate::select(uint64_t length) const
         }
         if (relationshipSites.emplace(target, false).second) {
             result.relationshipPorts.push_back({target, 0, false});
+        }
+    }
+    for (const auto& rule : laneRules) {
+        const auto& record = quotient.generators[rule.record];
+        if (length <= record.displacement) { continue; }
+        const auto upper = length - 1 - record.displacement;
+        const detail::ModuloLaneCongruence domain(rule.stride, rule.phase, rule.width);
+        for (uint64_t lane = 0; lane < rule.width; ++lane) {
+            const auto first = domain.residue(lane);
+            if (!first || *first > upper) { continue; }
+            const auto last = upper - (upper - *first) % domain.period();
+            auto& selected = result.lanes[{rule.group, lane}];
+            choose(selected.firstPublication, {record.source, *first, false}, length, true);
+            choose(selected.lastConsumption, {record.target, length - (last + record.displacement), true},
+                   length, false);
         }
     }
     indexBoundary(result, quotient);
@@ -371,35 +414,50 @@ RotatingBoundaryCertificate buildRotatingBoundaryCertificate(
             return fail("boundary cell list does not cover family");
         }
     }
-    uint64_t maximum = 0;
-    for (const auto& row : out.quotient.frontiers) {
-        for (const auto& distance : row.distances) {
-            if (distance) {
-                maximum = std::max(maximum, periodic::threshold(*distance, row.count, row.count));
-            }
-        }
-    }
-    if (!periodic::multiply(out.refresh, 2, out.cutoff) || !periodic::add(out.cutoff, maximum, out.cutoff) ||
-        !periodic::add(out.cutoff, 1, out.cutoff)) {
-        return fail("boundary cutoff overflow");
-    }
     out.fragments.assign(fragments.begin(), fragments.end());
     out.cells.assign(cells.begin(), cells.end());
-    if (out.period > maximumTypes || out.period > out.types.max_size()) {
-        return fail("boundary residue expansion exceeds representation");
-    }
-    for (uint64_t residue = 0; residue < out.period; ++residue) {
-        const auto current = out.cutoff % out.period;
-        const auto shift = residue >= current ? residue - current : out.period - (current - residue);
-        uint64_t representative;
-        if (!periodic::add(out.cutoff, shift, representative)) {
-            return fail("boundary representative overflow");
+    if (!indexBoundaryTypes(out, maximumTypes)) { return fail(out.error.c_str()); }
+    return out;
+}
+RotatingBoundaryCertificate extendRotatingLaneBoundary(
+    const RotatingBoundaryCertificate& child, llvm::ArrayRef<BoundaryLaneRule> rules,
+    uint64_t maximumTypes, uint64_t maximumLaneWidth)
+{
+    auto out = child;
+    auto fail = [&](StringRef message) {
+        out.error = message.str(); out.types.clear(); return out;
+    };
+    if (!child.error.empty() || !child.quotient.error.empty() || !child.refresh || !child.period ||
+        child.types.size() != child.period) { return fail("lane boundary requires a complete original certificate"); }
+    std::set<uint32_t> retained(child.quotient.retained.begin(), child.quotient.retained.end()), seen;
+    std::map<uint32_t, std::tuple<uint32_t, uint32_t, uint64_t>> groups;
+    for (const auto& rule : rules) {
+        if (!rule.width || rule.width > maximumLaneWidth || rule.phase >= rule.width ||
+            rule.record >= child.quotient.generators.size() || !retained.count(rule.record) ||
+            !seen.insert(rule.record).second) { return fail("invalid retained modulo lane rule"); }
+        const auto& record = child.quotient.generators[rule.record];
+        if (record.source >= child.quotient.payloads.size() || record.target >= child.quotient.payloads.size()) {
+            return fail("lane record outside original payload namespace");
         }
-        out.types.push_back(out.select(representative));
-        if (!out.types.back().index.error.empty()) {
-            return fail("boundary chain queries unavailable");
+        const auto source = child.quotient.payloads[record.source].pipe;
+        const auto target = child.quotient.payloads[record.target].pipe;
+        const auto shape = std::make_tuple(source, target, rule.width);
+        auto inserted = groups.emplace(rule.group, shape);
+        if (source == target || (!inserted.second && inserted.first->second != shape)) {
+            return fail("lane group has inconsistent direction or width");
         }
+        const auto modulus = rule.width / std::gcd(rule.stride, rule.width);
+        uint64_t radius;
+        if (!periodic::add(record.displacement, modulus, radius) || !periodic::add(radius, 1, radius) ||
+            !periodic::multiply(out.period / std::gcd(out.period, modulus), modulus, out.period)) {
+            return fail("lane boundary radius or period overflow");
+        }
+        out.refresh = std::max(out.refresh, radius);
     }
+    // This is a fresh requested view; never retain stale lane rules from an
+    // earlier allocation candidate while publishing another frame's metadata.
+    out.laneRules.assign(rules.begin(), rules.end());
+    if (!indexBoundaryTypes(out, maximumTypes)) { out.types.clear(); }
     return out;
 }
 AffineRotatingVisits analyzeAffineRotatingVisits(
@@ -467,6 +525,41 @@ AffineRotatingVisits analyzeAffineRotatingVisits(
             return out;
         }
         out.suffixCrossings.push_back(std::move(*result));
+    }
+    return out;
+}
+AffineRotatingVisits extendAffineRotatingLaneBoundary(
+    const AffineRotatingVisits& original, llvm::ArrayRef<BoundaryLaneRule> rules,
+    uint64_t maximumTypes, uint64_t maximumStartup, uint64_t maximumLaneWidth)
+{
+    AffineRotatingVisits out;
+    out.slope = original.slope; out.intercept = original.intercept;
+    auto fail = [&](StringRef message) { out.error = message.str(); return out; };
+    if (!original.error.empty() || !original.slope || !original.period ||
+        original.startupCrossings.size() != original.startup ||
+        original.suffixCrossings.size() != original.period) {
+        return fail("lane boundary requires the original affine crossing schedule");
+    }
+    out.child = extendRotatingLaneBoundary(original.child, rules, maximumTypes, maximumLaneWidth);
+    if (!out.child.error.empty()) { return fail(out.child.error); }
+    const auto delta = out.child.cutoff > out.intercept ? out.child.cutoff - out.intercept : 0;
+    out.startup = delta / out.slope + (delta % out.slope != 0);
+    out.period = out.child.period / std::gcd(out.slope, out.child.period);
+    if (out.startup < original.startup || out.period % original.period || out.startup > maximumStartup) {
+        return fail("lane proof frame cannot refine the original affine classes within representation");
+    }
+    // Translate the exact original crossing relation into finer proof classes.
+    // Emission continues to use original; no producer/reducer is run here.
+    for (uint64_t visit = 0; visit < out.startup; ++visit) {
+        out.startupCrossings.push_back(original.crossingInto(visit));
+    }
+    out.seam = original.crossingInto(out.startup);
+    for (uint64_t phase = 0; phase < out.period; ++phase) {
+        uint64_t visit;
+        if (!periodic::add(out.startup, out.period, visit) || !periodic::add(visit, phase, visit)) {
+            return fail("lane proof representative visit overflow");
+        }
+        out.suffixCrossings.push_back(original.crossingInto(visit));
     }
     return out;
 }
