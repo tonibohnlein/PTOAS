@@ -1,0 +1,24 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_allocation_candidates.py input %S/sync_mixed_crossing_families.pto 0 %t.0.input
+// RUN: pto-sync-input-test --insert-logical-library %t.0.input > %t.0.logical 2> %t.0.err
+// RUN: FileCheck %s --check-prefix=REQUEST < %t.0.err
+// RUN: pto-test-opt --mlir-disable-threading --pto-frontier-allocate="eligible-ids=0,1,2,3,4,5" %t.0.logical -o %t.0.physical
+// RUN: %python %S/Inputs/check_allocation_candidates.py trace %t.0.logical %t.0.trace
+// RUN: pto-sync-input-test --structured-trace %t.0.trace > %t.0.json
+// RUN: %python %S/Inputs/check_allocation_candidates.py check %t.0.json 0
+// RUN: %python %S/Inputs/check_allocation_candidates.py input %S/sync_mixed_crossing_families.pto 1 %t.1.input
+// RUN: pto-sync-input-test --insert-logical-library %t.1.input > %t.1.logical 2> %t.1.err
+// RUN: FileCheck %s --check-prefix=REQUEST < %t.1.err
+// RUN: pto-test-opt --mlir-disable-threading --pto-frontier-allocate="eligible-ids=0,1,2,3,4,5" %t.1.logical -o %t.1.physical
+// RUN: %python %S/Inputs/check_allocation_candidates.py trace %t.1.logical %t.1.trace
+// RUN: pto-sync-input-test --structured-trace %t.1.trace > %t.1.json
+// RUN: %python %S/Inputs/check_allocation_candidates.py check %t.1.json 1
+// REQUEST: regional-allocation-candidates: independent=
+// REQUEST-SAME: selected certificate without scalar materialization
+module {}

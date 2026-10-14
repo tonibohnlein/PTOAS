@@ -1603,6 +1603,11 @@ bool runExpressionRelationChecks(MLIRContext*);
 int runRegionalRelationChecks();
 int runMixedSymbolicRegionChecks(func::FuncOp);
 LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp, pto::GMAliasPolicy);
+bool runRegionalAllocationCandidateChecks(mlir::func::FuncOp function,
+    mlir::pto::frontiersynch::FrontierAnalysis& analysis,
+    const mlir::pto::frontiersynch::AnalysisOutcome& outcome,
+    mlir::pto::frontiersynch::PreparedLogicalPlan& plan);
+
 int main(int argc, char **argv) {
   const bool boundedPrefix = argc == 2 && StringRef(argv[1]) == "--bounded-prefix-realization-checks";
   if (boundedPrefix) {
@@ -2178,10 +2183,13 @@ int main(int argc, char **argv) {
       if (failed(analysis.initialize(policy))) { return 1; }
       pto::frontiersynch::AnalysisRequest request;
       request.needs.synchronization = true;
+      const bool candidates = function->hasAttr("test.allocation_candidates");
+      request.needs.queries = candidates;
       auto result = analysis.analyze(request);
       if (result.status != pto::frontiersynch::AnalysisStatus::Ready) { return 1; }
       auto prepared = analysis.prepareLogical(result);
       if (failed(prepared)) { return 1; }
+      if (candidates && !runRegionalAllocationCandidateChecks(function, analysis, result, **prepared)) { return 1; }
       const bool inserted = succeeded(pto::frontiersynch::insertLogicalSynchronization(function, **prepared));
       analysis.invalidate();
       if (!inserted || failed(verify(function))) { return 1; }

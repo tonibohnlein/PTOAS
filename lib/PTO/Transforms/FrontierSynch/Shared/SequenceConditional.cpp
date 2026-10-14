@@ -10,6 +10,7 @@
 #include "RegionalCapabilitiesInternal.h"
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
+#include "llvm/Support/SaveAndRestore.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 void maskSelectors(RegionalStorageSelectors& selectors, RegionExpressions& arena, Expr guard)
@@ -31,24 +32,28 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> maskPlan(
     // Original arm cuts already suppress commands when the arm is not taken.
     // Allocation summaries also need that presence; copy borrowed summaries.
     auto prepare = std::move(plan.allocationPreparation);
-    plan.allocationPreparation = [prepare = std::move(prepare), arena, guard](PreparedLogicalPlan& plan) {
-        if (prepare) { prepare(plan); }
-        if (plan.regionalAllocation) {
-            plan.regionalAllocation = std::make_shared<RegionalAllocationSummary>(*plan.regionalAllocation);
-            for (auto& group : plan.regionalAllocation->groups) {
-                for (auto& member : group.members) {
-                    member.active = arena->select(guard, member.active, arena->boolean(false));
-                }
-                for (auto& lane : group.lanes) {
-                    for (auto* selectors : {&lane.firstSources, &lane.lastTargets}) {
-                        for (auto& selector : *selectors) {
-                            selector.present = arena->select(guard, selector.present, arena->boolean(false));
-                        }
+    plan.allocationPreparation = AllocationPreparation::candidates(
+        [prepare = std::move(prepare), initial = plan.regionalAllocation, arena, guard](
+            PreparedLogicalPlan& plan, AllocationStrength strength) mutable {
+        llvm::SaveAndRestore<std::shared_ptr<RegionalAllocationSummary>> input(plan.regionalAllocation, initial);
+        auto allocation = prepare.request(plan, strength);
+        if (!allocation) { allocation = initial; }
+        if (!allocation) { return std::shared_ptr<RegionalAllocationSummary>{}; }
+        auto masked = std::make_shared<RegionalAllocationSummary>(*allocation);
+        for (auto& group : masked->groups) {
+            for (auto& member : group.members) {
+                member.active = arena->select(guard, member.active, arena->boolean(false));
+            }
+            for (auto& lane : group.lanes) {
+                for (auto* selectors : {&lane.firstSources, &lane.lastTargets}) {
+                    for (auto& selector : *selectors) {
+                        selector.present = arena->select(guard, selector.present, arena->boolean(false));
                     }
                 }
             }
         }
-    };
+        return masked;
+    });
     return std::move(*prepared);
 }
 RegionalAnalysis guardedArm(RegionalAnalysis body, Expr guard)
