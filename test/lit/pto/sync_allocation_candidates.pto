@@ -19,6 +19,19 @@
 // RUN: %python %S/Inputs/check_allocation_candidates.py trace %t.1.logical %t.1.trace
 // RUN: pto-sync-input-test --structured-trace %t.1.trace > %t.1.json
 // RUN: %python %S/Inputs/check_allocation_candidates.py check %t.1.json 1
+// RUN: pto-test-opt --mlir-disable-threading --pto-frontier-analysis="allocation-ids=0,1,2,3,4,5" %t.1.input -o %t.public
+// RUN: pto-test-opt --mlir-disable-threading --pto-frontier-allocate="eligible-ids=0,1,2,3,4,5" %t.public -o %t.public.physical
+// RUN: %python %S/Inputs/check_allocation_candidates.py trace %t.public %t.public.trace
+// RUN: pto-sync-input-test --structured-trace %t.public.trace > %t.public.json
+// RUN: %python %S/Inputs/check_allocation_candidates.py check %t.public.json 1
+// RUN: pto-test-opt --mlir-disable-threading --pto-frontier-analysis="allocation-ids=1,3" %t.1.input -o %t.sparse
+// RUN: pto-test-opt --mlir-disable-threading --pto-frontier-allocate="eligible-ids=1,3" %t.sparse -o %t.sparse.physical
+// RUN: not pto-test-opt --pto-frontier-analysis="allocation-ids=0,0" %s 2>&1 | FileCheck %s --check-prefix=IDS
+// RUN: not pto-test-opt --pto-frontier-analysis="allocation-ids=6" %s 2>&1 | FileCheck %s --check-prefix=IDS
+// RUN: not pto-test-opt --pto-frontier-analysis="allocation-ids=0 prepare-allocation=false" %s 2>&1 | FileCheck %s --check-prefix=MODE
+// RUN: not pto-test-opt --pto-frontier-analysis="allocation-ids=0 analysis-only=true" %s 2>&1 | FileCheck %s --check-prefix=MODE
+// IDS: allocation-ids must be distinct eligible IDs from 0..5
+// MODE: allocation-ids requires logical preparation with prepare-allocation=true
 // REQUEST: regional-allocation-candidates: independent=
 // REQUEST-SAME: selected certificate without scalar materialization
 module {}

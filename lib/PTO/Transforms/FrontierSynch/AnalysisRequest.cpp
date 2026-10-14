@@ -14,6 +14,7 @@
 #include "WholeInvocationIdentity.h"
 #include "Structured/OrderCoveredPeriodic.h"
 #include "Shared/NormalizedControl.h"
+#include "Shared/RegionalAllocationCandidates.h"
 #include "PTO/Transforms/FrontierSynch/Structured/MixedStrideAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompactBoundingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
@@ -553,6 +554,44 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical
     return prepared;
 }
 namespace {
+// Borrow existing regional mathematics; requesting allocation must not invoke
+// another demand analysis or stronger query export merely to select a candidate.
+std::shared_ptr<const RegionalAnalysis> allocationRegion(const MathematicalResult& demands)
+{
+    if (demands.regionalDemands) { return demands.regionalDemands; }
+    if (demands.sequenceDemands) {
+        return std::make_shared<const RegionalAnalysis>(sequenceRegionalResult(*demands.sequenceDemands));
+    }
+    if (demands.finiteGuardedDemands) {
+        return std::make_shared<const RegionalAnalysis>(finiteGuardedRegionalResult(*demands.finiteGuardedDemands));
+    }
+    return {};
+}
+struct IdentityAllocationSource {
+    const MathematicalResult* demands = nullptr;
+    const BackendAttempt* attempt = nullptr;
+    AnalysisBackend backend = AnalysisBackend::Explicit;
+};
+// Identity composition changes neither the command graph nor its namespaces.
+// Both allocation requests use this same ownership check before forwarding.
+IdentityAllocationSource identityAllocationSource(const MathematicalResult& demands,
+    const SyncInput* input, const PhaseIndex* index, const ProgramRecognition* program,
+    func::FuncOp function, const AnalysisSessionState& session)
+{
+    const auto* retained = &demands;
+    auto backend = AnalysisBackend::Explicit;
+    while (retained->identityComposition) {
+        const auto& owner = *retained->identityComposition;
+        if (retained->region != owner.region || !owner.applies(input, index, program, function)) { return {}; }
+        backend = owner.childBackend;
+        retained = owner.child.get();
+    }
+    auto region = session.attempts.find(retained->region);
+    if (region == session.attempts.end()) { return {}; }
+    auto found = region->second.find(backend);
+    if (found == region->second.end() || found->second.mathematical.get() != retained) { return {}; }
+    return {retained, &found->second, backend};
+}
 DictionaryAttr allocateRetained(const MathematicalResult& demands, const ProgramRecognition& program,
     const BackendAttempt& attempt, PreparedLogicalPlan& prepared, MLIRContext* context,
     uint64_t& guardedImportWork, AllocationProfile* allocationProfile)
@@ -590,10 +629,9 @@ DictionaryAttr allocateRetained(const MathematicalResult& demands, const Program
             conversion.generators, *conversion.guarded, plan, context);
     }
     if (demands.sequenceDemands || demands.finiteGuardedDemands) {
-        auto region = demands.sequenceDemands ? sequenceRegionalResult(*demands.sequenceDemands) :
-            finiteGuardedRegionalResult(*demands.finiteGuardedDemands);
-        auto certificate = regionalAllocationCertificate(region, prepared, allocationProfile);
-        return certificate ? certificate : finiteRegionalAllocationCertificate(region, prepared);
+        auto region = allocationRegion(demands);
+        auto certificate = regionalAllocationCertificate(*region, prepared, allocationProfile);
+        return certificate ? certificate : finiteRegionalAllocationCertificate(*region, prepared);
     }
     if (!demands.arithmeticDemands && !demands.generalArithmeticDemands) { return {}; }
     SmallVector<uint32_t> pipes;
@@ -614,30 +652,28 @@ DictionaryAttr allocateRetained(const MathematicalResult& demands, const Program
 DictionaryAttr FrontierAnalysis::allocateIdentity(const MathematicalResult& demands, PreparedLogicalPlan& plan,
     AllocationProfile* allocationProfile)
 {
-    const MathematicalResult* retained = &demands;
-    AnalysisBackend backend = AnalysisBackend::Explicit;
-    while (retained->identityComposition) {
-        const auto& owner = *retained->identityComposition;
-        if (retained->region != owner.region ||
-            !owner.applies(storage.get(), structuralIndex.get(), program.get(), function)) { return {}; }
-        backend = owner.childBackend;
-        retained = owner.child.get();
-    }
-    auto& attempt = sessionState->attempts[retained->region][backend];
-    if (attempt.mathematical.get() != retained) { return {}; }
-    auto certificate = allocateRetained(*retained, *program, attempt, plan, function.getContext(),
+    auto source = identityAllocationSource(demands, storage.get(), structuralIndex.get(),
+        program.get(), function, *sessionState);
+    if (!source.demands) { return {}; }
+    const auto* retained = source.demands;
+    auto certificate = allocateRetained(*retained, *program, *source.attempt, plan, function.getContext(),
         sessionState->guardedImportWork, allocationProfile);
     if (certificate || !plan.regionalAllocation) { return certificate; }
     AnalysisRequest request;
     request.region = retained->region;
     request.needs.queries = true;
-    auto exported = requestBackend(backend, request);
+    auto exported = requestBackend(source.backend, request);
     if (exported.mathematical.get() != retained || !exported.available.queries) { return {}; }
     auto region = exported.regionalExports ? exported.regionalExports : retained->regionalDemands;
     return region ? regionalAllocationCertificate(*region, plan, allocationProfile) : DictionaryAttr{};
 }
-LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan)
+LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan,
+    ArrayRef<int64_t> eligibleIds)
 {
+    llvm::SmallDenseSet<int64_t, 8> uniqueIds;
+    for (auto id : eligibleIds) {
+        if (id < 0 || id > 5 || !uniqueIds.insert(id).second) { return failure(); }
+    }
     if (result.completion) {
         return success(!result.mathematical && sessionState && result.completion == sessionState->completion &&
                        plan.completionOwner == result.completion && result.completion->inputOwner() == storage);
@@ -657,12 +693,33 @@ LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, 
     if (selected == attempts.end()) { return failure(); }
     AnalysisProfileScope profile(sessionState->ledger, "allocation-support", result.mathematical->region,
         result.mathematical->backend, false, result.requestId);
+    if (!eligibleIds.empty()) {
+        auto region = result.regionalExports ? result.regionalExports : allocationRegion(*result.mathematical);
+        if (!region && result.mathematical->identityComposition) {
+            auto source = identityAllocationSource(*result.mathematical, storage.get(), structuralIndex.get(),
+                program.get(), function, *sessionState);
+            if (source.demands) { region = allocationRegion(*source.demands); }
+        }
+        if (region) {
+            AnalysisProfileScope candidateWork(sessionState->ledger, "allocation-candidates",
+                result.mathematical->region, result.mathematical->backend, false, result.requestId);
+            candidateWork.constructed();
+            AllocationProfile candidateProfile(sessionState->ledger);
+            if (succeeded(selectRegionalAllocationCandidate(function, *region, plan, eligibleIds, &candidateProfile))) {
+                profile.constructed();
+                if (construction.allocationExports != UINT64_MAX) { ++construction.allocationExports; }
+                // Capacity-specific evidence stays on this plan, outside the
+                // unrestricted split-export cache used by fresh preparations.
+                return success();
+            }
+        }
+    }
     if (plan.allocationCertificate) { profile.cacheHit(); return success(); }
+    AllocationProfile allocationWork(sessionState->ledger);
+    auto* allocationProfile = &allocationWork;
     auto& attempt = selected->second;
     auto cached = attempt.allocation.find(plan.planId);
     if (cached != attempt.allocation.end()) { profile.cacheHit(); }
-    AllocationProfile allocationWork(sessionState->ledger);
-    auto* allocationProfile = &allocationWork;
     {
         AllocationProfile::Scope summary(allocationProfile, AllocationProfile::Summary);
         prepareAllocationSupport(plan, allocationProfile);

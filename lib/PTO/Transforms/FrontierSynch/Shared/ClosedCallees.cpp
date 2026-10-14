@@ -8,6 +8,7 @@
 // Closed-callee composition owns module-level dependency decisions. Recognition
 // is linear in the call graph and IR size and never invokes a demand backend.
 #include "PTO/Transforms/FrontierSynch/Shared/ClosedCallees.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PrivateStatePlan.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
@@ -213,6 +214,13 @@ LogicalResult insertModuleSynchronization(ModuleOp module, GMAliasPolicy policy,
         // A successful whole-function producer accounts for every payload.
         // Closed calls additionally require its fixed completion interface.
         if (called) { (*plan)->completeInvocation = true; }
+        // Query deferred executable pieces, not the broader analysis-record
+        // inventory. Event-use checks precede their scalar materialization.
+        if (called && (*plan)->familyRecipe) {
+            auto matching = familyMatchingArities(*(*plan)->familyRecipe);
+            if (failed(matching)) { return function.emitError("invalid deferred callee matching metadata"); }
+            if (!matching->empty()) { newEvents.insert(function); }
+        }
         if ((*plan)->privateState || llvm::any_of((*plan)->endpoints, [](const auto& endpoint) {
                 return endpoint.kind != LogicalCommandKind::Barrier;
             })) { newEvents.insert(function); }

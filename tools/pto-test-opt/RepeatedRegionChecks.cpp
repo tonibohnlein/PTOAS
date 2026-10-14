@@ -309,13 +309,15 @@ bool allocationCheck(func::FuncOp function, Operation* anchor, scf::ForOp loop,
         // a truncated chain: its nominal endpoints cannot certify that chain.
         auto unqualified = child;
         unqualified.groups.front().members.back().singletonHandoff = false;
-        if (fs::repeatedRegionalAllocation(state, unqualified, crossings)) { return false; }
+        auto input = std::make_shared<fs::RegionalAllocationSummary>(unqualified);
+        if (fs::repeatedRegionalAllocation(state, input, crossings)) { return false; }
     }
     auto coalesced = fs::coalesceRegionalAllocation(body, child);
     if (!coalesced) { return false; }
     fs::RepeatedLaneProofCost proofCost;
+    auto input = std::make_shared<fs::RegionalAllocationSummary>(child);
     auto summary = cyclePolicy ? fs::periodicLaneAllocation(state, *coalesced, crossings, &proofCost) :
-                                 fs::repeatedRegionalAllocation(state, child, crossings);
+                                 fs::repeatedRegionalAllocation(state, input, crossings);
     if (!summary) {
         llvm::errs() << "allocation producer rejected " << q << ":" << begin << ":" << end
                      << " storage=" << storage << " omit=" << omitMember << " cycle_policy=" << cyclePolicy << "\n";

@@ -10,6 +10,7 @@
 #include "OccurrenceBinding.h"
 #include "MixedFamilyInsertion.h"
 #include "RepeatedAllocation.h"
+#include "AllocationInputCache.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
@@ -63,12 +64,19 @@ class RepeatedPreparation
             [](const RepeatedCrossing& crossing) { return crossing.displacement == 1; });
         if (unitCrossings) {
             plan->allocationPreparation = AllocationPreparation::candidates(
-                [owner = state.shared_from_this(), childView, crossings = std::move(allocationCrossings)](
-                    PreparedLogicalPlan& prepared, AllocationStrength strength) {
+                [owner = state.shared_from_this(), childView, crossings = std::move(allocationCrossings),
+                 coalescing = AllocationInputCache{}, fallback = std::shared_ptr<RegionalAllocationSummary>{},
+                 fallbackReady = false](PreparedLogicalPlan& prepared, AllocationStrength strength) mutable {
                 auto allocation = requestAllocationSummary(*childView, strength, prepared.allocationProfile);
-                if (!allocation) { allocation = finiteRegionalAllocation(owner->body, *childView); }
+                if (!allocation) {
+                    if (!fallbackReady) {
+                        fallback = finiteRegionalAllocation(owner->body, *childView);
+                        fallbackReady = true;
+                    }
+                    allocation = fallback;
+                }
                 return allocation ? repeatedRegionalAllocation(
-                    *owner, *allocation, crossings, prepared.allocationProfile, strength) :
+                    *owner, allocation, crossings, prepared.allocationProfile, strength, &coalescing) :
                     std::shared_ptr<RegionalAllocationSummary>{};
             });
         }

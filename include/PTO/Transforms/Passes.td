@@ -39,6 +39,9 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
     Regional certification alone does not establish whole-function support.
     Set prepare-allocation=false for logical-only emission. This omits allocation
     evidence; handoffs requiring that evidence cannot be allocated from this output.
+    An explicit allocation-ids pool enables parent-aware regional candidate
+    selection before scalar materialization. Omit it to keep the unrestricted
+    shared export. The following allocator still validates its eligible pool.
     Functions with manual on-core SET/WAIT or record/wait events are left
     unchanged, including dynamic event IDs. Cross-core commands and barriers
     alone do not trigger this skip, matching the shared InsertSync policy.
@@ -51,6 +54,9 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
       "Stop after mathematical certification without inserting synchronization">,
     Option<"prepareAllocation", "prepare-allocation", "bool", "true",
       "Construct allocation evidence for the following physical allocation pass">,
+    ListOption<"allocationIds", "allocation-ids", "int64_t",
+      "Optional eligible pool from 0..5 for regional candidate selection; physical allocation still validates fit",
+      "::llvm::cl::ZeroOrMore">,
     Option<"gmAlias", "gm-alias", "std::string", "\"may-not-alias\"",
       "Distinct GM root assumption: may-not-alias or may-alias">,
     Option<"arithmeticProfile", "arithmetic-profile", "std::string", "\"\"",

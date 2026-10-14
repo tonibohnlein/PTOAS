@@ -49,7 +49,11 @@ public:
     AnalysisOutcome analyzeFiniteExpansion(const AnalysisRequest& request);
     AnalysisOutcome analyzeArithmeticRegional(const AnalysisRequest& request);
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareLogical(const AnalysisOutcome& result);
-    LogicalResult attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan);
+    // A nonempty pool enables parent-aware regional candidate selection before
+    // scalar materialization. Other providers retain their existing certificate
+    // export; the physical allocator still validates fit and command bindings.
+    LogicalResult attachAllocation(const AnalysisOutcome& result, PreparedLogicalPlan& plan,
+        ArrayRef<int64_t> eligibleIds = {});
     const AnalysisConstructionCounts& constructionCounts() const { return construction; }
     uint64_t arithmeticGeneratorConstructions() const;
     uint64_t arithmeticRegionConstructions() const;

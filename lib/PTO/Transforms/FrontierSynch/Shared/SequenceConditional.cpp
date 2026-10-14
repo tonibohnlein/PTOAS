@@ -8,6 +8,7 @@
 // Guard original arm interfaces; mutually exclusive arms may share the sequence
 // composer because all query and boundary membership is masked by arm presence.
 #include "RegionalCapabilitiesInternal.h"
+#include "AllocationInputCache.h"
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "llvm/Support/SaveAndRestore.h"
@@ -33,26 +34,29 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> maskPlan(
     // Allocation summaries also need that presence; copy borrowed summaries.
     auto prepare = std::move(plan.allocationPreparation);
     plan.allocationPreparation = AllocationPreparation::candidates(
-        [prepare = std::move(prepare), initial = plan.regionalAllocation, arena, guard](
+        [prepare = std::move(prepare), initial = plan.regionalAllocation, arena, guard,
+         cache = AllocationInputCache{}](
             PreparedLogicalPlan& plan, AllocationStrength strength) mutable {
         llvm::SaveAndRestore<std::shared_ptr<RegionalAllocationSummary>> input(plan.regionalAllocation, initial);
         auto allocation = prepare.request(plan, strength);
         if (!allocation) { allocation = initial; }
         if (!allocation) { return std::shared_ptr<RegionalAllocationSummary>{}; }
-        auto masked = std::make_shared<RegionalAllocationSummary>(*allocation);
-        for (auto& group : masked->groups) {
-            for (auto& member : group.members) {
-                member.active = arena->select(guard, member.active, arena->boolean(false));
-            }
-            for (auto& lane : group.lanes) {
-                for (auto* selectors : {&lane.firstSources, &lane.lastTargets}) {
-                    for (auto& selector : *selectors) {
-                        selector.present = arena->select(guard, selector.present, arena->boolean(false));
+        return cache.request({allocation}, [&]() {
+            auto masked = std::make_shared<RegionalAllocationSummary>(*allocation);
+            for (auto& group : masked->groups) {
+                for (auto& member : group.members) {
+                    member.active = arena->select(guard, member.active, arena->boolean(false));
+                }
+                for (auto& lane : group.lanes) {
+                    for (auto* selectors : {&lane.firstSources, &lane.lastTargets}) {
+                        for (auto& selector : *selectors) {
+                            selector.present = arena->select(guard, selector.present, arena->boolean(false));
+                        }
                     }
                 }
             }
-        }
-        return masked;
+            return masked;
+        });
     });
     return std::move(*prepared);
 }

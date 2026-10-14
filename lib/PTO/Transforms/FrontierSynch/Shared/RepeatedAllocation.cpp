@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "RepeatedAllocation.h"
+#include "AllocationInputCache.h"
 #include "RepeatedLaneAllocation.h"
 #include "RepeatedRegionInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
@@ -42,7 +43,7 @@ public:
             {"lanes", cost.lanes}, {"first_alternatives", cost.firstAlternatives},
             {"last_alternatives", cost.lastAlternatives}, {"matrix_pairs", cost.matrixPairs},
             {"candidate_gaps", cost.candidateGaps}, {"boundary_pairs", cost.boundaryPairs},
-            {"coalescing_ns", cost.coalescingNanoseconds},
+            {"coalescing_ns", cost.coalescingNanoseconds}, {"coalescing_cache_hits", coalescingHit ? 1U : 0U},
             {"activity_requests", cost.activityRequests}, {"activity_computations", cost.activityComputations},
             {"activity_ns", cost.activityNanoseconds},
             {"relative_queries", cost.relativeQueries}, {"relative_computations", cost.relativeComputations},
@@ -55,8 +56,9 @@ public:
     }
     // This prelude includes child validation and palette coalescing, before
     // periodic proof construction. It is contained in elapsed_ns, not added.
-    void coalesced()
+    void coalesced(bool reused)
     {
+        coalescingHit = reused;
         if (profile) {
             cost.coalescingNanoseconds = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                 Clock::now() - started).count());
@@ -69,6 +71,7 @@ private:
     scf::ForOp loop;
     Clock::time_point started;
     RepeatedLaneProofCost cost;
+    bool coalescingHit = false;
 };
 
 // Preserve original event coordinates. Selecting extrema changes guards only,
@@ -350,15 +353,18 @@ std::vector<RegionalAllocationGroup> constantAllocationLanes(const RegionalAlloc
     return constantLanes(group);
 }
 std::shared_ptr<RegionalAllocationSummary> repeatedRegionalAllocation(
-    RepeatedRegionState& state, const RegionalAllocationSummary& child,
-    ArrayRef<std::pair<uint32_t, std::size_t>> crossings, AllocationProfile* profile, AllocationStrength strength)
+    RepeatedRegionState& state, std::shared_ptr<const RegionalAllocationSummary> child,
+    ArrayRef<std::pair<uint32_t, std::size_t>> crossings, AllocationProfile* profile, AllocationStrength strength,
+    AllocationInputCache* coalescing)
 {
     RepeatedWork work(profile, state.loop);
     // A terminal acquisition cannot be lifted to the end of each visit.
     // Repeated surplus publications need their own history/matching contract.
-    if (llvm::any_of(child.groups, [](const auto& group) { return group.terminalCleanup; })) { return {}; }
-    auto coalesced = coalesceRegionalAllocation(state.body, child);
-    work.coalesced();
+    if (!child || llvm::any_of(child->groups, [](const auto& group) { return group.terminalCleanup; })) { return {}; }
+    bool reused = false;
+    auto build = [&]() { return coalesceRegionalAllocation(state.body, *child); };
+    auto coalesced = coalescing ? coalescing->request({child}, build, &reused) : build();
+    work.coalesced(reused);
     if (!coalesced) { return {}; }
     if (strength == AllocationStrength::Shared) {
         if (auto periodic = periodicLaneAllocation(state, *coalesced, crossings, work.counters())) { return periodic; }
