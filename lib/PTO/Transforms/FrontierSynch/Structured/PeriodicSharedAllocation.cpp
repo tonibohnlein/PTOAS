@@ -114,7 +114,8 @@ private:
         return true;
     }
 };
-bool appendCycle(const PeriodicReuseMatrix& weights, const std::vector<uint32_t>& next,
+template <typename Weight>
+bool appendCycle(Weight weightAt, const std::vector<uint32_t>& next,
                  uint32_t start, std::vector<bool>& seen, PeriodicSharedAllocation& result)
 {
     std::vector<uint32_t> cycle;
@@ -123,7 +124,7 @@ bool appendCycle(const PeriodicReuseMatrix& weights, const std::vector<uint32_t>
     do {
         seen[current] = true;
         cycle.push_back(current);
-        const auto weight = *weights[current][next[current]];
+        const auto weight = weightAt(current);
         if (weight > UINT64_MAX - width) { return false; }
         width += weight;
         current = next[current];
@@ -135,7 +136,7 @@ bool appendCycle(const PeriodicReuseMatrix& weights, const std::vector<uint32_t>
     for (auto phase : cycle) {
         const auto offset = prefix ? (width - prefix) % width : 0;
         result.phases[phase] = {next[phase], id, result.budget, width, offset};
-        prefix += *weights[phase][next[phase]]; // Bounded by the checked cycle sum.
+        prefix += weightAt(phase); // Bounded by the checked cycle sum.
     }
     result.budget += width;
     return true;
@@ -160,10 +161,61 @@ PeriodicSharedAllocation allocatePeriodicShared(const PeriodicReuseMatrix& weigh
     result.phases.resize(n);
     std::vector<bool> seen(n, false);
     for (uint32_t start = 0; start < n; ++start) {
-        if (!seen[start] && !appendCycle(weights, *next, start, seen, result)) {
+        if (!seen[start] && !appendCycle([&](uint32_t phase) { return *weights[phase][(*next)[phase]]; },
+                                         *next, start, seen, result)) {
             return fail(Status::Overflow, "minimum periodic cycle-cover budget exceeds uint64 representation");
         }
     }
+    return result;
+}
+PeriodicSharedAllocation allocatePeriodicSuffixes(const std::vector<std::optional<uint64_t>>& firstReuse)
+{
+    const auto count = firstReuse.size();
+    if (count >= UINT32_MAX) {
+        return fail(Status::InvalidInput, "periodic suffix phase count exceeds representation");
+    }
+    PeriodicSharedAllocation result;
+    if (!count) { return result; }
+    // Stable bucket sort of residues, represented by singly linked lists.
+    const auto absent = static_cast<uint32_t>(count);
+    std::vector<uint32_t> heads(count, absent), tails(count, absent), links(count, absent), ranks(count);
+    for (uint32_t phase = 0; phase < count; ++phase) {
+        if (!firstReuse[phase]) { return fail(Status::NoFiniteCover, "periodic phase has no reusable publication"); }
+        if (*firstReuse[phase] <= phase) {
+            return fail(Status::InvalidInput, "periodic suffix must follow its publication");
+        }
+        const auto residue = *firstReuse[phase] % count;
+        if (heads[residue] == absent) { heads[residue] = phase; }
+        else { links[tails[residue]] = phase; }
+        tails[residue] = phase;
+    }
+    uint64_t rank = 0, shift = 0;
+    for (uint32_t residue = 0; residue < count; ++residue) {
+        for (auto phase = heads[residue]; phase != absent; phase = links[phase]) {
+            ranks[phase] = static_cast<uint32_t>(rank);
+            if (residue > rank) { shift = std::max(shift, residue - rank); }
+            ++rank;
+        }
+    }
+    std::vector<uint32_t> next(count);
+    std::vector<uint64_t> weights(count);
+    for (uint32_t phase = 0; phase < count; ++phase) {
+        const auto translated = uint64_t(ranks[phase]) + shift;
+        next[phase] = static_cast<uint32_t>(translated % count);
+        const auto periods = *firstReuse[phase] / count;
+        const auto carry = translated / count;
+        if (carry > UINT64_MAX - periods) { return fail(Status::Overflow, "periodic suffix period overflow"); }
+        weights[phase] = periods + carry;
+    }
+    result.phases.resize(count);
+    std::vector<bool> seen(count, false);
+    for (uint32_t start = 0; start < count; ++start) {
+        if (!seen[start] && !appendCycle([&](uint32_t phase) { return weights[phase]; },
+                                         next, start, seen, result)) {
+            return fail(Status::Overflow, "periodic suffix budget exceeds uint64 representation");
+        }
+    }
+    result.suffixPhases = count;
     return result;
 }
 PeriodicSharedAllocation allocateDirectedPeriodic(const PeriodicReuseMatrix& weights,

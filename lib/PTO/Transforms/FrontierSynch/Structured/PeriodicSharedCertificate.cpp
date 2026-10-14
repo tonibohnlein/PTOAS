@@ -9,6 +9,8 @@
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.h"
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedAllocation.h"
 #include "PTO/IR/PTO.h"
+#include "llvm/ADT/APInt.h"
+#include <algorithm>
 #include <map>
 #include <set>
 
@@ -76,6 +78,64 @@ bool reuseWeights(const PeriodicAnalysis& original, const PeriodicAnalysis& orde
     }
     return true;
 }
+std::optional<PeriodicSharedAllocation> suffixAssignment(const PeriodicAnalysis& original,
+    const PeriodicAnalysis& order, const std::vector<uint32_t>& records)
+{
+    std::map<std::pair<uint32_t, uint32_t>, std::vector<uint32_t>> directions;
+    for (uint32_t i = 0; i < records.size(); ++i) {
+        const auto& record = original.generators[records[i]];
+        directions[{original.payloads[record.source].pipe, original.payloads[record.target].pipe}].push_back(i);
+    }
+    PeriodicSharedAllocation result;
+    result.phases.resize(records.size());
+    for (auto& entry : directions) {
+        auto& phases = entry.second;
+        std::sort(phases.begin(), phases.end(), [&](auto a, auto b) {
+            return original.generators[records[a]].source < original.generators[records[b]].source;
+        });
+        for (std::size_t i = 1; i < phases.size(); ++i) {
+            if (original.generators[records[phases[i - 1]]].source ==
+                original.generators[records[phases[i]]].source) { return std::nullopt; }
+        }
+        // Native source-pipe starts form one ordered chain. Each consumer's
+        // reachable publication phases are therefore an exact suffix in this
+        // supplied order. Derive its first position without a pair matrix.
+        std::vector<std::optional<uint64_t>> thresholds(phases.size());
+        for (std::size_t r = 0; r < phases.size(); ++r) {
+            const auto& current = original.generators[records[phases[r]]];
+            std::optional<llvm::APInt> first;
+            for (std::size_t s = 0; s < phases.size(); ++s) {
+                const auto& next = original.generators[records[phases[s]]];
+                auto query = order.completionThreshold(current.target, {next.source, PeriodicEventKind::Start});
+                if (query.error != PeriodicQueryError::None) { return std::nullopt; }
+                if (!query.displacement) { continue; }
+                auto period = llvm::APInt(128, current.displacement) + llvm::APInt(128, *query.displacement);
+                auto position = period * llvm::APInt(128, phases.size()) + llvm::APInt(128, s);
+                if (!first || position.ult(*first)) { first = position; }
+            }
+            if (first) {
+                if (first->getActiveBits() > 64) { return std::nullopt; }
+                thresholds[r] = first->getZExtValue();
+            }
+        }
+        auto assigned = allocatePeriodicSuffixes(thresholds);
+        if (assigned.status != PeriodicSharedAllocationStatus::Success) { return std::nullopt; }
+        const auto cycleBegin = result.cycles.size();
+        for (auto cycle : assigned.cycles) {
+            cycle.firstPhase = phases[cycle.firstPhase];
+            result.cycles.push_back(cycle);
+        }
+        for (std::size_t i = 0; i < phases.size(); ++i) {
+            auto phase = assigned.phases[i];
+            phase.successor = phases[phase.successor];
+            phase.cycle += static_cast<uint32_t>(cycleBegin);
+            result.phases[phases[i]] = phase;
+        }
+        result.budget = std::max(result.budget, assigned.budget);
+        result.suffixPhases += assigned.suffixPhases;
+    }
+    return result;
+}
 std::optional<int64_t> number(DictionaryAttr dictionary, StringRef key)
 {
     auto attr = dictionary.getAs<IntegerAttr>(key);
@@ -135,6 +195,9 @@ std::optional<PeriodicSharedAssignment> buildPeriodicSharedAssignment(const Peri
         reconstructed = analyzePeriodicDemands(analysis.payloads, analysis.generators, native);
         if (!reconstructed.error.empty()) { return {}; }
         order = &reconstructed;
+    }
+    if (auto allocation = suffixAssignment(analysis, *order, records)) {
+        return PeriodicSharedAssignment{std::move(*allocation), std::move(records), exact};
     }
     PeriodicReuseMatrix weights;
     if (!reuseWeights(analysis, *order, records, weights)) { return {}; }

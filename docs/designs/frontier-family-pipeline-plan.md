@@ -44,7 +44,7 @@ draft obligation; its excess formula must not authorize a production decision.
 | R2 (implemented) | Core-chain periodic frontier specialization | Exact demand/query agreement, linear scan/relaxation scaling and period/residue scores | M1/M3; Section 5.4 |
 | R3 (qualifying paths implemented) | Writer-centered guarded storage and shared boundary scans | Exact conflict/boundary agreement, including macro envelopes and protected effects; read-heavy scaling | M1/M3; Section 5.2 |
 | R4a | Ordered periodic/repeated first-reuse sweeps | Certified applicability, linear query counts, exact capacity and finite-restriction checks | M2/M4; Propositions 7.8/7.10 |
-| R4b | Linear periodic allocation from suffix thresholds | Independent command-graph reuse/width oracle; no general assignment matrix on this route | M2/M4; Proposition 7.12 |
+| R4b (implemented for numerical periodic certificates) | Linear periodic allocation from suffix thresholds | Independent command-graph reuse/width oracle; no general assignment matrix on this route | M2/M4; Proposition 7.12 |
 | R4c | Direct modulo-lane span extraction and qualified boundary export | Exact span/presence agreement without generation expansion; parent retry preserved | M2/M4; Proposition 7.13, Corollary 7.14 |
 | R5 | Binding-aware multi-output control construction and producer query slicing | Less total constructed/live control, unchanged matching and payload order; Delta lifetime gate separate | M3/M4 |
 | R6 | Normalized logical graph allocation, owned session and closed-child completion import | Shared unified/split stages, allocation before scalar materialization, deleted superseded paths | M3/M4/M5/M6; Sections 6/8 |
@@ -1921,3 +1921,37 @@ parser false positives on already braced nested calls; no suppression was
 added. Receipts: `.local/r3-build.log`, `.local/r3-tests.log`,
 `.local/r3-compliance.log`. No paired compiler timing, Delta recovery, or device
 speedup is claimed by this milestone.
+
+### R4b: suffix-threshold allocation and numerical certificate integration
+
+`allocatePeriodicSuffixes` implements Proposition 7.12 with stable residue
+buckets and the existing checked cycle-potential construction. Its input is an
+exact ordered publication suffix per phase, not a merely sufficient matrix.
+It uses linear storage/arithmetic after thresholds are supplied, including the
+65,536-phase/seven-ID regression, without enumerating IDs. The general Hungarian
+allocator remains available for other certified reuse relations.
+
+Numerical periodic certificate construction now orders unique source phases
+within each direction and derives exact suffix thresholds from the retained
+command-order index. It invokes the linear allocator before constructing any
+matrix. Matching, finite-prefix restriction, directional namespaces, eligible
+IDs and complete-map candidate selection still use the existing certificate
+and physical materializer. Threshold discovery currently uses quadratic phase
+queries; the ordered sweep (R4a) remains open, as do repeated symbolic spans
+and direct modulo-lane endpoints (R4c).
+
+Validation: 6,932 independent interval-width/permutation cases and 19,864
+existing general-matrix cases pass, with layout, absent threshold, invalid
+suffix and integer-boundary checks. The production adapter is exercised in
+the C++ oracle. The shared-allocation fixture was renamed from `.mlir` to
+`.pto` because this checkout's lit configuration discovers only `.pto`.
+Physical-allocation matching/reuse checks pass, including finite prefixes and
+noncontiguous IDs. An explicitly cube-annotated copy of that fixture passes
+logical analysis, allocation with eligible IDs 0–5, and C++ generation through
+the retained pinned backend with synchronization generation disabled. The
+unannotated test fixture's section-inference refusal is preserved separately;
+it is not counted as C++ success. No device execution or speedup is claimed.
+
+Receipts: `.local/r4-suffix-build.log`, `.local/r4-suffix-test-build.log`,
+`.local/r4-suffix-oracle.log`, `.local/r4-suffix-tests.log`,
+`.local/r4-suffix-registered-test.log`, `.local/r4-suffix-pipeline/`.

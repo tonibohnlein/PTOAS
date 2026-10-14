@@ -31,6 +31,7 @@ struct PeriodicSharedAllocation {
     PeriodicSharedAllocationStatus status = PeriodicSharedAllocationStatus::Success;
     std::string error;
     uint64_t budget = 0;
+    uint64_t suffixPhases = 0; // Nonzero when allocated from certified suffix thresholds.
     std::vector<PeriodicSharedPhase> phases;
     std::vector<PeriodicSharedCycle> cycles;
 };
@@ -51,6 +52,14 @@ struct PeriodicSharedAllocation {
 // NoFiniteCover is distinct from a valid cover exceeding uint64 representation.
 // Failed results contain no partial assignment. Empty input succeeds at budget 0.
 PeriodicSharedAllocation allocatePeriodicShared(const PeriodicReuseMatrix& weights);
+// One direction with publication phases in command order. The supplier
+// certifies that consumption of phase r in period zero reaches exactly the
+// publication suffix [firstReuse[r], infinity), with firstReuse[r] > r.
+// Missing thresholds mean no finite assignment. Finite-prefix restriction
+// remains a separate caller obligation. O(c) arithmetic and space after the
+// thresholds are supplied; no flag values or pair matrix are enumerated.
+PeriodicSharedAllocation allocatePeriodicSuffixes(
+    const std::vector<std::optional<uint64_t>>& firstReuse);
 // Hardware adapter. Solve each directed pipe pair independently; lane ranges
 // may overlap across directions. Budget is the largest per-direction budget.
 PeriodicSharedAllocation allocateDirectedPeriodic(const PeriodicReuseMatrix& weights,

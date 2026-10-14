@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exhaustive permutation oracle; no assignment-solver helpers are reused.
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -163,15 +164,73 @@ bool boundaries()
     }
     return fs::allocatePeriodicShared(Matrix{{uint64_t(1), uint64_t(2)}}).status == Status::InvalidInput;
 }
+bool suffixes(uint64_t& checked)
+{
+    for (unsigned count = 1; count <= 4; ++count) {
+        unsigned cases = 1;
+        for (unsigned i = 0; i < count; ++i) { cases *= 2 * count + 1; }
+        for (unsigned pattern = 0; pattern < cases; ++pattern) {
+            auto digits = pattern;
+            std::vector<std::optional<uint64_t>> thresholds(count);
+            Matrix matrix(count, std::vector<std::optional<uint64_t>>(count));
+            for (unsigned r = 0; r < count; ++r) {
+                thresholds[r] = r + 1 + digits % (2 * count + 1);
+                digits /= 2 * count + 1;
+                for (unsigned s = 0; s < count; ++s) {
+                    matrix[r][s] = *thresholds[r] / count + (s < *thresholds[r] % count);
+                }
+            }
+            auto actual = fs::allocatePeriodicSuffixes(thresholds);
+            auto expected = optimum(matrix);
+            unsigned width = 0;
+            for (int point = 0; point < static_cast<int>(count); ++point) {
+                unsigned live = 0;
+                for (unsigned r = 0; r < count; ++r) {
+                    for (int period = -4; period <= 0; ++period) {
+                        const auto begin = period * static_cast<int>(count) + static_cast<int>(r);
+                        const auto end = period * static_cast<int>(count) + static_cast<int>(*thresholds[r]);
+                        live += begin <= point && point < end;
+                    }
+                }
+                width = std::max(width, live);
+            }
+            if (actual.status != Status::Success || !expected || actual.budget != width ||
+                actual.budget != expected->getZExtValue() || actual.suffixPhases != count || !layout(matrix, actual)) {
+                return false;
+            }
+            ++checked;
+        }
+    }
+    std::vector<std::optional<uint64_t>> large(65536);
+    for (uint64_t r = 0; r < large.size(); ++r) { large[r] = r + 7; }
+    auto result = fs::allocatePeriodicSuffixes(large);
+    if (result.status != Status::Success || result.budget != 7 || result.suffixPhases != large.size()) { return false; }
+    if (fs::allocatePeriodicSuffixes({0}).status != Status::InvalidInput ||
+        fs::allocatePeriodicSuffixes({std::nullopt}).status != Status::NoFiniteCover ||
+        fs::allocatePeriodicSuffixes({UINT64_MAX}).budget != UINT64_MAX ||
+        fs::allocatePeriodicSuffixes({UINT64_MAX, UINT64_MAX}).budget != UINT64_MAX) { return false; }
+    // Exercise the production command-order adapter, not only the kernel.
+    auto analysis = fs::analyzePeriodicDemands({{0}, {1}, {0}, {1}},
+        {{0, 1, 0}, {1, 2, 0}, {2, 3, 0}, {3, 0, 1}});
+    auto assigned = fs::buildPeriodicSharedAssignment(analysis);
+    return assigned && assigned->allocation.suffixPhases == assigned->records.size() &&
+           assigned->allocation.suffixPhases != 0;
+}
 } // namespace
 int runPeriodicSharedAllocationChecks()
 {
-    uint64_t checked = 0;
+    uint64_t checked = 0, suffixChecked = 0;
+    if (!suffixes(suffixChecked)) {
+        llvm::errs() << "periodic suffix allocation checks failed\n";
+        return 1;
+    }
     if (!exhaustive(checked) || !boundaries() || !directedNamespaces()) {
         llvm::errs() << "periodic shared allocation checks failed\n";
         return 1;
     }
     llvm::outs() << "periodic shared allocation: " << checked
                  << " permutation-oracle matrices plus capacity, zero-cycle and overflow boundaries passed\n";
+    llvm::outs() << "periodic suffix allocation: " << suffixChecked
+                 << " interval/permutation cases and 65536 phases passed\n";
     return 0;
 }
