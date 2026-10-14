@@ -2262,3 +2262,26 @@ single runs support no speedup claim. This fixes query-construction scaling
 for selected native endpoints; it does not explain or solve Delta's remaining
 large root. Exact tool/input hashes, source diff and receipts are retained in
 `.local/r5-native-selections/`.
+
+### R4/R7 validation: asymmetric commands at a shared cut
+
+The shared command-graph oracle now has a direct regression for A(P), B(Q),
+C(Q), D(R), with handoffs A->C and B->D. B's outgoing SET and C's incoming WAIT
+share one textual cut. Without a local barrier the oracle must not infer
+SET->WAIT or C_B->I_C; with the intervening barrier both orders hold. Matching,
+native start/completion chains and the absence of unrelated A->D order are
+checked separately. The same payload/edge fixtures exercise production finite
+rank certificates and physical allocation with an independent closure oracle.
+
+That allocation oracle had tracked numeric IDs globally. It now tracks the
+actual (source pipe, target pipe, ID) namespace, so unrelated directions may
+legitimately use the same number. This is a test-oracle correction; the
+production allocator already uses directed namespaces. Its existing entry
+`sync_shared_handoff_allocation.mlir` was not discovered by this repository's
+`.pto`-only lit configuration; it is now a `.pto` fixture and runs both the
+shared allocator and finite rank-query checks plus the new command-cut check.
+
+All three focused logical insertion, finite allocation and shared allocation
+suites pass. Incremental compilation, diff checks and the compliance prefilter
+pass. Receipts: `.local/r4-command-cuts/`. This closes the explicit R4 shared-cut
+semantics regression; remaining Section 7 span/export work is unchanged.

@@ -9,6 +9,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <map>
+#include <tuple>
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 namespace {
@@ -53,7 +54,8 @@ bool check(func::FuncOp function, ArrayRef<uint32_t> pipes, ArrayRef<fs::Storage
     close(graph);
     auto allocation = fs::decodeFiniteAllocation(function, certificate, {0, 1, 2, 3, 4, 5});
     if (failed(allocation) || allocation->records.size() != rows.size()) { return false; }
-    std::map<int64_t, uint32_t> last;
+    // Physical IDs are independent in each directed pipe namespace.
+    std::map<std::tuple<uint32_t, uint32_t, int64_t>, uint32_t> last;
     for (std::size_t i = 0; i < rows.size(); ++i) {
         auto row = cast<DictionaryAttr>(rows[i]);
         const auto record = row.getAs<IntegerAttr>("record").getInt();
@@ -73,12 +75,13 @@ bool check(func::FuncOp function, ArrayRef<uint32_t> pipes, ArrayRef<fs::Storage
         }
         const auto& assigned = allocation->records[i];
         if (assigned.record != record || assigned.ids.size() != 1) { return false; }
-        auto found = last.find(assigned.ids.front());
+        const auto resource = std::make_tuple(pipes[edge.source], pipes[edge.target], assigned.ids.front());
+        auto found = last.find(resource);
         if (found != last.end()) {
             const bool same = pipes[found->second] == pipes[edge.source];
             if (!graph[2*found->second + (same ? 0 : 1)][2*edge.source]) { return false; }
         }
-        last[assigned.ids.front()] = edge.target;
+        last[resource] = edge.target;
     }
     return true;
 }
@@ -111,7 +114,11 @@ int runFiniteAllocationQueryChecks()
         b.getUnknownLoc(), "finite_rank_query_checks", b.getFunctionType({}, {})));
     if (!check(*function, {}, {}) || !check(*function, {0, 1}, {{0, 1}}) ||
         !check(*function, {0, 1, 0, 1, 2, 0}, {{0, 1}, {1, 2}, {2, 3}, {3, 4}, {4, 5}}) ||
-        !check(*function, {0, 1, 0, 2, 0, 1}, {{0, 1}, {0, 4}, {3, 5}}) || !compact(context)) {
+        !check(*function, {0, 1, 0, 2, 0, 1}, {{0, 1}, {0, 4}, {3, 5}}) ||
+        // A(P), B(Q), C(Q), D(R): B's outgoing SET and C's incoming WAIT
+        // share a textual cut. Only the second case supplies a local barrier.
+        !check(*function, {0, 1, 1, 2}, {{0, 2}, {1, 3}}) ||
+        !check(*function, {0, 1, 1, 2}, {{0, 2}, {1, 3}, {1, 2}}) || !compact(context)) {
         llvm::errs() << "finite rank-query certificate check failed\n"; return 1;
     }
     llvm::outs() << "finite rank-query compact profiles and command-order oracle passed\n";
