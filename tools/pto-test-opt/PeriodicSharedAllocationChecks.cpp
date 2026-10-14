@@ -209,6 +209,21 @@ bool suffixes(uint64_t& checked)
         fs::allocatePeriodicSuffixes({std::nullopt}).status != Status::NoFiniteCover ||
         fs::allocatePeriodicSuffixes({UINT64_MAX}).budget != UINT64_MAX ||
         fs::allocatePeriodicSuffixes({UINT64_MAX, UINT64_MAX}).budget != UINT64_MAX) { return false; }
+    for (uint32_t count : {8U, 32U, 128U}) {
+        std::vector<fs::PeriodicPayload> payloads;
+        std::vector<fs::PeriodicRecord> records;
+        for (uint32_t site = 0; site < 2 * count; ++site) {
+            payloads.push_back({site % 2});
+            records.push_back({site, (site + 1) % (2 * count), uint64_t(site + 1 == 2 * count)});
+        }
+        auto chain = fs::analyzePeriodicDemands(payloads, records);
+        auto cyclic = fs::buildPeriodicAllocation(chain);
+        if (!cyclic.error.empty() || cyclic.directions.size() != 2) { return false; }
+        for (const auto& direction : cyclic.directions) {
+            if (direction.handoffs.size() != count || direction.reuseQueries > 3 * count ||
+                direction.uniformBudget != 1) { return false; }
+        }
+    }
     // Exercise the production command-order adapter, not only the kernel.
     auto analysis = fs::analyzePeriodicDemands({{0}, {1}, {0}, {1}},
         {{0, 1, 0}, {1, 2, 0}, {2, 3, 0}, {3, 0, 1}});

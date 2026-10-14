@@ -32,6 +32,7 @@ struct DirectedAllocation {
     uint32_t payloadTypes = 0;
     std::vector<DirectedHandoff> handoffs; // Source order; phase r is its array index.
     std::optional<uint64_t> uniformBudget = uint64_t(0);
+    uint64_t reuseQueries = 0;
     AllocationNumber handoffCount(uint64_t payloadPrefixLength) const;
     AllocationNumber finiteBudget(uint64_t payloadPrefixLength) const;
     // Missing prefix requests uniform certification over arbitrarily long prefixes.

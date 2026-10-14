@@ -46,6 +46,7 @@ def check(case, result):
         reach, pairs = handoffs(case, types * (6 * types + 8), source, target)
         ends, _ = lifetimes(reach, pairs)
         phases = len(pool["handoffs"])
+        assert pool["reuse_queries"] <= 3 * phases
         expected_reuse = [None if ends[r] == len(pairs) else ends[r] - r for r in range(phases)]
         assert [entry["first_reuse"] for entry in pool["handoffs"]] == expected_reuse
         uniform = None if None in expected_reuse else max(expected_reuse)

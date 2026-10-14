@@ -43,7 +43,7 @@ draft obligation; its excess formula must not authorize a production decision.
 | R1 (implemented) | SCC-ordered completion transfer | Concrete pending-state oracle, fixed-child containment, bounded fact propagation pass | M6; Section 6 |
 | R2 (implemented) | Core-chain periodic frontier specialization | Exact demand/query agreement, linear scan/relaxation scaling and period/residue scores | M1/M3; Section 5.4 |
 | R3 (qualifying paths implemented) | Writer-centered guarded storage and shared boundary scans | Exact conflict/boundary agreement, including macro envelopes and protected effects; read-heavy scaling | M1/M3; Section 5.2 |
-| R4a | Ordered periodic/repeated first-reuse sweeps | Certified applicability, linear query counts, exact capacity and finite-restriction checks | M2/M4; Propositions 7.8/7.10 |
+| R4a (numerical ordered path implemented) | Ordered periodic/repeated first-reuse sweeps | Certified applicability, linear query counts, exact capacity and finite-restriction checks | M2/M4; Propositions 7.8/7.10 |
 | R4b (implemented for numerical periodic certificates) | Linear periodic allocation from suffix thresholds | Independent command-graph reuse/width oracle; no general assignment matrix on this route | M2/M4; Proposition 7.12 |
 | R4c | Direct modulo-lane span extraction and qualified boundary export | Exact span/presence agreement without generation expansion; parent retry preserved | M2/M4; Proposition 7.13, Corollary 7.14 |
 | R5 | Binding-aware multi-output control construction and producer query slicing | Less total constructed/live control, unchanged matching and payload order; Delta lifetime gate separate | M3/M4 |
@@ -1955,3 +1955,23 @@ it is not counted as C++ success. No device execution or speedup is claimed.
 Receipts: `.local/r4-suffix-build.log`, `.local/r4-suffix-test-build.log`,
 `.local/r4-suffix-oracle.log`, `.local/r4-suffix-tests.log`,
 `.local/r4-suffix-registered-test.log`, `.local/r4-suffix-pipeline/`.
+
+
+### R4a: monotone reuse sweep for certified ordered numerical handoffs
+
+The numerical directional allocator now initializes the first reusable
+publication by one phase scan, then advances a shared publication cursor for
+ordered consumers. Native publication/consumption chains and the checked
+period-wrap order bound cursor movement to one period. The shared suffix
+certificate adapter uses the same sweep when ordered matching is certified;
+unordered matching retains exact threshold discovery. This is not a claim
+that arbitrary repeated symbolic child spans have acquired a linear query bound.
+
+The periodic-demand, shared-allocation and physical-allocation suites pass.
+Independent unfolded graphs check thresholds and finite budgets; 8/32/128-phase
+chains and existing numerical fixtures check at most three reuse queries per
+phase. Infinity and near-64-bit boundary cases remain covered. No device or
+paired compiler-time claim is made. The incremental build passes; compliance
+brace findings are parser false positives on already braced nested calls.
+Receipts: `.local/r4-sweep-build.log`, `.local/r4-sweep-tests.log`,
+`.local/r4-sweep-compliance.log`.
