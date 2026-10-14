@@ -30,7 +30,7 @@ public:
     SmallVector<Operation*> replay;
 };
 RegionExpressions::Id RegionExpressions::cofactorAtCut(Id expression, Operation* cut,
-                                                       llvm::DenseMap<Id, Id>& memo)
+    llvm::DenseMap<Id, Id>& memo, llvm::function_ref<bool(Id)> shared)
 {
     const auto assumptions = detail::originalCutFacts(cut);
     SmallVector<Id> pending{expression}, order;
@@ -38,6 +38,7 @@ RegionExpressions::Id RegionExpressions::cofactorAtCut(Id expression, Operation*
     while (!pending.empty()) {
         Id next = pending.pop_back_val();
         if (memo.count(next) || !seen.insert(next).second) { continue; }
+        if (shared && shared(next)) { memo[next] = next; continue; }
         order.push_back(next);
         appendOperands(nodes[next], pending);
     }
@@ -62,7 +63,7 @@ RegionExpressions::Id RegionExpressions::cofactorAtCut(Id expression, Operation*
     return memo.lookup(expression);
 }
 FailureOr<std::shared_ptr<const CutExpressionRecipe>> RegionExpressions::prepareContextual(
-    Id expression, Operation* cut, CutEmission& context)
+    Id expression, Operation* cut, CutEmission& context, const SharedCutPlanning* shared)
 {
     emissionMessage.clear();
     auto function = cut ? cut->getParentOfType<func::FuncOp>() : func::FuncOp();
@@ -85,7 +86,14 @@ FailureOr<std::shared_ptr<const CutExpressionRecipe>> RegionExpressions::prepare
             context.cofactors[bound] = bound;
         }
     }
-    recipe->selected = cofactorAtCut(expression, cut, context.cofactors);
+    auto binding = [&](Id id) {
+        if (!shared || !shared->values) { return false; }
+        if (context.planningSharedRequests != UINT64_MAX) { ++context.planningSharedRequests; }
+        if (!shared->values(id)) { return false; }
+        context.plannedValues.insert(id);
+        return true;
+    };
+    recipe->selected = cofactorAtCut(expression, cut, context.cofactors, binding);
     if (!constructionMessage.empty() || !valid(recipe->selected)) {
         emissionMessage = "guarded expression specialization is unavailable"; return failure();
     }

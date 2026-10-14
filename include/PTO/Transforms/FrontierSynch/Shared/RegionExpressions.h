@@ -213,6 +213,7 @@ public:
         // Saturates on overflow; instrumentation does not govern admission.
         uint64_t replayBindings = 0;
         uint64_t sharedRequests = 0, sharedImports = 0;
+        uint64_t planningSharedRequests = 0;
         // Planning-only bindings supplied by dominating shared recipes. They
         // stop specialization just like emitted values; materialization must
         // provide their actual Values or reject before constructing any IR.
@@ -234,8 +235,12 @@ public:
     // contain already available expression/input bindings; the recipe retains
     // only their keys and lowering requires those bindings in the same context.
     // Empty contexts produce self-contained original-value availability recipes.
+    // Borrowed only for this request. Answers belong to one immutable shared
+    // environment for the lifetime of context; a changed environment requires
+    // a fresh context. Only reached bindings enter plannedValues/cofactors.
+    struct SharedCutPlanning { llvm::function_ref<bool(Id)> values; };
     FailureOr<std::shared_ptr<const CutExpressionRecipe>> prepareContextual(
-        Id expression, Operation* cut, CutEmission& context);
+        Id expression, Operation* cut, CutEmission& context, const SharedCutPlanning* shared = nullptr);
     // Borrowed for this emission only. The caller certifies the same arena and
     // binding environment, dominating original cuts and retained preparation.
     // Only bindings reached by this recipe are imported into the local memo.
@@ -292,7 +297,8 @@ private:
                          const llvm::DenseMap<Id, Value>& memo, SmallVectorImpl<Id>& order);
     Value emitNode(const Node& node, OpBuilder& builder, Location location,
                    const llvm::DenseMap<Id, Value>& memo) const;
-    Id cofactorAtCut(Id expression, Operation* cut, llvm::DenseMap<Id, Id>& memo);
+    Id cofactorAtCut(Id expression, Operation* cut, llvm::DenseMap<Id, Id>& memo,
+                     llvm::function_ref<bool(Id)> shared);
     std::vector<std::shared_ptr<void>> inputOwners;
     llvm::DenseSet<Operation*> forbiddenRecomputation;
     llvm::DenseMap<Id, Evaluation> evaluations;

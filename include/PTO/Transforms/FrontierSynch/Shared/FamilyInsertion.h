@@ -12,6 +12,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/EndpointPieces.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include <map>
+#include <functional>
 namespace mlir::pto::frontiersynch {
 class FamilyEndpointRecipe;
 // Split construction from lowering. Recipes retain exact pieces and validated
@@ -41,14 +42,20 @@ struct ContextualEndpointFamily {
 // original cuts are unchanged; this owner must not survive an arena rollback.
 class ContextualFamilyExpressions {
 public:
-    explicit ContextualFamilyExpressions(std::shared_ptr<RegionExpressions> arena) : owner(std::move(arena)) {}
+    using SharedLookup = std::function<bool(RegionExpressions::Id, Operation*)>;
+    // The optional lookup has one immutable binding environment for this owner.
+    // It is used during preparation only; returned recipes retain reached keys.
+    explicit ContextualFamilyExpressions(std::shared_ptr<RegionExpressions> arena, SharedLookup shared = {})
+        : owner(std::move(arena)), sharedLookup(std::move(shared)) {}
     const std::shared_ptr<RegionExpressions>& arena() const { return owner; }
     // Shared roots must have validated recipes at dominating original cuts.
     // Bind their immutable expression identities before specializing a root.
     FailureOr<std::shared_ptr<const CutExpressionRecipe>> prepare(RegionExpressions::Id expression, Operation* cut,
         ArrayRef<RegionExpressions::Id> shared = {});
+    std::pair<uint64_t, uint64_t> sharedBindingWork() const;
 private:
     std::shared_ptr<RegionExpressions> owner;
+    SharedLookup sharedLookup;
     std::map<Operation*, RegionExpressions::CutEmission> contexts;
     std::map<Operation*, std::map<RegionExpressions::Id, std::shared_ptr<const CutExpressionRecipe>>> recipes;
 };

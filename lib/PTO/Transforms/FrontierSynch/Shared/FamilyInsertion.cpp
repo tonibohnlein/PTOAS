@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Retain numerical and contextual family recipes through composition; lower at insertion.
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "FamilyMaterialization.h"
 #include "MixedFamilyInsertion.h"
 #include "MixedEndpointPieces.h"
@@ -43,6 +44,7 @@ public:
         std::shared_ptr<const CutExpressionRecipe> binding;
     };
     std::vector<Shared> shared;
+    uint64_t sharedLookups = 0, sharedCandidates = 0, sharedBindings = 0;
     scf::ForOp outer;
     std::vector<EndpointPiece> pieces;
     std::vector<std::shared_ptr<const FamilyExpressionRecipe>> selectors;
@@ -318,10 +320,21 @@ FailureOr<std::shared_ptr<const CutExpressionRecipe>> ContextualFamilyExpression
     }
     auto found = cache.find(expression);
     if (found != cache.end()) { return found->second; }
-    auto recipe = owner->prepareContextual(expression, cut, context);
+    auto lookup = [&](RegionExpressions::Id id) { return sharedLookup && sharedLookup(id, cut); };
+    RegionExpressions::SharedCutPlanning bindings{lookup};
+    auto recipe = owner->prepareContextual(expression, cut, context, sharedLookup ? &bindings : nullptr);
     if (failed(recipe)) { return failure(); }
     cache.emplace(expression, *recipe);
     return *recipe;
+}
+std::pair<uint64_t, uint64_t> ContextualFamilyExpressions::sharedBindingWork() const
+{
+    uint64_t lookups = 0, bindings = 0;
+    for (const auto& [cut, context] : contexts) {
+        accumulateCost(lookups, context.planningSharedRequests);
+        accumulateCost(bindings, context.plannedValues.size());
+    }
+    return {lookups, bindings};
 }
 FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndpointRecipe(
     std::shared_ptr<RegionExpressions> arena, ArrayRef<ContextualEndpointFamily> families,
@@ -350,10 +363,21 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndp
     }
     // Shared-root dependencies belong to this immutable recipe, not to the
     // caller's availability cache or a later independent family build.
-    ContextualFamilyExpressions boundExpressions(recipe->arena);
-    auto& endpointExpressions = shared.empty() ? expressions : boundExpressions;
     DominanceInfo dominance(function);
-    std::map<Operation*, SmallVector<RegionExpressions::Id>> available;
+    std::map<RegionExpressions::Id, SmallVector<Operation*>> available;
+    for (const auto& root : recipe->shared) {
+        available[root.expression.expression].push_back(root.expression.cut);
+    }
+    ContextualFamilyExpressions boundExpressions(recipe->arena, [&](RegionExpressions::Id id, Operation* cut) {
+        auto found = available.find(id);
+        if (found == available.end()) { return false; }
+        for (auto* source : found->second) {
+            accumulateCost(recipe->sharedCandidates, 1);
+            if (source == cut || dominance.properlyDominates(source, cut)) { return true; }
+        }
+        return false;
+    });
+    auto& endpointExpressions = shared.empty() ? expressions : boundExpressions;
     for (const auto& family : families) {
         const auto& piece = family.piece;
         auto* cut = piece.cut.before;
@@ -362,24 +386,11 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndp
             (piece.kind != EndpointKind::Set && piece.kind != EndpointKind::Wait &&
              piece.kind != EndpointKind::Barrier) ||
             ((piece.sourcePipe == piece.targetPipe) != (piece.kind == EndpointKind::Barrier))) { return failure(); }
-        auto entry = available.try_emplace(cut);
-        auto bindings = entry.first;
-        bool added = entry.second;
-        if (added) {
-            for (const auto& root : recipe->shared) {
-                if (root.expression.cut == cut || dominance.properlyDominates(root.expression.cut, cut)) {
-                    bindings->second.push_back(root.expression.expression);
-                }
-            }
-        }
         auto prepare = [&](RegionExpressions::Id expression, bool boolean) {
             if (expression >= recipe->arena->size() || recipe->arena->isBoolean(expression) != boolean) {
                 return FailureOr<std::shared_ptr<const CutExpressionRecipe>>(failure());
             }
-            auto roots = added ? ArrayRef<RegionExpressions::Id>(bindings->second) :
-                                 ArrayRef<RegionExpressions::Id>();
-            added = false;
-            return endpointExpressions.prepare(expression, cut, roots);
+            return endpointExpressions.prepare(expression, cut);
         };
         auto guard = prepare(family.activity, true);
         if (failed(guard)) { return failure(); }
@@ -403,6 +414,7 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndp
         recipe->bindings.push_back(std::move(binding));
     }
     recipe->pieceCount = recipe->pieces.size();
+    std::tie(recipe->sharedLookups, recipe->sharedBindings) = boundExpressions.sharedBindingWork();
     return std::shared_ptr<const FamilyEndpointRecipe>(std::move(recipe));
 }
 FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildMixedFamilyEndpointRecipe(
@@ -442,6 +454,9 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildMixedFamilyEndpointR
         contextual = *planned;
         recipe->arena = contextual->arena;
         recipe->shared = contextual->shared;
+        recipe->sharedLookups = contextual->sharedLookups;
+        recipe->sharedCandidates = contextual->sharedCandidates;
+        recipe->sharedBindings = contextual->sharedBindings;
     } else {
         recipe->arena = expressions.arena();
     }
@@ -654,8 +669,15 @@ FailureOr<FamilyEndpointForms> familyEndpointForms(const FamilyEndpointRecipe& r
     SmallVector<FamilyContextPath> contexts;
     if (failed(collectFamilyParts(recipe, leaves, contexts))) { return failure(); }
     FamilyEndpointForms result;
+    llvm::DenseSet<const FamilyEndpointRecipe*> counted;
     for (const auto& part : leaves) {
         const auto& leaf = *part.recipe;
+        if (counted.insert(&leaf).second) {
+            accumulateCost(result.sharedRoots, leaf.shared.size());
+            accumulateCost(result.sharedLookups, leaf.sharedLookups);
+            accumulateCost(result.sharedCandidates, leaf.sharedCandidates);
+            accumulateCost(result.sharedBindings, leaf.sharedBindings);
+        }
         std::size_t numerical = 0;
         for (std::size_t i = 0; i < leaf.pieces.size(); ++i) {
             numerical += !leaf.arena || (!leaf.selectors.empty() && leaf.selectors[i]);
