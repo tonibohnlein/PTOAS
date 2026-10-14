@@ -2164,3 +2164,28 @@ oracles establish the changed recurrence; the diagnostic is not a full Delta
 trace or hardware test. Receipts, exact binary/input hashes and the measured
 production diff: `.local/r5-activity-joins/paired/{metadata,results}.json`.
 Focused validation: `.local/r5-activity-joins/{tests,regression,compliance}.log`.
+
+### R7 checkpoint: eleven-kernel pipeline at `c08615c32`
+
+[The checked-in campaign snapshot](frontier-revised-draft-validation.json)
+pins all eleven input hashes, the planner/allocator binary and separately retained
+C++ backend, flags, resource bounds, stage outcomes and generated-control counts.
+It also includes prepared/materialized/inserted inventories and available
+per-region allocation-work counters. Historical snapshots remain unchanged.
+
+All eleven logical compilations succeed; seven pass six-ID allocation and C++
+generation. No watchdog fires. GroupNorm and causal-convolution decode retain
+uncertified-capacity refusals; prefill lacks its supported allocation export;
+Delta lacks the prefix lifetime export. These are not capacity lower bounds.
+All three GEMMs retain their earlier static command counts. Persistent has
+56/56 SET/WAIT sites and 3,924 logical arithmetic operations (4,600 after physical
+lowering); its single diagnostic logical time is 1.604 seconds.
+
+Prefill still constructs 88,926 logical arithmetic operations and takes 76.419
+seconds in this diagnostic. Delta has 674,844 logical arithmetic operations
+including payload and takes 27.938 seconds. Both need more work. These campaign
+times are not paired speedup measurements; the separate three-pair Delta result
+above is the timing evidence for activity-only rank joins. No device execution
+or full 783-input corpus claim is made. R5, R6, remaining Section 7 exports and
+broader R7 validation remain open. Durable local receipts are under
+`.local/r7-revised-draft-campaign/`.
