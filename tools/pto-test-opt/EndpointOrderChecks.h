@@ -67,6 +67,13 @@ bool contextualEndpointRecipeChecks(const mlir::pto::frontiersynch::NumericTempl
     auto leaf = fs::buildContextualFamilyEndpointRecipe(
         planning, {family}, {{family.ordinal, family.piece.cut.before}});
     if (failed(leaf)) { return false; }
+    // Reusing the availability cache without the first build's shared roots
+    // must produce a self-contained recipe, not inherit a missing binding.
+    auto independent = fs::buildContextualFamilyEndpointRecipe(planning, {family});
+    if (failed(independent)) { return false; }
+    fs::PreparedLogicalPlan retry(0);
+    retry.familyRecipe = *independent;
+    if (failed(fs::materializeLogicalFamilies(retry)) || retry.endpoints.size() != 1) { return false; }
     fs::PreparedLogicalPlan plan(0);
     plan.familyRecipe = *leaf;
     if (!plan.endpoints.empty() || !plan.preparation.empty() ||

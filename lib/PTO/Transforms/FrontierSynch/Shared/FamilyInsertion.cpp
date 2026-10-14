@@ -291,15 +291,25 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFiniteFamilyEndpoint
     return buildRecipe(plan);
 }
 FailureOr<std::shared_ptr<const CutExpressionRecipe>> ContextualFamilyExpressions::prepare(
-    RegionExpressions::Id expression, Operation* cut)
+    RegionExpressions::Id expression, Operation* cut, ArrayRef<RegionExpressions::Id> shared)
 {
     if (!owner) { return failure(); }
-    const auto key = std::make_pair(expression, cut);
-    auto found = recipes.find(key);
-    if (found != recipes.end()) { return found->second; }
-    auto recipe = owner->prepareContextual(expression, cut, contexts[cut]);
+    auto& context = contexts[cut];
+    auto& cache = recipes[cut];
+    bool changed = false;
+    for (auto bound : shared) {
+        if (bound >= owner->size()) { return failure(); }
+        changed |= context.plannedValues.insert(bound).second;
+    }
+    if (changed) {
+        context.cofactors.clear();
+        cache.clear();
+    }
+    auto found = cache.find(expression);
+    if (found != cache.end()) { return found->second; }
+    auto recipe = owner->prepareContextual(expression, cut, context);
     if (failed(recipe)) { return failure(); }
-    recipes.emplace(key, *recipe);
+    cache.emplace(expression, *recipe);
     return *recipe;
 }
 FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndpointRecipe(
@@ -319,12 +329,20 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndp
     if (!function) { return failure(); }
     auto recipe = std::make_shared<FamilyEndpointRecipe>();
     recipe->arena = std::move(arena);
+    std::map<Operation*, llvm::DenseSet<RegionExpressions::Id>> sharedRoots;
     for (const auto& expression : shared) {
         if (!expression.cut || expression.cut->getParentOfType<func::FuncOp>() != function) { return failure(); }
+        if (!sharedRoots[expression.cut].insert(expression.expression).second) { continue; }
         auto planned = expressions.prepare(expression.expression, expression.cut);
         if (failed(planned)) { return failure(); }
         recipe->shared.push_back({expression, std::move(*planned)});
     }
+    // Shared-root dependencies belong to this immutable recipe, not to the
+    // caller's availability cache or a later independent family build.
+    ContextualFamilyExpressions boundExpressions(recipe->arena);
+    auto& endpointExpressions = shared.empty() ? expressions : boundExpressions;
+    DominanceInfo dominance(function);
+    std::map<Operation*, SmallVector<RegionExpressions::Id>> available;
     for (const auto& family : families) {
         const auto& piece = family.piece;
         auto* cut = piece.cut.before;
@@ -333,11 +351,24 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndp
             (piece.kind != EndpointKind::Set && piece.kind != EndpointKind::Wait &&
              piece.kind != EndpointKind::Barrier) ||
             ((piece.sourcePipe == piece.targetPipe) != (piece.kind == EndpointKind::Barrier))) { return failure(); }
+        auto entry = available.try_emplace(cut);
+        auto bindings = entry.first;
+        bool added = entry.second;
+        if (added) {
+            for (const auto& root : recipe->shared) {
+                if (root.expression.cut == cut || dominance.properlyDominates(root.expression.cut, cut)) {
+                    bindings->second.push_back(root.expression.expression);
+                }
+            }
+        }
         auto prepare = [&](RegionExpressions::Id expression, bool boolean) {
             if (expression >= recipe->arena->size() || recipe->arena->isBoolean(expression) != boolean) {
                 return FailureOr<std::shared_ptr<const CutExpressionRecipe>>(failure());
             }
-            return expressions.prepare(expression, cut);
+            auto roots = added ? ArrayRef<RegionExpressions::Id>(bindings->second) :
+                                 ArrayRef<RegionExpressions::Id>();
+            added = false;
+            return endpointExpressions.prepare(expression, cut, roots);
         };
         auto guard = prepare(family.activity, true);
         if (failed(guard)) { return failure(); }

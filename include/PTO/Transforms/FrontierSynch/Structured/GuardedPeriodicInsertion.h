@@ -30,7 +30,8 @@ struct GuardedPeriodicEndpointInput {
 };
 // The numerical reducer already owns canonical records and retained indices.
 // Its endpoint adapter uses the same original-cut rules without constructing
-// an additional guarded quotient. Family IDs remain numerical record IDs.
+// an additional guarded quotient. Provenance members retain numerical record
+// IDs; direction namespaces are assigned by the shared family compiler.
 struct NumericalPeriodicEndpointInput {
     scf::ForOp loop;
     std::shared_ptr<RegionExpressions> expressions;

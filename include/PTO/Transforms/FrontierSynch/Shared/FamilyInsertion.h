@@ -43,11 +43,14 @@ class ContextualFamilyExpressions {
 public:
     explicit ContextualFamilyExpressions(std::shared_ptr<RegionExpressions> arena) : owner(std::move(arena)) {}
     const std::shared_ptr<RegionExpressions>& arena() const { return owner; }
-    FailureOr<std::shared_ptr<const CutExpressionRecipe>> prepare(RegionExpressions::Id expression, Operation* cut);
+    // Shared roots must have validated recipes at dominating original cuts.
+    // Bind their immutable expression identities before specializing a root.
+    FailureOr<std::shared_ptr<const CutExpressionRecipe>> prepare(RegionExpressions::Id expression, Operation* cut,
+        ArrayRef<RegionExpressions::Id> shared = {});
 private:
     std::shared_ptr<RegionExpressions> owner;
     std::map<Operation*, RegionExpressions::CutEmission> contexts;
-    std::map<std::pair<RegionExpressions::Id, Operation*>, std::shared_ptr<const CutExpressionRecipe>> recipes;
+    std::map<Operation*, std::map<RegionExpressions::Id, std::shared_ptr<const CutExpressionRecipe>>> recipes;
 };
 struct ContextualSharedExpression {
     RegionExpressions::Id expression = RegionExpressions::invalid;

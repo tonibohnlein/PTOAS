@@ -36,8 +36,7 @@ def main():
             assert report["accepted"] and report["unchanged_before_insertion"], report
             assert report["physical_certificate"] and report["allocated"], report
             assert report["recipe_pieces"] > 0, report
-            if not compact:
-                assert report["recipe_only"], report
+            assert report["recipe_only"], report
             physical_check(report, range(6))
             assert not report["trace"]["error"], report
             events = report["trace"]["events"]

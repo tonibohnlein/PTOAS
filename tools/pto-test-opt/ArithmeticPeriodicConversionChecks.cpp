@@ -381,7 +381,9 @@ int runArithmeticPeriodicInputChecks(mlir::func::FuncOp function, const mlir::pt
             result.payloads, result.generators, &*result.guarded, converted.period, residues};
         prepared = fs::prepareGuardedPeriodicEndpoints(function, endpoints, error);
     }
-    if (failed(prepared) || failed(fs::insertLogicalSynchronization(function, **prepared)) ||
+    if (failed(prepared) || !(*prepared)->preparation.empty() || !(*prepared)->endpoints.empty() ||
+        (!(*prepared)->families.empty() && !(*prepared)->familyRecipe) ||
+        failed(fs::insertLogicalSynchronization(function, **prepared)) ||
         failed(verify(function))) {
         llvm::errs() << "arithmetic periodic endpoint preparation: " << error << "\n"; return 1;
     }
@@ -399,6 +401,13 @@ int runArithmeticPeriodicInputChecks(mlir::func::FuncOp function, const mlir::pt
         const auto kind = event->getString("kind");
         if (kind != "set" && kind != "wait") { continue; }
         auto record = event->getInteger("record"), ordinal = event->getInteger("source_ordinal");
+        // Family namespaces are not record identities. The member operand
+        // retains the exact original generator at both matching sides.
+        if (event->getBoolean("record_label").value_or(false)) {
+            auto* members = event->getArray("members");
+            if (!members || members->size() != 1) { return 1; }
+            record = members->front().getAsInteger();
+        }
         auto gap = event->getInteger("gap");
         if (!record || !ordinal || !gap || *record < 0) { return 1; }
         const auto recordCount = result.numerical ? result.numerical->generators.size() : result.generators.size();
