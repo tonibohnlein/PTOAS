@@ -1316,6 +1316,9 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
             {"bridge_candidates", fs::sequenceBridgeWork(analysis).candidates},
             {"bridge_remasked", fs::sequenceBridgeWork(analysis).remasked},
             {"bridge_retained", fs::sequenceBridgeWork(analysis).retained},
+            {"native_candidates", analysis.state ? analysis.state->nativeFrontierWork.candidates : 0},
+            {"native_remasked", analysis.state ? analysis.state->nativeFrontierWork.remasked : 0},
+            {"native_links", analysis.state ? analysis.state->nativeFrontierWork.retained : 0},
             {"boundary_summary_visits", fs::sequenceBoundarySummaryVisits(analysis)}}) << "\n";
         return success(analysis.error.empty());
     }
@@ -1407,6 +1410,9 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         {"bridge_candidates", fs::sequenceBridgeWork(analysis).candidates},
         {"bridge_remasked", fs::sequenceBridgeWork(analysis).remasked},
         {"bridge_retained", fs::sequenceBridgeWork(analysis).retained},
+        {"native_candidates", analysis.state ? analysis.state->nativeFrontierWork.candidates : 0},
+        {"native_remasked", analysis.state ? analysis.state->nativeFrontierWork.remasked : 0},
+        {"native_links", analysis.state ? analysis.state->nativeFrontierWork.retained : 0},
         {"boundary_summary_visits", fs::sequenceBoundarySummaryVisits(analysis)},
         {"implication_checks", analysis.cost.implicationChecks},
         {"expressions", expressions ? expressions->size() : 0}, {"emitted", emitted}}) << "\n";

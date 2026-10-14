@@ -195,6 +195,90 @@ inline bool checkSparseBoundaryImport(func::FuncOp function, ArrayRef<CompoundIn
     }
     return true;
 }
+inline bool checkSequenceNativeFrontier(func::FuncOp function)
+{
+    namespace fs = frontiersynch;
+    Block inputs;
+    auto makeGuard = [&](fs::RegionExpressions& e) {
+        return e.input(inputs.addArgument(IntegerType::get(function.getContext(), 1), function.getLoc()));
+    };
+    auto populate = [](fs::SequenceAnalysisState& state, ArrayRef<BridgeAccess> sites, ArrayRef<fs::Expr> guards) {
+        state.children.resize(guards.size());
+        state.nativeFirst.resize(guards.size()); state.nativeLast.resize(guards.size());
+        std::vector<unsigned> types(guards.size());
+        for (const auto& site : sites) {
+            auto port = state.port(site.group, types[site.group]++, state.c(0));
+            fs::Selected value{port, guards[site.group]};
+            state.nativeFirst[site.group][site.pipe].push_back(value);
+            state.nativeLast[site.group][site.pipe].push_back(value);
+        }
+        state.buildNativeLinks();
+    };
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    std::vector<fs::Expr> guards;
+    for (unsigned i = 0; i < 5; ++i) { guards.push_back(makeGuard(*arena)); }
+    // Multiple pipes in a group exercise simultaneous envelopes. The group
+    // with only pipe 1 leaves pipe 0's pending boundary untouched.
+    const std::vector<BridgeAccess> sites = {
+        {0, 0, false}, {0, 1, false}, {1, 1, false}, {2, 0, false},
+        {2, 1, false}, {3, 0, false}, {4, 0, false}, {4, 1, false}};
+    fs::SequenceAnalysisState state(function, arena);
+    populate(state, sites, guards);
+    for (unsigned bits = 0; bits < 32; ++bits) {
+        SmallVector<std::pair<fs::Expr, fs::Expr>> bindings;
+        for (unsigned i = 0; i < guards.size(); ++i) {
+            bindings.emplace_back(guards[i], arena->boolean(bits & (1U << i)));
+        }
+        fs::RegionExpressions::Substitution substitution(bindings);
+        const auto size = 2 * sites.size();
+        std::vector<std::vector<bool>> expected(size, std::vector<bool>(size)), actual = expected;
+        auto active = [&](unsigned i) { return bool(bits & (1U << sites[i].group)); };
+        for (unsigned i = 0; i < sites.size(); ++i) {
+            if (!active(i)) { continue; }
+            expected[2 * i][2 * i + 1] = actual[2 * i][2 * i + 1] = true;
+            for (unsigned j = 0; j < sites.size(); ++j) {
+                if (active(j) && sites[i].group < sites[j].group && sites[i].pipe == sites[j].pipe) {
+                    expected[2 * i][2 * j] = expected[2 * i + 1][2 * j + 1] = true;
+                }
+            }
+        }
+        for (const auto& [child, links] : state.incoming) {
+            for (const auto& link : links) {
+                auto present = arena->constantValue(arena->substitute(link.guard, substitution));
+                if (!present) { return bridgeCheckFailure(__LINE__); }
+                if (*present) { actual[link.source][link.target] = true; }
+            }
+        }
+        auto close = [](auto& graph) {
+            for (unsigned k = 0; k < graph.size(); ++k) {
+                for (unsigned i = 0; i < graph.size(); ++i) {
+                    for (unsigned j = 0; j < graph.size(); ++j) {
+                        graph[i][j] = graph[i][j] || (graph[i][k] && graph[k][j]);
+                    }
+                }
+            }
+        };
+        close(expected); close(actual);
+        if (expected != actual) { return bridgeCheckFailure(__LINE__); }
+    }
+    for (unsigned count : {128U, 256U, 1024U}) {
+        auto e = std::make_shared<fs::RegionExpressions>();
+        const auto shared = makeGuard(*e);
+        std::vector<BridgeAccess> chain;
+        for (unsigned i = 0; i < count; ++i) { chain.push_back({i, 0, false}); }
+        for (auto guard : {e->boolean(true), e->boolean(false), shared}) {
+            fs::SequenceAnalysisState repeated(function, e);
+            std::vector<fs::Expr> present(count, guard);
+            populate(repeated, chain, present);
+            const auto pairs = guard == e->boolean(false) ? 0 : count - 1;
+            const auto masks = guard == shared ? count - 1 : 0;
+            if (repeated.nativeFrontierWork.candidates != pairs || repeated.nativeFrontierWork.remasked != masks ||
+                repeated.nativeFrontierWork.retained != 2 * pairs) { return bridgeCheckFailure(__LINE__); }
+        }
+    }
+    llvm::outs() << "native-frontier checks: 32 guarded closures; linear 128/256/1024-child work\n";
+    return true;
+}
 inline bool checkSequenceBridgeWork(func::FuncOp function, const SyncInput& input)
 {
     if (input.instructions().empty()) { return bridgeCheckFailure(__LINE__); }
@@ -283,7 +367,7 @@ inline bool checkSequenceBridgeWork(func::FuncOp function, const SyncInput& inpu
             }
         }
     }
-    return checkSparseBoundaryImport(function, phases);
+    return checkSparseBoundaryImport(function, phases) && checkSequenceNativeFrontier(function);
 }
 } // namespace mlir::pto::test
 #endif

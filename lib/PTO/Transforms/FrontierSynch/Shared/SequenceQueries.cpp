@@ -8,6 +8,20 @@
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 namespace mlir::pto::frontiersynch {
+// A child replaces the complete preceding group only after its links have
+// been constructed. Keep genuine conditional alternatives, including distinct
+// simultaneous envelopes; discard only presence proved false by the arena.
+void SequenceAnalysisState::maskFrontier(std::vector<Selected>& values, Expr replaced, SequenceBridgeWork& work)
+{
+    if (expressions.constantValue(replaced) == 1) { values.clear(); return; }
+    if (expressions.constantValue(replaced) == 0) { return; }
+    const auto keep = negate(replaced);
+    llvm::erase_if(values, [&](Selected& value) {
+        ++work.remasked;
+        value.present = both(value.present, keep);
+        return expressions.constantValue(value.present) == 0;
+    });
+}
 void SequenceAnalysisState::bridges()
 {
     bridgeWork = {};
@@ -86,19 +100,6 @@ void SequenceAnalysisState::bridges()
             }
         }
     }
-    // Update a complete occurrence group before discarding dead alternatives.
-    // In particular, simultaneous macro envelopes never suppress one another.
-    // Only constant-false entries are removed; unresolved guards remain exact.
-    auto maskFrontier = [&](std::vector<Selected>& values, Expr replaced) {
-        if (expressions.constantValue(replaced) == 1) { values.clear(); return; }
-        if (expressions.constantValue(replaced) == 0) { return; }
-        const auto keep = negate(replaced);
-        llvm::erase_if(values, [&](Selected& value) {
-            ++bridgeWork.remasked;
-            value.present = both(value.present, keep);
-            return expressions.constantValue(value.present) == 0;
-        });
-    };
     auto appendLive = [&](std::vector<Selected>& frontier, const std::vector<Selected>& values) {
         for (auto value : values) {
             if (expressions.constantValue(value.present) != 0) { frontier.push_back(value); }
@@ -123,7 +124,7 @@ void SequenceAnalysisState::bridges()
                     for (auto old : writers) { storageCrossing(cell, old, first); }
                 }
             }
-            maskFrontier(writers, overwritten);
+            maskFrontier(writers, overwritten, bridgeWork);
             appendLive(writers, summary.lastWriters);
             for (auto& [p, old] : readers) {
                 Expr replaced = overwritten;
@@ -131,7 +132,7 @@ void SequenceAnalysisState::bridges()
                 if (found != summary.lastReaders.end()) {
                     for (auto current : found->second) { replaced = either(replaced, current.present); }
                 }
-                maskFrontier(old, replaced);
+                maskFrontier(old, replaced, bridgeWork);
             }
             for (const auto& [p, current] : summary.lastReaders) { appendLive(readers[p], current); }
         }
@@ -472,6 +473,40 @@ bool SequenceAnalysisState::valueBridges()
     }
     return error.empty();
 }
+void SequenceAnalysisState::buildNativeLinks()
+{
+    nativeFrontierWork = {};
+    auto add = [&](std::size_t source, std::size_t target, Expr guard) {
+        if (expressions.constantValue(guard) == 0) { return; }
+        incoming[ports[target / 2].child].push_back({source, target, guard});
+        ++nativeFrontierWork.retained;
+    };
+    std::map<uint32_t, std::vector<Selected>> preceding;
+    for (uint32_t childId = 0; childId < children.size(); ++childId) {
+        for (const auto& [p, firsts] : nativeFirst[childId]) {
+            auto& frontier = preceding[p];
+            auto nonempty = no();
+            for (auto selected : firsts) {
+                if (expressions.constantValue(selected.present) == 0) { continue; }
+                nonempty = either(nonempty, selected.present);
+                auto first = selected.port;
+                for (auto old : frontier) {
+                    ++nativeFrontierWork.candidates;
+                    auto guard = both(old.present, selected.present);
+                    add(2*old.port, 2*first, guard);
+                    add(2*old.port+1, 2*first+1, guard);
+                }
+            }
+            maskFrontier(frontier, nonempty, nativeFrontierWork);
+            auto found = nativeLast[childId].find(p);
+            if (found != nativeLast[childId].end()) {
+                for (auto selected : found->second) {
+                    if (expressions.constantValue(selected.present) != 0) { frontier.push_back(selected); }
+                }
+            }
+        }
+    }
+}
 bool SequenceAnalysisState::closure()
 {
     crossingPresence.reset();
@@ -486,26 +521,7 @@ bool SequenceAnalysisState::closure()
             incoming[ports[target / 2].child].push_back({source, target, guard});
         }
     };
-    std::map<uint32_t, std::vector<Selected>> preceding;
-    for (uint32_t childId = 0; childId < children.size(); ++childId) {
-        for (const auto& [p, firsts] : nativeFirst[childId]) {
-            auto nonempty = no();
-            for (auto selected : firsts) {
-                nonempty = either(nonempty, selected.present);
-                auto first = selected.port;
-                for (auto old : preceding[p]) {
-                    auto guard = both(old.present, selected.present);
-                    add(2*old.port, 2*first, guard);
-                    add(2*old.port+1, 2*first+1, guard);
-                }
-            }
-            for (auto& old : preceding[p]) { old.present = both(old.present, negate(nonempty)); }
-            auto found = nativeLast[childId].find(p);
-            if (found != nativeLast[childId].end()) {
-                llvm::append_range(preceding[p], found->second);
-            }
-        }
-    }
+    buildNativeLinks();
     for (const auto& edge : nativeValueCrossings) { add(2*edge.source+1, 2*edge.target, edge.guard); }
     // Estimate before leaf callbacks or symbolic crossing circuits are built.
     // Each attempt receives the same native and full crossing graph.
