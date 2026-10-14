@@ -1,0 +1,3697 @@
+{
+  "revision": "c08615c320b52c35b13f04c10e93a1e1250bb32d",
+  "scope": "Pinned logical/physical pipeline after revised-draft graph kernels and guarded rank-circuit changes. C++ uses a separately retained backend identified by hash. Single diagnostic timings; no device execution.",
+  "alias_policy": "may-not-alias",
+  "eligible_ids": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "worker_count": 1,
+  "watchdog_seconds": 240,
+  "memory_limit_bytes": 4294967296,
+  "paired_timing": false,
+  "device_execution": false,
+  "tools": {
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt": "8e1d5baff7ee9b0d1986ecdaa6f66c1cc1715c32a6864598caed3ec85635965c",
+    ".local/three-paths/review-plan-m7/ptoas-native": "30646a6e0e789283ea20a0c73aa8d92e90851c6ce6a087291643b048e80d56e0"
+  },
+  "flags": {
+    "logical": [
+      "--mlir-disable-threading",
+      "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5"
+    ],
+    "allocation": [
+      "--mlir-disable-threading",
+      "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5"
+    ],
+    "cpp": [
+      "--pto-level=level3",
+      "--enable-insert-sync=false",
+      "--enable-plan-memory=false"
+    ]
+  },
+  "cases": [
+    {
+      "id": "tilelang_gemm",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/tilelang/input.pto",
+      "input_sha256": "33e218f48e65a05c0b115771393e6c28bdf62c22ee361fd2ca7d895d42cb9a41",
+      "stages": {
+        "logical": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/tilelang/input.pto"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20173512073233724,
+          "maximum_rss_kib": 111328,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "allocation": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/r7-revised-draft-campaign/tilelang_gemm/logical.out"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20249897008761764,
+          "maximum_rss_kib": 108468,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "cpp": {
+          "command": [
+            ".local/three-paths/review-plan-m7/ptoas-native",
+            "--pto-level=level3",
+            "--enable-insert-sync=false",
+            "--enable-plan-memory=false",
+            ".local/r7-revised-draft-campaign/tilelang_gemm/allocation.out",
+            "-o",
+            ".local/r7-revised-draft-campaign/tilelang_gemm/kernel.cpp"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20285136764869094,
+          "maximum_rss_kib": 110552,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        }
+      },
+      "input_metrics": {
+        "bytes": 6995,
+        "lines": 91,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 2,
+        "arithmetic": 40,
+        "selects": 0,
+        "div_rem": 3,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 8865,
+        "lines": 136,
+        "sets": 12,
+        "waits": 12,
+        "barriers": 1,
+        "ifs": 4,
+        "arithmetic": 48,
+        "selects": 0,
+        "div_rem": 3,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 159759,
+        "lines": 1530,
+        "sets": 14,
+        "waits": 14,
+        "barriers": 1,
+        "ifs": 30,
+        "arithmetic": 1401,
+        "selects": 306,
+        "div_rem": 23,
+        "retained_record_labels": 194,
+        "recognition": {
+          "selected_logical_backend": "numerical-periodic",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 108018,
+        "lines": 1692,
+        "sets": 14,
+        "waits": 14,
+        "barriers": 1,
+        "ifs": 30,
+        "arithmetic": 1563,
+        "selects": 306,
+        "div_rem": 71,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "numerical-periodic",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 18672,
+        "lines": 527,
+        "ifs": 25,
+        "ternaries": 0
+      },
+      "control_stages": [
+        {
+          "endpoint_sites": 0,
+          "families": 17,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "tilelang_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 40,
+            "barriers": 0,
+            "div_rem": 3,
+            "ifs": 2,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 0,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_forms": {
+            "contextual_sites": 0,
+            "mixed_leaves": 0,
+            "numerical_sites": 28,
+            "shared_planning_bindings": 0,
+            "shared_planning_candidates": 0,
+            "shared_planning_lookups": 0,
+            "shared_planning_roots": 0,
+            "wrapper_binding_requests": 0,
+            "wrapper_discovery_nodes": 0,
+            "wrapper_discovery_pieces": 0,
+            "wrapper_index_entries": 0,
+            "wrapper_index_imports": 0
+          },
+          "recipe_sites": 28,
+          "record_members": 194,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 28,
+          "families": 17,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "tilelang_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 40,
+            "barriers": 0,
+            "div_rem": 3,
+            "ifs": 2,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 1534,
+            "blocks": 17,
+            "endpoint_reachable_arithmetic": 1534,
+            "required_arithmetic": 1534
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 194,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 28,
+          "families": 17,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "tilelang_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 40,
+            "barriers": 0,
+            "div_rem": 3,
+            "ifs": 2,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 1361,
+            "blocks": 17,
+            "endpoint_reachable_arithmetic": 1361,
+            "required_arithmetic": 1361
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 194,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 28,
+          "families": 17,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "tilelang_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 1401,
+            "barriers": 1,
+            "div_rem": 23,
+            "ifs": 30,
+            "selects": 306,
+            "sets": 14,
+            "waits": 14
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 17,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 194,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": [],
+      "device_execution": "not-run"
+    },
+    {
+      "id": "pypto_gemm",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/pypto/input.pto",
+      "input_sha256": "b89e787a23c72ba96a0669e96653faea7a4601c07b11d297f0114cc23689a33b",
+      "stages": {
+        "logical": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/pypto/input.pto"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.2022296041250229,
+          "maximum_rss_kib": 110800,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "allocation": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/r7-revised-draft-campaign/pypto_gemm/logical.out"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20221856888383627,
+          "maximum_rss_kib": 108128,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "cpp": {
+          "command": [
+            ".local/three-paths/review-plan-m7/ptoas-native",
+            "--pto-level=level3",
+            "--enable-insert-sync=false",
+            "--enable-plan-memory=false",
+            ".local/r7-revised-draft-campaign/pypto_gemm/allocation.out",
+            "-o",
+            ".local/r7-revised-draft-campaign/pypto_gemm/kernel.cpp"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20247204508632421,
+          "maximum_rss_kib": 110252,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        }
+      },
+      "input_metrics": {
+        "bytes": 5661,
+        "lines": 76,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 1,
+        "arithmetic": 33,
+        "selects": 0,
+        "div_rem": 2,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 7165,
+        "lines": 109,
+        "sets": 11,
+        "waits": 11,
+        "barriers": 1,
+        "ifs": 1,
+        "arithmetic": 36,
+        "selects": 0,
+        "div_rem": 2,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 142951,
+        "lines": 1305,
+        "sets": 12,
+        "waits": 12,
+        "barriers": 1,
+        "ifs": 25,
+        "arithmetic": 1196,
+        "selects": 248,
+        "div_rem": 22,
+        "retained_record_labels": 194,
+        "recognition": {
+          "selected_logical_backend": "numerical-periodic",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 93926,
+        "lines": 1481,
+        "sets": 12,
+        "waits": 12,
+        "barriers": 1,
+        "ifs": 25,
+        "arithmetic": 1372,
+        "selects": 248,
+        "div_rem": 76,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "numerical-periodic",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 16131,
+        "lines": 456,
+        "ifs": 22,
+        "ternaries": 0
+      },
+      "control_stages": [
+        {
+          "endpoint_sites": 0,
+          "families": 13,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "pypto_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 33,
+            "barriers": 0,
+            "div_rem": 2,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 0,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_forms": {
+            "contextual_sites": 0,
+            "mixed_leaves": 0,
+            "numerical_sites": 24,
+            "shared_planning_bindings": 0,
+            "shared_planning_candidates": 0,
+            "shared_planning_lookups": 0,
+            "shared_planning_roots": 0,
+            "wrapper_binding_requests": 0,
+            "wrapper_discovery_nodes": 0,
+            "wrapper_discovery_pieces": 0,
+            "wrapper_index_entries": 0,
+            "wrapper_index_imports": 0
+          },
+          "recipe_sites": 24,
+          "record_members": 194,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 24,
+          "families": 13,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "pypto_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 33,
+            "barriers": 0,
+            "div_rem": 2,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 1330,
+            "blocks": 14,
+            "endpoint_reachable_arithmetic": 1330,
+            "required_arithmetic": 1330
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 194,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 24,
+          "families": 13,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "pypto_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 33,
+            "barriers": 0,
+            "div_rem": 2,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 1163,
+            "blocks": 14,
+            "endpoint_reachable_arithmetic": 1163,
+            "required_arithmetic": 1163
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 194,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 24,
+          "families": 13,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "pypto_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 1196,
+            "barriers": 1,
+            "div_rem": 22,
+            "ifs": 25,
+            "selects": 248,
+            "sets": 12,
+            "waits": 12
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 14,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "numerical-periodic",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 194,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": [],
+      "device_execution": "not-run"
+    },
+    {
+      "id": "persistent_gemm",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto",
+      "input_sha256": "cc890b426ae89da77223b93a5ba4ad0b6f03d418f22f9bde65aea05fcde6324e",
+      "stages": {
+        "logical": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 1.6035895831882954,
+          "maximum_rss_kib": 148604,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "allocation": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/r7-revised-draft-campaign/persistent_gemm/logical.out"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20209571905434132,
+          "maximum_rss_kib": 111060,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "cpp": {
+          "command": [
+            ".local/three-paths/review-plan-m7/ptoas-native",
+            "--pto-level=level3",
+            "--enable-insert-sync=false",
+            "--enable-plan-memory=false",
+            ".local/r7-revised-draft-campaign/persistent_gemm/allocation.out",
+            "-o",
+            ".local/r7-revised-draft-campaign/persistent_gemm/kernel.cpp"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20205176807940006,
+          "maximum_rss_kib": 112164,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        }
+      },
+      "input_metrics": {
+        "bytes": 7515,
+        "lines": 124,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 5,
+        "arithmetic": 59,
+        "selects": 0,
+        "div_rem": 5,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 9309,
+        "lines": 149,
+        "sets": 12,
+        "waits": 12,
+        "barriers": 1,
+        "ifs": 5,
+        "arithmetic": 59,
+        "selects": 0,
+        "div_rem": 5,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 1042762,
+        "lines": 4313,
+        "sets": 56,
+        "waits": 56,
+        "barriers": 1,
+        "ifs": 117,
+        "arithmetic": 3924,
+        "selects": 768,
+        "div_rem": 127,
+        "retained_record_labels": 1544,
+        "recognition": {
+          "selected_logical_backend": "identity-sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 295635,
+        "lines": 4989,
+        "sets": 56,
+        "waits": 56,
+        "barriers": 1,
+        "ifs": 117,
+        "arithmetic": 4600,
+        "selects": 808,
+        "div_rem": 319,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "identity-sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 44512,
+        "lines": 1309,
+        "ifs": 115,
+        "ternaries": 95
+      },
+      "control_stages": [
+        {
+          "endpoint_sites": 0,
+          "families": 1544,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "persistent_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 59,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 5,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 0,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "identity-sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {
+            "contextual_sites": 56,
+            "mixed_leaves": 0,
+            "numerical_sites": 72,
+            "shared_planning_bindings": 40,
+            "shared_planning_candidates": 40,
+            "shared_planning_lookups": 256,
+            "shared_planning_roots": 4,
+            "wrapper_binding_requests": 67,
+            "wrapper_discovery_nodes": 18,
+            "wrapper_discovery_pieces": 114,
+            "wrapper_index_entries": 52,
+            "wrapper_index_imports": 4
+          },
+          "recipe_sites": 128,
+          "record_members": 1544,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 128,
+          "families": 1544,
+          "family_materialization": {
+            "contexts": 26,
+            "local_entries": 1207,
+            "shared_candidates": 89,
+            "shared_imports": 89,
+            "shared_published": 42,
+            "shared_requests": 256
+          },
+          "function": "persistent_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 59,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 5,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 11550,
+            "blocks": 237,
+            "endpoint_reachable_arithmetic": 11550,
+            "required_arithmetic": 11550
+          },
+          "producer": "identity-sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 1544,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 112,
+          "families": 1544,
+          "family_materialization": {
+            "contexts": 26,
+            "local_entries": 1207,
+            "shared_candidates": 89,
+            "shared_imports": 89,
+            "shared_published": 42,
+            "shared_requests": 256
+          },
+          "function": "persistent_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 59,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 5,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 3865,
+            "blocks": 253,
+            "endpoint_reachable_arithmetic": 3865,
+            "required_arithmetic": 3865
+          },
+          "producer": "identity-sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 1544,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 112,
+          "families": 1544,
+          "family_materialization": {
+            "contexts": 26,
+            "local_entries": 1207,
+            "shared_candidates": 89,
+            "shared_imports": 89,
+            "shared_published": 42,
+            "shared_requests": 256
+          },
+          "function": "persistent_gemm",
+          "function_control": {
+            "arithmetic_including_payload": 3924,
+            "barriers": 1,
+            "div_rem": 127,
+            "ifs": 117,
+            "selects": 768,
+            "sets": 56,
+            "waits": 56
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 253,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "identity-sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 1544,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": [
+        {
+          "cache_hits": 0,
+          "constructions": null,
+          "elapsed_ns": 0,
+          "exclusive_ns": 0,
+          "first_dispatches": 0,
+          "id": 100,
+          "method": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto\":43:5)",
+          "parent": 99,
+          "parent_request": 5,
+          "region": 0,
+          "request": 5,
+          "stage": "repeated-allocation-work",
+          "work": {
+            "activity_computations": 0,
+            "activity_ns": 0,
+            "activity_requests": 0,
+            "boundary_pairs": 0,
+            "candidate_gaps": 0,
+            "coalescing_cache_hits": 0,
+            "coalescing_ns": 1184640252,
+            "constant_computations": 0,
+            "constant_requests": 0,
+            "duplicate_extrema_guards": 0,
+            "elapsed_ns": 1189885738,
+            "extrema_candidates": 0,
+            "extrema_comparisons": 0,
+            "first_alternatives": 0,
+            "implication_computations": 0,
+            "implication_requests": 0,
+            "lanes": 0,
+            "last_alternatives": 0,
+            "matrix_pairs": 0,
+            "ordered_extrema_lists": 0,
+            "partition_attempts": 0,
+            "partition_matrix_entries": 0,
+            "proof_node_visits": 0,
+            "proof_ns": 0,
+            "relative_computations": 0,
+            "relative_ns": 0,
+            "relative_queries": 0
+          }
+        },
+        {
+          "cache_hits": 0,
+          "constructions": null,
+          "elapsed_ns": 0,
+          "exclusive_ns": 0,
+          "first_dispatches": 0,
+          "id": 101,
+          "method": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto\":43:5)",
+          "parent": 99,
+          "parent_request": 5,
+          "region": 0,
+          "request": 5,
+          "stage": "repeated-allocation-work",
+          "work": {
+            "activity_computations": 0,
+            "activity_ns": 0,
+            "activity_requests": 0,
+            "boundary_pairs": 0,
+            "candidate_gaps": 0,
+            "coalescing_cache_hits": 0,
+            "coalescing_ns": 1160,
+            "constant_computations": 0,
+            "constant_requests": 0,
+            "duplicate_extrema_guards": 0,
+            "elapsed_ns": 3174,
+            "extrema_candidates": 0,
+            "extrema_comparisons": 0,
+            "first_alternatives": 0,
+            "implication_computations": 0,
+            "implication_requests": 0,
+            "lanes": 0,
+            "last_alternatives": 0,
+            "matrix_pairs": 0,
+            "ordered_extrema_lists": 0,
+            "partition_attempts": 0,
+            "partition_matrix_entries": 0,
+            "proof_node_visits": 0,
+            "proof_ns": 0,
+            "relative_computations": 0,
+            "relative_ns": 0,
+            "relative_queries": 0
+          }
+        },
+        {
+          "cache_hits": 0,
+          "constructions": null,
+          "elapsed_ns": 0,
+          "exclusive_ns": 0,
+          "first_dispatches": 0,
+          "id": 102,
+          "method": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto\":43:5)",
+          "parent": 99,
+          "parent_request": 5,
+          "region": 0,
+          "request": 5,
+          "stage": "repeated-allocation-work",
+          "work": {
+            "activity_computations": 94,
+            "activity_ns": 21867,
+            "activity_requests": 1779,
+            "boundary_pairs": 1779,
+            "candidate_gaps": 162,
+            "coalescing_cache_hits": 1,
+            "coalescing_ns": 3925,
+            "constant_computations": 12,
+            "constant_requests": 114,
+            "duplicate_extrema_guards": 2928,
+            "elapsed_ns": 42395052,
+            "extrema_candidates": 1544,
+            "extrema_comparisons": 4534,
+            "first_alternatives": 80,
+            "implication_computations": 158,
+            "implication_requests": 2979,
+            "lanes": 21,
+            "last_alternatives": 80,
+            "matrix_pairs": 105,
+            "ordered_extrema_lists": 42,
+            "partition_attempts": 0,
+            "partition_matrix_entries": 0,
+            "proof_node_visits": 15749,
+            "proof_ns": 187049,
+            "relative_computations": 1200,
+            "relative_ns": 34626849,
+            "relative_queries": 1200
+          }
+        },
+        {
+          "cache_hits": 0,
+          "constructions": null,
+          "elapsed_ns": 0,
+          "exclusive_ns": 0,
+          "first_dispatches": 0,
+          "id": 103,
+          "method": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto\":43:5)",
+          "parent": 99,
+          "parent_request": 5,
+          "region": 0,
+          "request": 5,
+          "stage": "repeated-allocation-work",
+          "work": {
+            "activity_computations": 0,
+            "activity_ns": 0,
+            "activity_requests": 0,
+            "boundary_pairs": 0,
+            "candidate_gaps": 0,
+            "coalescing_cache_hits": 1,
+            "coalescing_ns": 68,
+            "constant_computations": 0,
+            "constant_requests": 0,
+            "duplicate_extrema_guards": 0,
+            "elapsed_ns": 2664,
+            "extrema_candidates": 0,
+            "extrema_comparisons": 0,
+            "first_alternatives": 0,
+            "implication_computations": 0,
+            "implication_requests": 0,
+            "lanes": 0,
+            "last_alternatives": 0,
+            "matrix_pairs": 0,
+            "ordered_extrema_lists": 0,
+            "partition_attempts": 0,
+            "partition_matrix_entries": 0,
+            "proof_node_visits": 0,
+            "proof_ns": 0,
+            "relative_computations": 0,
+            "relative_ns": 0,
+            "relative_queries": 0
+          }
+        }
+      ],
+      "device_execution": "not-run"
+    },
+    {
+      "id": "group_norm",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/group_norm/input.pto",
+      "input_sha256": "11f09d6fbbc109851266cd73a77ec321a445bff98311fee33acfb6bfb71ddfbb",
+      "stages": {
+        "logical": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/group_norm/input.pto"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.2019088319502771,
+          "maximum_rss_kib": 113248,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "allocation": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/r7-revised-draft-campaign/group_norm/logical.out"
+          ],
+          "returncode": 1,
+          "status": "finished",
+          "seconds": 0.20147197088226676,
+          "maximum_rss_kib": 107748,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": false,
+          "diagnostics": [
+            ".local/r7-revised-draft-campaign/group_norm/logical.out:6:3: error: regional lane assignment not certified within directed capacity; no minimum-capacity claim; scarcity repair not implemented yet"
+          ]
+        }
+      },
+      "input_metrics": {
+        "bytes": 24670,
+        "lines": 190,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 3,
+        "arithmetic": 77,
+        "selects": 0,
+        "div_rem": 5,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 25521,
+        "lines": 207,
+        "sets": 6,
+        "waits": 6,
+        "barriers": 5,
+        "ifs": 3,
+        "arithmetic": 77,
+        "selects": 0,
+        "div_rem": 5,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 94576,
+        "lines": 617,
+        "sets": 17,
+        "waits": 17,
+        "barriers": 24,
+        "ifs": 60,
+        "arithmetic": 335,
+        "selects": 0,
+        "div_rem": 5,
+        "retained_record_labels": 52,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "control_stages": [
+        {
+          "endpoint_sites": 21,
+          "families": 52,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "group_norm",
+          "function_control": {
+            "arithmetic_including_payload": 77,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 3,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 26,
+            "blocks": 17,
+            "endpoint_reachable_arithmetic": 26,
+            "required_arithmetic": 26
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {
+            "contextual_sites": 48,
+            "mixed_leaves": 0,
+            "numerical_sites": 0,
+            "shared_planning_bindings": 67,
+            "shared_planning_candidates": 67,
+            "shared_planning_lookups": 313,
+            "shared_planning_roots": 27,
+            "wrapper_binding_requests": 0,
+            "wrapper_discovery_nodes": 0,
+            "wrapper_discovery_pieces": 0,
+            "wrapper_index_entries": 0,
+            "wrapper_index_imports": 0
+          },
+          "recipe_sites": 48,
+          "record_members": 52,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 69,
+          "families": 52,
+          "family_materialization": {
+            "contexts": 47,
+            "local_entries": 340,
+            "shared_candidates": 67,
+            "shared_imports": 67,
+            "shared_published": 27,
+            "shared_requests": 313
+          },
+          "function": "group_norm",
+          "function_control": {
+            "arithmetic_including_payload": 77,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 3,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 287,
+            "blocks": 86,
+            "endpoint_reachable_arithmetic": 281,
+            "required_arithmetic": 281
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 52,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 69,
+          "families": 52,
+          "family_materialization": {
+            "contexts": 47,
+            "local_entries": 340,
+            "shared_candidates": 67,
+            "shared_imports": 67,
+            "shared_published": 27,
+            "shared_requests": 313
+          },
+          "function": "group_norm",
+          "function_control": {
+            "arithmetic_including_payload": 77,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 3,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 246,
+            "blocks": 86,
+            "endpoint_reachable_arithmetic": 246,
+            "required_arithmetic": 246
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 52,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 69,
+          "families": 52,
+          "family_materialization": {
+            "contexts": 47,
+            "local_entries": 340,
+            "shared_candidates": 67,
+            "shared_imports": 67,
+            "shared_published": 27,
+            "shared_requests": 313
+          },
+          "function": "group_norm",
+          "function_control": {
+            "arithmetic_including_payload": 335,
+            "barriers": 24,
+            "div_rem": 5,
+            "ifs": 60,
+            "selects": 0,
+            "sets": 17,
+            "waits": 17
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 86,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 52,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": [],
+      "device_execution": "not-run"
+    },
+    {
+      "id": "causal_conv1d_prefill",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/causal_conv1d_prefill/input.pto",
+      "input_sha256": "4a2da46ad42fbded8d15dd4b64cdabc93ae0df9570ea6d5d165712361ce16831",
+      "stages": {
+        "logical": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/causal_conv1d_prefill/input.pto"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 76.41910240007564,
+          "maximum_rss_kib": 1036912,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "allocation": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/r7-revised-draft-campaign/causal_conv1d_prefill/logical.out"
+          ],
+          "returncode": 1,
+          "status": "finished",
+          "seconds": 0.40378084126859903,
+          "maximum_rss_kib": 154260,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": false,
+          "diagnostics": [
+            ".local/r7-revised-draft-campaign/causal_conv1d_prefill/logical.out:12:3: error: physical allocation requires a supported finite or uniform allocation export; allocation adapter not implemented yet"
+          ]
+        }
+      },
+      "input_metrics": {
+        "bytes": 54281,
+        "lines": 414,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 9,
+        "arithmetic": 200,
+        "selects": 0,
+        "div_rem": 3,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 55940,
+        "lines": 454,
+        "sets": 6,
+        "waits": 6,
+        "barriers": 28,
+        "ifs": 9,
+        "arithmetic": 200,
+        "selects": 0,
+        "div_rem": 3,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 4461845,
+        "lines": 89756,
+        "sets": 59,
+        "waits": 84,
+        "barriers": 62,
+        "ifs": 213,
+        "arithmetic": 88926,
+        "selects": 2549,
+        "div_rem": 3,
+        "retained_record_labels": 131,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "unavailable"
+        }
+      },
+      "control_stages": [
+        {
+          "endpoint_sites": 76,
+          "families": 131,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "causal_conv1d_prefill",
+          "function_control": {
+            "arithmetic_including_payload": 200,
+            "barriers": 0,
+            "div_rem": 3,
+            "ifs": 9,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 51169,
+            "blocks": 104,
+            "endpoint_reachable_arithmetic": 51025,
+            "required_arithmetic": 51025
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {
+            "contextual_sites": 137,
+            "mixed_leaves": 1,
+            "numerical_sites": 2,
+            "shared_planning_bindings": 58,
+            "shared_planning_candidates": 86,
+            "shared_planning_lookups": 35771,
+            "shared_planning_roots": 15,
+            "wrapper_binding_requests": 0,
+            "wrapper_discovery_nodes": 0,
+            "wrapper_discovery_pieces": 0,
+            "wrapper_index_entries": 0,
+            "wrapper_index_imports": 0
+          },
+          "recipe_sites": 139,
+          "record_members": 131,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 215,
+          "families": 131,
+          "family_materialization": {
+            "contexts": 74,
+            "local_entries": 37357,
+            "shared_candidates": 472,
+            "shared_imports": 444,
+            "shared_published": 975,
+            "shared_requests": 34667
+          },
+          "function": "causal_conv1d_prefill",
+          "function_control": {
+            "arithmetic_including_payload": 200,
+            "barriers": 0,
+            "div_rem": 3,
+            "ifs": 9,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 93932,
+            "blocks": 253,
+            "endpoint_reachable_arithmetic": 93784,
+            "required_arithmetic": 93784
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 131,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 215,
+          "families": 131,
+          "family_materialization": {
+            "contexts": 74,
+            "local_entries": 37357,
+            "shared_candidates": 472,
+            "shared_imports": 444,
+            "shared_published": 975,
+            "shared_requests": 34667
+          },
+          "function": "causal_conv1d_prefill",
+          "function_control": {
+            "arithmetic_including_payload": 200,
+            "barriers": 0,
+            "div_rem": 3,
+            "ifs": 9,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 88715,
+            "blocks": 253,
+            "endpoint_reachable_arithmetic": 88715,
+            "required_arithmetic": 88715
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 131,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 215,
+          "families": 131,
+          "family_materialization": {
+            "contexts": 74,
+            "local_entries": 37357,
+            "shared_candidates": 472,
+            "shared_imports": 444,
+            "shared_published": 975,
+            "shared_requests": 34667
+          },
+          "function": "causal_conv1d_prefill",
+          "function_control": {
+            "arithmetic_including_payload": 88926,
+            "barriers": 62,
+            "div_rem": 3,
+            "ifs": 213,
+            "selects": 2549,
+            "sets": 59,
+            "waits": 84
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 253,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 131,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": [],
+      "device_execution": "not-run"
+    },
+    {
+      "id": "causal_conv1d_decode",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/causal_conv1d_decode/input.pto",
+      "input_sha256": "62eb4645ba3457dea9770c16f0aad959afe0db28325dcde353351f1ee95fa48e",
+      "stages": {
+        "logical": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/causal_conv1d_decode/input.pto"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20342935528606176,
+          "maximum_rss_kib": 111452,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "allocation": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/r7-revised-draft-campaign/causal_conv1d_decode/logical.out"
+          ],
+          "returncode": 1,
+          "status": "finished",
+          "seconds": 0.202321567106992,
+          "maximum_rss_kib": 108008,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": false,
+          "diagnostics": [
+            ".local/r7-revised-draft-campaign/causal_conv1d_decode/logical.out:2:3: error: regional lane assignment not certified within directed capacity; no minimum-capacity claim; scarcity repair not implemented yet"
+          ]
+        }
+      },
+      "input_metrics": {
+        "bytes": 23808,
+        "lines": 164,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 1,
+        "arithmetic": 57,
+        "selects": 0,
+        "div_rem": 0,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 24763,
+        "lines": 185,
+        "sets": 7,
+        "waits": 7,
+        "barriers": 7,
+        "ifs": 1,
+        "arithmetic": 57,
+        "selects": 0,
+        "div_rem": 0,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 170652,
+        "lines": 2483,
+        "sets": 22,
+        "waits": 22,
+        "barriers": 22,
+        "ifs": 66,
+        "arithmetic": 2187,
+        "selects": 722,
+        "div_rem": 0,
+        "retained_record_labels": 62,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "control_stages": [
+        {
+          "endpoint_sites": 0,
+          "families": 62,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "causal_conv1d_decode",
+          "function_control": {
+            "arithmetic_including_payload": 57,
+            "barriers": 0,
+            "div_rem": 0,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 0,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {
+            "contextual_sites": 84,
+            "mixed_leaves": 0,
+            "numerical_sites": 0,
+            "shared_planning_bindings": 0,
+            "shared_planning_candidates": 0,
+            "shared_planning_lookups": 0,
+            "shared_planning_roots": 0,
+            "wrapper_binding_requests": 0,
+            "wrapper_discovery_nodes": 0,
+            "wrapper_discovery_pieces": 0,
+            "wrapper_index_entries": 0,
+            "wrapper_index_imports": 0
+          },
+          "recipe_sites": 84,
+          "record_members": 62,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 84,
+          "families": 62,
+          "family_materialization": {
+            "contexts": 37,
+            "local_entries": 2079,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "causal_conv1d_decode",
+          "function_control": {
+            "arithmetic_including_payload": 57,
+            "barriers": 0,
+            "div_rem": 0,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 2122,
+            "blocks": 81,
+            "endpoint_reachable_arithmetic": 2122,
+            "required_arithmetic": 2122
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 62,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 84,
+          "families": 62,
+          "family_materialization": {
+            "contexts": 37,
+            "local_entries": 2079,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "causal_conv1d_decode",
+          "function_control": {
+            "arithmetic_including_payload": 57,
+            "barriers": 0,
+            "div_rem": 0,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 2111,
+            "blocks": 81,
+            "endpoint_reachable_arithmetic": 2111,
+            "required_arithmetic": 2111
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 62,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 84,
+          "families": 62,
+          "family_materialization": {
+            "contexts": 37,
+            "local_entries": 2079,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "causal_conv1d_decode",
+          "function_control": {
+            "arithmetic_including_payload": 2187,
+            "barriers": 22,
+            "div_rem": 0,
+            "ifs": 66,
+            "selects": 722,
+            "sets": 22,
+            "waits": 22
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 81,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 62,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": [],
+      "device_execution": "not-run"
+    },
+    {
+      "id": "gdn_chunk_cumsum",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/gdn_chunk_cumsum/input.pto",
+      "input_sha256": "8080a5290a21244f734ad8c40497e04e382632a8b52ce4e7cf90cca63dd6082f",
+      "stages": {
+        "logical": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/gdn_chunk_cumsum/input.pto"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.3022823198698461,
+          "maximum_rss_kib": 131580,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "allocation": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/r7-revised-draft-campaign/gdn_chunk_cumsum/logical.out"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.2024775049649179,
+          "maximum_rss_kib": 107288,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "cpp": {
+          "command": [
+            ".local/three-paths/review-plan-m7/ptoas-native",
+            "--pto-level=level3",
+            "--enable-insert-sync=false",
+            "--enable-plan-memory=false",
+            ".local/r7-revised-draft-campaign/gdn_chunk_cumsum/allocation.out",
+            "-o",
+            ".local/r7-revised-draft-campaign/gdn_chunk_cumsum/kernel.cpp"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20258535398170352,
+          "maximum_rss_kib": 109692,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        }
+      },
+      "input_metrics": {
+        "bytes": 4357,
+        "lines": 56,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 0,
+        "arithmetic": 23,
+        "selects": 0,
+        "div_rem": 2,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 4688,
+        "lines": 63,
+        "sets": 3,
+        "waits": 3,
+        "barriers": 1,
+        "ifs": 0,
+        "arithmetic": 23,
+        "selects": 0,
+        "div_rem": 2,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 23497,
+        "lines": 90,
+        "sets": 3,
+        "waits": 3,
+        "barriers": 1,
+        "ifs": 6,
+        "arithmetic": 42,
+        "selects": 1,
+        "div_rem": 2,
+        "retained_record_labels": 3,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 20058,
+        "lines": 90,
+        "sets": 3,
+        "waits": 3,
+        "barriers": 1,
+        "ifs": 6,
+        "arithmetic": 42,
+        "selects": 1,
+        "div_rem": 2,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 6186,
+        "lines": 189,
+        "ifs": 3,
+        "ternaries": 1
+      },
+      "control_stages": [
+        {
+          "endpoint_sites": 0,
+          "families": 3,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "gdn_chunk_cumsum",
+          "function_control": {
+            "arithmetic_including_payload": 23,
+            "barriers": 0,
+            "div_rem": 2,
+            "ifs": 0,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 0,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {
+            "contextual_sites": 6,
+            "mixed_leaves": 0,
+            "numerical_sites": 0,
+            "shared_planning_bindings": 11,
+            "shared_planning_candidates": 13,
+            "shared_planning_lookups": 23,
+            "shared_planning_roots": 6,
+            "wrapper_binding_requests": 0,
+            "wrapper_discovery_nodes": 0,
+            "wrapper_discovery_pieces": 0,
+            "wrapper_index_entries": 0,
+            "wrapper_index_imports": 0
+          },
+          "recipe_sites": 6,
+          "record_members": 3,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 6,
+          "families": 3,
+          "family_materialization": {
+            "contexts": 6,
+            "local_entries": 25,
+            "shared_candidates": 7,
+            "shared_imports": 7,
+            "shared_published": 6,
+            "shared_requests": 19
+          },
+          "function": "gdn_chunk_cumsum",
+          "function_control": {
+            "arithmetic_including_payload": 23,
+            "barriers": 0,
+            "div_rem": 2,
+            "ifs": 0,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 20,
+            "blocks": 12,
+            "endpoint_reachable_arithmetic": 20,
+            "required_arithmetic": 20
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 3,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 6,
+          "families": 3,
+          "family_materialization": {
+            "contexts": 6,
+            "local_entries": 25,
+            "shared_candidates": 7,
+            "shared_imports": 7,
+            "shared_published": 6,
+            "shared_requests": 19
+          },
+          "function": "gdn_chunk_cumsum",
+          "function_control": {
+            "arithmetic_including_payload": 23,
+            "barriers": 0,
+            "div_rem": 2,
+            "ifs": 0,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 19,
+            "blocks": 12,
+            "endpoint_reachable_arithmetic": 19,
+            "required_arithmetic": 19
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 3,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 6,
+          "families": 3,
+          "family_materialization": {
+            "contexts": 6,
+            "local_entries": 25,
+            "shared_candidates": 7,
+            "shared_imports": 7,
+            "shared_published": 6,
+            "shared_requests": 19
+          },
+          "function": "gdn_chunk_cumsum",
+          "function_control": {
+            "arithmetic_including_payload": 42,
+            "barriers": 1,
+            "div_rem": 2,
+            "ifs": 6,
+            "selects": 1,
+            "sets": 3,
+            "waits": 3
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 12,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 3,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": [],
+      "device_execution": "not-run"
+    },
+    {
+      "id": "mhc_head_mix",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/mhc_head_mix/input.pto",
+      "input_sha256": "86bc2900da82f40a7842b63b75ca47fa5b2bcee9cbcadebfda6b189a35409f8c",
+      "stages": {
+        "logical": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/mhc_head_mix/input.pto"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.2038723649457097,
+          "maximum_rss_kib": 118600,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "allocation": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/r7-revised-draft-campaign/mhc_head_mix/logical.out"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20243052579462528,
+          "maximum_rss_kib": 107268,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "cpp": {
+          "command": [
+            ".local/three-paths/review-plan-m7/ptoas-native",
+            "--pto-level=level3",
+            "--enable-insert-sync=false",
+            "--enable-plan-memory=false",
+            ".local/r7-revised-draft-campaign/mhc_head_mix/allocation.out",
+            "-o",
+            ".local/r7-revised-draft-campaign/mhc_head_mix/kernel.cpp"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.2030033259652555,
+          "maximum_rss_kib": 109740,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        }
+      },
+      "input_metrics": {
+        "bytes": 7459,
+        "lines": 69,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 0,
+        "arithmetic": 22,
+        "selects": 0,
+        "div_rem": 0,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 8013,
+        "lines": 81,
+        "sets": 4,
+        "waits": 4,
+        "barriers": 4,
+        "ifs": 0,
+        "arithmetic": 22,
+        "selects": 0,
+        "div_rem": 0,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 26624,
+        "lines": 123,
+        "sets": 3,
+        "waits": 3,
+        "barriers": 7,
+        "ifs": 12,
+        "arithmetic": 45,
+        "selects": 2,
+        "div_rem": 0,
+        "retained_record_labels": 9,
+        "recognition": {
+          "selected_logical_backend": "sequence-endpoints",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 20196,
+        "lines": 123,
+        "sets": 3,
+        "waits": 3,
+        "barriers": 7,
+        "ifs": 12,
+        "arithmetic": 45,
+        "selects": 2,
+        "div_rem": 0,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "sequence-endpoints",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 9242,
+        "lines": 260,
+        "ifs": 2,
+        "ternaries": 2
+      },
+      "control_stages": [
+        {
+          "endpoint_sites": 8,
+          "families": 9,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "mhc_head_mix",
+          "function_control": {
+            "arithmetic_including_payload": 22,
+            "barriers": 0,
+            "div_rem": 0,
+            "ifs": 0,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 4,
+            "blocks": 3,
+            "endpoint_reachable_arithmetic": 4,
+            "required_arithmetic": 4
+          },
+          "producer": "sequence-endpoints",
+          "realization": "direct-endpoints",
+          "recipe_forms": {
+            "contextual_sites": 4,
+            "mixed_leaves": 0,
+            "numerical_sites": 0,
+            "shared_planning_bindings": 8,
+            "shared_planning_candidates": 8,
+            "shared_planning_lookups": 23,
+            "shared_planning_roots": 4,
+            "wrapper_binding_requests": 0,
+            "wrapper_discovery_nodes": 0,
+            "wrapper_discovery_pieces": 0,
+            "wrapper_index_entries": 0,
+            "wrapper_index_imports": 0
+          },
+          "recipe_sites": 4,
+          "record_members": 9,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 12,
+          "families": 9,
+          "family_materialization": {
+            "contexts": 4,
+            "local_entries": 25,
+            "shared_candidates": 6,
+            "shared_imports": 6,
+            "shared_published": 4,
+            "shared_requests": 21
+          },
+          "function": "mhc_head_mix",
+          "function_control": {
+            "arithmetic_including_payload": 22,
+            "barriers": 0,
+            "div_rem": 0,
+            "ifs": 0,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 23,
+            "blocks": 11,
+            "endpoint_reachable_arithmetic": 23,
+            "required_arithmetic": 23
+          },
+          "producer": "sequence-endpoints",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 9,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 12,
+          "families": 9,
+          "family_materialization": {
+            "contexts": 4,
+            "local_entries": 25,
+            "shared_candidates": 6,
+            "shared_imports": 6,
+            "shared_published": 4,
+            "shared_requests": 21
+          },
+          "function": "mhc_head_mix",
+          "function_control": {
+            "arithmetic_including_payload": 22,
+            "barriers": 0,
+            "div_rem": 0,
+            "ifs": 0,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 23,
+            "blocks": 11,
+            "endpoint_reachable_arithmetic": 23,
+            "required_arithmetic": 23
+          },
+          "producer": "sequence-endpoints",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 9,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 12,
+          "families": 9,
+          "family_materialization": {
+            "contexts": 4,
+            "local_entries": 25,
+            "shared_candidates": 6,
+            "shared_imports": 6,
+            "shared_published": 4,
+            "shared_requests": 21
+          },
+          "function": "mhc_head_mix",
+          "function_control": {
+            "arithmetic_including_payload": 45,
+            "barriers": 7,
+            "div_rem": 0,
+            "ifs": 12,
+            "selects": 2,
+            "sets": 3,
+            "waits": 3
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 11,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence-endpoints",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 9,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": [],
+      "device_execution": "not-run"
+    },
+    {
+      "id": "elementwise_pipeline",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/elementwise_pipeline/input.pto",
+      "input_sha256": "b51ac3ff4fb604eb133285347b7abc6c9866581a946e24e8250d4a2e3e57dfeb",
+      "stages": {
+        "logical": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/elementwise_pipeline/input.pto"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.2023408990353346,
+          "maximum_rss_kib": 110476,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "allocation": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/r7-revised-draft-campaign/elementwise_pipeline/logical.out"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20226671919226646,
+          "maximum_rss_kib": 107240,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "cpp": {
+          "command": [
+            ".local/three-paths/review-plan-m7/ptoas-native",
+            "--pto-level=level3",
+            "--enable-insert-sync=false",
+            "--enable-plan-memory=false",
+            ".local/r7-revised-draft-campaign/elementwise_pipeline/allocation.out",
+            "-o",
+            ".local/r7-revised-draft-campaign/elementwise_pipeline/kernel.cpp"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20289892191067338,
+          "maximum_rss_kib": 109952,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        }
+      },
+      "input_metrics": {
+        "bytes": 6955,
+        "lines": 90,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 1,
+        "arithmetic": 50,
+        "selects": 0,
+        "div_rem": 4,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 7628,
+        "lines": 103,
+        "sets": 6,
+        "waits": 6,
+        "barriers": 1,
+        "ifs": 1,
+        "arithmetic": 50,
+        "selects": 0,
+        "div_rem": 4,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 33056,
+        "lines": 254,
+        "sets": 9,
+        "waits": 9,
+        "barriers": 1,
+        "ifs": 19,
+        "arithmetic": 164,
+        "selects": 0,
+        "div_rem": 4,
+        "retained_record_labels": 9,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 24026,
+        "lines": 274,
+        "sets": 9,
+        "waits": 9,
+        "barriers": 1,
+        "ifs": 19,
+        "arithmetic": 184,
+        "selects": 0,
+        "div_rem": 14,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 14342,
+        "lines": 414,
+        "ifs": 17,
+        "ternaries": 0
+      },
+      "control_stages": [
+        {
+          "endpoint_sites": 0,
+          "families": 9,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "elementwise_pipeline",
+          "function_control": {
+            "arithmetic_including_payload": 50,
+            "barriers": 0,
+            "div_rem": 4,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 0,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {
+            "contextual_sites": 18,
+            "mixed_leaves": 0,
+            "numerical_sites": 0,
+            "shared_planning_bindings": 29,
+            "shared_planning_candidates": 29,
+            "shared_planning_lookups": 144,
+            "shared_planning_roots": 15,
+            "wrapper_binding_requests": 0,
+            "wrapper_discovery_nodes": 0,
+            "wrapper_discovery_pieces": 0,
+            "wrapper_index_entries": 0,
+            "wrapper_index_imports": 0
+          },
+          "recipe_sites": 18,
+          "record_members": 9,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 18,
+          "families": 9,
+          "family_materialization": {
+            "contexts": 18,
+            "local_entries": 157,
+            "shared_candidates": 27,
+            "shared_imports": 27,
+            "shared_published": 15,
+            "shared_requests": 142
+          },
+          "function": "elementwise_pipeline",
+          "function_control": {
+            "arithmetic_including_payload": 50,
+            "barriers": 0,
+            "div_rem": 4,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 134,
+            "blocks": 33,
+            "endpoint_reachable_arithmetic": 131,
+            "required_arithmetic": 131
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 9,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 18,
+          "families": 9,
+          "family_materialization": {
+            "contexts": 18,
+            "local_entries": 157,
+            "shared_candidates": 27,
+            "shared_imports": 27,
+            "shared_published": 15,
+            "shared_requests": 142
+          },
+          "function": "elementwise_pipeline",
+          "function_control": {
+            "arithmetic_including_payload": 50,
+            "barriers": 0,
+            "div_rem": 4,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 114,
+            "blocks": 33,
+            "endpoint_reachable_arithmetic": 114,
+            "required_arithmetic": 114
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 9,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 18,
+          "families": 9,
+          "family_materialization": {
+            "contexts": 18,
+            "local_entries": 157,
+            "shared_candidates": 27,
+            "shared_imports": 27,
+            "shared_published": 15,
+            "shared_requests": 142
+          },
+          "function": "elementwise_pipeline",
+          "function_control": {
+            "arithmetic_including_payload": 164,
+            "barriers": 1,
+            "div_rem": 4,
+            "ifs": 19,
+            "selects": 0,
+            "sets": 9,
+            "waits": 9
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 33,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 9,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": [],
+      "device_execution": "not-run"
+    },
+    {
+      "id": "gated_delta_rule",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto",
+      "input_sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+      "stages": {
+        "logical": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 27.938165567815304,
+          "maximum_rss_kib": 513488,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "allocation": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/r7-revised-draft-campaign/gated_delta_rule/logical.out"
+          ],
+          "returncode": 1,
+          "status": "finished",
+          "seconds": 2.605481439270079,
+          "maximum_rss_kib": 589652,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": false,
+          "diagnostics": [
+            ".local/r7-revised-draft-campaign/gated_delta_rule/logical.out:13:3: error: invocation prefix physical allocation requires a missing lifetime export"
+          ]
+        }
+      },
+      "input_metrics": {
+        "bytes": 37326,
+        "lines": 270,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 4,
+        "arithmetic": 102,
+        "selects": 0,
+        "div_rem": 2,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 38384,
+        "lines": 290,
+        "sets": 9,
+        "waits": 8,
+        "barriers": 3,
+        "ifs": 4,
+        "arithmetic": 102,
+        "selects": 0,
+        "div_rem": 2,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 39527497,
+        "lines": 675918,
+        "sets": 172,
+        "waits": 47,
+        "barriers": 194,
+        "ifs": 195,
+        "arithmetic": 674844,
+        "selects": 202310,
+        "div_rem": 454,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "identity-sequence",
+          "logical_realization": "invocation-prefix",
+          "allocation_support": "unavailable"
+        }
+      },
+      "control_stages": [
+        {
+          "endpoint_sites": 0,
+          "families": 0,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "fused_gating_delta",
+          "function_control": {
+            "arithmetic_including_payload": 674844,
+            "barriers": 194,
+            "div_rem": 454,
+            "ifs": 195,
+            "selects": 202310,
+            "sets": 172,
+            "state_slots": 284,
+            "waits": 47
+          },
+          "function_scope": "staged-invocation",
+          "plan": 0,
+          "prefix_expressions": {
+            "attempts": 330,
+            "constructed_operations": 673216,
+            "direct_failures": 36,
+            "emissions": 294,
+            "history_attempts": 3,
+            "inactive_attempts": 33,
+            "largest_recipes": [
+              {
+                "arena": 1,
+                "attempts": 2,
+                "constructed_operations": 207673,
+                "cut": "pto.tcvt",
+                "direct_failures": 1,
+                "distance": 0,
+                "emissions": 1,
+                "history_attempts": 1,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":261:9)",
+                "maximum_retained_operations": 207673,
+                "producer": "regional",
+                "requests": 1,
+                "retained_operations": 207673,
+                "root": 419211
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 9800,
+                "cut": "pto.tcvt",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":257:11)",
+                "maximum_retained_operations": 9800,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 9800,
+                "root": 31486
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 9311,
+                "cut": "pto.tmul",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":246:11)",
+                "maximum_retained_operations": 9311,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 9311,
+                "root": 29901
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 9169,
+                "cut": "pto.tmov",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":244:11)",
+                "maximum_retained_operations": 9169,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 9169,
+                "root": 29387
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 9090,
+                "cut": "pto.tsub",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":241:11)",
+                "maximum_retained_operations": 9090,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 9090,
+                "root": 29089
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 9042,
+                "cut": "pto.tmov",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":240:11)",
+                "maximum_retained_operations": 9042,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 9042,
+                "root": 28912
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8989,
+                "cut": "pto.trowsum",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":238:11)",
+                "maximum_retained_operations": 8989,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8989,
+                "root": 28723
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8911,
+                "cut": "pto.tmul",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":237:11)",
+                "maximum_retained_operations": 8911,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8911,
+                "root": 28450
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8821,
+                "cut": "pto.tcolexpand",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":236:11)",
+                "maximum_retained_operations": 8821,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8821,
+                "root": 28132
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8756,
+                "cut": "pto.tmov",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":235:11)",
+                "maximum_retained_operations": 8756,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8756,
+                "root": 27898
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8703,
+                "cut": "pto.tmuls",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":234:11)",
+                "maximum_retained_operations": 8703,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8703,
+                "root": 27702
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8252,
+                "cut": "pto.trowsum",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":227:11)",
+                "maximum_retained_operations": 8252,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8252,
+                "root": 26180
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8137,
+                "cut": "pto.tload",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":216:13)",
+                "maximum_retained_operations": 8137,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8137,
+                "root": 24067
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8082,
+                "cut": "pto.tload",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":210:13)",
+                "maximum_retained_operations": 8082,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8082,
+                "root": 23975
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 7998,
+                "cut": "pto.tload",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":204:13)",
+                "maximum_retained_operations": 7998,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 7998,
+                "root": 23882
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 7912,
+                "cut": "pto.trsqrt",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":222:11)",
+                "maximum_retained_operations": 7912,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 7912,
+                "root": 25158
+              }
+            ],
+            "requests": 294,
+            "retained_operations": 673216,
+            "scope": "latest-materialization-attempt",
+            "unique_recipes": 294
+          },
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 0,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "identity-sequence",
+          "realization": "invocation-prefix",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 0,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 0,
+          "families": 0,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "fused_gating_delta",
+          "function_control": {
+            "arithmetic_including_payload": 674844,
+            "barriers": 194,
+            "div_rem": 454,
+            "ifs": 195,
+            "selects": 202310,
+            "sets": 172,
+            "state_slots": 284,
+            "waits": 47
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {
+            "attempts": 330,
+            "constructed_operations": 673216,
+            "direct_failures": 36,
+            "emissions": 294,
+            "history_attempts": 3,
+            "inactive_attempts": 33,
+            "largest_recipes": [
+              {
+                "arena": 1,
+                "attempts": 2,
+                "constructed_operations": 207673,
+                "cut": "pto.tcvt",
+                "direct_failures": 1,
+                "distance": 0,
+                "emissions": 1,
+                "history_attempts": 1,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":261:9)",
+                "maximum_retained_operations": 207673,
+                "producer": "regional",
+                "requests": 1,
+                "retained_operations": 207673,
+                "root": 419211
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 9800,
+                "cut": "pto.tcvt",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":257:11)",
+                "maximum_retained_operations": 9800,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 9800,
+                "root": 31486
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 9311,
+                "cut": "pto.tmul",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":246:11)",
+                "maximum_retained_operations": 9311,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 9311,
+                "root": 29901
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 9169,
+                "cut": "pto.tmov",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":244:11)",
+                "maximum_retained_operations": 9169,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 9169,
+                "root": 29387
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 9090,
+                "cut": "pto.tsub",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":241:11)",
+                "maximum_retained_operations": 9090,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 9090,
+                "root": 29089
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 9042,
+                "cut": "pto.tmov",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":240:11)",
+                "maximum_retained_operations": 9042,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 9042,
+                "root": 28912
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8989,
+                "cut": "pto.trowsum",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":238:11)",
+                "maximum_retained_operations": 8989,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8989,
+                "root": 28723
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8911,
+                "cut": "pto.tmul",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":237:11)",
+                "maximum_retained_operations": 8911,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8911,
+                "root": 28450
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8821,
+                "cut": "pto.tcolexpand",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":236:11)",
+                "maximum_retained_operations": 8821,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8821,
+                "root": 28132
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8756,
+                "cut": "pto.tmov",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":235:11)",
+                "maximum_retained_operations": 8756,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8756,
+                "root": 27898
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8703,
+                "cut": "pto.tmuls",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":234:11)",
+                "maximum_retained_operations": 8703,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8703,
+                "root": 27702
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8252,
+                "cut": "pto.trowsum",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":227:11)",
+                "maximum_retained_operations": 8252,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8252,
+                "root": 26180
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8137,
+                "cut": "pto.tload",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":216:13)",
+                "maximum_retained_operations": 8137,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8137,
+                "root": 24067
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 8082,
+                "cut": "pto.tload",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":210:13)",
+                "maximum_retained_operations": 8082,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 8082,
+                "root": 23975
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 7998,
+                "cut": "pto.tload",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":204:13)",
+                "maximum_retained_operations": 7998,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 7998,
+                "root": 23882
+              },
+              {
+                "arena": 0,
+                "attempts": 1,
+                "constructed_operations": 7912,
+                "cut": "pto.trsqrt",
+                "direct_failures": 0,
+                "distance": 3,
+                "emissions": 1,
+                "history_attempts": 0,
+                "inactive_attempts": 0,
+                "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":222:11)",
+                "maximum_retained_operations": 7912,
+                "producer": "bounded",
+                "requests": 1,
+                "retained_operations": 7912,
+                "root": 25158
+              }
+            ],
+            "requests": 294,
+            "retained_operations": 673216,
+            "scope": "latest-materialization-attempt",
+            "unique_recipes": 294
+          },
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 0,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "identity-sequence",
+          "realization": "invocation-prefix",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 0,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": [],
+      "device_execution": "not-run"
+    },
+    {
+      "id": "lossless_block_cast",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/lossless_block_cast/input.pto",
+      "input_sha256": "e24109f640f04054da0c493eb5e994e4fb6fbc263cf0da13924f08cadb824c13",
+      "stages": {
+        "logical": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/lossless_block_cast/input.pto"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 3.605655360966921,
+          "maximum_rss_kib": 249304,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "allocation": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/r7-revised-draft-campaign/lossless_block_cast/logical.out"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.202735198661685,
+          "maximum_rss_kib": 107080,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        },
+        "cpp": {
+          "command": [
+            ".local/three-paths/review-plan-m7/ptoas-native",
+            "--pto-level=level3",
+            "--enable-insert-sync=false",
+            "--enable-plan-memory=false",
+            ".local/r7-revised-draft-campaign/lossless_block_cast/allocation.out",
+            "-o",
+            ".local/r7-revised-draft-campaign/lossless_block_cast/kernel.cpp"
+          ],
+          "returncode": 0,
+          "status": "finished",
+          "seconds": 0.20352662215009332,
+          "maximum_rss_kib": 110604,
+          "address_space_limit_bytes": 4294967296,
+          "timeout_seconds": 240.0,
+          "success": true
+        }
+      },
+      "input_metrics": {
+        "bytes": 12098,
+        "lines": 133,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 0,
+        "ifs": 1,
+        "arithmetic": 55,
+        "selects": 0,
+        "div_rem": 5,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "expert_metrics": {
+        "bytes": 12356,
+        "lines": 140,
+        "sets": 0,
+        "waits": 0,
+        "barriers": 7,
+        "ifs": 1,
+        "arithmetic": 55,
+        "selects": 0,
+        "div_rem": 5,
+        "retained_record_labels": 0,
+        "recognition": {}
+      },
+      "logical_metrics": {
+        "bytes": 78817,
+        "lines": 203,
+        "sets": 5,
+        "waits": 5,
+        "barriers": 4,
+        "ifs": 14,
+        "arithmetic": 83,
+        "selects": 2,
+        "div_rem": 5,
+        "retained_record_labels": 8,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 71757,
+        "lines": 203,
+        "sets": 5,
+        "waits": 5,
+        "barriers": 4,
+        "ifs": 14,
+        "arithmetic": 83,
+        "selects": 2,
+        "div_rem": 5,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 13924,
+        "lines": 425,
+        "ifs": 3,
+        "ternaries": 4
+      },
+      "control_stages": [
+        {
+          "endpoint_sites": 9,
+          "families": 8,
+          "family_materialization": {
+            "contexts": 0,
+            "local_entries": 0,
+            "shared_candidates": 0,
+            "shared_imports": 0,
+            "shared_published": 0,
+            "shared_requests": 0
+          },
+          "function": "lossless_block_cast",
+          "function_control": {
+            "arithmetic_including_payload": 55,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 18,
+            "blocks": 12,
+            "endpoint_reachable_arithmetic": 18,
+            "required_arithmetic": 18
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {
+            "contextual_sites": 4,
+            "mixed_leaves": 0,
+            "numerical_sites": 0,
+            "shared_planning_bindings": 8,
+            "shared_planning_candidates": 8,
+            "shared_planning_lookups": 20,
+            "shared_planning_roots": 4,
+            "wrapper_binding_requests": 0,
+            "wrapper_discovery_nodes": 0,
+            "wrapper_discovery_pieces": 0,
+            "wrapper_index_entries": 0,
+            "wrapper_index_imports": 0
+          },
+          "recipe_sites": 4,
+          "record_members": 8,
+          "stage": "prepared"
+        },
+        {
+          "endpoint_sites": 13,
+          "families": 8,
+          "family_materialization": {
+            "contexts": 5,
+            "local_entries": 24,
+            "shared_candidates": 8,
+            "shared_imports": 8,
+            "shared_published": 4,
+            "shared_requests": 20
+          },
+          "function": "lossless_block_cast",
+          "function_control": {
+            "arithmetic_including_payload": 55,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 34,
+            "blocks": 20,
+            "endpoint_reachable_arithmetic": 34,
+            "required_arithmetic": 34
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 8,
+          "stage": "materialized"
+        },
+        {
+          "endpoint_sites": 13,
+          "families": 8,
+          "family_materialization": {
+            "contexts": 5,
+            "local_entries": 24,
+            "shared_candidates": 8,
+            "shared_imports": 8,
+            "shared_published": 4,
+            "shared_requests": 20
+          },
+          "function": "lossless_block_cast",
+          "function_control": {
+            "arithmetic_including_payload": 55,
+            "barriers": 0,
+            "div_rem": 5,
+            "ifs": 1,
+            "selects": 0,
+            "sets": 0,
+            "waits": 0
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 28,
+            "blocks": 20,
+            "endpoint_reachable_arithmetic": 28,
+            "required_arithmetic": 28
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 8,
+          "stage": "normalized"
+        },
+        {
+          "endpoint_sites": 13,
+          "families": 8,
+          "family_materialization": {
+            "contexts": 5,
+            "local_entries": 24,
+            "shared_candidates": 8,
+            "shared_imports": 8,
+            "shared_published": 4,
+            "shared_requests": 20
+          },
+          "function": "lossless_block_cast",
+          "function_control": {
+            "arithmetic_including_payload": 83,
+            "barriers": 4,
+            "div_rem": 5,
+            "ifs": 14,
+            "selects": 2,
+            "sets": 5,
+            "waits": 5
+          },
+          "function_scope": "original-or-inserted",
+          "plan": 0,
+          "prefix_expressions": {},
+          "preparation": {
+            "arithmetic": 0,
+            "blocks": 20,
+            "endpoint_reachable_arithmetic": 0,
+            "required_arithmetic": 0
+          },
+          "producer": "sequence",
+          "realization": "direct-endpoints",
+          "recipe_forms": {},
+          "recipe_sites": 0,
+          "record_members": 8,
+          "stage": "inserted"
+        }
+      ],
+      "allocation_work": [],
+      "device_execution": "not-run"
+    }
+  ],
+  "totals": {
+    "logical": 11,
+    "allocation": 7,
+    "cpp": 7
+  },
+  "receipts": ".local/r7-revised-draft-campaign"
+}
