@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Realize retained Boolean evaluations without evaluating opaque producers again.
 #include "PrefixExpression.h"
+#include "MappedCutInputs.h"
 #include "PrefixExpressionProfile.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "../../InsertSync/SyncScalarReplay.h"
@@ -111,26 +112,7 @@ RegionExpressions::CutEmission contextFor(RegionExpressions& arena, Expr root, O
 {
     RegionExpressions::CutEmission context;
     DominanceInfo dominance(cut->getParentOfType<func::FuncOp>());
-    SmallVector<Value> pending;
-    for (auto [id, original] : arena.referencedInputs(root)) {
-        pending.push_back(original);
-        auto value = mapping.lookupOrNull(original);
-        if (value && dominance.properlyDominates(original, cut)) {
-            context.values[id] = value; context.cofactors[id] = id;
-        }
-    }
-    // Bind only reached values and deterministic replay dependencies. Copying
-    // the complete module-clone mapping per expression grows with unrelated IR.
-    DenseSet<Value> seen;
-    while (!pending.empty()) {
-        auto value = pending.pop_back_val();
-        if (!seen.insert(value).second) { continue; }
-        if (dominance.properlyDominates(value, cut)) {
-            if (auto replacement = mapping.lookupOrNull(value)) { context.inputs[value] = replacement; }
-        } else if (auto* definition = value.getDefiningOp(); mlir::pto::detail::canReplayScalar(definition)) {
-            llvm::append_range(pending, definition->getOperands());
-        }
-    }
+    detail::bindMappedCutInputs(arena, root, cut, mapping, dominance, context);
     return context;
 }
 struct ExpressionRecipe {
