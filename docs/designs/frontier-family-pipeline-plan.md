@@ -2076,3 +2076,20 @@ construction and lifetime certification, not a claim that Delta is fixed.
 Incremental build, diff checks and the five suites pass. Compliance reports
 four already-braced test conditions. Receipts: `.local/r5-session-*.log`,
 `.local/r5-delta-current/`, `.local/r5-delta-shared/`.
+
+### R5 increment: native bounded regional queries
+
+Same-pipe start/start, start/completion and completion/completion queries now
+use occurrence order and exact endpoint presence directly. Reference-forward
+edges make this native answer exact; completion/start queries still use the
+full bounded query construction. Symbolic native queries stay within 16 shared
+expression nodes in the regression instead of constructing window circuits.
+
+The bounded regional interface, physical allocation and macro-selector suites
+pass, including the independent unfolded all-event query oracle. Incremental
+build and diff checks pass; the compliance script reports one already-braced
+test condition. A Delta diagnostic completes logically in 77.100 seconds but
+retains the same 1,936,116 constructed prefix operations and 607,621-operation
+largest root. This shortcut does not explain or fix that root; no speedup or
+physical-support claim follows. Receipts: `.local/r5-native-queries-*.log`,
+`.local/r5-delta-native/`.

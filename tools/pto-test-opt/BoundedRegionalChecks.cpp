@@ -518,6 +518,25 @@ bool checkBoundedRegionalQueries(const fs::BoundedLifetimeDemandResult& demands,
     fs::RegionalEvent source{0, e.constant(0), fs::PeriodicEventKind::Start};
     auto target = source;
     if (!fs::regionalReachability(queries, source, target)) { return false; }
+    // Native same-pipe kinds must retain their small coordinate/presence
+    // formula even for symbolic ordinals; no window-reachability substitution
+    // is necessary. The full graph oracle below independently checks semantics.
+    const auto first = e.input(loop.getInductionVar());
+    const auto next = e.add(first, e.constant(1));
+    const auto beforeNative = e.size();
+    for (unsigned site = 0; site < demands.window.sites; ++site) {
+        if (!demands.unconditional[site]) { continue; }
+        for (auto kinds : {std::make_pair(fs::PeriodicEventKind::Start, fs::PeriodicEventKind::Start),
+                           std::make_pair(fs::PeriodicEventKind::Start, fs::PeriodicEventKind::Completion),
+                           std::make_pair(fs::PeriodicEventKind::Completion, fs::PeriodicEventKind::Completion)}) {
+            auto native = fs::regionalReachability(queries, {site, first, kinds.first}, {site, next, kinds.second});
+            if (!native) { return false; }
+        }
+    }
+    if (e.size() - beforeNative > 16) {
+        llvm::errs() << "bounded native query expanded its window: " << e.size() - beforeNative << " nodes\n";
+        return false;
+    }
     source.visits.push_back(e.constant(0));
     if (fs::regionalReachability(queries, source, target)) { return false; }
     source.visits.clear(); source.kind = static_cast<fs::PeriodicEventKind>(255);
