@@ -279,6 +279,83 @@ inline bool checkSequenceNativeFrontier(func::FuncOp function)
     llvm::outs() << "native-frontier checks: 32 guarded closures; linear 128/256/1024-child work\n";
     return true;
 }
+inline bool checkSelectedNativeQueries(func::FuncOp function, const CompoundInstanceElement& phase)
+{
+    namespace fs = frontiersynch;
+    using Kind = fs::PeriodicEventKind;
+    Block inputs;
+    for (unsigned count : {16U, 64U, 256U}) {
+        auto e = std::make_shared<fs::RegionExpressions>();
+        std::array<fs::Expr, 4> values;
+        for (auto& value : values) {
+            value = e->input(inputs.addArgument(IndexType::get(function.getContext()), function.getLoc()));
+        }
+        fs::SequenceAnalysisState state(function, e);
+        state.children.resize(2);
+        unsigned presenceQueries = 0;
+        std::array<uint32_t, 2> roots;
+        for (unsigned child = 0; child < 2; ++child) {
+            fs::TemplateEndpointAnchor anchor; anchor.phase = &phase;
+            state.children[child].anchors.push_back(anchor);
+            auto& region = state.children[child].regional;
+            region.expressions = e; region.anchors.push_back(anchor); region.occurrenceLoops.resize(1);
+            region.presence = [&, child](fs::RegionalEvent event) -> std::optional<fs::Expr> {
+                ++presenceQueries;
+                // Only original occurrence coordinates are supported: the
+                // producer must not be asked to reinterpret a folded choice.
+                auto ordinal = e->constantValue(event.ordinal);
+                if (!ordinal || *ordinal >= count) { return std::nullopt; }
+                return e->eq(values[2 * child + 1], event.ordinal);
+            };
+            roots[child] = state.port(child, 0, e->constant(0));
+            for (unsigned i = 1; i < count; ++i) {
+                auto current = state.port(child, 0, e->constant(i));
+                roots[child] = state.selectPort(e->eq(values[2 * child], e->constant(i)), current, roots[child]);
+            }
+        }
+        for (auto kinds : {std::make_pair(Kind::Start, Kind::Start),
+                           std::make_pair(Kind::Start, Kind::Completion),
+                           std::make_pair(Kind::Completion, Kind::Completion)}) {
+            auto source = state.event(2 * roots[0]), target = state.event(2 * roots[1]);
+            source.kind = kinds.first; target.kind = kinds.second;
+            auto answer = state.eventReachability(source, target);
+            if (!answer) { return bridgeCheckFailure(__LINE__); }
+            for (unsigned a : {0U, count / 2, count - 1, count + 1}) {
+                for (unsigned b : {0U, count / 2, count - 1, count + 1}) {
+                    const unsigned chosenA = a < count ? a : 0, chosenB = b < count ? b : 0;
+                    for (unsigned bits = 0; bits < 4; ++bits) {
+                        std::vector<std::pair<fs::Expr, fs::Expr>> bindings{
+                            {values[0], e->constant(a)}, {values[2], e->constant(b)},
+                            {values[1], e->constant(bits & 1 ? chosenA : count)},
+                            {values[3], e->constant(bits & 2 ? chosenB : count)}};
+                        fs::RegionExpressions::Substitution substitution(bindings);
+                        if (e->constantValue(e->substitute(*answer, substitution)) != (bits == 3 ? 1 : 0)) {
+                            return bridgeCheckFailure(__LINE__);
+                        }
+                    }
+                }
+            }
+        }
+        // Four endpoint/kind descriptions, each with count leaves and count-1
+        // choices; only three cross-child query results are needed.
+        if (presenceQueries != 4 * count || state.reachabilityCache.size() > 8 * count) {
+            return bridgeCheckFailure(__LINE__);
+        }
+        if (count == 16) {
+            auto source = state.event(2 * roots[0] + 1), target = state.event(2 * roots[1]);
+            auto noDemand = state.eventReachability(source, target);
+            if (!noDemand || e->constantValue(*noDemand) != 0) { return bridgeCheckFailure(__LINE__); }
+            state.reachabilityCache.clear();
+            state.children[1].regional.presence = [](fs::RegionalEvent) -> std::optional<fs::Expr> {
+                return std::nullopt;
+            };
+            source.kind = Kind::Start;
+            if (state.eventReachability(source, target)) { return bridgeCheckFailure(__LINE__); }
+        }
+    }
+    llvm::outs() << "selected-native checks: 576 valuations; linear endpoint binding\n";
+    return true;
+}
 inline bool checkSequenceBridgeWork(func::FuncOp function, const SyncInput& input)
 {
     if (input.instructions().empty()) { return bridgeCheckFailure(__LINE__); }
@@ -367,7 +444,8 @@ inline bool checkSequenceBridgeWork(func::FuncOp function, const SyncInput& inpu
             }
         }
     }
-    return checkSparseBoundaryImport(function, phases) && checkSequenceNativeFrontier(function);
+    return checkSparseBoundaryImport(function, phases) && checkSequenceNativeFrontier(function) &&
+        checkSelectedNativeQueries(function, phases.front());
 }
 } // namespace mlir::pto::test
 #endif
