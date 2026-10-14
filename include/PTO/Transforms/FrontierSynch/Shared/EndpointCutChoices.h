@@ -17,12 +17,18 @@ public:
     scf::ForOp loop() const { return invocation; }
     ArrayRef<TemplateEndpointCut> cuts() const { return alternatives; }
     Value consumerPredicate() const { return terminalPredicate; }
+    bool pendingMaterialization() const { return bool(terminalArena); }
+    bool validPendingSelection() const;
 private:
     EndpointCutChoices(scf::ForOp loop, ArrayRef<TemplateEndpointCut> cuts, Value predicate = {})
         : invocation(loop), alternatives(cuts.begin(), cuts.end()), terminalPredicate(predicate) {}
     scf::ForOp invocation;
     std::vector<TemplateEndpointCut> alternatives;
     Value terminalPredicate;
+    std::shared_ptr<const RegionExpressions> terminalArena;
+    uint32_t terminalExpression = 0;
+    friend std::shared_ptr<const EndpointCutChoices> qualifyTerminalCleanupCuts(
+        ArrayRef<TemplateEndpointCut>, std::shared_ptr<const RegionExpressions>, uint32_t);
     friend std::shared_ptr<const EndpointCutChoices> qualifyTerminalCleanupCuts(
         ArrayRef<TemplateEndpointCut>, Value);
     friend std::shared_ptr<const EndpointCutChoices> qualifyEndpointCutChoices(
@@ -42,6 +48,11 @@ std::shared_ptr<const EndpointCutChoices> qualifyEndpointCutChoices(
 // allocator rechecks the same property on the actual command guard.
 std::shared_ptr<const EndpointCutChoices> qualifyTerminalCleanupCuts(
     ArrayRef<TemplateEndpointCut> cuts, Value consumerPredicate = {});
+// Retain the same singleton proof without generated SSA. The owning arena and
+// original cuts survive composition; final lowering rechecks the actual guard.
+std::shared_ptr<const EndpointCutChoices> qualifyTerminalCleanupCuts(
+    ArrayRef<TemplateEndpointCut> cuts, std::shared_ptr<const RegionExpressions> arena,
+    uint32_t consumerPredicate);
 // The same singleton-cut proof before scalar materialization. The exact arena
 // predicate is interpreted with original branch facts; necessary exclusion
 // domains are insufficient. This proves multiplicity, not value availability.

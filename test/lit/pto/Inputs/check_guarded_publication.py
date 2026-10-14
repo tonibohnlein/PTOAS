@@ -81,6 +81,8 @@ def main():
             report = invoke(tool, path, "--sequence-analysis", policy)
             assert not report["error"] and report["prepared"] and report["unchanged"], report
             assert report["queries_available"], report
+            if expanded:
+                assert report["crossing_preparation"] == 0, report
             for s, g, h, n in itertools.product((0, 1), (0, 1), (0, 1), (0, 1, 3)):
                 path.write_text(render(body, (s, g, h, n)))
                 report = invoke(tool, path, policy=policy)

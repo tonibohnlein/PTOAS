@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <limits>
 #include <map>
+#include <set>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
 enum class FamilyContextKind { Invocation, Activity };
@@ -35,6 +36,11 @@ public:
     };
     std::shared_ptr<RegionExpressions> arena;
     std::vector<Binding> bindings;
+    struct Shared {
+        ContextualSharedExpression expression;
+        std::shared_ptr<const CutExpressionRecipe> binding;
+    };
+    std::vector<Shared> shared;
     scf::ForOp outer;
     std::vector<EndpointPiece> pieces;
     std::vector<std::shared_ptr<const FamilyExpressionRecipe>> selectors;
@@ -70,10 +76,31 @@ private:
     LogicalResult prepareContextual()
     {
         std::map<Operation*, RegionExpressions::CutEmission> memos;
+        std::map<Operation*, RegionExpressions::CutEmission> sharedMemos;
+        for (const auto& shared : recipe.shared) {
+            auto* cut = shared.expression.cut;
+            builder.setInsertionPointToEnd(&prepared.addPreparation(cut));
+            auto value = recipe.arena->emitPreparedContextual(*shared.binding, builder, cut, sharedMemos[cut]);
+            if (failed(value)) { return failure(); }
+            sharedMemos[cut].values[shared.expression.expression] = *value;
+        }
+        DominanceInfo dominance(recipe.cuts.front().cut.before->getParentOfType<func::FuncOp>());
+        std::set<Operation*> seeded;
         for (std::size_t i = 0; i < recipe.pieces.size(); ++i) {
             const auto& piece = recipe.pieces[i];
             const auto& binding = recipe.bindings[i];
             auto* cut = piece.cut.before;
+            if (seeded.insert(cut).second) {
+                for (const auto& shared : sharedMemos) {
+                    if (shared.first != cut && !dominance.properlyDominates(shared.first, cut)) { continue; }
+                    for (const auto& value : shared.second.values) {
+                        memos[cut].values.try_emplace(value.first, value.second);
+                    }
+                    for (const auto& input : shared.second.inputs) {
+                        memos[cut].inputs.try_emplace(input.first, input.second);
+                    }
+                }
+            }
             builder.setInsertionPointToEnd(&prepared.addPreparation(cut));
             auto emit = [&](const std::shared_ptr<const CutExpressionRecipe>& value) {
                 return recipe.arena->emitPreparedContextual(*value, builder, cut, memos[cut]);
@@ -263,17 +290,46 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFiniteFamilyEndpoint
     }
     return buildRecipe(plan);
 }
-FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndpointRecipe(
-    std::shared_ptr<RegionExpressions> arena, ArrayRef<ContextualEndpointFamily> families)
+FailureOr<std::shared_ptr<const CutExpressionRecipe>> ContextualFamilyExpressions::prepare(
+    RegionExpressions::Id expression, Operation* cut)
 {
-    if (!arena || families.empty()) { return failure(); }
+    if (!owner) { return failure(); }
+    const auto key = std::make_pair(expression, cut);
+    auto found = recipes.find(key);
+    if (found != recipes.end()) { return found->second; }
+    auto recipe = owner->prepareContextual(expression, cut, contexts[cut]);
+    if (failed(recipe)) { return failure(); }
+    recipes.emplace(key, *recipe);
+    return *recipe;
+}
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndpointRecipe(
+    std::shared_ptr<RegionExpressions> arena, ArrayRef<ContextualEndpointFamily> families,
+    ArrayRef<ContextualSharedExpression> shared)
+{
+    ContextualFamilyExpressions expressions(std::move(arena));
+    return buildContextualFamilyEndpointRecipe(expressions, families, shared);
+}
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndpointRecipe(
+    ContextualFamilyExpressions& expressions, ArrayRef<ContextualEndpointFamily> families,
+    ArrayRef<ContextualSharedExpression> shared)
+{
+    auto arena = expressions.arena();
+    if (!arena || families.empty() || !families.front().piece.cut.before) { return failure(); }
+    auto function = families.front().piece.cut.before->getParentOfType<func::FuncOp>();
+    if (!function) { return failure(); }
     auto recipe = std::make_shared<FamilyEndpointRecipe>();
     recipe->arena = std::move(arena);
-    std::map<Operation*, RegionExpressions::CutEmission> contexts;
+    for (const auto& expression : shared) {
+        if (!expression.cut || expression.cut->getParentOfType<func::FuncOp>() != function) { return failure(); }
+        auto planned = expressions.prepare(expression.expression, expression.cut);
+        if (failed(planned)) { return failure(); }
+        recipe->shared.push_back({expression, std::move(*planned)});
+    }
     for (const auto& family : families) {
         const auto& piece = family.piece;
         auto* cut = piece.cut.before;
-        if (!cut || piece.cut.block != cut->getBlock() || piece.members.size() != 1 ||
+        if (!cut || piece.cut.block != cut->getBlock() || cut->getParentOfType<func::FuncOp>() != function ||
+            piece.members.size() != 1 ||
             (piece.kind != EndpointKind::Set && piece.kind != EndpointKind::Wait &&
              piece.kind != EndpointKind::Barrier) ||
             ((piece.sourcePipe == piece.targetPipe) != (piece.kind == EndpointKind::Barrier))) { return failure(); }
@@ -281,7 +337,7 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndp
             if (expression >= recipe->arena->size() || recipe->arena->isBoolean(expression) != boolean) {
                 return FailureOr<std::shared_ptr<const CutExpressionRecipe>>(failure());
             }
-            return recipe->arena->prepareContextual(expression, cut, contexts[cut]);
+            return expressions.prepare(expression, cut);
         };
         auto guard = prepare(family.activity, true);
         if (failed(guard)) { return failure(); }
@@ -513,6 +569,37 @@ LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, 
     for (std::size_t i = 0; i < lowered.endpoints.size(); ++i) {
         lowered.endpoints[i].piece = static_cast<int64_t>(i);
     }
+    // Only pending cleanup witnesses need a final guard binding. Index their
+    // record/cut requests once instead of scanning all endpoints per family.
+    std::map<std::pair<uint32_t, Operation*>, Value> primaryGuards;
+    for (const auto& family : prepared.families) {
+        if (!family.targetChoices || !family.targetChoices->pendingMaterialization()) { continue; }
+        if (!family.targetChoices->validPendingSelection() || family.members.size() != 1) { return failure(); }
+        if (!primaryGuards.emplace(std::make_pair(family.members.front().record, family.targetCut.before),
+                                   Value()).second) { return failure(); }
+    }
+    if (!primaryGuards.empty()) {
+        for (const auto& endpoint : lowered.endpoints) {
+            if (endpoint.kind != LogicalCommandKind::Wait) { continue; }
+            for (auto record : endpoint.records) {
+                auto found = primaryGuards.find({record, endpoint.before});
+                if (found == primaryGuards.end()) { continue; }
+                if (found->second) { return failure(); }
+                found->second = endpoint.guard;
+            }
+        }
+    }
+    std::vector<std::pair<std::size_t, std::shared_ptr<const EndpointCutChoices>>> resolvedChoices;
+    for (std::size_t f = 0; f < prepared.families.size(); ++f) {
+        const auto& family = prepared.families[f];
+        if (!family.targetChoices || !family.targetChoices->pendingMaterialization()) { continue; }
+        auto predicate = primaryGuards.at({family.members.front().record, family.targetCut.before});
+        if (!predicate) { return failure(); }
+        auto choices = qualifyTerminalCleanupCuts(family.targetChoices->cuts(), predicate);
+        if (!choices) { return failure(); }
+        resolvedChoices.push_back({f, std::move(choices)});
+    }
+    for (auto& choice : resolvedChoices) { prepared.families[choice.first].targetChoices = std::move(choice.second); }
     prepared.endpoints = std::move(lowered.endpoints);
     for (auto& stage : lowered.preparation) { prepared.preparation.push_back(std::move(stage)); }
     prepared.groupedFamilies = true;

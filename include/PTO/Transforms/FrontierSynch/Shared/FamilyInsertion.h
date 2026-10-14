@@ -36,8 +36,29 @@ struct ContextualEndpointFamily {
     RegionExpressions::Id residueCoordinate = RegionExpressions::invalid;
     uint64_t modulus = 0, residue = 0;
 };
+// One preparation attempt shares successful availability recipes across
+// protocol selection and family construction. The arena is append-only and
+// original cuts are unchanged; this owner must not survive an arena rollback.
+class ContextualFamilyExpressions {
+public:
+    explicit ContextualFamilyExpressions(std::shared_ptr<RegionExpressions> arena) : owner(std::move(arena)) {}
+    const std::shared_ptr<RegionExpressions>& arena() const { return owner; }
+    FailureOr<std::shared_ptr<const CutExpressionRecipe>> prepare(RegionExpressions::Id expression, Operation* cut);
+private:
+    std::shared_ptr<RegionExpressions> owner;
+    std::map<Operation*, RegionExpressions::CutEmission> contexts;
+    std::map<std::pair<RegionExpressions::Id, Operation*>, std::shared_ptr<const CutExpressionRecipe>> recipes;
+};
+struct ContextualSharedExpression {
+    RegionExpressions::Id expression = RegionExpressions::invalid;
+    Operation* cut = nullptr;
+};
 FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndpointRecipe(
-    std::shared_ptr<RegionExpressions> arena, ArrayRef<ContextualEndpointFamily> families);
+    std::shared_ptr<RegionExpressions> arena, ArrayRef<ContextualEndpointFamily> families,
+    ArrayRef<ContextualSharedExpression> shared = {});
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndpointRecipe(
+    ContextualFamilyExpressions& expressions, ArrayRef<ContextualEndpointFamily> families,
+    ArrayRef<ContextualSharedExpression> shared = {});
 // Append immutable child recipes without copying their selector inventories.
 // endpointIndex counts concrete endpoints preceding the child; recordBase is
 // the checked namespace translation applied equally to both matching sides.

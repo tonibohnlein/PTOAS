@@ -57,7 +57,15 @@ bool contextualEndpointRecipeChecks(const mlir::pto::frontiersynch::NumericTempl
     family.ordinal = arena->constant(13);
     family.residueCoordinate = arena->constant(5);
     family.modulus = 3; family.residue = 2;
-    auto leaf = fs::buildContextualFamilyEndpointRecipe(arena, {family});
+    if (succeeded(fs::buildContextualFamilyEndpointRecipe(arena, {family}, {{family.ordinal, nullptr}}))) {
+        return false;
+    }
+    fs::ContextualFamilyExpressions planning(arena);
+    auto first = planning.prepare(family.ordinal, family.piece.cut.before);
+    auto again = planning.prepare(family.ordinal, family.piece.cut.before);
+    if (failed(first) || failed(again) || *first != *again) { return false; }
+    auto leaf = fs::buildContextualFamilyEndpointRecipe(
+        planning, {family}, {{family.ordinal, family.piece.cut.before}});
     if (failed(leaf)) { return false; }
     fs::PreparedLogicalPlan plan(0);
     plan.familyRecipe = *leaf;

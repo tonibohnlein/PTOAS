@@ -8,15 +8,6 @@
 #include "PTO/Transforms/FrontierSynch/Shared/GuardedPublication.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
-class GuardedPublicationRecipe {
-public:
-    const RegionExpressions* owner = nullptr;
-    TemplateEndpointCut source, consumer;
-    RegionExpressions::Id sourceGuard = RegionExpressions::invalid;
-    RegionExpressions::Id publicationGuard = RegionExpressions::invalid;
-    Operation* cleanupCut = nullptr;
-    RegionExpressions::Id cleanupGuard = RegionExpressions::invalid;
-};
 const char* endpointFailureStageName(EndpointFailureStage stage)
 {
     switch (stage) {

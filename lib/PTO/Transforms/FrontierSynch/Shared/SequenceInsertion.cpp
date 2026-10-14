@@ -7,10 +7,12 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
 #include "OccurrenceBinding.h"
+#include "OriginalCutFacts.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
 #include "PTO/Transforms/FrontierSynch/Shared/GuardedPublication.h"
 #include "mlir/IR/Dominance.h"
+#include <set>
 namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepare(
     std::string& diagnostic, ArrayRef<scf::ForOp> enclosing,
@@ -137,9 +139,6 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
                     endpoint.before->getLoc(), *predicate, endpoint.guard, no);
             }
         }
-        for (const auto& stage : prepared->preparation) {
-            childPreparationOperations += stage.code->getOperations().size();
-        }
         result->nestedIdentities |= prepared->nestedIdentities;
         allocationChildren.push_back({takeRegionalAllocationView(*prepared, true), typeBase, nextRecord});
         if (child.anchors.size() > UINT32_MAX - nextType) {
@@ -198,22 +197,28 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
             nextRecord += maximum + 1;
         }
     }
-    std::map<Operation*, std::unique_ptr<DenseMap<Expr, Value>>> memos;
-    std::map<Operation*, Block*> stages;
-    std::map<Operation*, RegionExpressions::CutEmission> contexts;
+    // Attribute namespace/identity adapters to child import, not to newly
+    // constructed crossings. Their work remains in the total preparation count.
+    for (const auto& stage : result->preparation) {
+        childPreparationOperations += stage.code->getOperations().size();
+    }
+    ContextualFamilyExpressions familyExpressions(arena);
+    DominanceInfo dominance(function);
     const bool contextual = llvm::any_of(children, [](const Child& child) {
         return child.regional.capabilities.contextualGuards;
     });
-    auto emit = [&](Expr expression, Operation* cut) -> FailureOr<Value> {
-        auto& memo = memos[cut];
-        if (!memo) { memo = std::make_unique<DenseMap<Expr, Value>>(); stages[cut] = &result->addPreparation(cut); }
-        OpBuilder builder(function.getContext());
-        builder.setInsertionPointToEnd(stages[cut]);
-        // Publication may first try a selective SET and then a valid early
-        // publication. Its caller decides which failed probe is terminal.
-        return contextual ? expressions.emitContextual(expression,builder,cut,contexts[cut]) :
-                            expressions.emit(expression,builder,cut,*memo);
+    auto available = [&](Expr expression, Operation* cut) -> LogicalResult {
+        // Retain the incumbent protocol policy: an ordinary provider does not
+        // acquire scalar replay merely because its lowering is now deferred.
+        if (expression >= expressions.size()) { return failure(); }
+        if (!contextual && llvm::any_of(expressions.referencedInputs(expression), [&](const auto& input) {
+            return !detail::originalValueAvailable(input.second, cut, dominance);
+        })) { return failure(); }
+        return success(succeeded(familyExpressions.prepare(expression, cut)));
     };
+    std::vector<ContextualEndpointFamily> crossingFamilies;
+    std::vector<ContextualSharedExpression> shared;
+    std::set<std::pair<Operation*, Expr>> sharedRoots;
     auto endpointGuard = [&](const Port& point, Expr guard) {
         const auto& child = children[point.child];
         if (child.regional.endpointSiteGuard) {
@@ -225,50 +230,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         for (auto condition : *conditions) { guard = expressions.select(guard, condition, no()); }
         return guard;
     };
-    struct SharedPreparation {
-        Block* block = nullptr;
-        DenseMap<Expr, Value> values;
-        RegionExpressions::CutEmission context;
-    };
-    std::map<Operation*, SharedPreparation> shared;
-    DominanceInfo dominance(function);
-    auto shareAt = [&](Expr expression, Operation* cut) -> FailureOr<Value> {
-        auto found = shared.find(cut);
-        DenseMap<Expr, Value> values;
-        RegionExpressions::CutEmission context;
-        if (found != shared.end()) {
-            values = found->second.values;
-            context = found->second.context;
-        }
-        // Establish contextual availability before allocating detached scalar
-        // code. The recipe retains original producers and binding keys only.
-        std::shared_ptr<const CutExpressionRecipe> recipe;
-        if (contextual) {
-            auto planned = expressions.prepareContextual(expression, cut, context);
-            if (failed(planned)) { return failure(); }
-            recipe = std::move(*planned);
-        }
-        // Failed ordinary probes remain transactional too.
-        Block scratch;
-        OpBuilder builder(function.getContext());
-        builder.setInsertionPointToEnd(&scratch);
-        auto value = recipe ? expressions.emitPreparedContextual(*recipe, builder, cut, context) :
-                              expressions.emit(expression, builder, cut, values);
-        if (failed(value)) { return failure(); }
-        auto& stage = shared[cut];
-        if (!stage.block) {
-            stage.block = &result->addPreparation(cut);
-            // Shared stages use original SSA values and their own preceding
-            // operations only. They never borrow an endpoint's detached code,
-            // so placing them before endpoint stages preserves SSA availability.
-            std::rotate(result->preparation.begin(), std::prev(result->preparation.end()),
-                        result->preparation.end());
-        }
-        stage.block->getOperations().splice(stage.block->end(), scratch.getOperations());
-        stage.values = std::move(values);
-        stage.context = std::move(context);
-        stage.values[expression] = *value;
-        return *value;
+    auto shareAt = [&](Expr expression, Operation* cut) -> LogicalResult {
+        if (failed(available(expression, cut))) { return failure(); }
+        if (sharedRoots.emplace(cut, expression).second) { shared.push_back({expression, cut}); }
+        return success();
     };
     auto shareEndpointValues = [&](Expr retained, const Port& source, const Port& target,
                                    Operation* sourceCut, Operation* targetCut) {
@@ -290,27 +255,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
             if (!dominates(sourceCut) || !dominates(targetCut)) { continue; }
             if (failed(shareAt(retained, candidate))) { continue; }
             for (auto root : roots) { (void)shareAt(root, candidate); }
-            const auto& stage = shared.at(candidate);
-            for (auto* cut : {sourceCut, targetCut}) {
-                auto& memo = memos[cut];
-                if (!memo) {
-                    memo = std::make_unique<DenseMap<Expr, Value>>();
-                    stages[cut] = &result->addPreparation(cut);
-                }
-                auto seed = [&](const auto& values) {
-                    for (const auto& item : values) {
-                        (*memo)[item.first] = item.second;
-                        contexts[cut].values[item.first] = item.second;
-                        contexts[cut].cofactors[item.first] = item.first;
-                    }
-                };
-                seed(stage.values);
-                seed(stage.context.values);
-            }
             break;
         }
-        // Ordinary endpoint emission below clears failed optional-attempt
-        // diagnostics and remains authoritative for guard availability.
+        // Required family availability remains authoritative after these
+        // optional common-cut probes. No scalar code is constructed here.
     };
     auto addDemand = [&](const Port& a, const Port& b, Expr retained) -> bool {
         if (expressions.constantValue(retained) == 0) { return true; }
@@ -337,55 +285,61 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         family.sourceCut = aa.after; family.targetCut = ab.before;
         family.members.push_back({record, a.type, b.type, aa.coordinates, ab.coordinates});
         result->families.push_back(std::move(family));
-        auto targetGuard = emit(endpointGuard(b, retained), ab.before.before);
-        if (failed(targetGuard)) { return fail("sequence WAIT/barrier predicate unavailable at its cut"); }
+        auto append = [&](TemplateEndpointCut cut, EndpointKind kind, Expr guard,
+                          ArrayRef<TemplateCoordinate> coordinates) {
+            ContextualEndpointFamily endpoint;
+            endpoint.piece.cut = cut;
+            endpoint.piece.namespaceId = record;
+            endpoint.piece.sourcePipe = p; endpoint.piece.targetPipe = q;
+            endpoint.piece.kind = kind;
+            endpoint.piece.members.push_back({record, {coordinates.begin(), coordinates.end()}});
+            endpoint.activity = guard;
+            endpoint.ordinal = c(0);
+            crossingFamilies.push_back(std::move(endpoint));
+        };
+        auto targetGuard = endpointGuard(b, retained);
         if (p == q) {
-            PreparedLogicalEndpoint endpoint{ab.before.before, LogicalCommandKind::Barrier, p, q,
-                                              record, *targetGuard, {}};
-            endpoint.records.push_back(record); endpoint.piece = nextPiece++;
-            result->endpoints.push_back(std::move(endpoint));
+            if (failed(available(targetGuard, ab.before.before))) {
+                return fail("sequence barrier predicate unavailable at its cut");
+            }
+            append(ab.before, EndpointKind::Barrier, targetGuard, ab.coordinates);
             return true;
         }
-        // Each crossing selects one source and one consumer occurrence in
-        // this region invocation. Guarded port choices change that pair, never
-        // its multiplicity; enclosing repetition must drop this certificate.
+        // Settle selective versus early publication and terminal cleanup from
+        // exact expressions. The allocation view owns this protocol before any
+        // detached scalar arithmetic or command operands are materialized.
         auto sourcePresence = regionalPresence(ca.regional, a.event());
         if (!sourcePresence) { return fail("sequence publication requires exact source presence"); }
-        auto publication = prepareGuardedPublication(function, expressions, aa.after, ab.before,
-            endpointGuard(a, retained), retained, emit, diagnostic, *targetGuard,
-            SelectedPublication{*sourcePresence, endpointGuard(a, *sourcePresence)});
+        auto sourceGuard = endpointGuard(a, retained);
+        auto selectedSource = endpointGuard(a, *sourcePresence);
+        if (!diagnostic.empty()) { return false; }
+        auto publication = preparePublicationRecipe(function, expressions, aa.after, ab.before,
+            sourceGuard, retained, targetGuard, available, diagnostic,
+            SelectedPublication{*sourcePresence, selectedSource});
         if (failed(publication)) {
             llvm::raw_string_ostream detail(diagnostic);
             detail << "; crossing record " << record << " from " << aa.phase->elementOp->getLoc()
-                       << " to " << ab.phase->elementOp->getLoc();
+                   << " to " << ab.phase->elementOp->getLoc();
             return false;
         }
-        result->families.back().targetChoices = publication->targetChoices;
+        const auto& protocol = **publication;
+        if (protocol.cleanupCut) {
+            auto choices = qualifyTerminalCleanupCuts(
+                {ab.before, {protocol.cleanupCut->getBlock(), protocol.cleanupCut}}, arena, targetGuard);
+            if (!choices) { return fail("sequence cleanup requires a singleton consumer recipe"); }
+            result->families.back().targetChoices = std::move(choices);
+        }
         allocationCrossings.push_back({p, q, 1, {{record, 0, 0,
             {typeOffsets[a.child] + a.type, a.ordinal, PeriodicEventKind::Start, a.visits},
             {typeOffsets[b.child] + b.type, b.ordinal, PeriodicEventKind::Completion, b.visits},
-            publication->cleanupCut ? publication->publicationGuard : allocationActive, {}, true}}, {},
-            bool(publication->cleanupCut)});
-        auto sourceIdentity = emit(c(0), aa.after.before);
-        auto targetIdentity = emit(c(0), ab.before.before);
-        auto sourceMember = emit(c(record), aa.after.before);
-        auto targetMember = emit(c(record), ab.before.before);
-        if (failed(sourceIdentity) || failed(targetIdentity) ||
-            failed(sourceMember) || failed(targetMember)) {
-            return fail("sequence SET predicate or matching identity unavailable at its cut");
+            protocol.cleanupCut ? protocol.publicationGuard : allocationActive, {}, true}}, {},
+            bool(protocol.cleanupCut)});
+        append(aa.after, EndpointKind::Set, protocol.sourceGuard, aa.coordinates);
+        append(ab.before, EndpointKind::Wait, targetGuard, ab.coordinates);
+        if (protocol.cleanupCut) {
+            append({protocol.cleanupCut->getBlock(), protocol.cleanupCut}, EndpointKind::Wait,
+                   protocol.cleanupGuard, {});
         }
-        PreparedLogicalEndpoint set{aa.after.before, LogicalCommandKind::Set, p, q, record,
-                                     publication->sourceGuard, *sourceIdentity};
-        set.memberCoordinates.push_back(*sourceMember); set.records.push_back(record); set.piece = nextPiece++;
-        PreparedLogicalEndpoint wait{ab.before.before, LogicalCommandKind::Wait, p, q, record,
-                                      *targetGuard, *targetIdentity};
-        wait.memberCoordinates.push_back(*targetMember); wait.records.push_back(record); wait.piece = nextPiece++;
-        retainEndpointCoordinates(set, aa.coordinates);
-        retainEndpointCoordinates(wait, ab.coordinates);
-        result->endpoints.push_back(std::move(set)); result->endpoints.push_back(std::move(wait));
-        if (failed(appendPublicationCleanup(*publication, record, p, q, {c(0)},
-            expressions, emit, *result, diagnostic))) { return false; }
-        nextPiece = result->endpoints.size();
         return true;
     };
     auto finite = prepareFiniteCrossings(*result, allocationCrossings, typeOffsets, nextRecord);
@@ -395,14 +349,20 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
             if (!addDemand(ports[edge.source], ports[edge.target], edge.guard)) { return failure(); }
         }
     }
+    if (!crossingFamilies.empty()) {
+        auto recipe = buildContextualFamilyEndpointRecipe(familyExpressions, crossingFamilies, shared);
+        if (failed(recipe)) { fail("sequence crossing expressions unavailable at original cuts"); return failure(); }
+        auto joined = appendFamilyEndpointRecipe(result->familyRecipe, *recipe, 0, result->endpoints.size());
+        if (failed(joined)) { fail("sequence crossing recipe composition failed"); return failure(); }
+        result->familyRecipe = std::move(*joined);
+    }
     const auto namespaces = familyRecordNamespaces(result->families);
     for (auto& endpoint : result->endpoints) {
         endpoint.record = namespaces.at(endpoint.records.front());
     }
     if (!expressions.constructionError().empty()) { fail(expressions.constructionError()); }
-    // Optional ancestor-cut probes may leave a stale emission diagnostic.
-    // Only failures of this required recipe govern acceptance. In particular,
-    // emitting a false placeholder cannot hide an endpointGuard failure.
+    // Optional ancestor-cut probes do not govern acceptance. Required recipe
+    // failures and occurrence-binding failures remain explicit diagnostics.
     if (!diagnostic.empty()) { return failure(); }
     result->allocationPreparation = [owner = shared_from_this(),
         allocationChildren = std::move(allocationChildren),
@@ -445,8 +405,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
     for (const auto& stage : result->preparation) {
         preparationOperations += stage.code->getOperations().size();
     }
-    // Includes the small identity/namespace adapters added while importing the
-    // children, as well as the preparation for newly selected crossing edges.
+    // This boundary measures only newly selected crossing construction;
+    // imported child arithmetic and its namespace adapters were charged above.
     crossingPreparationOperations = preparationOperations - childPreparationOperations;
     return result;
 }
