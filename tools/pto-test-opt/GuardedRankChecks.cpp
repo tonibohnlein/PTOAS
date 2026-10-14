@@ -135,6 +135,38 @@ bool ranks(mlir::MLIRContext& context, unsigned pattern, fs::GuardedRankLabels l
     }
     return true;
 }
+bool activityOnlyRows(mlir::MLIRContext& context)
+{
+    mlir::Block inputs;
+    fs::RegionExpressions e;
+    const auto type = mlir::IntegerType::get(&context, 1);
+    const auto loc = mlir::UnknownLoc::get(&context);
+    const auto linked = inputs.addArgument(type, loc), optional = inputs.addArgument(type, loc);
+    const auto h = e.input(linked), z = e.input(optional), yes = e.boolean(true);
+    // B -> A; optional X and L follow A on its pipe; L -> R under h;
+    // C follows R on a third pipe, with an additional A -> C generator.
+    // X changes L's executed rank, but cannot affect whether B precedes C.
+    const std::vector<fs::GuardedRankPayload> payloads = {
+        {1, yes}, {0, yes}, {0, z}, {0, yes}, {2, yes}, {2, yes}};
+    const std::vector<fs::GuardedRankEdge> edges = {{0, 1, yes}, {3, 4, h}, {1, 5, yes}};
+    const auto result = fs::reduceGuardedRanks(e, payloads, edges);
+    if (!result.error.empty()) { return false; }
+    const auto row = result.starts[5][result.columns[0]];
+    if (llvm::any_of(e.referencedInputs(row), [&](const auto& input) { return input.second == optional; })) {
+        llvm::errs() << "reachability row embeds an irrelevant executed-rank decision\n";
+        return false;
+    }
+    for (unsigned mask = 0; mask < 4; ++mask) {
+        fs::RegionExpressions::Transaction transaction(e);
+        fs::RegionExpressions::Substitution binding({{h, e.boolean(mask & 1)}, {z, e.boolean(mask & 2)}});
+        if (e.constantValue(e.substitute(row, binding)) != 1) { return false; }
+        for (const auto& edge : result.retained) {
+            const bool expected = edge.source == 0 || (edge.source == 3 ? bool(mask & 1) : !(mask & 1));
+            if (e.constantValue(e.substitute(edge.guard, binding)) != unsigned(expected)) { return false; }
+        }
+    }
+    return true;
+}
 bool referenceRankConstruction(mlir::MLIRContext& context)
 {
     for (unsigned count : {16U, 64U, 256U}) {
@@ -416,7 +448,7 @@ bool storageScans()
 int runGuardedRankChecks()
 {
     mlir::MLIRContext context;
-    if (!moduloSpans() || !storageScans() || !referenceRankConstruction(context)) {
+    if (!moduloSpans() || !storageScans() || !referenceRankConstruction(context) || !activityOnlyRows(context)) {
         llvm::errs() << "guarded storage scan mismatch\n";
         return 1;
     }
