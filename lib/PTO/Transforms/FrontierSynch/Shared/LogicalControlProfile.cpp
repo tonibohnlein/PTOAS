@@ -70,6 +70,13 @@ void profileLogicalControl(func::FuncOp function, const PreparedLogicalPlan& pla
         {"endpoint_sites", plan.endpoints.size()},
         {"recipe_sites", plan.familyRecipe ? familyEndpointPieceCount(*plan.familyRecipe) : 0},
         {"preparation", preparation(plan)},
+        {"family_materialization", llvm::json::Object{
+            {"shared_published", plan.familyWork.sharedPublished},
+            {"shared_requests", plan.familyWork.sharedRequests},
+            {"shared_imports", plan.familyWork.sharedImports},
+            {"shared_candidates", plan.familyWork.sharedCandidates},
+            {"local_entries", plan.familyWork.localEntries},
+            {"contexts", plan.familyWork.contexts}}},
         {"function_scope", staged ? "staged-invocation" : "original-or-inserted"},
         {"function_control", functionControl(staged ? staged : function)}}) << "\n";
 }

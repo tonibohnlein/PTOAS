@@ -15,6 +15,7 @@
 #include <set>
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
+bool runSparseSharedBindingChecks(Operation* cut);
 bool runNestedRegionalChecks(func::FuncOp function);
 bool runRepeatedRegionChecks(func::FuncOp function);
 bool runRepeatedStorageChecks(MLIRContext* context);
@@ -1503,6 +1504,7 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
         !checked("checkImportOwners", checkImportOwners(function.getArgument(0))) ||
         !checked("checkImportReplay", checkImportReplay(cuts[0])) ||
         !checked("checkPreparedContextual", checkPreparedContextual(cuts[0])) ||
+        !checked("checkSparseSharedBindings", runSparseSharedBindingChecks(cuts[0])) ||
         !checked("checkSparseReplayBindings", checkSparseReplayBindings(cuts[0])) ||
         !checked("runNestedRegionalChecks", runNestedRegionalChecks(function)) ||
         !checked("runRepeatedRegionChecks", runRepeatedRegionChecks(function)) ||

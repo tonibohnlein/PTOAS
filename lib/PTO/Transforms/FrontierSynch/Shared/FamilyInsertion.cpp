@@ -7,13 +7,13 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Retain numerical and contextual family recipes through composition; lower at insertion.
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
+#include "FamilyMaterialization.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyExpressions.h"
 #include "PTO/Transforms/FrontierSynch/Shared/EndpointPieces.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include <algorithm>
 #include <limits>
 #include <map>
-#include <set>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
 enum class FamilyContextKind { Invocation, Activity };
@@ -51,8 +51,9 @@ namespace {
 class FamilyPreparer {
 public:
     FamilyPreparer(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared, uint32_t recordBase,
-                   const std::map<uint32_t, uint32_t>& namespaces)
+                   const std::map<uint32_t, uint32_t>& namespaces, FamilyMaterialization& materialization)
         : recipe(recipe), prepared(prepared), recordBase(recordBase), namespaces(namespaces),
+          materialization(materialization),
           builder(recipe.cuts.front().cut.before->getContext()) {}
     LogicalResult run()
     {
@@ -68,6 +69,7 @@ private:
     PreparedLogicalPlan& prepared;
     uint32_t recordBase;
     const std::map<uint32_t, uint32_t>& namespaces;
+    FamilyMaterialization& materialization;
     OpBuilder builder;
     Value trips;
     Value ordinal;
@@ -75,35 +77,25 @@ private:
     Value one;
     LogicalResult prepareContextual()
     {
-        std::map<Operation*, RegionExpressions::CutEmission> memos;
-        std::map<Operation*, RegionExpressions::CutEmission> sharedMemos;
+        const auto* environment = recipe.shared.empty() ? nullptr : &recipe;
         for (const auto& shared : recipe.shared) {
             auto* cut = shared.expression.cut;
-            builder.setInsertionPointToEnd(&prepared.addPreparation(cut));
-            auto value = recipe.arena->emitPreparedContextual(*shared.binding, builder, cut, sharedMemos[cut]);
+            Block code;
+            builder.setInsertionPointToEnd(&code);
+            auto value = materialization.emit(*recipe.arena, *shared.binding, builder, cut, environment);
             if (failed(value)) { return failure(); }
-            sharedMemos[cut].values[shared.expression.expression] = *value;
+            materialization.bind(*recipe.arena, recipe, cut, shared.expression.expression, *value);
+            adopt(code, cut);
         }
-        DominanceInfo dominance(recipe.cuts.front().cut.before->getParentOfType<func::FuncOp>());
-        std::set<Operation*> seeded;
+        if (environment) { materialization.publish(*recipe.arena, recipe); }
         for (std::size_t i = 0; i < recipe.pieces.size(); ++i) {
             const auto& piece = recipe.pieces[i];
             const auto& binding = recipe.bindings[i];
             auto* cut = piece.cut.before;
-            if (seeded.insert(cut).second) {
-                for (const auto& shared : sharedMemos) {
-                    if (shared.first != cut && !dominance.properlyDominates(shared.first, cut)) { continue; }
-                    for (const auto& value : shared.second.values) {
-                        memos[cut].values.try_emplace(value.first, value.second);
-                    }
-                    for (const auto& input : shared.second.inputs) {
-                        memos[cut].inputs.try_emplace(input.first, input.second);
-                    }
-                }
-            }
-            builder.setInsertionPointToEnd(&prepared.addPreparation(cut));
+            Block code;
+            builder.setInsertionPointToEnd(&code);
             auto emit = [&](const std::shared_ptr<const CutExpressionRecipe>& value) {
-                return recipe.arena->emitPreparedContextual(*value, builder, cut, memos[cut]);
+                return materialization.emit(*recipe.arena, *value, builder, cut, environment);
             };
             auto guard = emit(binding.activity);
             if (failed(guard)) { return failure(); }
@@ -131,8 +123,15 @@ private:
             }
             endpoint.piece = prepared.endpoints.size();
             prepared.endpoints.push_back(std::move(endpoint));
+            adopt(code, cut);
         }
         return success();
+    }
+    void adopt(Block& code, Operation* cut)
+    {
+        if (code.empty()) { return; }
+        auto& target = prepared.addPreparation(cut);
+        target.getOperations().splice(target.end(), code.getOperations());
     }
     Value number(uint64_t value, Location location)
     {
@@ -520,7 +519,8 @@ LogicalResult collectFamilyParts(const FamilyEndpointRecipe& recipe, SmallVector
 }
 class FamilyContextLowering {
 public:
-    explicit FamilyContextLowering(PreparedLogicalPlan& plan) : plan(plan) {}
+    FamilyContextLowering(PreparedLogicalPlan& plan, FamilyMaterialization& materialization)
+        : plan(plan), materialization(materialization) {}
     LogicalResult apply(PreparedLogicalEndpoint& endpoint, std::size_t path, ArrayRef<FamilyContextPath> paths)
     {
         // The innermost binding is visited first. Inserting at member one then
@@ -549,18 +549,23 @@ public:
     }
 private:
     PreparedLogicalPlan& plan;
-    std::map<Operation*, Block*> blocks;
-    std::map<std::pair<RegionExpressions*, Operation*>, RegionExpressions::CutEmission> contexts;
+    FamilyMaterialization& materialization;
     FailureOr<Value> lower(const FamilyContextRecipe& recipe, Operation* cut)
     {
         auto found = recipe.cuts.find(cut);
         if (found == recipe.cuts.end()) { return failure(); }
-        auto& block = blocks[cut];
-        if (!block) { block = &plan.addPreparation(cut); }
+        // Shared values may have been emitted by a preceding leaf. Append after
+        // that preparation rather than returning to an earlier wrapper block.
+        Block code;
         OpBuilder builder(cut->getContext());
-        builder.setInsertionPointToEnd(block);
-        return recipe.arena->emitPreparedContextual(*found->second, builder, cut,
-                                                   contexts[{recipe.arena.get(), cut}]);
+        builder.setInsertionPointToEnd(&code);
+        auto value = materialization.emit(*recipe.arena, *found->second, builder, cut);
+        if (failed(value)) { return failure(); }
+        if (!code.empty()) {
+            auto& target = plan.addPreparation(cut);
+            target.getOperations().splice(target.end(), code.getOperations());
+        }
+        return value;
     }
 };
 } // namespace
@@ -612,13 +617,14 @@ LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, 
     // Stage all lowering independently: unavailable contextual bindings must
     // not consume the incumbent concrete inventory or partially lower a recipe.
     PreparedLogicalPlan lowered(prepared.planId);
-    FamilyContextLowering contextLowering(lowered);
+    FamilyMaterialization materialization;
+    FamilyContextLowering contextLowering(lowered, materialization);
     std::size_t next = 0;
     for (const auto& part : leaves) {
         while (next < part.endpointIndex) { lowered.endpoints.push_back(prepared.endpoints[next++]); }
         const auto begin = lowered.endpoints.size();
         if (!part.recipe->pieces.empty()) {
-            if (failed(FamilyPreparer(*part.recipe, lowered, part.recordBase, namespaces).run())) {
+            if (failed(FamilyPreparer(*part.recipe, lowered, part.recordBase, namespaces, materialization).run())) {
                 return failure();
             }
         }
@@ -663,6 +669,7 @@ LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, 
         resolvedChoices.push_back({f, std::move(choices)});
     }
     for (auto& choice : resolvedChoices) { prepared.families[choice.first].targetChoices = std::move(choice.second); }
+    prepared.familyWork = materialization.work();
     prepared.endpoints = std::move(lowered.endpoints);
     for (auto& stage : lowered.preparation) { prepared.preparation.push_back(std::move(stage)); }
     prepared.groupedFamilies = true;

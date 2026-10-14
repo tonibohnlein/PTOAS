@@ -14,6 +14,7 @@
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -211,6 +212,7 @@ public:
         // Cumulative mappings actually needed by emitted scalar replay DAGs.
         // Saturates on overflow; instrumentation does not govern admission.
         uint64_t replayBindings = 0;
+        uint64_t sharedRequests = 0, sharedImports = 0;
         // Planning-only bindings supplied by dominating shared recipes. They
         // stop specialization just like emitted values; materialization must
         // provide their actual Values or reject before constructing any IR.
@@ -234,11 +236,20 @@ public:
     // Empty contexts produce self-contained original-value availability recipes.
     FailureOr<std::shared_ptr<const CutExpressionRecipe>> prepareContextual(
         Id expression, Operation* cut, CutEmission& context);
+    // Borrowed for this emission only. The caller certifies the same arena and
+    // binding environment, dominating original cuts and retained preparation.
+    // Only bindings reached by this recipe are imported into the local memo.
+    struct SharedCutBindings {
+        llvm::function_ref<Value(Id)> values;
+        llvm::function_ref<Value(Value)> inputs;
+    };
     FailureOr<Value> emitPreparedContextual(const CutExpressionRecipe& recipe,
-        OpBuilder& builder, Operation* cut, CutEmission& context);
+        OpBuilder& builder, Operation* cut, CutEmission& context, const SharedCutBindings* shared = nullptr);
     FailureOr<Value> emitContextual(Id expression, OpBuilder& builder, Operation* cut, CutEmission& context);
 
 private:
+    void importSharedBindings(const CutExpressionRecipe& recipe, CutEmission& context,
+                              const SharedCutBindings& shared);
     // The cleanup qualifier shares one narrow predicate interpreter between
     // retained arena expressions and emitted SSA; it never changes the DAG.
     friend class CutPredicate;

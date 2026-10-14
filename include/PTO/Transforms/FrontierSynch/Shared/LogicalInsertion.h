@@ -56,6 +56,10 @@ struct LogicalPreparation {
     Operation* before = nullptr;
     std::unique_ptr<Block> code;
 };
+struct FamilyMaterializationWork {
+    uint64_t sharedPublished = 0, sharedRequests = 0, sharedImports = 0, sharedCandidates = 0;
+    uint64_t localEntries = 0, contexts = 0;
+};
 struct PreparedLogicalPlan {
     explicit PreparedLogicalPlan(int64_t planId);
     ~PreparedLogicalPlan();
@@ -63,6 +67,7 @@ struct PreparedLogicalPlan {
     PreparedLogicalPlan& operator=(const PreparedLogicalPlan&) = delete;
     Block& addPreparation(Operation* before);
     int64_t planId;
+    FamilyMaterializationWork familyWork; // Successful staged lowering only; not serialized.
     bool profileControl = false; // Diagnostic snapshots only; never serialized into the plan.
     bool completeInvocation = false; // Drain whole-function work before return.
     bool nestedIdentities = false; // Version-four matching tuples; physical allocation is separate.

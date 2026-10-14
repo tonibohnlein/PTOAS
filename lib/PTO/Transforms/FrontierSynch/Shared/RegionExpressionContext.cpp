@@ -138,8 +138,35 @@ FailureOr<std::shared_ptr<const CutExpressionRecipe>> RegionExpressions::prepare
     }
     return std::shared_ptr<const CutExpressionRecipe>(std::move(recipe));
 }
+void RegionExpressions::importSharedBindings(const CutExpressionRecipe& recipe, CutEmission& context,
+                                            const SharedCutBindings& shared)
+{
+    auto import = [&](auto key, auto& memo, auto lookup) {
+        if (memo.count(key) || !lookup) { return; }
+        if (context.sharedRequests != UINT64_MAX) { ++context.sharedRequests; }
+        if (auto value = lookup(key)) {
+            memo.try_emplace(key, value);
+            if (context.sharedImports != UINT64_MAX) { ++context.sharedImports; }
+        }
+    };
+    // Required bindings are checked even when the selected root is cached.
+    // Other expressions are visited only until a local/shared value is found.
+    for (Id id : recipe.boundExpressions) { import(id, context.values, shared.values); }
+    SmallVector<Id> pending{recipe.selected};
+    llvm::DenseSet<Id> seen;
+    while (!pending.empty()) {
+        const auto id = pending.pop_back_val();
+        if (context.values.count(id) || !seen.insert(id).second) { continue; }
+        import(id, context.values, shared.values);
+        if (!context.values.count(id)) { appendOperands(nodes[id], pending); }
+    }
+    for (Value value : recipe.boundInputs) { import(value, context.inputs, shared.inputs); }
+    for (Operation* op : recipe.replay) {
+        for (Value value : op->getResults()) { import(value, context.inputs, shared.inputs); }
+    }
+}
 FailureOr<Value> RegionExpressions::emitPreparedContextual(const CutExpressionRecipe& recipe,
-    OpBuilder& builder, Operation* cut, CutEmission& context)
+    OpBuilder& builder, Operation* cut, CutEmission& context, const SharedCutBindings* shared)
 {
     emissionMessage.clear();
     if (recipe.owner != this || recipe.cut != cut || !valid(recipe.selected) ||
@@ -147,6 +174,7 @@ FailureOr<Value> RegionExpressions::emitPreparedContextual(const CutExpressionRe
         emissionMessage = "prepared guarded expression requires its original arena, cut and detached block";
         return failure();
     }
+    if (shared) { importSharedBindings(recipe, context, *shared); }
     // A recipe may depend on earlier cut-local bindings, but never retains
     // their generated Values. Reject missing dependencies before any mutation.
     for (Id id : recipe.boundExpressions) {
