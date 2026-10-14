@@ -52,7 +52,7 @@ const char* validateRecords(const RegionExpressions& expressions,
 }
 const char* validate(const RegionExpressions& expressions,
                      llvm::ArrayRef<GuardedPeriodicPayload> payloads,
-                     llvm::ArrayRef<GuardedPeriodicRecord> records)
+                     llvm::ArrayRef<GuardedPeriodicRecord> records, bool coreChains)
 {
     if (!expressions.constructionError().empty()) {
         return "guarded quotient received an invalid expression arena";
@@ -68,10 +68,12 @@ const char* validate(const RegionExpressions& expressions,
     std::map<uint32_t, uint64_t> counts;
     uint64_t largestPipe = 0;
     for (const auto& payload : payloads) { largestPipe = std::max(largestPipe, ++counts[payload.pipe]); }
-    // Shifted frontier scores are h-r+h*distance. V-1 rounds and one
-    // final-edge candidate use at most V weights; all intermediates fit u64.
+    // Shifted scores are h-r+h*distance. Generic relaxation plus exclusion
+    // uses V weights. Core scans additionally form wrapped native candidates
+    // before discarding dominated paths, so reserve two more weights.
     const auto maximum = std::numeric_limits<uint64_t>::max();
-    if (largestPipe && (maxWeight > (maximum - (largestPipe - 1)) / largestPipe / vertices)) {
+    const auto pathWeights = vertices + (coreChains ? 2 : 0);
+    if (largestPipe && (maxWeight > (maximum - (largestPipe - 1)) / largestPipe / pathWeights)) {
         return "guarded quotient frontier arithmetic bound exceeds uint64";
     }
     return nullptr;
@@ -92,6 +94,7 @@ private:
     std::vector<Group> groups;
     std::vector<std::vector<std::size_t>> incoming;
     std::vector<Id> winners;
+    std::vector<std::vector<uint32_t>> pipeSites;
     Threshold minimum(Threshold a, Threshold b);
     Threshold sum(Threshold a, Threshold b);
     Threshold guarded(Id active, Id distance);
@@ -102,6 +105,9 @@ private:
     void buildRanks();
     Id scale(Id value, uint32_t count);
     std::vector<Threshold> frontier(uint32_t row, bool completion, ArrayRef<Threshold> weights);
+    std::vector<Threshold> scanNative(ArrayRef<Threshold> scores, uint32_t count,
+                                      bool completion, bool strict);
+    std::vector<Threshold> closeNative(ArrayRef<Threshold> scores, uint32_t count);
     void retain(uint32_t row, ArrayRef<Threshold> weights);
     void computeFrontiers();
 };
@@ -126,6 +132,7 @@ void Builder::addEdge(uint32_t source, uint32_t target, Threshold weight, std::s
 }
 void Builder::buildNative()
 {
+    if (output.nativePrerequisites.empty()) { return; }
     for (const auto& edge : output.nativePrerequisites) {
         auto active = expressions.land(edge.active, expressions.land(
             output.payloads[edge.source].presence, output.payloads[edge.target].presence));
@@ -188,7 +195,8 @@ void Builder::buildRanks()
     std::map<uint32_t, uint32_t> rows;
     for (const auto& payload : output.payloads) {
         auto [found, added] = rows.emplace(payload.pipe, rows.size());
-        if (added) { output.frontiers.push_back({payload.pipe, 0, {}, {}}); }
+        if (added) { output.frontiers.push_back({payload.pipe, 0, {}, {}}); pipeSites.emplace_back(); }
+        pipeSites[found->second].push_back(output.sourceRows.size());
         output.sourceRows.push_back(found->second);
         output.localRanks.push_back(++output.frontiers[found->second].count);
     }
@@ -203,6 +211,49 @@ Id Builder::scale(Id value, uint32_t count)
     }
     return result;
 }
+// All native paths in one scan pair. Strict start scans supply alternative
+// final native edges: earlier starts without a wrap, current/later with one.
+std::vector<Threshold> Builder::scanNative(ArrayRef<Threshold> scores, uint32_t count,
+                                          bool completion, bool strict)
+{
+    std::vector<Threshold> result(output.payloads.size(), absent);
+    const auto wrap = guarded(expressions.boolean(true), expressions.constant(count));
+    auto input = [&](uint32_t site) {
+        const auto value = completion ? minimum(scores[2 * site], scores[2 * site + 1]) : scores[2 * site];
+        return guarded(expressions.land(output.payloads[site].presence, value.reachable), value.distance);
+    };
+    for (const auto& sites : pipeSites) {
+        auto prefix = absent;
+        for (auto site : sites) {
+            const auto value = input(site);
+            result[site] = strict ? prefix : minimum(prefix, value);
+            prefix = minimum(prefix, value);
+            ++output.nativeScanVisits;
+        }
+        auto suffix = absent;
+        for (auto it = sites.rbegin(); it != sites.rend(); ++it) {
+            const auto value = input(*it);
+            if (strict) { suffix = minimum(suffix, value); }
+            result[*it] = minimum(result[*it], sum(suffix, wrap));
+            if (!strict) { suffix = minimum(suffix, value); }
+            ++output.nativeScanVisits;
+        }
+    }
+    return result;
+}
+std::vector<Threshold> Builder::closeNative(ArrayRef<Threshold> scores, uint32_t count)
+{
+    auto starts = scanNative(scores, count, false, false);
+    auto completions = scanNative(scores, count, true, false);
+    std::vector<Threshold> result(vertices, absent);
+    for (std::size_t site = 0; site < output.payloads.size(); ++site) {
+        const auto present = output.payloads[site].presence;
+        result[2 * site] = guarded(expressions.land(present, starts[site].reachable), starts[site].distance);
+        result[2 * site + 1] = guarded(expressions.land(present, completions[site].reachable),
+                                     completions[site].distance);
+    }
+    return result;
+}
 std::vector<Threshold> Builder::frontier(uint32_t row, bool completion, ArrayRef<Threshold> weights)
 {
     std::vector<Threshold> scores(vertices, absent);
@@ -212,6 +263,20 @@ std::vector<Threshold> Builder::frontier(uint32_t row, bool completion, ArrayRef
             scores[2 * a + unsigned(completion)] = guarded(output.payloads[a].presence,
                 expressions.constant(count - output.localRanks[a]));
         }
+    }
+    if (output.nativePrerequisites.empty()) {
+        scores = closeNative(scores, count);
+        for (std::size_t round = 0; round < output.frontiers.size(); ++round) {
+            const auto previous = scores;
+            for (std::size_t i = 0; i < edges.size(); ++i) {
+                const auto& edge = edges[i];
+                scores[edge.target] = minimum(scores[edge.target], sum(previous[edge.source], weights[i]));
+                ++output.relaxationCandidates;
+            }
+            scores = closeNative(scores, count);
+            ++output.demandRounds;
+        }
+        return scores;
     }
     // Synchronous Bellman-Ford circuits: a shortest nonnegative-weight walk
     // has a simple representative. Absent native positions remain wire nodes.
@@ -233,9 +298,11 @@ void Builder::retain(uint32_t row, ArrayRef<Threshold> weights)
     // excluded edge: that would require a nonempty zero-displacement cycle.
     // Prefix/suffix minima exclude edge identities, preserving equal scores.
     const auto& frontier = output.frontiers[row];
+    const auto native = output.nativePrerequisites.empty() ?
+        scanNative(frontier.completions, frontier.count, false, true) : std::vector<Threshold>();
     for (uint32_t target = 0; target < output.payloads.size(); ++target) {
         const auto& list = incoming[2 * target];
-        std::vector<Threshold> values, prefix{absent};
+        std::vector<Threshold> values, prefix{native.empty() ? absent : native[target]};
         values.reserve(list.size()); prefix.reserve(list.size() + 1);
         for (auto id : list) {
             values.push_back(sum(frontier.completions[edges[id].source], weights[id]));
@@ -296,7 +363,7 @@ GuardedPeriodicQuotient analyzeGuardedPeriodicQuotient(
     }
     std::vector<GuardedPeriodicRecord> all(records.begin(), records.end());
     all.insert(all.end(), nativePrerequisites.begin(), nativePrerequisites.end());
-    if (const char* error = validate(*result.expressions, payloads, all)) {
+    if (const char* error = validate(*result.expressions, payloads, all, nativePrerequisites.empty())) {
         result.error = error;
         return result;
     }

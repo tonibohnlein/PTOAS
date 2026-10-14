@@ -159,9 +159,9 @@ def main():
         "samples": [list(p) + [a, 0, b, 1] for p in itertools.product((0, 1), repeat=3)
                     for a, b in itertools.product((0, 1), repeat=2)]})
     cases.append({"pipes": [], "records": [], "samples": [[]]})
-    # Largest accepted scaled-score bound: h=2, V=4, seed at most1.
+    # Largest accepted core scan bound: h=2, V+2=6, seed at most1.
     # Evaluate the large distance itself, beyond every unfolded test prefix.
-    maximum_safe = (2**64 - 2) // 8
+    maximum_safe = (2**64 - 2) // 12
     cases.append({"pipes": [0, 0], "records": [
         {"source": 0, "target": 1, "bound": maximum_safe}],
         "samples": [[1, 1, 1, maximum_safe], [0, 1, 1, maximum_safe]]})
@@ -169,7 +169,7 @@ def main():
         case["export_thresholds"] = True
     sparse_begin = len(cases)
     # Construction-only requests explicitly omit quadratic threshold export.
-    # Fixed three pipes and linear edges give quadratic relaxation work.
+    # Fixed three pipes use linear native scans and demand relaxations.
     for m in (6, 12, 24):
         cases.append({"pipes": [i % 3 for i in range(m)], "records": [
             {"source": i, "target": (i + 1) % m, "bound": 3} for i in range(m)],
@@ -201,15 +201,22 @@ def main():
         m, k = len(case["pipes"]), len(set(case["pipes"]))
         edges = result["edges"]
         assert result["frontier_entries"] == 4 * m * k
-        assert result["relaxations"] == 2 * k * max(0, 2 * m - 1) * edges
-        assert result["exclusions"] == k * (edges - 2 * m)
+        if case.get("native_prerequisites"):
+            assert result["relaxations"] == 2 * k * max(0, 2 * m - 1) * edges
+            assert result["exclusions"] == k * (edges - 2 * m)
+            assert result["native_scan_visits"] == result["demand_rounds"] == 0
+        else:
+            assert result["relaxations"] == 2 * k * k * edges
+            assert result["exclusions"] == k * edges
+            assert result["demand_rounds"] == 2 * k * k
+            assert result["native_scan_visits"] == (8 * k * (k + 1) + 2 * k) * m
         assert result["threshold_queries"] == ((2 * m)**2 if case["export_thresholds"] else 0)
         assert result["scaling_additions"] <= 2 * k * edges * max(1, m.bit_length())
     for case, result in zip(cases[sparse_begin:-1], results[sparse_begin:-1]):
         m = len(case["pipes"])
-        assert result["edges"] == 4 * m
+        assert result["edges"] == m
         assert result["expressions_after_queries"] == result["expressions"]
-        assert result["expressions"] < 200 * (len(case["records"]) + 3 * (2 * m) * result["edges"])
+        assert result["expressions"] < 200 * (len(case["records"]) + 9 * (m + result["edges"]))
         print("sparse guarded frontier:", {"sites": m, **{key: result[key] for key in
               ("edges", "frontier_entries", "relaxations", "exclusions", "expressions")}})
     assert results[-1]["error"], results[-1]
