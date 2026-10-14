@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
 #include "OccurrenceBinding.h"
+#include "MixedFamilyInsertion.h"
 #include "OriginalCutFacts.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
@@ -217,6 +218,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         return success(succeeded(familyExpressions.prepare(expression, cut)));
     };
     std::vector<ContextualEndpointFamily> crossingFamilies;
+    SmallVector<uint8_t> numericalEndpoints;
     std::vector<ContextualSharedExpression> shared;
     std::set<std::pair<Operation*, Expr>> sharedRoots;
     auto endpointGuard = [&](const Port& point, Expr guard) {
@@ -260,7 +262,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         // Required family availability remains authoritative after these
         // optional common-cut probes. No scalar code is constructed here.
     };
-    auto addDemand = [&](const Port& a, const Port& b, Expr retained) -> bool {
+    auto addDemand = [&](const Port& a, const Port& b, Expr retained, bool numerical) -> bool {
         if (expressions.constantValue(retained) == 0) { return true; }
         const auto& ca = children[a.child];
         const auto& cb = children[b.child];
@@ -274,8 +276,6 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         const auto& ab = cb.anchors[b.type];
         auto p = static_cast<uint32_t>(aa.phase->kPipeValue);
         auto q = static_cast<uint32_t>(ab.phase->kPipeValue);
-
-        shareEndpointValues(retained, a, b, aa.after.before, ab.before.before);
 
         if (nextRecord == UINT32_MAX) { return fail("sequence endpoint identity overflow"); }
         const auto record = nextRecord++;
@@ -296,7 +296,21 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
             endpoint.activity = guard;
             endpoint.ordinal = c(0);
             crossingFamilies.push_back(std::move(endpoint));
+            numericalEndpoints.push_back(numerical);
         };
+        if (numerical) {
+            if (p != q) {
+                append(aa.after, EndpointKind::Set, endpointGuard(a, retained), aa.coordinates);
+                allocationCrossings.push_back({p, q, 1, {{record, 0, 0,
+                    {typeOffsets[a.child] + a.type, a.ordinal, PeriodicEventKind::Start, a.visits},
+                    {typeOffsets[b.child] + b.type, b.ordinal, PeriodicEventKind::Completion, b.visits},
+                    allocationActive, {}, true}}, {}, false});
+            }
+            append(ab.before, p == q ? EndpointKind::Barrier : EndpointKind::Wait,
+                   endpointGuard(b, retained), ab.coordinates);
+            return diagnostic.empty();
+        }
+        shareEndpointValues(retained, a, b, aa.after.before, ab.before.before);
         auto targetGuard = endpointGuard(b, retained);
         if (p == q) {
             if (failed(available(targetGuard, ab.before.before))) {
@@ -342,15 +356,21 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         }
         return true;
     };
-    auto finite = prepareFiniteCrossings(*result, allocationCrossings, typeOffsets, nextRecord);
+    std::vector<uint8_t> qualified;
+    auto finite = prepareFiniteCrossings(*result, allocationCrossings, typeOffsets, nextRecord, qualified);
     if (failed(finite)) { fail("finite crossing family preparation failed"); return failure(); }
     if (!*finite) {
         for (const auto& edge : crossings) {
-            if (!addDemand(ports[edge.source], ports[edge.target], edge.guard)) { return failure(); }
+            if (!addDemand(ports[edge.source], ports[edge.target], edge.guard,
+                           qualified[&edge - crossings.data()])) { return failure(); }
         }
     }
     if (!crossingFamilies.empty()) {
-        auto recipe = buildContextualFamilyEndpointRecipe(familyExpressions, crossingFamilies, shared);
+        auto recipe = buildMixedFamilyEndpointRecipe(
+            familyExpressions, crossingFamilies, numericalEndpoints, {}, shared);
+        if (failed(recipe)) {
+            recipe = buildContextualFamilyEndpointRecipe(familyExpressions, crossingFamilies, shared);
+        }
         if (failed(recipe)) { fail("sequence crossing expressions unavailable at original cuts"); return failure(); }
         auto joined = appendFamilyEndpointRecipe(result->familyRecipe, *recipe, 0, result->endpoints.size());
         if (failed(joined)) { fail("sequence crossing recipe composition failed"); return failure(); }

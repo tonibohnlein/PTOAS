@@ -11,8 +11,11 @@
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 namespace mlir::pto::frontiersynch {
 FailureOr<bool> SequenceAnalysisState::prepareFiniteCrossings(PreparedLogicalPlan& plan,
-    std::vector<RegionalAllocationGroup>& allocation, ArrayRef<uint32_t> typeOffsets, uint32_t& nextRecord)
+    std::vector<RegionalAllocationGroup>& allocation, ArrayRef<uint32_t> typeOffsets,
+    uint32_t& nextRecord, std::vector<uint8_t>& qualified)
 {
+    qualified.assign(crossings.size(), 0);
+    bool complete = true;
     FixedPointActivity proof(expressions);
     std::size_t count = 0;
     for (const auto& edge : crossings) {
@@ -24,12 +27,14 @@ FailureOr<bool> SequenceAnalysisState::prepareFiniteCrossings(PreparedLogicalPla
         auto active = edge.guard;
         if (ca.regional.endpointInvocationGuard) { active = both(active, *ca.regional.endpointInvocationGuard); }
         if (cb.regional.endpointInvocationGuard) { active = both(active, *cb.regional.endpointInvocationGuard); }
-        if (!proof.prove(ca.regional, a.event(), ca.anchors[a.type], ca.anchors[a.type].after.before, active) ||
-            !proof.prove(cb.regional, b.event(), cb.anchors[b.type], cb.anchors[b.type].before.before, active)) {
-            return false;
-        }
+        const bool numerical =
+            proof.prove(ca.regional, a.event(), ca.anchors[a.type], ca.anchors[a.type].after.before, active) &&
+            proof.prove(cb.regional, b.event(), cb.anchors[b.type], cb.anchors[b.type].before.before, active);
+        qualified[&edge - crossings.data()] = numerical;
+        complete &= numerical;
         ++count;
     }
+    if (!complete) { return false; }
     if (!count) { return true; }
     if (count > UINT32_MAX - nextRecord) { return failure(); }
     if (count > UINT32_MAX / 2) { return false; }

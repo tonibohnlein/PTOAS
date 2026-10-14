@@ -12,8 +12,10 @@
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 namespace mlir::pto::frontiersynch {
 FailureOr<bool> prepareRepeatedCrossingFamilies(RepeatedRegionState& state, PreparedLogicalPlan& plan,
-    std::vector<std::pair<uint32_t, std::size_t>>& allocation, uint64_t& nextRecord)
+    std::vector<std::pair<uint32_t, std::size_t>>& allocation, uint64_t& nextRecord, std::vector<uint8_t>& qualified)
 {
+    qualified.assign(state.crossings.size(), 0);
+    bool complete = true;
     // The numerical family's ordinal and finite bounds must be those of the
     // original loop. Quotient phases and clipped invocations keep their exact
     // guarded producer until they export the corresponding family maps.
@@ -32,11 +34,14 @@ FailureOr<bool> prepareRepeatedCrossingFamilies(RepeatedRegionState& state, Prep
         }
         const auto& a = body.anchors[crossing.source.type];
         const auto& b = body.anchors[crossing.target.type];
-        if (!a.phase || !b.phase ||
-            !proof.prove(body, crossing.source, a, a.after.before, crossing.guard) ||
-            !proof.prove(body, crossing.target, b, b.before.before, crossing.guard)) { return false; }
+        const bool numerical = a.phase && b.phase &&
+            proof.prove(body, crossing.source, a, a.after.before, crossing.guard) &&
+            proof.prove(body, crossing.target, b, b.before.before, crossing.guard);
+        qualified[&crossing - state.crossings.data()] = numerical;
+        complete &= numerical;
         ++count;
     }
+    if (!complete) { return false; }
     if (!count) { return true; }
     if (nextRecord >= UINT32_MAX || count > UINT32_MAX - nextRecord) { return failure(); }
     if (count > UINT32_MAX / 2) { return false; }

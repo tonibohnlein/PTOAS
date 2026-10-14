@@ -13,6 +13,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyExpressions.h"
 bool runFamilyMaterializationChecks(mlir::MLIRContext* context);
+bool runMixedFamilyChecks(mlir::MLIRContext* context);
 namespace {
 bool familyRequestedOutputChecks(mlir::scf::ForOp loop)
 {
@@ -418,7 +419,8 @@ bool endpointOrderFamilyChecks(mlir::MLIRContext* context)
     auto end = builder.create<arith::ConstantIndexOp>(loc, 16);
     auto loop = builder.create<scf::ForOp>(loc, zero, end, one);
     builder.create<func::ReturnOp>(loc);
-    if (!familyRequestedOutputChecks(loop) || !runFamilyMaterializationChecks(context)) { return false; }
+    if (!familyRequestedOutputChecks(loop) || !runFamilyMaterializationChecks(context) ||
+        !runMixedFamilyChecks(context)) { return false; }
     builder.setInsertionPoint(loop.getBody()->getTerminator());
     auto cut = builder.create<arith::AddIOp>(loc, zero, one).getOperation();
     pto::CompoundInstanceElement source(0, {}, {}, pto::PipelineType::PIPE_MTE2, cut->getName());
