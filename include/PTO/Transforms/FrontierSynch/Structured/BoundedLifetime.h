@@ -22,6 +22,7 @@ struct LifetimeWindowInput {
     uint32_t sites = 0;
     uint64_t span = 0;
     StorageProtectionPolicy storageProtection;
+    GuardedRankLabels rankLabels = GuardedRankLabels::Executed;
     // Exactly sites*(span+1) potential occurrences in reference order.
     // The supplier pads iterations after the actual trip count with false.
     std::vector<GuardedRankPayload> payloads;

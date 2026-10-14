@@ -2093,3 +2093,31 @@ retains the same 1,936,116 constructed prefix operations and 607,621-operation
 largest root. This shortcut does not explain or fix that root; no speedup or
 physical-support claim follows. Receipts: `.local/r5-native-queries-*.log`,
 `.local/r5-delta-native/`.
+
+### R5 increment: fixed labels for finite guarded rank circuits
+
+Finite guarded and production bounded-window analysis now request reference
+labels: the potential occurrence's position on its pipe, including absent
+sites. For each fixed execution, these labels are a strictly increasing
+relabeling of the present completion chain. Prefix comparisons and component
+maxima therefore preserve reachability and cover decisions. Endpoint presence
+still gates queries, edges and register updates. These labels are never used
+as executed publication ordinals. The public register transition and default
+finite oracle retain executed ranks; the window retains its chosen label mode
+so replay uses the same construction. Both modes share one reducer.
+
+Twelve focused suites pass, including 640 independent guarded graph valuations,
+960 anchored windows, streaming register comparisons, production finite and
+bounded regional interfaces, six-ID allocation, macro selectors, provenance,
+private-state history and 4,745 bounded-prefix executions. Read-only conditional
+chains at 16/64/256 sites construct fewer nodes with fixed labels. Incremental
+build and diff checks pass; the compliance script reports five already-braced
+conditions in the changed code/tests.
+
+The full Delta diagnostic succeeds logically in 77.802 seconds. Prefix
+construction falls from 1,936,116 to 1,925,702 operations, and the largest root
+from 607,621 to 605,701. This is a small construction reduction, not a measured
+compiler-time improvement or a fix for Delta's control size. The prefix lifetime
+export remains absent. Receipts: `.local/r5-reference-ranks/{build,tests,compliance}.log`
+and `.local/r5-reference-ranks/delta.*`. The prior executable is retained there
+for further controlled comparisons.

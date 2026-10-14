@@ -86,6 +86,7 @@ FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> analyzeBoundedLifetimeRe
     auto& predicates = *demands->predicates;
     auto& window = demands->window;
     window.sites = m;
+    window.rankLabels = GuardedRankLabels::Reference;
     window.span = span;
     window.storageProtection = ptoStorageProtection();
     const auto protection = structuredProtection(input.accesses());

@@ -19,6 +19,11 @@ struct GuardedRankEdge {
     uint32_t source, target;
     RegionExpressions::Id guard;
 };
+// Reference labels count potential occurrences on each pipe, including absent
+// ones. Their strictly increasing order is sufficient for finite reachability
+// and reduction, but they are not executed-source ordinals for a protocol.
+// Executed labels retain the register/streaming rank contract.
+enum class GuardedRankLabels { Executed, Reference };
 struct GuardedRanks {
     std::string error;
     std::vector<GuardedRankPayload> payloads;
@@ -57,6 +62,7 @@ GuardedRankStep advanceGuardedRank(RegionExpressions& expressions, GuardedRankFr
 // are ORed. Native prerequisites seed each start row before cover tests.
 GuardedRanks reduceGuardedRanks(
     RegionExpressions& expressions, llvm::ArrayRef<GuardedRankPayload> payloads,
-    llvm::ArrayRef<GuardedRankEdge> generators, llvm::ArrayRef<GuardedRankEdge> nativePrerequisites = {});
+    llvm::ArrayRef<GuardedRankEdge> generators, llvm::ArrayRef<GuardedRankEdge> nativePrerequisites = {},
+    GuardedRankLabels labels = GuardedRankLabels::Executed);
 } // namespace mlir::pto::frontiersynch
 #endif

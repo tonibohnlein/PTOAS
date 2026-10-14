@@ -100,7 +100,7 @@ void FiniteGuardedState::closeAndReduce()
         native.push_back({edge.source, edge.target, yes()});
     }
     for (auto edge : guardedNative) { native.push_back({edge.source, edge.target, edge.guard}); }
-    rankIndex = reduceGuardedRanks(*arena, payloads, generators, native);
+    rankIndex = reduceGuardedRanks(*arena, payloads, generators, native, GuardedRankLabels::Reference);
     retained.clear();
     for (auto edge : rankIndex.retained) {
         retained.push_back({edge.source, edge.target, edge.guard});

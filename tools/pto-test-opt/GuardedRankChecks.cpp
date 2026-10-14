@@ -14,6 +14,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/GuardedStorageScan.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/ModuloLaneSpan.h"
+#include <array>
 #include <set>
 namespace fs = mlir::pto::frontiersynch;
 namespace {
@@ -31,7 +32,7 @@ void close(Graph& graph)
         }
     }
 }
-bool ranks(mlir::MLIRContext& context, unsigned pattern)
+bool ranks(mlir::MLIRContext& context, unsigned pattern, fs::GuardedRankLabels labels)
 {
     constexpr unsigned n = 6;
     mlir::Block block;
@@ -55,7 +56,7 @@ bool ranks(mlir::MLIRContext& context, unsigned pattern)
             }
         }
     }
-    auto result = fs::reduceGuardedRanks(dag, payloads, edges, native);
+    auto result = fs::reduceGuardedRanks(dag, payloads, edges, native, labels);
     if (!result.error.empty()) {
         llvm::errs() << result.error << "\n";
         return false;
@@ -131,6 +132,37 @@ bool ranks(mlir::MLIRContext& context, unsigned pattern)
                 return false;
             }
         }
+    }
+    return true;
+}
+bool referenceRankConstruction(mlir::MLIRContext& context)
+{
+    for (unsigned count : {16U, 64U, 256U}) {
+        std::array<std::size_t, 2> sizes{};
+        for (unsigned mode = 0; mode < 2; ++mode) {
+            mlir::Block block;
+            fs::RegionExpressions e;
+            std::vector<fs::GuardedRankPayload> payloads;
+            for (unsigned i = 0; i < count; ++i) {
+                auto value = block.addArgument(mlir::IntegerType::get(&context, 1),
+                    mlir::UnknownLoc::get(&context));
+                payloads.push_back({0, e.input(value)});
+            }
+            const auto labels = mode ? fs::GuardedRankLabels::Reference : fs::GuardedRankLabels::Executed;
+            auto result = fs::reduceGuardedRanks(e, payloads, {}, {}, labels);
+            if (!result.error.empty() || !result.retained.empty()) { return false; }
+            if (mode) {
+                for (unsigned i = 0; i < count; ++i) {
+                    if (e.constantValue(result.ranks[i]) != i + 1) { return false; }
+                }
+            }
+            sizes[mode] = e.size();
+        }
+        if (sizes[1] >= sizes[0]) {
+            llvm::errs() << "reference ranks did not eliminate branch-dependent counters\n";
+            return false;
+        }
+        llvm::outs() << "finite rank construction " << count << ": " << sizes[0] << " -> " << sizes[1] << "\n";
     }
     return true;
 }
@@ -384,12 +416,13 @@ bool storageScans()
 int runGuardedRankChecks()
 {
     mlir::MLIRContext context;
-    if (!moduloSpans() || !storageScans()) {
+    if (!moduloSpans() || !storageScans() || !referenceRankConstruction(context)) {
         llvm::errs() << "guarded storage scan mismatch\n";
         return 1;
     }
     for (unsigned pattern = 0; pattern < 5; ++pattern) {
-        if (!ranks(context, pattern)) {
+        if (!ranks(context, pattern, fs::GuardedRankLabels::Executed) ||
+            !ranks(context, pattern, fs::GuardedRankLabels::Reference)) {
             return 1;
         }
     }
@@ -398,7 +431,7 @@ int runGuardedRankChecks()
             return 1;
         }
     }
-    llvm::outs() << "guarded ranks: 320 valuations and 960 anchored windows "
+    llvm::outs() << "guarded ranks: 640 valuations and 960 anchored windows "
                    "(including protected writers/scalars/macros) passed\n";
     return 0;
 }
