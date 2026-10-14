@@ -221,6 +221,10 @@ struct Execution {
                 return false;
             }
             values[a] = get(a.getLhs()) / divisor;
+        } else if (auto a = dyn_cast<arith::RemUIOp>(op)) {
+            const auto divisor = get(a.getRhs());
+            if (!divisor) { return false; }
+            values[a] = get(a.getLhs()) % divisor;
         } else if (auto a = dyn_cast<arith::AndIOp>(op)) {
             values[a] = get(a.getLhs()) & get(a.getRhs());
         } else if (auto a = dyn_cast<arith::OrIOp>(op)) {
@@ -297,6 +301,8 @@ struct Execution {
                 }
                 events.push_back(
                     {op.getName().getStringRef() == "pto.logical_set" ? 1U : 2U, 0, 0, 0, get(op.getOperand(0))});
+            } else if (auto barrier = dyn_cast<pto::BarrierOp>(op)) {
+                events.push_back({3, unsigned(barrier.getPipe().getPipe()), 0, 0, 0});
             } else if (!scalar(op)) {
                 valid = false;
                 return {};
@@ -556,13 +562,86 @@ bool runCase(MLIRContext& context, unsigned trips, unsigned invocations, unsigne
     }
     return before == render(f.module->getOperation());
 }
+bool sharedGuards(MLIRContext& context, unsigned count, bool mixedDistances, bool barriers = false)
+{
+    Fixture fixture(context, 2, 2);
+    auto demands = fixture.demands(true);
+    auto& e = demands->expressions;
+    const auto original = demands->analysis.sourceDemands.front();
+    const auto phase = e.rem(e.input(fixture.function.getArgument(0)), e.constant(count));
+    std::vector<fs::GuardedRankEdge> records;
+    for (unsigned i = 0; i < count; ++i) {
+        auto edge = original;
+        edge.guard = e.land(edge.guard, e.eq(phase, e.constant(i)));
+        if (mixedDistances && i % 2) { edge.target = 1; }
+        // Coactive barriers must retain their full multiplicity and order.
+        if (barriers) { edge.source = 1; edge.guard = original.guard; }
+        records.push_back(edge);
+    }
+    fs::InvocationPrefixCollection separate(fixture.function), batch(fixture.function);
+    std::string error;
+    // Singleton contributions are an independent lowering arrangement with
+    // isolated history slots and expression memos. The coordinator still owns
+    // exactly one publication/acquisition protocol for the whole direction.
+    for (auto edge : records) {
+        demands->analysis.sourceDemands = {edge};
+        if (failed(fs::appendBoundedPrefixRealization(demands, separate, error))) { return false; }
+    }
+    demands->analysis.sourceDemands = records;
+    if (failed(fs::appendBoundedPrefixRealization(demands, batch, error))) { return false; }
+    auto configure = [&](fs::InvocationPrefixCollection& collection) {
+        auto& recipe = collection.recipe();
+        recipe.privateScalarControl = true;
+        recipe.sourceBounds = {{P, 4}, {Q, 4}};
+    };
+    configure(separate); configure(batch);
+    fs::PrivateStateError diagnostic;
+    auto before = fs::materializeInvocationPrefix(fixture.function, separate.recipe(), diagnostic);
+    auto after = fs::materializeInvocationPrefix(fixture.function, batch.recipe(), diagnostic);
+    if (failed(before) || failed(after)) { llvm::errs() << diagnostic.message << "\n"; return false; }
+    const auto oldWork = separate.recipe().expressionProfile->report().getInteger("constructed_operations");
+    const auto newWork = batch.recipe().expressionProfile->report().getInteger("constructed_operations");
+    if (!oldWork || !newWork || *newWork >= *oldWork) {
+        llvm::errs() << "bounded batch failed to share control: " << newWork.value_or(-1)
+                     << " / " << oldWork.value_or(-1) << "\n";
+        return false;
+    }
+    for (uint64_t d = 0; d < 16; ++d) {
+        for (uint64_t v : {uint64_t(0), uint64_t(5), uint64_t(10), uint64_t(15)}) {
+            for (uint64_t p : {uint64_t(0), uint64_t(5), uint64_t(10), uint64_t(15)}) {
+                Execution expected(2), actual(2), payload(2);
+                expected.run((*before)->function, d, v, p);
+                actual.run((*after)->function, d, v, p);
+                payload.run(fixture.function, d, v, p);
+                if (!expected.valid || !actual.valid || expected.evaluations != actual.evaluations ||
+                    expected.events.size() != actual.events.size()) { return false; }
+                for (std::size_t i = 0; i < expected.events.size(); ++i) {
+                    const auto& a = expected.events[i];
+                    const auto& b = actual.events[i];
+                    if (std::tie(a.kind, a.role, a.outer, a.iv, a.ordinal) !=
+                        std::tie(b.kind, b.role, b.outer, b.iv, b.ordinal)) { return false; }
+                }
+                if (!mixedDistances && !barriers && !oracle(payload, actual, 2, d, v)) { return false; }
+            }
+        }
+    }
+    // A fresh attempt must not retain generated values from the earlier clone.
+    const auto text = render((*after)->function);
+    after = fs::materializeInvocationPrefix(fixture.function, batch.recipe(), diagnostic);
+    if (failed(after) || text != render((*after)->function)) { return false; }
+    llvm::outs() << "bounded shared guards=" << count << " mixed=" << mixedDistances
+                 << " barriers=" << barriers << " constructed=" << *oldWork << "->" << *newWork << "\n";
+    return true;
+}
 } // namespace
 bool runBoundedPrefixRealizationChecks()
 {
     MLIRContext context;
     context.disableMultithreading();
     context.loadDialect<func::FuncDialect, scf::SCFDialect, arith::ArithDialect, pto::PTODialect>();
-    if (!rejectsFutureDefinition(context)) {
+    if (!rejectsFutureDefinition(context) || !sharedGuards(context, 8, false) ||
+        !sharedGuards(context, 32, false) || !sharedGuards(context, 8, true) ||
+        !sharedGuards(context, 8, false, true)) {
         return false;
     }
     unsigned cases = 0;

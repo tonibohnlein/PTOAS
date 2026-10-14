@@ -2006,3 +2006,39 @@ nested-call conditions in the test oracle. No planning/device speedup is claimed
 Receipts: `.local/r4-spans-build.log`, `.local/r4-spans-tests.log`,
 `.local/r4-spans-rotating-probe.log`, `.local/r4-spans-rotating-trace.log`,
 `.local/r4-spans-compliance.log`.
+
+
+### R5 increment: bounded-prefix multi-output lowering
+
+Bounded incoming records now form one ordered batch per original consumer cut
+and direction; same-pipe records form a cut-local ordered barrier batch.
+The materializer shares substitutions and contextual expression emission within
+one arena transaction. Different lookback distances retain separate contexts,
+so historical evaluations cannot alias across occurrence translations. No
+context escapes the callback's immutable private-state view or a failed staged
+materialization. Every coactive barrier remains in its original order; incoming
+ranks use the same maximum and one existing direction coordinator.
+
+Bounded and regional prefix paths now share reached-input binding. They visit
+only original operands needed by requested roots and deterministic replay;
+the bounded path no longer copies the complete module-clone mapping per guard.
+Mapped non-index integers go through the expression service's conversion rather
+than being incorrectly used as index-valued expression results.
+
+Five focused suites pass: bounded prefix realization, invocation prefix,
+bounded predicate history, sequence prefix and singleton prefix. New comparisons
+against isolated singleton contributions preserve full ordered payload and
+command traces for nested invocations and mixed history distances; a fresh
+materialization produces identical output. Coactive barriers retain their full
+multiplicity. Constructed guard operations are 196→49 (8 roots), 796→145
+(32 roots), 180→63 (mixed lookbacks), and 152→19 (8 coactive barriers).
+The independent existing bounded oracle still passes 4,745 executions.
+These are focused construction reductions, not a full Delta speedup.
+
+R5 remains open for the large regional root's producer queries, sharing across
+regional recipes and the prefix lifetime export/finite-ID proof. No additional
+payload ordering or conservative substitution is introduced. Incremental build
+and diff checks pass; compliance findings are already-braced nested-call
+conditions. Receipts: `.local/r5-batch-*-build.log`,
+`.local/r5-batch-complete-tests.log`, `.local/r5-batch-oracle-final.log`,
+`.local/r5-batch-compliance.log`.

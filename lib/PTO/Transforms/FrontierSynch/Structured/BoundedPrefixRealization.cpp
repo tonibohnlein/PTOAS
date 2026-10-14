@@ -10,6 +10,7 @@
 #include "../Shared/BoundedPredicateHistory.h"
 #include "../Shared/CountedLoop.h"
 #include "../Shared/PrefixExpressionProfile.h"
+#include "../Shared/MappedCutInputs.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -176,115 +177,145 @@ LogicalResult appendRank(
         },
         error);
 }
-FailureOr<Value> guard(
-    const std::shared_ptr<Owner>& owner, GuardedRankEdge edge, Operation* cut, OpBuilder& builder,
-    const IRMapping& mapping, ArrayRef<Value> state, std::string& error, PrefixExpressionProfile::Entry& work)
+struct GuardRecord {
+    GuardedRankEdge edge;
+    PrefixExpressionProfile::Entry* work;
+};
+// One call owns one original cut, mapped invocation and immutable state view.
+// Each lookback has a separate binding/substitution context; none escape the
+// arena transaction or survive an invocation reset or failed staged lowering.
+FailureOr<SmallVector<Value>> guards(const std::shared_ptr<Owner>& owner,
+    ArrayRef<GuardRecord> records, Operation* cut, OpBuilder& builder,
+    const IRMapping& mapping, ArrayRef<Value> state, std::string& error)
 {
-    accumulateCost(work.emissions, 1);
     auto& demands = *owner->demands;
     auto& e = demands.expressions;
-    const auto distance = edge.target / demands.anchors.size();
     RegionExpressions::Transaction transaction(e);
-    std::vector<std::pair<Id, Id>> substitutions{{demands.base, e.sub(demands.ordinal, e.constant(distance))}};
-    RegionExpressions::CutEmission context;
+    struct Context {
+        RegionExpressions::CutEmission emission;
+        RegionExpressions::Substitution translation;
+        Context(RegionExpressions& e, Id base, Id ordinal, uint64_t distance)
+            : translation({{base, e.sub(ordinal, e.constant(distance))}}) {}
+    };
+    std::map<uint64_t, std::unique_ptr<Context>> contexts;
+    llvm::DenseMap<Id, const Leaf*> leaves;
+    for (const auto& leaf : owner->leaves) { leaves[leaf.id] = &leaf; }
     DominanceInfo dominance(demands.function);
-    const auto referenced = e.referencedInputs(edge.guard);
-    for (const auto& leaf : owner->leaves) {
-        const bool used = llvm::any_of(referenced, [&](auto input) { return input.first == leaf.id; });
-        if (!used) {
-            continue;
-        }
-        if (leaf.offset > distance) {
-            error = "retained consumer guard requires a future evaluation";
-            return failure();
-        }
-        auto read = owner->history->read(leaf.requirement, distance - leaf.offset, cut, mapping, state, error);
-        if (failed(read)) {
-            return failure();
-        }
-        context.values[leaf.id] = read->value;
-        context.cofactors[leaf.id] = leaf.id;
-    }
-    RegionExpressions::Substitution binding(substitutions);
-    auto root = e.substitute(edge.guard, binding);
-    root = e.land(e.le(e.constant(distance), demands.ordinal), root);
-    for (auto [id, original] : e.referencedInputs(root)) {
-        if (context.values.count(id)) {
-            continue;
-        }
-        auto actual = mapping.lookupOrNull(original);
-        if (actual && dominance.properlyDominates(original, cut)) {
-            context.values[id] = actual;
-            context.cofactors[id] = id;
-        }
-    }
-    for (const auto& item : mapping.getValueMap()) {
-        if (dominance.properlyDominates(item.first, cut)) {
-            context.inputs[item.first] = item.second;
-        }
-    }
     Block scratch;
     OpBuilder detached(builder.getContext());
     detached.setInsertionPointToEnd(&scratch);
-    auto emitted = e.emitContextual(root, detached, cut, context);
-    const auto operations = scratch.getOperations().size();
-    accumulateCost(work.attempts, 1);
-    accumulateCost(work.constructed, operations);
-    if (succeeded(emitted)) {
-        accumulateCost(work.retained, operations);
-        work.maximumRetained = std::max(work.maximumRetained, static_cast<uint64_t>(operations));
-        builder.getInsertionBlock()->getOperations().splice(builder.getInsertionPoint(), scratch.getOperations());
-    }
-    if (failed(emitted) && error.empty()) {
-        error = e.lastEmissionError();
-    }
-    return emitted;
-}
-LogicalResult appendRecord(
-    const std::shared_ptr<Owner>& owner, GuardedRankEdge edge, InvocationPrefixCollection& collection,
-    std::string& error)
-{
-    auto& demands = *owner->demands;
-    const auto distance = edge.target / demands.anchors.size();
-    const auto target = edge.target % demands.anchors.size();
-    auto* cut = demands.anchors[target].before.before;
-    auto* work = &owner->profile->request(&demands.expressions, edge.guard, cut, "bounded", distance);
-    auto p = static_cast<uint32_t>(demands.anchors[edge.source].phase->kPipeValue);
-    auto q = static_cast<uint32_t>(demands.anchors[target].phase->kPipeValue);
-    if (p == q) {
-        if (p == static_cast<uint32_t>(PIPE::PIPE_S)) {
-            error = "scalar completion requires its existing prerequisite contract";
-            return failure();
-        }
-        collection.recipe().actions.push_back(
-            {cut, PrivateStateCut::Before,
-             [owner, edge, cut, p, work](
-                 OpBuilder& b, const IRMapping& mapping, MutableArrayRef<Value> state, std::string& error) {
-                 auto active = guard(owner, edge, cut, b, mapping, state, error, *work);
-                 if (failed(active)) {
-                     return failure();
-                 }
-                 auto branch = b.create<scf::IfOp>(cut->getLoc(), *active, false);
-                 OpBuilder::InsertionGuard restore(b);
-                 b.setInsertionPointToStart(branch.thenBlock());
-                 b.create<BarrierOp>(cut->getLoc(), PipeAttr::get(b.getContext(), static_cast<PIPE>(p)));
-                 return success();
-             }});
-        return success();
-    }
-    const auto rank = owner->ranks.at(edge.source);
-    return collection.consumer(
-        cut, {p, q},
-        [owner, edge, cut, rank, distance, work](
-            OpBuilder& b, const IRMapping& mapping, ArrayRef<Value> state, std::string& error) -> FailureOr<Value> {
-            auto active = guard(owner, edge, cut, b, mapping, state, error, *work);
-            if (failed(active)) {
+    SmallVector<Value> values;
+    SmallVector<uint64_t> constructed;
+    for (const auto& record : records) {
+        const auto edge = record.edge;
+        auto& work = *record.work;
+        accumulateCost(work.emissions, 1);
+        const auto distance = edge.target / demands.anchors.size();
+        auto& binding = contexts[distance];
+        if (!binding) { binding = std::make_unique<Context>(e, demands.base, demands.ordinal, distance); }
+        auto& context = binding->emission;
+        for (auto [id, original] : e.referencedInputs(edge.guard)) {
+            if (context.values.count(id)) { continue; }
+            auto found = leaves.find(id);
+            if (found == leaves.end()) { continue; }
+            const auto& leaf = *found->second;
+            if (leaf.offset > distance) {
+                error = "retained consumer guard requires a future evaluation";
                 return failure();
             }
+            auto read = owner->history->read(leaf.requirement, distance - leaf.offset, cut, mapping, state, error);
+            if (failed(read)) { return failure(); }
+            context.values[id] = read->value;
+            context.cofactors[id] = id;
+        }
+        auto root = e.substitute(edge.guard, binding->translation);
+        root = e.land(e.le(e.constant(distance), demands.ordinal), root);
+        detail::bindMappedCutInputs(e, root, cut, mapping, dominance, context);
+        const auto before = scratch.getOperations().size();
+        auto emitted = e.emitContextual(root, detached, cut, context);
+        const auto operations = scratch.getOperations().size() - before;
+        accumulateCost(work.attempts, 1);
+        accumulateCost(work.constructed, operations);
+        if (failed(emitted)) {
+            if (error.empty()) { error = e.lastEmissionError(); }
+            return failure();
+        }
+        values.push_back(*emitted);
+        constructed.push_back(operations);
+    }
+    for (std::size_t i = 0; i < records.size(); ++i) {
+        auto& work = *records[i].work;
+        accumulateCost(work.retained, constructed[i]);
+        work.maximumRetained = std::max(work.maximumRetained, constructed[i]);
+    }
+    builder.getInsertionBlock()->getOperations().splice(builder.getInsertionPoint(), scratch.getOperations());
+    return values;
+}
+LogicalResult appendRecords(const std::shared_ptr<Owner>& owner, ArrayRef<uint8_t> inactive,
+    InvocationPrefixCollection& collection, std::string& error)
+{
+    auto& demands = *owner->demands;
+    std::map<Operation*, std::vector<GuardRecord>> barriers;
+    using Key = std::tuple<Operation*, uint32_t, uint32_t>;
+    std::map<Key, std::vector<GuardRecord>> incoming;
+    for (auto [index, edge] : llvm::enumerate(demands.analysis.sourceDemands)) {
+        if (inactive[index]) { continue; }
+        const auto distance = edge.target / demands.anchors.size();
+        const auto target = edge.target % demands.anchors.size();
+        auto* cut = demands.anchors[target].before.before;
+        auto* work = &owner->profile->request(&demands.expressions, edge.guard, cut, "bounded", distance);
+        const auto p = static_cast<uint32_t>(demands.anchors[edge.source].phase->kPipeValue);
+        const auto q = static_cast<uint32_t>(demands.anchors[target].phase->kPipeValue);
+        if (p == q) {
+            if (p == static_cast<uint32_t>(PIPE::PIPE_S)) {
+                error = "scalar completion requires its existing prerequisite contract";
+                return failure();
+            }
+            barriers[cut].push_back({edge, work});
+        } else { incoming[{cut, p, q}].push_back({edge, work}); }
+    }
+    for (auto& entry : barriers) {
+        auto* cut = entry.first;
+        collection.recipe().actions.push_back({cut, PrivateStateCut::Before,
+            [owner, cut, records = std::move(entry.second)](OpBuilder& b, const IRMapping& mapping,
+                MutableArrayRef<Value> state, std::string& error) {
+                auto active = guards(owner, records, cut, b, mapping, state, error);
+                if (failed(active)) { return failure(); }
+                // Preserve every barrier and its original coactive order.
+                for (std::size_t i = 0; i < records.size(); ++i) {
+                    const auto pipe = owner->demands->anchors[records[i].edge.source].phase->kPipeValue;
+                    auto branch = b.create<scf::IfOp>(cut->getLoc(), (*active)[i], false);
+                    OpBuilder::InsertionGuard restore(b);
+                    b.setInsertionPointToStart(branch.thenBlock());
+                    b.create<BarrierOp>(cut->getLoc(), PipeAttr::get(b.getContext(), static_cast<PIPE>(pipe)));
+                }
+                return success();
+            }});
+    }
+    for (auto& entry : incoming) {
+        auto* cut = std::get<0>(entry.first);
+        const auto p = std::get<1>(entry.first), q = std::get<2>(entry.first);
+        auto selector = [owner, cut, records = std::move(entry.second)](OpBuilder& b, const IRMapping& mapping,
+            ArrayRef<Value> state, std::string& error) -> FailureOr<Value> {
+            auto active = guards(owner, records, cut, b, mapping, state, error);
+            if (failed(active)) { return failure(); }
             auto zero = b.create<arith::ConstantIndexOp>(cut->getLoc(), 0);
-            return b.create<arith::SelectOp>(cut->getLoc(), *active, state[rank.first + distance], zero).getResult();
-        },
-        error);
+            Value required;
+            for (std::size_t i = 0; i < records.size(); ++i) {
+                const auto edge = records[i].edge;
+                const auto rank = owner->ranks.at(edge.source);
+                const auto distance = edge.target / owner->demands->anchors.size();
+                Value selected = b.create<arith::SelectOp>(cut->getLoc(), (*active)[i],
+                    state[rank.first + distance], zero);
+                if (!required) { required = selected; continue; }
+                auto later = b.create<arith::CmpIOp>(cut->getLoc(), arith::CmpIPredicate::ugt, required, selected);
+                required = b.create<arith::SelectOp>(cut->getLoc(), later, required, selected);
+            }
+            return required;
+        };
+        if (failed(collection.consumer(cut, {p, q}, std::move(selector), error))) { return failure(); }
+    }
+    return success();
 }
 } // namespace
 LogicalResult appendBoundedPrefixRealization(
@@ -371,11 +402,6 @@ LogicalResult appendBoundedPrefixRealization(
             return failure();
         }
     }
-    for (auto [record, edge] : llvm::enumerate(owner->demands->analysis.sourceDemands)) {
-        if (!(*inactive)[record] && failed(appendRecord(owner, edge, collection, error))) {
-            return failure();
-        }
-    }
-    return success();
+    return appendRecords(owner, *inactive, collection, error);
 }
 } // namespace mlir::pto::frontiersynch
