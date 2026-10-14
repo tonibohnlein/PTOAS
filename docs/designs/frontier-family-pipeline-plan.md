@@ -45,7 +45,7 @@ draft obligation; its excess formula must not authorize a production decision.
 | R3 (qualifying paths implemented) | Writer-centered guarded storage and shared boundary scans | Exact conflict/boundary agreement, including macro envelopes and protected effects; read-heavy scaling | M1/M3; Section 5.2 |
 | R4a (numerical ordered path implemented) | Ordered periodic/repeated first-reuse sweeps | Certified applicability, linear query counts, exact capacity and finite-restriction checks | M2/M4; Propositions 7.8/7.10 |
 | R4b (implemented for numerical periodic certificates) | Linear periodic allocation from suffix thresholds | Independent command-graph reuse/width oracle; no general assignment matrix on this route | M2/M4; Proposition 7.12 |
-| R4c | Direct modulo-lane span extraction and qualified boundary export | Exact span/presence agreement without generation expansion; parent retry preserved | M2/M4; Proposition 7.13, Corollary 7.14 |
+| R4c (shared span extraction implemented; extended exports open) | Direct modulo-lane span extraction and qualified boundary export | Exact span/presence agreement without generation expansion; parent retry preserved | M2/M4; Proposition 7.13, Corollary 7.14 |
 | R5 | Binding-aware multi-output control construction and producer query slicing | Less total constructed/live control, unchanged matching and payload order; Delta lifetime gate separate | M3/M4 |
 | R6 | Normalized logical graph allocation, owned session and closed-child completion import | Shared unified/split stages, allocation before scalar materialization, deleted superseded paths | M3/M4/M5/M6; Sections 6/8 |
 | R7 | Pinned pipeline, scaling and device closure | Distinct logical/physical/C++/device outcomes and reproducible receipts | M1/M6 |
@@ -1975,3 +1975,34 @@ paired compiler-time claim is made. The incremental build passes; compliance
 brace findings are parser false positives on already braced nested calls.
 Receipts: `.local/r4-sweep-build.log`, `.local/r4-sweep-tests.log`,
 `.local/r4-sweep-compliance.log`.
+
+
+### R4c: shared modular lane-span extraction
+
+A shared congruence helper solves `(stride * ordinal + phase) mod width = lane`
+and intersects its solution progression with an inclusive ordinal interval.
+It handles noncoprime strides, absent lanes, clipped intervals and zero stride
+without enumerating generations. Wide modular multiplication and checked room
+before addition preserve the full unsigned 64-bit domain. Coordinates are
+meaningful only under the exact returned presence condition.
+
+Numerical periodic exports and repeated shared allocation now use this helper
+for their certified unit-stride rules, replacing duplicate formulas. These
+paths already avoided generation expansion; this migration consolidates them
+and supplies the general fixed-stride primitive. Three rotating adapters also
+share the same modular inverse. Allocation choices and certificates are
+unchanged. This does not yet replace every guarded endpoint-alternative list
+or establish the extended child-boundary export of Corollary 7.14.
+
+Independent enumeration covers widths 1–8, strides 0–8, all lanes and clipped
+intervals, plus symbolic activity/upper bounds and near-UINT64_MAX cases.
+Rotating boundary certificates, rotating storage exports, and the Persistent
+allocation-profile suite pass. The direct rotating-region C++ constructor
+checks pass separately. The broader Python rotating trace campaign was
+interrupted, and a bounded follow-up expired while progressing through the
+small trace cases; the full suite is unresolved, not counted as passing.
+Incremental build and diff checks pass. Compliance reports only already-braced
+nested-call conditions in the test oracle. No planning/device speedup is claimed.
+Receipts: `.local/r4-spans-build.log`, `.local/r4-spans-tests.log`,
+`.local/r4-spans-rotating-probe.log`, `.local/r4-spans-rotating-trace.log`,
+`.local/r4-spans-compliance.log`.

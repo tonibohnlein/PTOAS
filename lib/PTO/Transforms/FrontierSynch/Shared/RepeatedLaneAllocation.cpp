@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "ModuloLaneSpan.h"
 #include "RepeatedLaneAllocation.h"
 #include "RepeatedRegionInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
@@ -221,21 +222,14 @@ void appendBounds(RepeatedRegionState& state, RegionalAllocationGroup& result,
     auto& e = state.e();
     const auto first = member.firstSource.visits.front();
     const auto last = e.sub(member.lastTarget.visits.front(), e.constant(delay));
+    const detail::ModuloLaneDomain domain(1, offset, width);
     for (uint64_t lane = 0; lane < width; ++lane) {
-        const auto residue = (lane + width - offset) % width;
-        const auto shift = e.rem(e.add(e.constant(residue),
-            e.sub(e.constant(width), e.rem(first, e.constant(width)))), e.constant(width));
-        // Compare the shift before adding it, so an absent first+shift cannot
-        // wrap into the live interval near the machine integer limit.
-        const auto room = e.sub(last, first);
-        const auto active = e.land(member.active, e.le(shift, room));
-        const auto begin = e.select(active, e.add(first, shift), first);
-        const auto end = e.sub(last, e.rem(e.sub(last, begin), e.constant(width)));
+        const auto span = domain.span(e, first, last, member.active, lane);
         auto source = member.firstSource, target = member.lastTarget;
-        source.visits.front() = begin;
-        target.visits.front() = e.add(end, e.constant(delay));
-        result.lanes[base + lane].firstSources.push_back({std::move(source), active});
-        result.lanes[base + lane].lastTargets.push_back({std::move(target), active});
+        source.visits.front() = span.first;
+        target.visits.front() = e.add(span.last, e.constant(delay));
+        result.lanes[base + lane].firstSources.push_back({std::move(source), span.present});
+        result.lanes[base + lane].lastTargets.push_back({std::move(target), span.present});
     }
 }
 

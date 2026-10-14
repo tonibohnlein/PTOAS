@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingExtraction.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "llvm/ADT/APInt.h"
+#include "../Shared/ModularArithmetic.h"
 #include <algorithm>
 #include <limits>
 #include <numeric>
@@ -16,28 +17,6 @@
 #include <unordered_map>
 namespace mlir::pto::frontiersynch {
 namespace {
-uint64_t inverse(uint64_t value, uint64_t modulus)
-{
-    uint64_t oldRemainder = modulus, remainder = value;
-    // 256-bit signed intermediates contain products of a 64-bit quotient and
-    // the extended-Euclidean coefficients, without host signed overflow.
-    llvm::APInt oldCoefficient(256, 0), coefficient(256, 1);
-    while (remainder != 0) {
-        const auto quotient = oldRemainder / remainder;
-        const auto nextRemainder = oldRemainder % remainder;
-        const auto nextCoefficient = oldCoefficient - llvm::APInt(256, quotient) * coefficient;
-        oldRemainder = remainder;
-        remainder = nextRemainder;
-        oldCoefficient = coefficient;
-        coefficient = nextCoefficient;
-    }
-    const llvm::APInt bound(256, modulus);
-    auto result = oldCoefficient.srem(bound);
-    if (result.isNegative()) {
-        result += bound;
-    }
-    return result.getZExtValue();
-}
 uint64_t modularPhase(uint64_t offset, uint64_t inverseStride, uint64_t period)
 {
     if (period == 1) {
@@ -147,7 +126,7 @@ private:
         }
         const auto divisor = std::gcd(fragment.stride, fragment.slots);
         const auto period = fragment.slots / divisor;
-        const auto inverseStride = period == 1 ? 0 : inverse(fragment.stride / divisor, period);
+        const auto inverseStride = period == 1 ? 0 : detail::modularInverse(fragment.stride / divisor, period);
         families.emplace(fragment.family, Family{fragment.slots, fragment.stride, divisor, period, inverseStride});
         output.refreshBound = std::max(output.refreshBound, period);
         return true;

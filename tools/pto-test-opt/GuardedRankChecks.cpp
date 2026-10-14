@@ -13,6 +13,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/Support/raw_ostream.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/GuardedStorageScan.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/ModuloLaneSpan.h"
 #include <set>
 namespace fs = mlir::pto::frontiersynch;
 namespace {
@@ -225,6 +226,89 @@ bool windows(unsigned mode)
     auto certificate = fs::certifyRotatingRefresh(payloads, fragments, {1, 0});
     return certificate.error.empty() && certificate.span == 2;
 }
+bool moduloSpans()
+{
+    for (uint64_t width = 1; width <= 8; ++width) {
+        for (uint64_t stride = 0; stride <= 8; ++stride) {
+            for (uint64_t phase : {uint64_t(0), width - 1}) {
+                const fs::detail::ModuloLaneDomain domain(stride, phase, width);
+                for (uint64_t lane = 0; lane < width; ++lane) {
+                    for (uint64_t lower = 0; lower < 8; ++lower) {
+                        for (uint64_t upper = 0; upper < 10; ++upper) {
+                            fs::RegionExpressions e;
+                            auto span = domain.span(e, e.constant(lower), e.constant(upper), e.boolean(true), lane);
+                            std::optional<uint64_t> first, last;
+                            for (uint64_t n = lower; n <= upper; ++n) {
+                                if ((stride * n + phase) % width == lane) {
+                                    if (!first) { first = n; }
+                                    last = n;
+                                }
+                            }
+                            if (e.constantValue(span.present) != unsigned(bool(first)) ||
+                                (first && (e.constantValue(span.first) != first ||
+                                           e.constantValue(span.last) != last))) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for (uint64_t width : {UINT64_MAX, UINT64_MAX - 1}) {
+        for (uint64_t stride : {uint64_t(0), uint64_t(2), UINT64_MAX - 2}) {
+            fs::detail::ModuloLaneDomain large(stride, width - 1, width);
+            for (uint64_t n : {uint64_t(0), uint64_t(1), uint64_t(7), UINT64_MAX}) {
+                const auto lane = (llvm::APInt(128, stride) * llvm::APInt(128, n) +
+                    llvm::APInt(128, width - 1)).urem(llvm::APInt(128, width)).getZExtValue();
+                fs::RegionExpressions e;
+                auto span = large.span(e, e.constant(n), e.constant(n), e.boolean(true), lane);
+                if (e.constantValue(span.present) != 1 || e.constantValue(span.first) != n ||
+                    e.constantValue(span.last) != n) { return false; }
+            }
+        }
+    }
+    {
+        mlir::MLIRContext context;
+        mlir::Block inputs;
+        fs::RegionExpressions e;
+        const auto upper = e.input(inputs.addArgument(mlir::IndexType::get(&context), mlir::UnknownLoc::get(&context)));
+        const auto activity = e.input(inputs.addArgument(mlir::IntegerType::get(&context, 1),
+                                                          mlir::UnknownLoc::get(&context)));
+        fs::detail::ModuloLaneDomain domain(1, 2, 5);
+        const auto span = domain.span(e, e.constant(0), upper, activity, 0);
+        if (e.constantValue(span.first) != 3) { return false; }
+        for (uint64_t end = 0; end < 12; ++end) {
+            for (bool active : {false, true}) {
+                fs::RegionExpressions::Transaction transaction(e);
+                fs::RegionExpressions::Substitution at({{upper, e.constant(end)}, {activity, e.boolean(active)}});
+                const auto present = e.constantValue(e.substitute(span.present, at));
+                if (present != unsigned(active && end >= 3)) { return false; }
+                if (active && end >= 3 && e.constantValue(e.substitute(span.last, at)) != end - (end - 3) % 5) {
+                    return false;
+                }
+            }
+        }
+    }
+    fs::RegionExpressions e;
+    fs::detail::ModuloLaneDomain domain(6, 7, 8);
+    for (uint64_t lane = 0; lane < 8; ++lane) {
+        const auto span = domain.span(e, e.constant(UINT64_MAX - 5), e.constant(UINT64_MAX), e.boolean(true), lane);
+        std::optional<uint64_t> first, last;
+        for (uint64_t offset = 0; offset < 6; ++offset) {
+            const auto n = UINT64_MAX - 5 + offset;
+            if ((6 * (n % 8) + 7) % 8 == lane) {
+                if (!first) { first = n; }
+                last = n;
+            }
+        }
+        if (e.constantValue(span.present) != unsigned(bool(first)) ||
+            (first && (e.constantValue(span.first) != first || e.constantValue(span.last) != last))) { return false; }
+        const auto absent = domain.span(e, e.constant(0), e.constant(UINT64_MAX), e.boolean(false), lane);
+        if (e.constantValue(absent.present) != 0) { return false; }
+    }
+    return true;
+}
 bool storageScans()
 {
     // Independent interval oracle: enumerate all pairs and compare the exact
@@ -300,7 +384,7 @@ bool storageScans()
 int runGuardedRankChecks()
 {
     mlir::MLIRContext context;
-    if (!storageScans()) {
+    if (!moduloSpans() || !storageScans()) {
         llvm::errs() << "guarded storage scan mismatch\n";
         return 1;
     }
