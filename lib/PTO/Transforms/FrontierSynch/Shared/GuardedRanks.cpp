@@ -60,9 +60,17 @@ GuardedRankStep advanceRank(RegionExpressions& e, GuardedRankFrontier& frontier,
         }
     }
     for (const auto& edge : candidates) {
-        auto keep = e.land(e.land(present, edge.guard), e.lt(out.start[edge.column], edge.rank));
+        const auto active = e.land(present, edge.guard);
+        auto keep = e.land(active, e.lt(out.start[edge.column], edge.rank));
         out.retained.push_back(keep);
-        if (!join(out.start, edge.completion, keep)) {
+        // If this source already reaches the accumulated prefix, its entire
+        // completion row is contained in that prefix. Joining an active
+        // redundant source therefore changes nothing. Keep cover selection
+        // out of the reachability circuit; otherwise each later row embeds
+        // the earlier reduction tests in every component. Statically rejected
+        // candidates still require no join construction at all.
+        if (e.constantValue(keep) == 0) { continue; }
+        if (!join(out.start, edge.completion, active)) {
             out.error = "invalid candidate frontier row"; return out;
         }
     }

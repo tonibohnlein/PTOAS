@@ -2121,3 +2121,46 @@ compiler-time improvement or a fix for Delta's control size. The prefix lifetime
 export remains absent. Receipts: `.local/r5-reference-ranks/{build,tests,compliance}.log`
 and `.local/r5-reference-ranks/delta.*`. The prior executable is retained there
 for further controlled comparisons.
+
+### R5 result: separate guarded reachability joins from cover predicates
+
+The shared rank transition still tests each incoming generator in decreasing
+reference order and retains exactly the same covers. Its reachability join now
+uses the generator's activity instead of the cover-retention predicate. If the
+source is already in the accumulated completion prefix, its complete ancestor
+row is already contained in that prefix, so joining it again changes nothing.
+Constant-false cover tests still skip construction. Unresolved cover tests no
+longer become inputs to every component of every later reachability row.
+This implements the draft's all-generator row recurrence within the existing
+reducer, without another query backend or a protocol change.
+
+The twelve finite/bounded/prefix suites pass. A new six-payload regression
+checks that an optional operation affecting one pipe's executed rank does not
+enter an unrelated pipe's reachability circuit; it checks the retained guards
+for all four branch valuations. Both rank modes continue to pass the independent
+graph oracle, and the streaming transition uses the same improved recurrence.
+Incremental build and diff checks pass. Compliance reports four already-braced
+conditions, not unbraced control bodies.
+
+Three serial Delta pairs compare `926987750` with this production change, using
+the same input, flags, incremental build configuration and fixed binaries:
+
+| Logical compilation including allocation-support requests | Pair 1 | Pair 2 | Pair 3 | Median |
+|---|---:|---:|---:|---:|
+| Before activity-only joins | 77.206 s | 79.004 s | 79.003 s | 79.003 s |
+| After activity-only joins | 26.737 s | 26.939 s | 26.636 s | 26.737 s |
+
+This is a **2.95× logical-compilation improvement** for this input and host.
+Constructed prefix operations fall from 1,925,702 to 673,216; the largest root
+falls from 605,701 to 207,673. Inserted arithmetic including payload falls from
+1,927,330 to 674,844, and selects from 659,031 to 202,310. All repetitions have
+the same counts. Median peak RSS falls from 1,089,572 to 513,320 KiB.
+The prefix route, 284 state slots, 172 static SET sites, 47 static WAIT sites
+and 194 barriers remain unchanged. These are static sites, not executed pairs.
+
+Delta still has excessive control and no prefix lifetime export. These results
+are neither six-ID feasibility nor device validation. The kernel-independent
+oracles establish the changed recurrence; the diagnostic is not a full Delta
+trace or hardware test. Receipts, exact binary/input hashes and the measured
+production diff: `.local/r5-activity-joins/paired/{metadata,results}.json`.
+Focused validation: `.local/r5-activity-joins/{tests,regression,compliance}.log`.
