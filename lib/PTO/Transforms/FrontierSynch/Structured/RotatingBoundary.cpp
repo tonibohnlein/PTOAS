@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Algebraic storage generators without expanding banks or loop iterations.
+#include "../Shared/ModularArithmetic.h"
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingBoundary.h"
 #include "PeriodicAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
@@ -17,24 +18,6 @@
 namespace mlir::pto::frontiersynch {
 namespace {
 using Occ = BoundaryOccurrence;
-uint64_t inverse(uint64_t value, uint64_t modulus)
-{
-    uint64_t a = modulus, b = value;
-    llvm::APInt x(256, 0), y(256, 1);
-    while (b) {
-        auto next = x - llvm::APInt(256, a / b) * y;
-        auto remainder = a % b;
-        a = b;
-        b = remainder;
-        x = y;
-        y = next;
-    }
-    auto answer = x.srem(llvm::APInt(256, modulus));
-    if (answer.isNegative()) {
-        answer += llvm::APInt(256, modulus);
-    }
-    return answer.getZExtValue();
-}
 std::optional<std::pair<uint64_t, uint64_t>> progression(const RotatingFragment& f, uint64_t slot)
 {
     const auto stride = f.stride % f.slots, offset = f.offset % f.slots;
@@ -45,7 +28,8 @@ std::optional<std::pair<uint64_t, uint64_t>> progression(const RotatingFragment&
     }
     const auto first = period == 1 ?
                            0 :
-                           (llvm::APInt(128, delta / divisor) * llvm::APInt(128, inverse(stride / divisor, period)))
+                           (llvm::APInt(128, delta / divisor) *
+                            llvm::APInt(128, detail::modularInverse(stride / divisor, period)))
                                .urem(llvm::APInt(128, period))
                                .getZExtValue();
     return std::make_pair(first, period);

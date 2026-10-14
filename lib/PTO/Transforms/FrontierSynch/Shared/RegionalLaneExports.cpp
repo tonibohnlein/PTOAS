@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
+#include "ModuloLaneSpan.h"
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.h"
 
 namespace mlir::pto::frontiersynch {
@@ -65,7 +66,7 @@ std::shared_ptr<RegionalAllocationSummary> exportPeriodicSharedLanes(
         auto& group = out->groups[assigned.cycle];
         // Every chosen edge weighs d+h, so d <= its positive cycle width.
         if (record.displacement > group.budget) { return {}; }
-        const auto distance = e.constant(record.displacement), modulus = e.constant(group.budget);
+        const auto distance = e.constant(record.displacement);
         const auto active = e.lt(distance, trips);
         const auto limit = e.select(active, e.sub(trips, distance), e.constant(0));
         RegionalAllocationMember member{id, 1, assigned.offset,
@@ -75,17 +76,14 @@ std::shared_ptr<RegionalAllocationSummary> exportPeriodicSharedLanes(
         member.targetPipe = periodic.payloads[record.target].pipe;
         member.tupleRule = PhysicalTupleRule{1, 0, {{0, 1, assigned.offset, group.budget, 1}}};
         group.members.push_back(std::move(member));
+        const detail::ModuloLaneDomain domain(1, assigned.offset, group.budget);
+        const auto upper = e.select(active, e.sub(limit, e.constant(1)), e.constant(0));
         for (uint64_t lane = 0; lane < group.budget; ++lane) {
-            const auto residue = (lane + group.budget - assigned.offset) % group.budget;
-            const auto first = e.constant(residue), present = e.lt(first, limit);
-            // Guard before subtracting: inactive phases keep defined arithmetic
-            // and cannot manufacture a boundary event for an empty invocation.
-            const auto end = e.select(present, e.sub(limit, e.constant(1)), first);
-            const auto last = e.sub(end, e.rem(e.sub(end, first), modulus));
+            const auto span = domain.span(e, e.constant(0), upper, active, lane);
             group.lanes[lane].firstSources.push_back(
-                {{record.source, first, PeriodicEventKind::Start}, present});
+                {{record.source, span.first, PeriodicEventKind::Start}, span.present});
             group.lanes[lane].lastTargets.push_back(
-                {{record.target, e.add(last, distance), PeriodicEventKind::Completion}, present});
+                {{record.target, e.add(span.last, distance), PeriodicEventKind::Completion}, span.present});
         }
     }
     return out;

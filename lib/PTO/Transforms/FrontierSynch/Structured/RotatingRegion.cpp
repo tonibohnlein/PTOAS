@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "../Shared/ModularArithmetic.h"
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingRegion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/BoundingRepetition.h"
 #include "../Shared/RepeatedRegionInternal.h"
@@ -41,16 +42,6 @@ Id multiplyModulo(RegionExpressions& e, Id value, uint64_t coefficient, uint64_t
         if (coefficient) { value = e.rem(e.add(value, value), divisor); }
     }
     return result;
-}
-uint64_t inverse(uint64_t value, uint64_t modulus)
-{
-    BoundInteger a(value), b(modulus), x(1), y(0);
-    while (b != 0) {
-        auto quotient = a / b;
-        auto next = a - quotient * b; a = b; b = std::move(next);
-        next = x - quotient * y; x = y; y = std::move(next);
-    }
-    return static_cast<uint64_t>(static_cast<int64_t>(mod(x, BoundInteger(modulus))));
 }
 struct FamilySelectors {
     RotatingRegionFamily family;
@@ -271,7 +262,7 @@ RepeatedRegionAnalysis repeatRotatingRegion(func::FuncOp function, scf::ForOp lo
         FamilySelectors selectors;
         selectors.divisor = std::gcd(family.stride, family.banks);
         selectors.distance = family.banks / selectors.divisor;
-        selectors.inverseStride = inverse(family.stride / selectors.divisor, selectors.distance);
+        selectors.inverseStride = detail::modularInverse(family.stride / selectors.divisor, selectors.distance);
         selectors.family = std::move(family);
         storage->families.push_back(std::move(selectors));
     }
