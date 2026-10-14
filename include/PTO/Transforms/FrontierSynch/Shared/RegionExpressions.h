@@ -211,6 +211,10 @@ public:
         // Cumulative mappings actually needed by emitted scalar replay DAGs.
         // Saturates on overflow; instrumentation does not govern admission.
         uint64_t replayBindings = 0;
+        // Planning-only bindings supplied by dominating shared recipes. They
+        // stop specialization just like emitted values; materialization must
+        // provide their actual Values or reject before constructing any IR.
+        llvm::DenseSet<Id> plannedValues;
         llvm::DenseMap<Id, Value> values;
         llvm::DenseMap<Value, Value> inputs;
         llvm::DenseMap<Id, Id> cofactors;

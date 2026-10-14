@@ -7,17 +7,18 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedPeriodicInsertion.h"
 #include "../Shared/CountedLoop.h"
-#include <map>
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
+// Retain exact periodic families and entry invariants before scalar lowering.
 namespace mlir::pto::frontiersynch {
 namespace {
 using Expr = RegionExpressions::Id;
 class Preparer {
 public:
-    Preparer(func::FuncOp function, const GuardedPeriodicEndpointInput& analysis, ArrayRef<Expr> selected,
+    Preparer(const GuardedPeriodicEndpointInput& analysis, ArrayRef<Expr> selected,
              PreparedLogicalPlan& plan, std::string& error,
              const RegionalDemandFilter& filter)
-        : function(function), analysis(analysis), selected(selected), plan(plan), arena(*analysis.expressions),
-          builder(function.getContext()), error(error), filter(filter) {}
+        : analysis(analysis), selected(selected), plan(plan), arena(*analysis.expressions),
+          expressions(analysis.expressions), error(error), filter(filter) {}
     LogicalResult run()
     {
         auto loop = analysis.loop;
@@ -30,66 +31,53 @@ public:
         auto originalOrdinal = domain->ordinal(arena);
         ordinal = arena.div(originalOrdinal, arena.constant(analysis.period));
         residue = arena.rem(originalOrdinal, arena.constant(analysis.period));
-        builder.setInsertionPointToEnd(&plan.addPreparation(loop));
-        auto count = arena.emitContextual(trips, builder, loop, entry);
-        if (failed(count)) { return failure(); }
-        tripValue = *count;
+        if (failed(share(trips))) { return failure(); }
         for (std::size_t i = 0; i < analysis.generators.size(); ++i) {
             auto retained = selected[i];
             if (arena.implies(retained, arena.boolean(false))) { continue; }
-            auto distance = analysis.generators[i].displacement;
-            auto enabledValue = arena.emitContextual(retained, builder, loop, entry);
-            auto distanceValue = arena.emitContextual(distance, builder, loop, entry);
-            if (failed(enabledValue) || failed(distanceValue)) { return failure(); }
-            invariants.push_back({i, *enabledValue, *distanceValue});
+            if (failed(share(retained)) || failed(share(analysis.generators[i].displacement)) ||
+                failed(endpoints(i))) { return failure(); }
         }
-        for (const auto& item : invariants) {
-            if (failed(endpoints(item))) { return failure(); }
+        if (!families.empty()) {
+            const auto namespaces = familyRecordNamespaces(plan.families);
+            for (auto& family : families) {
+                family.piece.namespaceId = namespaces.at(family.piece.members.front().record);
+            }
+            auto recipe = buildContextualFamilyEndpointRecipe(expressions, families, shared);
+            if (failed(recipe)) { return failure(); }
+            plan.familyRecipe = std::move(*recipe);
         }
+        plan.groupedFamilies = true;
+        plan.independentPieces = true;
         return success();
     }
 private:
-    struct Invariant { std::size_t record; Value retained, distance; };
-    func::FuncOp function;
     const GuardedPeriodicEndpointInput& analysis;
     ArrayRef<Expr> selected;
     PreparedLogicalPlan& plan;
     RegionExpressions& arena;
-    OpBuilder builder;
-    RegionExpressions::CutEmission entry;
+    ContextualFamilyExpressions expressions;
     Expr trips = RegionExpressions::invalid, ordinal = RegionExpressions::invalid;
     Expr residue = RegionExpressions::invalid;
-    Value tripValue;
-    std::vector<Invariant> invariants;
+    std::vector<ContextualEndpointFamily> families;
+    std::vector<ContextualSharedExpression> shared;
     std::string& error;
     const RegionalDemandFilter& filter;
-    struct Cut {
-        Block* block = nullptr;
-        RegionExpressions::CutEmission context;
-    };
-    std::map<Operation*, Cut> cuts;
-    LogicalResult endpoint(const Invariant& item, bool publish, bool local)
+    LogicalResult share(Expr expression)
     {
-        const auto& edge = analysis.generators[item.record];
+        // Preserve entry availability and sharing, including safe scalar replay.
+        // This validates a recipe and retains no generated Values.
+        if (failed(expressions.prepare(expression, analysis.loop))) { return failure(); }
+        shared.push_back({expression, analysis.loop});
+        return success();
+    }
+    LogicalResult endpoint(std::size_t record, bool publish, bool local)
+    {
+        const auto& edge = analysis.generators[record];
         auto* operation = analysis.phases[publish ? edge.source : edge.target]->elementOp;
         auto* before = publish ? operation->getNextNode() : operation;
         if (!before) { return failure(); }
-        auto& cut = cuts[before];
-        if (!cut.block) {
-            cut.block = &plan.addPreparation(before);
-            // Entry preparation dominates every original body cut. Preserve
-            // its computed invariants through contextual branch specialization
-            // instead of rebuilding their DAGs independently at each endpoint.
-            for (auto [expression, value] : entry.values) {
-                cut.context.values[expression] = value;
-                cut.context.cofactors[expression] = expression;
-            }
-        }
-        builder.setInsertionPointToEnd(cut.block);
-        auto retained = selected[item.record];
-        cut.context.values[retained] = item.retained;
-        cut.context.values[edge.displacement] = item.distance;
-        cut.context.values[trips] = tripValue;
+        auto retained = selected[record];
         // At a visited body cut ordinal < trips. Subtract before comparing to
         // avoid an overflowing source ordinal + displacement.
         auto count = [&](uint32_t type) {
@@ -115,37 +103,34 @@ private:
             if (!condition || !arena.isBoolean(*condition)) { return failure(); }
             guardExpression = arena.land(guardExpression, *condition);
         }
-        // A filter can introduce predicates beyond the loop invariants. Reuse
-        // seeded values and the same safe contextual replay rules as regions.
-        auto guard = filter ? arena.emitContextual(guardExpression, builder, before, cut.context) :
-                              arena.emit(guardExpression, builder, before, cut.context.values);
-        auto identity = arena.emit(publish ? ordinal : arena.sub(ordinal, edge.displacement),
-                                   builder, before, cut.context.values);
-        if (failed(guard) || failed(identity)) { return failure(); }
-        auto kind = local ? LogicalCommandKind::Barrier :
-                    publish ? LogicalCommandKind::Set : LogicalCommandKind::Wait;
-        plan.endpoints.push_back({before, kind, analysis.payloads[edge.source].pipe,
-            analysis.payloads[edge.target].pipe, static_cast<int64_t>(item.record), *guard,
-            local ? Value() : *identity});
+        ContextualEndpointFamily family;
+        family.piece.cut = {before->getBlock(), before};
+        family.piece.kind = local ? EndpointKind::Barrier : publish ? EndpointKind::Set : EndpointKind::Wait;
+        family.piece.sourcePipe = analysis.payloads[edge.source].pipe;
+        family.piece.targetPipe = analysis.payloads[edge.target].pipe;
+        family.piece.members.push_back({static_cast<uint32_t>(record), {}});
+        family.activity = guardExpression;
+        family.ordinal = publish ? ordinal : arena.sub(ordinal, edge.displacement);
+        families.push_back(std::move(family));
         return success();
     }
-    LogicalResult endpoints(const Invariant& item)
+    LogicalResult endpoints(std::size_t record)
     {
-        const auto& edge = analysis.generators[item.record];
+        const auto& edge = analysis.generators[record];
         const bool local = analysis.payloads[edge.source].pipe == analysis.payloads[edge.target].pipe;
         auto* source = analysis.phases[edge.source]->elementOp;
         auto* target = analysis.phases[edge.target]->elementOp;
         EndpointFamily family;
-        family.id = static_cast<uint32_t>(item.record);
+        family.id = static_cast<uint32_t>(record);
         family.sourcePipe = analysis.payloads[edge.source].pipe;
         family.targetPipe = analysis.payloads[edge.target].pipe;
         family.local = local;
         family.sourceCut = {source->getBlock(), source->getNextNode()};
         family.targetCut = {target->getBlock(), target};
-        family.members.push_back({static_cast<uint32_t>(item.record), edge.source, edge.target, {}, {}});
+        family.members.push_back({static_cast<uint32_t>(record), edge.source, edge.target, {}, {}});
         plan.families.push_back(std::move(family));
-        if (!local && failed(endpoint(item, true, false))) { return failure(); }
-        return endpoint(item, false, local);
+        if (!local && failed(endpoint(record, true, false))) { return failure(); }
+        return endpoint(record, false, local);
     }
 };
 } // namespace
@@ -176,7 +161,7 @@ static FailureOr<std::unique_ptr<PreparedLogicalPlan>> preparePeriodicEndpoints(
     auto plan = std::make_unique<PreparedLogicalPlan>(0);
     plan->completeInvocation = !analysis.phases.empty();
     for (auto* phase : analysis.phases) { analysis.expressions->forbidRecomputation(phase->elementOp); }
-    if (failed(Preparer(function, analysis, selected, *plan, error, filter).run())) {
+    if (failed(Preparer(analysis, selected, *plan, error, filter).run())) {
         if (error.empty()) {
             error = "guarded periodic endpoint invariants or bounds unavailable: " + analysis.expressions->error();
         }

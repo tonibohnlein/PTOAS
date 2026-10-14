@@ -77,6 +77,14 @@ FailureOr<std::shared_ptr<const CutExpressionRecipe>> RegionExpressions::prepare
     auto recipe = std::make_shared<CutExpressionRecipe>();
     recipe->owner = this;
     recipe->cut = cut;
+    // The binding owner clears this cache when adding shared roots. Seed once
+    // per cut, not once per endpoint request over the same invariant inventory.
+    if (context.cofactors.empty()) {
+        for (Id bound : context.plannedValues) {
+            if (!valid(bound)) { emissionMessage = "invalid shared expression binding"; return failure(); }
+            context.cofactors[bound] = bound;
+        }
+    }
     recipe->selected = cofactorAtCut(expression, cut, context.cofactors);
     if (!constructionMessage.empty() || !valid(recipe->selected)) {
         emissionMessage = "guarded expression specialization is unavailable"; return failure();
@@ -86,7 +94,9 @@ FailureOr<std::shared_ptr<const CutExpressionRecipe>> RegionExpressions::prepare
     while (!pending.empty()) {
         Id next = pending.pop_back_val();
         if (!seen.insert(next).second) { continue; }
-        if (context.values.count(next)) { recipe->boundExpressions.push_back(next); continue; }
+        if (context.values.count(next) || context.plannedValues.count(next)) {
+            recipe->boundExpressions.push_back(next); continue;
+        }
         const Node& node = nodes[next];
         if (node.kind == Kind::Input) { recipe->inputs.push_back(next); }
         appendOperands(node, pending);

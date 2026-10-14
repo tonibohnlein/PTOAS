@@ -2014,6 +2014,10 @@ LogicalResult checkSpecializedGuardedSession(func::FuncOp function, pto::GMAlias
         const auto size = generic->demands.expressions->size();
         auto plan = session.prepareLogical(outcome);
         if (failed(plan)) { return function.emitError("guarded root preparation did not reach allocation check"); }
+        if (!(*plan)->preparation.empty() || !(*plan)->endpoints.empty() ||
+            (!(*plan)->families.empty() && !(*plan)->familyRecipe)) {
+            return function.emitError("guarded periodic preparation materialized scalar endpoints");
+        }
         (void)session.attachAllocation(outcome, **plan);
         const bool isolatedExports = generic->demands.expressions->size() == size &&
             generic->demands.expressions->error().empty();

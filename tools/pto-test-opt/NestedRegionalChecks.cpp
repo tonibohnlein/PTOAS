@@ -136,8 +136,10 @@ bool runNestedRegionalChecks(func::FuncOp function)
     auto nestedOverlay = fs::analyzeFiniteOverlay(nestedBase,
         {{addedSource, addedTarget, e.boolean(true)}}, nestedBase.referenceBefore);
     auto nestedPlan = fs::prepareFiniteOverlayInsertion(function, nestedOverlay, overlayError);
-    if (failed(nestedPlan) || (*nestedPlan)->endpoints.size() != 2 || !(*nestedPlan)->regionalAllocation ||
-        (*nestedPlan)->regionalAllocation->groups.size() != 1) { return false; }
+    if (failed(nestedPlan) || !(*nestedPlan)->endpoints.empty() || !(*nestedPlan)->preparation.empty() ||
+        !(*nestedPlan)->familyRecipe || !(*nestedPlan)->regionalAllocation ||
+        (*nestedPlan)->regionalAllocation->groups.size() != 1 ||
+        failed(fs::materializeLogicalFamilies(**nestedPlan)) || (*nestedPlan)->endpoints.size() != 2) { return false; }
     for (const auto& endpoint : (*nestedPlan)->endpoints) {
         SmallVector<Value> work{endpoint.guard};
         bool hasOuter = false, hasInner = false;

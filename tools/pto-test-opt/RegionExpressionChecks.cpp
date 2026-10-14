@@ -942,6 +942,16 @@ bool checkPreparedContextual(Operation* cut)
     if (succeeded(arena.emitPreparedContextual(**cached, builder, cut, missing)) || !absent.empty()) { return false; }
     auto reused = arena.emitPreparedContextual(**cached, builder, cut, context);
     if (failed(reused) || *reused != *value || !absent.empty()) { return false; }
+    Arena::CutEmission planned;
+    planned.plannedValues.insert(root);
+    auto shared = arena.prepareContextual(root, cut, planned);
+    if (failed(shared) || !planned.values.empty() ||
+        succeeded(arena.emitPreparedContextual(**shared, builder, cut, missing)) || !absent.empty()) {
+        return false;
+    }
+    planned.values[root] = *value;
+    auto bound = arena.emitPreparedContextual(**shared, builder, cut, planned);
+    if (failed(bound) || *bound != *value || !absent.empty()) { return false; }
     arena.forbidRecomputation(cut);
     return failed(arena.emitPreparedContextual(**recipe, builder, cut, missing)) && absent.empty();
 }
