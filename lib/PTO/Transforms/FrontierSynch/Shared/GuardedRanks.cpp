@@ -16,9 +16,10 @@ GuardedRankFrontier initGuardedRankFrontier(RegionExpressions& e, uint32_t colum
     result.starts.assign(columns, result.counters); result.completions = result.starts;
     return result;
 }
-GuardedRankStep advanceGuardedRank(RegionExpressions& e, GuardedRankFrontier& frontier,
+namespace {
+GuardedRankStep advanceRank(RegionExpressions& e, GuardedRankFrontier& frontier,
     uint32_t column, RegionExpressions::Id present, llvm::ArrayRef<GuardedRankIncoming> candidates,
-    llvm::ArrayRef<GuardedRankIncoming> native)
+    llvm::ArrayRef<GuardedRankIncoming> native, std::optional<RegionExpressions::Id> referenceRank)
 {
     GuardedRankStep out;
     const auto k = frontier.counters.size();
@@ -38,7 +39,7 @@ GuardedRankStep advanceGuardedRank(RegionExpressions& e, GuardedRankFrontier& fr
         });
     };
     if (!valid(candidates) || !valid(native)) { out.error = "invalid guarded frontier source"; return out; }
-    if (e.constantValue(frontier.counters[column]) == UINT64_MAX && e.constantValue(present) == 1) {
+    if (!referenceRank && e.constantValue(frontier.counters[column]) == UINT64_MAX && e.constantValue(present) == 1) {
         out.error = "guarded frontier rank overflow"; return out;
     }
     auto join = [&](std::vector<RegionExpressions::Id>& to, llvm::ArrayRef<RegionExpressions::Id> from,
@@ -50,7 +51,8 @@ GuardedRankStep advanceGuardedRank(RegionExpressions& e, GuardedRankFrontier& fr
         }
         return true;
     };
-    out.rank = e.add(frontier.counters[column], e.select(present, e.constant(1), e.constant(0)));
+    out.rank = referenceRank ? *referenceRank :
+        e.add(frontier.counters[column], e.select(present, e.constant(1), e.constant(0)));
     out.start = frontier.starts[column];
     for (const auto& edge : native) {
         if (!join(out.start, edge.completion, e.land(present, edge.guard))) {
@@ -78,9 +80,16 @@ GuardedRankStep advanceGuardedRank(RegionExpressions& e, GuardedRankFrontier& fr
     frontier.counters[column] = out.rank;
     return out;
 }
+} // namespace
+GuardedRankStep advanceGuardedRank(RegionExpressions& e, GuardedRankFrontier& frontier,
+    uint32_t column, RegionExpressions::Id present, llvm::ArrayRef<GuardedRankIncoming> candidates,
+    llvm::ArrayRef<GuardedRankIncoming> native)
+{
+    return advanceRank(e, frontier, column, present, candidates, native, std::nullopt);
+}
 GuardedRanks reduceGuardedRanks(
     RegionExpressions& e, llvm::ArrayRef<GuardedRankPayload> payloads, llvm::ArrayRef<GuardedRankEdge> generators,
-    llvm::ArrayRef<GuardedRankEdge> native)
+    llvm::ArrayRef<GuardedRankEdge> native, GuardedRankLabels labels)
 {
     GuardedRanks out;
     out.payloads.assign(payloads.begin(), payloads.end());
@@ -117,6 +126,7 @@ GuardedRanks reduceGuardedRanks(
         return out;
     }
     auto frontier = initGuardedRankFrontier(e, pipes.size());
+    std::vector<uint64_t> referenceRanks(pipes.size());
     for (uint32_t i = 0; i < payloads.size(); ++i) {
         std::vector<GuardedRankIncoming> candidates, nativeSources;
         for (auto [source, guard] : incoming[i]) {
@@ -125,7 +135,16 @@ GuardedRanks reduceGuardedRanks(
         for (auto [source, guard] : fixed[i]) {
             nativeSources.push_back({out.columns[source], out.ranks[source], guard, out.completions[source]});
         }
-        auto step = advanceGuardedRank(e, frontier, out.columns[i], payloads[i].present, candidates, nativeSources);
+        // Any strictly increasing labels on each present pipe chain induce the
+        // same prefix comparisons. Fixed potential-site labels remove the
+        // branch-dependent counting circuit; presence still gates every edge,
+        // query and frontier update. The finite input bounds labels by UINT32_MAX.
+        std::optional<RegionExpressions::Id> referenceRank;
+        if (labels == GuardedRankLabels::Reference) {
+            referenceRank = e.constant(++referenceRanks[out.columns[i]]);
+        }
+        auto step = advanceRank(e, frontier, out.columns[i], payloads[i].present,
+            candidates, nativeSources, referenceRank);
         if (!step.error.empty()) { out.error = step.error; return out; }
         std::size_t at = 0;
         for (auto [source, guard] : incoming[i]) {
