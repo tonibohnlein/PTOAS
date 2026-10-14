@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.h"
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedAllocation.h"
 #include "PTO/IR/PTO.h"
+#include "PeriodicReuseInternal.h"
 #include "llvm/ADT/APInt.h"
 #include <algorithm>
 #include <map>
@@ -101,7 +102,22 @@ std::optional<PeriodicSharedAllocation> suffixAssignment(const PeriodicAnalysis&
         // reachable publication phases are therefore an exact suffix in this
         // supplied order. Derive its first position without a pair matrix.
         std::vector<std::optional<uint64_t>> thresholds(phases.size());
+        DirectedAllocation ordered;
+        for (auto phase : phases) {
+            const auto& record = original.generators[records[phase]];
+            ordered.handoffs.push_back(
+                {records[phase], record.source, record.target, record.displacement, std::nullopt});
+        }
+        const bool swept = detail::computeOrderedPeriodicReuse(order, ordered);
         for (std::size_t r = 0; r < phases.size(); ++r) {
+            if (swept) {
+                if (ordered.handoffs[r].firstReuse) {
+                    const auto separation = *ordered.handoffs[r].firstReuse;
+                    if (r > UINT64_MAX - separation) { return std::nullopt; }
+                    thresholds[r] = r + separation;
+                }
+                continue;
+            }
             const auto& current = original.generators[records[phases[r]]];
             std::optional<llvm::APInt> first;
             for (std::size_t s = 0; s < phases.size(); ++s) {

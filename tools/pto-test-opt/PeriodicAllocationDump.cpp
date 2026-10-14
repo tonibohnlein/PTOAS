@@ -23,7 +23,8 @@ llvm::json::Object dumpPeriodicAllocation(const fs::PeriodicAllocation& result)
         }
         directions.push_back(llvm::json::Object{{"source_pipe", direction.sourcePipe},
             {"target_pipe", direction.targetPipe}, {"payload_types", direction.payloadTypes},
-            {"handoffs", std::move(handoffs)}, {"uniform_budget", direction.uniformBudget ?
+            {"handoffs", std::move(handoffs)}, {"reuse_queries", direction.reuseQueries},
+            {"uniform_budget", direction.uniformBudget ?
                 llvm::json::Value(*direction.uniformBudget) : llvm::json::Value(nullptr)}});
     }
     return llvm::json::Object{{"error", result.error}, {"directions", std::move(directions)},

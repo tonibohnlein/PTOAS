@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exact return-order budgets from completion-origin quotient thresholds.
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicAllocation.h"
+#include "PeriodicReuseInternal.h"
 #include "llvm/ADT/APInt.h"
 #include <algorithm>
 #include <limits>
@@ -53,45 +54,62 @@ bool budgets(const PeriodicAnalysis& analysis, DirectedAllocation& pool)
 {
     const uint64_t count = pool.handoffs.size();
     pool.uniformBudget = 0;
+    pool.reuseQueries = 0;
+    if (!count) { return true; }
+    // Initialize from every phase once. Subsequent consumers are in the same
+    // native completion order, so their first reusable publication cannot move
+    // backwards; the last threshold is before the first threshold plus a period.
+    std::optional<llvm::APInt> first;
+    const auto& origin = pool.handoffs.front();
+    for (uint32_t s = 0; s < count; ++s) {
+        const auto query = analysis.completionThreshold(origin.target,
+            {pool.handoffs[s].source, PeriodicEventKind::Start});
+        ++pool.reuseQueries;
+        if (query.error != PeriodicQueryError::None) { return false; }
+        if (!query.displacement) { continue; }
+        auto periods = llvm::APInt(128, origin.displacement) + llvm::APInt(128, *query.displacement);
+        if (periods.isZero() && !s) { periods = llvm::APInt(128, 1); }
+        auto position = periods * llvm::APInt(128, count) + llvm::APInt(128, s);
+        if (!first || position.ult(*first)) { first = position; }
+    }
+    if (!first) {
+        pool.uniformBudget = std::nullopt;
+        for (auto& handoff : pool.handoffs) { handoff.firstReuse = std::nullopt; }
+        return true;
+    }
+    auto position = *first;
+    const auto limit = *first + llvm::APInt(128, count);
     for (uint32_t r = 0; r < count; ++r) {
         auto& current = pool.handoffs[r];
-        std::optional<llvm::APInt> best;
-        for (uint32_t s = 0; s < count; ++s) {
-            const auto& next = pool.handoffs[s];
-            const auto query = analysis.completionThreshold(current.target, {next.source, PeriodicEventKind::Start});
-            if (query.error != PeriodicQueryError::None) {
-                return false;
-            }
-            if (!query.displacement) {
-                continue;
-            }
-            auto periods = llvm::APInt(128, current.displacement) + llvm::APInt(128, *query.displacement);
-            if (periods.isZero() && s <= r) {
-                periods = llvm::APInt(128, 1);
-            }
-            // At most 65+32 bits. Keep the subtraction widened: the final value
-            // may fit even when the multiplication alone exceeds UINT64_MAX.
-            auto separation = periods * llvm::APInt(128, count) + llvm::APInt(128, s) - llvm::APInt(128, r);
-            if (!best || separation.ult(*best)) {
-                best = std::move(separation);
+        if (r) {
+            while (true) {
+                if (position.ugt(limit)) { return false; }
+                const auto s = position.urem(llvm::APInt(128, count)).getZExtValue();
+                const auto query = analysis.completionThreshold(current.target,
+                    {pool.handoffs[s].source, PeriodicEventKind::Start});
+                ++pool.reuseQueries;
+                if (query.error != PeriodicQueryError::None) { return false; }
+                if (query.displacement) {
+                    const auto periods = llvm::APInt(128, current.displacement) +
+                        llvm::APInt(128, *query.displacement);
+                    if (position.ugt(llvm::APInt(128, r)) &&
+                        periods.ule(position.udiv(llvm::APInt(128, count)))) { break; }
+                }
+                position += llvm::APInt(128, 1);
             }
         }
-        if (!best) {
-            current.firstReuse = std::nullopt;
-            pool.uniformBudget = std::nullopt;
-            continue;
-        }
-        if (best->getActiveBits() > 64) {
-            return false;
-        }
-        current.firstReuse = best->getZExtValue();
-        if (pool.uniformBudget) {
-            pool.uniformBudget = std::max(*pool.uniformBudget, *current.firstReuse);
-        }
+        const auto separation = position - llvm::APInt(128, r);
+        if (separation.getActiveBits() > 64) { return false; }
+        current.firstReuse = separation.getZExtValue();
+        pool.uniformBudget = std::max(*pool.uniformBudget, *current.firstReuse);
     }
     return true;
 }
 } // namespace
+bool detail::computeOrderedPeriodicReuse(const PeriodicAnalysis& analysis, DirectedAllocation& pool)
+{
+    return ordered(pool) && budgets(analysis, pool);
+}
 PeriodicAllocation buildPeriodicAllocation(const PeriodicAnalysis& analysis)
 {
     if (!analysis.error.empty() || analysis.payloads.size() > UINT32_MAX || analysis.retained.size() > UINT32_MAX) {
