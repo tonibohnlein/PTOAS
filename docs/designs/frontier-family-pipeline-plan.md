@@ -1485,3 +1485,36 @@ requests. No paired wall-time speedup, new physical capability or device result
 is claimed. Receipts are in `.local/family-wrapper-index/`. This change stays in
 the private family implementation; validation used the existing incremental
 build, without another public-header rebuild.
+
+## Normalize equivalent complete physical mappings
+
+The existing complete-map key now folds zero-stride modular terms into the
+base and sums the scales of identical dynamic terms. Zero-scale and modulus-one
+terms remain irrelevant. Terms are sorted by coordinate, reduced stride,
+reduced phase and modulus. The full palette remains part of the key. These
+operations preserve the supplied function for every coordinate; they neither
+fit a new assignment nor infer reuse. The existing palette-range check bounds
+all nonnegative contributions, including the constant folds and scale sums.
+
+This lets the existing identical-family path discard arbitrary record
+selection before constructing its scalar selector, even when equal functions
+have different additive spellings. The emitted map still comes from an original
+certified member. The shared dispatcher cache uses the same normalized key.
+The common-skeleton phase-fitting path is unchanged, so combining duplicate
+terms cannot accidentally narrow its supported varying-phase representation.
+Different complete functions still retain their existing selection and cost
+checks. This does not complete allocation on the normalized recipe graph.
+
+A pinned baseline at `fe5976a84` emits 184 / 472 / 1,624 arithmetic operations for
+32 / 128 / 512 records representing one dynamic map. The candidate emits
+62 / 62 / 62 for that family. Additional forms give constant counts of 63, 40
+and 41, covering maximal unsigned ordinals and modulus three. Exact ID traces
+are checked with noncontiguous palettes, independently grouped consumers,
+constant terms, duplicate summands, reordered terms and zero trips. These are
+saved-certificate lowering fixtures, not new allocator reuse certificates.
+
+Four allocation tests pass, including the separate causal-reuse oracle and
+existing genuinely different phase/stride mappings. Physical outputs for
+TileLang, PyPTO and Persistent GEMM are byte-identical to the baseline, with
+1,563 / 1,372 / 4,600 arithmetic operations respectively. No additional GEMM or
+device speedup is claimed. Receipts: `.local/family-mapping-normalization/`.

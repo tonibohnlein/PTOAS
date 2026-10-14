@@ -86,17 +86,22 @@ std::vector<uint64_t> physicalMappingKey(const PhysicalRecordAllocation& member)
     if (auto fixed = constantTupleId(member)) { return {0, static_cast<uint64_t>(*fixed)}; }
     PhysicalTupleRule flat{1, 0, {{0, member.stride, member.phase, member.ids.size(), 1}}};
     const auto& rule = member.tupleRule ? *member.tupleRule : flat;
-    std::vector<std::array<uint64_t, 5>> terms;
+    uint64_t base = rule.base;
+    std::map<std::array<uint64_t, 4>, uint64_t> terms;
     for (const auto& term : rule.terms) {
-        if (term.scale && term.modulus > 1) {
-            terms.push_back({term.coordinate, term.stride % term.modulus,
-                term.phase % term.modulus, term.modulus, term.scale});
-        }
+        if (!term.scale || term.modulus == 1) { continue; }
+        const auto stride = term.stride % term.modulus, phase = term.phase % term.modulus;
+        // These supplied rules have passed the palette-range check. Folding
+        // constants and adding equal nonnegative terms cannot exceed its bound.
+        if (!stride) { base += term.scale * phase; }
+        else { terms[{term.coordinate, stride, phase, term.modulus}] += term.scale; }
     }
-    llvm::sort(terms);
-    std::vector<uint64_t> key{1, rule.base, member.ids.size()};
+    std::vector<uint64_t> key{1, base, member.ids.size()};
     for (auto id : member.ids) { key.push_back(static_cast<uint64_t>(id)); }
-    for (const auto& term : terms) { key.insert(key.end(), term.begin(), term.end()); }
+    for (const auto& [term, scale] : terms) {
+        key.insert(key.end(), term.begin(), term.end());
+        key.push_back(scale);
+    }
     return key;
 }
 
