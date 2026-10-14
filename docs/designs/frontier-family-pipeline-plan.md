@@ -54,7 +54,7 @@ deferred until this work is complete; existing InsertSync already uses it.
 | Milestone | Work and acceptance | Current status |
 |---|---|---|
 | M0: preparation ownership | Reproduce prefill failure; remap every affected non-SSA preparation reference before deletion; validate complementary cleanup and failure atomicity; replay prefill separately from the failing baseline. | Complete: `32b38b426` |
-| M1: measurement | Extend stage inventories with per-repeat lanes/extrema, candidate pairs/gaps, query construction, proof/cache work and actual traversal counts. Keep static records/sites distinct from dynamic commands and evaluated control. | Stage inventories and repeated-allocation work/traversal counters implemented; dynamic-control and complete ID-map inventories remain open |
+| M1: measurement | Extend stage inventories with per-repeat lanes/extrema, candidate pairs/gaps, query construction, proof/cache work and actual traversal counts. Keep static records/sites distinct from dynamic commands and evaluated control. | Stage inventories, repeated-allocation work/traversal counters and concrete trace arithmetic/select/guard visits implemented; complete ID-map cost attribution and wrapper-discovery inventories remain open |
 | M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans, exact-activity deduplication and attempt-owned relative queries implemented; owned independent/shared candidate requests with parent retry implemented; explicit-capacity selection is available through the session and analysis-pass resource request; complete mapping-cost policy remains open |
 | M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is now retained entirely in shared family recipes; ordinary numerical sequence and repeated children retain recipes through composition; exact fixed-coordinate sequence crossings now form recipes before scalar preparation; child activity masks retain those recipes through composition; repeated crossings now retain numerical or contextual recipes before scalar lowering; guarded sequence crossings now retain publication/cleanup and common-cut expression recipes; finite overlays and guarded/numerical periodic adapters retain recipes through allocation; relational crossings and capture closure remain open |
 | M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; common nonconstant tuple terms compose before dispatch in `15f2007ea`; coordinate-selected phase shifts now compose under the same skeleton with a cost-checked incumbent; different skeletons and early graph allocation remain open |
@@ -1399,3 +1399,49 @@ export, and Delta lacks a prefix-lifetime export. Delta still contains 2,473,273
 logical arithmetic operations. No device execution is included, and logical
 success does not close those production blockers. Campaign timings are single
 watchdog-run diagnostics, not paired speedup measurements.
+
+## Sparse shared-binding planning
+
+Shared lookup now applies to availability planning as well as scalar lowering.
+The contextual family constructor indexes published roots by expression ID and
+asks about a root only when cofactoring reaches it. A binding is admitted only
+at the same original cut or a dominating original cut. Each receiving cut
+retains the reached keys, rather than copying every dominating shared root into
+its planning cache. The expression arena, original cut and immutable binding
+environment still scope those caches; a different environment needs a fresh
+owner. Final lowering must supply every retained binding or fail before
+constructing scalar IR.
+
+The diagnostic inventory separately counts published planning roots, lookup
+requests, candidate-cut checks and retained planning bindings. Composition
+counts construction once per immutable leaf, while counting command sites per
+use. Mixed leaves retain the counters of their contextual contribution. The
+restriction remains important: many publications of the same root can require
+multiple candidate-cut checks, and the algorithm still traverses the requested
+expression DAG. This removes eager root-by-cut copying; it is not a universal
+linear bound for contextual preparation.
+
+This change does not remove shared computations that the producer explicitly
+requested, compress arbitrary guarded selectors, or change the logical
+communications. It addresses compiler-side binding construction. Wrapper
+subtree discovery and the remaining compact-allocation milestones stay open.
+
+Eight focused tests pass, including shared-family scaling, sparse binding
+failure, guarded publication, mixed batches, repeated allocation and stage
+profiling. With 512 published roots and 64 receiving cuts that each use one
+root, the constructor records 64 lookups, 64 candidate-cut checks and 64 retained
+bindings. Reusing a recipe doubles its command sites without double-counting
+construction. Later-cut bindings, independent retry environments and missing
+binding failure atomicity remain covered. The separate 128-request fixture
+retains one planning and one lowered binding per request. Local receipts are in
+`.local/family-shared-planning/`.
+
+Against `80c8d5779`, TileLang and PyPTO outputs are byte-identical. Persistent
+and prefill retain canonical agreement after associative Boolean-AND and
+equality normalization; no command, tuple or other output change is accepted
+by that comparison. Persistent records 40 retained shared bindings and prefill
+58. Prefill still visits 38,835 expression nodes through lookup, with 86
+candidate-cut checks: sparse bindings do not eliminate its large requested
+DAG. The single serial prefill pair is 88.58 / 88.48 seconds, and Persistent is
+1.52 / 1.62 seconds. These diagnostics establish neither a planning speedup nor
+a device result. The existing physical/export refusals remain open.

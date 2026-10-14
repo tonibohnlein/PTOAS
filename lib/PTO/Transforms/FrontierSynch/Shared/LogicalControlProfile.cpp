@@ -40,7 +40,10 @@ llvm::json::Object familyForms(const PreparedLogicalPlan& plan)
     auto forms = familyEndpointForms(*plan.familyRecipe);
     if (failed(forms)) { return llvm::json::Object{{"error", "invalid family recipe inventory"}}; }
     return llvm::json::Object{{"numerical_sites", forms->numericalSites}, {"contextual_sites", forms->contextualSites},
-            {"mixed_leaves", forms->mixedLeaves}};
+            {"mixed_leaves", forms->mixedLeaves}, {"shared_planning_roots", forms->sharedRoots},
+            {"shared_planning_lookups", forms->sharedLookups},
+            {"shared_planning_candidates", forms->sharedCandidates},
+            {"shared_planning_bindings", forms->sharedBindings}};
 }
 llvm::json::Object functionControl(func::FuncOp function)
 {

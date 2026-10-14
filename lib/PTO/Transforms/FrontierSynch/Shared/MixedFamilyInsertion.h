@@ -22,6 +22,8 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildMixedFamilyEndpointR
 // separately maintained semantic metadata or generated SSA is required.
 struct FamilyEndpointForms {
     std::size_t numericalSites = 0, contextualSites = 0, mixedLeaves = 0;
+    // Construction work counted once per immutable leaf, not per reference.
+    uint64_t sharedRoots = 0, sharedLookups = 0, sharedCandidates = 0, sharedBindings = 0;
 };
 FailureOr<FamilyEndpointForms> familyEndpointForms(const FamilyEndpointRecipe& recipe);
 } // namespace mlir::pto::frontiersynch

@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Construction-size and staged ownership checks for shared family lowering.
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/MixedFamilyInsertion.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinOps.h"
 bool runFamilyMaterializationChecks(mlir::MLIRContext* context)
@@ -42,6 +43,26 @@ bool runFamilyMaterializationChecks(mlir::MLIRContext* context)
     }
     auto recipe = fs::buildContextualFamilyEndpointRecipe(arena, endpoints, shared);
     if (failed(recipe)) { return false; }
+    auto forms = fs::familyEndpointForms(**recipe);
+    if (failed(forms) || forms->sharedRoots != shared.size() ||
+        forms->sharedLookups != cuts.size() || forms->sharedCandidates != cuts.size() ||
+        forms->sharedBindings != cuts.size()) { return false; }
+    // Reusing a recipe does not repeat its construction. A mixed leaf carries
+    // the construction work of its retained contextual part exactly once.
+    auto twice = fs::appendFamilyEndpointRecipe(*recipe, *recipe, 64, 0);
+    if (failed(twice)) { return false; }
+    auto repeatedForms = fs::familyEndpointForms(**twice);
+    if (failed(repeatedForms) || repeatedForms->contextualSites != 2 * cuts.size() ||
+        repeatedForms->sharedBindings != forms->sharedBindings ||
+        repeatedForms->sharedLookups != forms->sharedLookups) { return false; }
+    fs::ContextualFamilyExpressions expressions(arena);
+    SmallVector<uint8_t> residual(endpoints.size(), 0);
+    auto mixed = fs::buildMixedFamilyEndpointRecipe(expressions, endpoints, residual, {}, shared);
+    if (failed(mixed)) { return false; }
+    auto mixedForms = fs::familyEndpointForms(**mixed);
+    if (failed(mixedForms) || mixedForms->sharedBindings != forms->sharedBindings ||
+        mixedForms->sharedLookups != forms->sharedLookups ||
+        mixedForms->sharedCandidates != forms->sharedCandidates) { return false; }
     fs::PreparedLogicalPlan plan(0);
     plan.familyRecipe = *recipe;
     if (failed(fs::materializeLogicalFamilies(plan)) || plan.endpoints.size() != cuts.size()) { return false; }
@@ -125,8 +146,11 @@ bool runSparseSharedBindingChecks(mlir::Operation* cut)
     Arena::SharedCutBindings bindings{lookup, input};
     for (unsigned i = 0; i < 128; ++i) {
         Arena::CutEmission planning, local;
-        planning.plannedValues.insert(roots[i]);
-        auto recipe = arena.prepareContextual(roots[i], cut, planning);
+        auto known = [&](Arena::Id id) { return published.count(id); };
+        Arena::SharedCutPlanning planned{known};
+        auto recipe = arena.prepareContextual(roots[i], cut, planning, &planned);
+        if (planning.plannedValues.size() != 1 || planning.cofactors.size() != 1 ||
+            planning.planningSharedRequests != 1) { return false; }
         if (failed(recipe)) { return false; }
         auto& code = plan.addPreparation(cut);
         builder.setInsertionPointToEnd(&code);
