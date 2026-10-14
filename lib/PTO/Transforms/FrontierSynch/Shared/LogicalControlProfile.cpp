@@ -43,7 +43,12 @@ llvm::json::Object familyForms(const PreparedLogicalPlan& plan)
             {"mixed_leaves", forms->mixedLeaves}, {"shared_planning_roots", forms->sharedRoots},
             {"shared_planning_lookups", forms->sharedLookups},
             {"shared_planning_candidates", forms->sharedCandidates},
-            {"shared_planning_bindings", forms->sharedBindings}};
+            {"shared_planning_bindings", forms->sharedBindings},
+            {"wrapper_discovery_nodes", forms->wrapperDiscoveryNodes},
+            {"wrapper_discovery_pieces", forms->wrapperDiscoveryPieces},
+            {"wrapper_index_imports", forms->wrapperIndexImports},
+            {"wrapper_index_entries", forms->wrapperIndexEntries},
+            {"wrapper_binding_requests", forms->wrapperBindingRequests}};
 }
 llvm::json::Object functionControl(func::FuncOp function)
 {

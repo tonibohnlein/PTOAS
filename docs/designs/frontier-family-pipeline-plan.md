@@ -39,7 +39,8 @@ and protocol selection; they do not by themselves compress guarded control.
 5. Finish remaining producer migrations, bounded complete-map normalization,
    session ownership and the validation obligations below.
 
-Track wrapper subtree discovery and binding traversal before optimizing them.
+Wrapper subtree discovery and availability requests are now counted. Measure
+lowering context-chain traversal separately before optimizing it.
 Sharing caches must not hide incompatible binding environments or allow values
 from a later detached block to become operands of an earlier block. Original
 cuts alone are not a complete cache key.
@@ -54,7 +55,7 @@ deferred until this work is complete; existing InsertSync already uses it.
 | Milestone | Work and acceptance | Current status |
 |---|---|---|
 | M0: preparation ownership | Reproduce prefill failure; remap every affected non-SSA preparation reference before deletion; validate complementary cleanup and failure atomicity; replay prefill separately from the failing baseline. | Complete: `32b38b426` |
-| M1: measurement | Extend stage inventories with per-repeat lanes/extrema, candidate pairs/gaps, query construction, proof/cache work and actual traversal counts. Keep static records/sites distinct from dynamic commands and evaluated control. | Stage inventories, repeated-allocation work/traversal counters and concrete trace arithmetic/select/guard visits implemented; complete ID-map cost attribution and wrapper-discovery inventories remain open |
+| M1: measurement | Extend stage inventories with per-repeat lanes/extrema, candidate pairs/gaps, query construction, proof/cache work and actual traversal counts. Keep static records/sites distinct from dynamic commands and evaluated control. | Stage inventories, repeated-allocation work/traversal counters and concrete trace arithmetic/select/guard visits implemented; wrapper-discovery inventories implemented; complete ID-map cost attribution remains open |
 | M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans, exact-activity deduplication and attempt-owned relative queries implemented; owned independent/shared candidate requests with parent retry implemented; explicit-capacity selection is available through the session and analysis-pass resource request; complete mapping-cost policy remains open |
 | M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is now retained entirely in shared family recipes; ordinary numerical sequence and repeated children retain recipes through composition; exact fixed-coordinate sequence crossings now form recipes before scalar preparation; child activity masks retain those recipes through composition; repeated crossings now retain numerical or contextual recipes before scalar lowering; guarded sequence crossings now retain publication/cleanup and common-cut expression recipes; finite overlays and guarded/numerical periodic adapters retain recipes through allocation; relational crossings and capture closure remain open |
 | M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; common nonconstant tuple terms compose before dispatch in `15f2007ea`; coordinate-selected phase shifts now compose under the same skeleton with a cost-checked incumbent; different skeletons and early graph allocation remain open |
@@ -1445,3 +1446,42 @@ candidate-cut checks: sparse bindings do not eliminate its large requested
 DAG. The single serial prefill pair is 88.58 / 88.48 seconds, and Persistent is
 1.52 / 1.62 seconds. These diagnostics establish neither a planning speedup nor
 a device result. The existing physical/export refusals remain open.
+
+
+## Shared original-cut index for recipe wrappers
+
+Activity and invocation wrappers now reuse an immutable index of the child's
+original cuts. The index records whether a cut contains a nonlocal command;
+activity still applies to every cut, while invocation coordinates apply only
+to communication tuples. Namespace translations and wrappers preserve those
+original cuts. Appending another child forms a new union lazily, importing
+already indexed subtrees and visiting each remaining recipe node once. The
+index retains neither expression bindings nor an availability certificate.
+Every new wrapper still plans its own expression at each applicable cut.
+
+The old discovery walk is removed. New counters distinguish discovered nodes,
+examined endpoint pieces, index imports, imported entries and availability
+requests. Imported entries are counted explicitly: union construction can still
+copy a supplied cut inventory, and retaining an index does not imply constant
+work for every composition. Counters describe construction retained by the
+accepted recipe, counting shared context objects once; they are not a ledger
+of discarded failed attempts. The cache is scoped to the existing owned
+compilation and unchanged original IR, with no global lookup state.
+
+The scaling fixture uses 128 alternating activity/invocation wrappers over 64
+cuts, half carrying nonlocal commands. Discovery examines one leaf and its 64
+pieces; subsequent wrappers reuse its index. All 6,144 applicable availability
+checks remain, and nonlocal matching tuples have the expected 65 coordinates.
+The old repeated walk would examine those 64 pieces 128 times. Appending a new
+cut is checked separately: the new union includes it, importing 64 old entries
+and inspecting the new leaf. An unresolved invocation predicate still refuses
+even when the cut inventory is cached.
+
+Four focused family/order/repeat/profile tests pass. TileLang and PyPTO output
+is byte-identical to `55915f90b`; Persistent retains canonical agreement under
+the existing associative-Boolean comparison. Its retained recipe reports 18
+discovered nodes, 114 examined pieces, 52 imported entries and 67 availability
+requests. No paired wall-time speedup, new physical capability or device result
+is claimed. Receipts are in `.local/family-wrapper-index/`. This change stays in
+the private family implementation; validation used the existing incremental
+build, without another public-header rebuild.

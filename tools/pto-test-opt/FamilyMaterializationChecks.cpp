@@ -122,6 +122,52 @@ bool runFamilyMaterializationChecks(mlir::MLIRContext* context)
         if (predicate && predicate != mask.getCondition()) { return false; }
         predicate = mask.getCondition();
     }
+    // Binding 128 wrappers must not rediscover the entire child chain for
+    // each wrapper. Availability still runs at every applicable original cut.
+    auto mixedEndpoints = endpoints;
+    for (unsigned i = 0; i < mixedEndpoints.size(); i += 2) {
+        mixedEndpoints[i].piece.kind = fs::EndpointKind::Set;
+        mixedEndpoints[i].piece.targetPipe = 2;
+        mixedEndpoints[i].ordinal = arena->constant(0);
+    }
+    auto nested = fs::buildContextualFamilyEndpointRecipe(arena, mixedEndpoints);
+    if (failed(nested)) { return false; }
+    constexpr unsigned depth = 128;
+    for (unsigned i = 0; i < depth; ++i) {
+        nested = i % 2 ? fs::prefixFamilyInvocation(*nested, arena, arena->constant(i)) :
+                         fs::maskFamilyActivity(*nested, arena, endpoints.front().activity);
+        if (failed(nested)) { return false; }
+    }
+    // A cached cut inventory is not an availability certificate for a new
+    // expression. An unresolved invocation input must still be rejected.
+    Block foreign;
+    auto unavailable = foreign.addArgument(builder.getI1Type(), location);
+    if (succeeded(fs::maskFamilyActivity(*nested, arena, arena->input(unavailable)))) { return false; }
+    auto nestedForms = fs::familyEndpointForms(**nested);
+    const auto bindings = depth / 2 * (cuts.size() + cuts.size() / 2);
+    if (failed(nestedForms) || nestedForms->wrapperDiscoveryNodes != 1 ||
+        nestedForms->wrapperDiscoveryPieces != cuts.size() || nestedForms->wrapperIndexImports != depth - 1 ||
+        nestedForms->wrapperIndexEntries != 0 || nestedForms->wrapperBindingRequests != bindings) { return false; }
+    auto arities = fs::familyMatchingArities(**nested);
+    if (failed(arities) || arities->size() != cuts.size() / 2) { return false; }
+    for (const auto& [record, arity] : *arities) {
+        if (record % 2 || arity != depth / 2 + 1) { return false; }
+    }
+    // Appending a new cut must form a new union; the old wrapper index cannot
+    // hide it. This also exercises imports from an already indexed subtree.
+    auto extra = endpoints.front();
+    extra.piece.cut = {body, body->getTerminator()};
+    auto tail = fs::buildContextualFamilyEndpointRecipe(arena, {extra});
+    if (failed(tail)) { return false; }
+    auto extended = fs::appendFamilyEndpointRecipe(*nested, *tail, 64, 0);
+    if (failed(extended)) { return false; }
+    auto outer = fs::maskFamilyActivity(*extended, arena, endpoints.front().activity);
+    if (failed(outer)) { return false; }
+    auto outerForms = fs::familyEndpointForms(**outer);
+    if (failed(outerForms) || outerForms->wrapperDiscoveryNodes != 4 ||
+        outerForms->wrapperDiscoveryPieces != cuts.size() + 1 ||
+        outerForms->wrapperIndexEntries != cuts.size() ||
+        outerForms->wrapperBindingRequests != bindings + cuts.size() + 1) { return false; }
     return composed.endpoints.size() == 32;
 }
 
