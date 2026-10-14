@@ -251,6 +251,61 @@ def common_tuple_checks(optimizer, interpreter, path):
     print("shared nonconstant tuple maps:", observed)
 
 
+def normalized_tuple_checks(optimizer, interpreter, path):
+    """Equivalent complete maps must ignore constant and additive spelling."""
+    observed = []
+    for modulus, huge in [(2, False), (2, True), (3, False), (3, True)]:
+        sizes = []
+        palette = [0, 2, 3, 5] if modulus == 2 else list(range(6))
+        for size in (8, 32, 128):
+            source, _ = fixture(size)
+            records, rules, expected = [], [], []
+            for row in range(size):
+                for column in range(4):
+                    records.append((4 * row + column) ** 2 + 13)
+                    base = 1
+                    terms = [f"array<i64: 0, 1, 0, {modulus}, 2>"]
+                    if (row + column) % 2:
+                        base = 0
+                        terms = [f"array<i64: 0, 1, 0, {modulus}, 1>",
+                                 f"array<i64: 0, {modulus + 1}, {modulus}, {modulus}, 1>",
+                                 "array<i64: 0, 2, 3, 2, 1>",
+                                 "array<i64: 0, 0, 0, 1, 1>"]
+                    if column % 2:
+                        terms.reverse()
+                    rules.append("{coordinate_count = 1 : i64, base = " + str(base) +
+                                 " : i64, terms = [" + ", ".join(terms) + "]}")
+                    ordinal = (1 << 64) - 1 if huge else row
+                    expected.extend([[kind, palette[1 + 2 * (ordinal % modulus)]] for kind in ("set", "wait")])
+            zeros = ", ".join("0" for _ in records)
+            certificate = ('pto.finite_allocation = {version = 2 : i64, plan = 0 : i64, kind = "finite", '
+                           'strategy = "regional-palettes", groups = [{source = 4 : i64, target = 3 : i64, '
+                           'budget = ' + str(len(palette)) + ' : i64, records = array<i64: ' +
+                           ", ".join(map(str, records)) + '>, strides = array<i64: ' + zeros +
+                           '>, phases = array<i64: ' + zeros + '>, conflicts = array<i64>, tuple_rules = [' +
+                           ', '.join(rules) + ']}]},\n    ')
+            start = source.index('pto.cyclic_allocation =')
+            end = source.index('pto.endpoint_families =', start)
+            source = source[:start] + certificate + source[end:]
+            source = source.replace('pto.endpoint_families = {version = 3',
+                                    'pto.endpoint_families = {version = 4')
+            source = source.replace('ordinal %zero', 'ordinal %huge' if huge else 'ordinal %row')
+            if huge:
+                source = source.replace('%zero = arith.constant',
+                                        '%huge = arith.constant -1 : index\n    %zero = arith.constant', 1)
+            path.write_text(source)
+            flags = ['--pto-frontier-allocate=eligible-ids=' + ','.join(map(str, palette))]
+            physical = opt(optimizer, path, flags).stdout
+            sizes.append(len(re.findall(r" = arith\.", physical)))
+            path.write_text(physical)
+            assert commands(interpreter, path) == expected, (size, modulus, huge)
+            path.write_text(physical.replace(f"array<i64: {1 + 2 * size}>", "array<i64: 1>"))
+            assert commands(interpreter, path) == []
+        assert max(sizes) < 100 and max(sizes) - min(sizes) <= 4, sizes
+        observed.append(sizes)
+    print("normalized complete tuple maps:", observed)
+
+
 def main():
     optimizer, interpreter = map(shutil.which, sys.argv[1:3])
     scratch = Path(sys.argv[3])
@@ -261,6 +316,7 @@ def main():
         candidate_checks(optimizer, interpreter, path)
         sharing_checks(optimizer, interpreter, path)
         common_tuple_checks(optimizer, interpreter, path)
+        normalized_tuple_checks(optimizer, interpreter, path)
         for threshold, sparse, nested in [(t, s, n) for t, s in [(False, False), (False, True), (True, False)]
                                          for n in (False, True)]:
             sizes = []
