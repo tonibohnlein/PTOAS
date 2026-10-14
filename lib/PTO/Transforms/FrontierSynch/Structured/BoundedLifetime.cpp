@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetime.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
+#include "../Shared/GuardedStorageScan.h"
 #include <map>
 #include <numeric>
 #include <set>
@@ -38,8 +39,11 @@ public:
         add(StorageHazard::RAW, targetPipe, e.land(a.write, targetRead), absent(targetPipe));
         add(StorageHazard::WAR, sourcePipe, e.land(sourceRead, b.write), absent(sourcePipe));
         add(StorageHazard::WAW, targetPipe, e.land(a.write, b.write), noReaders);
-        auto notReader = e.lnot(targetRead);
-        readers[targetPipe] = e.land(absent(targetPipe), notReader);
+    }
+    void advance(uint32_t pipe, Mode mode)
+    {
+        auto notReader = e.lnot(e.land(mode.read, e.lnot(mode.write)));
+        readers[pipe] = e.land(absent(pipe), notReader);
         noReaders = e.land(noReaders, notReader);
     }
 private:
@@ -117,7 +121,9 @@ LifetimeWindowAnalysis analyzeLifetimeWindow(RegionExpressions& e, const Lifetim
     auto sameOperation = [&](uint32_t a, uint32_t b) {
         return !input.operations.empty() && input.operations[a] && input.operations[a] == input.operations[b];
     };
-    for (auto& [cell, uses] : cells) {
+    for (auto& entry : cells) {
+        const auto cell = entry.first;
+        auto& uses = entry.second;
         std::set<uint64_t> operations;
         bool plain = true;
         for (auto& [id, mode] : uses) {
@@ -127,39 +133,39 @@ LifetimeWindowAnalysis analyzeLifetimeWindow(RegionExpressions& e, const Lifetim
             auto present = input.payloads[id].present;
             mode = {e.land(present, mode.read), e.land(present, mode.write), mode.group};
         }
-        for (auto a = uses.begin(); a != uses.end(); ++a) {
-            auto noWriter = e.boolean(true);
-            WitnessPrefix prefix(e);
-            for (auto b = std::next(a); b != uses.end(); ++b) {
-                auto [ar, aw, ag] = a->second;
-                auto [br, bw, bg] = b->second;
+        std::vector<std::pair<uint32_t, Mode>> ordered(uses.begin(), uses.end());
+        std::vector<bool> writers;
+        for (const auto& use : ordered) { writers.push_back(e.constantValue(use.second.write) != 0); }
+        struct Interval {
+            Id noWriter;
+            WitnessPrefix readers;
+        };
+        detail::scanWriterPairs(writers, Interval{e.boolean(true), WitnessPrefix(e)},
+            [&](std::size_t source, std::size_t target, Interval& interval) {
+                const auto& a = ordered[source];
+                const auto& b = ordered[target];
+                auto [ar, aw, ag] = a.second;
+                auto [br, bw, bg] = b.second;
                 auto conflict = e.lor(e.land(aw, e.lor(br, bw)), e.land(ar, bw));
-                if (sameOperation(a->first, b->first)) {
-                    conflict = e.boolean(false);
-                }
-                const auto p = input.payloads[a->first].pipe, q = input.payloads[b->first].pipe;
-                if (input.storageProtection.protectsScalar(p, q)) {
-                    conflict = e.boolean(false);
-                }
+                if (sameOperation(a.first, b.first)) { conflict = e.boolean(false); }
+                const auto p = input.payloads[a.first].pipe, q = input.payloads[b.first].pipe;
+                if (input.storageProtection.protectsScalar(p, q)) { conflict = e.boolean(false); }
                 if (hardwareProtectsConflict(p, ag, q, bg)) {
-                    // The certified accumulation contract protects writer
-                    // pairs, including their RMW input. Read-only users keep
-                    // readiness/release; resets never consume protection.
+                    // Accumulation protects writer pairs, including RMW input.
                     conflict = e.land(conflict, e.lnot(e.land(aw, bw)));
                 }
-                auto generator = e.land(conflict, noWriter);
-                generators.push_back({a->first, b->first, generator});
-                if (plain && a->first < input.sites) {
-                    prefix.append(witnesses, cell, a->first, b->first, p, q, a->second, b->second, generator);
-                }
-                // Simultaneous envelopes do not form a writer chain. As in
-                // finite guarded analysis, keep raw pairs for such cells.
-                if (plain) {
-                    noWriter = e.land(noWriter, e.lnot(bw));
+                auto generator = e.land(conflict, interval.noWriter);
+                generators.push_back({a.first, b.first, generator});
+                if (plain && a.first < input.sites) {
+                    interval.readers.append(witnesses, cell, a.first, b.first, p, q, a.second, b.second, generator);
                 }
                 ++out.accessPairs;
-            }
-        }
+            }, [&](Interval& interval, std::size_t position) {
+                if (!plain) { return; }
+                const auto& access = ordered[position];
+                interval.noWriter = e.land(interval.noWriter, e.lnot(access.second.write));
+                interval.readers.advance(input.payloads[access.first].pipe, access.second);
+            });
     }
     out.window = reduceGuardedRanks(e, input.payloads, generators, input.nativePrerequisites);
     out.error = out.window.error;

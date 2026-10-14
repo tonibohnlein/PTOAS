@@ -6,11 +6,13 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "FiniteGuardedInternal.h"
+#include "../Shared/GuardedStorageScan.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticStorageSelectors.h"
 #include "../Shared/RegionalRelationsInternal.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "../../InsertSync/SyncRegionArithmetic.h"
 #include "llvm/ADT/MapVector.h"
+#include <set>
 namespace mlir::pto::frontiersynch {
 bool detail::preflightFiniteStoragePredicate(func::FuncOp function, const IntegerSystem& domain,
     ArrayRef<Value> parameters, bool physicalByte, uint64_t period, ArrayRef<uint64_t> residues,
@@ -47,37 +49,38 @@ void FiniteGuardedState::closeAndReduce()
             accesses[mode.atom].push_back({i, mode});
         }
     }
-    for (const auto& [cell, uses] : accesses) {
-        // Protected writer pairs and simultaneous macro phases change the
-        // lifetime-chain proof. Retain their exact raw pair generators; rank
-        // reduction still applies, with the same O(W) candidate bound.
+    for (const auto& entry : accesses) {
+        const auto& uses = entry.second;
+        // Qualify only potential conflicts. Read/read pairs cannot remove
+        // a writer-chain edge; repeated macro envelopes remain conservative.
         bool plain = true;
-        for (auto [i, x] : uses) {
-            for (auto [j, y] : uses) {
-                if (i == j) {
-                    continue;
-                }
-                plain &= anchors[i].phase->elementOp != anchors[j].phase->elementOp &&
-                         !ptoStorageProtection().protectsScalar(pipe(i), pipe(j)) &&
-                         !hardwareProtectsConflict(pipe(i), x.protectionGroup, pipe(j), y.protectionGroup);
-            }
+        std::set<Operation*> operations;
+        std::vector<bool> writers;
+        for (auto [i, mode] : uses) {
+            writers.push_back(mode.write);
+            plain &= operations.insert(anchors[i].phase->elementOp).second;
         }
-        for (std::size_t a = 0; a < uses.size(); ++a) {
-            auto [i, x] = uses[a];
-            auto noWriter = yes();
-            for (std::size_t b = a + 1; b < uses.size(); ++b) {
+        detail::scanWriterPairs(writers, false,
+            [&](std::size_t a, std::size_t b, bool) {
+                auto [i, x] = uses[a];
+                auto [j, y] = uses[b];
+                plain &= !ptoStorageProtection().protectsScalar(pipe(i), pipe(j)) &&
+                    !hardwareProtectsConflict(pipe(i), x.protectionGroup, pipe(j), y.protectionGroup);
+            }, [](bool&, std::size_t) {});
+        detail::scanWriterPairs(writers, yes(),
+            [&](std::size_t a, std::size_t b, Expr noWriter) {
+                auto [i, x] = uses[a];
                 auto [j, y] = uses[b];
                 ++cost.crossingCandidates;
-                if (anchors[i].phase->elementOp != anchors[j].phase->elementOp && (x.write || y.write) &&
+                if (anchors[i].phase->elementOp != anchors[j].phase->elementOp &&
                     !ptoStorageProtection().protectsScalar(pipe(i), pipe(j)) &&
                     !hardwareProtectsConflict(pipe(i), x.protectionGroup, pipe(j), y.protectionGroup)) {
                     add(i, j, both(both(presence[i], presence[j]), noWriter));
                 }
-                if (plain && y.write) {
-                    noWriter = both(noWriter, negate(presence[j]));
-                }
-            }
-        }
+            }, [&](Expr& noWriter, std::size_t position) {
+                auto [i, mode] = uses[position];
+                if (plain && mode.write) { noWriter = both(noWriter, negate(presence[i])); }
+            });
     }
     for (auto edge : residual) {
         add(edge.source, edge.target, both(presence[edge.source], presence[edge.target]));
@@ -127,9 +130,56 @@ void FiniteGuardedState::summarize(const SyncInput& input)
         seen->second = either(seen->second, presence[i]);
         ++cost.selectorComparisons;
     }
-    for (const auto& [cell, uses] : cells) {
+    for (const auto& entry : cells) {
+        const auto cell = entry.first;
+        const auto& uses = entry.second;
         RegionalStorageBoundary boundary;
         boundary.cell = input.accesses().cells()[cell];
+        // Original macro envelopes must be contiguous for a group scan.
+        // Expanded descriptions with a repeated static owner keep the exact
+        // existing comparison path rather than inventing occurrence identity.
+        std::set<Operation*> owners;
+        std::vector<std::vector<std::size_t>> groups;
+        Operation* previous = nullptr;
+        bool grouped = true;
+        for (std::size_t position = 0; position < uses.size(); ++position) {
+            auto* owner = anchors[uses[position].first].phase->elementOp;
+            if (owner != previous) {
+                grouped &= owners.insert(owner).second;
+                groups.emplace_back();
+                previous = owner;
+            }
+            groups.back().push_back(position);
+        }
+        if (grouped) {
+            std::vector<Expr> first(uses.size()), last(uses.size());
+            for (bool tail : {false, true}) {
+                detail::GuardedBoundaryScan scan(*arena);
+                for (std::size_t index = 0; index < groups.size(); ++index) {
+                    scan.group(groups[tail ? groups.size() - 1 - index : index],
+                        [&](std::size_t position) {
+                            auto [i, mode] = uses[position];
+                            return detail::GuardedStorageMode{pipe(i), mode.read ? presence[i] : no(),
+                                                                      mode.write ? presence[i] : no()};
+                        }, [&](std::size_t position, Expr writer, Expr reader) {
+                            (tail ? last : first)[position] = uses[position].second.write ? writer : reader;
+                            ++cost.selectorComparisons;
+                        });
+                }
+            }
+            for (std::size_t position = 0; position < uses.size(); ++position) {
+                auto [i, mode] = uses[position];
+                if (mode.write) {
+                    boundary.firstWriters.push_back(selector(i, first[position]));
+                    boundary.lastWriters.push_back(selector(i, last[position]));
+                } else if (mode.read) {
+                    boundary.firstReaders[pipe(i)].push_back(selector(i, first[position]));
+                    boundary.lastReaders[pipe(i)].push_back(selector(i, last[position]));
+                }
+            }
+            storageBoundary.push_back(std::move(boundary));
+            continue;
+        }
         for (auto [i, mode] : uses) {
             auto first = presence[i], last = presence[i];
             if (mode.write) {

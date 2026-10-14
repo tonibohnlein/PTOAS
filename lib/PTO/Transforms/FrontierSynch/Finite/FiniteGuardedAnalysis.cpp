@@ -17,6 +17,7 @@ bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recogni
 {
     const auto invocation = structuredProtection(input.accesses());
     SmallVector<const CompoundInstanceElement*> phases;
+    SmallVector<std::size_t> effectIds;
     for (const auto& guarded : recognized.phases) {
         phases.push_back(guarded.phase);
         auto* phase = guarded.phase;
@@ -25,6 +26,7 @@ bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recogni
         occurrence.pipe = static_cast<uint32_t>(phase->kPipeValue);
         std::map<uint32_t, CellAccess> modes;
         for (auto id : input.accesses().effectsFor(phase)) {
+            effectIds.push_back(id);
             const auto& effect = input.accesses().effects()[id];
             if (input.accesses().independentOfOtherPhases(id)) { continue; }
             state.cost.physicalFragments += effect.ranges.size();
@@ -48,6 +50,9 @@ bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recogni
         }
         state.effects.push_back(std::move(occurrence));
     }
+    // The complete comparable partition represents every conflict in cells.
+    // Unresolved bases/ranges retain the residual relationship checks below.
+    if (input.accesses().hasMaterializedCellPartition(effectIds)) { return true; }
     const auto modeledGroups = modeledProtectionGroups(input, phases, invocation);
     for (uint32_t a = 0; a < recognized.phases.size(); ++a) {
         for (uint32_t b = a + 1; b < recognized.phases.size(); ++b) {

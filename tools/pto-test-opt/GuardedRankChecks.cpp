@@ -12,6 +12,7 @@
 #include "mlir/IR/Block.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/Support/raw_ostream.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/GuardedStorageScan.h"
 #include <set>
 namespace fs = mlir::pto::frontiersynch;
 namespace {
@@ -224,10 +225,85 @@ bool windows(unsigned mode)
     auto certificate = fs::certifyRotatingRefresh(payloads, fragments, {1, 0});
     return certificate.error.empty() && certificate.span == 2;
 }
+bool storageScans()
+{
+    // Independent interval oracle: enumerate all pairs and compare the exact
+    // intervening-position set, including reverse reader-to-writer scans.
+    for (unsigned mask = 0; mask < 256; ++mask) {
+        std::vector<bool> writers;
+        for (unsigned i = 0; i < 8; ++i) { writers.push_back(mask & (1U << i)); }
+        std::set<std::pair<unsigned, unsigned>> seen;
+        bool valid = true;
+        fs::detail::scanWriterPairs(writers, 0U,
+            [&](std::size_t a, std::size_t b, unsigned between) {
+                unsigned expected = 0;
+                for (unsigned i = a + 1; i < b; ++i) { expected |= 1U << i; }
+                valid &= between == expected && seen.emplace(a, b).second;
+            }, [](unsigned& between, std::size_t i) { between |= 1U << i; });
+        for (unsigned a = 0; a < 8; ++a) {
+            for (unsigned b = a + 1; b < 8; ++b) {
+                valid &= bool(seen.count({a, b})) == (writers[a] || writers[b]);
+            }
+        }
+        if (!valid) { return false; }
+    }
+    // Exhaust absent/read/write/RMW modes against all other occurrences.
+    // Adjacent pairs are simultaneous envelopes and cannot supersede each other.
+    for (unsigned pattern = 0; pattern < 4096; ++pattern) {
+        fs::RegionExpressions e;
+        std::vector<fs::detail::GuardedStorageMode> modes;
+        for (unsigned i = 0; i < 6; ++i) {
+            const auto mode = (pattern >> (2 * i)) & 3;
+            modes.push_back({i % 3, e.boolean(mode & 1), e.boolean(mode & 2)});
+        }
+        for (bool tail : {false, true}) {
+            fs::detail::GuardedBoundaryScan scan(e);
+            bool valid = true;
+            for (unsigned step = 0; step < 3; ++step) {
+                const auto group = tail ? 2 - step : step;
+                std::vector<unsigned> positions{2 * group, 2 * group + 1};
+                scan.group(positions, [&](unsigned i) { return modes[i]; },
+                    [&](unsigned i, auto writer, auto reader) {
+                        bool wantWriter = e.constantValue(modes[i].write) == 1;
+                        bool wantReader = e.constantValue(modes[i].read) == 1 && !wantWriter;
+                        for (unsigned j = 0; j < 6; ++j) {
+                            if (i / 2 == j / 2 || (tail ? j < i : j > i)) { continue; }
+                            const bool writes = e.constantValue(modes[j].write) == 1;
+                            wantWriter &= !writes;
+                            wantReader &= !writes && !(modes[i].pipe == modes[j].pipe &&
+                                e.constantValue(modes[j].read) == 1);
+                        }
+                        valid &= e.constantValue(writer) == unsigned(wantWriter) &&
+                                 e.constantValue(reader) == unsigned(wantReader);
+                    });
+            }
+            if (!valid) { return false; }
+        }
+    }
+    for (unsigned count : {32U, 128U, 512U}) {
+        for (unsigned writerCount : {0U, 1U, 2U}) {
+            fs::RegionExpressions e;
+            fs::LifetimeWindowInput input;
+            input.sites = count;
+            for (unsigned i = 0; i < count; ++i) {
+                input.payloads.push_back({i % 3, e.boolean(true)});
+                input.accesses.push_back({i, 0, e.boolean(true), e.boolean(i < writerCount)});
+            }
+            auto result = fs::analyzeLifetimeWindow(e, input);
+            const auto expected = writerCount * (count - writerCount) + writerCount * (writerCount - 1) / 2;
+            if (!result.error.empty() || result.accessPairs != expected) { return false; }
+        }
+    }
+    return true;
+}
 } // namespace
 int runGuardedRankChecks()
 {
     mlir::MLIRContext context;
+    if (!storageScans()) {
+        llvm::errs() << "guarded storage scan mismatch\n";
+        return 1;
+    }
     for (unsigned pattern = 0; pattern < 5; ++pattern) {
         if (!ranks(context, pattern)) {
             return 1;
