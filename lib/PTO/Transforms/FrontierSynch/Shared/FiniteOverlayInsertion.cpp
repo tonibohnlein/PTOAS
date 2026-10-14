@@ -5,12 +5,13 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+// Preserve filtered child recipes and append finite overlay families before SSA.
 #include "PTO/Transforms/FrontierSynch/Shared/FiniteOverlayInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
+#include "OccurrenceBinding.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FiniteOverlayAllocation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/IR/Matchers.h"
 #include <map>
-#include <tuple>
 namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayLogicalInsertion(
     func::FuncOp function, const FiniteOverlayAnalysis& analysis,
@@ -34,11 +35,15 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayLogicalInser
     auto supplied = base.prepareFiltered(analysis.retainBase);
     if (failed(supplied)) { error = "finite overlay base endpoint refinement failed"; return failure(); }
     auto plan = std::move(*supplied);
-    auto baseView = takeRegionalAllocationView(*plan);
+    auto baseView = takeRegionalAllocationView(*plan, true);
+    if (!baseView || (plan->familyRecipe && !plan->independentPieces)) {
+        error = "finite overlay base lacks composable matching metadata"; return failure();
+    }
     plan->allocationCertificate = {};
     // Retain the typed base proof, then rebuild the certificate against augmented queries.
     auto& arena = *base.expressions;
     using Expr = RegionExpressions::Id;
+    // Compatibility adapters for still-concrete legacy children only.
     std::map<Operation*, Block*> blocks;
     std::map<Operation*, RegionExpressions::CutEmission> contexts;
     auto emit = [&](Expr value, Operation* cut) -> FailureOr<Value> {
@@ -75,43 +80,24 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayLogicalInser
     }
     plan->groupedFamilies = true;
     plan->independentPieces = true;
-    auto ordinal = [&](scf::ForOp loop) -> std::optional<Expr> {
-        APInt step;
-        if (!loop || !matchPattern(loop.getStep(), m_ConstantInt(&step)) || !step.isSignedIntN(64) ||
-            step.getSExtValue() <= 0 || !loop.getInductionVar().getType().isIndex()) { return std::nullopt; }
-        return arena.div(arena.sub(arena.input(loop.getInductionVar()), arena.input(loop.getLowerBound())),
-            arena.constant(step.getSExtValue()));
-    };
     auto cutGuard = [&](RegionalEvent event, Expr retained) -> std::optional<Expr> {
         if (!validRegionalEvent(base, event)) { return std::nullopt; }
-        if (base.endpointEventGuard) {
-            auto guard = base.endpointEventGuard(event);
-            if (!guard) { return std::nullopt; }
-            retained = arena.land(retained, *guard);
+        auto indexLoop = [](scf::ForOp loop) { return !loop || loop.getInductionVar().getType().isIndex(); };
+        if (!indexLoop(base.occurrenceLoops[event.type]) ||
+            (!base.outerLoops.empty() && !llvm::all_of(base.outerLoops[event.type], indexLoop))) {
+            return std::nullopt;
         }
-        const auto& anchor = base.anchors[event.type];
-        auto loop = base.occurrenceLoops[event.type];
-        if (loop) {
-            auto current = ordinal(loop);
-            if (!current) { return std::nullopt; }
-            retained = arena.land(retained, arena.eq(*current, event.ordinal));
-        } else { retained = arena.land(retained, arena.eq(event.ordinal, arena.constant(0))); }
-        if (!base.outerLoops.empty()) {
-            for (std::size_t i = 0; i < event.visits.size(); ++i) {
-                auto current = ordinal(base.outerLoops[event.type][i]);
-                if (!current) { return std::nullopt; }
-                if (!base.outerDivisors.empty()) {
-                    current = arena.div(*current, arena.constant(base.outerDivisors[event.type][i]));
-                }
-                retained = arena.land(retained, arena.eq(*current, event.visits[i]));
-            }
-        }
-        for (auto coordinate : anchor.coordinates) {
-            retained = arena.land(retained, arena.eq(arena.input(coordinate.loop.getInductionVar()),
-                                                      arena.constant(coordinate.induction)));
+        auto conditions = regionalOccurrenceConstraints(base, event, error);
+        if (failed(conditions)) { return std::nullopt; }
+        for (auto condition : *conditions) { retained = arena.land(retained, condition); }
+        // A finite leaf has only ordinal zero. Keep the overlay's existing
+        // validity check in addition to the shared original-frame constraints.
+        if (!base.occurrenceLoops[event.type]) {
+            retained = arena.land(retained, arena.eq(event.ordinal, arena.constant(0)));
         }
         return retained;
     };
+    std::vector<ContextualEndpointFamily> endpoints;
     std::vector<std::optional<uint32_t>> overlayRecords(analysis.demands.size());
     for (std::size_t i = 0; i < analysis.demands.size(); ++i) {
         auto retained = analysis.retained[i];
@@ -134,36 +120,32 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteOverlayLogicalInser
             auto* cut = publish ? a.after.before : b.before.before;
             auto expression = cutGuard(publish ? demand.source : demand.target, retained);
             if (!expression) { error = "finite overlay endpoint coordinate unsupported"; return failure(); }
-            auto guard = emit(*expression, cut);
-            if (failed(guard)) { error = "finite overlay endpoint guard unavailable"; return failure(); }
-            auto kind = p == q ? LogicalCommandKind::Barrier :
-                        publish ? LogicalCommandKind::Set : LogicalCommandKind::Wait;
-            PreparedLogicalEndpoint endpoint{cut, kind, p, q, record, *guard, {}};
-            endpoint.records.push_back(record);
-            if (p != q) {
-                auto identity = emit(arena.constant(0), cut), member = emit(arena.constant(record), cut);
-                if (failed(identity) || failed(member)) { return failure(); }
-                endpoint.identity = *identity; endpoint.memberCoordinates.push_back(*member);
-            }
-            plan->endpoints.push_back(std::move(endpoint));
+            ContextualEndpointFamily endpoint;
+            endpoint.piece.cut = {cut->getBlock(), cut};
+            endpoint.piece.kind = p == q ? EndpointKind::Barrier : publish ? EndpointKind::Set : EndpointKind::Wait;
+            endpoint.piece.namespaceId = record;
+            endpoint.piece.sourcePipe = p; endpoint.piece.targetPipe = q;
+            // Do not add exclusion evidence beyond this producer's incumbent
+            // exact guard. The occurrence constraints remain its authority.
+            endpoint.piece.members.push_back({record, {}});
+            endpoint.activity = *expression; endpoint.ordinal = arena.constant(0);
+            endpoints.push_back(std::move(endpoint));
         }
     }
-    using Namespace = std::tuple<uint32_t, uint32_t, uint64_t>;
-    std::map<Namespace, uint32_t> namespaces;
-    std::map<uint32_t, Namespace> records;
-    for (const auto& family : plan->families) {
-        Namespace key{family.sourcePipe, family.targetPipe, family.displacement};
-        for (const auto& member : family.members) {
-            auto [it, inserted] = namespaces.emplace(key, member.record);
-            it->second = std::min(it->second, member.record); records.emplace(member.record, key);
-        }
+    if (!endpoints.empty()) {
+        auto recipe = buildContextualFamilyEndpointRecipe(base.expressions, endpoints);
+        if (failed(recipe)) { error = "finite overlay endpoint guard unavailable"; return failure(); }
+        auto joined = appendFamilyEndpointRecipe(plan->familyRecipe, *recipe, 0, plan->endpoints.size());
+        if (failed(joined)) { error = "finite overlay recipe composition failed"; return failure(); }
+        plan->familyRecipe = std::move(*joined);
     }
+    const auto namespaces = familyRecordNamespaces(plan->families);
     int64_t piece = 0;
     for (auto& endpoint : plan->endpoints) {
-        if (endpoint.records.empty() || !records.count(endpoint.records.front())) {
+        if (endpoint.records.empty() || !namespaces.count(endpoint.records.front())) {
             error = "finite overlay endpoint lacks record provenance"; return failure();
         }
-        endpoint.record = namespaces.at(records.at(endpoint.records.front())); endpoint.piece = piece++;
+        endpoint.record = namespaces.at(endpoint.records.front()); endpoint.piece = piece++;
     }
     if (!arena.constructionError().empty()) { error = arena.constructionError(); return failure(); }
     plan->allocationPreparation = [owned = std::make_shared<FiniteOverlayAnalysis>(analysis),

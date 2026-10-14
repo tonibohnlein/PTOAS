@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Shared/FiniteOverlayAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
 #include <map>
 #include <set>
@@ -24,6 +25,15 @@ std::optional<std::map<uint32_t, Record>> recordShapes(const PreparedLogicalPlan
             if (!records.emplace(member.record, Record{family.sourcePipe, family.targetPipe, 0}).second) {
                 return std::nullopt;
             }
+        }
+    }
+    if (plan.familyRecipe) {
+        auto shapes = familyMatchingArities(*plan.familyRecipe);
+        if (failed(shapes)) { return std::nullopt; }
+        for (const auto& [record, arity] : *shapes) {
+            auto found = records.find(record);
+            if (found == records.end()) { return std::nullopt; }
+            found->second.arity = arity;
         }
     }
     for (const auto& endpoint : plan.endpoints) {
