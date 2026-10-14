@@ -998,3 +998,29 @@ and local-barrier cases. The public prefill replay succeeds and matches the
 preceding candidate after canonicalization; record namespace additions now fold
 before lowering. Receipts are retained under
 `.local/family-pipeline-finite-context/`. No compiler or device speedup is claimed.
+
+## M3 finite overlay recipe composition
+
+Finite overlays now retain filtered child recipes and append their exact added
+handoffs through the common contextual family compiler. Allocation reads matching
+tuple sizes directly from the same recipe composition walk used by lowering,
+including namespace translation and invocation prefixes. Conflicting tuple
+sizes are rejected. This metadata describes matching shape only; it does not
+replace activity, matching or reuse proofs.
+
+The overlay's duplicate loop/coordinate interpreter and new-handoff scalar
+emitter are removed. Shared occurrence constraints retain the existing index-IV
+contract and finite ordinal-zero check. Already concrete legacy children keep
+their compatibility adapter; migrated children need no scalar materialization
+merely to export allocation metadata. Existing augmented-order reuse checks and
+physical allocation remain unchanged.
+
+Eight focused suites pass, including malformed matching shapes and independent
+lowering retries. Ten before/after cases preserve complete ordered logical and
+physical traces, including physical IDs. The refreshed eleven-input campaign
+reports 11 logical, 7 six-ID allocation and 7 C++ successes, with the same four
+refusals and no timeouts. Persistent's arithmetic differences are associative
+Boolean conjunctions; prefill matches the preceding finite-family candidate
+after canonicalization. No paired planning-time or device-speed claim is made.
+Receipts are under `.local/family-pipeline-overlay-context/` and
+`.local/generated-control-overlay-context/`.

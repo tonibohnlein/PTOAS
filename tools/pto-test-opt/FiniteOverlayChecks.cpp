@@ -8,6 +8,7 @@
 // Independent closure oracle and actual-IR insertion checks for finite overlays.
 #include "PTO/Transforms/FrontierSynch/Shared/FiniteOverlayInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FiniteOverlayAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingRegional.h"
 #include "SyncLogicalInsertionChecks.h"
@@ -237,10 +238,15 @@ LogicalResult runFiniteOverlayInsertionChecks(func::FuncOp function, pto::GMAlia
     auto plan = fs::prepareFiniteOverlayInsertion(function, overlay, error);
     const bool unchanged = before == render(function);
     const bool physicalCertificate = succeeded(plan) && static_cast<bool>((**plan).allocationCertificate);
+    const bool recipeOnly = succeeded(plan) && (*plan)->familyRecipe &&
+        (*plan)->preparation.empty() && (*plan)->endpoints.empty();
+    const uint64_t recipePieces = succeeded(plan) && (*plan)->familyRecipe ?
+        fs::familyEndpointPieceCount(*(*plan)->familyRecipe) : 0;
     const bool accepted = unchanged && physicalCertificate && succeeded(plan) &&
         succeeded(fs::insertLogicalSynchronization(function, **plan)) && succeeded(verify(function));
     llvm::json::Object report{{"accepted", accepted}, {"unchanged_before_insertion", unchanged},
-        {"physical_certificate", physicalCertificate}, {"error", error}, {"base_error", baseError}};
+        {"physical_certificate", physicalCertificate}, {"error", error}, {"base_error", baseError},
+        {"recipe_only", recipeOnly}, {"recipe_pieces", recipePieces}};
     if (accepted) {
         report["trace"] = traceStructuredLogicalInsertion(function, input.instructions());
         const bool allocated = succeeded(fs::allocatePhysicalEventIds(function, {0, 1, 2, 3, 4, 5}));

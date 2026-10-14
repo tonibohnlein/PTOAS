@@ -449,7 +449,44 @@ namespace {
 struct FamilyContextPath {
     const FamilyContextRecipe* recipe;
     std::size_t parent;
+    uint64_t invocationDepth;
 };
+struct FamilyPart {
+    const FamilyEndpointRecipe* recipe;
+    uint32_t recordBase;
+    std::size_t endpointIndex, contextPath;
+};
+LogicalResult collectFamilyParts(const FamilyEndpointRecipe& recipe, SmallVectorImpl<FamilyPart>& leaves,
+                                 SmallVectorImpl<FamilyContextPath>& contexts)
+{
+    SmallVector<FamilyPart> pending{{&recipe, 0, 0, SIZE_MAX}};
+    // Preserve inventory order without recursive host stack use. Coordinate
+    // metadata and scalar lowering consume this same composition traversal.
+    while (!pending.empty()) {
+        auto part = pending.pop_back_val();
+        if (!part.recipe->child) {
+            if (!leaves.empty() && leaves.back().endpointIndex > part.endpointIndex) { return failure(); }
+            leaves.push_back(part);
+            continue;
+        }
+        auto path = part.contextPath;
+        if (part.recipe->context) {
+            uint64_t depth = path == SIZE_MAX ? 0 : contexts[path].invocationDepth;
+            if (part.recipe->context->kind == FamilyContextKind::Invocation) {
+                if (depth == UINT64_MAX) { return failure(); }
+                ++depth;
+            }
+            path = contexts.size();
+            contexts.push_back({part.recipe->context.get(), part.contextPath, depth});
+        }
+        pending.push_back({part.recipe->child.get(), part.recordBase + part.recipe->recordBase,
+                           part.endpointIndex + part.recipe->endpointIndex, path});
+        if (part.recipe->previous) {
+            pending.push_back({part.recipe->previous.get(), part.recordBase, part.endpointIndex, part.contextPath});
+        }
+    }
+    return success();
+}
 class FamilyContextLowering {
 public:
     explicit FamilyContextLowering(PreparedLogicalPlan& plan) : plan(plan) {}
@@ -497,39 +534,34 @@ private:
 };
 } // namespace
 std::size_t familyEndpointPieceCount(const FamilyEndpointRecipe& recipe) { return recipe.pieceCount; }
+FailureOr<std::map<uint32_t, uint64_t>> familyMatchingArities(const FamilyEndpointRecipe& recipe)
+{
+    SmallVector<FamilyPart> leaves;
+    SmallVector<FamilyContextPath> contexts;
+    if (failed(collectFamilyParts(recipe, leaves, contexts))) { return failure(); }
+    std::map<uint32_t, uint64_t> result;
+    for (const auto& part : leaves) {
+        const uint64_t depth = part.contextPath == SIZE_MAX ? 0 : contexts[part.contextPath].invocationDepth;
+        if (depth == UINT64_MAX) { return failure(); }
+        for (const auto& piece : part.recipe->pieces) {
+            if (piece.kind == EndpointKind::Barrier) { continue; }
+            for (const auto& member : piece.members) {
+                auto [entry, added] = result.emplace(member.record + part.recordBase, depth + 1);
+                if (!added && entry->second != depth + 1) { return failure(); }
+            }
+        }
+    }
+    return result;
+}
 LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared)
 {
     if (!recipe.child && (!prepared.preparation.empty() || !prepared.endpoints.empty())) { return failure(); }
     if (prepared.endpoints.size() > static_cast<uint64_t>(INT64_MAX) ||
         recipe.maximumEndpointIndex > prepared.endpoints.size() ||
         recipe.pieceCount > static_cast<uint64_t>(INT64_MAX) - prepared.endpoints.size()) { return failure(); }
-    struct Part {
-        const FamilyEndpointRecipe* recipe;
-        uint32_t recordBase;
-        std::size_t endpointIndex, contextPath;
-    };
-    SmallVector<Part> pending{{&recipe, 0, 0, SIZE_MAX}}, leaves;
+    SmallVector<FamilyPart> leaves;
     SmallVector<FamilyContextPath> contexts;
-    // Preserve the original endpoint inventory order, including concrete
-    // crossings between recipe contributions. No recursive host call stack.
-    while (!pending.empty()) {
-        auto part = pending.pop_back_val();
-        if (part.recipe->child) {
-            auto path = part.contextPath;
-            if (part.recipe->context) {
-                path = contexts.size();
-                contexts.push_back({part.recipe->context.get(), part.contextPath});
-            }
-            pending.push_back({part.recipe->child.get(), part.recordBase + part.recipe->recordBase,
-                               part.endpointIndex + part.recipe->endpointIndex, path});
-            if (part.recipe->previous) {
-                pending.push_back({part.recipe->previous.get(), part.recordBase, part.endpointIndex, part.contextPath});
-            }
-        } else {
-            if (!leaves.empty() && leaves.back().endpointIndex > part.endpointIndex) { return failure(); }
-            leaves.push_back(part);
-        }
-    }
+    if (failed(collectFamilyParts(recipe, leaves, contexts))) { return failure(); }
     // Sequence namespace normalization applies to delayed and concrete records
     // alike. Validate the translated provenance before allocating any operations.
     auto namespaces = recipe.child ? familyRecordNamespaces(prepared.families) : std::map<uint32_t, uint32_t>{};

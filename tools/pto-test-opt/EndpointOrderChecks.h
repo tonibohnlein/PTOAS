@@ -150,6 +150,8 @@ bool endpointInvocationRecipeChecks(const mlir::pto::frontiersynch::NumericTempl
     fs::PreparedLogicalPlan plan(0);
     plan.familyRecipe = *outer;
     plan.families = families;
+    auto shapes = fs::familyMatchingArities(*plan.familyRecipe);
+    if (failed(shapes)) { return false; }
     auto view = fs::takeRegionalAllocationView(plan, true);
     if (!view || !plan.preparation.empty() || !plan.endpoints.empty() ||
         failed(fs::materializeLogicalFamilies(plan))) { return false; }
@@ -159,6 +161,9 @@ bool endpointInvocationRecipeChecks(const mlir::pto::frontiersynch::NumericTempl
             continue;
         }
         if (endpoint.memberCoordinates.size() != 3) { return false; }
+        for (auto record : endpoint.records) {
+            if (shapes->at(record) != endpoint.memberCoordinates.size()) { return false; }
+        }
         for (auto [index, expected] : {std::pair<unsigned, int64_t>{1, 29}, {2, 13}}) {
             auto constant = endpoint.memberCoordinates[index].getDefiningOp<arith::ConstantIndexOp>();
             if (!constant || constant.value() != expected) { return false; }
@@ -284,6 +289,12 @@ bool endpointActivityRecipeChecks(const mlir::pto::frontiersynch::NumericTemplat
             plan.families.push_back(std::move(family));
         }
     }
+    auto shapes = fs::familyMatchingArities(*plan.familyRecipe);
+    if (failed(shapes) || !plan.preparation.empty() || !plan.endpoints.empty()) { return false; }
+    // Same record under different invocation depths is an invalid matching
+    // shape; do not pick one endpoint side's arity and silently accept it.
+    auto conflict = fs::appendFamilyEndpointRecipe(*prefixed, *masked, 0, 0);
+    if (failed(conflict) || succeeded(fs::familyMatchingArities(**conflict))) { return false; }
     if (failed(fs::materializeLogicalFamilies(plan))) { return false; }
     llvm::DenseSet<mlir::Value> available;
     for (const auto& stage : plan.preparation) {
@@ -301,6 +312,9 @@ bool endpointActivityRecipeChecks(const mlir::pto::frontiersynch::NumericTemplat
         auto condition = selected.getCondition().getDefiningOp<mlir::arith::ConstantOp>();
         if (!condition || !llvm::cast<mlir::IntegerAttr>(condition.getValue()).getValue().isZero()) { return false; }
         if (endpoint.memberCoordinates.size() != (endpoint.records.front() < 1000 ? 2U : 1U)) { return false; }
+        for (auto record : endpoint.records) {
+            if (shapes->at(record) != endpoint.memberCoordinates.size()) { return false; }
+        }
     }
     auto* cut = input.groups.front().cut.before;
     auto late = std::make_shared<fs::RegionExpressions>();

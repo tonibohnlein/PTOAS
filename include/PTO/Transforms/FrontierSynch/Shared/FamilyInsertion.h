@@ -80,5 +80,9 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> maskFamilyActivity(
 std::map<uint32_t, uint32_t> familyRecordNamespaces(ArrayRef<EndpointFamily> families);
 LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared);
 std::size_t familyEndpointPieceCount(const FamilyEndpointRecipe& recipe);
+// Exact matching-tuple sizes for nonlocal records, before SSA. Count the source
+// ordinal and enclosing invocation coordinates, excluding the provenance label.
+// Derived through the same composition walk as lowering; conflicting shapes fail.
+FailureOr<std::map<uint32_t, uint64_t>> familyMatchingArities(const FamilyEndpointRecipe& recipe);
 } // namespace mlir::pto::frontiersynch
 #endif
