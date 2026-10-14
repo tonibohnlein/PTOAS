@@ -14,6 +14,7 @@ namespace mlir::pto::frontiersynch {
 namespace {
 using Id = RegionExpressions::Id;
 using Threshold = GuardedPeriodicThreshold;
+using Score = GuardedPeriodicScore;
 constexpr std::size_t noGroup = std::numeric_limits<std::size_t>::max();
 struct Edge {
     uint32_t source = 0, target = 0;
@@ -65,15 +66,13 @@ const char* validate(const RegionExpressions& expressions,
     if (const char* error = validateRecords(expressions, payloads, records, maxWeight)) {
         return error;
     }
-    std::map<uint32_t, uint64_t> counts;
-    uint64_t largestPipe = 0;
-    for (const auto& payload : payloads) { largestPipe = std::max(largestPipe, ++counts[payload.pipe]); }
-    // Shifted scores are h-r+h*distance. Generic relaxation plus exclusion
-    // uses V weights. Core scans additionally form wrapped native candidates
-    // before discarding dominated paths, so reserve two more weights.
+    // Period components count edge displacements; residues stay below the
+    // source-pipe length. Reserve wrapped scan candidates and the final query
+    // carry without multiplying distances by that length.
     const auto maximum = std::numeric_limits<uint64_t>::max();
     const auto pathWeights = vertices + (coreChains ? 2 : 0);
-    if (largestPipe && (maxWeight > (maximum - (largestPipe - 1)) / largestPipe / pathWeights)) {
+    const bool exceedsBound = vertices && maxWeight > (maximum - 1) / pathWeights;
+    if (exceedsBound) {
         return "guarded quotient frontier arithmetic bound exceeds uint64";
     }
     return nullptr;
@@ -82,7 +81,8 @@ class Builder {
 public:
     explicit Builder(GuardedPeriodicQuotient& result)
         : output(result), expressions(*result.expressions), vertices(2 * result.payloads.size()),
-          zero(expressions.constant(0)), absent{expressions.boolean(false), zero} {}
+          zero(expressions.constant(0)), absent{expressions.boolean(false), zero},
+          noScore{absent.reachable, zero, zero} {}
     void run();
 private:
     GuardedPeriodicQuotient& output;
@@ -90,24 +90,27 @@ private:
     std::size_t vertices;
     Id zero;
     Threshold absent;
+    Score noScore;
     std::vector<Edge> edges;
     std::vector<Group> groups;
     std::vector<std::vector<std::size_t>> incoming;
     std::vector<Id> winners;
     std::vector<std::vector<uint32_t>> pipeSites;
     Threshold minimum(Threshold a, Threshold b);
-    Threshold sum(Threshold a, Threshold b);
+    Score minimum(Score a, Score b);
+    Score sum(Score a, Threshold b);
+    Score guardedScore(Id active, Id period, Id residue);
+    Id lessEqual(Score a, Score b);
     Threshold guarded(Id active, Id distance);
     void addEdge(uint32_t source, uint32_t target, Threshold weight, std::size_t group = noGroup);
     void buildNative();
     void buildGroups();
     void selectWinners(const Group& group);
     void buildRanks();
-    Id scale(Id value, uint32_t count);
-    std::vector<Threshold> frontier(uint32_t row, bool completion, ArrayRef<Threshold> weights);
-    std::vector<Threshold> scanNative(ArrayRef<Threshold> scores, uint32_t count,
+    std::vector<Score> frontier(uint32_t row, bool completion, ArrayRef<Threshold> weights);
+    std::vector<Score> scanNative(ArrayRef<Score> scores,
                                       bool completion, bool strict);
-    std::vector<Threshold> closeNative(ArrayRef<Threshold> scores, uint32_t count);
+    std::vector<Score> closeNative(ArrayRef<Score> scores);
     void retain(uint32_t row, ArrayRef<Threshold> weights);
     void computeFrontiers();
 };
@@ -121,9 +124,26 @@ Threshold Builder::minimum(Threshold a, Threshold b)
         expressions.lor(expressions.lnot(a.reachable), expressions.lt(b.distance, a.distance)));
     return {expressions.lor(a.reachable, b.reachable), expressions.select(take, b.distance, a.distance)};
 }
-Threshold Builder::sum(Threshold a, Threshold b)
+Score Builder::guardedScore(Id active, Id period, Id residue)
 {
-    return guarded(expressions.land(a.reachable, b.reachable), expressions.add(a.distance, b.distance));
+    return {active, expressions.select(active, period, zero), expressions.select(active, residue, zero)};
+}
+Id Builder::lessEqual(Score a, Score b)
+{
+    return expressions.lor(expressions.lt(a.period, b.period),
+        expressions.land(expressions.eq(a.period, b.period), expressions.le(a.residue, b.residue)));
+}
+Score Builder::minimum(Score a, Score b)
+{
+    const auto take = expressions.land(b.reachable,
+        expressions.lor(expressions.lnot(a.reachable), lessEqual(b, a)));
+    return {expressions.lor(a.reachable, b.reachable),
+        expressions.select(take, b.period, a.period), expressions.select(take, b.residue, a.residue)};
+}
+Score Builder::sum(Score a, Threshold b)
+{
+    return guardedScore(expressions.land(a.reachable, b.reachable),
+        expressions.add(a.period, b.distance), a.residue);
 }
 void Builder::addEdge(uint32_t source, uint32_t target, Threshold weight, std::size_t group)
 {
@@ -201,36 +221,27 @@ void Builder::buildRanks()
         output.localRanks.push_back(++output.frontiers[found->second].count);
     }
 }
-Id Builder::scale(Id value, uint32_t count)
-{
-    auto result = zero;
-    while (count) {
-        if (count & 1U) { result = expressions.add(result, value); ++output.scalingAdditions; }
-        count >>= 1U;
-        if (count) { value = expressions.add(value, value); ++output.scalingAdditions; }
-    }
-    return result;
-}
 // All native paths in one scan pair. Strict start scans supply alternative
 // final native edges: earlier starts without a wrap, current/later with one.
-std::vector<Threshold> Builder::scanNative(ArrayRef<Threshold> scores, uint32_t count,
+std::vector<Score> Builder::scanNative(ArrayRef<Score> scores,
                                           bool completion, bool strict)
 {
-    std::vector<Threshold> result(output.payloads.size(), absent);
-    const auto wrap = guarded(expressions.boolean(true), expressions.constant(count));
+    std::vector<Score> result(output.payloads.size(), noScore);
+    const auto wrap = guarded(expressions.boolean(true), expressions.constant(1));
     auto input = [&](uint32_t site) {
         const auto value = completion ? minimum(scores[2 * site], scores[2 * site + 1]) : scores[2 * site];
-        return guarded(expressions.land(output.payloads[site].presence, value.reachable), value.distance);
+        return guardedScore(expressions.land(output.payloads[site].presence, value.reachable),
+                            value.period, value.residue);
     };
     for (const auto& sites : pipeSites) {
-        auto prefix = absent;
+        auto prefix = noScore;
         for (auto site : sites) {
             const auto value = input(site);
             result[site] = strict ? prefix : minimum(prefix, value);
             prefix = minimum(prefix, value);
             ++output.nativeScanVisits;
         }
-        auto suffix = absent;
+        auto suffix = noScore;
         for (auto it = sites.rbegin(); it != sites.rend(); ++it) {
             const auto value = input(*it);
             if (strict) { suffix = minimum(suffix, value); }
@@ -241,31 +252,32 @@ std::vector<Threshold> Builder::scanNative(ArrayRef<Threshold> scores, uint32_t 
     }
     return result;
 }
-std::vector<Threshold> Builder::closeNative(ArrayRef<Threshold> scores, uint32_t count)
+std::vector<Score> Builder::closeNative(ArrayRef<Score> scores)
 {
-    auto starts = scanNative(scores, count, false, false);
-    auto completions = scanNative(scores, count, true, false);
-    std::vector<Threshold> result(vertices, absent);
+    auto starts = scanNative(scores, false, false);
+    auto completions = scanNative(scores, true, false);
+    std::vector<Score> result(vertices, noScore);
     for (std::size_t site = 0; site < output.payloads.size(); ++site) {
         const auto present = output.payloads[site].presence;
-        result[2 * site] = guarded(expressions.land(present, starts[site].reachable), starts[site].distance);
-        result[2 * site + 1] = guarded(expressions.land(present, completions[site].reachable),
-                                     completions[site].distance);
+        result[2 * site] = guardedScore(expressions.land(present, starts[site].reachable),
+                                        starts[site].period, starts[site].residue);
+        result[2 * site + 1] = guardedScore(expressions.land(present, completions[site].reachable),
+                                            completions[site].period, completions[site].residue);
     }
     return result;
 }
-std::vector<Threshold> Builder::frontier(uint32_t row, bool completion, ArrayRef<Threshold> weights)
+std::vector<Score> Builder::frontier(uint32_t row, bool completion, ArrayRef<Threshold> weights)
 {
-    std::vector<Threshold> scores(vertices, absent);
+    std::vector<Score> scores(vertices, noScore);
     const auto count = output.frontiers[row].count;
     for (uint32_t a = 0; a < output.payloads.size(); ++a) {
         if (output.sourceRows[a] == row) {
-            scores[2 * a + unsigned(completion)] = guarded(output.payloads[a].presence,
+            scores[2 * a + unsigned(completion)] = guardedScore(output.payloads[a].presence, zero,
                 expressions.constant(count - output.localRanks[a]));
         }
     }
     if (output.nativePrerequisites.empty()) {
-        scores = closeNative(scores, count);
+        scores = closeNative(scores);
         for (std::size_t round = 0; round < output.frontiers.size(); ++round) {
             const auto previous = scores;
             for (std::size_t i = 0; i < edges.size(); ++i) {
@@ -273,7 +285,7 @@ std::vector<Threshold> Builder::frontier(uint32_t row, bool completion, ArrayRef
                 scores[edge.target] = minimum(scores[edge.target], sum(previous[edge.source], weights[i]));
                 ++output.relaxationCandidates;
             }
-            scores = closeNative(scores, count);
+            scores = closeNative(scores);
             ++output.demandRounds;
         }
         return scores;
@@ -299,27 +311,27 @@ void Builder::retain(uint32_t row, ArrayRef<Threshold> weights)
     // Prefix/suffix minima exclude edge identities, preserving equal scores.
     const auto& frontier = output.frontiers[row];
     const auto native = output.nativePrerequisites.empty() ?
-        scanNative(frontier.completions, frontier.count, false, true) : std::vector<Threshold>();
+        scanNative(frontier.completions, false, true) : std::vector<Score>();
     for (uint32_t target = 0; target < output.payloads.size(); ++target) {
         const auto& list = incoming[2 * target];
-        std::vector<Threshold> values, prefix{native.empty() ? absent : native[target]};
+        std::vector<Score> values, prefix{native.empty() ? noScore : native[target]};
         values.reserve(list.size()); prefix.reserve(list.size() + 1);
         for (auto id : list) {
             values.push_back(sum(frontier.completions[edges[id].source], weights[id]));
             prefix.push_back(minimum(prefix.back(), values.back()));
             ++output.exclusionCandidates;
         }
-        auto suffix = absent;
+        auto suffix = noScore;
         for (std::size_t i = list.size(); i > 0; --i) {
             const auto id = list[i - 1];
             const auto& edge = edges[id];
             if (edge.group != noGroup && output.sourceRows[groups[edge.group].source] == row) {
                 const auto& group = groups[edge.group];
                 auto alternative = minimum(prefix[i - 1], suffix);
-                auto limit = expressions.add(weights[id].distance,
-                    expressions.constant(frontier.count - output.localRanks[group.source]));
+                const Score limit{weights[id].reachable, weights[id].distance,
+                    expressions.constant(frontier.count - output.localRanks[group.source])};
                 auto redundant = expressions.land(alternative.reachable,
-                    expressions.le(alternative.distance, limit));
+                    lessEqual(alternative, limit));
                 for (auto record : group.records) {
                     output.retained[record] = expressions.land(winners[record], expressions.lnot(redundant));
                 }
@@ -334,7 +346,7 @@ void Builder::computeFrontiers()
         std::vector<Threshold> weights;
         weights.reserve(edges.size());
         for (const auto& edge : edges) {
-            weights.push_back(guarded(edge.weight.reachable, scale(edge.weight.distance, output.frontiers[row].count)));
+            weights.push_back(edge.weight);
         }
         output.frontiers[row].starts = frontier(row, false, weights);
         output.frontiers[row].completions = frontier(row, true, weights);
@@ -399,13 +411,11 @@ std::optional<GuardedPeriodicThreshold> GuardedPeriodicQuotient::eventThreshold(
         vertex >= scores.size()) { return std::nullopt; }
     const auto score = scores[vertex];
     auto active = e.land(score.reachable, e.land(payloads[source.type].presence, payloads[target.type].presence));
-    // The last ancestor rank at target period j is h*j+h-rho. For a present
-    // source of rank r at period i, inclusion is h*(j-i)>=rho+r-h, hence the
-    // nonnegative threshold floor((rho+r-1)/h). Fixed potential ranks also
-    // handle gaps from omitted sites. Split the sum to avoid u64 overflow.
-    auto count = e.constant(row.count), zero = e.constant(0);
-    auto carry = e.le(count, e.add(e.rem(score.distance, count), e.constant(localRanks[source.type] - 1)));
-    auto distance = e.add(e.div(score.distance, count), e.select(carry, e.constant(1), zero));
+    // ceil((rho-(h-r))/h) is period plus a carry exactly when the
+    // residue exceeds h-r. Potential ranks preserve absent-site gaps.
+    auto zero = e.constant(0);
+    auto carry = e.lt(e.constant(row.count - localRanks[source.type]), score.residue);
+    auto distance = e.add(score.period, e.select(carry, e.constant(1), zero));
     if (!e.constructionError().empty()) { return std::nullopt; }
     return Threshold{active, e.select(active, distance, zero)};
 }

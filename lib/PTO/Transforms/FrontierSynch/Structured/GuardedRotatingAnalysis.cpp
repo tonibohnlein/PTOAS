@@ -28,7 +28,8 @@ void rewriteGuardedRotatingExpressions(GuardedRotatingAnalysis& analysis,
     for (auto& frontier : analysis.periodic.frontiers) {
         for (auto* side : {&frontier.starts, &frontier.completions}) {
             for (auto& value : *side) {
-                value.reachable = rewrite(value.reachable); value.distance = rewrite(value.distance);
+                value.reachable = rewrite(value.reachable);
+                value.period = rewrite(value.period); value.residue = rewrite(value.residue);
             }
         }
     }

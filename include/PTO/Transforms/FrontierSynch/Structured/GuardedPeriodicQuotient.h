@@ -26,12 +26,18 @@ struct GuardedPeriodicThreshold {
     RegionExpressions::Id reachable = RegionExpressions::invalid;
     RegionExpressions::Id distance = RegionExpressions::invalid;
 };
+struct GuardedPeriodicScore {
+    RegionExpressions::Id reachable = RegionExpressions::invalid;
+    RegionExpressions::Id period = RegionExpressions::invalid;
+    RegionExpressions::Id residue = RegionExpressions::invalid;
+};
 struct GuardedPeriodicFrontier {
     uint32_t pipe = 0, count = 0;
     // Event 2*a is I_a and 2*a+1 is C_a. These are shifted scores
     // rho(v)=min_a(count-rank(a)+count*dist(a,v)), not event distances.
-    // Separate seeds supply start-origin and completion-origin queries.
-    std::vector<GuardedPeriodicThreshold> starts, completions;
+    // Store rho=count*period+residue, with 0<=residue<count, without
+    // constructing the product. Separate seeds supply both origin kinds.
+    std::vector<GuardedPeriodicScore> starts, completions;
 };
 struct GuardedPeriodicQuotient {
     std::shared_ptr<RegionExpressions> expressions;
@@ -65,8 +71,8 @@ struct GuardedPeriodicQuotient {
 // with k demand rounds: O(g+k^2(m+g)) gates beyond supplied expressions and
 // endpoint grouping. Otherwise V-1 generic rounds cost O(g+kVE), with V=2m
 // and E normalized/native edges. Grouping uses O(g log(g+1)) comparisons.
-// Frontier outputs occupy O(kV) entries, not O(V^2) pair entries. Scalar-score
-// distance scaling additionally costs O(kg log(m+1)) additions.
+// Frontier outputs occupy O(kV) entries, not O(V^2) pair entries.
+// Period/residue scores avoid multiplication by the source-pipe length.
 // Native prerequisites are not removable demands. No IR mutation.
 // Threshold queries are reflexive on present types; finite-prefix clients also
 // check both occurrence domains and compare targetIteration-sourceIteration.

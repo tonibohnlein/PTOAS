@@ -41,7 +41,7 @@ draft obligation; its excess formula must not authorize a production decision.
 | Step | Reviewable work | Completion gate | Existing obligations |
 |---|---|---|---|
 | R1 (implemented) | SCC-ordered completion transfer | Concrete pending-state oracle, fixed-child containment, bounded fact propagation pass | M6; Section 6 |
-| R2 (native closure implemented; pair scores open) | Core-chain periodic frontier specialization | Exact demand/query agreement and linear scan/relaxation scaling; scalar scaling costs remain explicit | M1/M3; Section 5.4 |
+| R2 (implemented) | Core-chain periodic frontier specialization | Exact demand/query agreement, linear scan/relaxation scaling and period/residue scores | M1/M3; Section 5.4 |
 | R3 | Writer-centered guarded storage and shared boundary scans | Exact conflict/boundary agreement, including macro envelopes and protected effects; read-heavy scaling | M1/M3; Section 5.2 |
 | R4a | Ordered periodic/repeated first-reuse sweeps | Certified applicability, linear query counts, exact capacity and finite-restriction checks | M2/M4; Propositions 7.8/7.10 |
 | R4b | Linear periodic allocation from suffix thresholds | Independent command-graph reuse/width oracle; no general assignment matrix on this route | M2/M4; Proposition 7.12 |
@@ -50,8 +50,8 @@ draft obligation; its excess formula must not authorize a production decision.
 | R6 | Normalized logical graph allocation, owned session and closed-child completion import | Shared unified/split stages, allocation before scalar materialization, deleted superseded paths | M3/M4/M5/M6; Sections 6/8 |
 | R7 | Pinned pipeline, scaling and device closure | Distinct logical/physical/C++/device outcomes and reproducible receipts | M1/M6 |
 
-R1 transfer is implemented; R2–R7 remain open. Existing primitives are starting
-points, not completed migrations. Continue with R2, R3, R4a–c, R5, R6, then R7.
+R1 transfer and R2 frontiers are implemented; R3–R7 remain open. Existing primitives are starting
+points, not completed migrations. Continue with R3, R4a–c, R5, R6, then R7.
 Run focused integration checks at each step; do not defer all production
 validation to R7. A newly measured bottleneck may justify resequencing, recorded
 with evidence rather than another untracked fallback.
@@ -1867,3 +1867,22 @@ baseline builds; the changed kernel introduces no warning. The compliance
 checker flags the braced arithmetic-bound conditional as a parser false
 positive. Receipts: `.local/r2-build.log`, `.local/r2-build-final.log`,
 `.local/r2-tests.log`, `.local/r2-adapter-tests.log`, `.local/r2-validation/`.
+
+### R2 completion: period/residue frontier scores
+
+Frontiers now retain a reachable bit and `(period, residue)` with
+`rho = pipeLength * period + residue`, `0 <= residue < pipeLength`.
+Lexicographic minima preserve the scalar order; edge relaxation adds only to
+period. Native wrap adds one period. Threshold export adds a carry exactly when
+residue exceeds `pipeLength - sourceRank`. Neither frontier construction nor
+threshold export constructs multiplication, division or remainder by pipe
+length. The rotating arena-import adapter remaps both components together.
+Checked static bounds reserve transient native-wrap candidates and query carry.
+
+Four focused tests pass: guarded periodic (independent scalar shortest paths
+and unfolded covers, including large distances), frontier scaling, arithmetic
+periodic conversion, and order-covered periodic. Every tested specialization
+and generic fallback reports zero scaling additions. The historical phased
+rotating timeout remains unresolved as recorded above. This establishes
+representation and correctness checks, not a paired compilation or device
+speedup. Receipts: `.local/r2-pairs-build.log`, `.local/r2-pairs-tests.log`.
