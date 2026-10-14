@@ -8,6 +8,56 @@
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 namespace mlir::pto::frontiersynch {
+namespace {
+SequenceAnalysisState::EventKey eventKey(const SequenceEvent& value)
+{
+    return {value.child, value.type, value.ordinal, value.kind, value.visits};
+}
+const SequenceAnalysisState::PortChoice* portChoice(const SequenceAnalysisState& state, const SequenceEvent& value)
+{
+    auto portId = state.portIds.find({value.child, value.type, value.ordinal, value.visits});
+    if (portId == state.portIds.end()) { return nullptr; }
+    auto found = state.portChoices.find(portId->second);
+    return found == state.portChoices.end() ? nullptr : &found->second;
+}
+std::optional<Expr> selectedPresence(SequenceAnalysisState& state, SequenceEvent root)
+{
+    // Reflexive reachability is exactly presence. Use the existing owned cache
+    // rather than constructing a product of source and target choice DAGs.
+    // Choices refer to lower port IDs; an explicit stack also handles deep
+    // selection chains without consuming the host call stack.
+    auto selfKey = [](const SequenceEvent& value) {
+        const auto key = eventKey(value);
+        return std::make_pair(key, key);
+    };
+    auto& memo = state.reachabilityCache;
+    std::vector<SequenceEvent> pending{root};
+    while (!pending.empty()) {
+        const auto value = pending.back();
+        const auto key = selfKey(value);
+        if (memo.count(key)) { pending.pop_back(); continue; }
+        if (const auto* choice = portChoice(state, value)) {
+            auto yes = state.event(2 * static_cast<std::size_t>(choice->yes));
+            auto no = state.event(2 * static_cast<std::size_t>(choice->no));
+            yes.kind = no.kind = value.kind;
+            auto yesValue = memo.find(selfKey(yes)), noValue = memo.find(selfKey(no));
+            if (yesValue == memo.end() || noValue == memo.end()) {
+                if (yesValue == memo.end()) { pending.push_back(std::move(yes)); }
+                if (noValue == memo.end()) { pending.push_back(std::move(no)); }
+                continue;
+            }
+            memo.emplace(key, state.expressions.select(choice->choose, yesValue->second, noValue->second));
+        } else {
+            const auto& region = state.children[value.child].regional;
+            auto present = regionalPresence(region, {value.type, value.ordinal, value.kind, value.visits});
+            if (!present) { return std::nullopt; }
+            memo.emplace(key, *present);
+        }
+        pending.pop_back();
+    }
+    return memo.at(selfKey(root));
+}
+} // namespace
 // A child replaces the complete preceding group only after its links have
 // been constructed. Keep genuine conditional alternatives, including distinct
 // simultaneous envelopes; discard only presence proved false by the arena.
@@ -326,25 +376,34 @@ std::optional<Expr> SequenceAnalysisState::eventReachability(SequenceEvent sourc
         auto answer = numericalReachability(source, target, numericalQueryCost);
         if (answer) { return answer; }
     }
-    auto key = [](const SequenceEvent& value) -> EventKey {
-        return {value.child, value.type, value.ordinal, value.kind, value.visits};
-    };
-    auto pair = std::make_pair(key(source), key(target));
+    auto pair = std::make_pair(eventKey(source), eventKey(target));
     auto cached = reachabilityCache.find(pair);
     if (cached != reachabilityCache.end()) { return cached->second; }
     if (source.child >= children.size() || target.child >= children.size()) { return std::nullopt; }
     if (source.child > target.child) { return no(); }
+    // Reference order places every occurrence of an earlier child before
+    // every occurrence of a later child. On one pipe, native start and
+    // completion chains therefore decide all event-kind pairs except C->I,
+    // without traversing storage crossings or the intervening children.
+    const auto& left = children[source.child];
+    const auto& right = children[target.child];
+    const bool nativeKinds = source.kind != PeriodicEventKind::Completion || target.kind != PeriodicEventKind::Start;
+    if (source.child < target.child && nativeKinds &&
+        source.type < left.anchors.size() && target.type < right.anchors.size() &&
+        left.anchors[source.type].phase && right.anchors[target.type].phase &&
+        left.anchors[source.type].phase->kPipeValue == right.anchors[target.type].phase->kPipeValue) {
+        auto pa = selectedPresence(*this, source);
+        auto pb = selectedPresence(*this, target);
+        if (!pa || !pb) { return std::nullopt; }
+        auto answer = both(*pa, *pb);
+        reachabilityCache.emplace(std::move(pair), answer);
+        return answer;
+    }
     // A selected occurrence denotes exactly one original occurrence, including
     // its presence. Expand the alias before any child query. Memoization is by
     // endpoint pair, so shared selection DAGs do not enumerate choice paths.
-    auto choice = [&](const SequenceEvent& value) -> const PortChoice* {
-        auto portId = portIds.find({value.child, value.type, value.ordinal, value.visits});
-        if (portId == portIds.end()) { return nullptr; }
-        auto found = portChoices.find(portId->second);
-        return found == portChoices.end() ? nullptr : &found->second;
-    };
-    const auto* sourceChoice = choice(source);
-    const auto* targetChoice = sourceChoice ? nullptr : choice(target);
+    const auto* sourceChoice = portChoice(*this, source);
+    const auto* targetChoice = sourceChoice ? nullptr : portChoice(*this, target);
     if (sourceChoice || targetChoice) {
         const auto selected = sourceChoice ? *sourceChoice : *targetChoice;
         const auto kind = sourceChoice ? source.kind : target.kind;
@@ -383,23 +442,6 @@ std::optional<Expr> SequenceAnalysisState::eventReachability(SequenceEvent sourc
     if (source.child == target.child) {
         auto answer = local(source, target);
         if (answer) { reachabilityCache.emplace(std::move(pair), *answer); }
-        return answer;
-    }
-    // Reference order places every occurrence of an earlier child before
-    // every occurrence of a later child. On one pipe, native start and
-    // completion chains therefore decide all event-kind pairs except C->I,
-    // without traversing storage crossings or the intervening children.
-    const auto& left = children[source.child];
-    const auto& right = children[target.child];
-    if (!(source.kind == PeriodicEventKind::Completion && target.kind == PeriodicEventKind::Start) &&
-        source.type < left.anchors.size() && target.type < right.anchors.size() &&
-        left.anchors[source.type].phase && right.anchors[target.type].phase &&
-        left.anchors[source.type].phase->kPipeValue == right.anchors[target.type].phase->kPipeValue) {
-        auto pa = regionalPresence(left.regional, {source.type, source.ordinal, source.kind, source.visits});
-        auto pb = regionalPresence(right.regional, {target.type, target.ordinal, target.kind, target.visits});
-        if (!pa || !pb) { return std::nullopt; }
-        auto answer = both(*pa, *pb);
-        reachabilityCache.emplace(std::move(pair), answer);
         return answer;
     }
     // Every path has a last cross-child link. Its prefix ends in an earlier

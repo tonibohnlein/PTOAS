@@ -2237,3 +2237,28 @@ eight brace findings; each indicated condition already has a braced body
 (the parser stops at nested calls). Receipts are under
 `.local/r5-native-frontier/`. R5's large query/selector roots and physical prefix
 lifetime export remain open.
+
+### R5 increment: native queries resolve selected endpoints independently
+
+For same-pipe native event-kind queries across ordered children, sequence
+reachability now determines each selected endpoint's exact presence before
+combining the two answers. It walks the retained choice DAG iteratively and
+shares results as reflexive entries in the existing owned reachability cache.
+Original child callbacks still receive primitive occurrence coordinates.
+This avoids a Cartesian product of source and target choices; C->I remains
+on the demand-query path. Failed presence exports remain unavailable.
+
+The new fixture checks 576 valuations, three native event-kind pairs and
+16/64/256 alternatives on each side. Four endpoint/kind descriptions require
+4*N primitive presence queries and fewer than 8*N cache entries. It also checks
+absence, unsupported presence, and that native order alone cannot answer C->I
+as reachable. Nine focused suites, incremental build and diff checks pass.
+The compliance prefilter's four brace findings are already-braced conditions.
+
+Two serial Delta diagnostics at the pinned baseline `887ac7d18` and candidate
+produce byte-identical complete logical IR: 672,883 constructed prefix
+operations and a 207,669-operation largest root. The 25.334/25.634-second
+single runs support no speedup claim. This fixes query-construction scaling
+for selected native endpoints; it does not explain or solve Delta's remaining
+large root. Exact tool/input hashes, source diff and receipts are retained in
+`.local/r5-native-selections/`.
