@@ -1518,3 +1518,44 @@ existing genuinely different phase/stride mappings. Physical outputs for
 TileLang, PyPTO and Persistent GEMM are byte-identical to the baseline, with
 1,563 / 1,372 / 4,600 arithmetic operations respectively. No additional GEMM or
 device speedup is claimed. Receipts: `.local/family-mapping-normalization/`.
+
+## Share exact prefix source captures before materialization
+
+One sequence contributor now owns a directory of primitive source-rank captures.
+Its key contains the source phase, the exact occurrence-matching predicate in
+that contributor's arena, and the qualified reset loop (or whole invocation).
+Repeated requests for that key reuse the state slot, reset and source update.
+The old per-crossing allocation of these identical captures is removed.
+Consumer predicates and choices remain separate; no publication, acquisition,
+barrier or retained demand is removed by this transformation.
+
+The preservation argument is equality of state transitions: the replaced slots
+start at zero, reset at the same original invocation boundary, and receive the
+same executed-source ordinal under the same exact predicate. They therefore
+hold the same value at every consumer. Different matching predicates and reset
+scopes remain distinct. The directory is local to one collection call, owns no
+generated SSA, and cannot leak slot numbers into a fresh retry or another arena.
+This does not add cross-provider capture equivalence or general expression
+sharing across changed private-state bindings.
+
+The invocation-prefix oracle now includes 4-way and 128-way disjoint guarded
+partitions that refer to two primitive source occurrences. Both retain two
+capture slots, while preserving independent consumer decisions. A separate
+case requires four slots for two different reset scopes: an inner consumer
+needs loop-local captures, while an outer consumer on another pipe needs the
+whole-invocation captures to survive a later empty invocation. The independent
+payload-closure and exact publication-consumption checks cover 24 additional
+executions. Existing guarded, singleton and bounded-prefix tests also pass.
+The fixture's second direction is explicitly included in its allowed-direction
+and publication-count oracle; no matching or closure check is relaxed.
+
+The pinned Delta probe against `a00ba0ba9` is deliberately reported separately
+from those semantic tests. Capture sharing reduces private-state slots from
+294 to 284, selects from 853,003 to 852,993, and total arithmetic from 2,473,273
+to 2,473,233. SET/WAIT/barrier sites remain 172 / 47 / 194, and consumer sites
+remain 41. Logical output is still about 153 MB. Thus duplicate primitive
+captures are not the main cause of Delta's control expansion. The single serial
+compiler pair is 79.41 / 83.72 seconds; it establishes no speedup. Allocation
+still refuses the missing invocation-prefix lifetime export. No full Delta
+command-trace equivalence or device result is claimed from this structural
+probe. Receipts and the explicit refusal are in `.local/prefix-source-captures/`.

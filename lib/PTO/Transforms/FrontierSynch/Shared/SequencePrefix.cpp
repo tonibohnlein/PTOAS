@@ -119,10 +119,14 @@ struct PrefixCapturedRank {
     PrefixIncomingSelector choose;
     uint32_t yes = 0, no = 0;
 };
+// Scoped to one sequence contribution and its append-only arena. Identical
+// captures have the same initial value, exact source update and invocation
+// reset, regardless of which consumer later selects that saved rank.
+using PrimitiveCaptures = std::map<std::tuple<const CompoundInstanceElement*, Expr, Operation*>, std::size_t>;
 LogicalResult capturePrimitivePrefixSource(
     const std::shared_ptr<SequenceAnalysisState>& owner, uint32_t id, const PrefixOccurrencePtr& occurrence,
     Operation* targetCut, InvocationPrefixCollection& collection,
-    std::map<uint32_t, PrefixCapturedRank>& captured, std::string& error)
+    std::map<uint32_t, PrefixCapturedRank>& captured, PrimitiveCaptures& shared, std::string& error)
 {
     if (!occurrence || occurrence->choose) { error = "prefix source has no primitive occurrence"; return failure(); }
     const auto& anchor = occurrence->anchor;
@@ -130,9 +134,6 @@ LogicalResult capturePrimitivePrefixSource(
     const auto guard = occurrence->match;
     auto* sourceCut = anchor.phase->elementOp;
     auto& recipe = collection.recipe();
-    const auto slot = recipe.slots.size();
-    auto type = IndexType::get(collection.function().getContext());
-    recipe.slots.push_back({type, IntegerAttr::get(type, 0)});
     scf::ForOp common;
     for (auto* parent = sourceCut->getParentOp(); parent; parent = parent->getParentOp()) {
         auto loop = dyn_cast<scf::ForOp>(parent);
@@ -142,6 +143,16 @@ LogicalResult capturePrimitivePrefixSource(
         if (!llvm::is_contained(owner->requiredOuterLoops, common)) {
             error = "prefix crossing needs a certified enclosing-visit rank adapter"; return failure();
         }
+    }
+    auto key = std::make_tuple(anchor.phase, guard, common ? common.getOperation() : nullptr);
+    if (auto found = shared.find(key); found != shared.end()) {
+        captured.emplace(id, PrefixCapturedRank{found->second});
+        return success();
+    }
+    const auto slot = recipe.slots.size();
+    auto type = IndexType::get(collection.function().getContext());
+    recipe.slots.push_back({type, IntegerAttr::get(type, 0)});
+    if (common) {
         recipe.actions.push_back({&common.getBody()->front(), PrivateStateCut::Before,
             [slot](OpBuilder& b, const IRMapping&, MutableArrayRef<Value> state, std::string&) {
                 state[slot] = b.create<arith::ConstantIndexOp>(b.getUnknownLoc(), 0);
@@ -157,12 +168,13 @@ LogicalResult capturePrimitivePrefixSource(
             state[slot] = b.create<arith::SelectOp>(sourceCut->getLoc(), *selected, ordinal, state[slot]);
             return success();
         }, error))) { return failure(); }
+    shared.emplace(key, slot);
     captured.emplace(id, PrefixCapturedRank{slot});
     return success();
 }
 FailureOr<uint32_t> capturePrefixSource(
     const std::shared_ptr<SequenceAnalysisState>& owner, const PrefixOccurrencePtr& root, Operation* targetCut,
-    InvocationPrefixCollection& collection, std::map<uint32_t, PrefixCapturedRank>& captured,
+    InvocationPrefixCollection& collection, std::map<uint32_t, PrefixCapturedRank>& captured, PrimitiveCaptures& shared,
     std::string& error)
 {
     // Preparation owns a separate topological directory. Imported child recipes
@@ -186,7 +198,8 @@ FailureOr<uint32_t> capturePrefixSource(
         const auto id = static_cast<uint32_t>(ids.size());
         ids.emplace(node.get(), id);
         if (node->choose) { captured.emplace(id, std::move(rank)); }
-        else if (failed(capturePrimitivePrefixSource(owner, id, node, targetCut, collection, captured, error))) {
+        else if (failed(capturePrimitivePrefixSource(
+                     owner, id, node, targetCut, collection, captured, shared, error))) {
             return failure();
         }
         return id;
@@ -211,7 +224,7 @@ FailureOr<Value> selectedPrefixRank(uint32_t root,
 }
 LogicalResult appendPrefixCrossing(
     const std::shared_ptr<SequenceAnalysisState>& owner, const Crossing& edge, InvocationPrefixCollection& collection,
-    std::string& error, bool certifiedPresence)
+    std::string& error, bool certifiedPresence, PrimitiveCaptures& shared)
 {
     auto& e = owner->expressions;
     if (edge.source >= owner->ports.size() || edge.target >= owner->ports.size()) {
@@ -275,7 +288,7 @@ LogicalResult appendPrefixCrossing(
     }
     std::map<uint32_t, PrefixCapturedRank> captured;
     auto sourceOccurrence = sequencePrefixOccurrence(owner, edge.source, occurrences, error);
-    auto sourceId = capturePrefixSource(owner, sourceOccurrence, targetCut, collection, captured, error);
+    auto sourceId = capturePrefixSource(owner, sourceOccurrence, targetCut, collection, captured, shared, error);
     if (failed(sourceId)) { return failure(); }
     return collection.consumer(
         targetCut, {p, q},
@@ -330,8 +343,10 @@ LogicalResult SequenceAnalysisState::collectPrefix(InvocationPrefixCollection& c
     // ordinary checked path. This evidence does not certify executable guards,
     // source ordinals, original cuts, or rank transport across invocations.
     const bool certifiedPresence = hasCertifiedCrossingPresence();
+    PrimitiveCaptures captures;
     for (const auto& edge : crossings) {
-        if (failed(appendPrefixCrossing(shared_from_this(), edge, collection, diagnostic, certifiedPresence))) {
+        if (failed(appendPrefixCrossing(
+                shared_from_this(), edge, collection, diagnostic, certifiedPresence, captures))) {
             return failure();
         }
     }
