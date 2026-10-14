@@ -2211,3 +2211,29 @@ prefix operations versus 673,216 before these folds; the largest root is still
 The small reduction does not close the large-root or physical-lifetime work.
 Receipts: `.local/r5-literal-choices/{build,tests,compliance}.log` and `delta.*`.
 The broad campaign above remains explicitly pinned to `c08615c32`.
+
+### R5 increment: prune dead native sequence frontiers
+
+Sequence native-link construction had retained masked, constant-false boundary
+alternatives even after storage bridges stopped doing so. Both now use the same
+whole-group masking helper. The child links are constructed before replacement;
+genuinely conditional entries remain, false entries are removed, and an
+unconditional child clears the previous frontier. No new equivalence proof or
+admission cutoff is required. Diagnostic JSON now includes `native_candidates`,
+`native_remasked`, and `native_links`; links count both I->I and C->C edges.
+
+An independent dense native-event closure agrees on all 32 valuations of a
+five-child fixture with conditional absence, untouched intermediate pipes and
+simultaneous multi-pipe envelopes. Separate 128/256/1,024-child fixtures check
+unconditional, empty and shared-symbolic activity. Unconditional candidate
+visits are 127/255/1,023, versus the former 8,128/32,640/523,776; symbolic masking
+also visits only the live predecessor. This is a construction-work result,
+not a measured compiler or device speedup, and does not bound genuinely large
+conditional frontiers or other composition stages.
+
+Nine sequence, prefix, bounding, overlay and bounded-interface suites pass.
+The incremental build and diff checks pass. The compliance prefilter reports
+eight brace findings; each indicated condition already has a braced body
+(the parser stops at nested calls). Receipts are under
+`.local/r5-native-frontier/`. R5's large query/selector roots and physical prefix
+lifetime export remain open.
