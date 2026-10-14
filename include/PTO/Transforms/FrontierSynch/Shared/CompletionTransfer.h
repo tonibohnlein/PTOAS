@@ -31,6 +31,8 @@ struct CompletionVertex {
 struct CompletionTransferWork {
     uint64_t propagatedFacts = 0;
     uint64_t edgeFactVisits = 0;
+    uint64_t components = 0, cyclicComponents = 0, componentSolves = 0;
+    uint64_t internalEdgeFactVisits = 0, externalEdgeFactVisits = 0;
 };
 struct CompletionTransferResult {
     CompletionSummary summary;
@@ -40,7 +42,10 @@ struct CompletionTransferResult {
 };
 // Input summaries use exactly classCount entries, with E and S contained in A.
 // The designated exit has no successors. Unreachable nodes do not contribute.
-// Each solve sends each class/mode over each reachable edge at most once.
+// SCCs are finalized in topological order. Acyclic singletons transfer once;
+// cyclic components solve twice with fixed external inputs. Each solve sends
+// each class/mode over each internal edge at most once; final output facts
+// cross each external edge once. Mandatory completions precede all solves.
 // No visit unfolding, symbolic selectors or target synchronization is involved.
 CompletionTransferResult buildCompletionTransfer(const std::vector<CompletionVertex>& graph,
     std::size_t entry, std::size_t exit, std::size_t classCount);

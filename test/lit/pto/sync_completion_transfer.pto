@@ -6,5 +6,5 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --completion-transfer-checks %s | FileCheck %s
-// CHECK: completion transfer: 16384 execution graphs; two delta solves
+// CHECK: completion transfer: 16384 execution graphs; SCC-local transfer; 1000 random graphs; 100000-node chain
 module { func.func @empty() { return } }

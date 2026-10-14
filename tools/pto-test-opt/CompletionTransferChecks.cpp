@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionTransfer.h"
 #include "llvm/Support/raw_ostream.h"
 #include <set>
+#include <random>
 #include <tuple>
 namespace fs = mlir::pto::frontiersynch;
 namespace {
@@ -51,6 +52,56 @@ Executions execute(const std::vector<fs::CompletionVertex>& graph, const std::ve
     }
     return result;
 }
+bool conflicts(unsigned incoming, unsigned exposed)
+{
+    for (unsigned c = 0; c < 2; ++c) {
+        const auto a = (incoming >> (2 * c)) & 3;
+        const auto b = (exposed >> (2 * c)) & 3;
+        if (a && b && ((a | b) & 2)) { return true; }
+    }
+    return false;
+}
+// Independent oracle: transitive closure identifies components, and concrete
+// state exploration supplies incoming facts. No production delta equations.
+std::vector<bool> referenceProtection(const std::vector<fs::CompletionVertex>& graph)
+{
+    const auto size = graph.size();
+    std::vector<std::vector<bool>> reaches(size, std::vector<bool>(size));
+    std::vector<bool> protect(size), done(size);
+    for (std::size_t v = 0; v < size; ++v) {
+        reaches[v][v] = true;
+        for (auto next : graph[v].successors) { reaches[v][next] = true; }
+    }
+    for (std::size_t k = 0; k < size; ++k) {
+        for (std::size_t i = 0; i < size; ++i) {
+            for (std::size_t j = 0; j < size; ++j) {
+                reaches[i][j] = reaches[i][j] || (reaches[i][k] && reaches[k][j]);
+            }
+        }
+    }
+    for (std::size_t v = 0; v < size; ++v) {
+        done[v] = !reaches[0][v];
+        protect[v] = reaches[0][v] && graph[v].requiresEntryCompletion;
+    }
+    for (std::size_t pass = 0; pass < size; ++pass) {
+        for (std::size_t v = 0; v < size; ++v) {
+            if (done[v]) { continue; }
+            bool ready = true;
+            for (std::size_t u = 0; u < size; ++u) {
+                if (!done[u] && reaches[u][v] && !reaches[v][u]) { ready = false; }
+            }
+            if (!ready) { continue; }
+            const auto preliminary = execute(graph, protect);
+            for (std::size_t u = 0; u < size; ++u) {
+                if (reaches[v][u] && reaches[u][v]) {
+                    protect[u] = protect[u] || conflicts(preliminary.incoming[u], bits(graph[u].summary.exposed));
+                    done[u] = true;
+                }
+            }
+        }
+    }
+    return protect;
+}
 bool check(std::vector<fs::CompletionVertex> graph)
 {
     auto first = execute(graph, std::vector<bool>(graph.size()));
@@ -64,18 +115,23 @@ bool check(std::vector<fs::CompletionVertex> graph)
             protect[v] = protect[v] || (a && b && ((a | b) & 2));
         }
     }
-    auto expected = execute(graph, protect);
-    auto actual = fs::buildCompletionTransfer(graph, 0, graph.size() - 1, 2);
-    // An unreachable entry obligation never emits a command.
+    const auto selected = referenceProtection(graph);
+    const auto expected = execute(graph, selected);
+    const auto actual = fs::buildCompletionTransfer(graph, 0, graph.size() - 1, 2);
     for (std::size_t v = 0; v < graph.size(); ++v) {
-        if (!actual.reachable[v]) { protect[v] = false; }
+        if (actual.protectEntry[v] && !protect[v]) { return false; }
+        if (actual.reachable[v] && !selected[v] &&
+            conflicts(expected.incoming[v], bits(graph[v].summary.exposed))) { return false; }
     }
     std::size_t edges = 0;
     for (const auto& vertex : graph) { edges += vertex.successors.size(); }
-    return actual.error.empty() && actual.protectEntry == protect &&
+    return actual.error.empty() && actual.protectEntry == selected &&
            bits(actual.summary.all) == expected.all && bits(actual.summary.exposed) == expected.exposed &&
            bits(actual.summary.suffix) == expected.suffix && actual.summary.transparent == expected.transparent &&
-           actual.work.propagatedFacts <= 8 * graph.size() && actual.work.edgeFactVisits <= 8 * edges;
+           actual.work.propagatedFacts <= 8 * graph.size() && actual.work.edgeFactVisits <= 8 * edges &&
+           actual.work.externalEdgeFactVisits <= 4 * edges &&
+           actual.work.edgeFactVisits == actual.work.internalEdgeFactVisits + actual.work.externalEdgeFactVisits &&
+           actual.work.componentSolves == actual.work.components + actual.work.cyclicComponents;
 }
 } // namespace
 int runCompletionTransferChecks()
@@ -130,6 +186,37 @@ int runCompletionTransferChecks()
     auto required = fs::buildCompletionTransfer(scalar, 0, 0, 0);
     if (!required.error.empty() || !required.protectEntry[0] || required.summary.transparent ||
         required.work.propagatedFacts || required.work.edgeFactVisits) { return 1; }
-    llvm::outs() << "completion transfer: " << checked << " execution graphs; two delta solves\n";
+    std::vector<fs::CompletionVertex> reads(4, {empty, {}, false});
+    for (std::size_t v = 0; v + 1 < reads.size(); ++v) { reads[v].successors = {v + 1}; }
+    reads[0].summary = {facts(2), facts(2), facts(2), true};
+    reads[1].summary = reads[2].summary = {facts(1), facts(1), facts(1), true};
+    const auto compact = fs::buildCompletionTransfer(reads, 0, 3, 2);
+    if (!check(reads) || compact.protectEntry != std::vector<bool>({false, true, false, false}) ||
+        compact.work.componentSolves != 4 || compact.work.cyclicComponents) { return 1; }
+    std::mt19937 random(621);
+    for (unsigned trial = 0; trial < 1000; ++trial) {
+        std::vector<fs::CompletionVertex> graph(2 + random() % 7, {empty, {}, false});
+        for (std::size_t v = 0; v + 1 < graph.size(); ++v) {
+            const auto all = random() % 16;
+            graph[v].summary = {facts(all), facts(all & random()), facts(all & random()), (random() % 2) != 0};
+            graph[v].requiresEntryCompletion = random() % 7 == 0;
+            for (std::size_t u = 0; u < graph.size(); ++u) {
+                if (random() % 4 == 0) { graph[v].successors.push_back(u); }
+            }
+        }
+        if (!check(graph)) { llvm::errs() << "random completion execution oracle mismatch\n"; return 1; }
+    }
+    // A small cycle with a long acyclic descendant chain must not trigger
+    // repeated whole-graph solves or recursion on the host stack.
+    std::vector<fs::CompletionVertex> chain(100000, {empty, {}, false});
+    for (std::size_t v = 0; v + 1 < chain.size(); ++v) { chain[v].successors = {v + 1}; }
+    chain[1].successors.push_back(0);
+    chain[0].summary = {facts(2), facts(2), facts(2), true};
+    const auto large = fs::buildCompletionTransfer(chain, 0, chain.size() - 1, 2);
+    if (!large.error.empty() || large.work.components != chain.size() - 1 ||
+        large.work.cyclicComponents != 1 || large.work.componentSolves != chain.size() ||
+        large.work.externalEdgeFactVisits > chain.size() || !large.protectEntry[0]) { return 1; }
+    llvm::outs() << "completion transfer: " << checked
+                 << " execution graphs; SCC-local transfer; 1000 random graphs; 100000-node chain\n";
     return 0;
 }
