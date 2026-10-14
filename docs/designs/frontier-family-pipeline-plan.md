@@ -18,6 +18,37 @@ cutoffs, general symbolic solver, runtime demand analyzer, or weaker fallback
 after exact retention is introduced. Necessary activity domains remain one-way
 exclusion evidence; they do not replace exact guards or matching identities.
 
+## Review-driven execution order after the rebase
+
+The next work reduces duplication inside the shared materializer before
+migrating more producers. Deferred contextual singletons establish ownership
+and protocol selection; they do not by themselves compress guarded control.
+
+1. Rebuild the rebased source and establish focused baseline results.
+2. Replace eager common-cut memo copying with demand-driven lookup. Use one
+   context for the staged materialization, isolating arena, cut and binding
+   environments and discarding all caches on failure. Measure published
+   bindings, lookup requests, imported bindings and retained local entries.
+3. Admit qualified numerical sub-batches beside guarded residual crossings in
+   one command-order inventory. A residual must not disqualify unrelated regular
+   families. Preserve simultaneous-command order, matching and exact activity;
+   necessary domains remain exclusion evidence only.
+4. Normalize the recipe-level protocol before allocation. Retain inexpensive
+   certified candidates and permit parent requests for stronger sharing; do not
+   permanently accept the first locally feasible child assignment.
+5. Finish remaining producer migrations, bounded complete-map normalization,
+   session ownership and the validation obligations below.
+
+Track wrapper subtree discovery and binding traversal before optimizing them.
+Sharing caches must not hide incompatible binding environments or allow values
+from a later detached block to become operands of an earlier block. Original
+cuts alone are not a complete cache key.
+
+Delta has separate production gates for control-construction size and the
+missing prefix-lifetime allocation export. Logical insertion alone closes
+neither. The upstream dynamic-subview row proof integration is explicitly
+deferred until this work is complete; existing InsertSync already uses it.
+
 ## Milestones
 
 | Milestone | Work and acceptance | Current status |
@@ -1060,3 +1091,59 @@ only by conjunction with an already-true enclosing condition. Delta's large
 logical output is unchanged. No paired planning-time or device claim is made.
 Receipts are `.local/family-pipeline-periodic-context/` and
 `.local/generated-control-periodic-context/`.
+
+## Shared materialization cache refinement
+
+The staged family lowering now owns one `FamilyMaterialization` context. Its
+cache key includes the expression arena, original command cut and shared-root
+binding owner. Self-contained leaves and invocation/activity wrappers share the
+empty binding environment. Distinct nonempty binding owners remain isolated;
+no cache survives a failed materialization or an arena rollback.
+
+Shared expressions and replay inputs are indexed once after their defining
+recipes lower. A receiving cut imports required or reachable bindings only,
+and checks the original defining cut's dominance. It no longer copies every
+entry of every dominating shared memo. Wrapper preparation appends after earlier
+leaf preparation, preserving detached SSA dependency order.
+
+`frontier-control-profile` now includes `family_materialization` counters for
+published bindings, lookup requests, inspected candidates, imported bindings,
+local memo entries and cut contexts. These are construction-work diagnostics;
+they do not influence admission or serialize into allocation evidence.
+
+The regression with 512 shared predicates and 64 cuts requires exactly 63
+imports and 63 candidate checks beyond the source cut. Retained entries equal
+published entries plus those 63 imports. Another regression composes 32
+self-contained leaves and activity wrappers using one cut context. Fresh retry,
+missing bindings and a non-dominating shared definition are checked separately.
+
+At baseline `078658748`, the focused rebased campaign passed 11 tests and the
+historical phased-repeat trace timed out at 90 seconds. The candidate passes
+all 11 selected checks, including the new regressions, plus 14 nested/zero-trip
+command-closure cases. Ten overlay configurations preserve the complete ordered
+logical and physical traces. TileLang/PyPTO canonical logical output is byte
+identical; Persistent agrees after SSA naming and associative/commutative
+Boolean-AND normalization, with a changed-command negative control rejected.
+
+Persistent physical allocation succeeds with eligible IDs 0–5. Complete ordered
+payload/synchronization traces, matching identities and numeric IDs agree on
+cores 0, 15, 16 and 19: 5,011 pairs on cores 0/15 and 4,625 on cores 16/19.
+
+For Persistent, arithmetic constructed at materialization falls from 11,811 to
+11,550 operations. Final logical arithmetic remains 3,924 and static SET/WAIT
+sites remain 56/56. The successful lowering reports 42 published bindings, 256
+lookup requests, 89 candidate checks/imports, 1,207 local entries and 26 cut
+contexts. These inventories establish scoped sharing; they do not establish a
+compiler-time or device-speed improvement. The diagnostic timing pair was not
+an isolated performance experiment.
+
+The build passes with no new warnings. The changed-code prefilter reports 13
+`G.FMT.11-CPP` matches: all are nested/multiline conditions followed by braced
+bodies, verified against the complete conditions. No source suppressions were
+added. This is scoped build/test/manual validation, not a full analyzer or
+device campaign. Receipts are in `.local/family-pipeline-shared-context/`.
+
+Remaining costs include shared-root availability planning per cut, wrapper
+subtree discovery, the extra reachable-DAG lookup traversal, and conservatively
+separate nonempty environments. This refinement does not claim compact guarded
+families, allocation on a normalized recipe graph, or Delta lifetime support.
