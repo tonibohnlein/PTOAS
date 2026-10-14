@@ -13,7 +13,7 @@ struct RepeatedRegionState;
 class AllocationProfile;
 class AllocationInputCache;
 struct RepeatedExtremaCost {
-    uint64_t candidates = 0, comparisons = 0, orderedLists = 0;
+    uint64_t candidates = 0, comparisons = 0, orderedLists = 0, duplicateGuards = 0;
 };
 using RepeatedAllocationExtrema = std::pair<std::vector<RegionalSelector>, std::vector<RegionalSelector>>;
 std::optional<RepeatedAllocationExtrema> repeatedAllocationExtrema(

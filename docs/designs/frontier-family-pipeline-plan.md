@@ -55,7 +55,7 @@ deferred until this work is complete; existing InsertSync already uses it.
 |---|---|---|
 | M0: preparation ownership | Reproduce prefill failure; remap every affected non-SSA preparation reference before deletion; validate complementary cleanup and failure atomicity; replay prefill separately from the failing baseline. | Complete: `32b38b426` |
 | M1: measurement | Extend stage inventories with per-repeat lanes/extrema, candidate pairs/gaps, query construction, proof/cache work and actual traversal counts. Keep static records/sites distinct from dynamic commands and evaluated control. | Stage inventories and repeated-allocation work/traversal counters implemented; dynamic-control and complete ID-map inventories remain open |
-| M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans and attempt-owned relative queries implemented; owned independent/shared candidate requests with parent retry implemented; explicit-capacity selection is available through the session and analysis-pass resource request; complete mapping-cost policy remains open |
+| M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans, exact-activity deduplication and attempt-owned relative queries implemented; owned independent/shared candidate requests with parent retry implemented; explicit-capacity selection is available through the session and analysis-pass resource request; complete mapping-cost policy remains open |
 | M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is now retained entirely in shared family recipes; ordinary numerical sequence and repeated children retain recipes through composition; exact fixed-coordinate sequence crossings now form recipes before scalar preparation; child activity masks retain those recipes through composition; repeated crossings now retain numerical or contextual recipes before scalar lowering; guarded sequence crossings now retain publication/cleanup and common-cut expression recipes; finite overlays and guarded/numerical periodic adapters retain recipes through allocation; relational crossings and capture closure remain open |
 | M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; common nonconstant tuple terms compose before dispatch in `15f2007ea`; coordinate-selected phase shifts now compose under the same skeleton with a cost-checked incumbent; different skeletons and early graph allocation remain open |
 | M5: session and capabilities | Retain facts, mathematics, recipes and allocation in one session; deterministic capability upgrades; common unified/split stage functions; self-contained versioned saved artifacts; delete redundant orchestration. | Explicit-capacity allocation requests now reuse the retained session and identity owner; capacity-specific answers are isolated from unrestricted exports. Unified physical materialization and remaining orchestration are open |
@@ -1316,3 +1316,48 @@ Validation receipts are in `.local/family-allocation-session/`:
   Physical arithmetic remains 4,600 operations.
 - No new device execution, full corpus closure or minimum-capacity claim is
   established by these checks.
+
+## Compact ordered lifetime selectors
+
+After certifying strict reference order, the repeated allocator now retains only
+the first candidate for each identical exact activity in its forward scan and
+the last in its reverse scan. If two candidates have the same activity, the
+later one cannot be first: whenever it exists, the earlier one also exists.
+The symmetric argument applies to last selection. This removes dead candidates
+before constructing their selection guards or comparing boundary pairs. It
+uses expression identity in the same arena, not guard-equivalence solving.
+
+The existing order qualification remains mandatory. Conditionally ordered
+endpoints keep the general algorithm; mixed-direction groups keep all required
+completion bounds. Demand records, communication instances and physical reuse
+obligations are unchanged. This compacts the selector interface used by reuse
+queries; it does not erase record provenance or finish general family-level
+allocation.
+
+For Persistent's shared candidate, the retained first/last alternatives each
+fall from 1,544 to 80, boundary-pair visits from 894,583 to 1,779, and proof-node
+visits from 2,046,877 to 15,749. The 21 lanes and 1,544 input records are unchanged.
+The `duplicate_extrema_guards` counter records the removed selection candidates
+separately from the input inventory.
+
+The independent occurrence oracle enumerates all 256 combinations of eight
+predicates, including empty/all-absent cases, 128 repeated candidates, reversed
+record order, conditional occurrence order, and mixed directions. It checks
+actual selected occurrences and bounds both retained selector count and newly
+constructed selection arithmetic by the distinct supplied predicates on the
+certified path. This guarantee is restricted to identical activities; arbitrary
+guarded selectors can still require their full supplied representation.
+
+Validation against `4ef0797b6` passes the allocation/profile, repeated-family and
+candidate-request tests. Persistent's full logical traces remain identical on
+cores 0, 15, 16 and 19, and physical traces pass independent matching and causal
+reuse checks with IDs 0–5. Its static command counts and 4,600 physical arithmetic
+operations are unchanged. These are compiler-side lifetime-summary reductions,
+not fewer executed synchronization commands. Receipts are retained under
+`.local/family-allocation-extrema/`.
+
+Three serial paired runs, alternating baseline/candidate order and using the
+same explicit six-ID request, measured median logical-pass time including
+allocation support at 1.734 seconds before and 1.499 seconds after (about 14%
+lower). No concurrent builds or tests ran during the pairs. This is one host's
+compiler measurement; it does not imply a device-latency improvement.
