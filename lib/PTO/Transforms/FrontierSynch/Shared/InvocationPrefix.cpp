@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // One count per source pipe, one acquisition watermark per selected direction.
 #include "InvocationPrefix.h"
+#include "PrefixExpressionProfile.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOSyncUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -188,6 +189,7 @@ FailureOr<std::unique_ptr<StructuredPrivateState>> materializeInvocationPrefix(
     func::FuncOp original, const InvocationPrefixRecipe& recipe, PrivateStateError& error)
 {
     if (failed(check(original, recipe, error))) { return failure(); }
+    if (recipe.expressionProfile) { recipe.expressionProfile->resetEmission(); }
     original.getContext()->getOrLoadDialect<PTODialect>();
     auto slots = recipe.slots;
     const auto layout = appendSlots(original, recipe, slots);

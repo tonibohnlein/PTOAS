@@ -8,6 +8,7 @@
 // Unfold original opaque evaluations independently from retained-window history emission.
 #include "../../lib/PTO/Transforms/FrontierSynch/Structured/BoundedPrefixRealization.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/IterationPredicates.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/PrefixExpressionProfile.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RegionalCapabilitiesInternal.h"
 #include "PTO/IR/PTO.h"
@@ -514,6 +515,15 @@ bool runCase(MLIRContext& context, unsigned trips, unsigned invocations, unsigne
     auto prepared = fs::materializeInvocationPrefix(f.function, recipe, diagnostic);
     if (failed(prepared)) {
         llvm::errs() << diagnostic.message << "\n";
+        return false;
+    }
+    if (!recipe.expressionProfile) { return false; }
+    const auto profile = recipe.expressionProfile->report();
+    const int64_t expected = trips ? 1 : 0;
+    if (profile.getInteger("requests") != expected || profile.getInteger("emissions") != expected ||
+        (expected && profile.getInteger("constructed_operations").value_or(0) <= 0) ||
+        profile.getInteger("constructed_operations") != profile.getInteger("retained_operations")) {
+        llvm::errs() << "bounded profile trips=" << trips << " " << profile.getInteger("requests").value_or(-1) << "\n";
         return false;
     }
     const auto masks = uint64_t(1) << (trips * invocations);

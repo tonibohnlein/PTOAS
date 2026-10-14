@@ -88,6 +88,7 @@ void profileLogicalControl(func::FuncOp function, const PreparedLogicalPlan& pla
         {"recipe_sites", plan.familyRecipe ? familyEndpointPieceCount(*plan.familyRecipe) : 0},
         {"preparation", preparation(plan)},
         {"recipe_forms", familyForms(plan)},
+        {"prefix_expressions", plan.privateState ? plan.privateState->expressionProfile() : llvm::json::Object{}},
         {"family_materialization", llvm::json::Object{
             {"shared_published", plan.familyWork.sharedPublished},
             {"shared_requests", plan.familyWork.sharedRequests},

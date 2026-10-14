@@ -7,8 +7,12 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Realize retained Boolean evaluations without evaluating opaque producers again.
 #include "PrefixExpression.h"
+#include "PrefixExpressionProfile.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "../../InsertSync/SyncScalarReplay.h"
 #include "mlir/IR/Matchers.h"
+#include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 namespace mlir::pto::frontiersynch {
 namespace {
 using Expr = RegionExpressions::Id;
@@ -135,20 +139,31 @@ struct ExpressionRecipe {
     Operation* cut;
     std::vector<Binding> bindings;
     std::optional<bool> historyProved;
+    std::shared_ptr<PrefixExpressionProfile> profile;
+    PrefixExpressionProfile::Entry* work = nullptr;
     FailureOr<Value> emit(OpBuilder& builder, const IRMapping& mapping,
                           ArrayRef<Value> state, std::string& error)
     {
         auto& e = *arena;
+        accumulateCost(work->emissions, 1);
         Block scratch;
         OpBuilder detached(builder.getContext()); detached.setInsertionPointToEnd(&scratch);
+        auto attempt = [&]() {
+            accumulateCost(work->attempts, 1);
+            accumulateCost(work->constructed, scratch.getOperations().size());
+        };
         auto context = contextFor(e, root, cut, mapping);
         auto value = e.emitContextual(root, detached, cut, context);
+        attempt();
         if (failed(value)) {
+            accumulateCost(work->directFailures, 1);
             const std::string directError = e.lastEmissionError();
             scratch.clear(); detached.setInsertionPointToEnd(&scratch);
             if (e.inactiveByThresholds(root)) {
+                accumulateCost(work->inactiveAttempts, 1);
                 RegionExpressions::CutEmission inactive;
                 value = e.emitContextual(e.boolean(false), detached, cut, inactive);
+                attempt();
             } else {
                 if (!historyProved) {
                     historyProved = !bindings.empty() && llvm::all_of(bindings, [&](const Binding& binding) {
@@ -156,6 +171,7 @@ struct ExpressionRecipe {
                     });
                 }
                 if (!*historyProved) { error = directError; return failure(); }
+                accumulateCost(work->historyAttempts, 1);
                 context = contextFor(e, root, cut, mapping);
                 for (const auto& binding : bindings) {
                     if (binding.validSlot >= state.size() || !state[binding.valueSlot].getType().isInteger(1) ||
@@ -168,19 +184,89 @@ struct ExpressionRecipe {
                     context.cofactors[binding.input] = binding.input;
                 }
                 value = e.emitContextual(root, detached, cut, context);
+                attempt();
             }
             if (failed(value)) { error = e.lastEmissionError(); return failure(); }
         }
+        const auto kept = scratch.getOperations().size();
+        accumulateCost(work->retained, kept);
+        work->maximumRetained = std::max(work->maximumRetained, static_cast<uint64_t>(kept));
         builder.getInsertionBlock()->getOperations().splice(builder.getInsertionPoint(), scratch.getOperations());
         return *value;
     }
 };
 } // namespace
+PrefixExpressionProfile::Entry& PrefixExpressionProfile::request(
+    const void* arena, uint32_t root, Operation* cut, const std::string& producer, uint64_t distance)
+{
+    auto [position, added] = entries.try_emplace({arena, root, cut, producer, distance});
+    auto& entry = position->second;
+    if (added) {
+        entry.arena = arenas.try_emplace(arena, arenas.size()).first->second;
+        entry.root = root; entry.producer = producer; entry.distance = distance;
+        entry.cut = cut->getName().getStringRef().str();
+        llvm::raw_string_ostream location(entry.location);
+        cut->getLoc().print(location);
+    }
+    accumulateCost(entry.requests, 1);
+    return entry;
+}
+void PrefixExpressionProfile::resetEmission()
+{
+    for (auto& [key, entry] : entries) {
+        entry.emissions = entry.attempts = entry.directFailures = entry.inactiveAttempts = entry.historyAttempts = 0;
+        entry.constructed = entry.retained = entry.maximumRetained = 0;
+    }
+}
+llvm::json::Object PrefixExpressionProfile::report() const
+{
+    Entry totals;
+    std::vector<const Entry*> largest;
+    for (const auto& [key, entry] : entries) {
+        accumulateCost(totals.requests, entry.requests);
+        accumulateCost(totals.emissions, entry.emissions);
+        accumulateCost(totals.attempts, entry.attempts);
+        accumulateCost(totals.directFailures, entry.directFailures);
+        accumulateCost(totals.inactiveAttempts, entry.inactiveAttempts);
+        accumulateCost(totals.historyAttempts, entry.historyAttempts);
+        accumulateCost(totals.constructed, entry.constructed);
+        accumulateCost(totals.retained, entry.retained);
+        largest.push_back(&entry);
+    }
+    llvm::sort(largest, [](const Entry* a, const Entry* b) {
+        if (a->constructed != b->constructed) { return a->constructed > b->constructed; }
+        return std::tie(a->arena, a->root, a->location) < std::tie(b->arena, b->root, b->location);
+    });
+    auto counts = [](const Entry& entry) {
+        return llvm::json::Object{{"requests", entry.requests}, {"emissions", entry.emissions},
+            {"attempts", entry.attempts}, {"direct_failures", entry.directFailures},
+            {"inactive_attempts", entry.inactiveAttempts}, {"history_attempts", entry.historyAttempts},
+            {"constructed_operations", entry.constructed}, {"retained_operations", entry.retained}};
+    };
+    auto result = counts(totals);
+    result["unique_recipes"] = entries.size();
+    result["scope"] = "latest-materialization-attempt";
+    llvm::json::Array top;
+    for (const auto* entry : ArrayRef<const Entry*>(largest).take_front(16)) {
+        auto item = counts(*entry);
+        item["arena"] = entry->arena; item["root"] = entry->root;
+        item["producer"] = entry->producer; item["distance"] = entry->distance;
+        item["cut"] = entry->cut; item["location"] = entry->location;
+        item["maximum_retained_operations"] = entry->maximumRetained;
+        top.push_back(std::move(item));
+    }
+    result["largest_recipes"] = std::move(top);
+    return result;
+}
 PrefixIncomingSelector preparePrefixExpression(std::shared_ptr<RegionExpressions> arena,
     Expr root, Operation* cut, InvocationPrefixCollection& collection)
 {
     auto recipe = std::make_shared<ExpressionRecipe>();
     recipe->arena = std::move(arena); recipe->root = root; recipe->cut = cut;
+    auto& profile = collection.recipe().expressionProfile;
+    if (!profile) { profile = std::make_shared<PrefixExpressionProfile>(); }
+    recipe->profile = profile;
+    recipe->work = &profile->request(recipe->arena.get(), root, cut);
     recipe->bindings = collectBindings(recipe->arena, root, cut, collection);
     return [recipe](OpBuilder& b, const IRMapping& mapping, ArrayRef<Value> state, std::string& error) {
         return recipe->emit(b, mapping, state, error);

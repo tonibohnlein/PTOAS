@@ -9,6 +9,7 @@
 #ifndef PTO_FRONTIERSYNCH_PRIVATESTATEPLAN_H
 #define PTO_FRONTIERSYNCH_PRIVATESTATEPLAN_H
 #include "InvocationPrefix.h"
+#include "llvm/Support/JSON.h"
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 namespace mlir::pto::frontiersynch {
 enum class PrivateStateTarget { Unavailable, ScalarControl64 };
@@ -17,6 +18,7 @@ public:
     ~PrivateStatePlan();
     LogicalResult insert(func::FuncOp function, PreparedLogicalPlan& plan);
     func::FuncOp preparedFunction() const;
+    llvm::json::Object expressionProfile() const;
     // Trusted module coordinator only: call for EVERY pending private plan
     // before changing any sibling body. Subsequent edits may only insert the
     // already prepared synchronization or materialize physical section guards.
@@ -34,6 +36,7 @@ private:
     std::string originalText, functionText, contextText, stagedText;
     std::vector<Operation*> originalOperations;
     std::unique_ptr<StructuredPrivateState> staged;
+    std::shared_ptr<const PrefixExpressionProfile> expressions;
     std::shared_ptr<const MathematicalResult> mathematics;
     int64_t planId = 0;
     bool consumed = false;
