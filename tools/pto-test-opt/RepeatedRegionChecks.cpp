@@ -12,6 +12,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RepeatedRegionInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RepeatedAllocation.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/RegionalConstantPalette.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/OccurrenceBinding.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RepeatedLaneAllocation.h"
 #include <map>
@@ -442,6 +443,88 @@ bool allocationCheck(func::FuncOp function, Operation* anchor, scf::ForOp loop,
     }
     return recordsSeen.size() == specs.size() && e.error().empty();
 }
+// Concrete handoff intervals are the oracle. A common residual predicate may
+// guard many sequential lifetimes; overlapping envelopes must retain pairwise
+// compatibility, and genuinely overlapping live intervals must stay separate.
+bool checkGuardedPaletteBounds(func::FuncOp function, Operation* anchor,
+                               unsigned count, unsigned layout, unsigned guardMode)
+{
+    fs::RegionalAnalysis body;
+    body.expressions = std::make_shared<fs::RegionExpressions>();
+    body.capabilities.exactQueries = true;
+    auto& e = *body.expressions;
+    const auto gate = e.input(function.getArgument(1));
+    const auto other = e.eq(e.input(function.getArgument(0)), e.constant(0));
+    std::vector<pto::CompoundInstanceElement> phases;
+    phases.reserve(2);
+    for (auto pipe : {pto::PipelineType::PIPE_MTE1, pto::PipelineType::PIPE_M}) {
+        phases.emplace_back(phases.size(), SmallVector<const pto::BaseMemInfo*>{},
+                            SmallVector<const pto::BaseMemInfo*>{}, pipe, anchor->getName());
+        phases.back().elementOp = anchor;
+        body.anchors.push_back({&phases.back(), {}, {anchor->getBlock(), anchor},
+                               {anchor->getBlock(), anchor->getNextNode()}});
+        body.occurrenceLoops.push_back({});
+    }
+    std::map<std::pair<uint32_t, uint64_t>, fs::RegionExpressions::Id> presence;
+    fs::RegionalAllocationSummary input;
+    const unsigned groups = layout == 2 ? 2 : 3;
+    for (unsigned g = 0; g < groups; ++g) {
+        fs::RegionalAllocationGroup group{static_cast<uint32_t>(phases[0].kPipeValue),
+                                         static_cast<uint32_t>(phases[1].kPipeValue), 1, {}};
+        const auto active = g % 2 && guardMode ? (guardMode == 1 ? e.lnot(gate) : other) : gate;
+        for (unsigned i = 0; i < count; ++i) {
+            const uint64_t source = layout == 1 ? i * groups + g : g * count + i;
+            const uint64_t target = source + (layout == 2 ? groups : 0);
+            group.members.push_back({g * count + i, 0, 0,
+                {0, e.constant(source), fs::PeriodicEventKind::Start},
+                {1, e.constant(target), fs::PeriodicEventKind::Completion}, active});
+            presence.emplace(std::make_pair(0U, source), active);
+            presence.emplace(std::make_pair(1U, target), active);
+        }
+        input.groups.push_back(std::move(group));
+    }
+    body.presence = [&](fs::RegionalEvent event) -> std::optional<fs::RegionExpressions::Id> {
+        auto ordinal = e.constantValue(event.ordinal);
+        if (!ordinal) { return {}; }
+        auto found = presence.find({event.type, *ordinal});
+        return found == presence.end() ? e.boolean(false) : found->second;
+    };
+    unsigned queries = 0;
+    body.reachability = [&](fs::RegionalEvent a, fs::RegionalEvent b) {
+        ++queries;
+        const auto x = *e.constantValue(a.ordinal), y = *e.constantValue(b.ordinal);
+        const bool forward = std::make_pair(x, a.type) < std::make_pair(y, b.type) ||
+            (x == y && a.type == b.type && a.kind <= b.kind);
+        return std::optional(e.land(e.land(*body.presence(a), *body.presence(b)), e.boolean(forward)));
+    };
+    auto output = fs::coalesceConstantRegionalAllocation(body, input);
+    if (!output || (layout == 0 && guardMode == 0 && queries > 4 * groups)) { return false; }
+    const unsigned expectedGroups = layout == 2 && guardMode != 1 ? 2 : 1;
+    if (output->groups.size() != expectedGroups) { return false; }
+    std::set<uint32_t> records;
+    for (const auto& group : output->groups) {
+        for (const auto& member : group.members) { records.insert(member.record); }
+        for (unsigned mask = 0; mask < 4; ++mask) {
+            fs::RegionExpressions::Transaction scratch(e);
+            fs::RegionExpressions::Substitution values({{gate, e.boolean(mask & 1)},
+                {other, e.boolean(mask & 2)}});
+            std::vector<std::pair<uint64_t, uint64_t>> live;
+            for (const auto& member : group.members) {
+                auto active = e.constantValue(e.substitute(member.active, values));
+                if (!active) { return false; }
+                if (*active) {
+                    live.emplace_back(*e.constantValue(member.firstSource.ordinal),
+                                      *e.constantValue(member.lastTarget.ordinal));
+                }
+            }
+            std::sort(live.begin(), live.end());
+            for (std::size_t i = 1; i < live.size(); ++i) {
+                if (live[i - 1].second >= live[i].first) { return false; }
+            }
+        }
+    }
+    return records.size() == groups * count;
+}
 // Compare extrema with direct enumeration of active original occurrences.
 // Scrambled provenance does not affect order; a shuffled endpoint inventory
 // exercises coordinate sorting; conditional order exercises the fallback,
@@ -657,6 +740,14 @@ bool runRepeatedRegionChecks(func::FuncOp function)
     if (!checkOrderedExtrema(function, 128, true, false) ||
         !checkOrderedExtrema(function, 32, false, true) ||
         !checkOrderedExtrema(function, 8, false, false, true)) { return false; }
+    for (unsigned guardMode = 0; guardMode < 3; ++guardMode) {
+        for (unsigned count : {1U, 8U, 128U}) {
+            for (unsigned layout : {0U, 1U}) {
+                if (!checkGuardedPaletteBounds(function, anchor, count, layout, guardMode)) { return false; }
+            }
+        }
+        if (!checkGuardedPaletteBounds(function, anchor, 1, 2, guardMode)) { return false; }
+    }
     uint64_t allocations = 0;
     fs::RepeatedLaneProofCost proofCost;
     for (unsigned q = 1; q <= 3; ++q) {

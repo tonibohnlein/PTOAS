@@ -1,0 +1,734 @@
+{
+  "revision": "c088495d83ed5d46a5470fe7ce67844386d21d02",
+  "alias_policy": "may-not-alias",
+  "eligible_ids": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "scope": "Pinned planner and allocator; fixed retained C++ emitter identified by hash; no device execution. Timings are single diagnostic runs under a 240-second watchdog, not paired performance measurements.",
+  "tools": {
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt": "dfde3b319089878027b553963a1656772a522b22bb1663e9ab8ba69f954cbbaf",
+    ".local/shared-alias/ptoas": "a345d25bb3251bcc887079c311f56a81f774748b9114c7872d5be795f94d185a"
+  },
+  "cases": [
+    {
+      "id": "tilelang_gemm",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/tilelang/input.pto",
+      "sha256": "33e218f48e65a05c0b115771393e6c28bdf62c22ee361fd2ca7d895d42cb9a41",
+      "stages": {
+        "logical": {
+          "success": true,
+          "seconds": 0.20176521502435207,
+          "status": "finished"
+        },
+        "allocation": {
+          "success": true,
+          "seconds": 0.20173151791095734,
+          "status": "finished"
+        },
+        "cpp": {
+          "success": true,
+          "seconds": 0.20221248734742403,
+          "status": "finished"
+        }
+      },
+      "logical_metrics": {
+        "bytes": 159759,
+        "lines": 1530,
+        "sets": 14,
+        "waits": 14,
+        "barriers": 1,
+        "ifs": 30,
+        "arithmetic": 1401,
+        "selects": 306,
+        "div_rem": 23,
+        "retained_record_labels": 194,
+        "recognition": {
+          "selected_logical_backend": "numerical-periodic",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 108018,
+        "lines": 1692,
+        "sets": 14,
+        "waits": 14,
+        "barriers": 1,
+        "ifs": 30,
+        "arithmetic": 1563,
+        "selects": 306,
+        "div_rem": 71,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "numerical-periodic",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 18672,
+        "lines": 527,
+        "ifs": 25,
+        "ternaries": 0
+      },
+      "repeated_work": []
+    },
+    {
+      "id": "pypto_gemm",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/pypto/input.pto",
+      "sha256": "b89e787a23c72ba96a0669e96653faea7a4601c07b11d297f0114cc23689a33b",
+      "stages": {
+        "logical": {
+          "success": true,
+          "seconds": 0.2032276950776577,
+          "status": "finished"
+        },
+        "allocation": {
+          "success": true,
+          "seconds": 0.20159333990886807,
+          "status": "finished"
+        },
+        "cpp": {
+          "success": true,
+          "seconds": 0.20205507427453995,
+          "status": "finished"
+        }
+      },
+      "logical_metrics": {
+        "bytes": 142951,
+        "lines": 1305,
+        "sets": 12,
+        "waits": 12,
+        "barriers": 1,
+        "ifs": 25,
+        "arithmetic": 1196,
+        "selects": 248,
+        "div_rem": 22,
+        "retained_record_labels": 194,
+        "recognition": {
+          "selected_logical_backend": "numerical-periodic",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 93926,
+        "lines": 1481,
+        "sets": 12,
+        "waits": 12,
+        "barriers": 1,
+        "ifs": 25,
+        "arithmetic": 1372,
+        "selects": 248,
+        "div_rem": 76,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "numerical-periodic",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 16131,
+        "lines": 456,
+        "ifs": 22,
+        "ternaries": 0
+      },
+      "repeated_work": []
+    },
+    {
+      "id": "persistent_gemm",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto",
+      "sha256": "cc890b426ae89da77223b93a5ba4ad0b6f03d418f22f9bde65aea05fcde6324e",
+      "stages": {
+        "logical": {
+          "success": true,
+          "seconds": 1.7032911251299083,
+          "status": "finished"
+        },
+        "allocation": {
+          "success": true,
+          "seconds": 0.20217449171468616,
+          "status": "finished"
+        },
+        "cpp": {
+          "success": true,
+          "seconds": 0.20207881787791848,
+          "status": "finished"
+        }
+      },
+      "logical_metrics": {
+        "bytes": 1042762,
+        "lines": 4313,
+        "sets": 56,
+        "waits": 56,
+        "barriers": 1,
+        "ifs": 117,
+        "arithmetic": 3924,
+        "selects": 768,
+        "div_rem": 127,
+        "retained_record_labels": 1544,
+        "recognition": {
+          "selected_logical_backend": "identity-sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 295635,
+        "lines": 4989,
+        "sets": 56,
+        "waits": 56,
+        "barriers": 1,
+        "ifs": 117,
+        "arithmetic": 4600,
+        "selects": 808,
+        "div_rem": 319,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "identity-sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 44433,
+        "lines": 1310,
+        "ifs": 115,
+        "ternaries": 95
+      },
+      "repeated_work": [
+        {
+          "activity_computations": 0,
+          "activity_ns": 0,
+          "activity_requests": 0,
+          "boundary_pairs": 0,
+          "candidate_gaps": 0,
+          "coalescing_cache_hits": 0,
+          "coalescing_ns": 1254493999,
+          "constant_computations": 0,
+          "constant_requests": 0,
+          "duplicate_extrema_guards": 0,
+          "elapsed_ns": 1260805918,
+          "extrema_candidates": 0,
+          "extrema_comparisons": 0,
+          "first_alternatives": 0,
+          "implication_computations": 0,
+          "implication_requests": 0,
+          "lanes": 0,
+          "last_alternatives": 0,
+          "matrix_pairs": 0,
+          "ordered_extrema_lists": 0,
+          "partition_attempts": 0,
+          "partition_matrix_entries": 0,
+          "proof_node_visits": 0,
+          "proof_ns": 0,
+          "relative_computations": 0,
+          "relative_ns": 0,
+          "relative_queries": 0
+        },
+        {
+          "activity_computations": 0,
+          "activity_ns": 0,
+          "activity_requests": 0,
+          "boundary_pairs": 0,
+          "candidate_gaps": 0,
+          "coalescing_cache_hits": 0,
+          "coalescing_ns": 1343,
+          "constant_computations": 0,
+          "constant_requests": 0,
+          "duplicate_extrema_guards": 0,
+          "elapsed_ns": 3109,
+          "extrema_candidates": 0,
+          "extrema_comparisons": 0,
+          "first_alternatives": 0,
+          "implication_computations": 0,
+          "implication_requests": 0,
+          "lanes": 0,
+          "last_alternatives": 0,
+          "matrix_pairs": 0,
+          "ordered_extrema_lists": 0,
+          "partition_attempts": 0,
+          "partition_matrix_entries": 0,
+          "proof_node_visits": 0,
+          "proof_ns": 0,
+          "relative_computations": 0,
+          "relative_ns": 0,
+          "relative_queries": 0
+        },
+        {
+          "activity_computations": 94,
+          "activity_ns": 23434,
+          "activity_requests": 1779,
+          "boundary_pairs": 1779,
+          "candidate_gaps": 162,
+          "coalescing_cache_hits": 1,
+          "coalescing_ns": 4461,
+          "constant_computations": 12,
+          "constant_requests": 114,
+          "duplicate_extrema_guards": 2928,
+          "elapsed_ns": 42668481,
+          "extrema_candidates": 1544,
+          "extrema_comparisons": 4534,
+          "first_alternatives": 80,
+          "implication_computations": 158,
+          "implication_requests": 2979,
+          "lanes": 21,
+          "last_alternatives": 80,
+          "matrix_pairs": 105,
+          "ordered_extrema_lists": 42,
+          "partition_attempts": 0,
+          "partition_matrix_entries": 0,
+          "proof_node_visits": 15749,
+          "proof_ns": 191817,
+          "relative_computations": 1200,
+          "relative_ns": 34967978,
+          "relative_queries": 1200
+        },
+        {
+          "activity_computations": 0,
+          "activity_ns": 0,
+          "activity_requests": 0,
+          "boundary_pairs": 0,
+          "candidate_gaps": 0,
+          "coalescing_cache_hits": 1,
+          "coalescing_ns": 272,
+          "constant_computations": 0,
+          "constant_requests": 0,
+          "duplicate_extrema_guards": 0,
+          "elapsed_ns": 3338,
+          "extrema_candidates": 0,
+          "extrema_comparisons": 0,
+          "first_alternatives": 0,
+          "implication_computations": 0,
+          "implication_requests": 0,
+          "lanes": 0,
+          "last_alternatives": 0,
+          "matrix_pairs": 0,
+          "ordered_extrema_lists": 0,
+          "partition_attempts": 0,
+          "partition_matrix_entries": 0,
+          "proof_node_visits": 0,
+          "proof_ns": 0,
+          "relative_computations": 0,
+          "relative_ns": 0,
+          "relative_queries": 0
+        }
+      ]
+    },
+    {
+      "id": "group_norm",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/group_norm/input.pto",
+      "sha256": "11f09d6fbbc109851266cd73a77ec321a445bff98311fee33acfb6bfb71ddfbb",
+      "stages": {
+        "logical": {
+          "success": true,
+          "seconds": 0.20221872441470623,
+          "status": "finished"
+        },
+        "allocation": {
+          "success": false,
+          "seconds": 0.201565301977098,
+          "status": "finished",
+          "diagnostics": [
+            "regional lane assignment not certified within directed capacity; no minimum-capacity claim; scarcity repair not implemented yet"
+          ]
+        }
+      },
+      "logical_metrics": {
+        "bytes": 94576,
+        "lines": 617,
+        "sets": 17,
+        "waits": 17,
+        "barriers": 24,
+        "ifs": 60,
+        "arithmetic": 335,
+        "selects": 0,
+        "div_rem": 5,
+        "retained_record_labels": 52,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "repeated_work": []
+    },
+    {
+      "id": "causal_conv1d_prefill",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/causal_conv1d_prefill/input.pto",
+      "sha256": "4a2da46ad42fbded8d15dd4b64cdabc93ae0df9570ea6d5d165712361ce16831",
+      "stages": {
+        "logical": {
+          "success": true,
+          "seconds": 87.52672126702964,
+          "status": "finished"
+        },
+        "allocation": {
+          "success": false,
+          "seconds": 0.5031967530958354,
+          "status": "finished",
+          "diagnostics": [
+            "physical allocation requires a supported finite or uniform allocation export; allocation adapter not implemented yet"
+          ]
+        }
+      },
+      "logical_metrics": {
+        "bytes": 4516729,
+        "lines": 90864,
+        "sets": 59,
+        "waits": 84,
+        "barriers": 62,
+        "ifs": 213,
+        "arithmetic": 90034,
+        "selects": 2763,
+        "div_rem": 3,
+        "retained_record_labels": 131,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "unavailable"
+        }
+      },
+      "repeated_work": []
+    },
+    {
+      "id": "causal_conv1d_decode",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/causal_conv1d_decode/input.pto",
+      "sha256": "62eb4645ba3457dea9770c16f0aad959afe0db28325dcde353351f1ee95fa48e",
+      "stages": {
+        "logical": {
+          "success": true,
+          "seconds": 0.3025133339688182,
+          "status": "finished"
+        },
+        "allocation": {
+          "success": false,
+          "seconds": 0.20272355386987329,
+          "status": "finished",
+          "diagnostics": [
+            "regional lane assignment not certified within directed capacity; no minimum-capacity claim; scarcity repair not implemented yet"
+          ]
+        }
+      },
+      "logical_metrics": {
+        "bytes": 197185,
+        "lines": 3057,
+        "sets": 22,
+        "waits": 22,
+        "barriers": 22,
+        "ifs": 66,
+        "arithmetic": 2761,
+        "selects": 881,
+        "div_rem": 0,
+        "retained_record_labels": 62,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "repeated_work": []
+    },
+    {
+      "id": "gdn_chunk_cumsum",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/gdn_chunk_cumsum/input.pto",
+      "sha256": "8080a5290a21244f734ad8c40497e04e382632a8b52ce4e7cf90cca63dd6082f",
+      "stages": {
+        "logical": {
+          "success": true,
+          "seconds": 0.4025451340712607,
+          "status": "finished"
+        },
+        "allocation": {
+          "success": true,
+          "seconds": 0.20285486290231347,
+          "status": "finished"
+        },
+        "cpp": {
+          "success": true,
+          "seconds": 0.2029502158984542,
+          "status": "finished"
+        }
+      },
+      "logical_metrics": {
+        "bytes": 23497,
+        "lines": 90,
+        "sets": 3,
+        "waits": 3,
+        "barriers": 1,
+        "ifs": 6,
+        "arithmetic": 42,
+        "selects": 1,
+        "div_rem": 2,
+        "retained_record_labels": 3,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 20058,
+        "lines": 90,
+        "sets": 3,
+        "waits": 3,
+        "barriers": 1,
+        "ifs": 6,
+        "arithmetic": 42,
+        "selects": 1,
+        "div_rem": 2,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 6186,
+        "lines": 189,
+        "ifs": 3,
+        "ternaries": 1
+      },
+      "repeated_work": []
+    },
+    {
+      "id": "mhc_head_mix",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/mhc_head_mix/input.pto",
+      "sha256": "86bc2900da82f40a7842b63b75ca47fa5b2bcee9cbcadebfda6b189a35409f8c",
+      "stages": {
+        "logical": {
+          "success": true,
+          "seconds": 0.30275553185492754,
+          "status": "finished"
+        },
+        "allocation": {
+          "success": true,
+          "seconds": 0.20238640811294317,
+          "status": "finished"
+        },
+        "cpp": {
+          "success": true,
+          "seconds": 0.20296846004202962,
+          "status": "finished"
+        }
+      },
+      "logical_metrics": {
+        "bytes": 26624,
+        "lines": 123,
+        "sets": 3,
+        "waits": 3,
+        "barriers": 7,
+        "ifs": 12,
+        "arithmetic": 45,
+        "selects": 2,
+        "div_rem": 0,
+        "retained_record_labels": 9,
+        "recognition": {
+          "selected_logical_backend": "sequence-endpoints",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 20196,
+        "lines": 123,
+        "sets": 3,
+        "waits": 3,
+        "barriers": 7,
+        "ifs": 12,
+        "arithmetic": 45,
+        "selects": 2,
+        "div_rem": 0,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "sequence-endpoints",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 9242,
+        "lines": 260,
+        "ifs": 2,
+        "ternaries": 2
+      },
+      "repeated_work": []
+    },
+    {
+      "id": "elementwise_pipeline",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/elementwise_pipeline/input.pto",
+      "sha256": "b51ac3ff4fb604eb133285347b7abc6c9866581a946e24e8250d4a2e3e57dfeb",
+      "stages": {
+        "logical": {
+          "success": true,
+          "seconds": 0.30305645102635026,
+          "status": "finished"
+        },
+        "allocation": {
+          "success": true,
+          "seconds": 0.20239547593519092,
+          "status": "finished"
+        },
+        "cpp": {
+          "success": true,
+          "seconds": 0.20224444195628166,
+          "status": "finished"
+        }
+      },
+      "logical_metrics": {
+        "bytes": 33056,
+        "lines": 254,
+        "sets": 9,
+        "waits": 9,
+        "barriers": 1,
+        "ifs": 19,
+        "arithmetic": 164,
+        "selects": 0,
+        "div_rem": 4,
+        "retained_record_labels": 9,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 24026,
+        "lines": 274,
+        "sets": 9,
+        "waits": 9,
+        "barriers": 1,
+        "ifs": 19,
+        "arithmetic": 184,
+        "selects": 0,
+        "div_rem": 14,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 14342,
+        "lines": 414,
+        "ifs": 17,
+        "ternaries": 0
+      },
+      "repeated_work": []
+    },
+    {
+      "id": "gated_delta_rule",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto",
+      "sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+      "stages": {
+        "logical": {
+          "success": true,
+          "seconds": 95.81792003987357,
+          "status": "finished"
+        },
+        "allocation": {
+          "success": false,
+          "seconds": 11.518708208575845,
+          "status": "finished",
+          "diagnostics": [
+            "invocation prefix physical allocation requires a missing lifetime export"
+          ]
+        }
+      },
+      "logical_metrics": {
+        "bytes": 152833726,
+        "lines": 2474347,
+        "sets": 172,
+        "waits": 47,
+        "barriers": 194,
+        "ifs": 195,
+        "arithmetic": 2473273,
+        "selects": 853003,
+        "div_rem": 617,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "identity-sequence",
+          "logical_realization": "invocation-prefix",
+          "allocation_support": "unavailable"
+        }
+      },
+      "repeated_work": []
+    },
+    {
+      "id": "lossless_block_cast",
+      "input": "test/npu_validation/benchmarks/auto_sync/prepared/lossless_block_cast/input.pto",
+      "sha256": "e24109f640f04054da0c493eb5e994e4fb6fbc263cf0da13924f08cadb824c13",
+      "stages": {
+        "logical": {
+          "success": true,
+          "seconds": 4.207543624099344,
+          "status": "finished"
+        },
+        "allocation": {
+          "success": true,
+          "seconds": 0.2038420639000833,
+          "status": "finished"
+        },
+        "cpp": {
+          "success": true,
+          "seconds": 0.2020870610140264,
+          "status": "finished"
+        }
+      },
+      "logical_metrics": {
+        "bytes": 78817,
+        "lines": 203,
+        "sets": 5,
+        "waits": 5,
+        "barriers": 4,
+        "ifs": 14,
+        "arithmetic": 83,
+        "selects": 2,
+        "div_rem": 5,
+        "retained_record_labels": 8,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "physical_metrics": {
+        "bytes": 71757,
+        "lines": 203,
+        "sets": 5,
+        "waits": 5,
+        "barriers": 4,
+        "ifs": 14,
+        "arithmetic": 83,
+        "selects": 2,
+        "div_rem": 5,
+        "retained_record_labels": 0,
+        "recognition": {
+          "selected_logical_backend": "sequence",
+          "logical_realization": "direct-endpoints",
+          "allocation_support": "available"
+        }
+      },
+      "cpp_metrics": {
+        "bytes": 13924,
+        "lines": 425,
+        "ifs": 3,
+        "ternaries": 4
+      },
+      "repeated_work": []
+    }
+  ],
+  "totals": {
+    "logical": 11,
+    "allocation": 7,
+    "cpp": 7
+  }
+}
