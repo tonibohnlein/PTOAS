@@ -213,6 +213,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Structured/RotationPattern.cpp
   FrontierSynch/Structured/RotationSelectors.cpp
   FrontierSynch/Structured/StorageLaneAllocation.cpp
+  FrontierSynch/Structured/VaryingBoundaryFrame.cpp
   FrontierSynch/Structured/VaryingBoundaryQuery.cpp
   FrontierSynch/Structured/VaryingRotatingAllocation.cpp
   FrontierSynch/Structured/VaryingRotatingRecognition.cpp

@@ -28,11 +28,22 @@ struct BoundaryCellSelectors {
     std::optional<BoundaryOccurrence> firstWriter, lastWriter;
     std::map<uint32_t, BoundaryOccurrence> firstReaders, lastReaders;
 };
+// Endpoint geometry for a supplied modulo assignment, not a reuse proof.
+// The original retained record is active at n in [0,K-1-displacement].
+// All rules in a group share one direction and width; groups remain separate.
+struct BoundaryLaneRule {
+    uint32_t record = 0, group = 0;
+    uint64_t stride = 1, phase = 0, width = 1;
+};
+struct BoundaryLaneSelectors {
+    std::optional<BoundaryOccurrence> firstPublication, lastConsumption;
+};
 struct RotatingBoundaryType {
     uint64_t representative = 0;
     std::vector<BoundaryCellSelectors> cells;
     std::map<uint32_t, BoundaryOccurrence> firstPayloads, lastPayloads;
     std::vector<BoundaryOccurrence> relationshipPorts;
+    std::map<std::pair<uint32_t, uint64_t>, BoundaryLaneSelectors> lanes;
     NumericalChainInterface index;
     std::map<std::tuple<uint32_t, uint64_t, PeriodicEventKind>, uint32_t> eventIds;
 };
@@ -41,6 +52,8 @@ struct BoundaryDemand {
 };
 struct RotatingBoundaryCertificate {
     std::string error;
+    // Certified head/tail frame radius. Initially the storage refresh bound;
+    // an allocation request may enlarge it to include its lane endpoints.
     uint64_t refresh = 1, period = 1, cutoff = 1;
     PeriodicAnalysis quotient;
     StorageProtectionPolicy storageProtection;
@@ -48,6 +61,7 @@ struct RotatingBoundaryCertificate {
     std::vector<RotatingBoundaryCell> cells;
     // Uniform conflict pairs across visits; these are not child prerequisites.
     std::vector<std::pair<uint32_t, uint32_t>> uniformCrossings;
+    std::vector<BoundaryLaneRule> laneRules;
     // Long types indexed by length modulo period. Construction charges this
     // explicit expansion; it is not polynomial in the encoded period.
     std::vector<RotatingBoundaryType> types;
@@ -63,6 +77,13 @@ RotatingBoundaryCertificate buildRotatingBoundaryCertificate(
     llvm::ArrayRef<PeriodicPayload> payloads, llvm::ArrayRef<RotatingFragment> fragments,
     llvm::ArrayRef<RotatingBoundaryCell> cells, llvm::ArrayRef<PeriodicRecord> prerequisites = {},
     uint64_t maximumTypes = 256, StorageProtectionPolicy protection = {});
+// Refine only the query representation of this retained quotient. Rules must
+// name its retained cross-pipe records. The caller certifies the assignment's
+// reuse separately; this operation establishes exact endpoint geometry and
+// uniform query classes. Representation limits/overflow return unavailable.
+RotatingBoundaryCertificate extendRotatingLaneBoundary(
+    const RotatingBoundaryCertificate& child, llvm::ArrayRef<BoundaryLaneRule> rules,
+    uint64_t maximumTypes = 256, uint64_t maximumLaneWidth = 6);
 // Preserve the child's analyzed native and demand relations. The caller proves
 // uniformCrossings from shared effects and supplies fragments whose protection
 // groups describe the enclosing visit scope, independently of the child index.
@@ -87,5 +108,11 @@ struct AffineRotatingVisits {
 // remains its quotient records, filtered by each visit's actual length.
 AffineRotatingVisits analyzeAffineRotatingVisits(
     RotatingBoundaryCertificate child, uint64_t slope, uint64_t intercept, uint64_t maximumStartup = 256);
+// Allocation-owned refinement. Crossing tables are translated from the
+// original schedule, never re-extracted or reduced. Original record activity
+// and matching must continue to use the original invocation certificate.
+AffineRotatingVisits extendAffineRotatingLaneBoundary(
+    const AffineRotatingVisits& original, llvm::ArrayRef<BoundaryLaneRule> rules,
+    uint64_t maximumTypes = 256, uint64_t maximumStartup = 256, uint64_t maximumLaneWidth = 6);
 } // namespace mlir::pto::frontiersynch
 #endif

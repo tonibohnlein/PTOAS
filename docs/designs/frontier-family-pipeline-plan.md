@@ -43,9 +43,9 @@ draft obligation; its excess formula must not authorize a production decision.
 | R1 (implemented) | SCC-ordered completion transfer | Concrete pending-state oracle, fixed-child containment, bounded fact propagation pass | M6; Section 6 |
 | R2 (implemented) | Core-chain periodic frontier specialization | Exact demand/query agreement, linear scan/relaxation scaling and period/residue scores | M1/M3; Section 5.4 |
 | R3 (qualifying paths implemented) | Writer-centered guarded storage and shared boundary scans | Exact conflict/boundary agreement, including macro envelopes and protected effects; read-heavy scaling | M1/M3; Section 5.2 |
-| R4a (numerical ordered path implemented) | Ordered periodic/repeated first-reuse sweeps | Certified applicability, linear query counts, exact capacity and finite-restriction checks | M2/M4; Propositions 7.8/7.10 |
+| R4a (numerical and qualified repeated paths implemented) | Ordered periodic/repeated first-reuse sweeps | Certified applicability, linear query counts, exact capacity and finite-restriction checks | M2/M4; Propositions 7.8/7.10 |
 | R4b (implemented for numerical periodic certificates) | Linear periodic allocation from suffix thresholds | Independent command-graph reuse/width oracle; no general assignment matrix on this route | M2/M4; Proposition 7.12 |
-| R4c (shared span extraction implemented; extended exports open) | Direct modulo-lane span extraction and qualified boundary export | Exact span/presence agreement without generation expansion; parent retry preserved | M2/M4; Proposition 7.13, Corollary 7.14 |
+| R4c (shared span extraction and qualified rotating exports implemented) | Direct modulo-lane span extraction and qualified boundary export | Exact span/presence agreement without generation expansion; parent retry preserved | M2/M4; Proposition 7.13, Corollary 7.14 |
 | R5 | Binding-aware multi-output control construction and producer query slicing | Less total constructed/live control, unchanged matching and payload order; Delta lifetime gate separate | M3/M4 |
 | R6 | Normalized logical graph allocation, owned session and closed-child completion import | Shared unified/split stages, allocation before scalar materialization, deleted superseded paths | M3/M4/M5/M6; Sections 6/8 |
 | R7 | Pinned pipeline, scaling and device closure | Distinct logical/physical/C++/device outcomes and reproducible receipts | M1/M6 |
@@ -55,6 +55,35 @@ points, not completed migrations. Continue with R4a–c, R5, R6, then R7.
 Run focused integration checks at each step; do not defer all production
 validation to R7. A newly measured bottleneck may justify resequencing, recorded
 with evidence rather than another untracked fallback.
+
+## Remaining execution batches at `1d6193795`
+
+These batches replace the remaining commit granularity of R4–R7. The R1–R7
+contracts and unfinished M1–M6 obligations below remain authoritative. Each
+batch includes production callers, independent regressions, relevant scaling
+and updated evidence in one reviewable commit. Local algebra changes,
+instrumentation and test fixes belong to the batch they support.
+
+| Batch | Integrated implementation | Acceptance gate |
+|---|---|---|
+| B1: Section 7 allocation and lane boundaries | Finish qualified periodic lane-boundary exports, connect them to variable-length/repeated allocation, and use ordered first-reuse capabilities for qualifying spans. Retain parent retry and economical independently certified mappings. | Exact lane presence/extrema and legal reuse on zero, short, partial and repeated invocations; scaling without generation expansion or an unnecessary pair matrix. |
+| B2: allocate the normalized family plan | Normalize recipe-level families and coactive command order before allocation. Compose certified ID maps with occurrence selectors, then materialize live code once. Consolidate retained-session and split-pipeline stage functions and remove replaced preparation paths. | Allocation can inspect the actual logical protocol without singleton scalar preparation; unified/split agreement, owned/versioned artifacts and unchanged communications/order. |
+| B3: compact guarded control and constructive exports | Address the remaining large guard/query roots through shared producer construction, restricted incoming queries where qualified, early multi-output slicing and binding-aware lowering. Finish applicable guarded/relational occurrence and capture transport through the common interface. Include residual read/read avoidance and complete control-cost attribution. | Independent demand/query/selector agreement, preserved invocation/history semantics, structural scaling and paired full preparation measurements; no speedup claim from deferred work alone. |
+| B4: physical lifetime export for prefix protocols | Export publication, acquisition, terminal cleanup and invocation lifetimes for the actual prefix command plan; integrate them with allocation and reservations. | Matching and consumption-before-republication proofs on empty, guarded and repeated executions; certify supported finite-ID assignments and distinguish infeasibility from unavailable evidence. Delta logical success alone does not complete this batch. |
+| B5: Section 6 production integration | Import qualified closed selectively synchronized children into SCC-local completion composition and provide coarse shared input for completion requests. Preserve child synchronization and carry outstanding effects across boundaries. | Concrete summary/coverage oracle, closed matching and joint resource certification, no automatic boundary drains, transactional failure and hardware/readiness restrictions. |
+| B6: pinned production and scaling closure | Run the eleven-kernel pipeline and remaining phased/corpus checks with pinned inputs/tools. Compare control, preparation, allocation and backend outcomes; retain failures and feed actionable defects back into the owning batch. | Reproducible stage-separated receipts, independent semantic traces, scaling results and paired timings. Device results remain a separate qualification gate supplied by device runs. |
+
+Proceed B1 -> B2 -> B3 -> B4 -> B5 -> B6, with focused production integration
+at each batch. Use incremental builds at coherent batch boundaries and at most
+two aggregate intensive workers; rebuild/retest earlier only to resolve a
+concrete failure or integration uncertainty. Commit after the whole batch's
+acceptance gate is reviewable, then continue the loop. No automatic push.
+
+Exact minimum demands and the accepted payload order remain admissibility
+conditions in every batch. Smaller control code or fewer IDs never compensates
+for added payload ordering. Missing capabilities and unproved capacity remain
+explicit. The fused explicit scan is subsequent work; upstream dynamic-subview
+proof integration remains deferred. Device tasks are not repository artifacts.
 
 ### R1: SCC-local conservative transfer
 
@@ -2285,3 +2314,55 @@ All three focused logical insertion, finite allocation and shared allocation
 suites pass. Incremental compilation, diff checks and the compliance prefilter
 pass. Receipts: `.local/r4-command-cuts/`. This closes the explicit R4 shared-cut
 semantics regression; remaining Section 7 span/export work is unchanged.
+
+
+### B1: allocation-only lane frames and ordered repeated spans
+
+The Section 7 batch adds allocation endpoint geometry to the existing rotating
+boundary certificate. A supplied modulo rule is preprocessed by its gcd and
+inverse; each physical lane receives its exact first publication and last
+consumption without enumerating the generation interval. Geometry is not a
+reuse proof. Rules are checked against original retained records, direction,
+width and phase, with checked radius, cutoff and period refinement.
+
+Affine variable-length allocation now keeps two explicit domains. Original
+visits own emitted records, activity, tuples, matching and crossings. A refined
+proof frame owns the larger attachment radius and finer universal query
+classes. The original and refined routes use one transfer builder, whose edges
+come from the original crossing schedule. Refinement occurs only after the
+incumbent fails; one immutable allocation assignment is retained across the
+retry. Refusal remains allocation-specific and leaves exact mathematics and
+logical preparation available. Every compatible exact visit and refined
+suffix residue is checked, including old suffix visits inside the new startup.
+
+Repeated allocation now attempts an ordered first-reuse sweep before allocating
+a pair matrix. It qualifies complete unphased invocations, unconditional unit
+lane spans, one consumer delay, and certified publication/consumption order.
+Only exact constant relative-query answers enter this route. The sweep assigns
+`(phase_count * source_visit + phase) mod width`, with at most twice the phase
+count plus six reuse queries and no pair matrix. Common modulo-span extraction
+exports the actual per-label extrema, including zero/noncoprime strides. Mixed,
+clipped, guarded or unavailable cases retain the existing general allocator.
+This is not a claim of minimum capacity for arbitrary repeated child spans.
+
+Validation includes 6,496 independently enumerated finite lane cases; 222,656
+refined event queries against an independently unfolded original graph; and
+185 ordered-allocation finite/scaling cases through the production allocator.
+The latter check emitted tuple maps, consumption-before-republication and exact
+lane extrema, with zero/short invocations, delayed crossings, multiple handoffs
+per lane, arbitrary provenance ordering, noncoprime strides, both partial-domain
+forms, unknown proofs and an over-six refusal. Adversarial refined-residue and
+unrelated-quotient tests reject incomplete evidence. Existing regional-expression
+checks also retain 125,856 event comparisons and 1,583 reuse-chain checks.
+
+Both reviewers accepted the source after removing repeated assignment
+construction, stopping failed frame work promptly, placing the sparse route
+before dense size restrictions, and checking quotient identity at the allocation
+API. Final public-pipeline receipts and acceptance are recorded with this batch.
+The first focused run passed eight of nine suites; the varying session audit
+assumed eager recognition before making a producer request. The audit helper
+now explicitly requests all forms, consistent with the existing lazy
+recognition contract. This test correction does not change production policy.
+Receipts are under `.local/b1-lane-boundaries/`. These are correctness and
+structural-work measurements; no paired kernel speedup or device result is
+claimed. Remaining work continues in B2 through B6 above.

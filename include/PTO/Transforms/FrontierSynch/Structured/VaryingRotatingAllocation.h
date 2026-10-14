@@ -31,11 +31,13 @@ std::optional<std::vector<VaryingAllocationRecord>> enumerateVaryingAllocationRe
 // means the numerical proof is unavailable; false means this relation fails.
 using VaryingBoundaryReuseQuery = std::function<std::optional<bool>(
     BoundaryOccurrence, PeriodicEventKind, BoundaryOccurrence, PeriodicEventKind, uint64_t, uint64_t)>;
-// Separate palettes have independently certified internal reuse. Global M3
-// lane matching assigns the one shared physical pool; directions are metadata.
+// Separate palettes have independently certified internal reuse. Matching is
+// directional. An optional proof domain refines the original radius/classes;
+// it controls universal queries only, never record activity or tuple identities.
 // Failure is an unavailable sufficient certificate, never hardware scarcity.
 std::shared_ptr<RegionalAllocationSummary> buildVaryingRotatingAllocation(
     const RegionalAnalysis& region, const AffineRotatingVisits& visits, RegionExpressions::Id trips,
-    ArrayRef<VaryingAllocationRecord> records, const VaryingBoundaryReuseQuery& query, std::string& error);
+    ArrayRef<VaryingAllocationRecord> records, const VaryingBoundaryReuseQuery& query, std::string& error,
+    const AffineRotatingVisits* proofDomain = nullptr);
 } // namespace mlir::pto::frontiersynch
 #endif

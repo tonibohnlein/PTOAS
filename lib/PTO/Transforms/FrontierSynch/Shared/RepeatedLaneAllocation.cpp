@@ -10,6 +10,7 @@
 #include "RepeatedRegionInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedAllocation.h"
+#include <algorithm>
 #include <chrono>
 #include <map>
 
@@ -121,7 +122,32 @@ struct Lane {
     RepeatedAllocationExtrema bounds;
     uint64_t delay = 0;
     bool child = true;
+    std::optional<std::pair<RegionalEvent, RegionalEvent>> orderedPhase;
 };
+
+// A unit lane may contain many handoffs. Retain unconditional extrema before
+// invocation clipping; these describe one complete phase of the repeated word.
+std::optional<std::pair<RegionalEvent, RegionalEvent>> orderedPhase(
+    const RegionalAnalysis& body, const RegionalAllocationGroup& group)
+{
+    if (group.terminalCleanup || group.members.empty()) { return std::nullopt; }
+    auto& e = *body.expressions;
+    auto first = group.members.front().firstSource, last = group.members.front().lastTarget;
+    for (const auto& member : group.members) {
+        auto sourcePresent = regionalPresence(body, member.firstSource);
+        auto targetPresent = regionalPresence(body, member.lastTarget);
+        if (e.constantValue(member.active) != 1 || !sourcePresent || !targetPresent ||
+            e.constantValue(*sourcePresent) != 1 || e.constantValue(*targetPresent) != 1) { return std::nullopt; }
+        auto earlier = regionalReferenceBefore(body, member.firstSource, first);
+        auto later = regionalReferenceBefore(body, last, member.lastTarget);
+        if (!earlier || !later) { return std::nullopt; }
+        const auto a = e.constantValue(*earlier), b = e.constantValue(*later);
+        if (!a || !b) { return std::nullopt; }
+        if (*a) { first = member.firstSource; }
+        if (*b) { last = member.lastTarget; }
+    }
+    return std::make_pair(std::move(first), std::move(last));
+}
 bool addLane(RepeatedRegionState& state, std::vector<Lane>& lanes,
              RegionalAllocationGroup group, uint64_t delay, bool child, RepeatedLaneProofCost* cost)
 {
@@ -130,6 +156,7 @@ bool addLane(RepeatedRegionState& state, std::vector<Lane>& lanes,
         if (child && (!member.tupleRule || !validPhysicalTupleRule(*member.tupleRule, 1) ||
                       !canRestrictRepeatedAllocationMember(state, member))) { return false; }
     }
+    auto phase = orderedPhase(state.body, group);
     // Intersect each member's invocation with the retained phase interval
     // before constructing the reuse graph. A clipped-away handoff still needs
     // a record mapping, but must not become a phantom vertex in a cycle.
@@ -140,7 +167,7 @@ bool addLane(RepeatedRegionState& state, std::vector<Lane>& lanes,
     }
     auto bounds = repeatedAllocationExtrema(state.body, group, cost ? &cost->extrema : nullptr);
     if (!bounds || bounds->first.empty() != bounds->second.empty()) { return false; }
-    lanes.push_back({std::move(group), std::move(*bounds), delay, child});
+    lanes.push_back({std::move(group), std::move(*bounds), delay, child, std::move(phase)});
     return true;
 }
 
@@ -212,7 +239,7 @@ std::optional<uint64_t> reuseCost(RepeatedRegionState& state, const Lane& from, 
 // by a fixed number of repeats. Only the at-most-six physical labels expand.
 void appendBounds(RepeatedRegionState& state, RegionalAllocationGroup& result,
                   const RegionalAllocationMember& member, uint64_t delay,
-                  uint64_t base, uint64_t width, uint64_t offset)
+                  uint64_t base, uint64_t width, uint64_t offset, uint64_t stride)
 {
     if (width == 1) {
         result.lanes[base].firstSources.push_back({member.firstSource, member.active});
@@ -222,7 +249,7 @@ void appendBounds(RepeatedRegionState& state, RegionalAllocationGroup& result,
     auto& e = state.e();
     const auto first = member.firstSource.visits.front();
     const auto last = e.sub(member.lastTarget.visits.front(), e.constant(delay));
-    const detail::ModuloLaneDomain domain(1, offset, width);
+    const detail::ModuloLaneDomain domain(stride, offset, width);
     for (uint64_t lane = 0; lane < width; ++lane) {
         const auto span = domain.span(e, first, last, member.active, lane);
         auto source = member.firstSource, target = member.lastTarget;
@@ -234,7 +261,7 @@ void appendBounds(RepeatedRegionState& state, RegionalAllocationGroup& result,
 }
 
 bool appendLane(RepeatedRegionState& state, RegionalAllocationGroup& result,
-                const Lane& lane, uint64_t base, uint64_t width, uint64_t offset)
+                const Lane& lane, uint64_t base, uint64_t width, uint64_t offset, uint64_t stride = 1)
 {
     for (auto member : lane.group.members) {
         auto direction = regionalAllocationDirection(lane.group, member);
@@ -243,12 +270,12 @@ bool appendLane(RepeatedRegionState& state, RegionalAllocationGroup& result,
         auto arity = lane.child ? member.tupleRule->coordinateCount : 0;
         if (arity == UINT64_MAX) { return false; }
         PhysicalTupleRule rule{arity + 1, base,
-            {{lane.child ? uint64_t(1) : uint64_t(0), 1, offset, width, 1}}};
+            {{lane.child ? uint64_t(1) : uint64_t(0), stride, offset, width, 1}}};
         member.tupleRule = std::move(rule);
         member.stride = 0;
         member.phase = 0;
         if (!liftRepeatedAllocationEnvelope(state, member, lane.delay)) { return false; }
-        appendBounds(state, result, member, lane.delay, base, width, offset);
+        appendBounds(state, result, member, lane.delay, base, width, offset, stride);
         result.members.push_back(std::move(member));
     }
     return true;
@@ -379,6 +406,84 @@ std::optional<PeriodicSharedAllocation> partitionAssignment(const PeriodicReuseM
     return result;
 }
 
+// The admitted word has ordered publications and ordered consumptions, all
+// present on the same complete generation interval. Native publication order
+// makes each exact reuse set a suffix; consumption order makes its first
+// reusable position monotone. Truncating the word preserves these witnesses.
+// Unknown queries or mixed/partial phases retain the general matrix route.
+std::optional<RegionalAllocationGroup> allocateOrderedLanes(
+    RepeatedRegionState& state, ArrayRef<Lane> lanes, ArrayRef<std::size_t> live, ReuseProof& proof)
+{
+    proof.count(&RepeatedLaneProofCost::orderedAttempts);
+    if (live.empty() || live.size() > UINT32_MAX || state.phaseCount != 1 ||
+        state.originalBegin != RegionExpressions::invalid ||
+        state.originalTrips != RegionExpressions::invalid) { return std::nullopt; }
+    auto& e = state.e();
+    const auto delay = lanes[live.front()].delay;
+    struct Phase { std::size_t lane; std::vector<uint64_t> key; };
+    std::vector<Phase> phases;
+    for (const auto index : live) {
+        const auto& lane = lanes[index];
+        if (!lane.orderedPhase || lane.delay != delay) { return std::nullopt; }
+        const auto& source = lane.orderedPhase->first;
+        std::vector<uint64_t> key;
+        for (const auto coordinate : source.visits) {
+            auto value = e.constantValue(coordinate);
+            if (!value) { return std::nullopt; }
+            key.push_back(*value);
+        }
+        auto ordinal = e.constantValue(source.ordinal);
+        if (!ordinal) { return std::nullopt; }
+        key.push_back(*ordinal); key.push_back(source.type);
+        if (!phases.empty() && phases.front().key.size() != key.size()) { return std::nullopt; }
+        phases.push_back({index, std::move(key)});
+    }
+    std::sort(phases.begin(), phases.end(), [](const auto& a, const auto& b) { return a.key < b.key; });
+    for (std::size_t i = 1; i < phases.size(); ++i) {
+        const auto& a = *lanes[phases[i - 1].lane].orderedPhase;
+        const auto& b = *lanes[phases[i].lane].orderedPhase;
+        auto sources = regionalReferenceBefore(state.body, a.first, b.first);
+        auto targets = regionalReferenceBefore(state.body, a.second, b.second);
+        if (!sources || !targets || e.constantValue(*sources) != 1 || e.constantValue(*targets) != 1) {
+            return std::nullopt;
+        }
+    }
+    proof.count(&RepeatedLaneProofCost::orderedPhases, phases.size());
+    const uint64_t count = phases.size();
+    uint64_t cursor = 1, width = 1;
+    for (uint64_t i = 0; i < count; ++i) {
+        cursor = std::max(cursor, i + 1);
+        bool found = false;
+        for (; cursor <= i + maximumPaletteWidth; ++cursor) {
+            if (cursor / count < delay) { continue; }
+            auto consumer = lanes[phases[i].lane].orderedPhase->second;
+            auto producer = lanes[phases[cursor % count].lane].orderedPhase->first;
+            consumer.kind = PeriodicEventKind::Completion;
+            producer.kind = PeriodicEventKind::Start;
+            proof.count(&RepeatedLaneProofCost::orderedReuseQueries);
+            auto query = proof.relativeQuery(consumer, producer, cursor / count - delay);
+            if (!query) { return std::nullopt; }
+            auto answer = e.constantValue(*query);
+            if (!answer) { return std::nullopt; }
+            if (*answer) { found = true; break; }
+        }
+        if (!found) { return std::nullopt; }
+        width = std::max(width, cursor - i);
+    }
+    RegionalAllocationGroup result{lanes.front().group.sourcePipe, lanes.front().group.targetPipe, width, {}};
+    result.lanes.resize(width);
+    for (uint64_t i = 0; i < count; ++i) {
+        if (!appendLane(state, result, lanes[phases[i].lane], 0, width, i % width, count % width)) {
+            return std::nullopt;
+        }
+    }
+    for (const auto& lane : lanes) {
+        if (lane.bounds.first.empty() && !appendLane(state, result, lane, 0, 1, 0)) { return std::nullopt; }
+    }
+    proof.count(&RepeatedLaneProofCost::orderedAccepted);
+    return result;
+}
+
 std::optional<RegionalAllocationGroup> allocateLanes(
     RepeatedRegionState& state, ArrayRef<Lane> lanes, ReuseProof& proof)
 {
@@ -392,6 +497,7 @@ std::optional<RegionalAllocationGroup> allocateLanes(
         proof.count(&RepeatedLaneProofCost::firstAlternatives, lane.bounds.first.size());
         proof.count(&RepeatedLaneProofCost::lastAlternatives, lane.bounds.second.size());
     }
+    if (auto ordered = allocateOrderedLanes(state, lanes, live, proof)) { return ordered; }
     if (n > UINT32_MAX || (n && n > std::vector<std::optional<uint64_t>>().max_size() / n)) {
         return std::nullopt;
     }

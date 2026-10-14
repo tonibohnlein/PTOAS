@@ -235,6 +235,8 @@ LogicalResult checkVaryingBoundarySession(func::FuncOp function, pto::GMAliasPol
   using namespace pto::frontiersynch;
   FrontierAnalysis session(function);
   if (failed(session.initialize(policy))) { return failure(); }
+  // This audit inspects recognized forms before requesting any producer.
+  if (failed(session.recognizeAllForms())) { return failure(); }
   if (function->hasAttr("test.varying_boundary_rejected")) {
     for (std::size_t id = 0; id < session.result()->nodes.size(); ++id) {
       if (session.analyzeVaryingBoundary({id}).mathematical) {

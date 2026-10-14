@@ -41,10 +41,8 @@ bool validTypes(const AffineRotatingVisits& visits)
     return true;
 }
 } // namespace
-VaryingBoundaryQuery::VaryingBoundaryQuery(const AffineRotatingVisits& visits,
-    const std::vector<VaryingBoundaryPort>& ports, const std::vector<VaryingBoundaryMatrix>& startup,
-    const std::vector<VaryingBoundaryMatrix>& suffix, const std::vector<std::vector<VaryingBoundaryMatrix>>& powers)
-    : visits(visits), ports(ports), startup(startup), suffix(suffix), powers(powers)
+VaryingBoundaryQuery::VaryingBoundaryQuery(const VaryingBoundaryFrame& frame)
+    : visits(frame.visits()), ports(frame.ports), startup(frame.startup), suffix(frame.suffix), powers(frame.powers)
 {
     if (!validTypes(visits) || startup.size() != visits.startup || suffix.size() != visits.period ||
         powers.size() != visits.period || !llvm::all_of(ports, [&](auto port) { return valid(port); })) {

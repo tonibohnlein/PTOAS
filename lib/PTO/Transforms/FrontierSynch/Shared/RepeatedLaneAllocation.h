@@ -18,6 +18,7 @@ struct RepeatedLaneProofCost {
     uint64_t proofNodeVisits = 0, relativeQueries = 0, relativeComputations = 0;
     uint64_t proofNanoseconds = 0, relativeNanoseconds = 0;
     uint64_t lanes = 0, firstAlternatives = 0, lastAlternatives = 0;
+    uint64_t orderedAttempts = 0, orderedPhases = 0, orderedReuseQueries = 0, orderedAccepted = 0;
     uint64_t matrixPairs = 0, candidateGaps = 0, boundaryPairs = 0;
     uint64_t partitionAttempts = 0, partitionMatrixEntries = 0;
 };
