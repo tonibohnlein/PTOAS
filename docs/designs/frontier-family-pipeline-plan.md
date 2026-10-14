@@ -25,7 +25,7 @@ exclusion evidence; they do not replace exact guards or matching identities.
 | M0: preparation ownership | Reproduce prefill failure; remap every affected non-SSA preparation reference before deletion; validate complementary cleanup and failure atomicity; replay prefill separately from the failing baseline. | Complete: `32b38b426` |
 | M1: measurement | Extend stage inventories with per-repeat lanes/extrema, candidate pairs/gaps, query construction, proof/cache work and actual traversal counts. Keep static records/sites distinct from dynamic commands and evaluated control. | Stage inventories and repeated-allocation work/traversal counters implemented; dynamic-control and complete ID-map inventories remain open |
 | M2: repeated allocation | Normalize certified ordered extrema; share attempt-owned relative queries; try economical certified numerical/repeated assignments before general sharing, retaining alternatives needed by parent allocation. | Certified extrema scans and attempt-owned relative queries implemented; economical candidate policy with parent retry remains open |
-| M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is planned before scalar lowering in `8a0a94536`; ordinary numerical sequence and repeated children retain recipes through composition; exact fixed-coordinate sequence crossings now form recipes before scalar preparation; child activity masks retain those recipes through composition; guarded and relational crossing construction remains open |
+| M3: family construction and binding | Plan availability and publication/cleanup before allocation; share occurrence/frame/capture/reset interpretation; migrate sequence and repeated crossings to shared recipe families before scalar lowering. | Numerical/rotating root recipes migrated in `a2ae91269`; shared occurrence-coordinate binding and availability recipes implemented; finite guarded publication/cleanup is planned before scalar lowering in `8a0a94536`; ordinary numerical sequence and repeated children retain recipes through composition; exact fixed-coordinate sequence crossings now form recipes before scalar preparation; child activity masks retain those recipes through composition; repeated crossings now retain numerical or contextual recipes before scalar lowering; guarded sequence/relational crossings and capture closure remain open |
 | M4: composed allocation and lowering | Allocate the normalized command graph; compose incoming selectors with independently certified ID maps; compare complete mapping costs; emit only live control at legal scopes. | Existing late normalization/candidate comparison retained; common nonconstant tuple terms compose before dispatch in `15f2007ea`; coordinate-selected phase shifts now compose under the same skeleton with a cost-checked incumbent; different skeletons and early graph allocation remain open |
 | M5: session and capabilities | Retain facts, mathematics, recipes and allocation in one session; deterministic capability upgrades; common unified/split stage functions; self-contained versioned saved artifacts; delete redundant orchestration. | Pending |
 | M6: carryover and closure | Finish shared-fact and coarse-input integration, closed-child completion imports, guarded/relational rank transport and outstanding semantic oracles; run pinned eleven-kernel/corpus validation and report device results separately. | Eleven-kernel replay refreshed at `e0e17e5db`: 11 logical, 7 six-ID/C++ successes; corpus, device, and interface closure remain open |
@@ -880,3 +880,42 @@ comparisons cover new logical compilation of all three GEMMs and physical
 allocation of all seven successful saved campaign plans. Those outputs agree
 with `e0e17e5db`; this is a construction improvement, with no paired compiler-time
 or device-speed claim. Artifacts: `.local/family-pipeline-requested-output/`.
+
+## M3 repeated crossing recipes
+
+Repeated preparation now retains its crossing activity, source ordinal and
+phase-residue evidence in the existing family recipe tree. The shared contextual
+availability service certifies each expression at its original cut without
+constructing MLIR arithmetic. The general repeated crossing emitter is removed;
+final lowering uses the common family materializer, including namespace changes,
+enclosing invocation coordinates, activity masks and transactional failure.
+
+When the original loop domain and exact fixed-coordinate endpoint activity are
+certified, a repeated crossing batch instead uses the existing numerical family
+compiler. Sequence and repeated producers share the same attempt-owned
+fixed-point activity proof. Quotient phases, clipped invocations and unresolved
+activity use contextual recipes with their original exact boundary predicates;
+necessary residue evidence never replaces those predicates.
+
+This is a preparation migration, not a claim that every guarded family has been
+compressed or that its arithmetic is cheap. Guarded sequence publication/cleanup,
+relational crossings and projection-owned remapping remain separate work. The
+allocation policy and selected demands are unchanged.
+
+Validation: nine focused lit suites pass (eight from the first run, then the
+corrected repeated-family regression), plus 14 existing repeated-region closure
+cases. The new production regression checks 14 guarded/zero-trip executions;
+six before/after traces preserve every ordered payload and logical command.
+Contextual recipe tests cover residue validation, malformed activity/member
+inputs and atomic failure after an availability binding is invalidated.
+
+For the guarded nested fixture with surrounding work, preparation changes from
+12 concrete endpoints plus 5 deferred pieces to 5 concrete endpoints plus 12
+deferred pieces. Prepared arithmetic changes from 56 to 28; materialized and
+normalized arithmetic remain 96 and 82. All three GEMM logical outputs match the
+pinned canonical outputs; Persistent's six-ID physical output matches too. These
+are representation/semantic checks, not paired compiler-speed measurements or
+device results. Additional two/three-bank phase probes timed out (90 seconds in
+the trace driver and a separate 20-second public probe); they remain unresolved
+and are not counted as passing. The complete historical phase suite remains open.
+Receipts are retained under `.local/family-pipeline-repeated-crossings/`.

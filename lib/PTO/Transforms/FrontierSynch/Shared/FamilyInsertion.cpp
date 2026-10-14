@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Retain numerical family recipes through sequence composition; lower at insertion.
+// Retain numerical and contextual family recipes through composition; lower at insertion.
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyExpressions.h"
 #include "PTO/Transforms/FrontierSynch/Shared/EndpointPieces.h"
@@ -23,12 +23,18 @@ struct FamilyContextRecipe {
 };
 class FamilyEndpointRecipe {
 public:
-    // A leaf owns a numerical endpoint plan. A composition references earlier
+    // A leaf owns numerical selectors or contextual bindings. A composition references earlier
     // recipes and records namespace/placement transforms; append is constant work.
     std::shared_ptr<const FamilyEndpointRecipe> previous, child;
     std::shared_ptr<const FamilyContextRecipe> context;
     uint32_t recordBase = 0, maximumRecord = 0;
     std::size_t endpointIndex = 0, maximumEndpointIndex = 0, pieceCount = 0;
+    struct Binding {
+        std::shared_ptr<const CutExpressionRecipe> activity, ordinal, residueCoordinate;
+        uint64_t modulus = 0, residue = 0;
+    };
+    std::shared_ptr<RegionExpressions> arena;
+    std::vector<Binding> bindings;
     scf::ForOp outer;
     std::vector<EndpointPiece> pieces;
     std::vector<std::shared_ptr<const FamilyExpressionRecipe>> selectors;
@@ -42,12 +48,14 @@ public:
                    const std::map<uint32_t, uint32_t>& namespaces)
         : recipe(recipe), prepared(prepared), recordBase(recordBase), namespaces(namespaces),
           builder(recipe.cuts.front().cut.before->getContext()) {}
-    void run()
+    LogicalResult run()
     {
+        if (recipe.arena) { return prepareContextual(); }
         if (recipe.outer) { initializeOrdinals(); }
         for (const auto& cut : recipe.cuts) {
             if (!cut.pieces.empty()) { prepareCut(cut.cut, cut.pieces); }
         }
+        return success();
     }
 private:
     const FamilyEndpointRecipe& recipe;
@@ -59,6 +67,46 @@ private:
     Value ordinal;
     Value zero;
     Value one;
+    LogicalResult prepareContextual()
+    {
+        std::map<Operation*, RegionExpressions::CutEmission> memos;
+        for (std::size_t i = 0; i < recipe.pieces.size(); ++i) {
+            const auto& piece = recipe.pieces[i];
+            const auto& binding = recipe.bindings[i];
+            auto* cut = piece.cut.before;
+            builder.setInsertionPointToEnd(&prepared.addPreparation(cut));
+            auto emit = [&](const std::shared_ptr<const CutExpressionRecipe>& value) {
+                return recipe.arena->emitPreparedContextual(*value, builder, cut, memos[cut]);
+            };
+            auto guard = emit(binding.activity);
+            if (failed(guard)) { return failure(); }
+            const bool local = piece.kind == EndpointKind::Barrier;
+            auto kind = local ? LogicalCommandKind::Barrier :
+                (piece.kind == EndpointKind::Set ? LogicalCommandKind::Set : LogicalCommandKind::Wait);
+            const auto record = piece.members.front().record + recordBase;
+            PreparedLogicalEndpoint endpoint{cut, kind, piece.sourcePipe, piece.targetPipe,
+                namespaces.empty() ? piece.namespaceId + recordBase : namespaces.at(record), *guard, {}};
+            endpoint.records = {record};
+            retainEndpointCoordinates(endpoint, piece.members.front().coordinates);
+            if (binding.residueCoordinate) {
+                auto coordinate = emit(binding.residueCoordinate);
+                if (failed(coordinate)) { return failure(); }
+                if (endpoint.domain.empty()) { endpoint.domain.emplace_back(); }
+                for (auto& box : endpoint.domain) {
+                    box.push_back({*coordinate, binding.modulus, static_cast<int64_t>(binding.residue)});
+                }
+            }
+            if (!local) {
+                auto ordinal = emit(binding.ordinal);
+                if (failed(ordinal)) { return failure(); }
+                endpoint.identity = *ordinal;
+                endpoint.memberCoordinates.push_back(number(record, cut->getLoc()));
+            }
+            endpoint.piece = prepared.endpoints.size();
+            prepared.endpoints.push_back(std::move(endpoint));
+        }
+        return success();
+    }
     Value number(uint64_t value, Location location)
     {
         auto type = builder.getIndexType();
@@ -214,6 +262,50 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildFiniteFamilyEndpoint
         return failure();
     }
     return buildRecipe(plan);
+}
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndpointRecipe(
+    std::shared_ptr<RegionExpressions> arena, ArrayRef<ContextualEndpointFamily> families)
+{
+    if (!arena || families.empty()) { return failure(); }
+    auto recipe = std::make_shared<FamilyEndpointRecipe>();
+    recipe->arena = std::move(arena);
+    std::map<Operation*, RegionExpressions::CutEmission> contexts;
+    for (const auto& family : families) {
+        const auto& piece = family.piece;
+        auto* cut = piece.cut.before;
+        if (!cut || piece.cut.block != cut->getBlock() || piece.members.size() != 1 ||
+            (piece.kind != EndpointKind::Set && piece.kind != EndpointKind::Wait &&
+             piece.kind != EndpointKind::Barrier) ||
+            ((piece.sourcePipe == piece.targetPipe) != (piece.kind == EndpointKind::Barrier))) { return failure(); }
+        auto prepare = [&](RegionExpressions::Id expression, bool boolean) {
+            if (expression >= recipe->arena->size() || recipe->arena->isBoolean(expression) != boolean) {
+                return FailureOr<std::shared_ptr<const CutExpressionRecipe>>(failure());
+            }
+            return recipe->arena->prepareContextual(expression, cut, contexts[cut]);
+        };
+        auto guard = prepare(family.activity, true);
+        if (failed(guard)) { return failure(); }
+        FamilyEndpointRecipe::Binding binding;
+        binding.activity = std::move(*guard);
+        if (piece.kind != EndpointKind::Barrier) {
+            auto ordinal = prepare(family.ordinal, false);
+            if (failed(ordinal)) { return failure(); }
+            binding.ordinal = std::move(*ordinal);
+        }
+        if (family.residueCoordinate != RegionExpressions::invalid) {
+            if (!family.modulus || family.residue >= family.modulus || family.residue > INT64_MAX) { return failure(); }
+            auto coordinate = prepare(family.residueCoordinate, false);
+            if (failed(coordinate)) { return failure(); }
+            binding.residueCoordinate = std::move(*coordinate);
+            binding.modulus = family.modulus; binding.residue = family.residue;
+        }
+        recipe->maximumRecord = std::max({recipe->maximumRecord, piece.namespaceId, piece.members.front().record});
+        recipe->cuts.push_back({piece.cut, {}});
+        recipe->pieces.push_back(piece);
+        recipe->bindings.push_back(std::move(binding));
+    }
+    recipe->pieceCount = recipe->pieces.size();
+    return std::shared_ptr<const FamilyEndpointRecipe>(std::move(recipe));
 }
 std::map<uint32_t, uint32_t> familyRecordNamespaces(ArrayRef<EndpointFamily> families)
 {
@@ -407,7 +499,9 @@ LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, 
         while (next < part.endpointIndex) { lowered.endpoints.push_back(prepared.endpoints[next++]); }
         const auto begin = lowered.endpoints.size();
         if (!part.recipe->pieces.empty()) {
-            FamilyPreparer(*part.recipe, lowered, part.recordBase, namespaces).run();
+            if (failed(FamilyPreparer(*part.recipe, lowered, part.recordBase, namespaces).run())) {
+                return failure();
+            }
         }
         for (std::size_t i = begin; i < lowered.endpoints.size(); ++i) {
             if (failed(contextLowering.apply(lowered.endpoints[i], part.contextPath, contexts))) {

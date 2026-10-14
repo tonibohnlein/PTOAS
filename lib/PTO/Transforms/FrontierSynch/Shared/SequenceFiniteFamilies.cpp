@@ -8,58 +8,8 @@
 // Keep finite crossing points as recipes before preparing any scalar endpoint code.
 #include "SequenceAnalysisInternal.h"
 #include "OccurrenceBinding.h"
-#include "OriginalCutFacts.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 namespace mlir::pto::frontiersynch {
-namespace {
-class FixedPointActivity {
-public:
-    explicit FixedPointActivity(RegionExpressions& arena) : arena(arena) {}
-    bool prove(const RegionalAnalysis& region, const RegionalEvent& event,
-               const TemplateEndpointAnchor& anchor, Operation* cut, Expr active)
-    {
-        if (region.expressions.get() != &arena || event.type >= region.anchors.size() ||
-            !validRegionalEvent(region, event) || arena.constantValue(event.ordinal) != 0 ||
-            !event.visits.empty() || region.occurrenceLoops[event.type] ||
-            (!region.outerLoops.empty() && !region.outerLoops[event.type].empty()) || !cut) { return false; }
-        if (anchor.coordinates.size() != region.anchors[event.type].coordinates.size()) { return false; }
-        std::set<Operation*> axes;
-        for (auto [original, supplied] : llvm::zip(region.anchors[event.type].coordinates, anchor.coordinates)) {
-            auto loop = supplied.loop;
-            if (!loop || original.loop != loop || original.induction != supplied.induction ||
-                !axes.insert(loop.getOperation()).second) { return false; }
-        }
-        std::string error;
-        auto conditions = regionalOccurrenceConstraints(region, event, error);
-        if (failed(conditions)) { return false; }
-        if (region.endpointSiteGuard) { conditions->push_back(*region.endpointSiteGuard); }
-        conditions->push_back(active);
-        // Reuse the authoritative original-cut facts, not a second branch or
-        // availability analysis. Substitution never emits or replays payloads.
-        auto key = std::make_pair(&anchor, cut);
-        auto& context = contexts[key];
-        if (!context) {
-            SmallVector<std::pair<Expr, Expr>> bindings;
-            for (const auto& [value, truth] : detail::originalCutFacts(cut)) {
-                auto input = arena.input(value);
-                if (!arena.constantValue(input)) { bindings.push_back({input, arena.boolean(truth)}); }
-            }
-            for (auto coordinate : anchor.coordinates) {
-                bindings.push_back({arena.input(coordinate.loop.getInductionVar()),
-                                    arena.constant(coordinate.induction)});
-            }
-            context = std::make_unique<RegionExpressions::Substitution>(bindings);
-        }
-        return llvm::all_of(*conditions, [&](Expr condition) {
-            return arena.constantValue(arena.substitute(condition, *context)) == 1;
-        });
-    }
-private:
-    RegionExpressions& arena;
-    std::map<std::pair<const TemplateEndpointAnchor*, Operation*>,
-             std::unique_ptr<RegionExpressions::Substitution>> contexts;
-};
-} // namespace
 FailureOr<bool> SequenceAnalysisState::prepareFiniteCrossings(PreparedLogicalPlan& plan,
     std::vector<RegionalAllocationGroup>& allocation, ArrayRef<uint32_t> typeOffsets, uint32_t& nextRecord)
 {

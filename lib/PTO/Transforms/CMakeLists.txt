@@ -350,6 +350,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Shared/RepeatedRegion.cpp
   FrontierSynch/Shared/RepeatedRegionExports.cpp
   FrontierSynch/Shared/RepeatedRegionInsertion.cpp
+  FrontierSynch/Shared/RepeatedCrossingFamilies.cpp
   FrontierSynch/Shared/RepeatedStorage.cpp
   FrontierSynch/Shared/RepeatedStorageGeometry.cpp
   FrontierSynch/Shared/RepeatedStorageIntegration.cpp

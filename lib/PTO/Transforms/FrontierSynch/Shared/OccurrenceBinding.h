@@ -12,6 +12,7 @@
 #ifndef PTO_FRONTIERSYNCH_OCCURRENCEBINDING_H
 #define PTO_FRONTIERSYNCH_OCCURRENCEBINDING_H
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAnalysis.h"
+#include <map>
 namespace mlir::pto::frontiersynch {
 std::optional<RegionExpressions::Id> originalLoopOrdinal(
     RegionExpressions& expressions, scf::ForOp loop, uint64_t divisor = 1);
@@ -20,5 +21,18 @@ std::optional<RegionExpressions::Id> originalLoopOrdinal(
 // using its existing masking semantics. No original values are evaluated here.
 FailureOr<SmallVector<RegionExpressions::Id>> regionalOccurrenceConstraints(
     const RegionalAnalysis& region, const RegionalEvent& event, std::string& error);
+// Attempt-owned exact finite-point activity proof. Both sequence and repeated
+// producers use original cut facts and the authoritative occurrence constraints.
+// Failure means the compact point representation is unavailable, not inactivity.
+class FixedPointActivity {
+public:
+    explicit FixedPointActivity(RegionExpressions& arena) : arena(arena) {}
+    bool prove(const RegionalAnalysis& region, const RegionalEvent& event,
+               const TemplateEndpointAnchor& anchor, Operation* cut, RegionExpressions::Id active);
+private:
+    RegionExpressions& arena;
+    std::map<std::pair<const TemplateEndpointAnchor*, Operation*>,
+             std::unique_ptr<RegionExpressions::Substitution>> contexts;
+};
 } // namespace mlir::pto::frontiersynch
 #endif
