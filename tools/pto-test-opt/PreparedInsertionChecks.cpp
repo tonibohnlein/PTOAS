@@ -19,6 +19,7 @@
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
+#include <tuple>
 #include "EndpointOrderChecks.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
@@ -50,7 +51,8 @@ bool publicationRecipeChecks(MLIRContext* context)
     auto condition = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq, source, one);
     auto consumer = builder.create<arith::AddIOp>(location, source, one);
     auto terminal = builder.create<func::ReturnOp>(location);
-    fs::RegionExpressions arena, foreign;
+    auto owner = std::make_shared<fs::RegionExpressions>();
+    auto& arena = *owner;
     // Model an original value that must not be replayed before its producer.
     arena.forbidRecomputation(source);
     auto guard = arena.input(condition);
@@ -68,22 +70,37 @@ bool publicationRecipeChecks(MLIRContext* context)
     for (const auto& entry : preparation) {
         if (!entry.second.values.empty() || !entry.second.inputs.empty()) { return false; }
     }
+    if ((*recipe)->owner != owner.get() || (*recipe)->cleanupCut != terminal.getOperation() ||
+        arena.constantValue((*recipe)->sourceGuard) != 1) { return false; }
     fs::PreparedLogicalPlan plan(0);
-    std::map<Operation*, fs::RegionExpressions::CutEmission> contexts;
-    auto emit = [&](fs::RegionExpressions::Id expression, Operation* cut) {
-        builder.setInsertionPointToEnd(&plan.addPreparation(cut));
-        return arena.emitContextual(expression, builder, cut, contexts[cut]);
-    };
-    if (succeeded(fs::materializePublicationRecipe(**recipe, foreign, emit, condition, error)) ||
-        !plan.preparation.empty()) { return false; }
-    auto publication = fs::materializePublicationRecipe(**recipe, arena, emit, condition, error);
-    if (failed(publication) || publication->cleanupCut != terminal.getOperation() ||
-        !publication->targetChoices || render(function) != original) { return false; }
+    fs::EndpointFamily family;
+    family.id = 0; family.sourcePipe = 1; family.targetPipe = 2;
+    family.sourceCut = sourceCut; family.targetCut = consumerCut;
+    family.members.push_back({0, 0, 0, {}, {}});
+    family.targetChoices = fs::qualifyTerminalCleanupCuts(
+        {consumerCut, {terminal->getBlock(), terminal}}, owner, guard);
+    if (!family.targetChoices) { return false; }
+    plan.families.push_back(family);
+    std::vector<fs::ContextualEndpointFamily> endpoints;
+    for (auto [cut, kind, predicate] : {
+        std::make_tuple(source.getOperation(), fs::EndpointKind::Set, (*recipe)->sourceGuard),
+        std::make_tuple(consumer.getOperation(), fs::EndpointKind::Wait, guard),
+        std::make_tuple(terminal.getOperation(), fs::EndpointKind::Wait, (*recipe)->cleanupGuard)}) {
+        fs::ContextualEndpointFamily endpoint;
+        endpoint.piece.cut = {cut->getBlock(), cut}; endpoint.piece.kind = kind;
+        endpoint.piece.sourcePipe = 1; endpoint.piece.targetPipe = 2;
+        endpoint.piece.members.push_back({0, {}});
+        endpoint.activity = predicate; endpoint.ordinal = arena.constant(0);
+        endpoints.push_back(std::move(endpoint));
+    }
+    auto delayed = fs::buildContextualFamilyEndpointRecipe(owner, endpoints);
+    if (failed(delayed) || !plan.preparation.empty()) { return false; }
+    plan.familyRecipe = *delayed;
+    if (failed(fs::materializeLogicalFamilies(plan)) || plan.endpoints.size() != 3 ||
+        plan.families.front().targetChoices->pendingMaterialization() || render(function) != original) { return false; }
     auto direct = fs::preparePublicationRecipe(function, arena, sourceCut, consumerCut,
         arena.boolean(true), arena.boolean(true), arena.boolean(true), available, error);
-    if (failed(direct)) { return false; }
-    auto ordinary = fs::materializePublicationRecipe(**direct, arena, emit, condition, error);
-    return succeeded(ordinary) && !ordinary->cleanupCut && !ordinary->targetChoices;
+    return succeeded(direct) && !(*direct)->cleanupCut;
 }
 bool cleanupSelectionChecks(MLIRContext* context)
 {

@@ -160,28 +160,6 @@ FailureOr<std::shared_ptr<const GuardedPublicationRecipe>> preparePublicationRec
     if (failed(recipe)) { return failure(); }
     return std::make_shared<const GuardedPublicationRecipe>(std::move(*recipe));
 }
-FailureOr<GuardedPublication> materializePublicationRecipe(const GuardedPublicationRecipe& recipe,
-    RegionExpressions& arena, const EndpointExpressionEmitter& emit, Value consumerPredicate, std::string& error)
-{
-    if (recipe.owner != &arena || !emit || !arena.constructionError().empty()) {
-        error = "publication recipe requires its original arena and emitter"; return failure();
-    }
-    std::shared_ptr<const EndpointCutChoices> choices;
-    if (recipe.cleanupCut) {
-        choices = qualifyTerminalCleanupCuts({recipe.consumer,
-            {recipe.cleanupCut->getBlock(), recipe.cleanupCut}}, consumerPredicate);
-        if (!choices) { error = "publication recipe lost its singleton consumer"; return failure(); }
-    }
-    auto source = emit(recipe.sourceGuard, recipe.source.before);
-    if (failed(source)) { error = "publication recipe source predicate unavailable"; return failure(); }
-    Value cleanup;
-    if (recipe.cleanupCut) {
-        auto value = emit(recipe.cleanupGuard, recipe.cleanupCut);
-        if (failed(value)) { error = "publication recipe cleanup predicate unavailable"; return failure(); }
-        cleanup = *value;
-    }
-    return GuardedPublication{*source, recipe.publicationGuard, recipe.cleanupCut, cleanup, std::move(choices)};
-}
 LogicalResult appendPublicationCleanup(const GuardedPublication& publication,
     uint32_t record, uint32_t sourcePipe, uint32_t targetPipe,
     ArrayRef<RegionExpressions::Id> identity, RegionExpressions& arena,
