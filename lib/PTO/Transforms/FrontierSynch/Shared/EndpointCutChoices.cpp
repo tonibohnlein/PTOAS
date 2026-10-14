@@ -296,6 +296,19 @@ bool qualifyTerminalCleanupSelection(ArrayRef<TemplateEndpointCut> cuts,
     return function && arena.constructionError().empty() && view.valid(predicate) && view.boolean(predicate) &&
         singletonConsumer(cuts[0].before, view, predicate, function);
 }
+std::shared_ptr<const EndpointCutChoices> qualifyTerminalCleanupCuts(
+    ArrayRef<TemplateEndpointCut> cuts, std::shared_ptr<const RegionExpressions> arena, uint32_t predicate)
+{
+    if (!arena || !qualifyTerminalCleanupSelection(cuts, *arena, predicate)) { return {}; }
+    auto result = std::shared_ptr<EndpointCutChoices>(new EndpointCutChoices({}, cuts));
+    result->terminalArena = std::move(arena);
+    result->terminalExpression = predicate;
+    return result;
+}
+bool EndpointCutChoices::validPendingSelection() const
+{
+    return terminalArena && qualifyTerminalCleanupSelection(alternatives, *terminalArena, terminalExpression);
+}
 bool validateTerminalCleanupCommands(func::FuncOp function, ArrayRef<Operation*> commands)
 {
     if (commands.size() != 2 || !function.getBody().hasOneBlock()) { return false; }

@@ -9,6 +9,7 @@
 // after checking original-IR availability at each detached preparation cut.
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include "RegionIntegerExpressionsInternal.h"
+#include "OriginalCutFacts.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -691,11 +692,7 @@ bool RegionExpressions::prepareEmission(Id expression, OpBuilder& builder, Opera
         if (memo.count(id) || !seen.insert(id).second) { continue; }
         const Node& node = nodes[id];
         if (node.kind == Kind::Input) {
-            Value original = node.value;
-            auto* region = original.getParentRegion();
-            auto* owner = region ? region->getParentOp() : nullptr;
-            if (!owner || (owner != function && !function->isProperAncestor(owner)) ||
-                !dominance->properlyDominates(node.value, cut)) {
+            if (!detail::originalValueAvailable(node.value, cut, *dominance)) {
                 emissionMessage = "regional expression input is unavailable at endpoint cut";
                 return false;
             }

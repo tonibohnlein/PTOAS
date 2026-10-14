@@ -355,6 +355,9 @@ LogicalResult checkSequenceEndpointRetry(func::FuncOp function, pto::GMAliasPoli
     auto right = session.prepareLogical(again);
     const bool fresh = succeeded(left) && succeeded(right) && left->get() != right->get();
     if (!fresh) { return function.emitError("sequence retry lacks fresh detached plans"); }
+    if (failed(materializeLogicalFamilies(**left)) || failed(materializeLogicalFamilies(**right))) {
+        return function.emitError("sequence retry family materialization failed");
+    }
     llvm::DenseSet<Operation*> operations;
     for (const auto& preparation : (*left)->preparation) {
         if (preparation.code->getParent()) { return failure(); }
@@ -388,7 +391,8 @@ LogicalResult checkSequenceEndpointRetry(func::FuncOp function, pto::GMAliasPoli
         return function.emitError("cold sequence dispatch differs from exhaustive-audit dispatch");
     }
     auto coldPlan = cold.prepareLogical(coldResult), auditedPlan = audited.prepareLogical(auditedResult);
-    if (failed(coldPlan) || failed(auditedPlan) || renderPlan(**coldPlan) != renderPlan(**auditedPlan)) {
+    if (failed(coldPlan) || failed(auditedPlan) || failed(materializeLogicalFamilies(**coldPlan)) ||
+        failed(materializeLogicalFamilies(**auditedPlan)) || renderPlan(**coldPlan) != renderPlan(**auditedPlan)) {
         return function.emitError("exhaustive audit changed selected sequence command graph");
     }
     const auto coldForms = cold.result()->formConstructions;

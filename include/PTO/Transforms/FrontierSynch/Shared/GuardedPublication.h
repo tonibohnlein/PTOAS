@@ -56,7 +56,14 @@ FailureOr<GuardedPublication> prepareGuardedPublication(func::FuncOp function,
 // SSA. The recipe borrows this arena and unchanged original cuts. It retains
 // the exact chosen predicates, not emitted Values or necessary-domain evidence.
 // Matching identities remain the caller's separate obligation.
-class GuardedPublicationRecipe;
+struct GuardedPublicationRecipe {
+    const RegionExpressions* owner = nullptr;
+    TemplateEndpointCut source, consumer;
+    RegionExpressions::Id sourceGuard = RegionExpressions::invalid;
+    RegionExpressions::Id publicationGuard = RegionExpressions::invalid;
+    Operation* cleanupCut = nullptr;
+    RegionExpressions::Id cleanupGuard = RegionExpressions::invalid;
+};
 using EndpointExpressionAvailability =
     std::function<LogicalResult(RegionExpressions::Id, Operation*)>;
 FailureOr<std::shared_ptr<const GuardedPublicationRecipe>> preparePublicationRecipe(func::FuncOp function,

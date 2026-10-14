@@ -108,7 +108,8 @@ bool cleanupSelectionChecks(MLIRContext* context)
                 auto visit = builder.create<arith::DivUIOp>(location, difference, stride);
                 auto first = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq, visit, stride);
                 auto cut = builder.create<arith::AddIOp>(location, lo, stride).getOperation();
-                fs::RegionExpressions arena;
+                auto owner = std::make_shared<fs::RegionExpressions>();
+                auto& arena = *owner;
                 auto offset = arena.sub(arena.input(loop.getInductionVar()), arena.input(lo));
                 auto ordinal = arena.div(offset, arena.constant(step));
                 auto selected = arena.eq(ordinal, arena.constant(1));
@@ -129,6 +130,9 @@ bool cleanupSelectionChecks(MLIRContext* context)
                 for (auto [predicate, expected] : predicates) {
                     const bool planned = fs::qualifyTerminalCleanupSelection(cuts, arena, predicate);
                     if (planned != expected || render(function) != original) { return false; }
+                    auto retained = fs::qualifyTerminalCleanupCuts(cuts, owner, predicate);
+                    if (bool(retained) != expected || (retained && (!retained->pendingMaterialization() ||
+                        !retained->validPendingSelection() || retained->consumerPredicate()))) { return false; }
                     Block detached;
                     builder.setInsertionPointToEnd(&detached);
                     llvm::DenseMap<fs::RegionExpressions::Id, Value> values;
@@ -137,6 +141,38 @@ bool cleanupSelectionChecks(MLIRContext* context)
                         return false;
                     }
                 }
+                // Owned cleanup evidence must survive recipe-only composition
+                // and become evidence for the actual emitted primary WAIT.
+                fs::PreparedLogicalPlan delayed(0);
+                fs::EndpointFamily family;
+                family.id = 0; family.sourcePipe = 1; family.targetPipe = 2;
+                family.sourceCut = cuts.front(); family.targetCut = cuts.front();
+                family.members.push_back({0, 0, 0, {}, {}});
+                family.targetChoices = fs::qualifyTerminalCleanupCuts(cuts, owner, selected);
+                delayed.families.push_back(family);
+                fs::ContextualEndpointFamily endpoint;
+                endpoint.piece.cut = cuts.front();
+                endpoint.piece.kind = fs::EndpointKind::Wait;
+                endpoint.piece.sourcePipe = 1; endpoint.piece.targetPipe = 2;
+                endpoint.piece.members.push_back({0, {}});
+                endpoint.activity = selected; endpoint.ordinal = arena.constant(0);
+                auto recipe = fs::buildContextualFamilyEndpointRecipe(owner, {endpoint});
+                if (failed(recipe)) { return false; }
+                delayed.familyRecipe = *recipe;
+                if (failed(fs::materializeLogicalFamilies(delayed)) || delayed.endpoints.size() != 1 ||
+                    delayed.families.front().targetChoices->pendingMaterialization() ||
+                    !delayed.families.front().targetChoices->consumerPredicate()) { return false; }
+                // A changed, non-singleton lowering cannot consume the retained
+                // proof or partially publish its detached arithmetic.
+                fs::PreparedLogicalPlan rejected(0);
+                rejected.families.push_back(family);
+                endpoint.activity = arena.boolean(true);
+                recipe = fs::buildContextualFamilyEndpointRecipe(owner, {endpoint});
+                if (failed(recipe)) { return false; }
+                rejected.familyRecipe = *recipe;
+                if (succeeded(fs::materializeLogicalFamilies(rejected)) || !rejected.preparation.empty() ||
+                    !rejected.endpoints.empty() || !rejected.familyRecipe ||
+                    !rejected.families.front().targetChoices->pendingMaterialization()) { return false; }
                 if (fs::qualifyTerminalCleanupSelection(cuts, arena, fs::RegionExpressions::invalid) ||
                     fs::qualifyTerminalCleanupSelection(cuts, arena, arena.constant(0)) ||
                     fs::qualifyTerminalCleanupSelection({}, arena, selected)) { return false; }
