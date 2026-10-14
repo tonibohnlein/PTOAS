@@ -12,6 +12,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/DenseSet.h"
 #include <algorithm>
 #include <chrono>
 namespace mlir::pto::frontiersynch {
@@ -40,6 +41,7 @@ public:
                 Clock::now() - started).count())},
             {"extrema_candidates", cost.extrema.candidates}, {"extrema_comparisons", cost.extrema.comparisons},
             {"ordered_extrema_lists", cost.extrema.orderedLists},
+            {"duplicate_extrema_guards", cost.extrema.duplicateGuards},
             {"lanes", cost.lanes}, {"first_alternatives", cost.firstAlternatives},
             {"last_alternatives", cost.lastAlternatives}, {"matrix_pairs", cost.matrixPairs},
             {"candidate_gaps", cost.candidateGaps}, {"boundary_pairs", cost.boundaryPairs},
@@ -112,9 +114,19 @@ bool orderedExtrema(const RegionalAnalysis& body, Selectors& values, bool first,
     }
     if (cost) { accumulateCost(cost->orderedLists, 1); }
     auto remaining = e.boolean(true);
+    llvm::DenseSet<Id> seen;
     for (std::size_t i = 0; i < values.size(); ++i) {
         auto& value = values[first ? i : values.size() - 1 - i];
         const auto present = value.present;
+        // Under this certified strict order, an earlier candidate with the
+        // identical exact activity always wins. In the reverse scan the later
+        // candidate always wins. Do not construct dead selection guards for
+        // repeated activity; coordinates and other records remain untouched.
+        if (!seen.insert(present).second) {
+            value.present = e.boolean(false);
+            if (cost) { accumulateCost(cost->duplicateGuards, 1); }
+            continue;
+        }
         value.present = e.select(remaining, present, e.boolean(false));
         remaining = e.select(remaining, e.lnot(present), e.boolean(false));
     }

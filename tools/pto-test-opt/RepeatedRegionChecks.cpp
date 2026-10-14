@@ -482,6 +482,13 @@ bool checkOrderedExtrema(func::FuncOp function, unsigned count, bool shuffle, bo
         (cost.orderedLists != 2 || cost.comparisons != 2 * (count ? count - 1 : 0) ||
          e.size() - initialSize > 8 * count + 2)) { return false; }
     if (shuffle && !conditional && !mixed && cost.orderedLists != 2) { return false; }
+    if (!conditional && !mixed) {
+        const auto unique = std::min(count, 8U);
+        if (result->first.size() > unique || result->second.size() > unique ||
+            cost.duplicateGuards != 2 * (count - unique) ||
+            e.size() - initialSize > 8 * unique + 2) { return false; }
+    }
+    if (mixed && cost.duplicateGuards) { return false; }
     for (unsigned mask = 0; mask < 256; ++mask) {
         std::set<unsigned> expected;
         for (unsigned i = 0; i < count; ++i) {
@@ -647,8 +654,8 @@ bool runRepeatedRegionChecks(func::FuncOp function)
     for (unsigned count : {0U, 1U, 8U, 128U}) {
         if (!checkOrderedExtrema(function, count, false, false)) { return false; }
     }
-    if (!checkOrderedExtrema(function, 8, true, false) ||
-        !checkOrderedExtrema(function, 8, false, true) ||
+    if (!checkOrderedExtrema(function, 128, true, false) ||
+        !checkOrderedExtrema(function, 32, false, true) ||
         !checkOrderedExtrema(function, 8, false, false, true)) { return false; }
     uint64_t allocations = 0;
     fs::RepeatedLaneProofCost proofCost;
