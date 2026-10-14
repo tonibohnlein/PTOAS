@@ -116,6 +116,8 @@ bool graphCase(const llvm::json::Object& input, llvm::json::Object& output, MLIR
     output["pipes"] = quotient.frontiers.size();
     output["frontier_entries"] = 4 * payloads.size() * quotient.frontiers.size();
     output["relaxations"] = quotient.relaxationCandidates;
+    output["native_scan_visits"] = quotient.nativeScanVisits;
+    output["demand_rounds"] = quotient.demandRounds;
     output["exclusions"] = quotient.exclusionCandidates;
     output["scaling_additions"] = quotient.scalingAdditions;
     if (!quotient.error.empty()) { return true; }

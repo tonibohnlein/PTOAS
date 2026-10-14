@@ -109,8 +109,8 @@ def quotient_checks(run):
 
 def guarded_checks(run):
     """Check the sparse guarded construction against its stated work counters."""
-    # This is the stated sparse guarded construction's quadratic relaxation
-    # work, not a claim that fixed pipes make all guarded analysis linear.
+    # Core chains close all native paths between k demand rounds.
+    # These counters exclude separately requested all-pair query exports.
     for count in (6, 12, 24):
         name = f'guarded_{count}'
         case = dict(pipes=[i % 3 for i in range(count)], records=[
@@ -121,10 +121,12 @@ def guarded_checks(run):
         text, record = run.invoke(name, '--guarded-periodic-checks', source)
         result = json.loads(text)[0]
         require(not result['error'], result['error'])
-        require(result['edges'] == 4 * count and result['frontier_entries'] == 12 * count,
+        require(result['edges'] == count and result['frontier_entries'] == 12 * count,
                 'sparse guarded input was expanded')
-        require(result['relaxations'] == 6 * (2 * count - 1) * result['edges'],
+        require(result['relaxations'] == 18 * result['edges'],
                 'guarded relaxation count differs from supplied graph bound')
+        require(result['native_scan_visits'] == 102 * count and result['demand_rounds'] == 18,
+                'core native closure work is not linear')
         require(result['threshold_queries'] == 0, 'unrequested query export constructed')
         record.update(sites=count, supplied_generators=count, **{key: result[key] for key in
                       ['edges', 'frontier_entries', 'relaxations', 'expressions', 'threshold_queries']})

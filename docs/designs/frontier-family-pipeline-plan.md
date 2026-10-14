@@ -41,7 +41,7 @@ draft obligation; its excess formula must not authorize a production decision.
 | Step | Reviewable work | Completion gate | Existing obligations |
 |---|---|---|---|
 | R1 (implemented) | SCC-ordered completion transfer | Concrete pending-state oracle, fixed-child containment, bounded fact propagation pass | M6; Section 6 |
-| R2 | Core-chain periodic frontier specialization | Exact demand/query agreement and linear gate/work scaling at fixed pipe count | M1/M3; Section 5.4 |
+| R2 (native closure implemented; pair scores open) | Core-chain periodic frontier specialization | Exact demand/query agreement and linear scan/relaxation scaling; scalar scaling costs remain explicit | M1/M3; Section 5.4 |
 | R3 | Writer-centered guarded storage and shared boundary scans | Exact conflict/boundary agreement, including macro envelopes and protected effects; read-heavy scaling | M1/M3; Section 5.2 |
 | R4a | Ordered periodic/repeated first-reuse sweeps | Certified applicability, linear query counts, exact capacity and finite-restriction checks | M2/M4; Propositions 7.8/7.10 |
 | R4b | Linear periodic allocation from suffix thresholds | Independent command-graph reuse/width oracle; no general assignment matrix on this route | M2/M4; Proposition 7.12 |
@@ -1831,3 +1831,39 @@ are false positives: each reported conditional has a braced body, including
 the multiline conditions. This establishes the transfer-policy migration, not
 closed-child import, broader hardware protocols or device execution. Receipts:
 `.local/r1-build.log`, `.local/r1-tests.log`, `.local/r1-compliance.log`.
+
+## R2 result: native closure between bounded demand rounds
+
+Core-chain guarded periodic analysis now closes all native paths with masked
+prefix/suffix scans, then alternates k demand rounds with complete native
+closure. Both query-origin kinds use this construction. Native final-edge
+alternatives use strict scans including wrapped self/later starts; demand
+exclusions retain winner identities and ties. Additional native prerequisites
+retain the generic relaxation path. The core route stores only demand edges.
+
+The existing scalar-score representation remains for this algorithm change. Its
+checked bound accounts for transient native-wrap candidates, and multiplication
+by source-pipe length still uses addition chains. The planned period/rank pair
+representation is not implemented yet; do not claim the full gate bound without
+charging these scaling additions.
+
+The independent guarded periodic and frontier scaling suites pass, as do the
+arithmetic-periodic conversion and order-covered periodic suites. At three
+pipes and 6/12/24 sites, demand relaxations are 108/216/432 and native scan visits
+are 612/1224/2448. Constructed expression counts are 1,946/4,966/10,970; emitted
+operations in the construction fixture are 559/1,767/4,231. No paired compiler
+speedup or device result is claimed.
+
+Guarded rotating integration passes regular, ACC-protected, branch-local and
+poison-masking cases before timing out at its historical alternating-guard
+rejection case (90 seconds). A retained baseline also times out on the isolated
+input (20-second diagnostic); the earlier report already records the same
+90-second baseline failure. The final nonadjacent case passes separately. The
+whole guarded rotating suite remains unresolved, not counted as passing.
+
+Incremental compilation passes. Two covered-switch warnings arise in unchanged
+SessionProducers and SequenceBoundary code, already recorded by the configured
+baseline builds; the changed kernel introduces no warning. The compliance
+checker flags the braced arithmetic-bound conditional as a parser false
+positive. Receipts: `.local/r2-build.log`, `.local/r2-build-final.log`,
+`.local/r2-tests.log`, `.local/r2-adapter-tests.log`, `.local/r2-validation/`.

@@ -46,6 +46,7 @@ struct GuardedPeriodicQuotient {
     std::vector<GuardedPeriodicFrontier> frontiers;
     std::vector<uint32_t> sourceRows, localRanks;
     uint64_t graphEdges = 0;
+    uint64_t nativeScanVisits = 0, demandRounds = 0;
     uint64_t relaxationCandidates = 0, exclusionCandidates = 0, scalingAdditions = 0;
     // Constructs only the requested scalar threshold. Exporting all pairs is
     // an explicit consumer cost; this index never materializes a pair matrix.
@@ -60,10 +61,12 @@ struct GuardedPeriodicQuotient {
 // presence and checks constant violations, but does not prove symbolic premises.
 // All arithmetic uses checked static bounds for uint64_t circuit intermediates.
 // No iterations, slots, distance values or guard valuations are enumerated.
-// With V=2m vertices, k pipes and E normalized/native edges, construction is
-// O(g+kVE) circuit gates beyond supplied expressions and endpoint grouping.
-// Grouping uses O(g log(g+1)) comparisons. The shared DAG retains O(g+kVE)
-// gates; its frontier outputs occupy O(kV) entries, not O(V^2) pair entries.
+// With no additional native prerequisites, complete core-chain scans alternate
+// with k demand rounds: O(g+k^2(m+g)) gates beyond supplied expressions and
+// endpoint grouping. Otherwise V-1 generic rounds cost O(g+kVE), with V=2m
+// and E normalized/native edges. Grouping uses O(g log(g+1)) comparisons.
+// Frontier outputs occupy O(kV) entries, not O(V^2) pair entries. Scalar-score
+// distance scaling additionally costs O(kg log(m+1)) additions.
 // Native prerequisites are not removable demands. No IR mutation.
 // Threshold queries are reflexive on present types; finite-prefix clients also
 // check both occurrence domains and compare targetIteration-sourceIteration.
