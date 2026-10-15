@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PrivateStatePlan.h"
 #include "PreparedControlLiveness.h"
+#include "PhysicalMapInputs.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyExpressions.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
@@ -41,16 +42,28 @@ void retainEndpointCoordinates(PreparedLogicalEndpoint& endpoint, ArrayRef<Templ
 }
 void prepareAllocationSupport(PreparedLogicalPlan& plan, AllocationProfile* profile)
 {
-    if (plan.privateState || plan.completionOwner) { return; }
+    if (plan.privateState || plan.completionOwner || failed(normalizeLogicalFamilies(plan))) {
+        return;
+    }
     auto prepare = std::move(plan.allocationPreparation);
     plan.allocationPreparation = AllocationPreparation{};
     llvm::SaveAndRestore<AllocationProfile*> profiling(plan.allocationProfile, profile);
     prepare(plan);
 }
+LogicalResult normalizeLogicalFamilies(PreparedLogicalPlan& plan)
+{
+    if (!plan.familyRecipe) {
+        return success();
+    }
+    if (plan.privateState || plan.completionOwner) {
+        return failure();
+    }
+    return normalizeFamilyEndpointPlan(plan);
+}
 LogicalResult materializeLogicalFamilies(PreparedLogicalPlan& plan)
 {
     if (!plan.familyRecipe) { return success(); }
-    if (plan.privateState || plan.completionOwner) {
+    if (failed(normalizeLogicalFamilies(plan))) {
         return failure();
     }
     if (failed(materializeFamilyEndpointCode(*plan.familyRecipe, plan))) { return failure(); }
@@ -59,14 +72,16 @@ LogicalResult materializeLogicalFamilies(PreparedLogicalPlan& plan)
 }
 std::shared_ptr<PreparedLogicalPlan> takeRegionalAllocationView(PreparedLogicalPlan& plan, bool retainFamilyRecipe)
 {
-    if (plan.privateState || plan.completionOwner ||
-        (!retainFamilyRecipe && failed(materializeLogicalFamilies(plan)))) { return {}; }
+    if (plan.privateState || plan.completionOwner || plan.physicalOutput ||
+        (!retainFamilyRecipe && failed(materializeLogicalFamilies(plan)))) {
+        return {};
+    }
     auto view = std::make_shared<PreparedLogicalPlan>(plan.planId);
     view->completeInvocation = plan.completeInvocation;
     view->nestedIdentities = plan.nestedIdentities;
     view->independentPieces = plan.independentPieces;
     view->groupedFamilies = plan.groupedFamilies;
-    view->familyRecipe = plan.familyRecipe;
+    view->familyRecipe = familyRecipeForComposition(plan.familyRecipe);
     view->endpoints = plan.endpoints;
     view->families = plan.families;
     view->mathematicalOwner = plan.mathematicalOwner;
@@ -327,8 +342,12 @@ LogicalResult coalesceEndpointAlternatives(PreparedLogicalPlan& plan)
         const auto old = entry->second;
         auto known = domains.find(old);
         auto& preceding = plan.endpoints[old];
-        const bool compatible = !fresh && current && known != domains.end() &&
-            preceding.record == endpoint.record && preceding.identity == endpoint.identity &&
+        const bool compatible =
+            !fresh && current && known != domains.end() && preceding.record == endpoint.record &&
+            preceding.identity == endpoint.identity &&
+            ((!preceding.physicalMapping && !endpoint.physicalMapping) ||
+             (preceding.physicalMapping && endpoint.physicalMapping &&
+              equivalentPhysicalMaps(*preceding.physicalMapping, *endpoint.physicalMapping))) &&
             preceding.sourcePipe == endpoint.sourcePipe && preceding.targetPipe == endpoint.targetPipe &&
             ArrayRef<Value>(preceding.memberCoordinates).drop_front() ==
                 ArrayRef<Value>(endpoint.memberCoordinates).drop_front() &&
@@ -360,8 +379,15 @@ LogicalResult coalesceEndpointAlternatives(PreparedLogicalPlan& plan)
             }
             OpBuilder builder(endpoint.before->getContext());
             builder.setInsertionPointToEnd(&plan.addPreparation(endpoint.before));
-            auto selection = emitFamilyExpressions(builder, endpoint.before->getLoc(), points, labels);
-            if (!selection.error.empty()) { return endpoint.before->emitError(selection.error); }
+            const bool needMember = !endpoint.physicalMapping || physicalMapRequiresMember(*endpoint.physicalMapping);
+            auto selected = buildFamilyExpressions(points, labels);
+            if (!selected.error.empty()) {
+                return endpoint.before->emitError(selected.error);
+            }
+            auto selection =
+                needMember ?
+                    emitFamilyExpressions(builder, endpoint.before->getLoc(), *selected.recipe) :
+                    FamilyExpressions{{}, emitFamilyPresence(builder, endpoint.before->getLoc(), *selected.recipe), {}};
             endpoint.memberCoordinates.front() = selection.member;
             endpoint.guard = selection.present;
             for (auto factor : domains.at(i).residual) {
@@ -497,6 +523,10 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
     if (function->hasAttr("pto.endpoint_families")) {
         return function.emitError("logical insertion cannot replace existing endpoint-family provenance");
     }
+    if (!plan.physicalOutput &&
+        llvm::any_of(plan.endpoints, [](const auto& endpoint) { return bool(endpoint.physicalMapping); })) {
+        return function.emitError("endpoint physical maps require their owning physical-output request");
+    }
     Availability available(function);
     for (const auto& stage : plan.preparation) {
         if (!available.cut(stage.before) || !stage.code || stage.code->getParent() || stage.code->getNumArguments()) {
@@ -520,17 +550,19 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
     for (const auto& endpoint : plan.endpoints) {
         const bool barrier = endpoint.kind == LogicalCommandKind::Barrier;
         if (barrier && endpoint.sourcePipe == static_cast<uint32_t>(PIPE::PIPE_S)) {
-            return function.emitError("invalid logical plan: PIPE_S barrier is forbidden; "
-                                      "same-scalar storage hazards must be hardware protected before reduction");
+            return function.emitError(
+                "invalid logical plan: PIPE_S barrier is forbidden; "
+                "same-scalar storage hazards must be hardware protected before reduction");
         }
-        const bool kind = barrier || endpoint.kind == LogicalCommandKind::Set ||
-            endpoint.kind == LogicalCommandKind::Wait;
-        if (!kind || !available.cut(endpoint.before) || endpoint.record < 0 ||
-            !concretePipe(endpoint.sourcePipe) || !concretePipe(endpoint.targetPipe) ||
-            (barrier != (endpoint.sourcePipe == endpoint.targetPipe)) ||
+        const bool needsIdentity =
+            !endpoint.physicalMapping || physicalMapNeedsCoordinate(*endpoint.physicalMapping, 0);
+        const bool kind =
+            barrier || endpoint.kind == LogicalCommandKind::Set || endpoint.kind == LogicalCommandKind::Wait;
+        if (!kind || !available.cut(endpoint.before) || endpoint.record < 0 || !concretePipe(endpoint.sourcePipe) ||
+            !concretePipe(endpoint.targetPipe) || (barrier != (endpoint.sourcePipe == endpoint.targetPipe)) ||
             !available.value(endpoint.guard, endpoint.before) || !endpoint.guard.getType().isInteger(1) ||
-            (!barrier && (!available.value(endpoint.identity, endpoint.before) ||
-                         !endpoint.identity.getType().isIndex())) ||
+            (!barrier && (needsIdentity || endpoint.identity) &&
+             (!available.value(endpoint.identity, endpoint.before) || !endpoint.identity.getType().isIndex())) ||
             (barrier && endpoint.identity)) {
             return function.emitError("invalid or unavailable prepared logical endpoint");
         }
@@ -540,13 +572,21 @@ LogicalResult preflight(func::FuncOp function, const PreparedLogicalPlan& plan)
             for (const auto& constraint : box) {
                 if (!available.value(constraint.coordinate, endpoint.before) ||
                     !constraint.coordinate.getType().isIntOrIndex() || constraint.modulus > INT64_MAX ||
-                    (constraint.modulus && (constraint.value < 0 ||
-                        static_cast<uint64_t>(constraint.value) >= constraint.modulus))) {
+                    (constraint.modulus &&
+                     (constraint.value < 0 || static_cast<uint64_t>(constraint.value) >= constraint.modulus))) {
                     return function.emitError("invalid or unavailable endpoint domain constraint");
                 }
             }
         }
-        for (auto member : endpoint.memberCoordinates) {
+        if (!validPhysicalFamilyEndpoint(plan, endpoint)) {
+            return function.emitError("physical endpoint mapping does not belong to its certified family output");
+        }
+        for (auto [index, member] : llvm::enumerate(endpoint.memberCoordinates)) {
+            if (!member && plan.physicalOutput && endpoint.physicalMapping &&
+                (index ? !physicalMapNeedsCoordinate(*endpoint.physicalMapping, index) :
+                         !physicalMapRequiresMember(*endpoint.physicalMapping))) {
+                continue;
+            }
             if (endpoint.kind == LogicalCommandKind::Barrier || !member || !member.getType().isIndex() ||
                 !available.value(member, endpoint.before)) {
                 return function.emitError("invalid or unavailable endpoint family member");
@@ -724,13 +764,17 @@ void serializeFamilies(func::FuncOp function, const PreparedLogicalPlan& plan,
                 builder.getNamedAttr("records", builder.getDenseI64ArrayAttr(records))}));
         }
     }
-    function->setAttr("pto.endpoint_families", builder.getDictionaryAttr({
-        builder.getNamedAttr("version",
-                             builder.getI64IntegerAttr(plan.nestedIdentities ? 4 :
-                                 (plan.independentPieces ? 3 : (plan.groupedFamilies ? 2 : 1)))),
-        builder.getNamedAttr("plan", builder.getI64IntegerAttr(plan.planId)),
-        builder.getNamedAttr("families", builder.getArrayAttr(families)),
-        builder.getNamedAttr("pieces", builder.getArrayAttr(pieces))}));
+    function->setAttr(
+        "pto.endpoint_families",
+        builder.getDictionaryAttr(
+            {builder.getNamedAttr(
+                 "version",
+                 builder.getI64IntegerAttr(
+                     plan.nestedIdentities ? 4 : (plan.independentPieces ? 3 : (plan.groupedFamilies ? 2 : 1)))),
+             builder.getNamedAttr("plan", builder.getI64IntegerAttr(plan.planId)),
+             builder.getNamedAttr("protocol_version", builder.getI64IntegerAttr(plan.familyProtocol ? 1 : 0)),
+             builder.getNamedAttr("families", builder.getArrayAttr(families)),
+             builder.getNamedAttr("pieces", builder.getArrayAttr(pieces))}));
 }
 void command(OpBuilder& builder, const PreparedLogicalEndpoint& endpoint, int64_t planId, uint64_t cutId)
 {
@@ -739,6 +783,16 @@ void command(OpBuilder& builder, const PreparedLogicalEndpoint& endpoint, int64_
     branch->setAttr("pto.endpoint_cut", builder.getI64IntegerAttr(cutId));
     OpBuilder::InsertionGuard restore(builder);
     builder.setInsertionPointToStart(branch.thenBlock());
+    if (endpoint.physicalMapping) {
+        SmallVector<Value> tuple{endpoint.identity};
+        tuple.append(endpoint.memberCoordinates.begin() + 1, endpoint.memberCoordinates.end());
+        auto id = emitPhysicalEndpointMap(
+            builder, location, *endpoint.physicalMapping, tuple, endpoint.memberCoordinates.front());
+        assert(id && "validated immutable physical map must produce an event ID");
+        emitPhysicalCommand(
+            builder, location, endpoint.kind == LogicalCommandKind::Set, endpoint.sourcePipe, endpoint.targetPipe, id);
+        return;
+    }
     OperationState state(location, endpoint.kind == LogicalCommandKind::Set ? "pto.logical_set" : "pto.logical_wait");
     state.addOperands(endpoint.identity);
     state.addOperands(endpoint.memberCoordinates);
@@ -788,7 +842,10 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
     if (!function) {
         return failure();
     }
-    if (failed(materializeLogicalFamilies(plan))) { return failure(); }
+    if (!validFamilyEndpointProtocol(plan) || !validPhysicalFamilyOutput(plan) ||
+        failed(materializeLogicalFamilies(plan))) {
+        return failure();
+    }
     if (plan.completionOwner || plan.privateState) {
         auto inserted = plan.completionOwner ? plan.completionOwner->insert(function, plan) :
             plan.privateState->insert(function, plan);
@@ -810,6 +867,9 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
     if (failed(deduplicatePreparation(plan))) {
         return function.emitError("preparation deduplication invalidated terminal cleanup evidence");
     }
+    // Retained numerical families were grouped before allocation. Concrete and
+    // contextual compatibility contributions still use the trace-preserving
+    // compactor. Physical contributions merge only with equal complete maps.
     if (failed(coalesceEndpointAlternatives(plan))) { return failure(); }
     if (failed(preflight(function, plan))) { return failure(); }
     discardUnusedPreparation(plan);
@@ -822,7 +882,9 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
     for (const auto& endpoint : plan.endpoints) {
         cuts[endpoint.before].push_back(&endpoint);
     }
-    serializeFamilies(function, plan, cuts);
+    if (!plan.physicalOutput) {
+        serializeFamilies(function, plan, cuts);
+    }
     OpBuilder builder(function.getContext());
     uint64_t cutId = 0;
     for (const auto& cut : cuts) {
@@ -839,7 +901,7 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
     if (plan.recognitionReport) {
         function->setAttr("pto.frontier_recognition", plan.recognitionReport);
     }
-    if (plan.allocationCertificate) {
+    if (plan.allocationCertificate && !plan.physicalOutput) {
         auto kind = plan.allocationCertificate.getAs<StringAttr>("kind");
         function->setAttr(kind && kind.getValue() == "finite" ? FiniteAllocationAttr : CyclicAllocationAttr,
                           plan.allocationCertificate);

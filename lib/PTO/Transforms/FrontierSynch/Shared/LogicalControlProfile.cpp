@@ -60,8 +60,8 @@ llvm::json::Object functionControl(func::FuncOp function)
         divisions += name == "arith.divui" || name == "arith.divsi" ||
                      name == "arith.remui" || name == "arith.remsi";
         branches += name == "scf.if";
-        sets += name == "pto.logical_set";
-        waits += name == "pto.logical_wait";
+        sets += name == "pto.logical_set" || name == "pto.set_flag" || name == "pto.set_flag_dyn";
+        waits += name == "pto.logical_wait" || name == "pto.wait_flag" || name == "pto.wait_flag_dyn";
         barriers += name == "pto.barrier";
     });
     llvm::json::Object result{{"arithmetic_including_payload", arithmeticCount}, {"selects", selects},
@@ -78,25 +78,37 @@ void profileLogicalControl(func::FuncOp function, const PreparedLogicalPlan& pla
     uint64_t records = 0;
     for (const auto& family : plan.families) { records += family.members.size(); }
     auto staged = plan.privateState ? plan.privateState->preparedFunction() : func::FuncOp{};
-    llvm::errs() << "frontier-control-profile " << llvm::json::Value(llvm::json::Object{
-        {"function", function.getSymName()}, {"stage", stage}, {"plan", plan.planId},
-        {"producer", plan.mathematicalOwner ? plan.mathematicalOwner->backend : "unreported"},
-        {"realization", plan.privateState ? "invocation-prefix" :
-            (plan.completionOwner ? "conservative-completion" : "direct-endpoints")},
-        {"record_members", records}, {"families", plan.families.size()},
-        {"endpoint_sites", plan.endpoints.size()},
-        {"recipe_sites", plan.familyRecipe ? familyEndpointPieceCount(*plan.familyRecipe) : 0},
-        {"preparation", preparation(plan)},
-        {"recipe_forms", familyForms(plan)},
-        {"prefix_expressions", plan.privateState ? plan.privateState->expressionProfile() : llvm::json::Object{}},
-        {"family_materialization", llvm::json::Object{
-            {"shared_published", plan.familyWork.sharedPublished},
-            {"shared_requests", plan.familyWork.sharedRequests},
-            {"shared_imports", plan.familyWork.sharedImports},
-            {"shared_candidates", plan.familyWork.sharedCandidates},
-            {"local_entries", plan.familyWork.localEntries},
-            {"contexts", plan.familyWork.contexts}}},
-        {"function_scope", staged ? "staged-invocation" : "original-or-inserted"},
-        {"function_control", functionControl(staged ? staged : function)}}) << "\n";
+    llvm::errs() << "frontier-control-profile "
+                 << llvm::json::Value(
+                        llvm::json::Object{
+                            {"function", function.getSymName()},
+                            {"stage", stage},
+                            {"plan", plan.planId},
+                            {"producer", plan.mathematicalOwner ? plan.mathematicalOwner->backend : "unreported"},
+                            {"realization", plan.privateState ? "invocation-prefix" :
+                                                                (plan.completionOwner ? "conservative-completion" :
+                                                                                        "direct-endpoints")},
+                            {"record_members", records},
+                            {"families", plan.families.size()},
+                            {"endpoint_sites", plan.endpoints.size()},
+                            {"recipe_sites", plan.familyRecipe ? familyEndpointPieceCount(*plan.familyRecipe) : 0},
+                            {"preparation", preparation(plan)},
+                            {"recipe_forms", familyForms(plan)},
+                            {"prefix_expressions",
+                             plan.privateState ? plan.privateState->expressionProfile() : llvm::json::Object{}},
+                            {"family_materialization",
+                             llvm::json::Object{
+                                 {"normalization_inputs", plan.familyWork.normalizationInputs},
+                                 {"normalized_sites", plan.familyWork.normalizedSites},
+                                 {"materializations", plan.familyWork.materializations},
+                                 {"shared_published", plan.familyWork.sharedPublished},
+                                 {"shared_requests", plan.familyWork.sharedRequests},
+                                 {"shared_imports", plan.familyWork.sharedImports},
+                                 {"shared_candidates", plan.familyWork.sharedCandidates},
+                                 {"local_entries", plan.familyWork.localEntries},
+                                 {"contexts", plan.familyWork.contexts}}},
+                            {"function_scope", staged ? "staged-invocation" : "original-or-inserted"},
+                            {"function_control", functionControl(staged ? staged : function)}})
+                 << "\n";
 }
 } // namespace mlir::pto::frontiersynch

@@ -74,7 +74,9 @@ AllocationPreparation::operator bool() const
 std::shared_ptr<RegionalAllocationSummary> requestAllocationSummary(
     PreparedLogicalPlan& plan, AllocationStrength strength, AllocationProfile* profile)
 {
-    if (plan.privateState || plan.completionOwner) { return {}; }
+    if (plan.privateState || plan.completionOwner || failed(normalizeLogicalFamilies(plan))) {
+        return {};
+    }
     llvm::SaveAndRestore<AllocationProfile*> profiling(plan.allocationProfile, profile);
     return plan.allocationPreparation.request(plan, strength);
 }

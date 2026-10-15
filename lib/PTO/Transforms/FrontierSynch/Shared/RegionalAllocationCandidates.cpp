@@ -32,6 +32,9 @@ LogicalResult selectRegionalAllocationCandidate(func::FuncOp function,
     for (auto id : eligibleIds) {
         if (id < 0 || id > 5 || !unique.insert(id).second) { return failure(); }
     }
+    if (failed(normalizeLogicalFamilies(plan))) {
+        return failure();
+    }
     const auto incumbent = plan.regionalAllocation;
     const auto certificate = plan.allocationCertificate;
     if (fits(function, certificate, eligibleIds)) {

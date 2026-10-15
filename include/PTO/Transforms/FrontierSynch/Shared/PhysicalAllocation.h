@@ -9,9 +9,11 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_PHYSICALALLOCATION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_PHYSICALALLOCATION_H
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Structured/NumericTemplate.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Dominance.h"
 #include <optional>
 namespace mlir::pto::frontiersynch {
 inline constexpr llvm::StringLiteral CyclicAllocationAttr = "pto.cyclic_allocation";
@@ -48,7 +50,30 @@ struct PhysicalAllocationPlan {
     int64_t planId = 0;
     std::vector<PhysicalRecordAllocation> records;
 };
+// Common hardware/input admission before either physical-output route.
+LogicalResult preflightPhysicalOutput(func::FuncOp function, DictionaryAttr certificate);
+bool physicalCandidateFits(DictionaryAttr certificate, std::size_t capacity);
+// Both retained and serialized plans use this pure mapping planner. The
+// supplied allocation is already certified; fitting only re-expresses it.
+class PhysicalEndpointMap;
+FailureOr<std::shared_ptr<const PhysicalEndpointMap>> planPhysicalEndpointMap(
+    Operation* cut, ArrayRef<PhysicalRecordAllocation> members, ArrayRef<SmallVector<TemplateCoordinate>> points,
+    uint64_t tupleArity, bool nested, DominanceInfo& dominance);
+bool physicalMapRequiresMember(const PhysicalEndpointMap& mapping);
+uint64_t physicalMapTupleArity(const PhysicalEndpointMap& mapping);
+// Sufficient equality of complete total maps, independent of record labels.
+bool equivalentPhysicalMaps(const PhysicalEndpointMap& a, const PhysicalEndpointMap& b);
+std::optional<uint64_t> physicalMapCost(const PhysicalEndpointMap& mapping);
+// Lowering is infallible for a validated immutable map and preflighted bindings.
+// Matching coordinates exclude the provenance label: source ordinal first,
+// followed by enclosing invocation coordinates. Lower only inside exact activity.
+Value emitPhysicalEndpointMap(
+    OpBuilder& builder, Location location, const PhysicalEndpointMap& mapping, ArrayRef<Value> tuple, Value member);
+void emitPhysicalCommand(
+    OpBuilder& builder, Location location, bool publish, uint32_t sourcePipe, uint32_t targetPipe, Value id);
 FailureOr<PhysicalAllocationPlan> decodePhysicalAllocation(func::FuncOp function, ArrayRef<int64_t> eligibleIds);
+FailureOr<PhysicalAllocationPlan> decodePhysicalAllocationCertificate(
+    func::FuncOp function, DictionaryAttr certificate, ArrayRef<int64_t> eligibleIds);
 FailureOr<PhysicalAllocationPlan> decodeCyclicAllocation(func::FuncOp function, ArrayRef<int64_t> eligibleIds);
 // Decode retained alternative evidence without temporarily changing function attributes.
 FailureOr<PhysicalAllocationPlan> decodeCyclicAllocationCertificate(

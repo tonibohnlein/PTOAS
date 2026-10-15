@@ -12,6 +12,7 @@
 #include "AnalysisSessionInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ClosedCallees.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingAnalysis.h"
@@ -503,7 +504,8 @@ struct StageProfileReport {
 FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     func::FuncOp function, GMAliasPolicy policy,
     const std::optional<frontiersynch::ArithmeticLimits>& profile = std::nullopt, bool profileStages = false,
-    bool prepareAllocation = true, ArrayRef<int64_t> allocationIds = {})
+    bool prepareAllocation = true, ArrayRef<int64_t> allocationIds = {}, bool completeInvocation = false,
+    bool physicalOutput = false)
 {
     frontiersynch::FrontierAnalysis analysis(function);
     analysis.enableStageProfiling(profileStages);
@@ -524,10 +526,17 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     if (result.status == frontiersynch::AnalysisStatus::Ready) {
         prepared = analysis.prepareLogical(result);
         if (succeeded(prepared)) {
+            (*prepared)->completeInvocation |= completeInvocation;
             logicalBackend = result.completion ? StringRef("completion-transfer") :
                 StringRef(result.mathematical->backend);
             // Missing allocation support leaves the selected logical graph available.
             if (prepareAllocation) { (void)analysis.attachAllocation(result, **prepared, allocationIds); }
+            if (physicalOutput &&
+                failed(frontiersynch::planPhysicalFamilyOutput(function, **prepared, allocationIds))) {
+                return function.emitError(
+                           "combined physical output requires a supported retained family and allocation export"),
+                       failure();
+            }
         }
     }
     std::string routeError;
@@ -611,6 +620,14 @@ public:
                 return;
             }
         }
+        if (physicalOutput && (analysisOnly || !prepareAllocation)) {
+            getOperation().emitError("physical-output requires synchronization and prepare-allocation=true");
+            signalPassFailure();
+            return;
+        }
+        if (physicalOutput && allocationIds.empty()) {
+            allocationIds = {0, 1, 2, 3, 4, 5};
+        }
         if (!allocationIds.empty() && (analysisOnly || !prepareAllocation)) {
             getOperation().emitError("allocation-ids requires logical preparation with prepare-allocation=true");
             signalPassFailure();
@@ -628,11 +645,13 @@ public:
             profile = *parsed;
         }
         if (!analysisOnly) {
-            if (failed(frontiersynch::insertModuleSynchronization(getOperation(), policy,
-                    [&](func::FuncOp function, GMAliasPolicy contextPolicy) {
-                        return prepareFunction(function, contextPolicy, profile, profileStages,
-                            prepareAllocation, allocationIds);
-                    }))) {
+            if (failed(
+                    frontiersynch::insertModuleSynchronization(
+                        getOperation(), policy, [&](func::FuncOp function, GMAliasPolicy contextPolicy, bool closed) {
+                            return prepareFunction(
+                                function, contextPolicy, profile, profileStages, prepareAllocation, allocationIds,
+                                closed, physicalOutput);
+                        }))) {
                 signalPassFailure();
             }
             return;
@@ -709,10 +728,10 @@ public:
     }
 };
 } // namespace
-FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>>
-frontiersynch::prepareFunctionSynchronization(func::FuncOp function, GMAliasPolicy policy)
+FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> frontiersynch::prepareFunctionSynchronization(
+    func::FuncOp function, GMAliasPolicy policy, bool completeInvocation)
 {
-    return prepareFunction(function, policy);
+    return prepareFunction(function, policy, std::nullopt, false, true, {}, completeInvocation);
 }
 std::unique_ptr<Pass> createPTOFrontierAnalysisPass() {
     return std::make_unique<PTOFrontierAnalysisPass>();

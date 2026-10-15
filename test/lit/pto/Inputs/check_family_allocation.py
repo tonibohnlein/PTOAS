@@ -87,6 +87,8 @@ def rejection_checks(optimizer, path, source):
         source.replace("source_cut = 0 : i64", "source_cut = 9 : i64"),
         source.replace("members(%member)", "members(%four)"),
         source.replace("version = 2 : i64", "version = 7 : i64"),
+        source.replace("pto.endpoint_families = {", "pto.endpoint_families = {protocol_version = 2 : i64, "),
+        source.replace("pto.endpoint_families = {", "pto.endpoint_families = {protocol_version = 1 : i128, "),
     ]
     for text in cases:
         path.write_text(text)

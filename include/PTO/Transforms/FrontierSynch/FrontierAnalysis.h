@@ -22,7 +22,7 @@
 namespace mlir::pto::frontiersynch {
 // Detached whole-function producer shared by module coordination and tests.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFunctionSynchronization(
-    func::FuncOp function, GMAliasPolicy policy);
+    func::FuncOp function, GMAliasPolicy policy, bool completeInvocation = false);
 struct ArithmeticPeriodicExports {
     bool endpointsAvailable = false, allocationAvailable = false;
     std::string endpointError, allocationError;

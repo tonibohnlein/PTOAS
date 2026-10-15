@@ -50,8 +50,9 @@ draft obligation; its excess formula must not authorize a production decision.
 | R6 | Normalized logical graph allocation, owned session and closed-child completion import | Shared unified/split stages, allocation before scalar materialization, deleted superseded paths | M3/M4/M5/M6; Sections 6/8 |
 | R7 | Pinned pipeline, scaling and device closure | Distinct logical/physical/C++/device outcomes and reproducible receipts | M1/M6 |
 
-R1 transfer, R2 frontiers and the qualifying R3 scans are implemented; R4–R7 remain open. Existing primitives are starting
-points, not completed migrations. Continue with R4a–c, R5, R6, then R7.
+R1 transfer, R2 frontiers, qualifying R3 scans and the B1 Section 7 routes are implemented.
+R5–R7 and the remaining capability migrations stay open. Continue through the
+batched execution order below; implemented specializations do not imply universal coverage.
 Run focused integration checks at each step; do not defer all production
 validation to R7. A newly measured bottleneck may justify resequencing, recorded
 with evidence rather than another untracked fallback.
@@ -66,8 +67,8 @@ instrumentation and test fixes belong to the batch they support.
 
 | Batch | Integrated implementation | Acceptance gate |
 |---|---|---|
-| B1: Section 7 allocation and lane boundaries | Finish qualified periodic lane-boundary exports, connect them to variable-length/repeated allocation, and use ordered first-reuse capabilities for qualifying spans. Retain parent retry and economical independently certified mappings. | Exact lane presence/extrema and legal reuse on zero, short, partial and repeated invocations; scaling without generation expansion or an unnecessary pair matrix. |
-| B2: allocate the normalized family plan | Normalize recipe-level families and coactive command order before allocation. Compose certified ID maps with occurrence selectors, then materialize live code once. Consolidate retained-session and split-pipeline stage functions and remove replaced preparation paths. | Allocation can inspect the actual logical protocol without singleton scalar preparation; unified/split agreement, owned/versioned artifacts and unchanged communications/order. |
+| B1 (accepted, `d42907306`): Section 7 allocation and lane boundaries | Finish qualified periodic lane-boundary exports, connect them to variable-length/repeated allocation, and use ordered first-reuse capabilities for qualifying spans. Retain parent retry and economical independently certified mappings. | Exact lane presence/extrema and legal reuse on zero, short, partial and repeated invocations; scaling without generation expansion or an unnecessary pair matrix. |
+| B2 (accepted): allocate the normalized family plan | Normalize recipe-level families and coactive command order before allocation. Compose certified ID maps with occurrence selectors, then materialize live code once. Consolidate retained-session and split-pipeline stage functions and remove replaced preparation paths. | Allocation can inspect the actual logical protocol without singleton scalar preparation; unified/split agreement, owned/versioned artifacts and unchanged communications/order. |
 | B3: compact guarded control and constructive exports | Address the remaining large guard/query roots through shared producer construction, restricted incoming queries where qualified, early multi-output slicing and binding-aware lowering. Finish applicable guarded/relational occurrence and capture transport through the common interface. Include residual read/read avoidance and complete control-cost attribution. | Independent demand/query/selector agreement, preserved invocation/history semantics, structural scaling and paired full preparation measurements; no speedup claim from deferred work alone. |
 | B4: physical lifetime export for prefix protocols | Export publication, acquisition, terminal cleanup and invocation lifetimes for the actual prefix command plan; integrate them with allocation and reservations. | Matching and consumption-before-republication proofs on empty, guarded and repeated executions; certify supported finite-ID assignments and distinguish infeasibility from unavailable evidence. Delta logical success alone does not complete this batch. |
 | B5: Section 6 production integration | Import qualified closed selectively synchronized children into SCC-local completion composition and provide coarse shared input for completion requests. Preserve child synchronization and carry outstanding effects across boundaries. | Concrete summary/coverage oracle, closed matching and joint resource certification, no automatic boundary drains, transactional failure and hardware/readiness restrictions. |
@@ -2366,3 +2367,126 @@ recognition contract. This test correction does not change production policy.
 Receipts are under `.local/b1-lane-boundaries/`. These are correctness and
 structural-work measurements; no paired kernel speedup or device result is
 claimed. Remaining work continues in B2 through B6 above.
+
+
+### B2: normalized protocol ownership and combined physical lowering
+
+The retained-family boundary now freezes one ordered contribution stream before
+allocation. It includes concrete compatibility anchors, deferred leaves, record
+translations, invocation bindings and exact activity wrappers. Adjacent compatible
+numerical leaves use the existing exclusion/coactive-order grouping before scalar
+preparation. Unknown residual activity stays opaque. The allocation cache is keyed
+by the complete attempt-owned protocol description and retains the owner that
+keeps expression identities alive; a plan ID alone is insufficient.
+
+The owner identifies logical communications, matching, original cuts and coactive
+order. It does not promise an immutable final static-piece vector: certified
+trace-preserving lowering may combine exclusive sites without changing the
+unfolded protocol. Concrete and contextual compatibility contributions retain the
+existing late compactor. Their further migration requires owned activity
+factorization, tracked in B3; this batch does not claim that every producer is
+fully normalized before scalar preparation. Projection remains an explicit
+concrete compatibility boundary.
+
+Closed-callee completion is now part of the preparation request, before allocation
+can freeze the graph. Private-state and completion plans reject family/protocol
+and physical-output owners. Changing a frozen invocation or matching shape is
+rejected, including after deferred families have materialized. Parent composition
+requests a fresh owner after its supported coordinate/namespace transformations.
+
+Physical mapping uses an owned pure recipe rather than scratch SSA for candidate
+selection. Retained and saved-plan adapters share coordinate fitting, complete
+selector/tuple lowering and palette handling. Structural costs charge live
+selectors, modular terms and dispatch, sharing identical selector recipes; they
+are deterministic heuristics, not instruction counts or hardware latency.
+Unknown costs and ties retain the incumbent. An optional allocation that does
+not fit, decode or provide a supported map cannot invalidate an accepted primary
+assignment. Re-expression never creates reuse evidence.
+
+The existing analysis pass has an explicit `physical-output=true` request.
+Attaching allocation evidence alone still produces logical output. The combined
+request binds certified maps to the frozen protocol, eligible pool, cuts,
+directions, original records and matching tuple shapes before family lowering.
+Exact presence is retained; unused record-label selectors are not emitted.
+Physical ID arithmetic is lowered inside the exact command guard. Compatibility
+sites may merge only when their complete total physical maps are provably equal.
+The split pipeline uses the same map components and remains available.
+
+Combined lowering retains matching arity but slices unused tuple inputs before
+scalar preparation: a constant physical map needs neither source ordinal nor
+invocation coordinates. A nonconstant map keeps each input it actually reads;
+null positional slots never shift the remaining coordinates. Ordinals needed by
+exact displacement guards remain live even when the physical map ignores them.
+This is expression slicing of a certified assignment, not a new reuse argument.
+
+Pending cleanup selection contributes its immutable arena and predicate identity
+to the protocol key, rather than a freshly allocated wrapper address. The frozen
+inventory retains these proof owners independently of command-recipe arenas.
+Fresh preparation can reuse the same evidence without permitting arena address
+reuse after the original detached plan is destroyed.
+
+Successful scalar-free exports now have an immutable session-owned template.
+Fresh plans share recipes and their evidence owners, while copying mutable family
+provenance and protocol flags. Concrete preparation, allocation callbacks and
+evidence, generated cut-choice predicates, private state and completion plans
+are excluded. Both pending and newly constructed successful exports use the
+same admission helper. This preserves disposable guarded-export arena isolation
+without importing an identical successful graph again for each preparation.
+
+Both physical entry points preserve the 64-bit index-layout, manual-event and
+hidden macro-reservation admission checks. Unsupported prefix lifetimes,
+completion plans, concrete-only roots and projected combined output remain
+explicit refusals, not implicit fallback or capacity lower bounds. Duplicate
+`(cut, kind, original record)` coverage is already forbidden by the independent
+piece schema, including distinct qualified terminal-cleanup alternatives.
+
+The explicit prepared-insertion suite passes 36 independently unfolded
+logical/combined order, ownership and scaling cases. It also verifies a pending
+proof in a distinct arena outlives the original plan through the cached protocol.
+Checks cover arbitrary record numbering, bounded complete-map code, unused tuple
+inputs, a live third coordinate, foreign-map rejection, index-width and hidden
+reservations, and optional-candidate refusal. The session regression verifies
+shared recipe ownership with fresh mutable provenance and an isolated failed
+compatibility preparation. The latter fails before scalar construction; existing
+staged-lowering regressions cover transactional materialization failures.
+
+Sixteen focused production tests pass, including the combined/split trace driver,
+closed callees, execution-context predicates, allocation retries, physical rotation
+and completion compatibility. The combined/split driver checks twelve
+empty/short/repeated invocations and complete ordered physical traces. Its profile
+check independently counts emitted physical SET/WAIT sites; logical and physical
+commands now both contribute to the control inventory.
+
+Persistent was compared with pinned B1 tools at `d42907306`, using three alternating
+serial pairs with identical MayNotAlias and six-ID flags. Logical-pass medians
+including allocation support were 1.542 seconds before and 1.524 seconds after:
+this establishes no meaningful planning speedup. The logical function remains at
+3,924 arithmetic operations and 56/56 SET/WAIT sites. Split physical output has
+4,606 arithmetic operations, versus 4,600 before this batch.
+
+The explicit combined request constructs 2,230 preparation arithmetic operations,
+versus 11,550 in the candidate logical/split route, and leaves 2,114 total arithmetic
+operations in the physical function. It emits 68/60 SET/WAIT sites rather than
+56/56: differing complete maps prevent some compatibility merges, while unused
+identity/coordinate construction is removed. This is a measured representation
+tradeoff, not a claim that either site's count is minimal. The exact physical event
+arrays, matching IDs, payloads and command order agree across baseline, split and
+combined output for cores 0, 15, 16 and 19. Independent command-graph reuse checks
+pass; cores 0/15 execute 5,011 pairs and cores 16/19 execute 4,625 pairs.
+
+The combined output also passes C++ emission with the separately pinned historical
+backend `30646a6e0e789283ea20a0c73aa8d92e90851c6ce6a087291643b048e80d56e0`.
+No device execution or latency improvement is claimed. Receipts, input/tool hashes
+and the source manifest live under `.local/b2-normalized-protocol/`.
+
+The changed-code prefilter reports multiline-control and debug-assertion matches.
+All 54 flagged control bodies have braces when the complete conditions are read.
+Assertions check internal immutable-map invariants after explicit runtime preflight;
+the compliance skill's debug-invariant exception applies. Opaque pointer-to-integer
+keys are attempt-local identities, never decoded as executable values, and retain
+their owners. These are contextual resolutions, not a claim that the regex checker
+returned clean. Correctness and architecture reviewers accepted this scoped batch
+against the 37-file code manifest
+`ab55d24b94e8f2eb81d780e853d4a90b5eb8a6822c0cd70fff04e6e4aa4d5286`.
+Their acceptance includes the documented compatibility boundaries and static-site
+tradeoff. Continue with B3; this acceptance does not close B3–B6.

@@ -51,6 +51,13 @@ struct ProducerFailure {
     SmallVector<RecognitionDiagnostic> diagnostics;
     SmallVector<ArithmeticDiagnostic> arithmeticDiagnostics;
 };
+struct LogicalFamilyTemplate {
+    int64_t planId = 0;
+    bool completeInvocation = false, nestedIdentities = false;
+    bool independentPieces = false, groupedFamilies = false;
+    std::shared_ptr<const FamilyEndpointRecipe> recipe;
+    std::vector<EndpointFamily> families;
+};
 struct BackendAttempt {
     ProducerFailure failure;
     bool produced = false;
@@ -75,9 +82,18 @@ struct BackendAttempt {
     // The first successful synchronization request owns its detached fragment
     // until PrepareLogical consumes it. Later preparations instantiate afresh.
     std::unique_ptr<PreparedLogicalPlan> pendingLogical;
+    // Successful scalar-free construction only. Fresh preparations share its
+    // immutable recipes/evidence and never share mutable plans or generated SSA.
+    std::shared_ptr<const LogicalFamilyTemplate> logicalFamilyTemplate;
     std::shared_ptr<const NumericTemplateEndpoints> periodicEndpoints;
     // Only the allocation capability is memoized here, including unavailable exports.
-    std::map<int64_t, DictionaryAttr> allocation;
+    // Deferred exports bind evidence to the complete frozen protocol key.
+    // Concrete compatibility plans retain the legacy empty-key contract.
+    struct CachedAllocation {
+        std::shared_ptr<const FamilyEndpointRecipe> protocolOwner;
+        DictionaryAttr certificate;
+    };
+    std::map<std::pair<int64_t, std::vector<uint64_t>>, CachedAllocation> allocation;
     std::map<std::pair<std::size_t, std::size_t>, int64_t> arithmeticRecords;
 };
 struct SpecializedArithmeticAttempt {

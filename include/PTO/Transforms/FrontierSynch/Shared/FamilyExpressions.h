@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplate.h"
 #include "mlir/IR/Builders.h"
 #include <memory>
+#include <optional>
 #include <string>
 namespace mlir::pto::frontiersynch {
 struct FamilyExpressions {
@@ -29,7 +30,18 @@ struct FamilyExpressionPlan {
 FamilyExpressionPlan buildFamilyExpressions(ArrayRef<SmallVector<TemplateCoordinate>> members,
     ArrayRef<int64_t> labels = {}, uint64_t modulus = 0,
     FamilyExpressionOutputs outputs = FamilyExpressionOutputs::PresenceAndMember);
+// Deterministic structural estimate of the live requested outputs. No SSA is
+// constructed. This is a bounded implementation heuristic, not a latency model.
+struct FamilyExpressionEstimate {
+    uint64_t operations = 0, weighted = 0;
+    bool cheap = true;
+};
+std::optional<FamilyExpressionEstimate> estimateFamilyExpressions(const FamilyExpressionRecipe& recipe);
+// Attempt-local structural identity; original SSA pointers are opaque key data.
+void appendFamilyExpressionKey(const FamilyExpressionRecipe& recipe, SmallVectorImpl<uint64_t>& key);
 FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location, const FamilyExpressionRecipe& recipe);
+// Slice only the already retained exact activity; no selected-label SSA.
+Value emitFamilyPresence(OpBuilder& builder, Location location, const FamilyExpressionRecipe& recipe);
 // The caller establishes a 64-bit index layout and availability of every loop
 // induction value at the insertion point. Each tuple uses the same ordered loop
 // schema. Literal lower/step bounds permit lattice normalization; otherwise

@@ -25,6 +25,8 @@ class PrivateStatePlan;
 class CompletionRegion;
 class FamilyEndpointRecipe;
 class AllocationProfile;
+class PhysicalEndpointMap;
+struct PhysicalFamilyOutput;
 enum class LogicalCommandKind { Set, Barrier, Wait };
 // A necessary execution domain, retained by the producer that binds an
 // occurrence. Every active endpoint satisfies every constraint in one box.
@@ -49,7 +51,7 @@ struct PreparedLogicalEndpoint {
     SmallVector<uint32_t> records; // Original records covered by this independently grouped side.
     int64_t piece = -1; // Plan-local emission piece ID for version-three provenance.
     SmallVector<EndpointDomainBox> domain;
-
+    std::shared_ptr<const PhysicalEndpointMap> physicalMapping;
 };
 // A producer builds ordinary arith operations in detached blocks. Inputs may
 // refer to original SSA values or results of earlier preparation blocks.
@@ -58,6 +60,7 @@ struct LogicalPreparation {
     std::unique_ptr<Block> code;
 };
 struct FamilyMaterializationWork {
+    uint64_t normalizationInputs = 0, normalizedSites = 0, materializations = 0;
     uint64_t sharedPublished = 0, sharedRequests = 0, sharedImports = 0, sharedCandidates = 0;
     uint64_t localEntries = 0, contexts = 0;
 };
@@ -98,6 +101,11 @@ struct PreparedLogicalPlan {
     // Numerical families and qualified sequence composition own no generated
     // SSA. Allocation consumes the fixed protocol before one final lowering.
     std::shared_ptr<const FamilyEndpointRecipe> familyRecipe;
+    // Frozen contribution stream consumed by allocation and final lowering.
+    // Retained after lowering as protocol identity; contains no generated SSA.
+    std::shared_ptr<const FamilyEndpointRecipe> familyProtocol;
+    // Explicit physical-output request; a certificate alone never selects it.
+    std::shared_ptr<const PhysicalFamilyOutput> physicalOutput;
     std::vector<LogicalPreparation> preparation;
     std::vector<PreparedLogicalEndpoint> endpoints;
     std::vector<EndpointFamily> families; // Exact source/target coordinate provenance.
@@ -105,6 +113,10 @@ struct PreparedLogicalPlan {
 // For producers whose occurrence binding explicitly conjoins these equalities.
 void retainEndpointCoordinates(PreparedLogicalEndpoint& endpoint, ArrayRef<TemplateCoordinate> coordinates);
 void prepareAllocationSupport(PreparedLogicalPlan& plan, AllocationProfile* profile = nullptr);
+// Normalize deferred families without materializing scalar SSA. The resulting
+// owned stream fixes namespace, invocation transforms and coactive command order.
+// Replacing a frozen stream requires a fresh plan and allocation request.
+LogicalResult normalizeLogicalFamilies(PreparedLogicalPlan& plan);
 // Explicit compatibility boundary for consumers requiring concrete endpoint SSA.
 LogicalResult materializeLogicalFamilies(PreparedLogicalPlan& plan);
 // Opt-in aggregate snapshots; no expression evaluation or generated IR mutation.

@@ -415,6 +415,144 @@ FamilyExpressionPlan buildFamilyExpressions(ArrayRef<SmallVector<TemplateCoordin
     recipe->fallback = domain.labels.empty() ? 0 : domain.labels.front();
     return {{}, std::move(recipe)};
 }
+void appendFamilyExpressionKey(const FamilyExpressionRecipe& recipe, SmallVectorImpl<uint64_t>& key)
+{
+    key.push_back(recipe.axes.size());
+    for (const auto& axis : recipe.axes) {
+        key.push_back(reinterpret_cast<uintptr_t>(axis.induction.getAsOpaquePointer()));
+        key.push_back(static_cast<uint64_t>(axis.lower));
+        key.push_back(static_cast<uint64_t>(axis.step));
+        key.push_back(axis.normalized);
+    }
+    key.push_back(static_cast<uint64_t>(recipe.fallback));
+    key.push_back(recipe.modulus);
+    key.push_back(recipe.affine);
+    key.push_back(recipe.includePresence);
+    key.push_back(static_cast<uint64_t>(recipe.intercept));
+    key.push_back(recipe.coefficients.size());
+    for (auto coefficient : recipe.coefficients) {
+        key.push_back(static_cast<uint64_t>(coefficient));
+    }
+    auto boxes = [&](ArrayRef<Box> values) {
+        key.push_back(values.size());
+        for (const auto& box : values) {
+            key.push_back(box.low.size());
+            for (auto value : box.low) {
+                key.push_back(static_cast<uint64_t>(value));
+            }
+            for (auto value : box.high) {
+                key.push_back(static_cast<uint64_t>(value));
+            }
+        }
+    };
+    boxes(recipe.regions);
+    key.push_back(recipe.alternatives.size());
+    for (const auto& [label, regions] : recipe.alternatives) {
+        key.push_back(static_cast<uint64_t>(label));
+        boxes(regions);
+    }
+}
+std::optional<FamilyExpressionEstimate> estimateFamilyExpressions(const FamilyExpressionRecipe& recipe)
+{
+    FamilyExpressionEstimate result;
+    bool valid = true;
+    auto add = [&](uint64_t operations, uint64_t weighted) {
+        if (operations > UINT64_MAX - result.operations || weighted > uint64_t(INT64_MAX) - result.weighted) {
+            valid = false;
+            return;
+        }
+        result.operations += operations;
+        result.weighted += weighted;
+    };
+    auto remainder = [&](uint64_t modulus) {
+        const bool powerOfTwo = modulus && !(modulus & (modulus - 1));
+        add(1, powerOfTwo ? 1 : 8);
+        result.cheap &= powerOfTwo;
+    };
+    std::set<std::size_t> coordinates;
+    auto coordinate = [&](std::size_t index) {
+        if (!coordinates.insert(index).second) {
+            return;
+        }
+        const auto& axis = recipe.axes[index];
+        if (!axis.induction.getType().isIndex()) {
+            add(1, 1);
+        }
+        if (axis.normalized) {
+            add(2, 2);
+            result.cheap = false;
+        }
+    };
+    std::set<std::tuple<std::size_t, arith::CmpIPredicate, int64_t>> comparisons;
+    std::set<std::pair<Tuple, Tuple>> guards;
+    auto presence = [&](ArrayRef<Box> boxes) {
+        for (const auto& box : boxes) {
+            if (!guards.emplace(box.low, box.high).second) {
+                continue;
+            }
+            for (std::size_t axis = 0; axis < recipe.axes.size(); ++axis) {
+                coordinate(axis);
+                const bool point = box.low[axis] == box.high[axis];
+                if (comparisons
+                        .emplace(axis, point ? arith::CmpIPredicate::eq : arith::CmpIPredicate::sge, box.low[axis])
+                        .second) {
+                    add(1, 1);
+                }
+                if (!point) {
+                    if (comparisons.emplace(axis, arith::CmpIPredicate::sle, box.high[axis]).second) {
+                        add(1, 1);
+                    }
+                    add(1, 1);
+                }
+            }
+            if (!recipe.axes.empty()) {
+                add(recipe.axes.size() - 1, recipe.axes.size() - 1);
+            }
+        }
+        if (!boxes.empty()) {
+            add(boxes.size() - 1, boxes.size() - 1);
+        }
+    };
+    if (recipe.includePresence) {
+        presence(recipe.regions);
+    }
+    if (recipe.affine) {
+        for (std::size_t axis = 0; axis < recipe.axes.size(); ++axis) {
+            if (!recipe.coefficients[axis]) {
+                continue;
+            }
+            coordinate(axis);
+            if (!recipe.modulus) {
+                add(2, 2);
+                continue;
+            }
+            if (recipe.axes[axis].normalized) {
+                remainder(recipe.modulus);
+            } else {
+                add(4, 6);
+                result.cheap = false;
+            }
+            add(2, 2);
+            remainder(recipe.modulus);
+        }
+    } else {
+        for (const auto& [label, boxes] : recipe.alternatives) {
+            (void)label;
+            presence(boxes);
+            add(1, 3);
+        }
+    }
+    result.cheap &= result.operations <= 8;
+    return valid ? std::optional(result) : std::nullopt;
+}
+Value emitFamilyPresence(OpBuilder& builder, Location location, const FamilyExpressionRecipe& recipe)
+{
+    if (!recipe.includePresence) {
+        return {};
+    }
+    Emitter emitter(builder, location, recipe.axes);
+    return emitter.presence(recipe.regions);
+}
 FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location, const FamilyExpressionRecipe& recipe)
 {
     Emitter emitter(builder, location, recipe.axes);

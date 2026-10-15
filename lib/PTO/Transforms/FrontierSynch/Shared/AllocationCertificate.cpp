@@ -160,6 +160,21 @@ FailureOr<PhysicalAllocationPlan> decodeCyclicAllocationCertificate(
     }
     return result;
 }
+FailureOr<PhysicalAllocationPlan> decodePhysicalAllocationCertificate(
+    func::FuncOp function, DictionaryAttr certificate, ArrayRef<int64_t> eligibleIds)
+{
+    if (!certificate || failed(validateIds(function, eligibleIds))) {
+        return failure();
+    }
+    if (certificate.get("groups")) {
+        return decodeRegionalAllocation(function, certificate, eligibleIds);
+    }
+    auto kind = certificate.getAs<StringAttr>("kind");
+    if (kind && kind.getValue() == "finite") {
+        return decodeFiniteAllocation(function, certificate, eligibleIds);
+    }
+    return decodeCyclicAllocationCertificate(function, certificate, eligibleIds);
+}
 FailureOr<PhysicalAllocationPlan> decodePhysicalAllocation(func::FuncOp function, ArrayRef<int64_t> eligibleIds)
 {
     if (failed(validateIds(function, eligibleIds))) { return failure(); }

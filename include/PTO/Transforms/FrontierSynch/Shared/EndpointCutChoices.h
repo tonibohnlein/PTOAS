@@ -19,6 +19,14 @@ public:
     Value consumerPredicate() const { return terminalPredicate; }
     bool pendingMaterialization() const { return bool(terminalArena); }
     bool validPendingSelection() const;
+    // Attempt-local identity of retained selection evidence. A fresh choice
+    // wrapper around the same arena predicate must not force allocation again.
+    // The containing protocol retains this object and therefore the arena.
+    void appendPendingSelectionKey(SmallVectorImpl<uint64_t>& key) const
+    {
+        key.push_back(reinterpret_cast<uintptr_t>(terminalArena.get()));
+        key.push_back(terminalExpression);
+    }
 private:
     EndpointCutChoices(scf::ForOp loop, ArrayRef<TemplateEndpointCut> cuts, Value predicate = {})
         : invocation(loop), alternatives(cuts.begin(), cuts.end()), terminalPredicate(predicate) {}
