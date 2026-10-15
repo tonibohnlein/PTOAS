@@ -112,7 +112,9 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildCoarse(
 std::shared_ptr<const CompletionRegion> CompletionRegion::build(func::FuncOp function,
     std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error)
 {
-    return buildImpl(function, std::move(input), index, error, false);
+    ClosedCompletionImportContext context;
+    context.active.insert(function);
+    return buildImpl(function, std::move(input), index, error, false, context);
 }
 FailureOr<CompletionSummary> CompletionRegion::summarizeEventFree(func::FuncOp function,
     std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error)
@@ -125,12 +127,30 @@ FailureOr<CompletionSummary> CompletionRegion::summarizeEventFree(func::FuncOp f
         error = "event-free child has event resources or transitive calls";
         return failure();
     }
-    auto qualified = buildImpl(function, std::move(input), index, error, true);
+    ClosedCompletionImportContext context;
+    context.active.insert(function);
+    auto qualified = buildImpl(function, std::move(input), index, error, true, context);
     if (!qualified) { return failure(); }
     return qualified->result.summary;
 }
+std::shared_ptr<const CompletionRegion> CompletionRegion::qualifyExistingChild(func::FuncOp function,
+    std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error,
+    ClosedCompletionImportContext& context)
+{
+    if (!function || !function.isPrivate() || hasManualOnCoreSynchronization(function) ||
+        function.walk([](Operation* op) {
+            return isa<LogicalSetOp, LogicalWaitOp>(op) || getSyncMacroModel(op).has_value() ||
+                (isPreservedSyncProtocol(op) && !isa<BarrierOp>(op)) ?
+                WalkResult::interrupt() : WalkResult::advance();
+        }).wasInterrupted()) {
+        error = "completion child has local event resources or hidden protocols";
+        return {};
+    }
+    return buildImpl(function, std::move(input), index, error, true, context);
+}
 std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp function,
-    std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error, bool existingOnly)
+    std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error, bool existingOnly,
+    ClosedCompletionImportContext& context)
 {
     error.clear();
     const bool valid = function && input && !function.isDeclaration() &&
@@ -176,7 +196,7 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
         if (auto call = dyn_cast<func::CallOp>(op)) {
             auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(call, call.getCalleeAttr());
             auto found = byCallee.find(callee);
-            auto child = found != byCallee.end() ? found->second : ClosedCompletionChild::import(call, error);
+            auto child = found != byCallee.end() ? found->second : ClosedCompletionChild::import(call, error, context);
             if (!child) {
                 return;
             }
@@ -208,6 +228,7 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
         error = "completion fallback has unmodeled effects, macro matching or prerequisites"; return {};
     }
     auto owner = std::shared_ptr<CompletionRegion>(new CompletionRegion);
+    owner->summaryOnly = existingOnly;
     owner->original = function; owner->input = std::move(input);
     owner->originalText = text(function); owner->originalOperations = operations(function);
     owner->moduleAttributes = function->getParentOp()->getAttrDictionary();
@@ -225,7 +246,8 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
     if (!owner->result.error.empty()) { error = owner->result.error; return {}; }
     if (existingOnly) {
         if (llvm::any_of(owner->result.protectEntry, [](bool protect) { return protect; })) {
-            error = "event-free child requires additional internal completion";
+            error = imports.empty() ? "event-free child requires additional internal completion" :
+                "closed-descendant child requires additional internal completion";
             return {};
         }
         return owner;
@@ -244,11 +266,17 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
 bool CompletionRegion::ownsClosedCall(Operation* call) const { return importedCalls.contains(call); }
 bool CompletionRegion::validateClosedChildren() const
 {
-    return llvm::all_of(children, [](const auto& child) { return child->unchanged(); });
+    DenseSet<const ClosedCompletionChild*> checked;
+    return validateClosedChildren(checked);
+}
+bool CompletionRegion::validateClosedChildren(DenseSet<const ClosedCompletionChild*>& checked) const
+{
+    return llvm::all_of(children, [&](const auto& child) { return child->unchanged(checked); });
 }
 LogicalResult CompletionRegion::insert(func::FuncOp function, PreparedLogicalPlan& plan) const
 {
-    const bool clean = function == original && plan.completionOwner.get() == this && plan.completeInvocation &&
+    const bool clean = !summaryOnly && function == original && plan.completionOwner.get() == this &&
+                       plan.completeInvocation &&
                        !plan.mathematicalOwner && !plan.privateState && !plan.compactBoundingOwner &&
                        !plan.regionalAllocation && !plan.allocationCertificate && !plan.allocationPreparation &&
                        !plan.familyRecipe && !plan.familyProtocol && !plan.physicalOutput && plan.preparation.empty() &&

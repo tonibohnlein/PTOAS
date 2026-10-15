@@ -15,6 +15,7 @@
 namespace mlir::pto::frontiersynch {
 class PhaseIndex;
 class ClosedCompletionChild;
+struct ClosedCompletionImportContext;
 struct PreparedLogicalPlan;
 class CompletionRegion {
 public:
@@ -28,6 +29,11 @@ public:
     // No executable plan escapes: the summary may retain pending exit effects.
     static FailureOr<CompletionSummary> summarizeEventFree(func::FuncOp function,
         std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error);
+    // Qualify a private child with no local events. Calls retain independently
+    // closed resource owners; no completion command or executable plan is added.
+    static std::shared_ptr<const CompletionRegion> qualifyExistingChild(func::FuncOp function,
+        std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error,
+        ClosedCompletionImportContext& context);
     const CompletionTransferResult& transfer() const { return result; }
     std::shared_ptr<const SyncInput> inputOwner() const { return input; }
     // The parent publishes no events. Imported children own their closed IDs;
@@ -35,11 +41,14 @@ public:
     LogicalResult insert(func::FuncOp function, PreparedLogicalPlan& plan) const;
     bool ownsClosedCall(Operation* call) const;
     bool validateClosedChildren() const;
+    bool validateClosedChildren(DenseSet<const ClosedCompletionChild*>& checked) const;
     ArrayRef<func::FuncOp> importedFunctions() const { return childFunctions; }
 
 private:
     static std::shared_ptr<const CompletionRegion> buildImpl(func::FuncOp function,
-        std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error, bool existingOnly);
+        std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error, bool existingOnly,
+        ClosedCompletionImportContext& context);
+    bool summaryOnly = false;
     func::FuncOp original;
     std::shared_ptr<const SyncInput> input;
     CompletionTransferResult result;

@@ -245,7 +245,9 @@ LogicalResult insertModuleSynchronization(
         pending.push_back({function, std::move(*plan), std::move(summary)});
     }
     // Completion parents own the exact implementation they imported. Preserve
-    // qualified private primitive children instead of adding standalone drains.
+    // qualified private children and their closed descendants instead of adding
+    // standalone drains. Each pending completion parent retains its direct
+    // imports; nested qualification owners validate descendant bodies as well.
     DenseMap<Operation*, std::shared_ptr<const CompletionRegion>> completionParents;
     DenseSet<Operation*> frozenChildren;
     for (auto& item : pending) {

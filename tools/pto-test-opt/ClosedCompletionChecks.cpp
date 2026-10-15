@@ -220,6 +220,190 @@ bool eventfulImport(MLIRContext& context)
     }
     return true;
 }
+// The selective leaf is produced and physically allocated above. These private
+// wrappers own no events; their pending tail is an ordinary asynchronous load.
+constexpr const char* descendants = R"mlir(
+!tile = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+module {
+  func.func private @child(!pto.ptr<f16, gm>)
+  func.func private @pending(%a: !pto.ptr<f16, gm>) {
+    func.call @child(%a) : (!pto.ptr<f16, gm>) -> ()
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %sixteen = arith.constant 16 : index
+    %view = pto.make_tensor_view %a, shape = [%sixteen, %sixteen], strides = [%sixteen, %one]
+        {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%zero, %zero], sizes = [%sixteen, %sixteen]
+        : !pto.tensor_view<?x?xf16>
+    %tile = pto.alloc_tile addr = %base : !tile
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%tile : !tile)
+    return
+  }
+  func.func private @relay(%a: !pto.ptr<f16, gm>) {
+    func.call @pending(%a) : (!pto.ptr<f16, gm>) -> ()
+    pto.barrier <PIPE_ALL>
+    func.call @pending(%a) : (!pto.ptr<f16, gm>) -> ()
+    return
+  }
+  func.func @parent(%a: !pto.ptr<f16, gm>) {
+    func.call @relay(%a) : (!pto.ptr<f16, gm>) -> ()
+    func.call @relay(%a) : (!pto.ptr<f16, gm>) -> ()
+    return
+  }
+})mlir";
+fs::CompletionSummary traceSummary(ArrayRef<uint8_t> trace)
+{
+    // Independent concrete trace: zero is an existing ALL, other tokens are
+    // payload effects. A selective leaf's internally ordered payloads form one
+    // token, followed by its checked existing completion.
+    uint8_t all = 0, exposed = 0, pending = 0;
+    bool completed = false;
+    for (auto mode : trace) {
+        if (!mode) { pending = 0; completed = true; continue; }
+        all |= mode;
+        if (!completed) { exposed |= mode; }
+        pending |= mode;
+    }
+    return {{all}, {exposed}, {pending}, !completed};
+}
+bool sameSummary(const fs::CompletionSummary& a, const fs::CompletionSummary& b)
+{
+    return a.all == b.all && a.exposed == b.exposed && a.suffix == b.suffix && a.transparent == b.transparent;
+}
+bool pendingDescendants(MLIRContext& context)
+{
+    auto module = parseSourceString<ModuleOp>(eventful, &context);
+    auto additions = parseSourceString<ModuleOp>(descendants, &context);
+    if (!module || !additions || !compile(*module, false)) { return failedAt(__LINE__); }
+    auto leaf = module->lookupSymbol<func::FuncOp>("child");
+    for (auto name : {"pending", "relay", "parent"}) {
+        auto function = additions->lookupSymbol<func::FuncOp>(name);
+        function->remove();
+        module->getBody()->push_back(function);
+    }
+    auto pending = module->lookupSymbol<func::FuncOp>("pending");
+    auto relay = module->lookupSymbol<func::FuncOp>("relay");
+    auto parent = module->lookupSymbol<func::FuncOp>("parent");
+    auto first = *parent.front().getOps<func::CallOp>().begin();
+    std::string error;
+    if (fs::ClosedCompletionChild::import(first, error) ||
+        error != "completion child requires physical allocation before closed import" ||
+        failed(fs::allocatePhysicalEventIds(leaf, {0, 1, 2, 3, 4, 5}))) {
+        return failedAt(__LINE__);
+    }
+    fs::ClosedCompletionImportContext imports;
+    auto qualified = fs::ClosedCompletionChild::import(first, error, imports);
+    auto reference = traceSummary({3, 0, 3, 0, 3, 0, 3});
+    if (!qualified || !sameSummary(qualified->summary(), reference) || imports.retained.size() != 3 ||
+        qualified->resourceClosure() != fs::ClosedCompletionChild::ResourceClosure::ClosedDescendants) {
+        llvm::errs() << error << "\n";
+        return failedAt(__LINE__);
+    }
+    auto again = fs::ClosedCompletionChild::import(first, error, imports);
+    if (again != qualified) { return failedAt(__LINE__); }
+    // A wrapper's unchanged local text cannot hide a modified grandchild.
+    const auto wrapperText = render(pending);
+    leaf->setAttr("test.changed_descendant", UnitAttr::get(&context));
+    if (qualified->unchanged() || fs::ClosedCompletionChild::import(first, error) ||
+        wrapperText != render(pending)) { return failedAt(__LINE__); }
+    leaf->removeAttr("test.changed_descendant");
+    if (!qualified->unchanged()) { return failedAt(__LINE__); }
+    auto certificate = leaf->getAttr("pto.closed_completion");
+    leaf->removeAttr("pto.closed_completion");
+    if (fs::ClosedCompletionChild::import(first, error)) { return failedAt(__LINE__); }
+    leaf->setAttr("pto.closed_completion", certificate);
+    // Two pending tails require an internal completion; qualification refuses
+    // instead of silently inserting it into the child's implementation.
+    auto* payload = pending.front().getTerminator()->getPrevNode();
+    auto* repeated = payload->clone();
+    pending.front().getOperations().insert(pending.front().getTerminator()->getIterator(), repeated);
+    const auto invalidTail = render(module->getOperation());
+    if (fs::ClosedCompletionChild::import(first, error) ||
+        error != "closed-descendant child requires additional internal completion" ||
+        invalidTail != render(module->getOperation())) { return failedAt(__LINE__); }
+    repeated->erase();
+    // A fresh active-import stack detects an indirect cycle, without accepting
+    // an unfinished memo entry or recursing through validation indefinitely.
+    OpBuilder cycleBuilder(pending.front().getTerminator());
+    auto cycle = cycleBuilder.create<func::CallOp>(pending.getLoc(), relay.getSymName(), TypeRange{},
+                                                  pending.getArguments());
+    if (fs::ClosedCompletionChild::import(first, error) ||
+        error != "completion child has recursive call ownership") { return failedAt(__LINE__); }
+    cycle.erase();
+    Operation* localFlag = nullptr;
+    leaf.walk([&](Operation* op) {
+        if (!localFlag && isa<pto::SetFlagOp, pto::WaitFlagOp>(op)) { localFlag = op; }
+    });
+    if (!localFlag) { return failedAt(__LINE__); }
+    auto* copiedFlag = localFlag->clone();
+    pending.front().getOperations().insert(pending.front().getTerminator()->getIterator(), copiedFlag);
+    if (fs::ClosedCompletionChild::import(first, error) ||
+        error != "completion child has local event resources or hidden protocols") {
+        return failedAt(__LINE__);
+    }
+    copiedFlag->erase();
+    const auto leafText = render(leaf), pendingText = render(pending), relayText = render(relay);
+    // The same retained pending child is admitted under a guard and nonunit
+    // repeated visits. Zero visits execute no loop-local completion commands.
+    OwningOpRef<ModuleOp> guarded(cast<ModuleOp>(module->clone()));
+    std::string guardedCaller(caller);
+    for (std::size_t at = 0; (at = guardedCaller.find("@child", at)) != std::string::npos; at += 6) {
+        guardedCaller.replace(at, 6, "@relay");
+    }
+    const auto step = guardedCaller.find("%one = arith.constant 1 : index");
+    if (step == std::string::npos) { return failedAt(__LINE__); }
+    guardedCaller.replace(step, std::string("%one = arith.constant 1 : index").size(),
+                          "%one = arith.constant 2 : index");
+    auto guardedSource = parseSourceString<ModuleOp>(
+        std::string("module { func.func private @relay(!pto.ptr<f16, gm>)\n") + guardedCaller + "}", &context);
+    if (!guardedSource) { return failedAt(__LINE__); }
+    guarded->lookupSymbol<func::FuncOp>("parent").erase();
+    auto guardedParent = guardedSource->lookupSymbol<func::FuncOp>("parent");
+    guardedParent->remove();
+    guarded->getBody()->push_back(guardedParent);
+    if (!compile(*guarded, true)) { return failedAt(__LINE__); }
+    guardedParent = guarded->lookupSymbol<func::FuncOp>("parent");
+    unsigned loopCalls = 0, guardedCalls = 0, barriers = 0;
+    bool ordered = true;
+    guardedParent.walk([&](Operation* op) {
+        barriers += isa<pto::BarrierOp>(op);
+        if (!isa<func::CallOp>(op)) { return; }
+        if (op->getParentOfType<scf::ForOp>()) {
+            ++loopCalls;
+            auto barrier = dyn_cast_or_null<pto::BarrierOp>(op->getPrevNode());
+            ordered &= barrier && barrier.getPipe().getPipe() == pto::PIPE::PIPE_ALL;
+        } else {
+            ++guardedCalls;
+            ordered &= !isa_and_nonnull<pto::BarrierOp>(op->getPrevNode());
+        }
+    });
+    if (!ordered || loopCalls != 2 || guardedCalls != 1 || barriers != 3 ||
+        leafText != render(guarded->lookupSymbol<func::FuncOp>("child")) ||
+        pendingText != render(guarded->lookupSymbol<func::FuncOp>("pending")) ||
+        relayText != render(guarded->lookupSymbol<func::FuncOp>("relay"))) {
+        return failedAt(__LINE__);
+    }
+    if (!compile(*module, true)) { return failedAt(__LINE__); }
+    parent = module->lookupSymbol<func::FuncOp>("parent");
+    std::vector<unsigned> commands;
+    for (auto& operation : parent.front()) {
+        if (isa<func::CallOp>(operation)) { commands.push_back(1); }
+        else if (auto barrier = dyn_cast<pto::BarrierOp>(operation)) {
+            if (barrier.getPipe().getPipe() != pto::PIPE::PIPE_ALL) { return failedAt(__LINE__); }
+            commands.push_back(2);
+        } else if (isa<func::ReturnOp>(operation)) { commands.push_back(3); }
+    }
+    // Independent command-word check: pending conflicts acquire between calls,
+    // and the complete parent drains at exit. No child boundary adds a drain.
+    if (commands != std::vector<unsigned>{1, 2, 1, 2, 3} ||
+        leafText != render(module->lookupSymbol<func::FuncOp>("child")) ||
+        pendingText != render(module->lookupSymbol<func::FuncOp>("pending")) ||
+        relayText != render(module->lookupSymbol<func::FuncOp>("relay"))) {
+        return failedAt(__LINE__);
+    }
+    return true;
+}
 constexpr const char* native = R"mlir(
 !tile = !pto.tile_buf<vec, 1x8xf32>
 module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
@@ -386,7 +570,8 @@ int runClosedCompletionChecks()
     MLIRContext context;
     context.disableMultithreading();
     context.loadDialect<pto::PTODialect, func::FuncDialect, arith::ArithDialect, scf::SCFDialect>();
-    if (!eventfulImport(context) || !pendingPrimitive(context) || !pendingFragments(context)) {
+    if (!eventfulImport(context) || !pendingDescendants(context) ||
+        !pendingPrimitive(context) || !pendingFragments(context)) {
         return 1;
     }
     llvm::outs()

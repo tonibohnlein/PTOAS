@@ -7,8 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Preserve selectively synchronized children through a closed matching and
 // coarse completion contract, without importing their reachability selectors.
-// Event-free children may retain pending effects; their empty resource ownership
-// is independent of the completed-exit contract used for eventful children.
+// Children without local events may retain pending effects. Their resources
+// are empty or owned by closed descendants, independently of payload completion.
 #include "ClosedCompletionChild.h"
 #include "ProtocolSeal.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
@@ -21,6 +21,7 @@
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Verifier.h"
+#include "llvm/ADT/ScopeExit.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 constexpr llvm::StringLiteral closedAttr = "pto.closed_completion";
@@ -33,7 +34,7 @@ bool completed(func::FuncOp function)
     auto all = terminal ? dyn_cast_or_null<BarrierOp>(terminal->getPrevNode()) : BarrierOp{};
     return all && all.getPipe().getPipe() == PIPE::PIPE_ALL;
 }
-bool callable(func::FuncOp function, std::shared_ptr<SyncInput>* source = nullptr)
+bool callable(func::FuncOp function, std::shared_ptr<SyncInput>* source = nullptr, bool closedCalls = false)
 {
     if (!function || function.isDeclaration() || function.getNumResults() || !function.getBody().hasOneBlock() ||
         !isa<ModuleOp>(function->getParentOp()) || getTargetArch(function) != PTOArch::A3) {
@@ -46,10 +47,11 @@ bool callable(func::FuncOp function, std::shared_ptr<SyncInput>* source = nullpt
     if (hasPhysicalSections(function) || function->hasAttr(ActiveContextAttr)) {
         return false;
     }
-    // Initial subclass has no transitive symbol contracts or recursion.
+    // Sealed exports remain leaves. Private qualification may own closed calls.
     const bool basic = !function
                             .walk([&](Operation* op) {
-                                return isa<SymbolUserOpInterface>(op) || getSyncMacroModel(op).has_value() ||
+                                return (isa<SymbolUserOpInterface>(op) && !(closedCalls && isa<func::CallOp>(op))) ||
+                                               getSyncMacroModel(op).has_value() ||
                                                recoverSyncPhysicalCore(op) != core ?
                                            WalkResult::interrupt() :
                                            WalkResult::advance();
@@ -143,17 +145,31 @@ FailureOr<CompletionSummary> decodeClosedCompletionExport(func::FuncOp function,
 }
 std::shared_ptr<const ClosedCompletionChild> ClosedCompletionChild::import(func::CallOp call, std::string& error)
 {
+    ClosedCompletionImportContext context;
+    return import(call, error, context);
+}
+std::shared_ptr<const ClosedCompletionChild> ClosedCompletionChild::import(
+    func::CallOp call, std::string& error, ClosedCompletionImportContext& context)
+{
     error.clear();
     auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(call, call.getCalleeAttr());
     auto parent = call->getParentOfType<func::FuncOp>();
     std::shared_ptr<SyncInput> coarse;
-    if (!callee || !parent || !callable(callee, &coarse) || call.getNumResults() ||
+    if (!callee || !parent || call.getNumResults() ||
+        !callable(callee, &coarse, callee.isPrivate() && !callee->hasAttr(closedAttr)) ||
         getTargetArch(parent) != getTargetArch(callee) ||
         recoverSyncPhysicalCore(parent) != recoverSyncPhysicalCore(callee) ||
         call.getOperandTypes() != callee.getArgumentTypes() || callee == parent || failed(verify(callee))) {
         error = "completion call lacks a same-core closed child without result-readiness obligations";
         return {};
     }
+    if (context.active.contains(callee)) {
+        error = "completion child has recursive call ownership";
+        return {};
+    }
+    if (auto found = context.retained.find(callee); found != context.retained.end()) { return found->second; }
+    context.active.insert(callee);
+    auto leave = llvm::make_scope_exit([&] { context.active.erase(callee); });
     auto owner = std::shared_ptr<ClosedCompletionChild>(new ClosedCompletionChild);
     owner->callee = callee;
     owner->module = callee->getParentOp();
@@ -180,21 +196,33 @@ std::shared_ptr<const ClosedCompletionChild> ClosedCompletionChild::import(func:
         auto input = std::move(coarse);
         PhaseIndex index;
         if (failed(index.build(callee, *input))) {
-            error = "event-free completion child lacks a qualified phase index";
+            error = "completion child lacks a qualified phase index";
             return {};
         }
-        auto summary = CompletionRegion::summarizeEventFree(callee, input, index, error);
-        if (failed(summary)) { return {}; }
-        owner->effects = *summary;
-        owner->input = std::move(input);
+        owner->qualification = CompletionRegion::qualifyExistingChild(callee, input, index, error, context);
+        if (!owner->qualification) { return {}; }
+        owner->effects = owner->qualification->transfer().summary;
+        if (!owner->qualification->importedFunctions().empty()) {
+            owner->resources = ResourceClosure::ClosedDescendants;
+        }
     }
     owner->seal = closedCompletionSeal(callee);
+    context.retained[callee] = owner;
     return owner;
 }
 bool ClosedCompletionChild::unchanged() const
 {
+    DenseSet<const ClosedCompletionChild*> checked;
+    return unchanged(checked);
+}
+bool ClosedCompletionChild::unchanged(DenseSet<const ClosedCompletionChild*>& checked) const
+{
+    if (checked.contains(this)) { return true; }
     auto function = callee;
-    return function && !function.isDeclaration() && function.getBody().hasOneBlock() &&
-           function->getParentOp() == module && seal == closedCompletionSeal(function);
+    const bool valid = function && !function.isDeclaration() && function.getBody().hasOneBlock() &&
+        function->getParentOp() == module && seal == closedCompletionSeal(function) &&
+        (!qualification || qualification->validateClosedChildren(checked));
+    if (valid) { checked.insert(this); }
+    return valid;
 }
 } // namespace mlir::pto::frontiersynch
