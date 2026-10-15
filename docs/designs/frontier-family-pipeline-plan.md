@@ -22,6 +22,92 @@ cutoffs, general symbolic solver, runtime demand analyzer, or weaker fallback
 after exact retention is introduced. Necessary activity domains remain one-way
 exclusion evidence; they do not replace exact guards or matching identities.
 
+## Completion correction: Section 7 production integration remains open
+
+The B1–B6 reviews accepted their documented qualifying implementations and
+measurement receipts. They did not establish completion of Section 7 across
+the production plans. Describing all milestones as complete overstated the
+result: the eleven-kernel campaign still has four allocation refusals, none
+with a proved lower bound above six IDs.
+
+Reopen the allocation integration gate. GroupNorm and causal-convolution decode
+still use regional chain placement followed by greedy conflict placement, whose
+failure is not an exact capacity result. Prefill lacks an allocation export for
+its emitted guarded plan. Delta exports its prefix protocol, but the available
+fresh/already-drained-epoch assignments do not certify reuse for that protocol.
+
+Completion requires connecting the applicable Section 7 constructions to the
+actual logical command graphs, including matching, cleanup and invocation
+lifetimes. For these cases, obtain a certified six-ID assignment or a checked
+capacity lower bound where the paper's exact allocation premises apply. A
+missing export or failed sufficient assignment cannot close this gate. Preserve
+minimum demands and the accepted payload order; ordering-changing repairs
+remain outside the authorized policy. B6 measurement acceptance remains valid,
+while production allocation and unresolved semantic/phase closure remain open.
+
+## Production closure milestones at `c009862ca`
+
+This schedule supersedes the execution order below; earlier R/B entries remain
+historical implementation and validation receipts. Preserve exact minimum
+demands, matching, cuts and accepted payload order. PyPTO-lib's 49 captured
+modules across 12 example families are the primary performance suite. The 22
+PyPTO captures and eleven prepared benchmarks are secondary; the 708 PTOAS
+sample modules are a broader compiler inventory, not 708 independent workloads.
+
+| Milestone | Integrated work | Completion gate |
+|---|---|---|
+| M1: construction costs and allocation outcomes (accepted) | Remove whole-member copying during family normalization; classify ordered assignment, scoped overcapacity, inapplicability and unresolved queries; retain parent alternatives. | Grouped-family scaling and unchanged unfolding; finite seven-span witnesses bypass only the identical dense reservation problem; short/unknown cases retain alternatives. |
+| M2: guarded/regional allocation exports | Export prefill's actual guarded protocol; connect applicable exact Section 7 queries for GroupNorm/decode; preserve cleanup, reservations and parent retry. | A certified six-ID assignment or checked capacity bound for each stated protocol; unavailable capabilities remain open. |
+| M3: Delta construction and prefix reuse | Reduce the large sequence-incoming producer root and repeated threshold substitutions; preserve repeated selected-occurrence recipes; certify reuse for the actual prefix protocol. | Independent selector/matching checks, lower construction work and paired timings, plus certified assignment or a scoped checked capacity result. Logical success alone does not close physical support. |
+| M4: compact lowering and candidate choice | Preserve family recipes through split artifacts; share combined/split mapping composition and liveness; compare available certified mappings without eagerly constructing expensive alternatives. | Equivalent communications and legal reuse, serialized ownership checks, and removal of avoidable identity/control work in the split path. |
+| M5: Section 6 child interface | Separate closed matching, pending payload effects and physical reuse; import qualified selective children without requiring all payloads completed. | Sound SCC summaries, joint resource safety and no automatic child-boundary drain. |
+| M6: validation closure | Resolve phase watchdogs/guard-equivalence gaps, run primary/secondary compiler campaigns, then refresh broad coverage and incorporate external device findings. | Pinned stage-separated receipts and explicit remaining capabilities; device qualification requires actual device results. |
+
+Each milestone is one reviewable batch with implementation, production callers,
+independent regressions, cost evidence and status updates. Correctness and
+architecture review must accept it before commit and progression. Incremental
+builds use at most two aggregate intensive workers; paired timings are serial.
+No automatic push. Device tasks/results remain outside the repository.
+
+A checked lower bound closes only its fixed protocol/reservation investigation;
+it neither compiles the kernel nor excludes other order-preserving realizations.
+Missing export, failed sufficient placement and unresolved proof are distinct
+outcomes and do not close a production gate. Ordering-changing repairs, a new
+general symbolic solver, runtime demand analysis, explicit fused scanning and
+upstream dynamic-subview integration remain outside these batches. Completion
+of these batches does not mean every construction in Sections 5–8 is implemented.
+
+### M1 validation receipt
+
+The normalization fix constructs singleton metadata without copying the original
+member vector. Grouped leaves with 128, 512 and 2,048 members pass the existing
+complete-unfolding checks. The ordered allocator distinguishes assignment,
+finite scoped overcapacity, inapplicability and unresolved queries. A capacity
+witness contains seven admitted source/consumer spans and exact negative reuse
+answers for their 21 forward pairs; short, symbolic and nonexact-query cases
+retain the general route. Independent lifting remains available to the parent.
+The witness is attempt-local diagnostic evidence, not a portable allocation
+certificate or a hardware-wide minimum.
+
+Validation used the existing incremental LLVM build with two workers. The
+`sync_family_allocation`, `sync_repeated_allocation_profile` and
+`sync_region_expression` lit tests passed together (10.96 seconds), and
+`sync_prepared_insertion` passed separately (14.39 seconds), including the
+large grouped pieces. The primary 49 PyPTO-lib modules plus three prepared
+GEMMs all passed logical compilation and six-ID allocation. Of 104 stage outputs, 102 are byte-identical to the pinned pre-M1
+results (51 of 52 kernel pairs). Persistent's
+logical and physical outputs agree after associative/commutative i1-AND
+normalization; deliberate comparison/select mutations fail that comparison.
+No device or compiler-time speedup is claimed. Correctness and architecture
+review accepted this batch after checking the source manifest and receipts.
+
+Local receipts are under `.local/production-closure-m1/`: `build-reviewed.log`,
+`focused.out`, `families-run.out`, `primary/results.json`,
+`output-comparison.json`, `canonical-equivalence.json` and `code-manifest.json`.
+The changed-code checker has no unresolved finding; six brace-regex false
+positives are documented in `compliance-resolution.txt`. This is not a claim
+that a full security/static-analysis campaign ran.
+
 ## Active execution plan: revised Sections 5–8
 
 This execution order supersedes the earlier post-rebase priorities. Retain the

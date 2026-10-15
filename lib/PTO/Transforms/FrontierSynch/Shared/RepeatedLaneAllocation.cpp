@@ -406,36 +406,81 @@ std::optional<PeriodicSharedAllocation> partitionAssignment(const PeriodicReuseM
     return result;
 }
 
+struct OrderedLaneResult {
+    RepeatedLaneAllocationStatus status = RepeatedLaneAllocationStatus::NotApplicable;
+    std::optional<RegionalAllocationGroup> assignment;
+    std::shared_ptr<const RepeatedLaneCapacityWitness> overCapacity;
+};
+struct OrderedPhase { std::size_t lane; std::vector<uint64_t> key; };
+
+// Check a fixed-size finite antichain, not just failure of a sufficient reuse
+// search. All selected spans must actually occur in this complete invocation.
+std::shared_ptr<const RepeatedLaneCapacityWitness> capacityWitness(
+    RepeatedRegionState& state, ArrayRef<Lane> lanes, ArrayRef<OrderedPhase> phases,
+    uint64_t first, ReuseProof& proof)
+{
+    auto trips = state.e().constantValue(state.trips);
+    if (!trips || !state.body.capabilities.exactQueries) { return {}; }
+    const uint64_t count = phases.size(), delay = lanes[phases.front().lane].delay;
+    const uint64_t lastVisit = (first + maximumPaletteWidth) / count;
+    if (delay >= *trips || lastVisit >= *trips - delay) { return {}; }
+    auto result = std::make_shared<RepeatedLaneCapacityWitness>();
+    result->expressions = state.body.expressions;
+    result->sourcePipe = lanes[phases.front().lane].group.sourcePipe;
+    result->targetPipe = lanes[phases.front().lane].group.targetPipe;
+    if (result->sourcePipe == result->targetPipe) { return {}; }
+    result->phasesPerVisit = count; result->consumerDelay = delay; result->admittedTrips = *trips;
+    for (uint64_t i = first; i <= first + maximumPaletteWidth; ++i) {
+        const auto& lane = lanes[phases[i % count].lane];
+        RepeatedLaneCapacityWitness::Span span{lane.orderedPhase->first, lane.orderedPhase->second,
+                                              i / count, i / count + delay, {}};
+        span.source.kind = PeriodicEventKind::Start;
+        span.target.kind = PeriodicEventKind::Completion;
+        for (const auto& member : lane.group.members) { span.records.push_back(member.record); }
+        result->spans.push_back(std::move(span));
+    }
+    for (std::size_t i = 0; i < result->spans.size(); ++i) {
+        for (std::size_t j = i + 1; j < result->spans.size(); ++j) {
+            const auto& a = result->spans[i]; const auto& b = result->spans[j];
+            if (a.targetVisit > b.sourceVisit) { continue; }
+            proof.count(&RepeatedLaneProofCost::orderedWitnessQueries);
+            auto query = proof.relativeQuery(a.target, b.source, b.sourceVisit - a.targetVisit);
+            if (!query || state.e().constantValue(*query) != 0) { return {}; }
+            result->negativeReuse.push_back(*query);
+        }
+    }
+    return result;
+}
+
 // The admitted word has ordered publications and ordered consumptions, all
 // present on the same complete generation interval. Native publication order
 // makes each exact reuse set a suffix; consumption order makes its first
 // reusable position monotone. Truncating the word preserves these witnesses.
 // Unknown queries or mixed/partial phases retain the general matrix route.
-std::optional<RegionalAllocationGroup> allocateOrderedLanes(
+OrderedLaneResult allocateOrderedLanes(
     RepeatedRegionState& state, ArrayRef<Lane> lanes, ArrayRef<std::size_t> live, ReuseProof& proof)
 {
     proof.count(&RepeatedLaneProofCost::orderedAttempts);
     if (live.empty() || live.size() > UINT32_MAX || state.phaseCount != 1 ||
         state.originalBegin != RegionExpressions::invalid ||
-        state.originalTrips != RegionExpressions::invalid) { return std::nullopt; }
+        state.originalTrips != RegionExpressions::invalid) { return {}; }
     auto& e = state.e();
     const auto delay = lanes[live.front()].delay;
-    struct Phase { std::size_t lane; std::vector<uint64_t> key; };
-    std::vector<Phase> phases;
+    std::vector<OrderedPhase> phases;
     for (const auto index : live) {
         const auto& lane = lanes[index];
-        if (!lane.orderedPhase || lane.delay != delay) { return std::nullopt; }
+        if (!lane.orderedPhase || lane.delay != delay) { return {}; }
         const auto& source = lane.orderedPhase->first;
         std::vector<uint64_t> key;
         for (const auto coordinate : source.visits) {
             auto value = e.constantValue(coordinate);
-            if (!value) { return std::nullopt; }
+            if (!value) { return {}; }
             key.push_back(*value);
         }
         auto ordinal = e.constantValue(source.ordinal);
-        if (!ordinal) { return std::nullopt; }
+        if (!ordinal) { return {}; }
         key.push_back(*ordinal); key.push_back(source.type);
-        if (!phases.empty() && phases.front().key.size() != key.size()) { return std::nullopt; }
+        if (!phases.empty() && phases.front().key.size() != key.size()) { return {}; }
         phases.push_back({index, std::move(key)});
     }
     std::sort(phases.begin(), phases.end(), [](const auto& a, const auto& b) { return a.key < b.key; });
@@ -445,7 +490,7 @@ std::optional<RegionalAllocationGroup> allocateOrderedLanes(
         auto sources = regionalReferenceBefore(state.body, a.first, b.first);
         auto targets = regionalReferenceBefore(state.body, a.second, b.second);
         if (!sources || !targets || e.constantValue(*sources) != 1 || e.constantValue(*targets) != 1) {
-            return std::nullopt;
+            return {};
         }
     }
     proof.count(&RepeatedLaneProofCost::orderedPhases, phases.size());
@@ -462,29 +507,34 @@ std::optional<RegionalAllocationGroup> allocateOrderedLanes(
             producer.kind = PeriodicEventKind::Start;
             proof.count(&RepeatedLaneProofCost::orderedReuseQueries);
             auto query = proof.relativeQuery(consumer, producer, cursor / count - delay);
-            if (!query) { return std::nullopt; }
+            if (!query) { return {RepeatedLaneAllocationStatus::UnresolvedQuery, {}, {}}; }
             auto answer = e.constantValue(*query);
-            if (!answer) { return std::nullopt; }
+            if (!answer) { return {RepeatedLaneAllocationStatus::UnresolvedQuery, {}, {}}; }
             if (*answer) { found = true; break; }
         }
-        if (!found) { return std::nullopt; }
+        if (!found) {
+            auto witness = capacityWitness(state, lanes, phases, i, proof);
+            if (!witness) { return {RepeatedLaneAllocationStatus::UnresolvedQuery, {}, {}}; }
+            proof.count(&RepeatedLaneProofCost::orderedOverCapacity);
+            return {RepeatedLaneAllocationStatus::CertifiedOverCapacity, {}, std::move(witness)};
+        }
         width = std::max(width, cursor - i);
     }
     RegionalAllocationGroup result{lanes.front().group.sourcePipe, lanes.front().group.targetPipe, width, {}};
     result.lanes.resize(width);
     for (uint64_t i = 0; i < count; ++i) {
         if (!appendLane(state, result, lanes[phases[i].lane], 0, width, i % width, count % width)) {
-            return std::nullopt;
+            return {};
         }
     }
     for (const auto& lane : lanes) {
-        if (lane.bounds.first.empty() && !appendLane(state, result, lane, 0, 1, 0)) { return std::nullopt; }
+        if (lane.bounds.first.empty() && !appendLane(state, result, lane, 0, 1, 0)) { return {}; }
     }
     proof.count(&RepeatedLaneProofCost::orderedAccepted);
-    return result;
+    return {RepeatedLaneAllocationStatus::CertifiedAssignment, std::move(result), {}};
 }
 
-std::optional<RegionalAllocationGroup> allocateLanes(
+OrderedLaneResult allocateLanes(
     RepeatedRegionState& state, ArrayRef<Lane> lanes, ReuseProof& proof)
 {
     std::vector<std::size_t> live;
@@ -497,9 +547,14 @@ std::optional<RegionalAllocationGroup> allocateLanes(
         proof.count(&RepeatedLaneProofCost::firstAlternatives, lane.bounds.first.size());
         proof.count(&RepeatedLaneProofCost::lastAlternatives, lane.bounds.second.size());
     }
-    if (auto ordered = allocateOrderedLanes(state, lanes, live, proof)) { return ordered; }
+    auto ordered = allocateOrderedLanes(state, lanes, live, proof);
+    if (ordered.status == RepeatedLaneAllocationStatus::CertifiedAssignment ||
+        ordered.status == RepeatedLaneAllocationStatus::CertifiedOverCapacity) { return ordered; }
+    if (ordered.status == RepeatedLaneAllocationStatus::UnresolvedQuery) {
+        proof.count(&RepeatedLaneProofCost::orderedUnresolved);
+    }
     if (n > UINT32_MAX || (n && n > std::vector<std::optional<uint64_t>>().max_size() / n)) {
-        return std::nullopt;
+        return {RepeatedLaneAllocationStatus::UnresolvedQuery, {}, {}};
     }
     PeriodicReuseMatrix costs(n, std::vector<std::optional<uint64_t>>(n));
     for (std::size_t i = 0; i < n; ++i) {
@@ -511,7 +566,9 @@ std::optional<RegionalAllocationGroup> allocateLanes(
     auto assignment = allocatePeriodicShared(costs);
     if (!certifyAssignment(costs, assignment)) {
         auto partitioned = partitionAssignment(costs, proof);
-        if (!partitioned || (n && !certifyAssignment(costs, *partitioned))) { return std::nullopt; }
+        if (!partitioned || (n && !certifyAssignment(costs, *partitioned))) {
+            return {RepeatedLaneAllocationStatus::UnresolvedQuery, {}, {}};
+        }
         assignment = std::move(*partitioned);
     }
     // The existing typed record mapping requires a positive placeholder budget
@@ -522,18 +579,20 @@ std::optional<RegionalAllocationGroup> allocateLanes(
     for (std::size_t i = 0; i < n; ++i) {
         const auto& phase = assignment.phases[i];
         if (!appendLane(state, result, lanes[live[i]], phase.laneBegin, phase.laneCount, phase.offset)) {
-            return std::nullopt;
+            return {RepeatedLaneAllocationStatus::UnresolvedQuery, {}, {}};
         }
     }
     // Absent records execute no commands and consume no additional lane.
     for (const auto& lane : lanes) {
-        if (lane.bounds.first.empty() && !appendLane(state, result, lane, 0, 1, 0)) { return std::nullopt; }
+        if (lane.bounds.first.empty() && !appendLane(state, result, lane, 0, 1, 0)) {
+            return {RepeatedLaneAllocationStatus::UnresolvedQuery, {}, {}};
+        }
     }
-    return result;
+    return {RepeatedLaneAllocationStatus::CertifiedAssignment, std::move(result), {}};
 }
 } // namespace
 
-std::shared_ptr<RegionalAllocationSummary> periodicLaneAllocation(
+RepeatedLaneAllocationResult periodicLaneAllocation(
     RepeatedRegionState& state, const RegionalAllocationSummary& coalesced,
     ArrayRef<std::pair<uint32_t, std::size_t>> crossings, RepeatedLaneProofCost* cost)
 {
@@ -546,7 +605,7 @@ std::shared_ptr<RegionalAllocationSummary> periodicLaneAllocation(
     }
     if (!addCrossings(state, lanes, crossings, cost)) { return {}; }
     auto result = std::make_shared<RegionalAllocationSummary>();
-    if (lanes.empty()) { return result; }
+    if (lanes.empty()) { return {RepeatedLaneAllocationStatus::CertifiedAssignment, std::move(result), {}}; }
     std::map<std::pair<uint32_t, uint32_t>, std::vector<Lane>> directions;
     for (auto& lane : lanes) {
         const auto direction = regionalAllocationDirection(lane.group, lane.group.members.front());
@@ -557,9 +616,9 @@ std::shared_ptr<RegionalAllocationSummary> periodicLaneAllocation(
     }
     for (auto& direction : directions) {
         auto allocated = allocateLanes(state, direction.second, proof);
-        if (!allocated) { return {}; }
-        result->groups.push_back(std::move(*allocated));
+        if (!allocated.assignment) { return {allocated.status, {}, std::move(allocated.overCapacity)}; }
+        result->groups.push_back(std::move(*allocated.assignment));
     }
-    return result;
+    return {RepeatedLaneAllocationStatus::CertifiedAssignment, std::move(result), {}};
 }
 } // namespace mlir::pto::frontiersynch

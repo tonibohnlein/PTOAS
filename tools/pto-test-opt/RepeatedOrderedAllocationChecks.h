@@ -84,10 +84,36 @@ bool checkOrderedLaneAllocation(mlir::func::FuncOp function, mlir::Operation* an
     }
     if (mode == 6) { state.originalTrips = state.trips; }
     if (mode == 1) { state.originalBegin = zero; } // force the general clipped route
+    if (mode == 7) { state.body.capabilities.exactQueries = false; }
+    if (mode == 8) { state.trips = e.input(function.getArgument(0)); }
     fs::RepeatedLaneProofCost cost;
-    auto result = fs::periodicLaneAllocation(state, input, crossings, &cost);
+    auto outcome = fs::periodicLaneAllocation(state, input, crossings, &cost);
+    auto result = outcome.assignment;
+    if (mode == 7 || mode == 8 || mode == 9) {
+        return !outcome.overCapacity && !cost.orderedOverCapacity && cost.orderedUnresolved && cost.matrixPairs;
+    }
     if (mode == 2) { return !cost.orderedAccepted && cost.matrixPairs != 0; }
-    if (mode == 3) { return !result && !cost.orderedAccepted && cost.matrixPairs != 0; }
+    if (mode == 3) {
+        const auto& witness = outcome.overCapacity;
+        if (result || outcome.status != fs::RepeatedLaneAllocationStatus::CertifiedOverCapacity ||
+            !witness || witness->spans.size() != 7 || !cost.orderedOverCapacity || cost.matrixPairs ||
+            cost.orderedWitnessQueries > 21 || cost.orderedReuseQueries > 2 * count + 6) { return false; }
+        // Validate the finite witness against the independent unfolded graph,
+        // not the production suffix-query callback or stored negative IDs.
+        const auto reach = graph(count * trips);
+        for (std::size_t i = 0; i < witness->spans.size(); ++i) {
+            const auto& a = witness->spans[i];
+            if (a.sourceVisit >= trips || a.targetVisit >= trips || a.records.empty()) { return false; }
+            for (std::size_t j = 0; j < witness->spans.size(); ++j) {
+                if (i == j) { continue; }
+                const auto& b = witness->spans[j];
+                const auto end = 4 * (a.targetVisit * count + a.target.type / 2) + 3;
+                const auto begin = 4 * (b.sourceVisit * count + b.source.type / 2);
+                if (reach[end][begin]) { return false; }
+            }
+        }
+        return true;
+    }
     if (!result || result->groups.size() != 1) { return false; }
     if (trips > delay && (mode == 0 || mode == 4 || mode == 5) && (!cost.orderedAccepted || cost.matrixPairs ||
         cost.orderedReuseQueries > 2 * count + 6)) { return false; }
@@ -176,6 +202,12 @@ bool checkOrderedLaneAllocations(mlir::func::FuncOp function, mlir::Operation* a
         !checkOrderedLaneAllocation(function, anchor, loop, 2, 7, 8, 3, queries) ||
         !checkOrderedLaneAllocation(function, anchor, loop, 8, 1, 7, 4, queries) ||
         !checkOrderedLaneAllocation(function, anchor, loop, 2, 3, 7, 6, queries)) { return false; }
+    for (unsigned count : {2U, 7U, 64U, 256U}) {
+        if (!checkOrderedLaneAllocation(function, anchor, loop, count, 7, 8, 3, queries)) { return false; }
+    }
+    if (!checkOrderedLaneAllocation(function, anchor, loop, 2, 7, 8, 7, queries) ||
+        !checkOrderedLaneAllocation(function, anchor, loop, 2, 7, 8, 8, queries) ||
+        !checkOrderedLaneAllocation(function, anchor, loop, 2, 7, 1, 9, queries)) { return false; }
     llvm::outs() << "ordered repeated allocation: 185 finite/scaling cases, " << queries << " threshold queries\n";
     return true;
 }
