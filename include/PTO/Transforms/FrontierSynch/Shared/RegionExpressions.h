@@ -335,7 +335,11 @@ private:
     llvm::DenseSet<Operation*> forbiddenRecomputation;
     llvm::DenseMap<Id, Evaluation> evaluations;
     std::vector<Id> evaluationInsertions;
-    // Immutable source topology and dependency sets only. Rollback removes
+    // Generic substitution indexes each immutable structural edge once for
+    // the arena. Affected sets and rebuilt values remain request-local.
+    struct SubstitutionTopology;
+    std::shared_ptr<SubstitutionTopology> substitutionTopology;
+    // Immutable threshold topology and dependency sets only. Rollback removes
     // entries whose source root disappears; no specialized result is retained.
     std::map<Id, std::shared_ptr<const ThresholdPreparation>> thresholdPreparations;
     std::map<std::pair<Id, Id>, std::shared_ptr<const llvm::DenseSet<Id>>> thresholdDependencies;
