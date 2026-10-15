@@ -18,6 +18,9 @@ public:
     ~PrivateStatePlan();
     LogicalResult insert(func::FuncOp function, PreparedLogicalPlan& plan);
     func::FuncOp preparedFunction() const;
+    // The same lifetime allocator used by saved logical output. The staged
+    // invocation changes only after successful transactional physical lowering.
+    LogicalResult requestPhysical(func::FuncOp function, PreparedLogicalPlan& plan, ArrayRef<int64_t> eligible);
     llvm::json::Object expressionProfile() const;
     // Trusted module coordinator only: call for EVERY pending private plan
     // before changing any sibling body. Subsequent edits may only insert the
@@ -39,6 +42,7 @@ private:
     std::shared_ptr<const PrefixExpressionProfile> expressions;
     std::shared_ptr<const MathematicalResult> mathematics;
     int64_t planId = 0;
+    bool physical = false;
     bool consumed = false;
     bool siblingSynchronization = false;
 };

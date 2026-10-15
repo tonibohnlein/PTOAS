@@ -9,12 +9,15 @@
 #ifndef PTO_FRONTIERSYNCH_INVOCATIONSOURCEBOUNDS_H
 #define PTO_FRONTIERSYNCH_INVOCATIONSOURCEBOUNDS_H
 #include "InvocationPrefix.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 namespace mlir::pto::frontiersynch {
 // Counts original source actions, including distinct pipes at the same operation.
 // Branch alternatives use a per-pipe maximum; siblings sum and loops multiply.
 // No runtime visit enumeration, memory-shape assumptions, or selector inference.
+// An optional original loop is counted for one visit, for a separately certified
+// drained epoch. This changes only the count, never supplies reuse evidence.
 // Success guarantees each count and its exclusive +1 sentinel fit signed index64.
 FailureOr<std::map<uint32_t, uint64_t>> inferInvocationSourceBounds(
-    func::FuncOp original, llvm::ArrayRef<PrefixSource> sources, std::string& error);
+    func::FuncOp original, llvm::ArrayRef<PrefixSource> sources, std::string& error, scf::ForOp singleVisit = {});
 } // namespace mlir::pto::frontiersynch
 #endif

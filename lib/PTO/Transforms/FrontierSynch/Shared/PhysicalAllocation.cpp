@@ -9,6 +9,7 @@
 // commands in place. Allocation does not inspect or reconstruct endpoint guards.
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PhysicalMapInputs.h"
+#include "PrefixLifetimes.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalExecutedCounters.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
@@ -1560,7 +1561,7 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
         return failure();
     }
     if (function->hasAttr("pto.prefix_protocol")) {
-        return function.emitError("invocation prefix physical allocation requires a missing lifetime export");
+        return allocatePrefixLifetimes(function, eligibleIds);
     }
     auto cyclic = function->getAttrOfType<DictionaryAttr>(CyclicAllocationAttr);
     auto strategy = cyclic ? cyclic.getAs<StringAttr>("strategy") : StringAttr{};

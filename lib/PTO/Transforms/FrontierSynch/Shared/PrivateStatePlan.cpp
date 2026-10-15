@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Validate a complete staged invocation before consuming it with one body transfer.
 #include "PrivateStatePlan.h"
+#include "PrefixLifetimes.h"
 #include "PrefixExpressionProfile.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
@@ -31,9 +32,10 @@ std::string symbolContext(ModuleOp module)
     for (Operation& operation : *module.getBody()) {
         if (auto function = dyn_cast<func::FuncOp>(operation)) {
             NamedAttrList attributes(function->getAttrs());
-            for (auto name : {"pto.frontier_recognition", "pto.prefix_protocol", "pto.endpoint_families",
-                              "pto.cyclic_allocation", "pto.finite_allocation", "pto.sync_context_plans",
-                              "pto.sync_subblock_guard"}) {
+            for (auto name :
+                 {"pto.frontier_recognition", "pto.prefix_protocol", "pto.prefix_lifetimes", "pto.prefix_physical",
+                  "pto.prefix_lifetime_obligation", "pto.endpoint_families", "pto.cyclic_allocation",
+                  "pto.finite_allocation", "pto.sync_context_plans", "pto.sync_subblock_guard"}) {
                 attributes.erase(name);
             }
             attributes.getDictionary(module.getContext()).print(stream);
@@ -135,6 +137,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> preparePrivateStatePlan(
     protocol.set("consumer_sites", builder.getI64IntegerAttr(recipe.consumers.size()));
     protocol.set("publication_sites", builder.getI64IntegerAttr(publications));
     owner->staged->function->setAttr("pto.prefix_protocol", protocol.getDictionary(original.getContext()));
+    std::string lifetimeError;
+    if (failed(exportPrefixLifetimes(owner->staged->function, lifetimeError))) {
+        owner->staged->function->setAttr("pto.prefix_lifetime_obligation", builder.getStringAttr(lifetimeError));
+    }
     owner->stagedText = text(owner->staged->module->getOperation());
     auto plan = std::make_unique<PreparedLogicalPlan>(recipe.planId);
     plan->completeInvocation = true;
@@ -161,6 +167,23 @@ LogicalResult PrivateStatePlan::validate(func::FuncOp function, PreparedLogicalP
     }
     return success();
 }
+LogicalResult PrivateStatePlan::requestPhysical(
+    func::FuncOp function, PreparedLogicalPlan& plan, ArrayRef<int64_t> eligible)
+{
+    if (physical || failed(validate(function, plan, true))) {
+        return failure();
+    }
+    if (failed(allocatePrefixLifetimes(staged->function, eligible))) {
+        return failure();
+    }
+    // Physical lowering replaces the staged body; these construction-only
+    // handles referred to its previous SSA and must not outlive that body.
+    staged->mapping.clear();
+    staged->finalState.clear();
+    physical = true;
+    stagedText = text(staged->module->getOperation());
+    return success();
+}
 LogicalResult PrivateStatePlan::preflightSiblingSynchronization(func::FuncOp function, PreparedLogicalPlan& plan)
 {
     if (failed(validate(function, plan, true))) { return failure(); }
@@ -173,7 +196,16 @@ LogicalResult PrivateStatePlan::insert(func::FuncOp function, PreparedLogicalPla
     auto protocol = staged->function->getAttr("pto.prefix_protocol");
     function.getBody().takeBody(staged->function.getBody());
     function->setAttr("pto.prefix_protocol", protocol);
+    if (auto lifetimes = staged->function->getAttr("pto.prefix_lifetimes")) {
+        function->setAttr("pto.prefix_lifetimes", lifetimes);
+    }
+    if (auto obligation = staged->function->getAttr("pto.prefix_lifetime_obligation")) {
+        function->setAttr("pto.prefix_lifetime_obligation", obligation);
+    }
     if (plan.recognitionReport) { function->setAttr("pto.frontier_recognition", plan.recognitionReport); }
+    if (auto assignment = staged->function->getAttr("pto.prefix_physical")) {
+        function->setAttr("pto.prefix_physical", assignment);
+    }
     consumed = true;
     // Mapping keys refer to the old body. Destroy the mapping before releasing
     // staged symbol context, and never expose it through the attached plan.

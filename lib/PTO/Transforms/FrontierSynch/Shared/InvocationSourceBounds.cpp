@@ -47,8 +47,9 @@ std::optional<APInt> loopBound(scf::ForOp loop)
 }
 class Counter {
 public:
-    Counter(func::FuncOp original, ArrayRef<PrefixSource> sources, std::string& error)
-        : original(original), sources(sources), error(error) {}
+    Counter(func::FuncOp original, ArrayRef<PrefixSource> sources, std::string& error, scf::ForOp singleVisit)
+        : singleVisit(singleVisit), original(original), sources(sources), error(error)
+    {}
     FailureOr<Counts> run()
     {
         const bool validFunction = original && original.getBody().hasOneBlock() && succeeded(verify(original));
@@ -61,7 +62,13 @@ public:
             if (!valid) { return fail("source bounds have invalid or duplicate original action provenance"); }
             at[source.original].push_back(source.pipe);
         }
-        auto result = block(original.front());
+        if (singleVisit &&
+            (!original->isProperAncestor(singleVisit) || llvm::any_of(sources, [&](const PrefixSource& source) {
+                return !singleVisit->isProperAncestor(source.original);
+            }))) {
+            return fail("single-visit bounds require every source inside the supplied loop");
+        }
+        auto result = singleVisit ? block(*singleVisit.getBody()) : block(original.front());
         if (failed(result)) { return failure(); }
         for (const auto& source : sources) { result->try_emplace(source.pipe, 0); }
         return result;
@@ -93,7 +100,7 @@ private:
     }
     FailureOr<Counts> loop(scf::ForOp counted)
     {
-        auto bound = loopBound(counted);
+        auto bound = counted == singleVisit ? std::optional<APInt>(APInt(128, 1)) : loopBound(counted);
         if (bound && bound->isZero()) { return Counts{}; }
         auto body = block(*counted.getBody());
         const bool terminal = failed(body) || body->empty();
@@ -127,6 +134,7 @@ private:
         }
         return total;
     }
+    scf::ForOp singleVisit;
     func::FuncOp original;
     ArrayRef<PrefixSource> sources;
     std::string& error;
@@ -134,9 +142,9 @@ private:
 };
 } // namespace
 FailureOr<std::map<uint32_t, uint64_t>> inferInvocationSourceBounds(
-    func::FuncOp original, llvm::ArrayRef<PrefixSource> sources, std::string& error)
+    func::FuncOp original, llvm::ArrayRef<PrefixSource> sources, std::string& error, scf::ForOp singleVisit)
 {
     error.clear();
-    return Counter(original, sources, error).run();
+    return Counter(original, sources, error, singleVisit).run();
 }
 } // namespace mlir::pto::frontiersynch

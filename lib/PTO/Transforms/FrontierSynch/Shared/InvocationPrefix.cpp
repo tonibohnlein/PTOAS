@@ -42,14 +42,49 @@ void command(OpBuilder& b, Location loc, PrefixDirection direction, uint32_t rec
     op.addAttribute("plan_id", b.getI64IntegerAttr(plan));
     b.create(op);
 }
-void acquire(OpBuilder& b, Location loc, const Layout& layout, PrefixDirection direction,
-             Value required, llvm::MutableArrayRef<Value> state)
+// Private-state branches may return two identical unchanged slots as distinct
+// SSA results. Prove equality through their original branch yields only; this
+// does not simplify arbitrary guards or assume equality of loop-carried values.
+bool sameBranchValue(Value first, Value second)
+{
+    SmallVector<std::pair<Value, Value>> pending{{first, second}};
+    std::set<std::pair<const void*, const void*>> seen;
+    while (!pending.empty()) {
+        const auto [a, b] = pending.pop_back_val();
+        if (a == b) {
+            continue;
+        }
+        if (!seen.emplace(a.getAsOpaquePointer(), b.getAsOpaquePointer()).second) {
+            continue;
+        }
+        auto x = dyn_cast<OpResult>(a), y = dyn_cast<OpResult>(b);
+        auto branch = x ? dyn_cast<scf::IfOp>(x.getOwner()) : scf::IfOp{};
+        if (!branch || !y || y.getOwner() != branch || branch.getElseRegion().empty()) {
+            return false;
+        }
+        for (auto* block : {branch.thenBlock(), branch.elseBlock()}) {
+            auto yield = cast<scf::YieldOp>(block->getTerminator());
+            pending.emplace_back(yield.getOperand(x.getResultNumber()), yield.getOperand(y.getResultNumber()));
+        }
+    }
+    return true;
+}
+void acquire(
+    OpBuilder& b, Location loc, const Layout& layout, PrefixDirection direction, Value required,
+    llvm::MutableArrayRef<Value> state, bool terminal = false)
 {
     auto& watermark = state[layout.watermarks.at(direction)];
     auto one = b.create<arith::ConstantIndexOp>(loc, 1);
     auto first = b.create<arith::AddIOp>(loc, watermark, one);
     auto end = b.create<arith::AddIOp>(loc, required, one);
     auto loop = b.create<scf::ForOp>(loc, first, end, one);
+    loop->setAttr("pto.prefix_acquisition", b.getI64IntegerAttr(layout.records.at(direction)));
+    if (sameBranchValue(required, state[layout.counts.at(direction.sourcePipe)])) {
+        loop->setAttr("pto.prefix_full_acquisition", b.getUnitAttr());
+    }
+    if (terminal) {
+        loop->setAttr("pto.prefix_terminal_acquisition", b.getUnitAttr());
+    }
     {
         OpBuilder::InsertionGuard restore(b);
         b.setInsertionPointToStart(loop.getBody());
@@ -219,7 +254,9 @@ FailureOr<std::unique_ptr<StructuredPrivateState>> materializeInvocationPrefix(
     actions.push_back({original.front().getTerminator(), PrivateStateCut::Before,
         [layout](OpBuilder& b, const IRMapping&, llvm::MutableArrayRef<Value> state, std::string&) {
             for (auto [direction, slot] : layout.watermarks) {
-                acquire(b, b.getUnknownLoc(), layout, direction, state[layout.counts.at(direction.sourcePipe)], state);
+                acquire(
+                    b, b.getUnknownLoc(), layout, direction, state[layout.counts.at(direction.sourcePipe)], state,
+                    true);
             }
             return success();
         }});

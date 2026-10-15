@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Root attachment is transactional and never implies physical allocation support.
+// Root attachment and physical lifetime requests are separately transactional.
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/PrivateStatePlan.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/PrefixExpressionProfile.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
@@ -92,9 +92,31 @@ bool rejectionAndRetry(MLIRContext& context)
     if (!attached || failed(verify(*fixture.module))) { return false; }
     const auto logical = printed(fixture.module->getOperation());
     const bool twiceRejected = failed(fs::insertLogicalSynchronization(fixture.function, **plan));
-    const bool allocationRejected = failed(fs::allocatePhysicalEventIds(fixture.function, {0, 1, 2, 3, 4, 5}));
-    return twiceRejected && allocationRejected && logical == printed(fixture.module->getOperation()) &&
-        (*plan)->mathematicalOwner == fixture.mathematics;
+    const bool allocated = succeeded(fs::allocatePhysicalEventIds(fixture.function, {0, 1, 2, 3, 4, 5}));
+    return twiceRejected && allocated && logical != printed(fixture.module->getOperation()) &&
+           fixture.function->hasAttr("pto.prefix_physical") && (*plan)->mathematicalOwner == fixture.mathematics;
+}
+bool combinedPhysical(MLIRContext& context)
+{
+    Fixture fixture(context);
+    fs::PrivateStateError error;
+    auto plan = fixture.prepare(error);
+    if (failed(plan)) {
+        return false;
+    }
+    const auto original = printed(fixture.module->getOperation());
+    const auto staged = printed((*plan)->privateState->preparedFunction());
+    if (succeeded((*plan)->privateState->requestPhysical(fixture.function, **plan, {})) ||
+        staged != printed((*plan)->privateState->preparedFunction()) ||
+        original != printed(fixture.module->getOperation())) {
+        return false;
+    }
+    if (failed((*plan)->privateState->requestPhysical(fixture.function, **plan, {5})) ||
+        original != printed(fixture.module->getOperation()) ||
+        failed(fs::insertLogicalSynchronization(fixture.function, **plan))) {
+        return false;
+    }
+    return fixture.function->hasAttr("pto.prefix_physical") && succeeded(verify(*fixture.module));
 }
 func::FuncOp addSibling(Fixture& fixture, StringRef name, IRMapping& mapping)
 {
@@ -168,8 +190,8 @@ bool runPrivateStatePlanChecks()
     MLIRContext context; context.disableMultithreading();
     context.loadDialect<func::FuncDialect, scf::SCFDialect, arith::ArithDialect, pto::PTODialect>();
     ScopedDiagnosticHandler diagnostics(&context, [](Diagnostic&) { return success(); });
-    const bool passed = rejectionAndRetry(context) && malformedMetadata(context) &&
-        batchAttachment(context) && standaloneSiblingRefusal(context);
+    const bool passed = rejectionAndRetry(context) && malformedMetadata(context) && batchAttachment(context) &&
+                        standaloneSiblingRefusal(context) && combinedPhysical(context);
     if (!passed) { return false; }
     llvm::outs() << "private state plan checks passed\n";
     return true;
