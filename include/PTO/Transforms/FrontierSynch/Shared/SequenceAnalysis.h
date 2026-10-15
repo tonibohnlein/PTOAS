@@ -108,7 +108,7 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis);
 // Actual boundary-alternative visits during this result's prefix/suffix summary.
 uint64_t sequenceBoundarySummaryVisits(const SequenceAnalysis& analysis);
 // Per-composition storage bridge work, before crossing reduction. These counts
-// exclude child construction and residual alias pair enumeration.
+// exclude child construction; residual effects have a separate visit counter.
 struct SequenceBridgeWork {
     // Examined pairs, including guards found false or hardware protected.
     uint64_t candidates = 0;
@@ -116,6 +116,7 @@ struct SequenceBridgeWork {
     uint64_t remasked = 0;
     // Newly appended live endpoint pairs; excludes guard merges into a pair.
     uint64_t retained = 0;
+    uint64_t residualCandidates = 0;
 };
 SequenceBridgeWork sequenceBridgeWork(const SequenceAnalysis& analysis);
 RegionExpressions* sequenceExpressions(SequenceAnalysis& analysis);

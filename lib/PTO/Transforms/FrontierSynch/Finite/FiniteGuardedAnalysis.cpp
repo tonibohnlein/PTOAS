@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgram.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
+#include "../Shared/WriterPairIndex.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include <limits>
 namespace mlir::pto::frontiersynch {
@@ -52,24 +53,42 @@ bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recogni
     }
     // The complete comparable partition represents every conflict in cells.
     // Unresolved bases/ranges retain the residual relationship checks below.
-    if (input.accesses().hasMaterializedCellPartition(effectIds)) { return true; }
-    const auto modeledGroups = modeledProtectionGroups(input, phases, invocation);
-    for (uint32_t a = 0; a < recognized.phases.size(); ++a) {
-        for (uint32_t b = a + 1; b < recognized.phases.size(); ++b) {
-            if (recognized.phases[a].phase->elementOp == recognized.phases[b].phase->elementOp ||
-                ptoStorageProtection().protectsScalar(state.effects[a].pipe, state.effects[b].pipe)) { continue; }
-            bool conflict = false;
-            for (auto x : input.accesses().effectsFor(recognized.phases[a].phase)) {
-                for (auto y : input.accesses().effectsFor(recognized.phases[b].phase)) {
-                    const bool protectedPair = hardwareProtectsConflict(
-                        static_cast<uint32_t>(recognized.phases[a].phase->kPipeValue), modeledGroups[x],
-                        static_cast<uint32_t>(recognized.phases[b].phase->kPipeValue), modeledGroups[y]);
-                    conflict |= input.accesses().residualConflict(x, y) && !protectedPair;
-                }
-            }
-            if (conflict) { state.residual.push_back({a, b}); }
-        }
+    if (input.accesses().hasMaterializedCellPartition(effectIds)) {
+        return true;
     }
+    const auto modeledGroups = modeledProtectionGroups(input, phases, invocation);
+    // Index phases before effects: a macro envelope can contain many effects,
+    // but none of its internal pairs is a residual inter-phase conflict.
+    std::vector<ArrayRef<std::size_t>> effects;
+    std::vector<WriterPairIndex> roles;
+    for (const auto& guarded : recognized.phases) {
+        effects.push_back(input.accesses().effectsFor(guarded.phase));
+        const auto ids = effects.back();
+        roles.emplace_back(
+            ids.size(), [&](std::size_t i) { return input.accesses().effects()[ids[i]].mode == SyncAccessMode::Read; });
+    }
+    WriterPairIndex candidates(phases.size(), [&](std::size_t i) { return !roles[i].hasWriters(); });
+    candidates.pairs([&](std::size_t a, std::size_t b) {
+        if (phases[a]->elementOp == phases[b]->elementOp ||
+            ptoStorageProtection().protectsScalar(state.effects[a].pipe, state.effects[b].pipe)) {
+            return true;
+        }
+        bool conflict = false;
+        roles[a].cross(roles[b], [&](std::size_t i, std::size_t j) {
+            const auto x = effects[a][i], y = effects[b][j];
+            const bool protectedPair = hardwareProtectsConflict(
+                state.effects[a].pipe, modeledGroups[x], state.effects[b].pipe, modeledGroups[y]);
+            if (!protectedPair && input.accesses().residualConflict(x, y)) {
+                conflict = true;
+                return false;
+            }
+            return true;
+        });
+        if (conflict) {
+            state.residual.push_back({static_cast<uint32_t>(a), static_cast<uint32_t>(b)});
+        }
+        return true;
+    });
     return true;
 }
 bool validRoots(func::FuncOp function, ArrayRef<Operation*> roots)
@@ -77,7 +96,9 @@ bool validRoots(func::FuncOp function, ArrayRef<Operation*> roots)
     Operation* previous = nullptr;
     Block* block = roots.empty() || !roots.front() ? nullptr : roots.front()->getBlock();
     for (auto* root : roots) {
-        if (!root || !block || root->getBlock() != block) { return false; }
+        if (!root || !block || root->getBlock() != block) {
+            return false;
+        }
         const bool originalFunction = root->getParentOfType<func::FuncOp>() == function;
         if (!originalFunction || (previous && previous->getNextNode() != root)) {
             return false;

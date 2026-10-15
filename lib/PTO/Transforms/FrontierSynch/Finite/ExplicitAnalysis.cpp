@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "PTO/Transforms/FrontierSynch/Shared/Recognition.h"
+#include "../Shared/WriterPairIndex.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include <limits>
 namespace mlir::pto::frontiersynch {
@@ -87,26 +88,40 @@ ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, co
     const auto modeledProtection = modeledProtectionGroups(input, phases, invocation);
     const bool unresolvedBases = input.accesses().hasUniformRelationships(phases);
     std::vector<StorageGenerator> residual;
-    for (uint32_t a = 0; a < phases.size(); ++a) {
-        if (!input.accesses().needsOverlapQueries(phases[a], unresolvedBases)) { continue; }
-        for (uint32_t b = 0; b < phases.size(); ++b) {
-            if (a == b || (b < a && input.accesses().needsOverlapQueries(phases[b], unresolvedBases))) { continue; }
-            if (ptoStorageProtection().protectsScalar(static_cast<uint32_t>(phases[a]->kPipeValue),
-                                                      static_cast<uint32_t>(phases[b]->kPipeValue))) { continue; }
-            bool conflict = false;
-            for (auto x : input.accesses().effectsFor(phases[a])) {
-                for (auto y : input.accesses().effectsFor(phases[b])) {
-                    if (input.accesses().residualConflict(x, y) &&
-                        !hardwareProtectsConflict(static_cast<uint32_t>(phases[a]->kPipeValue), modeledProtection[x],
-                            static_cast<uint32_t>(phases[b]->kPipeValue), modeledProtection[y])) {
-                        conflict = true; break;
-                    }
-                }
-                if (conflict) { break; }
-            }
-            if (conflict) { residual.push_back({std::min(a, b), std::max(a, b)}); }
-        }
+    std::vector<ArrayRef<std::size_t>> effects;
+    std::vector<WriterPairIndex> roles;
+    std::vector<bool> needsOverlap;
+    for (auto* phase : phases) {
+        effects.push_back(input.accesses().effectsFor(phase));
+        needsOverlap.push_back(input.accesses().needsOverlapQueries(phase, unresolvedBases));
+        const auto ids = effects.back();
+        roles.emplace_back(
+            ids.size(), [&](std::size_t i) { return input.accesses().effects()[ids[i]].mode == SyncAccessMode::Read; });
     }
+    WriterPairIndex candidates(
+        phases.size(), [&](std::size_t i) { return !roles[i].hasWriters(); },
+        [&](std::size_t i) { return needsOverlap[i]; });
+    candidates.pairs([&](std::size_t a, std::size_t b) {
+        const auto p = static_cast<uint32_t>(phases[a]->kPipeValue);
+        const auto q = static_cast<uint32_t>(phases[b]->kPipeValue);
+        if (ptoStorageProtection().protectsScalar(p, q)) {
+            return true;
+        }
+        bool conflict = false;
+        roles[a].cross(roles[b], [&](std::size_t i, std::size_t j) {
+            const auto x = effects[a][i], y = effects[b][j];
+            if (!hardwareProtectsConflict(p, modeledProtection[x], q, modeledProtection[y]) &&
+                input.accesses().residualConflict(x, y)) {
+                conflict = true;
+                return false;
+            }
+            return true;
+        });
+        if (conflict) {
+            residual.push_back({static_cast<uint32_t>(a), static_cast<uint32_t>(b)});
+        }
+        return true;
+    });
     const auto prerequisites = index.mapPrerequisites(phases);
     if (!prerequisites.error.empty()) {
         result.error = prerequisites.error;

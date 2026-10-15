@@ -18,13 +18,14 @@ struct PrefixDirection {
     uint32_t sourcePipe = 0, targetPipe = 0;
     bool operator<(const PrefixDirection& other) const;
 };
+using PrefixSourceSnapshot =
+    std::function<LogicalResult(OpBuilder&, const IRMapping&, llvm::MutableArrayRef<Value>, Value, std::string&)>;
 struct PrefixSource {
     Operation* original = nullptr;
     uint32_t pipe = 0;
     // Optional source-rank snapshot actions run after the count increment and
     // outgoing publications. They receive that actual executed-source ordinal.
-    std::function<LogicalResult(OpBuilder&, const IRMapping&, llvm::MutableArrayRef<Value>,
-                                Value, std::string&)> snapshot;
+    PrefixSourceSnapshot snapshot;
 };
 using PrefixIncomingSelector = std::function<FailureOr<Value>(
     OpBuilder&, const IRMapping&, llvm::ArrayRef<Value>, std::string&)>;

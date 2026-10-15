@@ -31,9 +31,11 @@ FailureOr<Expr> prefixPortGuard(SequenceAnalysisState& state, const Port& point,
 }
 // Callback semantics are immutable under the regional export contract. Adapters
 // changing them must invalidate or explicitly transport the whole capability.
-bool sameFrame(const RegionalAnalysis& a, const RegionalAnalysis& b)
+} // namespace
+bool samePrefixOccurrenceFrame(const RegionalAnalysis& a, const RegionalAnalysis& b)
 {
-    if (a.expressions != b.expressions || a.accessModel != b.accessModel || a.gmAliasPolicy != b.gmAliasPolicy ||
+    if (a.relations != b.relations || a.arithmeticRelations != b.arithmeticRelations ||
+        a.expressions != b.expressions || a.accessModel != b.accessModel || a.gmAliasPolicy != b.gmAliasPolicy ||
         a.occurrenceLoops != b.occurrenceLoops || a.outerLoops != b.outerLoops || a.outerDivisors != b.outerDivisors ||
         a.endpointSiteGuard != b.endpointSiteGuard || a.endpointInvocationGuard != b.endpointInvocationGuard ||
         bool(a.endpointEventGuard) != bool(b.endpointEventGuard) || a.anchors.size() != b.anchors.size()) {
@@ -51,6 +53,7 @@ bool sameFrame(const RegionalAnalysis& a, const RegionalAnalysis& b)
     }
     return true;
 }
+namespace {
 using EventKey = std::tuple<uint32_t, Expr, std::vector<Expr>>;
 EventKey eventKey(const RegionalEvent& event) { return {event.type, event.ordinal, event.visits}; }
 } // namespace
@@ -88,7 +91,7 @@ PrefixOccurrencePtr sequencePrefixOccurrence(const std::shared_ptr<SequenceAnaly
         if (child.prefixMathematics && child.prefixMathematics->sequenceDemands) {
             const auto& retained = *child.prefixMathematics->sequenceDemands;
             auto canonical = sequenceRegionalResult(retained);
-            if (!retained.state || !sameFrame(canonical, region)) {
+            if (!retained.state || !samePrefixOccurrenceFrame(canonical, region)) {
                 error = "retained sequence occurrence has a transformed export frame"; return {};
             }
             // Borrowed leaf analyses can lack a detached prefix capability.
@@ -139,7 +142,7 @@ void attachSequenceOccurrenceRecipes(const RegionalAnalysis& region,
     auto snapshot = std::make_shared<RegionalAnalysis>(region);
     snapshot->invocationPrefix.reset();
     result.matchesOccurrenceFrame = [snapshot](const RegionalAnalysis& current) {
-        return sameFrame(*snapshot, current);
+        return samePrefixOccurrenceFrame(*snapshot, current);
     };
     std::vector<uint32_t> starts;
     uint32_t start = 0;
@@ -167,7 +170,7 @@ void liftSingletonPrefixContribution(const RegionalAnalysis& body, RegionalAnaly
     auto result = std::make_shared<RegionalPrefixContribution>(*original);
     auto snapshot = std::make_shared<RegionalAnalysis>(lifted); snapshot->invocationPrefix.reset();
     result->matchesOccurrenceFrame = [snapshot](const RegionalAnalysis& current) {
-        return sameFrame(*snapshot, current);
+        return samePrefixOccurrenceFrame(*snapshot, current);
     };
     result->occurrence = [original, snapshot](RegionalEvent event, std::string& error) -> PrefixOccurrencePtr {
         if (!validRegionalEvent(*snapshot, event) || event.visits.empty()) {

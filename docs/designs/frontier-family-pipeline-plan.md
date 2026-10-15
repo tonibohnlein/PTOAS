@@ -69,7 +69,7 @@ instrumentation and test fixes belong to the batch they support.
 |---|---|---|
 | B1 (accepted, `d42907306`): Section 7 allocation and lane boundaries | Finish qualified periodic lane-boundary exports, connect them to variable-length/repeated allocation, and use ordered first-reuse capabilities for qualifying spans. Retain parent retry and economical independently certified mappings. | Exact lane presence/extrema and legal reuse on zero, short, partial and repeated invocations; scaling without generation expansion or an unnecessary pair matrix. |
 | B2 (accepted): allocate the normalized family plan | Normalize recipe-level families and coactive command order before allocation. Compose certified ID maps with occurrence selectors, then materialize live code once. Consolidate retained-session and split-pipeline stage functions and remove replaced preparation paths. | Allocation can inspect the actual logical protocol without singleton scalar preparation; unified/split agreement, owned/versioned artifacts and unchanged communications/order. |
-| B3: compact guarded control and constructive exports | Address the remaining large guard/query roots through shared producer construction, restricted incoming queries where qualified, early multi-output slicing and binding-aware lowering. Finish applicable guarded/relational occurrence and capture transport through the common interface. Include residual read/read avoidance and complete control-cost attribution. | Independent demand/query/selector agreement, preserved invocation/history semantics, structural scaling and paired full preparation measurements; no speedup claim from deferred work alone. |
+| B3 (accepted): compact guarded control and constructive exports | Address the remaining large guard/query roots through shared producer construction, restricted incoming queries where qualified, early multi-output slicing and binding-aware lowering. Finish applicable guarded/relational occurrence and capture transport through the common interface. Include residual read/read avoidance and complete control-cost attribution. | Independent demand/query/selector agreement, preserved invocation/history semantics, structural scaling and paired full preparation measurements; no speedup claim from deferred work alone. |
 | B4: physical lifetime export for prefix protocols | Export publication, acquisition, terminal cleanup and invocation lifetimes for the actual prefix command plan; integrate them with allocation and reservations. | Matching and consumption-before-republication proofs on empty, guarded and repeated executions; certify supported finite-ID assignments and distinguish infeasibility from unavailable evidence. Delta logical success alone does not complete this batch. |
 | B5: Section 6 production integration | Import qualified closed selectively synchronized children into SCC-local completion composition and provide coarse shared input for completion requests. Preserve child synchronization and carry outstanding effects across boundaries. | Concrete summary/coverage oracle, closed matching and joint resource certification, no automatic boundary drains, transactional failure and hardware/readiness restrictions. |
 | B6: pinned production and scaling closure | Run the eleven-kernel pipeline and remaining phased/corpus checks with pinned inputs/tools. Compare control, preparation, allocation and backend outcomes; retain failures and feed actionable defects back into the owning batch. | Reproducible stage-separated receipts, independent semantic traces, scaling results and paired timings. Device results remain a separate qualification gate supplied by device runs. |
@@ -2490,3 +2490,84 @@ against the 37-file code manifest
 `ab55d24b94e8f2eb81d780e853d4a90b5eb8a6822c0cd70fff04e6e4aa4d5286`.
 Their acceptance includes the documented compatibility boundaries and static-site
 tradeoff. Continue with B3; this acceptance does not close B3–B6.
+
+
+### B3: restricted incoming circuits and owned constructive exports
+
+Finite guarded reduction now selects the latest active candidate on each source
+pipe before testing its incoming cover against the native seed and the other
+selected completion rows. Activity joins remain separate from cover predicates.
+The generic streaming frontier remains available. Independent closure and cover
+oracles check 4,096 guarded valuations and 960 consumer-anchored windows;
+read-heavy scaling checks 16, 64 and 256 optional sources.
+
+Residual conflict construction indexes writer roles before enumerating pairs.
+Explicit and finite guarded providers index distinct phases before effects,
+avoiding intra-envelope products; sequence residual bridges similarly avoid
+read/read products. Unknown/read-modify-write modes remain potential writers.
+Reference order, scalar protection and the asymmetric ACC protection rule remain
+part of qualification. The new original-input regression checks both ACC reset
+orientations when only the later phase requires residual queries. It removes a
+spurious reverse-oriented conflict in the older explicit path; this corner is
+not claimed to produce identical old and new demand sets.
+
+Prefix collection retains flat owned source and consumer contributions. The
+common incoming adapter owns barrier versus acquisition emission, while the
+producer still owns the selected occurrence and actual executed-source rank.
+Union-root input slicing and original/replay binding are shared within one
+arena, cut and clone environment. Historical values stay separated by lookback
+and state version; bounded substitution remains transaction-owned. No memo
+escapes rollback and no source load is replayed.
+
+Qualified nonrepeating relational crossings now retain source captures and
+consumer recipes through the same interface. Complete required order and real
+child contributions are required; a relational container need not duplicate
+internal child covers. Missing child owners, malformed schemas, unavailable
+inputs and repeated occurrence frames refuse explicitly. Original SCF arms may
+forward a capability only after checking their exact condition, original cuts
+and occurrence frame. Arbitrary predicate overlays invalidate it. General
+repeated relational transport remains unsupported.
+
+The production regression composes real explicit/finite children through the
+relational sequence adapter and an original conditional arm, including an
+internal child handoff absent from the crossing container. Independent finite
+relational fixtures check all 32 guard valuations, overlapping pieces, absence,
+matching, same-pipe barriers, zero-trip refusal, stale frames and owner lifetime.
+The flat callback fixture checks 16,384 contributions and retained recipes after
+collector destruction. Fifteen focused suites, the expression suite and final
+prefix/residual checks pass. This is compiler/oracle validation, not device
+qualification.
+
+Construction profiles now distinguish union discovery, input binding,
+substitution/proof traversal, constructed/live operations and the producer of
+large roots. Deferred work is not counted as eliminated work. Three alternating serial Delta pairs against the retained B2 binary give
+median preparation times of 26.129 and 20.850 seconds. Constructed prefix
+operations fall from 672,883 to 454,698; arithmetic including payload falls from
+674,511 to 456,242. Static SET/WAIT sites remain 172/47. Proved-false guard
+suppression reduces barrier sites from 194 to 84 and private state slots from
+284 to 231. These static changes are not dynamic handshake deletion claims.
+
+The largest root is still 208,060 operations (207,669 before), now attributed to
+sequence incoming selection after the token loop. The candidate also records
+95,790,640 threshold-substitution visits and 1,278,752 proof-traversal visits.
+That residual construction cost remains open; B3 does not claim Delta is cheap,
+physically allocated or device qualified. General repeated relational transport
+also remains outside this qualified export.
+
+Persistent pairs give medians of 1.495 and 1.512 seconds, establishing no planning
+speedup. Logical/physical counts remain unchanged from B2. Complete ordered
+physical traces and independent reuse checks pass on cores 0, 15, 16 and 19;
+cores 0/15 execute 5,011 matched pairs and cores 16/19 execute 4,625. Split-path
+arithmetic visits are unchanged: 4,933,582 and 4,554,120 respectively. Combined
+lowering records 1,224,490 and 1,130,348 visits, an existing B2 improvement rather
+than a new B3 result. No device execution is claimed.
+
+The changed-code prefilter's 47 remaining control matches have already-braced
+bodies when their complete conditions are read; the missing test-header guard
+was fixed. These are contextual regex resolutions, not a clean analyzer claim.
+Correctness and architecture source reviews accept the 35-file code manifest
+`c2494691867d1136f4e428937b3c89e70329807aef51c3887b56463c2b264b87`.
+Final test-header rebuild and acceptance receipts accompany the commit.
+Pinned input/tool hashes, paired results, four-core traces, source manifest and
+compliance contexts are retained under `.local/b3-guarded-control/`.
+Continue with B4; remaining limitations above are not hidden by acceptance.

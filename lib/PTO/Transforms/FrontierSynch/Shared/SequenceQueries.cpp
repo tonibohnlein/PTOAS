@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
+#include "WriterPairIndex.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 SequenceAnalysisState::EventKey eventKey(const SequenceEvent& value)
@@ -87,72 +88,120 @@ void SequenceAnalysisState::bridges()
     const auto protection = model ? structuredProtection(*model) : StructuredProtection{};
     auto storageCrossing = [&](uint32_t cell, Selected source, Selected target) {
         ++bridgeWork.candidates;
-        if (expressions.constantValue(both(source.present, target.present)) == 0) { return; }
-        if (ptoStorageProtection().protectsScalar(pipe(source.port), pipe(target.port))) { return; }
+        if (expressions.constantValue(both(source.present, target.present)) == 0) {
+            return;
+        }
+        if (ptoStorageProtection().protectsScalar(pipe(source.port), pipe(target.port))) {
+            return;
+        }
         const auto& a = ports[source.port];
         const auto& b = ports[target.port];
         auto x = children[a.child].anchors[a.type].phase;
         auto y = children[b.child].anchors[b.type].phase;
-        if (cells[cell].space == AddressSpace::ACC && hardwareProtectsConflict(
-                pipe(source.port), protection.within(x, requiredOuterLoops),
-                pipe(target.port), protection.within(y, requiredOuterLoops))) { return; }
+        if (cells[cell].space == AddressSpace::ACC &&
+            hardwareProtectsConflict(
+                pipe(source.port), protection.within(x, requiredOuterLoops), pipe(target.port),
+                protection.within(y, requiredOuterLoops))) {
+            return;
+        }
         const auto before = crossings.size();
         crossing(source, target);
         bridgeWork.retained += crossings.size() - before;
     };
     if (residual) {
-        for (uint32_t a = 0; a < children.size(); ++a) {
-            for (uint32_t b = a + 1; b < children.size(); ++b) {
-                const auto& left = children[a].regional;
-                const auto& right = children[b].regional;
-                if (!left.accessModel || !right.accessModel) { continue; }
-                auto pair = [&](const auto& xs, const auto& ys, bool activeEffects) {
-                    for (const auto& x : xs) {
-                        for (const auto& y : ys) {
-                            const auto& model = *left.accessModel;
-                            const auto& source = model.effects()[x.effect];
-                            const auto& target = model.effects()[y.effect];
-                            const auto sourcePipe = static_cast<uint32_t>(source.phase->kPipeValue);
-                            const auto targetPipe = static_cast<uint32_t>(target.phase->kPipeValue);
-                            if (ptoStorageProtection().protectsScalar(sourcePipe, targetPipe)) { continue; }
-                            const bool accumulator = source.memory && target.memory &&
-                                source.memory->scope == AddressSpace::ACC && target.memory->scope == AddressSpace::ACC;
-                            if (accumulator && hardwareProtectsConflict(sourcePipe,
-                                    protection.within(source.phase, requiredOuterLoops), targetPipe,
-                                    protection.within(target.phase, requiredOuterLoops))) { continue; }
-                            bool conflict = model.uniformConflict(x.effect, y.effect);
-                            const bool residualPair = !conflict && activeEffects &&
-                                !finiteCrossingPairs.count({a, x.effect, b, y.effect}) &&
-                                (!x.representedByCells || !y.representedByCells) &&
-                                model.residualConflict(x.effect, y.effect);
-                            if (residualPair) {
-                                if (left.occurrenceLoops[x.last.event.type] ||
-                                    right.occurrenceLoops[y.first.event.type] ||
-                                    !x.last.event.visits.empty() || !y.first.event.visits.empty()) {
-                                    fail("crossing symbolic access predicate needs an occurrence adapter"); return;
-                                }
-                                conflict = true;
-                            }
-                            if (conflict) {
-                                crossing({port(a, x.last.event), x.last.present},
-                                    {port(b, y.first.event), y.first.present});
-                            }
-                        }
+        struct BoundaryRoles {
+            WriterPairIndex active, deferred;
+        };
+        std::vector<BoundaryRoles> roles;
+        bool valid = true;
+        for (const auto& child : children) {
+            const auto& region = child.regional;
+            auto index = [&](ArrayRef<RegionalAccessBoundary> accesses) {
+                return WriterPairIndex(accesses.size(), [&](std::size_t i) {
+                    if (!region.accessModel) {
+                        return true;
                     }
-                };
-                pair(left.accessBoundary, right.accessBoundary, true);
-                if (!error.empty()) { return; }
-                pair(left.accessBoundary, right.deferredAccessBoundary, false);
-                if (!error.empty()) { return; }
-                pair(left.deferredAccessBoundary, right.accessBoundary, false);
-                if (!error.empty()) { return; }
-                pair(left.deferredAccessBoundary, right.deferredAccessBoundary, false);
+                    if (region.accessModel != model || accesses[i].effect >= model->effects().size()) {
+                        valid = false;
+                        return false;
+                    }
+                    return model->effects()[accesses[i].effect].mode == SyncAccessMode::Read;
+                });
+            };
+            roles.push_back({index(region.accessBoundary), index(region.deferredAccessBoundary)});
+        }
+        if (!valid) {
+            fail("residual boundary has a foreign or invalid original effect identity");
+            return;
+        }
+        // The child index also skips read/read child products. An all-reader
+        // sequence does not perform a quadratic empty boundary traversal.
+        WriterPairIndex pairs(children.size(), [&](std::size_t i) {
+            return !roles[i].active.hasWriters() && !roles[i].deferred.hasWriters();
+        });
+        pairs.pairs([&](std::size_t first, std::size_t second) {
+            const auto a = static_cast<uint32_t>(first), b = static_cast<uint32_t>(second);
+            const auto& left = children[a].regional;
+            const auto& right = children[b].regional;
+            if (!left.accessModel || !right.accessModel) {
+                return true;
             }
+            auto pair = [&](const auto& xs, const auto& ys, const WriterPairIndex& xroles,
+                            const WriterPairIndex& yroles, bool activeEffects) {
+                return xroles.cross(yroles, [&](std::size_t i, std::size_t j) {
+                    ++bridgeWork.residualCandidates;
+                    const auto& x = xs[i];
+                    const auto& y = ys[j];
+                    const auto& model = *left.accessModel;
+                    const auto& source = model.effects()[x.effect];
+                    const auto& target = model.effects()[y.effect];
+                    const auto sourcePipe = static_cast<uint32_t>(source.phase->kPipeValue);
+                    const auto targetPipe = static_cast<uint32_t>(target.phase->kPipeValue);
+                    if (ptoStorageProtection().protectsScalar(sourcePipe, targetPipe)) {
+                        return true;
+                    }
+                    const bool accumulator = source.memory && target.memory &&
+                                             source.memory->scope == AddressSpace::ACC &&
+                                             target.memory->scope == AddressSpace::ACC;
+                    if (accumulator && hardwareProtectsConflict(
+                                           sourcePipe, protection.within(source.phase, requiredOuterLoops), targetPipe,
+                                           protection.within(target.phase, requiredOuterLoops))) {
+                        return true;
+                    }
+                    bool conflict = model.uniformConflict(x.effect, y.effect);
+                    const bool residualPair =
+                        !conflict && activeEffects && !finiteCrossingPairs.count({a, x.effect, b, y.effect}) &&
+                        (!x.representedByCells || !y.representedByCells) && model.residualConflict(x.effect, y.effect);
+                    if (residualPair) {
+                        if (left.occurrenceLoops[x.last.event.type] || right.occurrenceLoops[y.first.event.type] ||
+                            !x.last.event.visits.empty() || !y.first.event.visits.empty()) {
+                            fail("crossing symbolic access predicate needs an occurrence adapter");
+                            return false;
+                        }
+                        conflict = true;
+                    }
+                    if (conflict) {
+                        crossing({port(a, x.last.event), x.last.present}, {port(b, y.first.event), y.first.present});
+                    }
+                    return error.empty();
+                });
+            };
+            return pair(left.accessBoundary, right.accessBoundary, roles[a].active, roles[b].active, true) &&
+                   pair(left.accessBoundary, right.deferredAccessBoundary, roles[a].active, roles[b].deferred, false) &&
+                   pair(left.deferredAccessBoundary, right.accessBoundary, roles[a].deferred, roles[b].active, false) &&
+                   pair(
+                       left.deferredAccessBoundary, right.deferredAccessBoundary, roles[a].deferred, roles[b].deferred,
+                       false);
+        });
+        if (!error.empty()) {
+            return;
         }
     }
     auto appendLive = [&](std::vector<Selected>& frontier, const std::vector<Selected>& values) {
         for (auto value : values) {
-            if (expressions.constantValue(value.present) != 0) { frontier.push_back(value); }
+            if (expressions.constantValue(value.present) != 0) {
+                frontier.push_back(value);
+            }
         }
     };
     for (uint32_t cell = 0; cell < cells.size(); ++cell) {

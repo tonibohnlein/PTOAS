@@ -22,6 +22,9 @@ public:
         uint64_t arena = 0, root = 0, requests = 0, emissions = 0, attempts = 0;
         uint64_t directFailures = 0, inactiveAttempts = 0, historyAttempts = 0;
         uint64_t constructed = 0, retained = 0, maximumRetained = 0;
+        uint64_t inactiveSuccesses = 0, preparationNodes = 0, preparationInputs = 0, sharedReturns = 0,
+                 bindingNodes = 0;
+        uint64_t thresholdDiscovery = 0, thresholdSubstitution = 0, proofVisits = 0, historySubstitution = 0;
         uint64_t distance = 0;
         std::string cut, location, producer;
     };

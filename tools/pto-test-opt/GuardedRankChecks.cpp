@@ -14,6 +14,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/GuardedStorageScan.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/ModuloLaneSpan.h"
+#include "RestrictedIncomingChecks.h"
 #include <array>
 #include <set>
 namespace fs = mlir::pto::frontiersynch;
@@ -448,11 +449,12 @@ bool storageScans()
 int runGuardedRankChecks()
 {
     mlir::MLIRContext context;
-    if (!moduloSpans() || !storageScans() || !referenceRankConstruction(context) || !activityOnlyRows(context)) {
+    if (!moduloSpans() || !storageScans() || !referenceRankConstruction(context) || !activityOnlyRows(context) ||
+        !writerPairIndexChecks() || !restrictedIncomingScaling(context)) {
         llvm::errs() << "guarded storage scan mismatch\n";
         return 1;
     }
-    for (unsigned pattern = 0; pattern < 5; ++pattern) {
+    for (unsigned pattern = 0; pattern < 32; ++pattern) {
         if (!ranks(context, pattern, fs::GuardedRankLabels::Executed) ||
             !ranks(context, pattern, fs::GuardedRankLabels::Reference)) {
             return 1;
@@ -463,7 +465,7 @@ int runGuardedRankChecks()
             return 1;
         }
     }
-    llvm::outs() << "guarded ranks: 640 valuations and 960 anchored windows "
-                   "(including protected writers/scalars/macros) passed\n";
+    llvm::outs() << "guarded ranks: 4096 valuations and 960 anchored windows "
+                    "(including protected writers/scalars/macros) passed\n";
     return 0;
 }

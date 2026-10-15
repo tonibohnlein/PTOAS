@@ -21,14 +21,24 @@ public:
         explicit Scope(PrefixExpressionSession& owner) : owner(owner) {}
         Scope(const Scope&) = delete;
         Scope& operator=(const Scope&) = delete;
-        ~Scope() { owner.entries.clear(); owner.active = false; }
+        ~Scope()
+        {
+            owner.entries.clear();
+            owner.originals.clear();
+            owner.active = false;
+        }
+
     private:
         PrefixExpressionSession& owner;
     };
     std::unique_ptr<Scope> begin()
     {
         if (active) { return {}; }
-        entries.clear(); cut = nullptr; block = nullptr; mapping = nullptr;
+        entries.clear();
+        originals.clear();
+        cut = nullptr;
+        block = nullptr;
+        mapping = nullptr;
         active = true;
         return std::make_unique<Scope>(*this);
     }
@@ -39,20 +49,49 @@ public:
     RegionExpressions::CutEmission* bindings(const RegionExpressions* arena,
         Operation* at, Block* into, const IRMapping& mapped, Environment environment)
     {
-        if (!active) { return nullptr; }
-        if (cut != at || block != into || mapping != &mapped) {
-            entries.clear(); cut = at; block = into; mapping = &mapped;
+        if (!atCut(at, into, mapped)) {
+            return nullptr;
         }
         llvm::sort(environment);
         return &entries[{arena, std::move(environment)}];
     }
+    struct OriginalBindings {
+        bool prepared = false;
+        RegionExpressions::CutEmission context;
+    };
+    // Read-only original/replay mappings are independent of history versions.
+    // Each immutable union-input batch is bound once in the current clone cut.
+    OriginalBindings* originalBindings(
+        const RegionExpressions* arena, const void* batch, Operation* at, Block* into, const IRMapping& mapped)
+    {
+        if (!atCut(at, into, mapped)) {
+            return nullptr;
+        }
+        return &originals[{arena, batch}];
+    }
+
 private:
+    bool atCut(Operation* at, Block* into, const IRMapping& mapped)
+    {
+        if (!active) {
+            return false;
+        }
+        if (cut != at || block != into || mapping != &mapped) {
+            entries.clear();
+            originals.clear();
+            cut = at;
+            block = into;
+            mapping = &mapped;
+        }
+        return true;
+    }
     bool active = false;
     Operation* cut = nullptr;
     Block* block = nullptr;
     const IRMapping* mapping = nullptr;
     using Key = std::pair<const RegionExpressions*, Environment>;
     std::map<Key, RegionExpressions::CutEmission> entries;
+    std::map<std::pair<const RegionExpressions*, const void*>, OriginalBindings> originals;
 };
 } // namespace mlir::pto::frontiersynch
 #endif

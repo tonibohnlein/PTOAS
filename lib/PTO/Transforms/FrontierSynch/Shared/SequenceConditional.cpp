@@ -10,6 +10,7 @@
 #include "RegionalCapabilitiesInternal.h"
 #include "AllocationInputCache.h"
 #include "SequenceAnalysisInternal.h"
+#include "InvocationPrefixCollection.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "llvm/Support/SaveAndRestore.h"
 namespace mlir::pto::frontiersynch {
@@ -125,6 +126,41 @@ RegionalAnalysis guardRegionalArm(RegionalAnalysis body, RegionExpressions::Id g
 {
     return guardedArm(std::move(body), guard);
 }
+RegionalAnalysis guardOriginalArm(RegionalAnalysis body, Expr guard, Region& arm)
+{
+    if (!body.expressions) {
+        return {};
+    }
+    const auto prefix = body.invocationPrefix;
+    auto branch = dyn_cast_or_null<scf::IfOp>(arm.getParentOp());
+    auto arena = body.expressions;
+    const auto condition = branch && arena ? arena->input(branch.getCondition()) : RegionExpressions::invalid;
+    const auto expected =
+        branch && &arm == &branch.getThenRegion() ?
+            condition :
+            (branch && &arm == &branch.getElseRegion() ? arena->lnot(condition) : RegionExpressions::invalid);
+    const bool valid = guard == expected && prefix && prefix->matchesOccurrenceFrame &&
+                       prefix->matchesOccurrenceFrame(body) && llvm::all_of(body.anchors, [&](const auto& anchor) {
+                           auto* op = anchor.phase ? anchor.phase->elementOp : nullptr;
+                           return op && arm.isAncestor(op->getParentRegion()) &&
+                                  anchor.before.block == op->getBlock() && anchor.before.before == op &&
+                                  anchor.after.block == op->getBlock() && anchor.after.before == op->getNextNode();
+                       });
+    auto out = guardedArm(std::move(body), guard);
+    if (valid) {
+        // The original arm suppresses every original payload/capture command.
+        // Rebind the exported frame after masking queries and clearing their
+        // derived mathematical certificates; keep the original recipe owner.
+        auto contribution = std::make_shared<RegionalPrefixContribution>(*prefix);
+        auto frame = std::make_shared<RegionalAnalysis>(out);
+        frame->invocationPrefix.reset();
+        contribution->matchesOccurrenceFrame = [frame](const RegionalAnalysis& current) {
+            return samePrefixOccurrenceFrame(*frame, current);
+        };
+        out.invocationPrefix = std::move(contribution);
+    }
+    return out;
+}
 bool SequenceAnalysisState::conditionalChild(const StructureNode& node)
 {
     auto branch = dyn_cast_or_null<scf::IfOp>(node.anchor);
@@ -149,18 +185,7 @@ bool SequenceAnalysisState::conditionalChild(const StructureNode& node)
             child.originalNode = id;
             child.originalArmGuard = guard;
         }
-        // These are the original arm's cuts, so execution already applies the
-        // arm guard to payload publications and acquisitions. Bookkeeping may
-        // still execute at enclosing cuts. Preserve
-        // occurrence recipes only under this structural certificate; a generic
-        // predicate overlay still invalidates them in guardedArm above.
-        const auto prefix = body.invocationPrefix;
-        const bool originalArmCuts = llvm::all_of(body.anchors, [&](const auto& anchor) {
-            auto* op = anchor.phase ? anchor.phase->elementOp : nullptr;
-            return op && arm.region && arm.region->isAncestor(op->getParentRegion());
-        });
-        child.regional = guardedArm(std::move(body), guard);
-        if (originalArmCuts) { child.regional.invocationPrefix = prefix; }
+        child.regional = guardOriginalArm(std::move(body), guard, *arm.region);
         child.anchors = child.regional.anchors;
         children.push_back(std::move(child));
     }

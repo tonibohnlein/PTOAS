@@ -80,7 +80,9 @@ bool RegionExpressions::inactiveOverThresholds(
         if (refined) { continue; }
         const auto domain = land(le(constant(lower), input), le(input, constant(upper)));
         if (cost) { count(cost->proofRequests); }
-        if (constantUnder(domain, specialized) != 0) { return false; }
+        if (constantUnder(domain, specialized, cost ? &cost->proofVisits : nullptr) != 0) {
+            return false;
+        }
         ++position;
     }
     return true;
