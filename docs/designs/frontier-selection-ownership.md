@@ -1,9 +1,9 @@
 # Selection ownership and milestone 2 closure audit
 
-This is a source audit of the construction-first milestone-loop changes. It is
-not a validation receipt or a completed-milestone declaration. Build and test
-receipts belong to `.local/milestone-loop/`; the construction checkpoint and
-remaining protocol investigations remain separate.
+This audit records M2 implementation acceptance and its supported ownership
+boundaries. Build and test receipts remain separately pinned under
+`.local/milestone-loop/`. The remaining construction, protocol allocation and
+device outcomes retain their own gates.
 
 ## Implemented ownership
 
@@ -148,38 +148,29 @@ and recipe path. Generic mathematical reducers and independent test oracles are
 retained. This inventory establishes in-tree ownership; it is not an assertion
 that downstream external users of public headers do not exist.
 
-## Remaining obligations before full milestone acceptance
+## M2 implementation acceptance
 
-1. **Validate the new arithmetic stage split.** The source now separates
-   generator construction from backend reduction/conversion estimates and
-   records generator ownership in ranking evidence. It never subtracts guessed
-   completed work from a whole estimate. New regressions use real DBM and integer
-   generator stages to check zero retained generator work, unchanged remaining
-   reducer cost, owner isolation and repeated previews. Run these together with
-   periodic-to-general and general-to-periodic continuation checks.
-2. **Missing export work remains an estimate.** Current structural export costs
-   are heuristics. Keep them labelled as such; unavailable qualification stays
-   unknown. A complete construction-work claim needs stage counters and paired
-   serial production evidence, including materialization. Primitive-count cache
-   tests must show one structural scan across repeated mixed requests and fresh
-   scans after session reset.
-3. **Validate the new facade separation.** Named explicit/arithmetic conveniences
-   now use request wrappers and private producers. Concrete sequence consumers
-   migrated to the explicitly named audit entry point. Run owner/retry,
-   failed-export retention and production dispatch tests; no new unused sequence
-   convenience wrapper was introduced. The public sequence-oracle rename is an
-   intentional diagnostic API migration.
-4. **Validate upgrade dependency boundaries.** Run changed-coordinate and
-   unchanged-coordinate upgrade checks on the final source, plus the independent
-   command-closure oracle. Full parent recomposition after changed coordinates
-   is documented; any smaller recomposition claim needs new dependency evidence.
-5. **Close the final request and profile gates.** Run explicit-success/no-later-
-   form, repeat/no-walk, unseen-superset, weak/strong/weak, audit isolation,
-   invalidation/reinitialization, failed-export retention, stable unknown/tie
-   ordering and cold expanded fallback checks. Profile selection reasons,
-   failure stage, reused/missing/refused outputs and retained unrequested work;
-   selection snapshots are not additive construction counts.
+M2's selection and capability ownership requirements are accepted on committed
+source `46e427696`, with the explicit namespace correction in `cbbb03954`.
+The retained source/tool manifests and focused execution receipts are under
+`.local/milestone-loop/checkpoint-family-directory/`; the subsequent production
+receipts are under `.local/milestone-loop/namespace-production/`. These pins
+exclude the later experimental generic-substitution changes.
 
-Passing these selection gates does not certify GroupNorm/prefill/Delta/decode
-allocation, successful kernel compilation, or device execution. Those outcomes
-retain their own protocol-specific evidence and open items.
+| Requirement | Implemented behavior and independent gate |
+| --- | --- |
+| Structural estimates and screening | Shared shape counts distinguish core-chain scans from generic graph relaxation. Retained generator work is excluded from remaining reduction/conversion work. Arithmetic periodic-conversion, dispatch and session checks cover both continuation directions, owner isolation, repeated previews and structural scan reuse. |
+| Retained request reuse | Complete and compatible stronger answers precede candidate walks. Full-context positive and exhausted recipes preserve evidence generation, stable ties/unknown estimates and fresh mutable plans. Analysis, normalized-control, identity, natural-export retry and allocation-session controls cover repeat/no-walk, supersets, weak/strong/weak, failed exports, reset and audit isolation. |
+| Capability upgrades | Sequence endpoint retry, conditional endpoint upgrade and symbolic-sibling controls cover unchanged-coordinate reuse and changed-coordinate dependency reconstruction. Independent command oracles cover zero, partial, skipped and nonunit visits. |
+| Caller ownership | Named conveniences are request wrappers; concrete sequence oracles and exhaustive audits are explicitly separated. The inventory above records supported callers and removed orchestration. Generic reducers and independent mathematical oracles remain. |
+| Production and diagnostics | The committed focused gate passes 46/46. After namespace repair, all 49 modules and 22 captures pass logical analysis and allocation. Selection receipts record reasons, failure stages, retained/reused outputs and missing work separately from audit construction. |
+
+Export cost estimates remain labelled estimates; unknown qualification cost does
+not exclude a candidate. No paired performance improvement or complete realized
+construction count is inferred from those estimates. Changed-coordinate parent
+closure reconstruction remains the documented affected dependency; arbitrary
+reduced crossings are not reused without a supporting certificate.
+
+This acceptance concerns M2 implementation. GroupNorm, prefill, Delta and decode
+allocation, kernel compilation, device execution, broader validation and the
+remaining milestones retain their separate evidence and limits.
